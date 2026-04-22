@@ -15,13 +15,29 @@ export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHe
     comment: '',
     isSubmitting: false,
     errorMessage: '',
+    // BH-008: decode-failed signal. Set true when the <img> element fails
+    // to load OR loads with naturalWidth/naturalHeight === 0 (e.g. SVG and
+    // other formats Go's image decoder can't size server-side, which get
+    // stored with Width=0/Height=0 post-BH-039). When true the crop
+    // overlay is hidden, the Crop button disabled, and an explanatory
+    // banner rendered so users don't submit nonsense rects.
+    decodeFailed: false,
     _drag: null, // { startX, startY } in natural pixels
 
     onImageLoad() {
       const img = this.$refs.image;
       if (!img) return;
+      if (!img.naturalWidth || !img.naturalHeight) {
+        this.decodeFailed = true;
+        return;
+      }
+      this.decodeFailed = false;
       this.naturalW = img.naturalWidth || this.naturalW;
       this.naturalH = img.naturalHeight || this.naturalH;
+    },
+
+    onImageError() {
+      this.decodeFailed = true;
     },
 
     _imageRect() {
@@ -168,6 +184,8 @@ export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHe
 
     async submit() {
       if (this.isSubmitting) return;
+      // BH-008: never submit when the image can't be decoded client-side.
+      if (this.decodeFailed || !this.naturalW || !this.naturalH) return;
       if (!this.hasSelection()) {
         this.errorMessage = 'Select a crop area first.';
         return;
@@ -224,6 +242,9 @@ export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHe
       this.errorMessage = '';
       this.isSubmitting = false;
       this._drag = null;
+      // Keep decodeFailed — it reflects whether the image can be decoded
+      // at all, not per-interaction state; resetting would incorrectly
+      // re-enable the disabled Crop button.
     },
   };
 }

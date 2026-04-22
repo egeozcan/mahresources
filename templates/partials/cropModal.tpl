@@ -40,18 +40,29 @@
                                 x-ref="image"
                                 :src="imageUrl"
                                 @load="onImageLoad()"
+                                @error="onImageError()"
                                 alt="Image being cropped"
                                 class="block max-w-full max-h-[60vh] pointer-events-none"
                                 draggable="false"
                             >
                             <div
                                 class="crop-selection absolute pointer-events-none"
-                                x-show="hasSelection()"
+                                x-show="hasSelection() && !decodeFailed"
                                 :style="selectionStyle()"
                                 aria-hidden="true"
                             ></div>
                         </div>
-                        <p class="text-xs text-stone-500 mt-2 text-center">Drag on the image to select the crop area, or type exact pixel values below.</p>
+                        <p class="text-xs text-stone-500 mt-2 text-center" x-show="!decodeFailed">Drag on the image to select the crop area, or type exact pixel values below.</p>
+                        {# BH-008: decode-failed banner. Non-dismissable so users can't accidentally submit a nonsense crop rect. #}
+                        <div
+                            x-show="decodeFailed"
+                            data-testid="crop-decode-failed-banner"
+                            role="status"
+                            aria-live="polite"
+                            class="mt-3 p-3 w-full bg-amber-50 border border-amber-300 rounded text-amber-900 text-sm"
+                        >
+                            This image could not be decoded in the browser; cropping is unavailable. Formats like SVG, ICO, AVIF, and HEIC need to be re-uploaded as PNG or JPEG before they can be cropped.
+                        </div>
                     </div>
 
                     <div class="w-full lg:w-64 space-y-3">
@@ -130,7 +141,8 @@
                 <button
                     type="button"
                     @click="submit()"
-                    :disabled="!hasSelection() || isSubmitting"
+                    :disabled="decodeFailed || !hasSelection() || isSubmitting"
+                    data-testid="crop-submit-button"
                     class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 disabled:bg-stone-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
                 >
                     <span x-show="!isSubmitting">Crop</span>
