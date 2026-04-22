@@ -380,13 +380,28 @@
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
               <span class="font-medium">Import completed</span>
             </div>
-            <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+            <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm" data-testid="import-apply-result">
               <dt class="text-stone-500">Groups created</dt>
               <dd x-text="applyResult.created_groups"></dd>
+              <dt class="text-stone-500">Groups merged</dt>
+              <dd x-text="applyResult.merged_groups || 0"></dd>
+              <dt class="text-stone-500">Groups skipped (policy)</dt>
+              <dd x-text="applyResult.skipped_by_policy_groups || 0"></dd>
+
               <dt class="text-stone-500">Resources created</dt>
               <dd x-text="applyResult.created_resources"></dd>
+              <dt class="text-stone-500">Resources merged</dt>
+              <dd x-text="applyResult.merged_resources || 0"></dd>
+              <dt class="text-stone-500">Resources skipped (policy)</dt>
+              <dd x-text="applyResult.skipped_by_policy_resources || 0"></dd>
+
               <dt class="text-stone-500">Notes created</dt>
               <dd x-text="applyResult.created_notes"></dd>
+              <dt class="text-stone-500">Notes merged</dt>
+              <dd x-text="applyResult.merged_notes || 0"></dd>
+              <dt class="text-stone-500">Notes skipped (policy)</dt>
+              <dd x-text="applyResult.skipped_by_policy_notes || 0"></dd>
+
               <dt class="text-stone-500">Skipped (hash match)</dt>
               <dd x-text="applyResult.skipped_by_hash"></dd>
               <dt class="text-stone-500">Skipped (missing bytes)</dt>

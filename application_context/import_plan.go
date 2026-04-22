@@ -168,7 +168,28 @@ type ImportApplyResult struct {
 	CreatedVersions           int      `json:"created_versions"`
 	CreatedShellGroups        int      `json:"created_shell_groups"`
 	MappedShellGroups         int      `json:"mapped_shell_groups"`
-	Warnings                  []string `json:"warnings"`
+
+	// BH-016: GUID-collision policy=merge counters — merged existing rows with incoming payload
+	MergedGroups    int `json:"merged_groups"`
+	MergedResources int `json:"merged_resources"`
+	MergedNotes     int `json:"merged_notes"`
+
+	// BH-016: re-link counters — incoming GUID matched an existing row; no new row
+	// created, but the plan's foreign-key targets were wired to the existing row.
+	// Reserved for future wiring — currently 0. Today, GUID collisions always take
+	// one of merge/replace/skip; there is no standalone "link-only" branch in
+	// apply_import.go. Emitted for forward-compatibility with a future policy.
+	LinkedByGUIDGroups    int `json:"linked_by_guid_groups"`
+	LinkedByGUIDResources int `json:"linked_by_guid_resources"`
+	LinkedByGUIDNotes     int `json:"linked_by_guid_notes"`
+
+	// BH-016: GUID-collision policy=skip counters — incoming payload skipped,
+	// existing row untouched (no data mutation).
+	SkippedByPolicyGroups    int `json:"skipped_by_policy_groups"`
+	SkippedByPolicyResources int `json:"skipped_by_policy_resources"`
+	SkippedByPolicyNotes     int `json:"skipped_by_policy_notes"`
+
+	Warnings []string `json:"warnings"`
 
 	// Created IDs per phase — enables manual cleanup after partial failure.
 	CreatedGroupIDs    []uint `json:"created_group_ids,omitempty"`
@@ -201,6 +222,12 @@ func (r *ImportApplyResult) HasMutations() bool {
 		r.CreatedGroups > 0 || r.CreatedResources > 0 ||
 		r.CreatedNotes > 0 || r.CreatedShellGroups > 0 ||
 		r.CreatedVersions > 0 || r.CreatedPreviews > 0 {
+		return true
+	}
+	// BH-016: merges and re-links are mutations (existing rows updated / wired).
+	// SkippedByPolicy is NOT a mutation — the row existed before the apply.
+	if r.MergedGroups > 0 || r.MergedResources > 0 || r.MergedNotes > 0 ||
+		r.LinkedByGUIDGroups > 0 || r.LinkedByGUIDResources > 0 || r.LinkedByGUIDNotes > 0 {
 		return true
 	}
 	return len(r.CreatedGroupIDs) > 0 || len(r.CreatedResourceIDs) > 0 || len(r.CreatedNoteIDs) > 0
