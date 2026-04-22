@@ -3,11 +3,11 @@
 **Date:** 2026-04-22
 **Status:** Design approved, ready for per-cluster implementation plans
 **Source backlog:** `tasks/bug-hunt-log.md` (iters 1–14)
-**Scope:** 23 bugs — the Minor + Cosmetic + Feature-Gap half, complementing the Major/Medium batch (c1–c8) in `2026-04-22-bug-backlog-triage-design.md`
+**Scope:** 23 original bug IDs — the Minor + Cosmetic + Feature-Gap half, complementing the Major/Medium batch (c1–c8) in `2026-04-22-bug-backlog-triage-design.md`. One ID (BH-005) is split at plan time into BH-005a (case-insensitive search, in-scope this batch) and BH-005b (fuzzy/typo-tolerant search, deferred to a separate brainstorm).
 
 ## 1. Summary
 
-Ship the remaining 23 active bugs from the hunt log as 10 file-location-clustered pull requests (c9–c18), each a single PR with its own tests. Each cluster gets its own per-cluster spec written at execution time, not upfront — this keeps cluster specs from going stale and lets them reflect repo state when the cluster actually starts. TDD per bug where sensible, full test matrix (Go unit + E2E browser + E2E CLI + Postgres + a11y) green before merge, `bug-hunt-log.md` Fixed/closed entries updated per cluster.
+Ship the remaining 23 original-ID active bugs from the hunt log as 10 file-location-clustered pull requests (c9–c18), each a single PR with its own tests. One ID (BH-005) is split at plan time into BH-005a (in-scope) + BH-005b (new backlog entry, deferred) so the "close all 23" criterion is honest about what this batch actually ships. Each cluster gets its own per-cluster spec written at execution time, not upfront — this keeps cluster specs from going stale and lets them reflect repo state when the cluster actually starts. TDD per bug where sensible, full test matrix (Go unit + E2E browser + E2E CLI + Postgres + a11y) green before merge, `bug-hunt-log.md` Fixed/closed entries updated per cluster.
 
 ## 2. Context
 
@@ -15,13 +15,14 @@ The c1–c8 effort (spec: `2026-04-22-bug-backlog-triage-design.md`) drove the 1
 
 These 23 items span ~13 subsystems. Landing them as one spec would be too heterogeneous to plan coherently. Landing them as 23 separate PRs would burn review bandwidth. The natural middle is the c1–c8 pattern: cluster by shared fix location or shared theme, one PR per cluster.
 
-## 3. Scope — 23 bugs
+## 3. Scope — 23 original IDs, 22 in-batch + 1 split (BH-005 → 005a in-batch, 005b deferred)
 
 | BH-ID | Severity | One-line |
 |---|---|---|
 | BH-001 | Cosmetic | Duplicate "META DATA" heading on tag and note-text pages |
 | BH-002 | Minor | `renderJsonTable(null)` throws on entities with no Meta |
-| BH-005 | Feature-gap | Global search is case-sensitive prefix-only |
+| BH-005a | Feature-gap | Global search is case-sensitive on LIKE fallback paths (split from BH-005) |
+| BH-005b | Feature-gap | Global search has no fuzzy/typo tolerance — **deferred** to a separate brainstorm (new backlog entry filed by this plan) |
 | BH-007 | Minor | Version-compare action bar wraps "Upload New Version" to 3 lines |
 | BH-008 | Minor | Crop selection overlay invisible when image W=0/H=0 |
 | BH-010 | Minor | Schema-editor "Preview Form" seeds numeric fields with `0` |
@@ -73,7 +74,7 @@ No cluster-to-cluster hard dependencies exist. The order is chosen for risk-mana
 
 **Fix choices:**
 - **BH-032:** middleware sets `X-Frame-Options: DENY`, `Content-Security-Policy` (draft, tested against existing templates), `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, `Strict-Transport-Security`. Applied to share server first as a single commit; applied to primary server as a separate commit within the same PR so the primary-server CSP can be rolled back independently if a template breaks.
-- **BH-033:** new `SHARE_PUBLIC_URL` / `--share-public-url` config. When set, used as share-URL base. When unset, fall back to `http://{ShareBindAddress}:{SharePort}` only if bind ≠ loopback/`::1`/`0.0.0.0`; else render a warning in the Share Note sidebar reading "Share URL base is not configured — set SHARE_PUBLIC_URL".
+- **BH-033:** new `SHARE_PUBLIC_URL` / `--share-public-url` config. When set, used as share-URL base → `{SHARE_PUBLIC_URL}/s/<token>`. When unset, **do not** construct an absolute URL from the bind address — any bind address (loopback, internal 10.x/192.168.x, container IP, internal hostname) is unreliable for external recipients. Instead render a prominent warning in the Share Note sidebar: "Share URL base is not configured — set SHARE_PUBLIC_URL to enable shareable links. The token path is `/s/<token>`; prepend your server's public URL before sending." The sidebar still shows the path so the operator can hand-assemble a URL if they know their public host, but the UI never pretends the bind address is a valid public URL.
 - **BH-035:** `shareCreatedAt *time.Time` column on `notes`, NULL for existing rows (no back-fill — we don't know real creation time). New handler `GET /admin/shares` rendering a table `Name | Public URL | Created (or "unknown") | Revoke`. Bulk-revoke checkbox + action button. `POST /admin/shares/revoke` reuses the existing `DELETE /v1/note/share` logic server-side.
 - **BH-038:** notes-list context strips `shareToken` from card payload. If the UI needs a "is this shared" signal, expose `hasShare bool` instead.
 
@@ -216,28 +217,37 @@ No cluster-to-cluster hard dependencies exist. The order is chosen for risk-mana
 - E2E (a11y fixture): compare view → axe-core clean; diff cards have aria-label; radiogroup has exactly one `tabindex=0`.
 
 ### Cluster 18 — obs-search-docs
-**Bugs:** BH-005, BH-022, BH-037
+**Bugs:** BH-005a, BH-022, BH-037 (BH-005b filed as a new backlog entry; out of scope)
 **Primary files:**
-- `src/components/globalSearch.js` (case-insensitive)
-- `application_context/*_context.go` (LOWER / ILIKE in search queries)
-- `cmd/openapi-gen/` (route registry — wire MRQL, editMeta, plugin routes)
-- `server/routes.go` (any registry-tagging needed by generator)
+- `application_context/search_context.go` (`searchEntitiesLike`, `getLikeOperator`) — case-insensitive on SQLite LIKE fallback
+- `fts/sqlite.go` (`fuzzyFallback`) — case-insensitive LIKE in the FTS fuzzy fallback path
+- `server/routes_openapi.go` (add the 11 missing route registrations — this is the real OpenAPI source of truth, **not** `cmd/openapi-gen/`)
 - `templates/displayResource.tpl` (perceptual-hash row)
 - `templates/adminOverview.tpl` (DHash=0 drill-down)
 - `application_context/resource_context.go` (include DHash/AHash in fetch)
 
 **Fix choices:**
-- **BH-005:** case-insensitive only. Use `LOWER(column) = LOWER(?)` portably (or GORM's `ILIKE` on Postgres and a conditional equivalent on SQLite). Fuzzy search (trigram/Levenshtein/FTS5 tokenizer) is **deferred to a separate brainstorm** — it's a design problem big enough to warrant its own spec (perf implications on "millions of resources" deployments, backend choice). Mark BH-005 as "partially fixed" in bug-hunt-log.md; file a fresh backlog entry "BH-005B: fuzzy search design".
-- **BH-022:** register the 11 missing routes in `cmd/openapi-gen`. MRQL subsystem (6 routes), `editMeta` (3 routes), plugins (2 routes). Add a CI drift check that fails if live routes exceed registered routes by more than some tolerance (or exactly).
-- **BH-037:** extend resource-context fetch to include DHash/AHash. Render "Perceptual hash (DHash): 0x... (AHash: 0x...)" row in Technical Details. Admin-overview: "resources with DHash=0" drill-down linking to the filtered list.
+- **BH-005a (case-insensitive):**
+  1. Investigate first: SQLite FTS5 defaults to the `unicode61` tokenizer which case-folds by default, so the FTS exact/prefix path may already be case-insensitive at the DB layer. Verify with a test (index "Pasta", search "pasta", assert 1 hit) before assuming a fix is needed in the FTS path.
+  2. Fix the SQLite LIKE fallback in `searchEntitiesLike` (`search_context.go:377`): on SQLite, switch to `LOWER(col) LIKE LOWER(?)` (Postgres already uses `ILIKE` via `getLikeOperator()`).
+  3. Fix `fuzzyFallback` in `fts/sqlite.go:173` to use `LOWER(col) LIKE LOWER(?)` for the same reason.
+  4. BH-005a closes when `Pasta` and `pasta` produce identical result sets across FTS-enabled, FTS-disabled, and fuzzy paths on SQLite — Postgres parity tests confirm no regression.
+- **BH-005b (fuzzy/typo tolerance):** file a new backlog entry `BH-005b` in `tasks/bug-hunt-log.md` pointing at `fts/sqlite.go` `fuzzyFallback` and the FTS5 tokenizer. Do **not** implement in this batch — a separate brainstorm resolves: trigram vs Levenshtein vs SQLite FTS5 prefix-match extensions vs `sqlean` extension, with perf implications on "millions of resources" deployments. Closing BH-005 in this batch means filing BH-005b; BH-005b is open on entry and stays open after this batch.
+- **BH-022:** add the 11 missing route registrations in `server/routes_openapi.go` (the real OpenAPI source). MRQL subsystem (6 routes), `editMeta` (3 routes), plugin-specific static routes (not the dynamic `PathPrefix`). Explicit exclusions (with rationale comments) for:
+  - `PathPrefix("/v1/plugins/")` at `routes.go:578` — dynamic plugin API; routes depend on installed plugins and cannot be enumerated statically. Document as "plugin-specific dynamic surface" in the OpenAPI `info.description` or a `tags.description`.
+  - Template routes (non-`/v1/`) — out of scope for an API spec.
+  Drift check: a Go unit test in `server/openapi/` counts live `/v1/` routes from the mux against registered operations; exclusion list is explicit (not tolerance-based). New routes that aren't either registered or explicitly excluded fail the test.
+- **BH-037:** extend `resource_context.go` fetch to include DHash/AHash from `resource_hashes`. Render "Perceptual hash (DHash): 0x... (AHash: 0x...)" row in Technical Details collapsible. Admin-overview: "resources with DHash=0" drill-down linking to the filtered list.
 
 **Tests:**
-- E2E: `pasta` and `Pasta` return the same results in global search.
-- Integration: `go run ./cmd/openapi-gen` produces spec with 167 paths (not 156); drift check fails when a route is added without registration.
+- Integration (SQLite + Postgres): `Pasta` and `pasta` return identical result sets across FTS-enabled + FTS-disabled + fuzzy paths.
+- Go unit test on OpenAPI drift: `routes.go` `/v1/` routes minus exclusions == registered ops.
+- Integration: generated OpenAPI spec contains the 11 previously-missing routes and total path count moves from 156 to ≥ 167 minus documented exclusions.
 - E2E: resource detail page shows perceptual-hash row; admin overview shows DHash=0 count + clicks into filtered list.
-- Postgres parity for case-insensitive search.
 
-**Known risk:** OpenAPI generator work may surface unrelated registration gaps. Scope creep cap: <30 min on "other" gaps. Beyond that becomes a separate cluster.
+**Known risks:**
+- OpenAPI drift check may surface unrelated registration gaps. Scope creep cap: <30 min on "other" gaps. Beyond that becomes a separate cluster.
+- FTS5 tokenizer investigation may reveal that case-insensitive is already working on the FTS path; in that case the fix shrinks to LIKE + fuzzyFallback only. Document this finding in the cluster spec's "Open questions resolved" section.
 
 ## 6. Per-cluster execution pattern
 
@@ -257,7 +267,11 @@ Per-cluster spec contains only what's not already in this top-level plan: repo-s
 ## 7. Batch-level success criteria
 
 Batch is complete when:
-- All 23 bug IDs appear in the Fixed/closed table of `tasks/bug-hunt-log.md` with PR + commit references.
+- All 23 original bug IDs have a final disposition in `tasks/bug-hunt-log.md`:
+  - 22 IDs in the Fixed/closed table with PR + commit references.
+  - BH-005 closed with a "split into BH-005a (fixed) + BH-005b (new backlog entry)" note linking to both.
+  - BH-005a in the Fixed/closed table with PR + commit reference.
+  - BH-005b present as a new active-backlog entry pointing at the future fuzzy-search brainstorm.
 - `go test --tags 'json1 fts5' ./...` passes on SQLite.
 - `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/...` passes on Postgres.
 - `cd e2e && npm run test:with-server:all` passes (browser + CLI).
@@ -279,7 +293,7 @@ Batch is complete when:
 ## 9. Non-goals
 
 - Full Markdown parser in the block editor (c15 is 3 tokens, not a rewrite).
-- Fuzzy search (c18 ships only case-insensitive; fuzzy deferred to a separate brainstorm).
+- Fuzzy/typo-tolerant search. This batch files BH-005b as a new backlog entry but does not implement it; trigram vs Levenshtein vs FTS5 tokenizer change warrants its own brainstorm with perf analysis for million-row deployments.
 - Recursive group delete (c16 ships a confirm dialog, not a destructive new option).
 - Auth/multi-user layer (BH-038's "latent major" only realizes the moment auth lands — out of scope).
 - Refactoring that crosses cluster boundaries. If a fix turns out to need surface outside its cluster, renegotiate at cluster-spec time rather than expanding scope silently.
