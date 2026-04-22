@@ -20,8 +20,8 @@ func TestSanitizeEntityName_RejectsNullByte(t *testing.T) {
 func TestSanitizeEntityName_RejectsDirectionalOverrides(t *testing.T) {
 	// U+202A..U+202E (embedding + override) and U+2066..U+2069 (isolates)
 	for _, ch := range []string{
-		"‪", "‫", "‬", "‭", "‮",
-		"⁦", "⁧", "⁨", "⁩",
+		"\u202a", "\u202b", "\u202c", "\u202d", "\u202e",
+		"\u2066", "\u2067", "\u2068", "\u2069",
 	} {
 		_, err := validation.SanitizeEntityName("foo" + ch + "bar")
 		if err == nil {

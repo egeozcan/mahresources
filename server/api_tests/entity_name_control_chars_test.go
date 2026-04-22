@@ -25,7 +25,7 @@ func TestTagCreate_RejectsNullByteInName(t *testing.T) {
 func TestTagCreate_RejectsDirectionalOverrideInName(t *testing.T) {
 	tc := SetupTestEnv(t)
 	form := url.Values{}
-	form.Set("Name", "bh19‮rotated")
+	form.Set("Name", "bh19\u202erotated")
 
 	resp := tc.MakeFormRequest(http.MethodPost, "/v1/tag", form)
 	assert.Equal(t, http.StatusBadRequest, resp.Code, "RTL override in name must be rejected, got body=%s", resp.Body.String())
