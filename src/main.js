@@ -105,6 +105,8 @@ window.generateParamNameForMeta = generateParamNameForMeta;
 window.renderMentions = renderMentions;
 window.getJSONValue = getJSONValue;
 window.getJSONOrObjValue = getJSONOrObjValue;
+// BH-015: expose the factory so E2E tests can unit-check formatProgress clamping.
+window.downloadCockpit = downloadCockpit;
 
 // Register Alpine plugins (must be done before Alpine.start())
 Alpine.plugin(morph);
