@@ -103,6 +103,10 @@ func (ctx *MahresourcesContext) CreateTag(tagQuery *query_models.TagCreator) (*m
 }
 
 func (ctx *MahresourcesContext) UpdateTag(tagQuery *query_models.TagCreator) (*models.Tag, error) {
+	if err := ValidateEntityName(tagQuery.Name, "tag"); err != nil {
+		return nil, err
+	}
+
 	hookData := map[string]any{
 		"id":          float64(tagQuery.ID),
 		"name":        tagQuery.Name,

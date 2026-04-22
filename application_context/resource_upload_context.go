@@ -502,6 +502,10 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 }
 
 func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+	if err := ValidateEntityName(resourceQuery.Name, "resource"); err != nil {
+		return nil, err
+	}
+
 	hookData := map[string]any{
 		"id":          float64(0),
 		"name":        resourceQuery.Name,

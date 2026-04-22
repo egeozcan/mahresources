@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"gorm.io/gorm"
+	"mahresources/application_context/validation"
 	"mahresources/models"
 )
 
@@ -11,10 +12,29 @@ import (
 // Names longer than this are rejected to prevent database bloat and rendering issues.
 const MaxEntityNameLength = 1000
 
-// ValidateEntityName checks that a name does not exceed MaxEntityNameLength.
+// ValidateEntityName checks that a name is well-formed for the given entity type.
+//
+// A name is rejected if it:
+//   - exceeds MaxEntityNameLength bytes
+//   - contains NUL bytes, C0 controls (except TAB), C1 controls, CR/LF,
+//     or Unicode directional overrides/isolates (BH-019)
+//
+// Empty names are accepted here so that callers preserving backward-compatible
+// "name is optional on update" semantics can continue to do so; callers that
+// require a non-empty name must still check for that themselves (the existing
+// call sites do, and they check before invoking this function).
 func ValidateEntityName(name, entityType string) error {
 	if len(name) > MaxEntityNameLength {
 		return fmt.Errorf("%s name must not exceed %d characters", entityType, MaxEntityNameLength)
+	}
+	// Allow empty names through — the existing "name optional on update"
+	// semantics in some context files rely on that. Non-empty names must
+	// pass the control-character / bidi-override checks.
+	if name == "" {
+		return nil
+	}
+	if _, err := validation.SanitizeEntityName(name); err != nil {
+		return fmt.Errorf("%s %s", entityType, err.Error())
 	}
 	return nil
 }

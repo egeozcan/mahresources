@@ -26,6 +26,9 @@ func (w *EntityWriter[T]) UpdateName(id uint, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("name must not be empty")
 	}
+	if err := ValidateEntityName(name, "entity"); err != nil {
+		return err
+	}
 	entity := new(T)
 	result := w.ctx.db.Model(entity).Where("id = ?", id).Update("name", name)
 	if result.Error != nil {
