@@ -39,6 +39,7 @@ export function downloadCockpit() {
 
         init() {
             this._liveRegion = createLiveRegion();
+            this._lastTrigger = null;
 
             // Listen for jobs-panel-open event (e.g., from pluginActionModal)
             window.addEventListener('jobs-panel-open', () => { this.isOpen = true; });
@@ -55,9 +56,21 @@ export function downloadCockpit() {
             // Always connect to SSE to track download completions
             this.connect();
 
+            // BH-028: Focus trap — move focus into panel on open, restore on close.
             this.$watch('isOpen', (value) => {
                 if (value) {
                     this.announce('Jobs panel opened. Shows background job progress.');
+                    this.$nextTick(() => {
+                        const panel = this.$refs.panel;
+                        if (!panel) return;
+                        const firstFocusable = panel.querySelector(
+                            'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+                        );
+                        (firstFocusable || panel).focus();
+                    });
+                } else if (this._lastTrigger) {
+                    this._lastTrigger.focus();
+                    this._lastTrigger = null;
                 }
             });
         },
@@ -74,7 +87,10 @@ export function downloadCockpit() {
             this.disconnect();
         },
 
-        toggle() {
+        toggle(event) {
+            if (!this.isOpen && event?.currentTarget) {
+                this._lastTrigger = event.currentTarget;
+            }
             this.isOpen = !this.isOpen;
         },
 
@@ -339,7 +355,11 @@ export function downloadCockpit() {
             if (job._isAction) {
                 return job.label || job.actionId;
             }
-            return this.getFilename(job.url);
+            // BH-026: group-export jobs don't have a URL; derive a useful title.
+            if (job.source === 'group-export') {
+                return job.name || 'Group export';
+            }
+            return this.getFilename(job.url) || job.name || 'Download';
         },
 
         getJobSubtitle(job) {

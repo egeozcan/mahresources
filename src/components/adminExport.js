@@ -30,15 +30,26 @@ export function adminExport(initial = {}) {
 
     init() {
       const ids = (initial.preselectedIds || '').split(',').map(s => s.trim()).filter(Boolean);
-      if (ids.length === 0) return;
-      Promise.all(ids.map(id => fetch('/v1/group?id=' + encodeURIComponent(id))
-        .then(r => r.ok ? r.json() : null)
-        .catch(() => null)))
-        .then(results => {
-          this.selectedGroups = results
-            .filter(g => g)
-            .map(g => ({ id: g.ID || g.id, name: g.Name || g.name }));
-        });
+      if (ids.length > 0) {
+        Promise.all(ids.map(id => fetch('/v1/group?id=' + encodeURIComponent(id))
+          .then(r => r.ok ? r.json() : null)
+          .catch(() => null)))
+          .then(results => {
+            this.selectedGroups = results
+              .filter(g => g)
+              .map(g => ({ id: g.ID || g.id, name: g.Name || g.name }));
+          });
+      }
+
+      // BH-025: Rehydrate in-flight export job from localStorage on page reload.
+      const storedJobId = localStorage.getItem('adminExport:currentJobId');
+      if (storedJobId) {
+        this.downloadUrl = '/v1/exports/' + encodeURIComponent(storedJobId) + '/download';
+        // Show the progress panel immediately with a placeholder state while SSE confirms.
+        this.job = { id: storedJobId, status: 'pending', phase: 'rehydrating...' };
+        this.jobInProgress = true;
+        this.subscribeProgress(storedJobId, true);
+      }
     },
 
     addGroup(g) {
@@ -107,26 +118,37 @@ export function adminExport(initial = {}) {
       const data = await res.json();
       this.job = { id: data.jobId, status: 'pending', phase: 'queued' };
       this.downloadUrl = '/v1/exports/' + encodeURIComponent(data.jobId) + '/download';
-      this.subscribeProgress(data.jobId);
+      // BH-025: Persist jobId so page reload can rehydrate the progress state.
+      // Any previous stored jobId is overwritten since a new export supersedes the old one.
+      localStorage.setItem('adminExport:currentJobId', data.jobId);
+      this.subscribeProgress(data.jobId, false);
     },
 
-    subscribeProgress(jobId) {
+    subscribeProgress(jobId, rehydrating = false) {
       if (this.eventSource) {
         this.eventSource.close();
       }
       this.eventSource = new EventSource('/v1/jobs/events');
+      const finishJob = (job, triggerDl = false) => {
+        this.job = job;
+        this.jobInProgress = false;
+        // Don't clear localStorage on completion — the user may reload the page and
+        // we want to rehydrate the completed state so they can still download.
+        // localStorage is cleared when: (a) a new export is submitted, or
+        // (b) rehydration finds the job is gone from the server.
+        if (this.eventSource) {
+          this.eventSource.close();
+          this.eventSource = null;
+        }
+        if (triggerDl) this.triggerDownload();
+      };
       const handleJobPayload = (payload) => {
         if (!payload.job || payload.job.id !== jobId) return;
         this.job = payload.job;
         if (payload.job.status === 'completed') {
-          this.jobInProgress = false;
-          this.triggerDownload();
-          this.eventSource.close();
-          this.eventSource = null;
+          finishJob(payload.job, !rehydrating);
         } else if (payload.job.status === 'failed' || payload.job.status === 'cancelled') {
-          this.jobInProgress = false;
-          this.eventSource.close();
-          this.eventSource = null;
+          finishJob(payload.job, false);
         }
       };
       const handler = (event) => {
@@ -134,13 +156,25 @@ export function adminExport(initial = {}) {
           handleJobPayload(JSON.parse(event.data));
         } catch (e) { /* ignore parse errors */ }
       };
-      // Handle init event: if job already completed before we subscribed, pick it up.
+      // Handle init event: pick up the job if it's already in the stream (or already completed).
       this.eventSource.addEventListener('init', (event) => {
         try {
           const payload = JSON.parse(event.data);
           const jobs = payload.jobs || [];
           const found = jobs.find(j => j.id === jobId);
-          if (found) handleJobPayload({ job: found });
+          if (found) {
+            handleJobPayload({ job: found });
+          } else if (rehydrating) {
+            // Job is gone from the server (retention expired or never existed).
+            // Clear localStorage and stale placeholder state.
+            localStorage.removeItem('adminExport:currentJobId');
+            this.job = null;
+            this.jobInProgress = false;
+            if (this.eventSource) {
+              this.eventSource.close();
+              this.eventSource = null;
+            }
+          }
         } catch (e) { /* ignore parse errors */ }
       });
       this.eventSource.addEventListener('added', handler);
@@ -183,6 +217,7 @@ export function adminExport(initial = {}) {
       if (!this.job) return;
       try {
         await fetch('/v1/jobs/cancel?id=' + encodeURIComponent(this.job.id), { method: 'POST' });
+        localStorage.removeItem('adminExport:currentJobId');
       } catch (e) { /* ignore */ }
     },
   };

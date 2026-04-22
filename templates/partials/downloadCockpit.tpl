@@ -6,11 +6,14 @@
 >
     <!-- Floating trigger button (always visible in corner) -->
     <button
-        @click="toggle()"
+        @click="toggle($event)"
+        data-testid="cockpit-trigger"
         class="fixed bottom-4 right-4 z-40 flex items-center gap-2 px-3 py-2 bg-amber-700 text-white rounded-full shadow-lg hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:ring-offset-2 transition-all"
         :class="{ 'animate-pulse': hasActiveJobs }"
         title="Jobs (Ctrl+Shift+D / Cmd+Shift+D)"
-        aria-label="Open jobs panel"
+        :aria-label="isOpen ? 'Close jobs panel' : 'Open jobs panel'"
+        :aria-expanded="isOpen.toString()"
+        aria-haspopup="dialog"
     >
         <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -26,6 +29,12 @@
 
             <!-- Slide-in panel from right -->
             <div class="fixed right-0 top-0 bottom-0 w-full max-w-md bg-white shadow-xl flex flex-col"
+                 x-ref="panel"
+                 data-testid="cockpit-panel"
+                 role="dialog"
+                 aria-modal="true"
+                 aria-labelledby="cockpit-panel-heading"
+                 tabindex="-1"
                  x-transition:enter="transform transition ease-out duration-300"
                  x-transition:enter-start="translate-x-full"
                  x-transition:enter-end="translate-x-0"
@@ -36,16 +45,18 @@
                 <!-- Header -->
                 <div class="flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-stone-50">
                     <div class="flex items-center gap-2">
-                        <h2 class="text-lg font-semibold font-mono text-stone-900">Jobs</h2>
+                        <h2 id="cockpit-panel-heading" class="text-lg font-semibold font-mono text-stone-900">Jobs</h2>
                         <span class="w-2 h-2 rounded-full"
+                              data-testid="cockpit-connection-status"
+                              role="img"
+                              :aria-label="'Connection status: ' + connectionStatus"
                               :class="{
                                   'bg-green-500': connectionStatus === 'connected',
                                   'bg-yellow-500 animate-pulse': connectionStatus === 'connecting',
                                   'bg-red-500': connectionStatus === 'disconnected'
-                              }"
-                              :title="connectionStatus"></span>
+                              }"></span>
                     </div>
-                    <button @click="close()" class="p-1 text-stone-400 hover:text-stone-600 rounded focus:outline-none focus:ring-2 focus:ring-amber-600" aria-label="Close jobs panel">
+                    <button @click="close()" class="p-1 text-stone-500 hover:text-stone-700 rounded focus:outline-none focus:ring-2 focus:ring-amber-600" aria-label="Close jobs panel">
                         <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                         </svg>
@@ -60,13 +71,13 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
                             </svg>
                             <p class="text-center">No jobs in queue</p>
-                            <p class="text-sm text-stone-400 mt-1 text-center">Submit remote URLs with "Download in background" to see them here</p>
+                            <p class="text-sm text-stone-500 mt-1 text-center">Submit remote URLs with "Download in background" to see them here</p>
                         </div>
                     </template>
 
                     <ul class="divide-y divide-stone-100">
                         <template x-for="job in displayJobs" :key="job.id">
-                            <li class="px-4 py-3 hover:bg-stone-50">
+                            <li class="px-4 py-3 hover:bg-stone-50" data-testid="cockpit-job">
                                 <div class="flex items-start gap-3">
                                     <!-- Status icon -->
                                     <span class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-lg"
@@ -84,8 +95,9 @@
                                     <div class="flex-1 min-w-0">
                                         <div class="flex items-center justify-between gap-2">
                                             <p class="text-sm font-medium text-stone-900 truncate"
+                                               data-testid="cockpit-job-title"
                                                x-text="getJobTitle(job)"
-                                               :title="job._isAction ? job.label : job.url"></p>
+                                               :title="job._isAction ? job.label : (job.source === 'group-export' ? getJobTitle(job) : job.url)"></p>
                                             <span class="flex-shrink-0 text-xs px-2 py-0.5 rounded-full"
                                                   :class="{
                                                       'bg-stone-100 text-stone-600': job.status === 'pending',
@@ -98,7 +110,7 @@
                                         </div>
 
                                         <!-- URL preview / action subtitle -->
-                                        <p class="text-xs text-stone-400 truncate mt-0.5" x-text="getJobSubtitle(job)"></p>
+                                        <p class="text-xs text-stone-600 truncate mt-0.5" x-text="getJobSubtitle(job)"></p>
 
                                         <!-- Progress bar (for downloading) -->
                                         <template x-if="job.status === 'downloading'">
@@ -107,7 +119,13 @@
                                                     <span x-text="formatProgress(job)"></span>
                                                     <span x-text="formatSpeed(job)" class="text-amber-700 font-medium"></span>
                                                 </div>
-                                                <div class="w-full bg-stone-200 rounded-full h-2">
+                                                <div class="w-full bg-stone-200 rounded-full h-2"
+                                                     data-testid="cockpit-progressbar"
+                                                     role="progressbar"
+                                                     :aria-valuenow="Math.round(getProgressPercent(job))"
+                                                     aria-valuemin="0"
+                                                     aria-valuemax="100"
+                                                     :aria-label="'Download progress: ' + formatProgress(job)">
                                                     <div class="bg-amber-700 h-2 rounded-full transition-all duration-300"
                                                          :class="{ 'animate-pulse': job.totalSize <= 0 }"
                                                          :style="'width: ' + (job.totalSize > 0 ? getProgressPercent(job) : 100) + '%'"></div>
@@ -121,7 +139,13 @@
                                                 <div class="flex justify-between text-xs text-stone-500 mb-1">
                                                     <span>Creating resource...</span>
                                                 </div>
-                                                <div class="w-full bg-stone-200 rounded-full h-2">
+                                                <div class="w-full bg-stone-200 rounded-full h-2"
+                                                     data-testid="cockpit-progressbar"
+                                                     role="progressbar"
+                                                     aria-valuenow="100"
+                                                     aria-valuemin="0"
+                                                     aria-valuemax="100"
+                                                     aria-label="Processing: creating resource">
                                                     <div class="bg-amber-700 h-2 rounded-full w-full animate-pulse"></div>
                                                 </div>
                                             </div>
@@ -133,7 +157,13 @@
                                                 <div class="flex justify-between text-xs text-stone-500 mb-1">
                                                     <span x-text="job.progress + '%'"></span>
                                                 </div>
-                                                <div class="w-full bg-stone-200 rounded-full h-2">
+                                                <div class="w-full bg-stone-200 rounded-full h-2"
+                                                     data-testid="cockpit-progressbar"
+                                                     role="progressbar"
+                                                     :aria-valuenow="Math.round(job.progress)"
+                                                     aria-valuemin="0"
+                                                     aria-valuemax="100"
+                                                     :aria-label="'Action progress: ' + job.progress + '%'">
                                                     <div class="bg-purple-600 h-2 rounded-full transition-all duration-300"
                                                          :style="'width: ' + job.progress + '%'"></div>
                                                 </div>
@@ -157,6 +187,15 @@
                                             <a :href="'/resource?id=' + job.resourceId"
                                                class="mt-1 inline-block text-xs text-amber-700 hover:text-amber-900 hover:underline">
                                                 View resource &rarr;
+                                            </a>
+                                        </template>
+
+                                        <!-- BH-026: Group export download link on completion -->
+                                        <template x-if="job.status === 'completed' && job.source === 'group-export' && job.resultPath">
+                                            <a :href="'/v1/exports/' + (job.id) + '/download'"
+                                               data-testid="cockpit-job-download"
+                                               class="mt-1 inline-block text-xs text-amber-700 hover:text-amber-900 hover:underline">
+                                                Download export &darr;
                                             </a>
                                         </template>
 
@@ -212,7 +251,7 @@
                 </div>
 
                 <!-- Footer with keyboard hint -->
-                <div class="px-4 py-2 bg-stone-50 border-t border-stone-200 text-xs text-stone-500 text-center">
+                <div class="px-4 py-2 bg-stone-50 border-t border-stone-200 text-xs text-stone-600 text-center">
                     Press <kbd class="px-1.5 py-0.5 bg-white rounded border border-stone-300 font-mono">Esc</kbd> to close
                     or <kbd class="px-1.5 py-0.5 bg-white rounded border border-stone-300 font-mono">
                         <span x-text="navigator.platform.indexOf('Mac') > -1 ? '\u2318' : 'Ctrl'"></span>+Shift+D
