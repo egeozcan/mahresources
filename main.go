@@ -318,6 +318,7 @@ func main() {
 		&models.LogEntry{},
 		&models.PluginState{},
 		&models.PluginKV{},
+		&models.RuntimeSetting{},
 		&models.SavedMRQLQuery{},
 		// Tables with FK to independent tables
 		&models.Group{},             // FK to Category (self-referencing Owner is handled by GORM)

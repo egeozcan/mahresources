@@ -54,3 +54,35 @@ func TestEnvelopeDurationEncodedAsNanos(t *testing.T) {
 		t.Fatalf("duration envelope %q should contain %q", string(enc), wantSubstr)
 	}
 }
+
+func TestBuildSpecs_ElevenKeys(t *testing.T) {
+	specs := buildSpecs()
+	if len(specs) != 11 {
+		t.Fatalf("want 11 specs, got %d", len(specs))
+	}
+	expected := []string{
+		KeyMaxUploadSize, KeyMaxImportSize, KeyMRQLDefaultLimit, KeyMRQLQueryTimeout,
+		KeyExportRetention, KeyRemoteConnectTimeout, KeyRemoteIdleTimeout, KeyRemoteOverallTimeout,
+		KeySharePublicURL, KeyHashSimilarityThreshold, KeyHashAHashThreshold,
+	}
+	for _, k := range expected {
+		if _, ok := specs[k]; !ok {
+			t.Errorf("missing spec for key %q", k)
+		}
+	}
+}
+
+func TestValidateSharePublicURL(t *testing.T) {
+	ok := []string{"", "https://example.com", "http://example.com:8080/base"}
+	bad := []string{"/relative", "no-scheme.example.com", "ftp://example.com", "http://", "https:///nohost"}
+	for _, s := range ok {
+		if err := validateSharePublicURL(s); err != nil {
+			t.Errorf("want accept %q, got %v", s, err)
+		}
+	}
+	for _, s := range bad {
+		if err := validateSharePublicURL(s); err == nil {
+			t.Errorf("want reject %q, got nil error", s)
+		}
+	}
+}

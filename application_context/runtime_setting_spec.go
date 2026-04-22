@@ -3,6 +3,7 @@ package application_context
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"time"
 )
 
@@ -142,4 +143,109 @@ func decodeSettingValue(typ string, data []byte) (any, error) {
 		return v, nil
 	}
 	return nil, fmt.Errorf("decode: unknown type %q", typ)
+}
+
+// Stable machine keys — also the primary keys in runtime_settings.
+const (
+	KeyMaxUploadSize           = "max_upload_size"
+	KeyMaxImportSize           = "max_import_size"
+	KeyMRQLDefaultLimit        = "mrql_default_limit"
+	KeyMRQLQueryTimeout        = "mrql_query_timeout"
+	KeyExportRetention         = "export_retention"
+	KeyRemoteConnectTimeout    = "remote_connect_timeout"
+	KeyRemoteIdleTimeout       = "remote_idle_timeout"
+	KeyRemoteOverallTimeout    = "remote_overall_timeout"
+	KeySharePublicURL          = "share_public_url"
+	KeyHashSimilarityThreshold = "hash_similarity_threshold"
+	KeyHashAHashThreshold      = "hash_ahash_threshold"
+)
+
+// buildSpecs returns the registry of runtime-editable settings.
+// Keep the list in display order; the admin UI groups by SettingGroup.
+func buildSpecs() map[string]SettingSpec {
+	return map[string]SettingSpec{
+		KeyMaxUploadSize: {
+			Key: KeyMaxUploadSize, Label: "Max upload size",
+			Description: "Upper bound on resource and version upload body size in bytes. 0 = unlimited.",
+			Group:       GroupUploads, Type: SettingTypeInt64,
+			MinNumeric: 1024, MaxNumeric: 1 << 40, AllowZero: true,
+		},
+		KeyMaxImportSize: {
+			Key: KeyMaxImportSize, Label: "Max import size",
+			Description: "Upper bound on group-import tar upload size in bytes.",
+			Group:       GroupUploads, Type: SettingTypeInt64,
+			MinNumeric: 1 << 20, MaxNumeric: 1 << 40,
+		},
+		KeyMRQLDefaultLimit: {
+			Key: KeyMRQLDefaultLimit, Label: "MRQL default LIMIT",
+			Description: "Default LIMIT applied to MRQL queries without an explicit LIMIT clause.",
+			Group:       GroupQueries, Type: SettingTypeInt,
+			MinNumeric: 1, MaxNumeric: 100000,
+		},
+		KeyMRQLQueryTimeout: {
+			Key: KeyMRQLQueryTimeout, Label: "MRQL query timeout",
+			Description: "Maximum execution time for a single MRQL query.",
+			Group:       GroupQueries, Type: SettingTypeDuration,
+			MinNumeric: int64(100 * time.Millisecond), MaxNumeric: int64(5 * time.Minute),
+		},
+		KeyExportRetention: {
+			Key: KeyExportRetention, Label: "Export retention",
+			Description: "How long completed group-export tars stay on disk before cleanup.",
+			Group:       GroupExports, Type: SettingTypeDuration,
+			MinNumeric: int64(time.Minute), MaxNumeric: int64(30 * 24 * time.Hour),
+		},
+		KeyRemoteConnectTimeout: {
+			Key: KeyRemoteConnectTimeout, Label: "Remote connect timeout",
+			Description: "Timeout for connecting to remote URLs (dial, TLS, response headers).",
+			Group:       GroupRemoteDownloads, Type: SettingTypeDuration,
+			MinNumeric: int64(time.Second), MaxNumeric: int64(10 * time.Minute),
+		},
+		KeyRemoteIdleTimeout: {
+			Key: KeyRemoteIdleTimeout, Label: "Remote idle timeout",
+			Description: "How long to wait before erroring if a remote server stops sending data.",
+			Group:       GroupRemoteDownloads, Type: SettingTypeDuration,
+			MinNumeric: int64(time.Second), MaxNumeric: int64(time.Hour),
+		},
+		KeyRemoteOverallTimeout: {
+			Key: KeyRemoteOverallTimeout, Label: "Remote overall timeout",
+			Description: "Maximum total time for a remote resource download.",
+			Group:       GroupRemoteDownloads, Type: SettingTypeDuration,
+			MinNumeric: int64(10 * time.Second), MaxNumeric: int64(24 * time.Hour),
+		},
+		KeySharePublicURL: {
+			Key: KeySharePublicURL, Label: "Share public URL",
+			Description: "Externally-routable base URL for shared notes (e.g. https://share.example.com). Empty = show /s/<token> path only.",
+			Group:       GroupSharing, Type: SettingTypeString,
+			StringValidator: validateSharePublicURL,
+		},
+		KeyHashSimilarityThreshold: {
+			Key: KeyHashSimilarityThreshold, Label: "Hash similarity threshold",
+			Description: "Maximum DHash Hamming distance to consider two resources similar.",
+			Group:       GroupDeduplication, Type: SettingTypeInt,
+			MinNumeric: 0, MaxNumeric: 64,
+		},
+		KeyHashAHashThreshold: {
+			Key: KeyHashAHashThreshold, Label: "Hash aHash threshold",
+			Description: "Max AHash Hamming distance for the secondary similarity check. 0 disables.",
+			Group:       GroupDeduplication, Type: SettingTypeUint64,
+			MinNumeric: 0, MaxNumeric: 64, AllowZero: true,
+		},
+	}
+}
+
+func validateSharePublicURL(s string) error {
+	if s == "" {
+		return nil
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return fmt.Errorf("parse url: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("scheme must be http or https, got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("host must not be empty")
+	}
+	return nil
 }
