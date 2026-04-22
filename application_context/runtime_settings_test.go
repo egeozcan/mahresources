@@ -208,3 +208,54 @@ func TestRuntimeSettings_ConcurrentSetGet(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestRuntimeSettings_TypedGetters_Defaults(t *testing.T) {
+	db := newTestDB(t)
+	rs := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), defaults())
+	_ = rs.Load()
+	if rs.MaxUploadSize() != int64(2<<30) {
+		t.Errorf("MaxUploadSize: got %d", rs.MaxUploadSize())
+	}
+	if rs.MaxImportSize() != int64(10<<30) {
+		t.Errorf("MaxImportSize: got %d", rs.MaxImportSize())
+	}
+	if rs.MRQLDefaultLimit() != 500 {
+		t.Errorf("MRQLDefaultLimit: got %d", rs.MRQLDefaultLimit())
+	}
+	if rs.MRQLQueryTimeout() != 10*time.Second {
+		t.Errorf("MRQLQueryTimeout: got %v", rs.MRQLQueryTimeout())
+	}
+	if rs.ExportRetention() != 24*time.Hour {
+		t.Errorf("ExportRetention: got %v", rs.ExportRetention())
+	}
+	if rs.RemoteConnectTimeout() != 30*time.Second {
+		t.Errorf("RemoteConnectTimeout: got %v", rs.RemoteConnectTimeout())
+	}
+	if rs.RemoteIdleTimeout() != 60*time.Second {
+		t.Errorf("RemoteIdleTimeout: got %v", rs.RemoteIdleTimeout())
+	}
+	if rs.RemoteOverallTimeout() != 30*time.Minute {
+		t.Errorf("RemoteOverallTimeout: got %v", rs.RemoteOverallTimeout())
+	}
+	if rs.SharePublicURL() != "" {
+		t.Errorf("SharePublicURL: got %q", rs.SharePublicURL())
+	}
+	if rs.HashSimilarityThreshold() != 10 {
+		t.Errorf("HashSimilarityThreshold: got %d", rs.HashSimilarityThreshold())
+	}
+	if rs.HashAHashThreshold() != 5 {
+		t.Errorf("HashAHashThreshold: got %d", rs.HashAHashThreshold())
+	}
+}
+
+func TestRuntimeSettings_TypedGetters_Overrides(t *testing.T) {
+	db := newTestDB(t)
+	rs := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), defaults())
+	_ = rs.Load()
+	if err := rs.Set(KeyMRQLQueryTimeout, "2s", "", ""); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if rs.MRQLQueryTimeout() != 2*time.Second {
+		t.Fatalf("want 2s, got %v", rs.MRQLQueryTimeout())
+	}
+}

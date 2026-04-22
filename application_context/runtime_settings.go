@@ -356,3 +356,39 @@ func sortedSpecKeys(m map[string]SettingSpec) []string {
 }
 
 func ptrInt64(v int64) *int64 { return &v }
+
+func (s *RuntimeSettings) MaxUploadSize() int64 { v, _ := s.getRaw(KeyMaxUploadSize); return v.(int64) }
+func (s *RuntimeSettings) MaxImportSize() int64 { v, _ := s.getRaw(KeyMaxImportSize); return v.(int64) }
+func (s *RuntimeSettings) MRQLDefaultLimit() int { v, _ := s.getRaw(KeyMRQLDefaultLimit); return v.(int) }
+func (s *RuntimeSettings) MRQLQueryTimeout() time.Duration {
+	v, _ := s.getRaw(KeyMRQLQueryTimeout)
+	return v.(time.Duration)
+}
+func (s *RuntimeSettings) ExportRetention() time.Duration {
+	v, _ := s.getRaw(KeyExportRetention)
+	return v.(time.Duration)
+}
+func (s *RuntimeSettings) RemoteConnectTimeout() time.Duration {
+	v, _ := s.getRaw(KeyRemoteConnectTimeout)
+	return v.(time.Duration)
+}
+func (s *RuntimeSettings) RemoteIdleTimeout() time.Duration {
+	v, _ := s.getRaw(KeyRemoteIdleTimeout)
+	return v.(time.Duration)
+}
+func (s *RuntimeSettings) RemoteOverallTimeout() time.Duration {
+	v, _ := s.getRaw(KeyRemoteOverallTimeout)
+	return v.(time.Duration)
+}
+func (s *RuntimeSettings) SharePublicURL() string {
+	v, _ := s.getRaw(KeySharePublicURL)
+	return v.(string)
+}
+func (s *RuntimeSettings) HashSimilarityThreshold() int {
+	v, _ := s.getRaw(KeyHashSimilarityThreshold)
+	return v.(int)
+}
+func (s *RuntimeSettings) HashAHashThreshold() uint64 {
+	v, _ := s.getRaw(KeyHashAHashThreshold)
+	return v.(uint64)
+}
