@@ -482,7 +482,7 @@ _(populated by iterations — newest first)_
 - **Evidence:** `imageCropper.js:158-167`; API response above.
 
 ### BH-007 · Version-compare action bar: "Upload New Version" label wraps to three lines when "Compare Selected" link appears
-- **Status:** **FIXED** (2026-04-22, c13-cosmetic-cleanup, PR #XX merged <sha>) — see Fixed / closed table below
+- **Status:** **FIXED** (2026-04-22, c13-cosmetic-cleanup, PR #32 merged fec44787) — see Fixed / closed table below
 - **Original status (pre-fix):** verified (template + screenshot)
 - **Severity:** minor cosmetic / usability (makes the primary "Upload" CTA look broken)
 - **Iter:** 2 · **Workflow:** photo-archive (resource → Versions panel → Compare)
@@ -512,7 +512,7 @@ _(populated by iterations — newest first)_
 - **Evidence:** iter-2 `tasks/bug-hunt-evidence/iter-2026-04-21-2/16-remote-404-error.png`; iter-3 `tasks/bug-hunt-evidence/iter-2026-04-21-3/group-form-loss.png`; error bodies above.
 
 ### BH-001 · Duplicate "META DATA" heading on tag and note-text pages
-- **Status:** **FIXED** (2026-04-22, c13-cosmetic-cleanup, PR #XX merged <sha>) — see Fixed / closed table below
+- **Status:** **FIXED** (2026-04-22, c13-cosmetic-cleanup, PR #32 merged fec44787) — see Fixed / closed table below
 - **Original status (pre-fix):** verified
 - **Severity:** minor (cosmetic, but visible on every tag page and every note text view)
 - **Iter:** 1 · **Workflow:** recipe-collection (tag detail page)
@@ -524,7 +524,7 @@ _(populated by iterations — newest first)_
 - **Evidence:** `tasks/bug-hunt-evidence/iter-2026-04-21-1/22-tag-page-null-meta-error.png`, `.../21-notetext-double-metadata.png`
 
 ### BH-002 · `renderJsonTable(null)` throws on entities with no Meta (console pollutes, empty sidebar stays empty silently)
-- **Status:** **FIXED** (2026-04-22, c13-cosmetic-cleanup, PR #XX merged <sha>) — see Fixed / closed table below
+- **Status:** **FIXED** (2026-04-22, c13-cosmetic-cleanup, PR #32 merged fec44787) — see Fixed / closed table below
 - **Original status (pre-fix):** verified
 - **Severity:** minor (silent-ish: UI still loads, but every such page logs an Alpine error and `metaTableInner` ends up with zero children)
 - **Iter:** 1 · **Workflow:** recipe-collection (freshly created tag with no Meta)
@@ -590,9 +590,9 @@ _(populated by iterations — newest first)_
 | BH-027 | **fixed** (2026-04-22, c6-block-editor-a11y, PR #28 merged 5460bdae) | `templates/partials/blockEditor.tpl` + `src/components/blockEditor.js`: gallery `<img>` gains dynamic `:alt` from `resourceMeta[resId]?.name`; heading-level `<select>` gains `aria-label="Heading level"`; move-up/move-down/delete buttons gain `:aria-label` + live-region announcement on reorder; Add-Block picker trigger gains `aria-expanded/aria-haspopup/aria-controls`; picker dropdown converted to `<ul role="listbox">` with roving tabindex + Arrow/Home/End handlers. E2E: `e2e/tests/accessibility/c6-bh027-block-editor-a11y.spec.ts`. |
 | BH-023 | **fixed** (2026-04-22, c7-alt-fs, PR #29 merged 8467c32f) | Three-layer fix: (1) `archive/manifest.go` `ResourcePayload` gains optional `storage_location` field, forward-compat, NO schema_version bump. Exporter + importer wired in `application_context/export_context.go` + `apply_import.go`. (2) `models/query_models/resource_query.go` `ResourceCreator` + `ResourceFromRemoteCreator` gain `PathName`; `AddResource` in `application_context/resource_upload_context.go` validates against `Config.AltFileSystems` and routes file IO accordingly. (3) `templates/createResource.tpl` renders a `<select name="PathName">` when alt-fs is configured; `altFileSystems` exposed via `resource_template_context.go`. Tests: `application_context/export_import_altfs_test.go`, `server/api_tests/resource_create_pathname_test.go`, `e2e/tests/c7-bh023-alt-fs-select-visible.spec.ts`. |
 | BH-031 | **fixed** (2026-04-22, c8-share-allowlist, PR #30 merged 3bed7dd8) | `server/share_server.go` `handleBlockStateUpdate` resolves the target block's type after note/ownership checks and requires it in an allowlist `map[string]bool{"todos": true}`. Non-matching types return HTTP 403 Forbidden. API test: `server/api_tests/share_server_block_state_allowlist_test.go`. Also exports `ShareServer.Handler()` for in-process testing. |
-| BH-001 | **fixed** (2026-04-22, c13-cosmetic-cleanup, PR #XX merged <sha>) | Dropped the duplicate `{% include "/partials/sideTitle.tpl" ... %}` from `templates/displayTag.tpl` and `templates/displayNoteText.tpl`; `partials/json.tpl` already owns the `<h2>Meta Data</h2>`. E2E: `e2e/tests/c13-bh001-dup-meta-heading.spec.ts`. |
-| BH-002 | **fixed** (2026-04-22, c13-cosmetic-cleanup, PR #XX merged <sha>) | `renderJsonTable(null)` and `renderJsonTable(undefined)` now return an empty `DocumentFragment` up front in `src/tableMaker.js`, so the `appendChild` call in `templates/partials/json.tpl` no longer throws `TypeError: parameter 1 is not of type 'Node'`. Object guard also simplified now that null/undefined is handled up front. E2E: `e2e/tests/c13-bh002-json-table-null.spec.ts`. |
-| BH-007 | **fixed** (2026-04-22, c13-cosmetic-cleanup, PR #XX merged <sha>) | `templates/partials/versionPanel.tpl` action bar now uses `flex flex-wrap gap-y-2` so the upload form drops to a second row on narrow widths; the Compare toggle + Compare-Selected share an inner flex row; both action buttons get `whitespace-nowrap` so labels never split mid-label. E2E: `e2e/tests/c13-bh007-version-panel-layout.spec.ts` asserts button height stays within 1.8x its line-height with Compare Selected visible at 1024px. |
+| BH-001 | **fixed** (2026-04-22, c13-cosmetic-cleanup, PR #32 merged fec44787) | Dropped the duplicate `{% include "/partials/sideTitle.tpl" ... %}` from `templates/displayTag.tpl` and `templates/displayNoteText.tpl`; `partials/json.tpl` already owns the `<h2>Meta Data</h2>`. E2E: `e2e/tests/c13-bh001-dup-meta-heading.spec.ts`. |
+| BH-002 | **fixed** (2026-04-22, c13-cosmetic-cleanup, PR #32 merged fec44787) | `renderJsonTable(null)` and `renderJsonTable(undefined)` now return an empty `DocumentFragment` up front in `src/tableMaker.js`, so the `appendChild` call in `templates/partials/json.tpl` no longer throws `TypeError: parameter 1 is not of type 'Node'`. Object guard also simplified now that null/undefined is handled up front. E2E: `e2e/tests/c13-bh002-json-table-null.spec.ts`. |
+| BH-007 | **fixed** (2026-04-22, c13-cosmetic-cleanup, PR #32 merged fec44787) | `templates/partials/versionPanel.tpl` action bar now uses `flex flex-wrap gap-y-2` so the upload form drops to a second row on narrow widths; the Compare toggle + Compare-Selected share an inner flex row; both action buttons get `whitespace-nowrap` so labels never split mid-label. E2E: `e2e/tests/c13-bh007-version-panel-layout.spec.ts` asserts button height stays within 1.8x its line-height with Compare Selected visible at 1024px. |
 
 ---
 
