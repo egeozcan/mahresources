@@ -534,6 +534,27 @@ components:
                 name:
                     type: string
             type: object
+        ImageHash:
+            properties:
+                AHash:
+                    type: string
+                AHashInt:
+                    nullable: true
+                    type: integer
+                DHash:
+                    type: string
+                DHashInt:
+                    nullable: true
+                    type: integer
+                ID:
+                    readOnly: true
+                    type: integer
+                Resource:
+                    $ref: '#/components/schemas/Resource'
+                ResourceId:
+                    nullable: true
+                    type: integer
+            type: object
         LogEntry:
             properties:
                 action:
@@ -1062,6 +1083,8 @@ components:
                 guid:
                     nullable: true
                     type: string
+                imageHash:
+                    $ref: '#/components/schemas/ImageHash'
                 ownMeta:
                     additionalProperties: true
                     description: Arbitrary JSON data
@@ -1288,6 +1311,8 @@ components:
                     type: string
                 OwnerId:
                     type: integer
+                PathName:
+                    type: string
                 ResourceCategoryId:
                     type: integer
                 SeriesId:
@@ -1358,6 +1383,8 @@ components:
                     type: integer
                 ResourceCategoryId:
                     type: integer
+                ShowDhashZero:
+                    type: boolean
                 ShowWithSimilar:
                     type: boolean
                 ShowWithoutOwner:
@@ -1419,6 +1446,33 @@ components:
                     type: integer
                 ID:
                     type: integer
+            type: object
+        SavedMRQLQuery:
+            properties:
+                createdAt:
+                    format: date-time
+                    readOnly: true
+                    type: string
+                description:
+                    type: string
+                id:
+                    readOnly: true
+                    type: integer
+                name:
+                    type: string
+                query:
+                    type: string
+                updatedAt:
+                    format: date-time
+                    readOnly: true
+                    type: string
+            type: object
+        SavedMRQLQueryPartial:
+            properties:
+                id:
+                    type: integer
+                name:
+                    type: string
             type: object
         SearchResultItemPartial:
             properties:
@@ -2061,6 +2115,36 @@ paths:
                 "500":
                     description: Internal server error
             summary: Edit a group's description
+            tags:
+                - groups
+    /v1/group/editMeta:
+        post:
+            description: Performs a deep-merge-by-path update of the entity's Meta JSON column. `path` is a dotted key path; `value` is raw JSON that replaces the node at that path.
+            operationId: editGroupMeta
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+                - description: Dotted path inside Meta to update (also accepted as a form/JSON field)
+                  in: query
+                  name: path
+                  required: true
+                  schema:
+                    type: string
+                - description: Raw JSON value to write at the path (also accepted as a form/JSON field)
+                  in: query
+                  name: value
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Edit a group's meta JSON at a given path
             tags:
                 - groups
     /v1/group/editName:
@@ -2925,6 +3009,200 @@ paths:
             summary: Get history of a specific entity
             tags:
                 - logs
+    /v1/mrql:
+        post:
+            description: |-
+                Parses, validates, translates, and executes a Mahresources Query Language (MRQL) query.
+
+                Request body fields:
+                  - query   (string, required) — the MRQL source
+                  - limit   (integer)          — items per bucket (grouped) or total items
+                  - buckets (integer)          — buckets per page (grouped mode only)
+                  - page    (integer)          — 1-based page number
+                  - offset  (integer)          — explicit cursor offset (takes precedence over page)
+
+                Query parameter:
+                  - render (0 or 1) — when 1, populates each result row's RenderedHTML using
+                    the entity's CustomMRQLResult template.
+            operationId: executeMRQL
+            parameters:
+                - description: Set to 1 to render CustomMRQLResult templates
+                  in: query
+                  name: render
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Execute an MRQL query
+            tags:
+                - mrql
+    /v1/mrql/complete:
+        post:
+            description: |-
+                Returns completion suggestions for the MRQL token at the given cursor offset.
+
+                Request body fields:
+                  - query  (string, required)
+                  - cursor (integer)          — byte offset in the query
+            operationId: completeMRQL
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Get MRQL autocomplete suggestions
+            tags:
+                - mrql
+    /v1/mrql/saved:
+        get:
+            description: 'Without `id`: paginated list of saved queries (pass `all=1` for the full set). With `id`: returns a single saved query.'
+            operationId: listSavedMRQLQueries
+            parameters:
+                - description: Fetch a single saved query by ID
+                  in: query
+                  name: id
+                  schema:
+                    type: integer
+                - description: Set to 1 to disable pagination
+                  in: query
+                  name: all
+                  schema:
+                    type: integer
+                - description: Page number for pagination
+                  in: query
+                  name: page
+                  schema:
+                    default: 1
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/SavedMRQLQueryPartial'
+                                type: array
+                    description: Successful response
+            summary: List or fetch saved MRQL queries
+            tags:
+                - mrql
+        post:
+            description: |-
+                Request body fields:
+                  - name        (string, required)
+                  - query       (string, required) — MRQL source
+                  - description (string)
+            operationId: createSavedMRQLQuery
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/SavedMRQLQuery'
+                    description: Successful response
+            summary: Create a saved MRQL query
+            tags:
+                - mrql
+        put:
+            operationId: updateSavedMRQLQuery
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/SavedMRQLQuery'
+                    description: Successful response
+            summary: Update a saved MRQL query
+            tags:
+                - mrql
+    /v1/mrql/saved/delete:
+        post:
+            operationId: deleteSavedMRQLQuery
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Delete a saved MRQL query
+            tags:
+                - mrql
+    /v1/mrql/saved/run:
+        post:
+            description: Runs a previously saved MRQL query. Accepts either `id` or `name` to identify the saved query, plus the same pagination params as /v1/mrql.
+            operationId: runSavedMRQLQuery
+            parameters:
+                - description: Saved query ID
+                  in: query
+                  name: id
+                  schema:
+                    type: integer
+                - description: Saved query name (fallback if id not found)
+                  in: query
+                  name: name
+                  schema:
+                    type: string
+                - in: query
+                  name: limit
+                  schema:
+                    type: integer
+                - in: query
+                  name: page
+                  schema:
+                    type: integer
+                - in: query
+                  name: buckets
+                  schema:
+                    type: integer
+                - in: query
+                  name: offset
+                  schema:
+                    type: integer
+                - description: Set to 1 to render CustomMRQLResult templates
+                  in: query
+                  name: render
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Execute a saved MRQL query by id or name
+            tags:
+                - mrql
+    /v1/mrql/validate:
+        post:
+            description: |-
+                Parses and validates an MRQL query without executing it.
+
+                Request body fields:
+                  - query (string, required)
+
+                Response: {"valid": bool, "errors": [...]}
+            operationId: validateMRQL
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Validate MRQL syntax
+            tags:
+                - mrql
     /v1/note:
         get:
             operationId: getNote
@@ -3212,6 +3490,36 @@ paths:
                 "500":
                     description: Internal server error
             summary: Edit a note's description
+            tags:
+                - notes
+    /v1/note/editMeta:
+        post:
+            description: Performs a deep-merge-by-path update of the entity's Meta JSON column. `path` is a dotted key path; `value` is raw JSON that replaces the node at that path.
+            operationId: editNoteMeta
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+                - description: Dotted path inside Meta to update (also accepted as a form/JSON field)
+                  in: query
+                  name: path
+                  required: true
+                  schema:
+                    type: string
+                - description: Raw JSON value to write at the path (also accepted as a form/JSON field)
+                  in: query
+                  name: value
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Edit a note's meta JSON at a given path
             tags:
                 - notes
     /v1/note/editName:
@@ -3863,6 +4171,27 @@ paths:
             tags:
                 - plugins
                 - blocks
+    /v1/plugins/{pluginName}/display/render:
+        post:
+            description: Invokes the named plugin's display renderer (e.g. for CustomHeader/CustomSidebar/CustomAvatar extensions). The request body is a plugin-specific JSON object; the response is HTML.
+            operationId: renderPluginDisplay
+            parameters:
+                - description: The plugin name
+                  in: path
+                  name: pluginName
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        text/html:
+                            schema:
+                                type: string
+                    description: Successful response
+            summary: Render a plugin display fragment
+            tags:
+                - plugins
     /v1/plugins/manage:
         get:
             operationId: getPluginsManage
@@ -4460,6 +4789,36 @@ paths:
             summary: Edit a resource's description
             tags:
                 - resources
+    /v1/resource/editMeta:
+        post:
+            description: Performs a deep-merge-by-path update of the entity's Meta JSON column. `path` is a dotted key path; `value` is raw JSON that replaces the node at that path.
+            operationId: editResourceMeta
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+                - description: Dotted path inside Meta to update (also accepted as a form/JSON field)
+                  in: query
+                  name: path
+                  required: true
+                  schema:
+                    type: string
+                - description: Raw JSON value to write at the path (also accepted as a form/JSON field)
+                  in: query
+                  name: value
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Edit a resource's meta JSON at a given path
+            tags:
+                - resources
     /v1/resource/editName:
         post:
             operationId: editResourceName
@@ -5041,6 +5400,10 @@ paths:
                   name: MaxHeight
                   schema:
                     type: integer
+                - in: query
+                  name: ShowDhashZero
+                  schema:
+                    type: boolean
                 - description: Page number for pagination
                   in: query
                   name: page
@@ -5379,6 +5742,10 @@ paths:
                   name: MaxHeight
                   schema:
                     type: integer
+                - in: query
+                  name: ShowDhashZero
+                  schema:
+                    type: boolean
                 - description: 'Time granularity: yearly, monthly, or weekly (default: monthly)'
                   in: query
                   name: granularity
@@ -5860,6 +6227,8 @@ tags:
       name: jobs
     - description: Operations related to logs
       name: logs
+    - description: Operations related to mrql
+      name: mrql
     - description: Operations related to notes
       name: notes
     - description: Operations related to plugins
