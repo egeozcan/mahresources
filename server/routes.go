@@ -96,10 +96,11 @@ var templates = map[string]templateInformation{
 	"/logs": {template_context_providers.LogListContextProvider, "listLogs.tpl", http.MethodGet},
 	"/log":  {template_context_providers.LogContextProvider, "displayLog.tpl", http.MethodGet},
 
-	"/admin/overview": {template_context_providers.AdminOverviewContextProvider, "adminOverview.tpl", http.MethodGet},
-	"/admin/export":   {template_context_providers.AdminExportContextProvider, "adminExport.tpl", http.MethodGet},
-	"/admin/import":   {template_context_providers.AdminImportContextProvider, "adminImport.tpl", http.MethodGet},
-	"/admin/shares":   {template_context_providers.AdminSharesContextProvider, "adminShares.tpl", http.MethodGet}, // BH-035
+	"/admin/overview":  {template_context_providers.AdminOverviewContextProvider, "adminOverview.tpl", http.MethodGet},
+	"/admin/export":    {template_context_providers.AdminExportContextProvider, "adminExport.tpl", http.MethodGet},
+	"/admin/import":    {template_context_providers.AdminImportContextProvider, "adminImport.tpl", http.MethodGet},
+	"/admin/shares":    {template_context_providers.AdminSharesContextProvider, "adminShares.tpl", http.MethodGet},    // BH-035
+	"/admin/settings":  {template_context_providers.AdminSettingsContextProvider, "adminSettings.tpl", http.MethodGet},
 
 	"/mrql": {template_context_providers.MRQLContextProvider, "mrql.tpl", http.MethodGet},
 }

@@ -104,6 +104,10 @@ var baseTemplateContext = pongo2.Context{
 			Url:  "/admin/shares",
 		},
 		{
+			Name: "Settings",
+			Url:  "/admin/settings",
+		},
+		{
 			Name: "Logs",
 			Url:  "/logs",
 		},
