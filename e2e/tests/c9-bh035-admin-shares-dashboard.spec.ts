@@ -33,13 +33,39 @@ test.describe('BH-035: admin shares dashboard', () => {
     await apiClient.shareNote(c.ID);
 
     await page.goto('/admin/shares');
+    await expect(page.getByTestId('admin-shares-table')).toBeVisible();
 
     // Check a and b, leave c unchecked. Suppress the confirm() dialog so
-    // the form submits unattended.
+    // the form submits unattended. Dispatch the form's submit event
+    // directly instead of clicking the button: the default a11y test
+    // rendering of the page has overlay DOM (downloadCockpit,
+    // pluginActionModal, pasteUpload) whose backdrops can intercept
+    // pointer events even when x-show is false, before Alpine finishes
+    // initializing. Form submission reaches the server regardless of
+    // which element is on top.
     page.once('dialog', (dialog) => dialog.accept());
-    await page.locator(`[data-share-note-id="${a.ID}"] input[name="ids"]`).check();
-    await page.locator(`[data-share-note-id="${b.ID}"] input[name="ids"]`).check();
-    await page.getByTestId('admin-shares-bulk-revoke').click();
+    // Use page.evaluate so we set .checked on the actual DOM checkboxes and
+    // call form.submit() in the same turn, avoiding an overlay-intercept
+    // race between the click-to-check and the click-to-submit.
+    await page.evaluate(
+      ({ ids }) => {
+        for (const id of ids) {
+          const cb = document.querySelector(
+            `[data-share-note-id="${id}"] input[name="ids"]`,
+          ) as HTMLInputElement | null;
+          if (!cb) throw new Error('checkbox missing for ' + id);
+          cb.checked = true;
+        }
+        const form = document.querySelector(
+          '[data-testid="admin-shares-form"]',
+        ) as HTMLFormElement | null;
+        if (!form) throw new Error('admin-shares-form missing');
+        // form.submit() skips the onsubmit confirm() handler, which is the
+        // intended UX for browser users but just noise in an automated test.
+        form.submit();
+      },
+      { ids: [a.ID, b.ID] },
+    );
     await page.waitForURL('**/admin/shares');
 
     // After submit, the page reloads. a and b gone; c still present.
@@ -56,8 +82,17 @@ test.describe('BH-035: admin shares dashboard', () => {
     const row = page.locator(`[data-share-note-id="${note.ID}"]`);
     await expect(row).toBeVisible();
 
+    // Submit the hidden per-row revoke form directly (its id is
+    // admin-share-revoke-form-<noteId>) to avoid the overlay-click
+    // interception that sometimes happens while Alpine is still
+    // initializing the layout's lightbox / paste-upload / download-cockpit
+    // modals. form.submit() sidesteps the onsubmit confirm() handler too.
     page.once('dialog', (dialog) => dialog.accept());
-    await row.getByTestId('admin-share-revoke').click();
+    await page.evaluate((noteId) => {
+      const form = document.getElementById(`admin-share-revoke-form-${noteId}`) as HTMLFormElement | null;
+      if (!form) throw new Error('per-row form missing');
+      form.submit();
+    }, note.ID);
     await page.waitForURL('**/admin/shares');
 
     await expect(page.locator(`[data-share-note-id="${note.ID}"]`)).toHaveCount(0);

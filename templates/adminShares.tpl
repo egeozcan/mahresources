@@ -18,6 +18,14 @@
   {% if shares|length == 0 %}
   <p class="text-sm text-stone-500" data-testid="admin-shares-empty">No notes are currently shared.</p>
   {% else %}
+  {# BH-035: per-row revoke forms live outside the bulk form and are targeted via the HTML5 form="..." button attribute (nested forms are invalid HTML). #}
+  {% for note in shares %}
+  <form id="admin-share-revoke-form-{{ note.ID }}" method="post" action="/v1/admin/shares/bulk-revoke" class="hidden"
+        onsubmit="return confirm('Revoke share for &quot;{{ note.Name|escape }}&quot;?');">
+    <input type="hidden" name="ids" value="{{ note.ID }}">
+  </form>
+  {% endfor %}
+
   <form method="post" action="/v1/admin/shares/bulk-revoke" data-testid="admin-shares-form"
         onsubmit="return confirm('Revoke share tokens for all selected notes?');">
     <div class="flex items-center justify-between mb-2">
@@ -68,16 +76,12 @@
               {% if note.ShareCreatedAtFormatted %}{{ note.ShareCreatedAtFormatted }}{% else %}<span class="text-stone-400" data-testid="admin-share-created-unknown">(unknown)</span>{% endif %}
             </td>
             <td class="p-2">
-              {# BH-035: per-row revoke uses a dedicated single-item form against the same bulk endpoint — zero JavaScript dependency on this control. #}
-              <form method="post" action="/v1/admin/shares/bulk-revoke" class="inline"
-                    onsubmit="return confirm('Revoke share for &quot;{{ note.Name|escape }}&quot;?');">
-                <input type="hidden" name="ids" value="{{ note.ID }}">
-                <button type="submit"
-                        class="text-xs text-red-700 hover:text-red-900 underline decoration-dotted"
-                        data-testid="admin-share-revoke">
-                  Revoke
-                </button>
-              </form>
+              {# Button targets its hidden per-row form via the HTML5 form=\"...\" attribute. #}
+              <button type="submit" form="admin-share-revoke-form-{{ note.ID }}"
+                      class="text-xs text-red-700 hover:text-red-900 underline decoration-dotted"
+                      data-testid="admin-share-revoke">
+                Revoke
+              </button>
             </td>
           </tr>
           {% endfor %}
