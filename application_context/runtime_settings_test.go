@@ -153,8 +153,8 @@ func TestRuntimeSettings_List(t *testing.T) {
 	_ = rs.Load()
 	_ = rs.Set(KeyMaxUploadSize, "1048576", "bump", "127.0.0.1")
 	views := rs.List()
-	if len(views) != 11 {
-		t.Fatalf("want 11 views, got %d", len(views))
+	if len(views) != len(buildSpecs()) {
+		t.Fatalf("want %d views, got %d", len(buildSpecs()), len(views))
 	}
 	var found bool
 	for _, v := range views {
@@ -170,6 +170,29 @@ func TestRuntimeSettings_List(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("max_upload_size view missing")
+	}
+}
+
+func TestRuntimeSettings_List_GroupOrdering(t *testing.T) {
+	db := newTestDB(t)
+	rs := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), defaults())
+	_ = rs.Load()
+	views := rs.List()
+	// The first view must be in GroupUploads; the last must be in GroupExports.
+	if views[0].Group != GroupUploads {
+		t.Fatalf("first group: want %q, got %q", GroupUploads, views[0].Group)
+	}
+	if views[len(views)-1].Group != GroupExports {
+		t.Fatalf("last group: want %q, got %q", GroupExports, views[len(views)-1].Group)
+	}
+	// No group should appear before an earlier group in groupDisplayOrder.
+	lastIdx := -1
+	for _, v := range views {
+		idx := groupOrderIndex(v.Group)
+		if idx < lastIdx {
+			t.Fatalf("group %q (idx %d) appeared after group with idx %d", v.Group, idx, lastIdx)
+		}
+		lastIdx = idx
 	}
 }
 

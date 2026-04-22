@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -263,7 +264,10 @@ func parseIntWithByteSuffix(raw string) (int64, error) {
 func validateBounds(spec SettingSpec, v any) error {
 	switch spec.Type {
 	case SettingTypeInt64:
-		n := v.(int64)
+		n, ok := v.(int64)
+		if !ok {
+			return fmt.Errorf("validateBounds %q: want int64, got %T", spec.Key, v)
+		}
 		if n == 0 && spec.AllowZero {
 			return nil
 		}
@@ -271,7 +275,11 @@ func validateBounds(spec SettingSpec, v any) error {
 			return fmt.Errorf("value %d out of bounds [%d, %d]", n, spec.MinNumeric, spec.MaxNumeric)
 		}
 	case SettingTypeInt:
-		n := int64(v.(int))
+		ni, ok := v.(int)
+		if !ok {
+			return fmt.Errorf("validateBounds %q: want int, got %T", spec.Key, v)
+		}
+		n := int64(ni)
 		if n == 0 && spec.AllowZero {
 			return nil
 		}
@@ -279,7 +287,10 @@ func validateBounds(spec SettingSpec, v any) error {
 			return fmt.Errorf("value %d out of bounds [%d, %d]", n, spec.MinNumeric, spec.MaxNumeric)
 		}
 	case SettingTypeUint64:
-		u := v.(uint64)
+		u, ok := v.(uint64)
+		if !ok {
+			return fmt.Errorf("validateBounds %q: want uint64, got %T", spec.Key, v)
+		}
 		if u == 0 && spec.AllowZero {
 			return nil
 		}
@@ -287,12 +298,19 @@ func validateBounds(spec SettingSpec, v any) error {
 			return fmt.Errorf("value %d out of bounds [%d, %d]", u, spec.MinNumeric, spec.MaxNumeric)
 		}
 	case SettingTypeDuration:
-		d := int64(v.(time.Duration))
+		dv, ok := v.(time.Duration)
+		if !ok {
+			return fmt.Errorf("validateBounds %q: want time.Duration, got %T", spec.Key, v)
+		}
+		d := int64(dv)
 		if d < spec.MinNumeric || d > spec.MaxNumeric {
 			return fmt.Errorf("duration %v out of bounds [%v, %v]", time.Duration(d), time.Duration(spec.MinNumeric), time.Duration(spec.MaxNumeric))
 		}
 	case SettingTypeString:
-		s := v.(string)
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("validateBounds %q: want string, got %T", spec.Key, v)
+		}
 		if spec.StringValidator != nil {
 			return spec.StringValidator(s)
 		}
@@ -300,20 +318,40 @@ func validateBounds(spec SettingSpec, v any) error {
 	return nil
 }
 
+// groupDisplayOrder sets the UI ordering. Groups not listed fall to the end in
+// alphabetical order (safety net for any future group that forgets to register
+// here).
+var groupDisplayOrder = []SettingGroup{
+	GroupUploads,
+	GroupQueries,
+	GroupRemoteDownloads,
+	GroupSharing,
+	GroupDeduplication,
+	GroupExports,
+}
+
+func groupOrderIndex(g SettingGroup) int {
+	for i, known := range groupDisplayOrder {
+		if known == g {
+			return i
+		}
+	}
+	return len(groupDisplayOrder) // unknown → sorts after all known groups
+}
+
 func sortedSpecKeys(m map[string]SettingSpec) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
-	// Sort by (Group, Key) for stable UI ordering.
-	for i := 0; i < len(keys); i++ {
-		for j := i + 1; j < len(keys); j++ {
-			a, b := m[keys[i]], m[keys[j]]
-			if a.Group > b.Group || (a.Group == b.Group && a.Key > b.Key) {
-				keys[i], keys[j] = keys[j], keys[i]
-			}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := m[keys[i]], m[keys[j]]
+		ai, bi := groupOrderIndex(a.Group), groupOrderIndex(b.Group)
+		if ai != bi {
+			return ai < bi
 		}
-	}
+		return a.Key < b.Key
+	})
 	return keys
 }
 
