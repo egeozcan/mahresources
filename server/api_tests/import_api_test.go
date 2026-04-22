@@ -78,10 +78,34 @@ func TestImportParseHandler_NoFile_Returns400(t *testing.T) {
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	rec := httptest.NewRecorder()
 
-	api_handlers.GetImportParseHandler(mock, 0)(rec, req)
+	api_handlers.GetImportParseHandler(mock, func() int64 { return 0 })(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestImportParse_RuntimeOverrideRejectsLargeBody verifies that the maxSize
+// getter is called per request, so a runtime Settings override of MaxImportSize
+// to 1 MiB causes a 2 MiB body to be rejected with HTTP 413.
+func TestImportParse_RuntimeOverrideRejectsLargeBody(t *testing.T) {
+	mock := &mockImportContext{}
+
+	// Build a multipart body whose payload is 2 MiB so ParseMultipartForm
+	// actually reads the body and triggers MaxBytesReader.
+	payload := bytes.Repeat([]byte{0}, 2<<20) // 2 MiB
+	body, ct := makeMultipartUpload(t, "file", "big.tar", payload, nil)
+
+	const limit = int64(1 << 20) // 1 MiB override — body exceeds this
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/groups/import/parse", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+
+	api_handlers.GetImportParseHandler(mock, func() int64 { return limit })(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("want 413, got %d (body=%s)", rec.Code, rec.Body.String())
 	}
 }
 

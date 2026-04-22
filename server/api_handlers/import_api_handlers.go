@@ -36,14 +36,24 @@ type GroupImporter interface {
 //
 // Accepts a multipart file upload, stages the tar under _imports/, and enqueues
 // a parse job. Returns {"jobId": "..."} with HTTP 202.
-func GetImportParseHandler(ctx GroupImporter, maxSize int64) func(http.ResponseWriter, *http.Request) {
+//
+// maxSize is a getter called per request so runtime Settings overrides take
+// effect immediately without re-wiring the router (mirrors MaxUploadSize).
+// 0 = unlimited.
+func GetImportParseHandler(ctx GroupImporter, maxSize func() int64) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if maxSize > 0 {
-			r.Body = http.MaxBytesReader(w, r.Body, maxSize)
+		limit := maxSize()
+		if limit > 0 {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
 
 		if err := r.ParseMultipartForm(32 << 20); err != nil {
-			http.Error(w, "failed to parse multipart form: "+err.Error(), http.StatusBadRequest)
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			} else {
+				http.Error(w, "failed to parse multipart form: "+err.Error(), http.StatusBadRequest)
+			}
 			return
 		}
 

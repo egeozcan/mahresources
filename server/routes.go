@@ -543,7 +543,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/exports/{jobId}/download").HandlerFunc(api_handlers.GetExportDownloadHandler(appContext, appContext.GetDefaultFs()))
 
 	// Group imports
-	router.Methods(http.MethodPost).Path("/v1/groups/import/parse").HandlerFunc(api_handlers.GetImportParseHandler(appContext, appContext.Config.MaxImportSize))
+	router.Methods(http.MethodPost).Path("/v1/groups/import/parse").HandlerFunc(api_handlers.GetImportParseHandler(appContext, func() int64 { return appContext.Settings().MaxImportSize() }))
 	router.Methods(http.MethodGet).Path("/v1/imports/{jobId}/plan").HandlerFunc(api_handlers.GetImportPlanHandler(appContext))
 	router.Methods(http.MethodDelete).Path("/v1/imports/{jobId}").HandlerFunc(api_handlers.GetImportDeleteHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/imports/{jobId}/apply").HandlerFunc(api_handlers.GetImportApplyHandler(appContext))
