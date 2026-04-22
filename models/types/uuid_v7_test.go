@@ -3,6 +3,7 @@ package types
 import (
 	"regexp"
 	"testing"
+	"time"
 )
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
@@ -26,12 +27,13 @@ func TestNewUUIDv7_Unique(t *testing.T) {
 }
 
 func TestNewUUIDv7_TimeSorted(t *testing.T) {
+	// UUIDv7 time-ordering is only guaranteed across distinct milliseconds.
+	// Within a millisecond the random bits dominate and can sort either way.
+	// Sleep > 1 ms between generations to force distinct-millisecond timestamps.
 	a := NewUUIDv7()
+	time.Sleep(2 * time.Millisecond)
 	b := NewUUIDv7()
 	if a >= b {
-		b = NewUUIDv7()
-		if a >= b {
-			t.Fatalf("expected %s < %s (time-sorted)", a, b)
-		}
+		t.Fatalf("expected %s < %s (time-sorted across distinct milliseconds)", a, b)
 	}
 }
