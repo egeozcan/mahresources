@@ -100,12 +100,12 @@ type adminConfigSummaryResponse struct {
 
 // adminDataStatsResponse matches the DataStats JSON shape.
 type adminDataStatsResponse struct {
-	Entities                     adminEntityCountsResponse `json:"entities"`
-	StorageTotalBytes            int64                     `json:"storageTotalBytes"`
-	StorageTotalFmt              string                    `json:"storageTotalFmt"`
-	TotalVersionStorageBytes     int64                     `json:"totalVersionStorageBytes"`
-	TotalVersionStorageFormatted string                    `json:"totalVersionStorageFormatted"`
-	Growth                       adminGrowthStatsResponse  `json:"growth"`
+	Entities                     adminEntityCountsResponse  `json:"entities"`
+	StorageTotalBytes            int64                      `json:"storageTotalBytes"`
+	StorageTotalFmt              string                     `json:"storageTotalFmt"`
+	TotalVersionStorageBytes     int64                      `json:"totalVersionStorageBytes"`
+	TotalVersionStorageFormatted string                     `json:"totalVersionStorageFormatted"`
+	Growth                       adminGrowthStatsResponse   `json:"growth"`
 	Config                       adminConfigSummaryResponse `json:"config"`
 }
 
@@ -154,14 +154,51 @@ type adminExpensiveStatsResponse struct {
 	LogStats   adminLogStatsInfoResponse   `json:"logStats"`
 }
 
-// NewAdminCmd returns the "admin" command with optional --server and --data flags.
-func NewAdminCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	var serverOnly bool
-	var dataOnly bool
+// adminSettingView matches the SettingView JSON shape from runtime_settings.go.
+type adminSettingView struct {
+	Key         string      `json:"key"`
+	Label       string      `json:"label"`
+	Description string      `json:"description"`
+	Group       interface{} `json:"group"`
+	Type        interface{} `json:"type"`
+	Current     interface{} `json:"current"`
+	BootDefault interface{} `json:"bootDefault"`
+	Overridden  bool        `json:"overridden"`
+	UpdatedAt   *time.Time  `json:"updatedAt,omitempty"`
+	Reason      string      `json:"reason,omitempty"`
+}
 
+// NewAdminCmd returns the "admin" command group. Bare `mr admin` delegates to
+// `mr admin stats` for backward compatibility.
+func NewAdminCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	help := helptext.Load(adminHelpFS, "admin_help/admin.md")
 	cmd := &cobra.Command{
 		Use:         "admin",
+		Short:       "Server administration commands",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+	}
+
+	statsCmd := NewAdminStatsCmd(c, opts)
+	// Bare `mr admin` delegates to `mr admin stats` for backward compat.
+	cmd.RunE = statsCmd.RunE
+	cmd.Flags().AddFlagSet(statsCmd.Flags())
+
+	cmd.AddCommand(statsCmd)
+	cmd.AddCommand(NewAdminSettingsCmd(c, opts))
+
+	return cmd
+}
+
+// NewAdminStatsCmd returns the "admin stats" subcommand (the former NewAdminCmd body).
+func NewAdminStatsCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	var serverOnly bool
+	var dataOnly bool
+
+	help := helptext.Load(adminHelpFS, "admin_help/admin_stats.md")
+	cmd := &cobra.Command{
+		Use:         "stats",
 		Short:       "Show server and data statistics",
 		Long:        help.Long,
 		Example:     help.Example,
@@ -363,4 +400,234 @@ func NewAdminCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd.Flags().BoolVar(&dataOnly, "data-only", false, "Show data stats only")
 
 	return cmd
+}
+
+// NewAdminSettingsCmd returns the "admin settings" subcommand group.
+func NewAdminSettingsCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(adminHelpFS, "admin_help/admin_settings.md")
+	cmd := &cobra.Command{
+		Use:         "settings",
+		Short:       "View and manage runtime configuration overrides",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+	}
+
+	cmd.AddCommand(NewAdminSettingsListCmd(c, opts))
+	cmd.AddCommand(NewAdminSettingsGetCmd(c, opts))
+	cmd.AddCommand(NewAdminSettingsSetCmd(c, opts))
+	cmd.AddCommand(NewAdminSettingsResetCmd(c, opts))
+
+	return cmd
+}
+
+// NewAdminSettingsListCmd returns the "admin settings list" subcommand.
+func NewAdminSettingsListCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(adminHelpFS, "admin_help/admin_settings_list.md")
+	return &cobra.Command{
+		Use:         "list",
+		Short:       "List all runtime settings",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var raw json.RawMessage
+			if err := c.Get("/v1/admin/settings", nil, &raw); err != nil {
+				return err
+			}
+			if opts.JSON {
+				output.PrintRawJSON(raw)
+				return nil
+			}
+			var views []adminSettingView
+			if err := json.Unmarshal(raw, &views); err != nil {
+				return fmt.Errorf("parsing settings: %w", err)
+			}
+			columns := []string{"KEY", "GROUP", "CURRENT", "DEFAULT", "OVERRIDDEN", "UPDATED_AT"}
+			rows := make([][]string, 0, len(views))
+			for _, v := range views {
+				overridden := "-"
+				if v.Overridden {
+					overridden = "yes"
+				}
+				updatedAt := ""
+				if v.UpdatedAt != nil {
+					updatedAt = v.UpdatedAt.Format(time.RFC3339)
+				}
+				rows = append(rows, []string{
+					v.Key,
+					fmt.Sprintf("%v", v.Group),
+					fmt.Sprintf("%v", v.Current),
+					fmt.Sprintf("%v", v.BootDefault),
+					overridden,
+					updatedAt,
+				})
+			}
+			output.Print(*opts, columns, rows, nil)
+			return nil
+		},
+	}
+}
+
+// NewAdminSettingsGetCmd returns the "admin settings get <key>" subcommand.
+func NewAdminSettingsGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(adminHelpFS, "admin_help/admin_settings_get.md")
+	return &cobra.Command{
+		Use:         "get <key>",
+		Short:       "Show a single runtime setting by key",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key := args[0]
+			var raw json.RawMessage
+			if err := c.Get("/v1/admin/settings", nil, &raw); err != nil {
+				return err
+			}
+			var views []adminSettingView
+			if err := json.Unmarshal(raw, &views); err != nil {
+				return fmt.Errorf("parsing settings: %w", err)
+			}
+			for i := range views {
+				if views[i].Key == key {
+					if opts.JSON {
+						data, err := json.Marshal(views[i])
+						if err != nil {
+							return fmt.Errorf("marshalling setting: %w", err)
+						}
+						output.PrintRawJSON(data)
+						return nil
+					}
+					updatedAt := ""
+					if views[i].UpdatedAt != nil {
+						updatedAt = views[i].UpdatedAt.Format(time.RFC3339)
+					}
+					overridden := "no"
+					if views[i].Overridden {
+						overridden = "yes"
+					}
+					output.PrintSingle(*opts, []output.KeyValue{
+						{Key: "Key", Value: views[i].Key},
+						{Key: "Label", Value: views[i].Label},
+						{Key: "Description", Value: views[i].Description},
+						{Key: "Group", Value: fmt.Sprintf("%v", views[i].Group)},
+						{Key: "Type", Value: fmt.Sprintf("%v", views[i].Type)},
+						{Key: "Current", Value: fmt.Sprintf("%v", views[i].Current)},
+						{Key: "Boot Default", Value: fmt.Sprintf("%v", views[i].BootDefault)},
+						{Key: "Overridden", Value: overridden},
+						{Key: "Updated At", Value: updatedAt},
+						{Key: "Reason", Value: views[i].Reason},
+					}, nil)
+					return nil
+				}
+			}
+			return fmt.Errorf("unknown setting key: %s", key)
+		},
+	}
+}
+
+// NewAdminSettingsSetCmd returns the "admin settings set <key> <value>" subcommand.
+func NewAdminSettingsSetCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	var reason string
+
+	help := helptext.Load(adminHelpFS, "admin_help/admin_settings_set.md")
+	cmd := &cobra.Command{
+		Use:         "set <key> <value>",
+		Short:       "Override a runtime setting",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key := args[0]
+			value := args[1]
+
+			body := struct {
+				Value  string `json:"value"`
+				Reason string `json:"reason,omitempty"`
+			}{Value: value, Reason: reason}
+
+			var raw json.RawMessage
+			if err := c.Put(fmt.Sprintf("/v1/admin/settings/%s", key), nil, body, &raw); err != nil {
+				return err
+			}
+			if opts.JSON {
+				output.PrintRawJSON(raw)
+				return nil
+			}
+			var view adminSettingView
+			if err := json.Unmarshal(raw, &view); err != nil {
+				return fmt.Errorf("parsing setting response: %w", err)
+			}
+			printSettingView(*opts, view)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&reason, "reason", "", "Free-text note recorded in the audit log")
+
+	return cmd
+}
+
+// NewAdminSettingsResetCmd returns the "admin settings reset <key>" subcommand.
+func NewAdminSettingsResetCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	var reason string
+
+	help := helptext.Load(adminHelpFS, "admin_help/admin_settings_reset.md")
+	cmd := &cobra.Command{
+		Use:         "reset <key>",
+		Short:       "Remove a runtime override and revert to boot default",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key := args[0]
+
+			body := struct {
+				Reason string `json:"reason,omitempty"`
+			}{Reason: reason}
+
+			var raw json.RawMessage
+			if err := c.DeleteJSON(fmt.Sprintf("/v1/admin/settings/%s", key), nil, body, &raw); err != nil {
+				return err
+			}
+			if opts.JSON {
+				output.PrintRawJSON(raw)
+				return nil
+			}
+			var view adminSettingView
+			if err := json.Unmarshal(raw, &view); err != nil {
+				return fmt.Errorf("parsing setting response: %w", err)
+			}
+			printSettingView(*opts, view)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&reason, "reason", "", "Free-text note recorded in the audit log")
+
+	return cmd
+}
+
+// printSettingView prints a single SettingView in human-readable form.
+func printSettingView(opts output.Options, v adminSettingView) {
+	updatedAt := ""
+	if v.UpdatedAt != nil {
+		updatedAt = v.UpdatedAt.Format(time.RFC3339)
+	}
+	overridden := "no"
+	if v.Overridden {
+		overridden = "yes"
+	}
+	output.PrintSingle(opts, []output.KeyValue{
+		{Key: "Key", Value: v.Key},
+		{Key: "Label", Value: v.Label},
+		{Key: "Current", Value: fmt.Sprintf("%v", v.Current)},
+		{Key: "Boot Default", Value: fmt.Sprintf("%v", v.BootDefault)},
+		{Key: "Overridden", Value: overridden},
+		{Key: "Updated At", Value: updatedAt},
+		{Key: "Reason", Value: v.Reason},
+	}, nil)
 }

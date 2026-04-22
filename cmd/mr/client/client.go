@@ -165,6 +165,35 @@ func (c *Client) Delete(path string, query url.Values, result any) error {
 	return decodeResponse(resp, result)
 }
 
+// DeleteJSON performs a DELETE request with a JSON body and decodes the response.
+func (c *Client) DeleteJSON(path string, query url.Values, body any, result any) error {
+	var bodyReader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		bodyReader = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, c.buildURL(path, query), bodyReader)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	return decodeResponse(resp, result)
+}
+
 // Put performs a PUT request with a JSON body and decodes the response.
 func (c *Client) Put(path string, query url.Values, body any, result any) error {
 	var bodyReader io.Reader
