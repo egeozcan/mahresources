@@ -30,6 +30,12 @@ type AppLogger interface {
 }
 
 // HashWorker processes resources to calculate perceptual hashes and find similarities.
+// hashEntry holds both perceptual hashes for a resource in the cache.
+type hashEntry struct {
+	DHash uint64
+	AHash uint64
+}
+
 type HashWorker struct {
 	db        *gorm.DB
 	fs        afero.Fs
@@ -37,8 +43,8 @@ type HashWorker struct {
 	config    Config
 	appLogger AppLogger
 
-	// hashCache is a bounded LRU cache mapping resource ID to DHash
-	hashCache *lru.Cache[uint, uint64]
+	// hashCache is a bounded LRU cache mapping resource ID to both DHash and AHash (BH-018)
+	hashCache *lru.Cache[uint, hashEntry]
 
 	// hashQueue receives resource IDs for immediate async processing
 	hashQueue chan uint
@@ -53,7 +59,7 @@ func New(db *gorm.DB, fs afero.Fs, altFS map[string]afero.Fs, config Config, app
 	if config.CacheSize <= 0 {
 		config.CacheSize = 100000
 	}
-	cache, _ := lru.New[uint, uint64](config.CacheSize)
+	cache, _ := lru.New[uint, hashEntry](config.CacheSize)
 
 	return &HashWorker{
 		db:        db,
@@ -336,7 +342,7 @@ func (w *HashWorker) warmCache() {
 
 	for {
 		var hashes []models.ImageHash
-		if err := w.db.Select("resource_id, d_hash, d_hash_int").
+		if err := w.db.Select("resource_id, d_hash, d_hash_int, a_hash, a_hash_int").
 			Offset(offset).Limit(batchSize).
 			Find(&hashes).Error; err != nil {
 			log.Printf("Hash worker: error warming cache: %v", err)
@@ -349,7 +355,7 @@ func (w *HashWorker) warmCache() {
 
 		for _, h := range hashes {
 			if h.ResourceId != nil {
-				w.hashCache.Add(*h.ResourceId, h.GetDHash())
+				w.hashCache.Add(*h.ResourceId, hashEntry{DHash: h.GetDHash(), AHash: h.GetAHash()})
 			}
 		}
 
@@ -417,10 +423,40 @@ func (w *HashWorker) hashAndStoreSimilarities(resource models.Resource) {
 	// Update cache BEFORE finding similarities to avoid race condition
 	// where concurrent goroutines miss detecting similarities between
 	// resources being processed simultaneously
-	w.hashCache.Add(resource.ID, dHashInt)
+	w.hashCache.Add(resource.ID, hashEntry{DHash: dHashInt, AHash: aHashInt})
 
 	// Find and store similarities
-	w.findAndStoreSimilarities(resource.ID, dHashInt)
+	w.findAndStoreSimilarities(resource.ID, dHashInt, aHashInt)
+}
+
+// AreSimilar returns true when two images should be recorded as perceptually similar.
+//
+// BH-018: The imgsim library produces DHash=0 and AHash=0 for any uniform (solid-color)
+// image, regardless of actual color. This means every solid-color image appears identical
+// to every other solid-color image (distance 0). To prevent these false positives, we skip
+// similarity when either image has both DHash==0 and AHash==0 (indicating a solid-color
+// image that cannot be meaningfully compared by perceptual hashing).
+//
+// Additionally, when aHashThr>0, the AHash Hamming distance must be within aHashThr.
+// When aHashThr is 0, the secondary check is skipped (backward-compatible behavior).
+func AreSimilar(dHashA, aHashA, dHashB, aHashB, dHashThr, aHashThr uint64) bool {
+	// Skip solid-color images: both hashes are 0, meaning any color matches any other
+	if dHashA == 0 && aHashA == 0 {
+		return false
+	}
+	if dHashB == 0 && aHashB == 0 {
+		return false
+	}
+
+	dDist := uint64(HammingDistance(dHashA, dHashB))
+	if dDist > dHashThr {
+		return false
+	}
+	if aHashThr == 0 {
+		return true
+	}
+	aDist := uint64(HammingDistance(aHashA, aHashB))
+	return aDist <= aHashThr
 }
 
 // findAndStoreSimilarities compares a newly hashed resource against all entries in
@@ -428,32 +464,35 @@ func (w *HashWorker) hashAndStoreSimilarities(resource models.Resource) {
 // resources in a batch). For typical deployments (< 1M images) this is fast enough
 // since Hamming distance is a single XOR + popcount. For very large deployments, a
 // BK-tree or VP-tree index on Hamming distance would reduce this to O(log N) per lookup.
-func (w *HashWorker) findAndStoreSimilarities(resourceID uint, dHash uint64) {
+func (w *HashWorker) findAndStoreSimilarities(resourceID uint, dHash, aHash uint64) {
 	var similarities []models.ResourceSimilarity
 
 	for _, otherID := range w.hashCache.Keys() {
 		if otherID == resourceID {
 			continue
 		}
-		otherHash, ok := w.hashCache.Peek(otherID)
+		otherEntry, ok := w.hashCache.Peek(otherID)
 		if !ok {
 			continue
 		}
 
-		distance := HammingDistance(dHash, otherHash)
-		if distance <= w.config.SimilarityThreshold {
-			// Ensure ResourceID1 < ResourceID2
-			id1, id2 := resourceID, otherID
-			if id1 > id2 {
-				id1, id2 = id2, id1
-			}
-
-			similarities = append(similarities, models.ResourceSimilarity{
-				ResourceID1:     id1,
-				ResourceID2:     id2,
-				HammingDistance: uint8(distance),
-			})
+		if !AreSimilar(dHash, aHash, otherEntry.DHash, otherEntry.AHash,
+			uint64(w.config.SimilarityThreshold), w.config.AHashThreshold) {
+			continue
 		}
+
+		distance := HammingDistance(dHash, otherEntry.DHash)
+		// Ensure ResourceID1 < ResourceID2
+		id1, id2 := resourceID, otherID
+		if id1 > id2 {
+			id1, id2 = id2, id1
+		}
+
+		similarities = append(similarities, models.ResourceSimilarity{
+			ResourceID1:     id1,
+			ResourceID2:     id2,
+			HammingDistance: uint8(distance),
+		})
 	}
 
 	if len(similarities) == 0 {

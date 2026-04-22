@@ -12,6 +12,10 @@ type Config struct {
 	PollInterval time.Duration
 	// SimilarityThreshold is the maximum Hamming distance to consider resources similar.
 	SimilarityThreshold int
+	// AHashThreshold is the maximum AHash Hamming distance for the secondary check (BH-018).
+	// When DHash distance is within SimilarityThreshold, AHash distance must also be within
+	// this value to record the pair as similar. Set to 0 to disable the secondary check.
+	AHashThreshold uint64
 	// Disabled prevents the hash worker from starting.
 	Disabled bool
 	// CacheSize is the maximum number of entries in the hash LRU cache.
@@ -25,6 +29,7 @@ func DefaultConfig() Config {
 		BatchSize:           500,
 		PollInterval:        time.Minute,
 		SimilarityThreshold: 10,
+		AHashThreshold:      5,
 		Disabled:            false,
 		CacheSize:           100000,
 	}

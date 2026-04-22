@@ -203,13 +203,20 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 			var messages []string
 			allConflict := true
 
+			allBadRequest := true
 			for _, err := range uploadErrors {
 				detail := uploadErrorDetail{Error: err.Error()}
 				var resErr *application_context.ResourceExistsError
+				var imgErr *application_context.InvalidImageError
 				if errors.As(err, &resErr) {
 					detail.ResourceID = resErr.ResourceID
+					allBadRequest = false
+				} else if errors.As(err, &imgErr) {
+					allConflict = false
+					// allBadRequest stays true
 				} else {
 					allConflict = false
+					allBadRequest = false
 				}
 				details = append(details, detail)
 				messages = append(messages, err.Error())
@@ -221,6 +228,8 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 			statusCode := http.StatusInternalServerError
 			if allConflict {
 				statusCode = http.StatusConflict
+			} else if allBadRequest {
+				statusCode = http.StatusBadRequest
 			}
 
 			// Structured JSON response for API / fetch callers

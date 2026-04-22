@@ -81,6 +81,19 @@ func parseInt64Env(envVar string, defaultVal int64) int64 {
 	return v
 }
 
+// parseUint64Env parses a uint64 from an environment variable, returning the default if not set or invalid
+func parseUint64Env(envVar string, defaultVal uint64) uint64 {
+	s := os.Getenv(envVar)
+	if s == "" {
+		return defaultVal
+	}
+	v, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return defaultVal
+	}
+	return v
+}
+
 // getEnvOrDefault returns the value of the environment variable or a default if not set
 func getEnvOrDefault(envVar string, defaultVal string) string {
 	val := os.Getenv(envVar)
@@ -124,6 +137,7 @@ func main() {
 	hashBatchSize := flag.Int("hash-batch-size", parseIntEnv("HASH_BATCH_SIZE", 500), "Resources to process per batch cycle (env: HASH_BATCH_SIZE)")
 	hashPollInterval := flag.Duration("hash-poll-interval", parseDurationEnv("HASH_POLL_INTERVAL", time.Minute), "Time between batch processing cycles (env: HASH_POLL_INTERVAL)")
 	hashSimilarityThreshold := flag.Int("hash-similarity-threshold", parseIntEnv("HASH_SIMILARITY_THRESHOLD", 10), "Maximum Hamming distance for similarity (env: HASH_SIMILARITY_THRESHOLD)")
+	hashAHashThreshold := flag.Uint64("hash-ahash-threshold", parseUint64Env("HASH_AHASH_THRESHOLD", 5), "Max AHash Hamming distance for secondary check to suppress solid-color false positives (BH-018); 0 disables the check (env: HASH_AHASH_THRESHOLD)")
 	hashWorkerDisabled := flag.Bool("hash-worker-disabled", os.Getenv("HASH_WORKER_DISABLED") == "1", "Disable hash worker (env: HASH_WORKER_DISABLED=1)")
 	hashCacheSize := flag.Int("hash-cache-size", parseIntEnv("HASH_CACHE_SIZE", 100000), "Maximum entries in the hash similarity cache (env: HASH_CACHE_SIZE)")
 
@@ -420,6 +434,7 @@ func main() {
 		BatchSize:           *hashBatchSize,
 		PollInterval:        *hashPollInterval,
 		SimilarityThreshold: *hashSimilarityThreshold,
+		AHashThreshold:      *hashAHashThreshold,
 		Disabled:            *hashWorkerDisabled,
 		CacheSize:           *hashCacheSize,
 	}

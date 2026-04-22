@@ -47,6 +47,24 @@ func (e *ResourceExistsError) Error() string {
 	return fmt.Sprintf("existing resource (%v) with %s", e.ResourceID, e.Reason)
 }
 
+// InvalidImageError is returned when an uploaded file is declared as an image
+// (content-type starts with "image/") but cannot be decoded or has zero dimensions.
+// Callers (e.g. API handlers) should map this to HTTP 400.
+type InvalidImageError struct {
+	Cause error
+}
+
+func (e *InvalidImageError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("uploaded file is not a valid image (failed to decode): %v", e.Cause)
+	}
+	return "uploaded file is not a valid image (zero dimensions)"
+}
+
+func (e *InvalidImageError) Unwrap() error {
+	return e.Cause
+}
+
 // timeoutReader wraps an io.Reader and returns an error if no data is read within the timeout period
 type timeoutReader struct {
 	reader      io.Reader
@@ -572,11 +590,16 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		if _, err = tempFile.Seek(0, io.SeekStart); err != nil {
 			return nil, err
 		}
-		if img, _, decErr := image.Decode(tempFile); decErr == nil {
-			bounds := img.Bounds()
-			preWidth = bounds.Max.X
-			preHeight = bounds.Max.Y
+		img, _, decErr := image.Decode(tempFile)
+		if decErr != nil {
+			return nil, &InvalidImageError{Cause: decErr}
 		}
+		bounds := img.Bounds()
+		if bounds.Dx() == 0 || bounds.Dy() == 0 {
+			return nil, &InvalidImageError{}
+		}
+		preWidth = bounds.Max.X
+		preHeight = bounds.Max.Y
 	}
 	preFileInfo, err := tempFile.Stat()
 	if err != nil {

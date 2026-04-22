@@ -92,15 +92,17 @@ func TestHashWorker_FindSimilarities(t *testing.T) {
 		SimilarityThreshold: 10,
 	}, nil)
 
-	// Seed cache with some hashes
-	// Use values without high bit set to avoid SQLite uint64 limitations
-	w.hashCache.Add(1, 0x7F00FF00FF00FF00) // Base hash
-	w.hashCache.Add(2, 0x7F00FF00FF00FF01) // 1 bit different (similar)
-	w.hashCache.Add(3, 0x00FF00FF00FF00FF) // Many bits different (not similar)
+	// Seed cache with some hashes. Use AHash=same as DHash so AHash check always passes.
+	// Use values without high bit set to avoid SQLite uint64 limitations.
+	baseHash := uint64(0x7F00FF00FF00FF00)
+	w.hashCache.Add(1, hashEntry{DHash: baseHash, AHash: baseHash})                       // Base hash
+	w.hashCache.Add(2, hashEntry{DHash: 0x7F00FF00FF00FF01, AHash: 0x7F00FF00FF00FF01}) // 1 bit different (similar)
+	w.hashCache.Add(3, hashEntry{DHash: 0x00FF00FF00FF00FF, AHash: 0x00FF00FF00FF00FF}) // Many bits different (not similar)
 
-	// Find similarities for a new hash that's similar to #1 and #2
-	newHash := uint64(0x7F00FF00FF00FF00) // Identical to #1
-	w.findAndStoreSimilarities(100, newHash)
+	// Find similarities for a new hash that's similar to #1 and #2.
+	// Use AHash=same as DHash so the secondary check does not filter anything out.
+	newHash := baseHash
+	w.findAndStoreSimilarities(100, newHash, newHash)
 
 	// Verify similarities were stored
 	var similarities []models.ResourceSimilarity
