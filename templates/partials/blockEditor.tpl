@@ -36,8 +36,9 @@
                         <button
                             @click="moveBlock(block.id, 'up')"
                             :disabled="index === 0"
+                            data-block-control="move-up"
+                            :aria-label="'Move block ' + (index + 1) + ' up'"
                             class="p-1 text-stone-400 hover:text-stone-600 disabled:opacity-30 disabled:cursor-not-allowed"
-                            title="Move up"
                         >
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
@@ -46,8 +47,9 @@
                         <button
                             @click="moveBlock(block.id, 'down')"
                             :disabled="index === blocks.length - 1"
+                            data-block-control="move-down"
+                            :aria-label="'Move block ' + (index + 1) + ' down'"
                             class="p-1 text-stone-400 hover:text-stone-600 disabled:opacity-30 disabled:cursor-not-allowed"
-                            title="Move down"
                         >
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
@@ -55,8 +57,9 @@
                         </button>
                         <button
                             @click="if(confirm('Delete this block?')) deleteBlock(block.id)"
+                            data-block-control="delete"
+                            :aria-label="'Delete block ' + (index + 1)"
                             class="p-1 text-red-400 hover:text-red-700"
-                            title="Delete block"
                         >
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -109,7 +112,7 @@
                             </template>
                             <template x-if="editMode">
                                 <div x-data="blockHeading(block, (id, content) => updateBlockContent(id, content), (id, content) => updateBlockContentDebounced(id, content))" class="flex gap-2">
-                                    <select x-model.number="level" @change="save()" class="border border-stone-300 rounded px-2 py-1">
+                                    <select aria-label="Heading level" x-model.number="level" @change="save()" class="border border-stone-300 rounded px-2 py-1">
                                         <option value="1">H1</option>
                                         <option value="2">H2</option>
                                         <option value="3">H3</option>
@@ -178,7 +181,9 @@
                                         <a :href="'/v1/resource/view?id=' + resId"
                                            @click.prevent="openGalleryLightbox(idx)"
                                            class="block aspect-square bg-stone-100 rounded overflow-hidden cursor-pointer hover:opacity-90 transition-opacity">
-                                            <img :src="'/v1/resource/preview?id=' + resId" class="w-full h-full object-cover" loading="lazy">
+                                            <img :src="'/v1/resource/preview?id=' + resId"
+                                                 :alt="(resourceMeta[resId]?.name) || ('Resource ' + resId)"
+                                                 class="w-full h-full object-cover" loading="lazy">
                                         </a>
                                     </template>
                                 </div>
@@ -193,7 +198,9 @@
                                         <div class="grid grid-cols-4 md:grid-cols-6 gap-2">
                                             <template x-for="(resId, idx) in resourceIds" :key="resId">
                                                 <div class="relative group aspect-square bg-stone-100 rounded overflow-hidden">
-                                                    <img :src="'/v1/resource/preview?id=' + resId" class="w-full h-full object-cover">
+                                                    <img :src="'/v1/resource/preview?id=' + resId"
+                                                         :alt="(resourceMeta[resId]?.name) || ('Resource ' + resId)"
+                                                         class="w-full h-full object-cover">
                                                     <button
                                                         @click="removeResource(resId)"
                                                         class="absolute top-1 right-1 w-5 h-5 bg-red-700 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
@@ -861,32 +868,53 @@
         <div x-show="editMode" class="mt-4">
             <div class="relative">
                 <button
+                    data-testid="add-block-trigger"
+                    type="button"
+                    :aria-expanded="addBlockPickerOpen.toString()"
+                    aria-haspopup="listbox"
+                    aria-controls="add-block-listbox"
                     @click="addBlockPickerOpen = !addBlockPickerOpen"
+                    @keydown.escape="addBlockPickerOpen = false"
                     class="w-full py-2 border-2 border-dashed border-stone-300 rounded-lg text-stone-500 hover:border-amber-400 hover:text-amber-700 transition-colors"
                 >
                     + Add Block
                 </button>
-                <div
+                <ul
+                    id="add-block-listbox"
+                    role="listbox"
+                    aria-label="Block types"
                     x-show="addBlockPickerOpen"
                     @click.away="addBlockPickerOpen = false"
+                    @keydown.escape="addBlockPickerOpen = false"
                     x-transition
-                    class="absolute z-10 mt-2 w-full bg-white border border-stone-200 rounded-lg shadow-lg py-2"
+                    class="absolute z-10 mt-2 w-full bg-white border border-stone-200 rounded-lg shadow-lg py-2 list-none"
                 >
-                    <template x-for="bt in blockTypes" :key="bt.type">
-                        <button
+                    <template x-for="(bt, idx) in blockTypes" :key="bt.type">
+                        <li
+                            role="option"
+                            :tabindex="idx === activePickerIndex ? 0 : -1"
+                            :aria-selected="idx === activePickerIndex"
+                            :data-block-type="bt.type"
                             @click="addBlock(bt.type); addBlockPickerOpen = false"
-                            class="w-full px-4 py-2 text-left hover:bg-stone-50 flex items-center gap-2"
-                            :title="bt.description || ''"
+                            @keydown.enter.prevent="addBlock(bt.type); addBlockPickerOpen = false"
+                            @keydown.arrow-down.prevent="focusPickerItem(Math.min(activePickerIndex + 1, blockTypes.length - 1))"
+                            @keydown.arrow-up.prevent="focusPickerItem(Math.max(activePickerIndex - 1, 0))"
+                            @keydown.home.prevent="focusPickerItem(0)"
+                            @keydown.end.prevent="focusPickerItem(blockTypes.length - 1)"
+                            class="w-full px-4 py-2 text-left hover:bg-stone-50 flex items-center gap-2 cursor-pointer"
                         >
                             <span x-text="bt.icon"></span>
                             <span x-text="bt.label"></span>
                             <span x-show="bt.description" x-text="bt.description" class="text-xs text-stone-400 ml-auto truncate max-w-[200px]"></span>
-                        </button>
+                        </li>
                     </template>
-                </div>
+                </ul>
             </div>
         </div>
     </div>
+
+    {# Live region for screen reader announcements #}
+    <div x-ref="liveRegion" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
     {# Entity Picker Modal #}
     {% include "partials/entityPicker.tpl" %}

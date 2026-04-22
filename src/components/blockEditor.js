@@ -22,6 +22,7 @@ export function blockEditor(noteId, initialBlocks = []) {
     blocks: initialBlocks,
     editMode: false,
     addBlockPickerOpen: false, // State for add block dropdown
+    activePickerIndex: 0, // Roving tabindex for add-block picker
     loading: false,
     error: null,
     _pendingUpdates: {}, // Track pending updates for optimistic UI
@@ -63,6 +64,20 @@ export function blockEditor(noteId, initialBlocks = []) {
         await this.loadBlocks();
       }
 
+      // Watch picker open state to reset index and focus first item
+      this.$watch('addBlockPickerOpen', (open) => {
+        if (open) {
+          this.activePickerIndex = 0;
+          this.$nextTick(() => {
+            const listbox = this.$el.querySelector('#add-block-listbox');
+            if (listbox) {
+              const first = listbox.querySelector('[role="option"][tabindex="0"]');
+              if (first) first.focus();
+            }
+          });
+        }
+      });
+
       // Set up JS bridge for plugin blocks
       const self = this;
       window.mahBlock = {
@@ -76,6 +91,18 @@ export function blockEditor(noteId, initialBlocks = []) {
           return self.blocks.find(b => b.id === blockId) || null;
         }
       };
+    },
+
+    // Move roving focus within the add-block picker listbox
+    focusPickerItem(newIndex) {
+      this.activePickerIndex = newIndex;
+      this.$nextTick(() => {
+        const listbox = this.$el.querySelector('#add-block-listbox');
+        if (listbox) {
+          const active = listbox.querySelector('[role="option"][tabindex="0"]');
+          if (active) active.focus();
+        }
+      });
     },
 
     async loadBlockTypes() {
@@ -275,6 +302,11 @@ export function blockEditor(noteId, initialBlocks = []) {
           throw new Error(errorData.error || `Failed to reorder blocks: ${res.status}`);
         }
         await this.loadBlocks();
+        // Announce reorder to screen readers via live region
+        const liveRegion = this.$refs && this.$refs.liveRegion;
+        if (liveRegion) {
+          liveRegion.textContent = `Block ${idx + 1} moved ${direction}`;
+        }
       } catch (err) {
         this.error = err.message;
         console.error('Error moving block:', err);
