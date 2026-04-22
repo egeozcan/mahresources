@@ -29,8 +29,9 @@
             class="px-4 no-ajax"
             method="post"
             :action="'/v1/groups/delete?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)"
-            x-data="confirmAction('Are you sure you want to delete the selected groups?')"
+            x-data="confirmGroupDelete"
             x-bind="events"
+            data-testid="bulk-delete-groups-form"
     >
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
         <div class="flex flex-col">
