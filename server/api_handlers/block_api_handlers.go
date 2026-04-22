@@ -348,10 +348,10 @@ func GetTableBlockQueryDataHandler(ctx interfaces.TableBlockQueryRunner) func(ht
 			}
 		}
 
-		// Execute query
+		// Execute query; translate record-not-found to 404 (BH-024)
 		rows, err := ctx.RunReadOnlyQuery(*content.QueryID, params)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 		defer rows.Close()
