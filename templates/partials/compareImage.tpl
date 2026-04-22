@@ -6,23 +6,28 @@
 })">
     <!-- Mode selector -->
     <div class="flex flex-wrap items-center gap-3 mb-4 border-b pb-4">
-        <div class="compare-segmented-control" role="radiogroup" aria-label="Comparison mode">
+        <div class="compare-segmented-control" role="radiogroup" aria-label="Comparison mode"
+             @keydown="onRadiogroupKeydown($event, 'mode', ['side-by-side', 'slider', 'onion', 'toggle'])">
             <button @click="mode = 'side-by-side'" role="radio" :aria-checked="mode === 'side-by-side'"
+                    :tabindex="mode === 'side-by-side' ? 0 : -1"
                     class="compare-seg-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/></svg>
                 <span class="compare-seg-label">Side by side</span>
             </button>
             <button @click="mode = 'slider'" role="radio" :aria-checked="mode === 'slider'"
+                    :tabindex="mode === 'slider' ? 0 : -1"
                     class="compare-seg-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="2" x2="12" y2="22"/><polyline points="8 6 12 2 16 6"/><polyline points="8 18 12 22 16 18"/></svg>
                 <span class="compare-seg-label">Slider</span>
             </button>
             <button @click="mode = 'onion'" role="radio" :aria-checked="mode === 'onion'"
+                    :tabindex="mode === 'onion' ? 0 : -1"
                     class="compare-seg-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="12" r="7"/><circle cx="15" cy="12" r="7"/></svg>
                 <span class="compare-seg-label">Onion skin</span>
             </button>
             <button @click="mode = 'toggle'" role="radio" :aria-checked="mode === 'toggle'"
+                    :tabindex="mode === 'toggle' ? 0 : -1"
                     class="compare-seg-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="5" width="22" height="14" rx="7"/><circle cx="16" cy="12" r="4"/></svg>
                 <span class="compare-seg-label">Toggle</span>

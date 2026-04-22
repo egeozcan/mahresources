@@ -4,13 +4,16 @@
 })">
     <!-- Mode selector -->
     <div class="flex flex-wrap items-center gap-3 mb-4 border-b pb-4">
-        <div class="compare-segmented-control" role="radiogroup" aria-label="Diff mode">
+        <div class="compare-segmented-control" role="radiogroup" aria-label="Diff mode"
+             @keydown="onRadiogroupKeydown($event, 'mode', ['unified', 'split'])">
             <button @click="mode = 'unified'" role="radio" :aria-checked="mode === 'unified'"
+                    :tabindex="mode === 'unified' ? 0 : -1"
                     class="compare-seg-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="7" y1="8" x2="17" y2="8"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="7" y1="16" x2="13" y2="16"/></svg>
                 <span class="compare-seg-label">Unified</span>
             </button>
             <button @click="mode = 'split'" role="radio" :aria-checked="mode === 'split'"
+                    :tabindex="mode === 'split' ? 0 : -1"
                     class="compare-seg-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/></svg>
                 <span class="compare-seg-label">Side by side</span>
