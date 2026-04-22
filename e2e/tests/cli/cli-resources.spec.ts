@@ -256,8 +256,10 @@ test.describe('Resource from-url', () => {
 
   test('from-url creates a resource from an existing resource URL', async ({ cli, workerServer }) => {
     const serverUrl = `http://127.0.0.1:${workerServer.port}`;
-    // Use the app's own favicon as the download URL (guaranteed to exist and return 200)
-    const url = `${serverUrl}/public/favicon/favicon.ico`;
+    // Use the app's PNG favicon as the download URL (guaranteed to exist,
+    // returns 200, and is a real PNG — image.Decode rejects .ico files
+    // per BH-011's stricter image ingestion).
+    const url = `${serverUrl}/public/favicon/favicon-32x32.png`;
     const result = cli.runJson<Resource | Resource[]>('resource', 'from-url', '--url', url);
     const res = Array.isArray(result) ? result[0] : result;
     expect(res.ID).toBeGreaterThan(0);

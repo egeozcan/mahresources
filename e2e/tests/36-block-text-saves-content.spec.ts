@@ -45,11 +45,9 @@ test.describe('Text block content saves via UI', () => {
     // Enter block edit mode
     await page.getByText('Edit Blocks').click();
 
-    // Add a text block via the picker
-    await page.getByText('+ Add Block').click();
-    // The block type picker renders buttons with icon + label spans
-    // Click the button that contains "Text" label
-    await page.locator('button:has(span:text-is("Text"))').click();
+    // Add a text block via the picker (BH-027: listbox with role=option items)
+    await page.locator('[data-testid="add-block-trigger"]').click();
+    await page.locator('[role="option"][data-block-type="text"]').click();
 
     // Type content into the textarea
     const textarea = page.locator('textarea[placeholder="Enter text..."]');

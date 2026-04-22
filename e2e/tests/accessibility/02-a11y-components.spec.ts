@@ -364,7 +364,13 @@ test.describe('Component Accessibility - Entity Picker', () => {
       await page.locator('button:has-text("Select Resources")').click();
 
       await page.locator('button:has-text("All Resources")').click();
-      await page.waitForSelector('[role="option"]', { timeout: 5000 });
+      // BH-027 added role="option" to the block picker too; scope to the
+      // entity picker dialog so we wait for its resource options, not any
+      // hidden block-type option elsewhere in the page.
+      await page.waitForSelector(
+        '[aria-labelledby="entity-picker-title"] [role="option"]',
+        { timeout: 5000 },
+      );
 
       await checkA11y({ include: ['[aria-labelledby="entity-picker-title"]'] });
     } finally {

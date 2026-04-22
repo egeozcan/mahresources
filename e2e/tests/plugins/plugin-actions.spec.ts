@@ -327,14 +327,17 @@ test.describe('Plugin Actions UI - Detail Pages', () => {
 
     await page.getByRole('button', { name: 'Async Demo' }).click();
 
-    const modal = page.getByRole('dialog');
+    // Scope to the plugin-action modal specifically: once the async job
+    // submits, the cockpit panel (also role="dialog") opens, which would
+    // make a plain getByRole('dialog') match two elements.
+    const modal = page.locator('[aria-labelledby="plugin-action-modal-title"]');
     await expect(modal).toBeVisible();
 
     await modal.getByRole('button', { name: 'Run' }).click();
 
     await expect(modal).not.toBeVisible({ timeout: 5000 });
 
-    const jobsPanel = page.locator('text=Jobs').first();
+    const jobsPanel = page.locator('[data-testid="cockpit-panel"]');
     await expect(jobsPanel).toBeVisible({ timeout: 5000 });
   });
 });

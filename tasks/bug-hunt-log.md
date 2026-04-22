@@ -32,6 +32,24 @@ Canonical log maintained by `/loop` orchestrator. Sub-hunters (Sonnet) append fi
 
 _(populated by iterations — newest first)_
 
+### BH-039 · BH-011 image ingestion over-rejects valid SVG/ICO/WebP/AVIF/HEIC uploads with HTTP 400
+- **Status:** verified (discovered during e2e-fixture-repair, 2026-04-22)
+- **Severity:** major (regression) — breaks a previously-working feature (SVG upload, lightbox display) and the `mr resource from-url` CLI path against any `.ico`/non-Go-decodable source
+- **Workflow:** `POST /v1/resource` (multipart) and `/v1/resource/remote` (URL fetch) for image MIME types Go's stdlib cannot decode natively.
+- **Repro:**
+  - `curl -X POST http://localhost:8181/v1/resource -F 'resource=@e2e/test-assets/sample-image.svg' -F 'Name=x'`
+    → HTTP 400 `{"error":"following errors were encountered: uploaded file is not a valid image (failed to decode): image: unknown format"}`
+  - Same for `.ico`, `.webp`, `.avif`, `.heic` (any file `mimetype.DetectFile` labels `image/*` that isn't PNG/JPEG/GIF/TIFF).
+- **Root cause (code-verified):** `application_context/resource_upload_context.go:589-603` (BH-011 fix, commit 64b8005c) runs `image.Decode(tempFile)` on **every** `image/*` MIME and treats **any** decode error — including `image.ErrFormat` (= "image: unknown format") — as a 400. The BH-011 intent was to catch truncated/corrupt uploads, not to reject formats Go lacks a decoder for.
+- **Impact:**
+  - E2E test `tests/13-lightbox.spec.ts › Lightbox SVG Support` is skipped in `test/e2e-fixture-repair` pending this fix.
+  - Any deployment whose users have `.svg` (icon libraries, logos), `.webp` (modern web image), or `.heic` (iPhone camera) in their import pipeline now sees 400s where pre-c3 they'd get a resource row (with Width=0/Height=0).
+- **Fix (narrow, preserves BH-011):** distinguish `image.ErrFormat` from other decode errors. Either:
+  1. `if errors.Is(decErr, image.ErrFormat) { preWidth, preHeight = 0, 0 /* keep the resource, skip dims */ } else { return &InvalidImageError{Cause: decErr} }`
+  2. Or bound the check to the set of MIME types for which a decoder is registered via `image.RegisterFormat` (png/jpeg/gif/tiff for this codebase).
+  Option 1 is a 2-line change. Either option keeps the truncated-PNG regression guard in `image_ingestion_rejects_truncated_test.go` green.
+- **Side-finding source:** surfaced while repairing 41 e2e failures caused by a separate fixture bug (5 truncated PNGs on disk). The SVG lightbox test was the only e2e test that still failed after repairing fixtures — and it failed because the backend's image gate is too wide, not because the SVG fixture is bad.
+
 ### BH-038 · Notes-list page serializes `shareToken` into Alpine `x-data` — all share tokens readable from `/notes` HTML source
 - **Status:** verified (iter 13, orchestrator re-confirmed via curl of `/notes?shared=true` — three share tokens in the page body)
 - **Severity:** cosmetic today (private-network / no-auth per CLAUDE.md), **latent major** the moment any auth/multi-user layer is added

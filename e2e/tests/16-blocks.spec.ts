@@ -272,11 +272,11 @@ test.describe('Block Editor UI', () => {
     await page.locator('button:has-text("Edit Blocks")').click();
     await expect(page.locator('button:has-text("Done")')).toBeVisible();
 
-    // Click Add Block button
-    await page.locator('button:has-text("Add Block")').click();
+    // Click Add Block button (BH-027: picker is now role="listbox" with <li role="option">)
+    await page.locator('[data-testid="add-block-trigger"]').click();
 
-    // Select Text block type from dropdown
-    const textOption = page.locator('button:has-text("Text")').first();
+    // Select Text block type from listbox options
+    const textOption = page.locator('[role="option"][data-block-type="text"]');
     await expect(textOption).toBeVisible();
     await textOption.click();
 
@@ -293,10 +293,10 @@ test.describe('Block Editor UI', () => {
     await page.locator('button:has-text("Edit Blocks")').click();
 
     // Click Add Block button
-    await page.locator('button:has-text("Add Block")').click();
+    await page.locator('[data-testid="add-block-trigger"]').click();
 
-    // Select Heading block type
-    const headingOption = page.locator('button:has-text("Heading")').first();
+    // Select Heading block type from listbox options
+    const headingOption = page.locator('[role="option"][data-block-type="heading"]');
     await expect(headingOption).toBeVisible();
     await headingOption.click();
 
@@ -312,10 +312,10 @@ test.describe('Block Editor UI', () => {
     await page.locator('button:has-text("Edit Blocks")').click();
 
     // Click Add Block button
-    await page.locator('button:has-text("Add Block")').click();
+    await page.locator('[data-testid="add-block-trigger"]').click();
 
-    // Select Divider block type
-    const dividerOption = page.locator('button:has-text("Divider")').first();
+    // Select Divider block type from listbox options
+    const dividerOption = page.locator('[role="option"][data-block-type="divider"]');
     await expect(dividerOption).toBeVisible();
     await dividerOption.click();
 
@@ -358,8 +358,8 @@ test.describe('Block Editor UI', () => {
       await dialog.accept();
     });
 
-    // Click delete button on the last block
-    const deleteButtons = page.locator('button[title="Delete block"]');
+    // Click delete button on the last block (BH-027: aria-label instead of title)
+    const deleteButtons = page.locator('[data-block-control="delete"]');
     await deleteButtons.last().click();
 
     // Wait for block to be removed
@@ -377,9 +377,9 @@ test.describe('Block Editor UI', () => {
     // Enter edit mode
     await page.locator('button:has-text("Edit Blocks")').click();
 
-    // Find move up/down buttons
-    const moveUpButtons = page.locator('button[title="Move up"]');
-    const moveDownButtons = page.locator('button[title="Move down"]');
+    // Find move up/down buttons (BH-027: aria-label instead of title)
+    const moveUpButtons = page.locator('[data-block-control="move-up"]');
+    const moveDownButtons = page.locator('[data-block-control="move-down"]');
 
     // Move up and move down buttons should be visible
     await expect(moveUpButtons.first()).toBeVisible();

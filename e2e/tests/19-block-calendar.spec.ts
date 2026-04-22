@@ -348,12 +348,13 @@ test.describe('Calendar Block', () => {
     await expect(page.locator('button:has-text("Done")')).toBeVisible({ timeout: 5000 });
 
     // Wait for add block button to become visible (it's x-show="editMode")
-    const addBlockButton = page.locator('button:has-text("+ Add Block")');
+    // BH-027: the trigger now has data-testid and the picker is a listbox
+    const addBlockButton = page.locator('[data-testid="add-block-trigger"]');
     await expect(addBlockButton).toBeVisible({ timeout: 5000 });
     await addBlockButton.click();
 
-    // Select calendar from the dropdown (wait for it to be visible first)
-    const calendarOption = page.locator('button:has-text("Calendar")').first();
+    // Select calendar option from the listbox
+    const calendarOption = page.locator('[role="option"][data-block-type="calendar"]');
     await expect(calendarOption).toBeVisible({ timeout: 10000 });
     await calendarOption.click();
 
@@ -379,10 +380,10 @@ test.describe('Calendar Block', () => {
     await expect(page.locator('button:has-text("Done")')).toBeVisible({ timeout: 5000 });
 
     // Add a new calendar block first
-    const addBlockButton = page.locator('button:has-text("+ Add Block")');
+    const addBlockButton = page.locator('[data-testid="add-block-trigger"]');
     await expect(addBlockButton).toBeVisible({ timeout: 5000 });
     await addBlockButton.click();
-    const calendarOption = page.locator('button:has-text("Calendar")').first();
+    const calendarOption = page.locator('[role="option"][data-block-type="calendar"]');
     await expect(calendarOption).toBeVisible({ timeout: 10000 });
     await calendarOption.click();
 
@@ -426,10 +427,10 @@ test.describe('Calendar Block', () => {
     await expect(page.locator('button:has-text("Done")')).toBeVisible({ timeout: 5000 });
 
     // Add a calendar block
-    const addBlockButton = page.locator('button:has-text("+ Add Block")');
+    const addBlockButton = page.locator('[data-testid="add-block-trigger"]');
     await expect(addBlockButton).toBeVisible({ timeout: 5000 });
     await addBlockButton.click();
-    const calendarOption = page.locator('button:has-text("Calendar")').first();
+    const calendarOption = page.locator('[role="option"][data-block-type="calendar"]');
     await expect(calendarOption).toBeVisible({ timeout: 10000 });
     await calendarOption.click();
 
