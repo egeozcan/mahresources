@@ -15,7 +15,15 @@ import (
 	"github.com/flosch/pongo2/v4"
 )
 
-func CreateServer(appContext *application_context.MahresourcesContext, fs afero.Fs, altFs map[string]string) *http.Server {
+// BuildPrimaryRouter assembles the primary mux.Router with every route, the
+// 404 handler, and the file-system PathPrefix handlers registered. It is the
+// shared router-construction path used by both CreateServer (which wraps it
+// with security-headers middleware and embeds it in an http.Server) and the
+// OpenAPI drift test (which walks the routes directly to detect missing spec
+// entries). Exposing the router separately keeps the middleware wrapper
+// BH-032 introduced from hiding the routes behind a http.HandlerFunc the
+// drift test can't traverse.
+func BuildPrimaryRouter(appContext *application_context.MahresourcesContext, fs afero.Fs, altFs map[string]string) *mux.Router {
 	router := mux.NewRouter()
 
 	registerRoutes(router, appContext)
@@ -45,9 +53,22 @@ func CreateServer(appContext *application_context.MahresourcesContext, fs afero.
 		router.PathPrefix(pathKey).Handler(http.StripPrefix(pathKey, http.FileServer(afero.NewHttpFs(system).Dir("/"))))
 	}
 
+	return router
+}
+
+func CreateServer(appContext *application_context.MahresourcesContext, fs afero.Fs, altFs map[string]string) *http.Server {
+	router := BuildPrimaryRouter(appContext, fs, altFs)
+
+	// BH-032: wrap the primary router with the same security-headers middleware
+	// the share server uses. This is applied in a separate commit from the
+	// share-server change so a CSP regression here (e.g. a template that loads
+	// a script from a CDN outside 'self') can be rolled back independently
+	// without reverting the share-server hardening. CLAUDE.md documents the
+	// primary server as private-network only; these headers are defense-in-depth
+	// against accidental public exposure and partner-side iframe embedding.
 	return &http.Server{
 		Addr:         appContext.Config.BindAddress,
-		Handler:      router,
+		Handler:      withSecurityHeaders(router),
 		WriteTimeout: 45 * time.Minute,
 		ReadTimeout:  45 * time.Minute,
 	}

@@ -54,6 +54,39 @@ func TestShareServer_SecurityHeaders(t *testing.T) {
 	}
 }
 
+// TestPrimaryServer_SecurityHeaders verifies BH-032: the primary server applies
+// the same baseline security headers as the share server on every response.
+// This is defense-in-depth — CLAUDE.md documents the primary as private-network
+// only, but a misconfigured deployment (accidental public exposure, iframe
+// embedding by a partner, etc.) still benefits from clickjacking protection
+// and MIME-type sniffing being off.
+func TestPrimaryServer_SecurityHeaders(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	resp := tc.MakeRequest(http.MethodGet, "/dashboard", nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("GET /dashboard returned %d: %s", resp.Code, resp.Body.String())
+	}
+
+	required := map[string]string{
+		"X-Frame-Options":        "DENY",
+		"X-Content-Type-Options": "nosniff",
+		"Referrer-Policy":        "no-referrer",
+	}
+	for hdr, want := range required {
+		got := resp.Header().Get(hdr)
+		if got != want {
+			t.Errorf("%s: expected %q, got %q", hdr, want, got)
+		}
+	}
+	if resp.Header().Get("Content-Security-Policy") == "" {
+		t.Error("Content-Security-Policy header missing")
+	}
+	if resp.Header().Get("Strict-Transport-Security") == "" {
+		t.Error("Strict-Transport-Security header missing")
+	}
+}
+
 // TestShareServer_SecurityHeaders_ErrorPath verifies headers are applied even on
 // 404s so a forged/expired token doesn't bypass nosniff. BH-032.
 func TestShareServer_SecurityHeaders_ErrorPath(t *testing.T) {
