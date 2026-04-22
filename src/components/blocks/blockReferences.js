@@ -24,7 +24,14 @@ export function blockReferences(block, saveContentFn, getEditMode) {
 
       this.loadingMeta = true;
       try {
-        this.groupMeta = await fetchEntityMeta('group', this.groupIds);
+        const meta = await fetchEntityMeta('group', this.groupIds);
+        // Mark groups that were fetched but returned no data (deleted / 404) as unavailable
+        for (const id of this.groupIds) {
+          if (!meta[id]) {
+            meta[id] = { __unavailable: true };
+          }
+        }
+        this.groupMeta = meta;
       } catch (err) {
         console.warn('Failed to fetch group metadata:', err);
       } finally {
@@ -49,10 +56,12 @@ export function blockReferences(block, saveContentFn, getEditMode) {
 
     getGroupDisplay(id) {
       const meta = this.groupMeta[id];
-      if (!meta) return { name: `Group ${id}`, breadcrumb: '' };
+      if (!meta) return { name: `Group ${id}`, breadcrumb: '', unavailable: false };
+      if (meta.__unavailable) return { name: `Group #${id} unavailable`, breadcrumb: '', unavailable: true };
       return {
         name: meta.name || `Group ${id}`,
-        breadcrumb: meta.breadcrumb || ''
+        breadcrumb: meta.breadcrumb || '',
+        unavailable: false
       };
     },
 

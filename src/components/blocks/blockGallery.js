@@ -32,11 +32,16 @@ export function blockGallery(block, saveContentFn, getEditMode, noteId) {
           const chunk = toFetch.slice(i, i + chunkSize);
           const results = await Promise.all(
             chunk.map(id =>
-              fetch(`/v1/resource?id=${id}`).then(r => r.ok ? r.json() : null)
+              fetch(`/v1/resource?id=${id}`).then(r => {
+                if (r.status === 404) return { __unavailable: true, id };
+                return r.ok ? r.json() : null;
+              })
             )
           );
           results.forEach((res, j) => {
-            if (res) {
+            if (res && res.__unavailable) {
+              this.resourceMeta[chunk[j]] = { __unavailable: true, id: chunk[j] };
+            } else if (res) {
               this.resourceMeta[chunk[j]] = {
                 contentType: res.ContentType || '',
                 name: res.Name || '',
