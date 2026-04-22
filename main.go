@@ -366,6 +366,9 @@ func main() {
 	}
 	settings.SetAuditor(application_context.NewContextAuditor(context))
 	context.SetSettings(settings)
+	// Wire the live runtime-settings provider into the download manager so that
+	// timeout and export-retention overrides take effect per download start.
+	context.DownloadManager().SetSettings(context.Settings())
 
 	util.AddInitialData(db)
 

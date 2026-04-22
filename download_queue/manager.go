@@ -25,11 +25,11 @@ const (
 
 // ManagerConfig controls runtime parameters of the DownloadManager. Zero
 // values fall back to the package constants MaxConcurrentDownloads and
-// JobRetentionDuration.
+// JobRetentionDuration. Export retention is now part of DownloadSettings so
+// it can be updated at runtime without a restart.
 type ManagerConfig struct {
-	Concurrency     int           // max concurrent jobs across all sources
-	JobRetention    time.Duration // how long completed/failed jobs linger in memory
-	ExportRetention time.Duration // how long completed export tars live on disk
+	Concurrency  int           // max concurrent jobs across all sources
+	JobRetention time.Duration // how long completed/failed jobs linger in memory
 }
 
 // ResourceCreator is the interface needed to create resources
@@ -45,28 +45,58 @@ type TimeoutConfig struct {
 	OverallTimeout time.Duration
 }
 
-// DownloadManager manages background download jobs
+// DownloadSettings is the runtime configuration surface for the download
+// manager. Reads are called per download start so runtime changes take effect
+// without a restart. See application_context.RuntimeSettings.
+type DownloadSettings interface {
+	ConnectTimeout() time.Duration
+	IdleTimeout() time.Duration
+	OverallTimeout() time.Duration
+	ExportRetention() time.Duration
+}
+
+// NewStaticDownloadSettings returns a DownloadSettings whose values never
+// change. Used by tests and by the legacy NewDownloadManager constructor.
+func NewStaticDownloadSettings(tc TimeoutConfig, exportRetention time.Duration) DownloadSettings {
+	return staticDownloadSettings{tc: tc, er: exportRetention}
+}
+
+type staticDownloadSettings struct {
+	tc TimeoutConfig
+	er time.Duration
+}
+
+func (s staticDownloadSettings) ConnectTimeout() time.Duration  { return s.tc.ConnectTimeout }
+func (s staticDownloadSettings) IdleTimeout() time.Duration     { return s.tc.IdleTimeout }
+func (s staticDownloadSettings) OverallTimeout() time.Duration  { return s.tc.OverallTimeout }
+func (s staticDownloadSettings) ExportRetention() time.Duration { return s.er }
+
+// DownloadManager manages background download jobs.
+// Concurrency discipline: settings is written under mu.Lock (SetSettings,
+// constructor) and read under mu.RLock (currentSettings). All other mu-guarded
+// fields follow the same pattern.
 type DownloadManager struct {
-	mu              sync.RWMutex
-	jobs            map[string]*DownloadJob
-	jobOrder        []string // Maintains insertion order
-	resourceCtx     ResourceCreator
-	timeoutConfig   TimeoutConfig
-	semaphore       chan struct{}
-	subscribers     map[chan JobEvent]struct{}
-	subscribersMu   sync.RWMutex
-	cleanupTicker   *time.Ticker
-	done            chan struct{}
-	concurrency     int
-	jobRetention    time.Duration
-	exportRetention time.Duration
-	exportSweepFn   func() // called by cleanupOldJobs to sweep expired export tars from disk
+	mu            sync.RWMutex
+	jobs          map[string]*DownloadJob
+	jobOrder      []string // Maintains insertion order
+	resourceCtx   ResourceCreator
+	settings      DownloadSettings
+	semaphore     chan struct{}
+	subscribers   map[chan JobEvent]struct{}
+	subscribersMu sync.RWMutex
+	cleanupTicker *time.Ticker
+	done          chan struct{}
+	concurrency   int
+	jobRetention  time.Duration
+	exportSweepFn func() // called by cleanupOldJobs to sweep expired export tars from disk
 }
 
 // NewDownloadManagerWithConfig constructs a DownloadManager with the given
 // runtime config. Zero-value Concurrency and JobRetention fall back to the
 // package constants so existing call sites that don't care stay simple.
-func NewDownloadManagerWithConfig(resourceCtx ResourceCreator, timeoutConfig TimeoutConfig, cfg ManagerConfig) *DownloadManager {
+// The settings provider is called per download start so runtime changes take
+// effect without a restart.
+func NewDownloadManagerWithConfig(resourceCtx ResourceCreator, settings DownloadSettings, cfg ManagerConfig) *DownloadManager {
 	if cfg.Concurrency <= 0 {
 		cfg.Concurrency = MaxConcurrentDownloads
 	}
@@ -74,16 +104,15 @@ func NewDownloadManagerWithConfig(resourceCtx ResourceCreator, timeoutConfig Tim
 		cfg.JobRetention = JobRetentionDuration
 	}
 	dm := &DownloadManager{
-		jobs:            make(map[string]*DownloadJob),
-		jobOrder:        make([]string, 0),
-		resourceCtx:     resourceCtx,
-		timeoutConfig:   timeoutConfig,
-		semaphore:       make(chan struct{}, cfg.Concurrency),
-		subscribers:     make(map[chan JobEvent]struct{}),
-		done:            make(chan struct{}),
-		concurrency:     cfg.Concurrency,
-		jobRetention:    cfg.JobRetention,
-		exportRetention: cfg.ExportRetention,
+		jobs:         make(map[string]*DownloadJob),
+		jobOrder:     make([]string, 0),
+		resourceCtx:  resourceCtx,
+		settings:     settings,
+		semaphore:    make(chan struct{}, cfg.Concurrency),
+		subscribers:  make(map[chan JobEvent]struct{}),
+		done:         make(chan struct{}),
+		concurrency:  cfg.Concurrency,
+		jobRetention: cfg.JobRetention,
 	}
 
 	// Start cleanup goroutine
@@ -95,14 +124,34 @@ func NewDownloadManagerWithConfig(resourceCtx ResourceCreator, timeoutConfig Tim
 
 // NewDownloadManager is the legacy constructor. Kept as a thin wrapper so
 // existing callers that don't care about concurrency/retention tuning still
-// work. Delegates to NewDownloadManagerWithConfig.
-func NewDownloadManager(resourceCtx ResourceCreator, timeoutConfig TimeoutConfig) *DownloadManager {
-	return NewDownloadManagerWithConfig(resourceCtx, timeoutConfig, ManagerConfig{})
+// work. Delegates to NewDownloadManagerWithConfig with a static settings provider.
+func NewDownloadManager(resourceCtx ResourceCreator, tc TimeoutConfig) *DownloadManager {
+	return NewDownloadManagerWithConfig(resourceCtx, NewStaticDownloadSettings(tc, 0), ManagerConfig{})
+}
+
+// currentSettings returns the active DownloadSettings provider under a
+// read-lock. Callers should cache the result for the duration of a single
+// download start to avoid repeated lock acquisitions on the hot path.
+func (m *DownloadManager) currentSettings() DownloadSettings {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.settings
+}
+
+// SetSettings replaces the DownloadSettings provider. Used by main.go to wire
+// the live runtime-settings service after NewMahresourcesContext has already
+// initialized the manager with a static provider.
+func (m *DownloadManager) SetSettings(settings DownloadSettings) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.settings = settings
 }
 
 // ExportRetention returns how long completed group-export tars should
 // linger on disk before the sweep deletes them.
-func (m *DownloadManager) ExportRetention() time.Duration { return m.exportRetention }
+func (m *DownloadManager) ExportRetention() time.Duration {
+	return m.currentSettings().ExportRetention()
+}
 
 // SetExportSweepFn registers a function that cleanupOldJobs will call
 // periodically to sweep expired export tars from disk. Called by
@@ -288,14 +337,17 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
 }
 
-// createHTTPClient creates an HTTP client with context support
-func (dm *DownloadManager) createHTTPClient() *http.Client {
+// createHTTPClient creates an HTTP client with context support.
+// settings is snapshotted by the caller (downloadWithProgress) so timeout
+// values reflect the live runtime configuration at the moment the download
+// starts.
+func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
 	return &http.Client{
-		Timeout: dm.timeoutConfig.OverallTimeout,
+		Timeout: s.OverallTimeout(),
 		Transport: &http.Transport{
-			DialContext:           (&net.Dialer{Timeout: dm.timeoutConfig.ConnectTimeout}).DialContext,
-			TLSHandshakeTimeout:   dm.timeoutConfig.ConnectTimeout / 2,
-			ResponseHeaderTimeout: dm.timeoutConfig.ConnectTimeout,
+			DialContext:           (&net.Dialer{Timeout: s.ConnectTimeout()}).DialContext,
+			TLSHandshakeTimeout:   s.ConnectTimeout() / 2,
+			ResponseHeaderTimeout: s.ConnectTimeout(),
 			IdleConnTimeout:       90 * time.Second,
 		},
 	}
@@ -303,7 +355,10 @@ func (dm *DownloadManager) createHTTPClient() *http.Client {
 
 // downloadWithProgress performs the HTTP download with progress tracking
 func (dm *DownloadManager) downloadWithProgress(job *DownloadJob) (*models.Resource, error) {
-	httpClient := dm.createHTTPClient()
+	// Snapshot settings once so all timeout values are consistent for this
+	// download and the read-lock is held only briefly.
+	s := dm.currentSettings()
+	httpClient := dm.createHTTPClient(s)
 
 	req, err := http.NewRequestWithContext(job.GetContext(), "GET", job.URL, nil)
 	if err != nil {
@@ -326,7 +381,7 @@ func (dm *DownloadManager) downloadWithProgress(job *DownloadJob) (*models.Resou
 	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
 
 	// Wrap with timeout reader for idle detection and cancellation
-	timeoutBody := NewTimeoutReaderWithContext(resp.Body, dm.timeoutConfig.IdleTimeout, job.GetContext())
+	timeoutBody := NewTimeoutReaderWithContext(resp.Body, s.IdleTimeout(), job.GetContext())
 	defer timeoutBody.Close()
 
 	// Throttle progress updates to avoid flooding SSE clients
@@ -583,6 +638,10 @@ func (dm *DownloadManager) cleanupLoop() {
 // and paused jobs older than PausedJobRetentionDuration. It also calls
 // exportSweepFn (if set) to purge expired export tars from disk.
 func (dm *DownloadManager) cleanupOldJobs() {
+	// Read the export retention outside the main lock to avoid a lock-order
+	// concern (currentSettings takes mu.RLock, cleanupOldJobs takes mu.Lock).
+	exportRetention := dm.currentSettings().ExportRetention()
+
 	dm.mu.Lock()
 
 	baseRetention := dm.jobRetention
@@ -603,8 +662,8 @@ func (dm *DownloadManager) cleanupOldJobs() {
 		// tar, so they also fall back to jobRetention.
 		if completedAt := job.GetCompletedAt(); completedAt != nil {
 			retention := baseRetention
-			if job.Source == JobSourceGroupExport && job.Status == JobStatusCompleted && dm.exportRetention > 0 {
-				retention = dm.exportRetention
+			if job.Source == JobSourceGroupExport && job.Status == JobStatusCompleted && exportRetention > 0 {
+				retention = exportRetention
 			}
 			if completedAt.Before(time.Now().Add(-retention)) {
 				shouldRemove = true

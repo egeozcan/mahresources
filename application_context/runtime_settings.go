@@ -424,6 +424,14 @@ func (s *RuntimeSettings) RemoteOverallTimeout() time.Duration {
 	v, _ := s.getRaw(KeyRemoteOverallTimeout)
 	return v.(time.Duration)
 }
+
+// DownloadSettings adapter methods — satisfy download_queue.DownloadSettings
+// without leaking the download_queue package into the service layer.
+func (s *RuntimeSettings) ConnectTimeout() time.Duration  { return s.RemoteConnectTimeout() }
+func (s *RuntimeSettings) IdleTimeout() time.Duration     { return s.RemoteIdleTimeout() }
+func (s *RuntimeSettings) OverallTimeout() time.Duration  { return s.RemoteOverallTimeout() }
+
+// ExportRetention already exists on RuntimeSettings (see above).
 func (s *RuntimeSettings) SharePublicURL() string {
 	v, _ := s.getRaw(KeySharePublicURL)
 	return v.(string)

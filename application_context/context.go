@@ -292,15 +292,21 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		DefaultResourceCategoryID: 1,
 	}
 
-	// Initialize download manager with timeout config and concurrency/retention config
-	ctx.downloadManager = download_queue.NewDownloadManagerWithConfig(ctx, download_queue.TimeoutConfig{
-		ConnectTimeout: config.RemoteResourceConnectTimeout,
-		IdleTimeout:    config.RemoteResourceIdleTimeout,
-		OverallTimeout: config.RemoteResourceOverallTimeout,
-	}, download_queue.ManagerConfig{
-		Concurrency:     config.MaxJobConcurrency,
-		ExportRetention: config.ExportRetention,
-	})
+	// Initialize download manager. A static settings provider seeded from the
+	// boot config is used here; main.go swaps it for the live RuntimeSettings
+	// provider via SetSettings after wiring is complete so that runtime
+	// overrides take effect per download.
+	ctx.downloadManager = download_queue.NewDownloadManagerWithConfig(
+		ctx,
+		download_queue.NewStaticDownloadSettings(download_queue.TimeoutConfig{
+			ConnectTimeout: config.RemoteResourceConnectTimeout,
+			IdleTimeout:    config.RemoteResourceIdleTimeout,
+			OverallTimeout: config.RemoteResourceOverallTimeout,
+		}, config.ExportRetention),
+		download_queue.ManagerConfig{
+			Concurrency: config.MaxJobConcurrency,
+		},
+	)
 
 	// Sweep orphaned export tars at startup. `filesystem` is already rooted at
 	// FileSavePath via BasePathFs in disk mode, so the path stays root-relative —

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"mahresources/models/query_models"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ func createTestManager() *DownloadManager {
 		jobOrder:    make([]string, 0),
 		subscribers: make(map[chan JobEvent]struct{}),
 		semaphore:   make(chan struct{}, MaxConcurrentDownloads),
+		settings:    NewStaticDownloadSettings(TimeoutConfig{}, 0),
 	}
 }
 
@@ -1006,9 +1008,8 @@ func TestGenericJob_RetryDispatchesToGenericPath(t *testing.T) {
 // group-export jobs are retained in memory for exportRetention, not the
 // shorter jobRetention that applies to regular download/plugin jobs.
 func TestCleanupOldJobs_ExportJobUsesExportRetention(t *testing.T) {
-	dm := NewDownloadManagerWithConfig(nil, TimeoutConfig{}, ManagerConfig{
-		JobRetention:    1 * time.Hour,
-		ExportRetention: 24 * time.Hour,
+	dm := NewDownloadManagerWithConfig(nil, NewStaticDownloadSettings(TimeoutConfig{}, 24*time.Hour), ManagerConfig{
+		JobRetention: 1 * time.Hour,
 	})
 
 	// Manually insert a completed export job that finished 2 hours ago.
@@ -1060,9 +1061,8 @@ func TestCleanupOldJobs_ExportJobUsesExportRetention(t *testing.T) {
 // TestCleanupOldJobs_ExportJobEvictedAfterExportRetention verifies that
 // completed export jobs are still evicted once exportRetention has elapsed.
 func TestCleanupOldJobs_ExportJobEvictedAfterExportRetention(t *testing.T) {
-	dm := NewDownloadManagerWithConfig(nil, TimeoutConfig{}, ManagerConfig{
-		JobRetention:    1 * time.Hour,
-		ExportRetention: 24 * time.Hour,
+	dm := NewDownloadManagerWithConfig(nil, NewStaticDownloadSettings(TimeoutConfig{}, 24*time.Hour), ManagerConfig{
+		JobRetention: 1 * time.Hour,
 	})
 
 	// Insert a completed export job that finished 25 hours ago — past export retention.
@@ -1116,9 +1116,9 @@ func TestDownloadManager_PeriodicSweepRemovesExpiredTars(t *testing.T) {
 
 	// Create a manager with an exportSweepFn wired in.
 	dm := createTestManager()
-	dm.exportRetention = 24 * time.Hour
+	dm.settings = NewStaticDownloadSettings(TimeoutConfig{}, 24*time.Hour)
 	dm.SetExportSweepFn(func() {
-		SweepOrphanedExports(fs, "_exports", dm.exportRetention) //nolint:errcheck
+		SweepOrphanedExports(fs, "_exports", dm.ExportRetention()) //nolint:errcheck
 	})
 
 	// Trigger cleanup manually (simulates the periodic loop firing).
@@ -1131,5 +1131,49 @@ func TestDownloadManager_PeriodicSweepRemovesExpiredTars(t *testing.T) {
 	// The fresh tar must remain.
 	if exists, _ := afero.Exists(fs, "_exports/fresh.tar"); !exists {
 		t.Errorf("fresh tar was removed by cleanupOldJobs")
+	}
+}
+
+// mutableSettings is a test-only DownloadSettings whose value can be changed
+// at runtime to verify that DownloadManager reads settings per-use.
+type mutableSettings struct {
+	mu sync.RWMutex
+	v  time.Duration
+}
+
+func (m *mutableSettings) ConnectTimeout() time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.v
+}
+func (m *mutableSettings) IdleTimeout() time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.v
+}
+func (m *mutableSettings) OverallTimeout() time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.v
+}
+func (m *mutableSettings) ExportRetention() time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.v
+}
+
+// TestExportRetention_RuntimeOverride verifies that DownloadManager.ExportRetention
+// reflects live changes to the DownloadSettings provider without a restart.
+func TestExportRetention_RuntimeOverride(t *testing.T) {
+	ms := &mutableSettings{v: 1 * time.Hour}
+	dm := NewDownloadManagerWithConfig(nil, ms, ManagerConfig{})
+	if dm.ExportRetention() != 1*time.Hour {
+		t.Fatalf("initial: got %v, want 1h", dm.ExportRetention())
+	}
+	ms.mu.Lock()
+	ms.v = 2 * time.Hour
+	ms.mu.Unlock()
+	if dm.ExportRetention() != 2*time.Hour {
+		t.Fatalf("after override: got %v, want 2h", dm.ExportRetention())
 	}
 }
