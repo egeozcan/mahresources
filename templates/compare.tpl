@@ -130,7 +130,7 @@
         <summary class="cursor-pointer text-sm font-medium text-stone-600 mb-3 select-none font-mono">Metadata</summary>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <!-- Content Type -->
-            <div class="compare-meta-card{% if not comparison.SameType %} compare-meta-card--diff{% endif %}">
+            <div class="compare-meta-card{% if not comparison.SameType %} compare-meta-card--diff{% endif %}"{% if not comparison.SameType %} aria-label="Changed: Content Type"{% endif %}>
                 <div class="compare-meta-card-label">Content Type</div>
                 <div class="compare-meta-card-value">
                     {% if comparison.SameType %}
@@ -141,7 +141,7 @@
                 </div>
             </div>
             <!-- File Size -->
-            <div class="compare-meta-card{% if comparison.SizeDelta != 0 %} compare-meta-card--diff{% endif %}">
+            <div class="compare-meta-card{% if comparison.SizeDelta != 0 %} compare-meta-card--diff{% endif %}"{% if comparison.SizeDelta != 0 %} aria-label="Changed: File Size"{% endif %}>
                 <div class="compare-meta-card-label">File Size</div>
                 <div class="compare-meta-card-value">
                     {% if comparison.SizeDelta == 0 %}
@@ -155,7 +155,7 @@
                 </div>
             </div>
             <!-- Dimensions -->
-            <div class="compare-meta-card{% if comparison.DimensionsDiff %} compare-meta-card--diff{% endif %}">
+            <div class="compare-meta-card{% if comparison.DimensionsDiff %} compare-meta-card--diff{% endif %}"{% if comparison.DimensionsDiff %} aria-label="Changed: Dimensions"{% endif %}>
                 <div class="compare-meta-card-label">Dimensions</div>
                 <div class="compare-meta-card-value">
                     {% if comparison.DimensionsDiff %}
@@ -166,7 +166,7 @@
                 </div>
             </div>
             <!-- Hash -->
-            <div class="compare-meta-card{% if not comparison.SameHash %} compare-meta-card--diff{% endif %}">
+            <div class="compare-meta-card{% if not comparison.SameHash %} compare-meta-card--diff{% endif %}"{% if not comparison.SameHash %} aria-label="Changed: Hash"{% endif %}>
                 <div class="compare-meta-card-label">Hash</div>
                 <div class="compare-meta-card-value">
                     {% if comparison.SameHash %}
@@ -189,7 +189,7 @@
             </div>
             <!-- Resource (cross-resource only) -->
             {% if crossResource %}
-            <div class="compare-meta-card compare-meta-card--diff">
+            <div class="compare-meta-card compare-meta-card--diff" aria-label="Changed: Resource">
                 <div class="compare-meta-card-label">Resource</div>
                 <div class="compare-meta-card-value">
                     <a href="/resource?id={{ resource1.ID }}" class="text-teal-700 hover:underline">{{ resource1.Name }}</a>
@@ -200,7 +200,7 @@
             {% endif %}
             <!-- Comment (only if either has one) -->
             {% if comparison.Version1.Comment or comparison.Version2.Comment %}
-            <div class="compare-meta-card sm:col-span-2 lg:col-span-3{% if comparison.Version1.Comment != comparison.Version2.Comment %} compare-meta-card--diff{% endif %}">
+            <div class="compare-meta-card sm:col-span-2 lg:col-span-3{% if comparison.Version1.Comment != comparison.Version2.Comment %} compare-meta-card--diff{% endif %}"{% if comparison.Version1.Comment != comparison.Version2.Comment %} aria-label="Changed: Comment"{% endif %}>
                 <div class="compare-meta-card-label">Comment</div>
                 <div class="compare-meta-card-value italic text-stone-600">
                     {% if comparison.Version1.Comment == comparison.Version2.Comment %}

@@ -100,6 +100,29 @@ export function textDiff({ leftUrl = null, rightUrl = null, leftText = null, rig
       }
 
       this.stats = { added, removed };
+    },
+
+    /**
+     * BH-030: WAI-ARIA radiogroup keyboard pattern.
+     * See imageCompare.onRadiogroupKeydown — same contract.
+     */
+    onRadiogroupKeydown(e, stateKey, values) {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft' && e.key !== 'Home' && e.key !== 'End') {
+        return;
+      }
+      e.preventDefault();
+      const currentIdx = values.indexOf(this[stateKey]);
+      let nextIdx = currentIdx;
+      if (e.key === 'ArrowRight') nextIdx = (currentIdx + 1) % values.length;
+      else if (e.key === 'ArrowLeft') nextIdx = (currentIdx - 1 + values.length) % values.length;
+      else if (e.key === 'Home') nextIdx = 0;
+      else if (e.key === 'End') nextIdx = values.length - 1;
+      this[stateKey] = values[nextIdx];
+      const group = e.currentTarget;
+      this.$nextTick(() => {
+        const checked = group.querySelector('[role="radio"][aria-checked="true"]');
+        if (checked instanceof HTMLElement) checked.focus();
+      });
     }
   };
 }
