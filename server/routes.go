@@ -112,6 +112,16 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		ctx["_appContext"] = appContext
 		ctx["_requestContext"] = request.Context()
 
+		// BH-036: expose the export-retention window to every template context so
+		// the admin-export helper text and the per-job expiry label in the
+		// downloadCockpit can render consistent values without a bespoke provider
+		// on each route. The ms value is consumed by downloadCockpit.js; the
+		// human-readable string is rendered directly in adminExport.tpl.
+		if appContext.Config != nil {
+			ctx["exportRetention"] = appContext.Config.ExportRetention.String()
+			ctx["exportRetentionMs"] = appContext.Config.ExportRetention.Milliseconds()
+		}
+
 		if pm == nil {
 			if strings.HasSuffix(request.URL.Path, ".json") ||
 				strings.Contains(request.Header.Get("Accept"), constants.JSON) {

@@ -103,6 +103,10 @@
       Start export
     </button>
 
+    <p class="mt-2 text-xs text-stone-600" data-testid="export-retention-helper">
+      Completed exports are available for download for <span class="font-mono">{{ exportRetention }}</span> after completion, then removed automatically. Start a new export if the link has expired.
+    </p>
+
     <div x-show="job" class="mt-3 space-y-2" data-testid="export-progress-panel">
       <div class="text-sm text-stone-600"><span class="font-semibold">Status:</span> <span x-text="job?.status || ''"></span></div>
       <div class="text-sm text-stone-600"><span class="font-semibold">Phase:</span> <span x-text="job?.phase || 'queued'"></span></div>
@@ -119,7 +123,7 @@
         <span x-show="(job?.totalSize || 0) > 0">
           / <span x-text="humanBytes(job?.totalSize)"></span> estimated
         </span>
-        <span x-show="(job?.progressPercent || -1) >= 0"> (<span x-text="Math.round(job?.progressPercent || 0)"></span>%)</span>
+        <span x-show="(job?.progressPercent || -1) >= 0"> (<span x-text="Math.min(100, Math.round(job?.progressPercent || 0))"></span>%)</span>
       </div>
 
       <progress :value="job?.progress || 0" :max="(job?.totalSize || 0) > 0 ? job.totalSize : 100" class="w-full"></progress>

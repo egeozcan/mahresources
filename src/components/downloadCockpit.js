@@ -14,6 +14,8 @@ export function downloadCockpit() {
         _maxReconnectAttempts: 10,
         _maxReconnectDelay: 60000,  // Max 60 seconds
         speedTracking: {},  // Track progress for speed calculation: { jobId: { lastProgress, lastTime, speed } }
+        // BH-036: retention window (ms). Read from the meta tag emitted by base.tpl.
+        exportRetentionMs: 0,
 
         statusIcons: {
             pending: '\u23F3',      // Hourglass
@@ -40,6 +42,12 @@ export function downloadCockpit() {
         init() {
             this._liveRegion = createLiveRegion();
             this._lastTrigger = null;
+
+            // BH-036: pick up the retention window from the meta tag emitted by base.tpl.
+            const metaEl = document.querySelector('meta[name="x-export-retention-ms"]');
+            if (metaEl) {
+                this.exportRetentionMs = parseInt(metaEl.getAttribute('content'), 10) || 0;
+            }
 
             // Listen for jobs-panel-open event (e.g., from pluginActionModal)
             window.addEventListener('jobs-panel-open', () => { this.isOpen = true; });
@@ -281,7 +289,9 @@ export function downloadCockpit() {
             if (job.totalSize > 0) {
                 const downloaded = this.formatBytes(job.progress);
                 const total = this.formatBytes(job.totalSize);
-                const percent = job.progressPercent.toFixed(1);
+                // BH-015: cap label at 100 — totalSize estimate sometimes understates
+                // tar overhead so raw progressPercent can overshoot.
+                const percent = Math.min(100, job.progressPercent).toFixed(1);
                 return `${downloaded} / ${total} (${percent}%)`;
             } else if (job.progress > 0) {
                 return `${this.formatBytes(job.progress)} downloaded`;
@@ -306,6 +316,20 @@ export function downloadCockpit() {
             const speed = this.getSpeed(job);
             if (speed <= 0) return '';
             return this.formatBytes(speed) + '/s';
+        },
+
+        // BH-036: human-readable relative time for a future timestamp (ms epoch).
+        // Used to render the "Expires in X" label on completed group-export rows.
+        formatRelativeTime(epochMs) {
+            const now = Date.now();
+            const diff = epochMs - now;
+            if (diff <= 0) return 'now (tar may already be gone)';
+            const mins = Math.floor(diff / 60_000);
+            if (mins < 60) return `in ${mins} min`;
+            const hours = Math.floor(mins / 60);
+            if (hours < 24) return `in ${hours} h ${mins % 60} min`;
+            const days = Math.floor(hours / 24);
+            return `in ${days} day${days !== 1 ? 's' : ''}`;
         },
 
         getProgressPercent(job) {
