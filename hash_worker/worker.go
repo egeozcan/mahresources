@@ -97,7 +97,7 @@ func (w *HashWorker) Start() {
 	}
 
 	log.Printf("Starting hash worker: %d workers, batch size %d, poll interval %v, threshold %d",
-		w.config.WorkerCount, w.config.BatchSize, w.config.PollInterval, w.config.SimilarityThreshold)
+		w.config.WorkerCount, w.config.BatchSize, w.config.PollInterval, w.config.SimilarityThresholdFn())
 
 	w.wg.Add(1)
 	go w.runBatchProcessor()
@@ -477,7 +477,7 @@ func (w *HashWorker) findAndStoreSimilarities(resourceID uint, dHash, aHash uint
 		}
 
 		if !AreSimilar(dHash, aHash, otherEntry.DHash, otherEntry.AHash,
-			uint64(w.config.SimilarityThreshold), w.config.AHashThreshold) {
+			uint64(w.config.SimilarityThresholdFn()), w.config.AHashThresholdFn()) {
 			continue
 		}
 

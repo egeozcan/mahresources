@@ -464,13 +464,13 @@ func main() {
 
 	// Start hash worker for background perceptual hash calculation
 	hashWorkerConfig := hash_worker.Config{
-		WorkerCount:         *hashWorkerCount,
-		BatchSize:           *hashBatchSize,
-		PollInterval:        *hashPollInterval,
-		SimilarityThreshold: *hashSimilarityThreshold,
-		AHashThreshold:      *hashAHashThreshold,
-		Disabled:            *hashWorkerDisabled,
-		CacheSize:           *hashCacheSize,
+		WorkerCount:           *hashWorkerCount,
+		BatchSize:             *hashBatchSize,
+		PollInterval:          *hashPollInterval,
+		SimilarityThresholdFn: context.Settings().HashSimilarityThreshold,
+		AHashThresholdFn:      context.Settings().HashAHashThreshold,
+		Disabled:              *hashWorkerDisabled,
+		CacheSize:             *hashCacheSize,
 	}
 
 	// Build alt filesystems map for hash worker
