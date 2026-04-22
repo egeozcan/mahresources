@@ -380,6 +380,18 @@
                                 <dt class="text-stone-500">Similar pairs found</dt>
                                 <dd class="text-stone-900" x-text="formatNumber(expensiveStats.similarity.similarPairsFound)"></dd>
                             </div>
+                            {# BH-037: drill-down for DHash=0 (solid-colour) resources. #}
+                            <template x-if="expensiveStats.similarity.dhashZeroCount > 0">
+                                <div class="flex items-center justify-between border-t border-stone-100 pt-2 mt-1">
+                                    <dt class="text-stone-500">Zero DHash (solid-colour)</dt>
+                                    <dd>
+                                        <a :href="'/resources?ShowDhashZero=1'"
+                                           class="text-amber-700 hover:underline font-semibold"
+                                           data-testid="admin-dhash-zero-drilldown"
+                                           x-text="formatNumber(expensiveStats.similarity.dhashZeroCount) + ' →'"></a>
+                                    </dd>
+                                </div>
+                            </template>
                         </dl>
                     </template>
                 </div>

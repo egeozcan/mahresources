@@ -445,8 +445,12 @@ type OrphanStats struct {
 
 // SimilarityInfo holds counts related to image hashing and similarity.
 type SimilarityInfo struct {
-	TotalHashes      int64 `json:"totalHashes"`
+	TotalHashes       int64 `json:"totalHashes"`
 	SimilarPairsFound int64 `json:"similarPairsFound"`
+	// BH-037: Resources whose perceptual DHash is zero — usually BH-018
+	// uniform/solid-colour false positives. The admin overview links to a
+	// drill-down at /resources?ShowDhashZero=1.
+	DhashZeroCount int64 `json:"dhashZeroCount"`
 }
 
 // LogStatsInfo holds log entry counts by level and recent error count.
@@ -585,7 +589,7 @@ func (ctx *MahresourcesContext) GetExpensiveStats() (*ExpensiveStats, error) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		var hashed, pairs int64
+		var hashed, pairs, dhashZero int64
 		if err := ctx.db.Model(&models.ImageHash{}).Count(&hashed).Error; err != nil {
 			setErr(err)
 			return
@@ -594,9 +598,19 @@ func (ctx *MahresourcesContext) GetExpensiveStats() (*ExpensiveStats, error) {
 			setErr(err)
 			return
 		}
+		// BH-037: count resources whose perceptual DHash is zero (BH-018-style
+		// solid-colour false positives). Matches both the migrated int column
+		// and the legacy hex string so it works across DB ages.
+		if err := ctx.db.Model(&models.ImageHash{}).
+			Where("d_hash_int = 0 OR d_hash = ?", "0000000000000000").
+			Count(&dhashZero).Error; err != nil {
+			setErr(err)
+			return
+		}
 		mu.Lock()
 		stats.Similarity.TotalHashes = hashed
 		stats.Similarity.SimilarPairsFound = pairs
+		stats.Similarity.DhashZeroCount = dhashZero
 		mu.Unlock()
 	}()
 

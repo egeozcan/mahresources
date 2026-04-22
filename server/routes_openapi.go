@@ -55,6 +55,9 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 	// Search
 	registerSearchRoutes(registry)
 
+	// MRQL (Mahresources Query Language)
+	registerMRQLRoutes(registry)
+
 	// Logs
 	registerLogRoutes(registry)
 
@@ -530,6 +533,8 @@ func registerNoteRoutes(r *openapi.Registry) {
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/note/editDescription", "editNoteDescription", "Edit a note's description", "notes").
 		WithIDParam("id", true))
 
+	r.Register(registerMetaEditRoute("note", "notes"))
+
 	// Bulk note operations
 	bulkQueryType := reflect.TypeOf(query_models.BulkQuery{})
 	bulkEditQueryType := reflect.TypeOf(query_models.BulkEditQuery{})
@@ -801,6 +806,8 @@ func registerGroupRoutes(r *openapi.Registry) {
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/group/editDescription", "editGroupDescription", "Edit a group's description", "groups").
 		WithIDParam("id", true))
+
+	r.Register(registerMetaEditRoute("group", "groups"))
 }
 
 func registerRelationRoutes(r *openapi.Registry) {
@@ -1136,6 +1143,8 @@ func registerResourceRoutes(r *openapi.Registry) {
 
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/resource/editDescription", "editResourceDescription", "Edit a resource's description", "resources").
 		WithIDParam("id", true))
+
+	r.Register(registerMetaEditRoute("resource", "resources"))
 }
 
 func registerTagRoutes(r *openapi.Registry) {
@@ -1395,6 +1404,191 @@ func registerSearchRoutes(r *openapi.Registry) {
 		ResponseType:         searchResponseType,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 		Paginated:            true,
+	})
+}
+
+// registerMetaEditRoute returns a RouteInfo describing the /v1/{entity}/editMeta
+// endpoint. This handler is shared by notes, groups, and resources — each takes
+// an `id` query param and a form body with `path` (JSON pointer-ish) and
+// `value` (raw JSON).
+//
+// BH-022: registered for notes, groups, and resources. The handler itself lives
+// at server/api_handlers/meta_edit_handler.go and is wired up in server/routes.go.
+func registerMetaEditRoute(entity, tag string) openapi.RouteInfo {
+	return openapi.RouteInfo{
+		Method:       http.MethodPost,
+		Path:         "/v1/" + entity + "/editMeta",
+		OperationID:  "edit" + capitalizeFirst(entity) + "Meta",
+		Summary:      "Edit a " + entity + "'s meta JSON at a given path",
+		Description:  "Performs a deep-merge-by-path update of the entity's Meta JSON column. `path` is a dotted key path; `value` is raw JSON that replaces the node at that path.",
+		Tags:         []string{tag},
+		IDQueryParam: "id",
+		IDRequired:   true,
+		RequestContentTypes: []openapi.ContentType{
+			openapi.ContentTypeForm,
+			openapi.ContentTypeJSON,
+		},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "path", Type: "string", Required: true, Description: "Dotted path inside Meta to update (also accepted as a form/JSON field)"},
+			{Name: "value", Type: "string", Required: true, Description: "Raw JSON value to write at the path (also accepted as a form/JSON field)"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	}
+}
+
+// capitalizeFirst uppercases the first byte of a non-empty ASCII string.
+func capitalizeFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	if s[0] >= 'a' && s[0] <= 'z' {
+		return string(s[0]-'a'+'A') + s[1:]
+	}
+	return s
+}
+
+// registerMRQLRoutes documents the /v1/mrql subsystem. The handlers live in
+// server/api_handlers/mrql_api_handlers.go. BH-022: registered 9 MRQL routes
+// that were previously invisible to the OpenAPI spec.
+func registerMRQLRoutes(r *openapi.Registry) {
+	// Request body shapes are defined inline — the real request types in
+	// mrql_api_handlers.go are package-private. We describe them as JSON
+	// objects using ExtraQueryParams-style documentation in the summary.
+	mrqlTag := []string{"mrql"}
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/mrql",
+		OperationID: "executeMRQL",
+		Summary:     "Execute an MRQL query",
+		Description: `Parses, validates, translates, and executes a Mahresources Query Language (MRQL) query.
+
+Request body fields:
+  - query   (string, required) — the MRQL source
+  - limit   (integer)          — items per bucket (grouped) or total items
+  - buckets (integer)          — buckets per page (grouped mode only)
+  - page    (integer)          — 1-based page number
+  - offset  (integer)          — explicit cursor offset (takes precedence over page)
+
+Query parameter:
+  - render (0 or 1) — when 1, populates each result row's RenderedHTML using
+    the entity's CustomMRQLResult template.`,
+		Tags:                 mrqlTag,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "render", Type: "integer", Description: "Set to 1 to render CustomMRQLResult templates"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/mrql/validate",
+		OperationID: "validateMRQL",
+		Summary:     "Validate MRQL syntax",
+		Description: `Parses and validates an MRQL query without executing it.
+
+Request body fields:
+  - query (string, required)
+
+Response: {"valid": bool, "errors": [...]}`,
+		Tags:                 mrqlTag,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/mrql/complete",
+		OperationID: "completeMRQL",
+		Summary:     "Get MRQL autocomplete suggestions",
+		Description: `Returns completion suggestions for the MRQL token at the given cursor offset.
+
+Request body fields:
+  - query  (string, required)
+  - cursor (integer)          — byte offset in the query`,
+		Tags:                 mrqlTag,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	// Saved MRQL queries
+	savedMRQLType := reflect.TypeOf(models.SavedMRQLQuery{})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/mrql/saved",
+		OperationID: "listSavedMRQLQueries",
+		Summary:     "List or fetch saved MRQL queries",
+		Description: "Without `id`: paginated list of saved queries (pass `all=1` for the full set). With `id`: returns a single saved query.",
+		Tags:        mrqlTag,
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "id", Type: "integer", Description: "Fetch a single saved query by ID"},
+			{Name: "all", Type: "integer", Description: "Set to 1 to disable pagination"},
+		},
+		ResponseType:         reflect.SliceOf(savedMRQLType),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Paginated:            true,
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/mrql/saved",
+		OperationID: "createSavedMRQLQuery",
+		Summary:     "Create a saved MRQL query",
+		Description: `Request body fields:
+  - name        (string, required)
+  - query       (string, required) — MRQL source
+  - description (string)`,
+		Tags:                 mrqlTag,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseType:         savedMRQLType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodPut,
+		Path:         "/v1/mrql/saved",
+		OperationID:  "updateSavedMRQLQuery",
+		Summary:      "Update a saved MRQL query",
+		Tags:         mrqlTag,
+		IDQueryParam: "id",
+		IDRequired:   true,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseType:         savedMRQLType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodPost,
+		Path:         "/v1/mrql/saved/delete",
+		OperationID:  "deleteSavedMRQLQuery",
+		Summary:      "Delete a saved MRQL query",
+		Tags:         mrqlTag,
+		IDQueryParam: "id",
+		IDRequired:   true,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/mrql/saved/run",
+		OperationID: "runSavedMRQLQuery",
+		Summary:     "Execute a saved MRQL query by id or name",
+		Description: "Runs a previously saved MRQL query. Accepts either `id` or `name` to identify the saved query, plus the same pagination params as /v1/mrql.",
+		Tags:        mrqlTag,
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "id", Type: "integer", Description: "Saved query ID"},
+			{Name: "name", Type: "string", Description: "Saved query name (fallback if id not found)"},
+			{Name: "limit", Type: "integer"},
+			{Name: "page", Type: "integer"},
+			{Name: "buckets", Type: "integer"},
+			{Name: "offset", Type: "integer"},
+			{Name: "render", Type: "integer", Description: "Set to 1 to render CustomMRQLResult templates"},
+		},
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 }
 
@@ -1757,6 +1951,20 @@ func registerPluginRoutes(r *openapi.Registry) {
 			{Name: "blockId", Type: "integer", Required: true, Description: "The ID of the block to render"},
 			{Name: "mode", Type: "string", Required: true, Description: "Render mode: 'view' or 'edit'"},
 		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeHTML},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/plugins/{pluginName}/display/render",
+		OperationID: "renderPluginDisplay",
+		Summary:     "Render a plugin display fragment",
+		Description: "Invokes the named plugin's display renderer (e.g. for CustomHeader/CustomSidebar/CustomAvatar extensions). The request body is a plugin-specific JSON object; the response is HTML.",
+		Tags:        []string{"plugins"},
+		PathParams: []openapi.PathParam{
+			{Name: "pluginName", Type: "string", Description: "The plugin name"},
+		},
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeHTML},
 	})
 

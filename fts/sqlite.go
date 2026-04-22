@@ -172,6 +172,10 @@ func escapeLikeWildcards(s string) string {
 
 // fuzzyFallback provides basic fuzzy matching for SQLite using LIKE patterns.
 // It searches name and description columns, plus original_name for the resources table.
+//
+// BH-005a: wraps both column and pattern in LOWER() so the fuzzy match is
+// case-insensitive, including across non-ASCII characters (SQLite's built-in
+// LIKE case-folds ASCII only, not Unicode).
 func (s *SQLiteFTS) fuzzyFallback(db *gorm.DB, tableName, term string) *gorm.DB {
 	escaped := escapeLikeWildcards(term)
 	likeEscape := " ESCAPE '\\'"
@@ -187,7 +191,7 @@ func (s *SQLiteFTS) fuzzyFallback(db *gorm.DB, tableName, term string) *gorm.DB 
 		var conditions []string
 		var args []interface{}
 		for _, col := range searchCols {
-			conditions = append(conditions, col+" LIKE ?"+likeEscape)
+			conditions = append(conditions, "LOWER("+col+") LIKE LOWER(?)"+likeEscape)
 			args = append(args, "%"+escaped+"%")
 		}
 		return db.Where(strings.Join(conditions, " OR "), args...)
@@ -204,14 +208,14 @@ func (s *SQLiteFTS) fuzzyFallback(db *gorm.DB, tableName, term string) *gorm.DB 
 		after := escapeLikeWildcards(string(runes[i+1:]))
 		pattern := before + "_" + after // intentional single-char wildcard
 		for _, col := range searchCols {
-			conditions = append(conditions, col+" LIKE ?"+likeEscape)
+			conditions = append(conditions, "LOWER("+col+") LIKE LOWER(?)"+likeEscape)
 			args = append(args, "%"+pattern+"%")
 		}
 	}
 
 	// Also include exact substring match across all columns
 	for _, col := range searchCols {
-		conditions = append(conditions, col+" LIKE ?"+likeEscape)
+		conditions = append(conditions, "LOWER("+col+") LIKE LOWER(?)"+likeEscape)
 		args = append(args, "%"+escaped+"%")
 	}
 

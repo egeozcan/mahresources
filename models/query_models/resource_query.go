@@ -71,6 +71,10 @@ type ResourceSearchQuery struct {
 	MinHeight        uint
 	MaxWidth         uint
 	MaxHeight        uint
+	// BH-037: filter resources whose perceptual DHash is zero — these are
+	// usually BH-018 solid-colour images that pollute similarity matches.
+	// The admin-overview drill-down links here.
+	ShowDhashZero bool
 }
 
 type ResourceThumbnailQuery struct {

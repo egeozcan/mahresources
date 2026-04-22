@@ -32,6 +32,16 @@ Canonical log maintained by `/loop` orchestrator. Sub-hunters (Sonnet) append fi
 
 _(populated by iterations — newest first)_
 
+### BH-005b · Global search has no fuzzy/typo tolerance & no Unicode case-folding on LIKE fallback (split from BH-005)
+- **Status:** deferred (filed 2026-04-22 during c18 plan — BH-005a shipped, this half remains open)
+- **Severity:** feature-gap (discoverability pain, not a defect against the current spec)
+- **Workflow:** discovery / global search
+- **Scope (remaining):** BH-005a fixed case-insensitivity on the SQLite LIKE fallback paths (LOWER() wrapping for ASCII, plus LOWER() on the fuzzy-fallback's LIKE patterns). Two gaps still open:
+  1. **Typo tolerance** — `Weeknight` matches, `Weeknite` (one typo) doesn't. FTS5 has no built-in Levenshtein; SQLite has no trigram; we'd need trigram via `sqlean`, spellfix1, or a different tokenizer.
+  2. **Unicode case-folding on LIKE** — SQLite's built-in `LIKE` and `LOWER()` are ASCII-only. `Spätzle` doesn't match `SPÄTZLE` via the LIKE fallback. Needs ICU extension or a Go-side case-fold pass on the query (then filter by byte-exact match against pre-folded columns we'd have to add).
+- **Design scope:** trigram vs Levenshtein vs FTS5 tokenizer change vs sqlean. Has perf implications on "millions of resources" deployments (CLAUDE.md). Needs its own brainstorm + design doc — do NOT bolt on without evaluation.
+- **Blocked on:** separate brainstorm; not scheduled.
+
 ### BH-039 · BH-011 image ingestion over-rejects valid SVG/ICO/WebP/AVIF/HEIC uploads with HTTP 400
 - **Status:** **FIXED** (2026-04-22, c14-ingestion-safety, PR #40 merged eff9f142 — see Fixed / closed table below)
 - **Original status (pre-fix):** verified (discovered during e2e-fixture-repair, 2026-04-22)
@@ -61,7 +71,8 @@ _(populated by iterations — newest first)_
 - **Why this matters even today:** any log aggregator, proxy cache, or browser session viewer (devtools → view source) with access to `/notes` captures share tokens in plaintext. Once the operator shares a note's URL via email, the token is effectively the password; leaking all tokens in a single HTML response is a wider blast radius than necessary.
 
 ### BH-037 · Perceptual-hash values (AHash/DHash) never exposed in the resource UI — cannot debug similarity misses
-- **Status:** verified (iter 13)
+- **Status:** **FIXED** (2026-04-22, c18-obs-search-docs — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 13)
 - **Severity:** cosmetic / observability gap (tightly related to BH-018's DHash-on-solid-color false-positive bug)
 - **Iter:** 13 · **Workflow:** admin surfaces
 - **Observed:** resource detail "Technical Details" section shows the SHA1 file-integrity hash. The **perceptual** hashes used by the similarity engine (stored in the separate `resource_hashes` table) are not surfaced anywhere. The admin overview shows aggregate totals (e.g. "85 hashed images, 64 similar pairs") but no per-resource visibility. The "Similar Resources" panel surfaces the *result* of the comparison but not the input hash values.
@@ -263,7 +274,8 @@ _(populated by iterations — newest first)_
 - **Scope:** if alt-fs is actually considered a documented feature, all three should land together. If it's considered aspirational, at minimum the docs and admin-overview panel should stop advertising it.
 
 ### BH-022 · OpenAPI spec (`cmd/openapi-gen`) omits 11 live routes — the entire MRQL subsystem, `editMeta` endpoints, and part of plugins
-- **Status:** verified (iter 8)
+- **Status:** **FIXED** (2026-04-22, c18-obs-search-docs — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 8)
 - **Severity:** minor / docs (but high-impact for any integrator consuming the spec — they'd have no idea MRQL or the per-entity `editMeta` endpoints exist)
 - **Iter:** 8 · **Workflow:** OpenAPI spec drift probe
 - **Counts:** 167 live routes in `server/routes.go`; 156 in generated `openapi.yaml`. Diff of in-code minus in-spec (routes that exist but aren't documented):
@@ -588,11 +600,16 @@ _(populated by iterations — newest first)_
 - **Evidence:** `tasks/bug-hunt-evidence/iter-2026-04-21-2/15-keyboard-space-enter-works.png`
 
 ### BH-005 · Global search is case-sensitive prefix-only (feature gap)
-- **Status:** unverified (claim plausible; no code trace done yet)
+- **Status:** **split** (2026-04-22, c18-obs-search-docs) — **BH-005a fixed** (case-insensitive LIKE fallback + fuzzy fallback on SQLite); **BH-005b deferred** (typo tolerance + Unicode case-folding on LIKE fallback — new entry at top of Active section, needs brainstorm).
 - **Severity:** feature-gap (discoverability pain, not a defect against current spec)
 - **Iter:** 1 · **Workflow:** recipe-collection (Cmd+K global search)
-- **Claim:** `Pasta` matches; `pasta` does not. `Weeknight` matches; `Weeknite` (one typo) returns nothing and no near-match suggestion.
-- **Follow-up:** confirm by inspecting `src/components/globalSearch.js` + the backing search API (likely SQLite FTS5). The repo already builds with the `fts5` tag per `CLAUDE.md`, so fuzzy/case-insensitive support may simply be a configuration improvement. Priorities: case-insensitive first, fuzzy second.
+- **Original claim:** `Pasta` matches; `pasta` does not. `Weeknight` matches; `Weeknite` (one typo) returns nothing and no near-match suggestion.
+- **c18 findings during code trace:**
+  - FTS5's `unicode61` tokenizer case-folds at index time, so the FTS path has always been case-insensitive for both ASCII and Unicode. The original "pasta ≠ Pasta" report must have landed on the LIKE or fuzzy fallback path.
+  - SQLite's built-in `LIKE` is case-insensitive for ASCII and byte-compare for Unicode. So the main-title scenario "pasta finds Pasta" already worked on the LIKE fallback for ASCII.
+  - The real gap was the fuzzy-fallback path (fts/sqlite.go `fuzzyFallback`): `LIKE 'P_sta'` required the exact case present in the name. BH-005a fixed this by wrapping col + pattern in `LOWER()`.
+  - Also defensively applied `LOWER()` to `searchEntitiesLike` so the LIKE and fuzzy paths stay consistent if SQLite's `case_sensitive_like` pragma ever flips.
+- **Follow-up:** see **BH-005b** at the top of the Active section.
 
 ---
 
@@ -635,6 +652,9 @@ _(populated by iterations — newest first)_
 | BH-039 | **fixed** (2026-04-22, c14-ingestion-safety, PR #40 merged eff9f142) | `application_context/resource_upload_context.go` narrows the BH-011 image-decode guard: `errors.Is(decErr, image.ErrFormat)` is the accept-with-zero-dims branch (SVG, ICO, AVIF, HEIC, and any other format Go's stdlib can't sniff); genuine decode errors (truncated PNG, corrupt JPEG) still reject with HTTP 400. API test: `server/api_tests/image_ingestion_accepts_svg_ico_webp_test.go` (SVG + ICO + AVIF accept + truncated-PNG regression guard). Also un-skipped the previously blocked `Lightbox SVG Support` describe in `e2e/tests/13-lightbox.spec.ts`. |
 | BH-034 | **fixed** (2026-04-22, c14-ingestion-safety, PR #40 merged eff9f142) | New `Config.MaxUploadSize` / flag `--max-upload-size` / env `MAX_UPLOAD_SIZE`, default 2 GB. New helper `tryFillStructValuesFromRequestWithLimit(dst, w, r, maxBytes)` in `server/api_handlers/api_handlers.go` wraps `r.Body = http.MaxBytesReader(w, r.Body, maxBytes)` before the existing multipart parse path. Both `GetResourceUploadHandler` and `GetUploadVersionHandler` now accept a `func() int64` getter (read at request time so tests and live config updates both take effect) and enforce the limit. Over-limit requests surface as HTTP 400 with "http: request body too large"; under-limit uploads unchanged. API test: `server/api_tests/upload_size_limit_test.go`. Docs: new row in CLAUDE.md. |
 | BH-008 | **fixed** (2026-04-22, c14-ingestion-safety, PR #40 merged eff9f142) | `src/components/imageCropper.js` gains a `decodeFailed` flag set on `img.onerror` or `naturalWidth/Height === 0`; `submit()` no-ops when the flag is true, and `reset()` deliberately preserves it (it reflects the image, not per-interaction state). `templates/partials/cropModal.tpl` renders an amber banner (`data-testid="crop-decode-failed-banner"`, `role="status"` + `aria-live="polite"`) when decodeFailed is true, hides the selection overlay and drag hint, and binds `:disabled="decodeFailed || !hasSelection() || isSubmitting"` + `data-testid="crop-submit-button"` on the Crop button. E2E: `e2e/tests/c14-bh008-crop-zero-dims-banner.spec.ts` dispatches `error` on the `<img>` to drive the decode-failed state and asserts banner + disabled Crop. |
+| BH-005a | **fixed** (2026-04-22, c18-obs-search-docs) | Split from BH-005 (original report bundled case-sensitivity + fuzzy tolerance). On SQLite, wrapped column + pattern in `LOWER()` in `application_context/search_context.go::searchEntitiesLike` and `fts/sqlite.go::fuzzyFallback`. Postgres unchanged (already uses ILIKE). FTS5's `unicode61` tokenizer case-folds at index time, so the FTS path was already case-insensitive — this fix aligns the LIKE fallback + fuzzy fallback with the FTS behaviour. API tests: `server/api_tests/global_search_case_insensitive_test.go` (3 cases: FTS, LIKE fallback, FTS fuzzy). E2E: `e2e/tests/c18-bh005a-search-case-insensitive.spec.ts`. **Remaining scope filed as BH-005b** (typo tolerance + Unicode case-folding — needs design brainstorm). |
+| BH-022 | **fixed** (2026-04-22, c18-obs-search-docs) | `server/routes_openapi.go` gains 11 new registrations: `POST /v1/mrql`, `POST /v1/mrql/validate`, `POST /v1/mrql/complete`, `GET/POST/PUT /v1/mrql/saved`, `POST /v1/mrql/saved/delete`, `POST /v1/mrql/saved/run`, `POST /v1/{note,group,resource}/editMeta` (via a new `registerMetaEditRoute(entity, tag)` helper), and `POST /v1/plugins/{pluginName}/display/render`. New drift-check unit test `server/openapi/drift_test.go` walks the live mux, diffs every `/v1/*` route against the registry, and fails if a new route is added without a corresponding registration (or an explicit `routesExcludedFromOpenAPI` entry with a reason). `/v1/plugins/` PathPrefix handler is in the exclusion list (dynamic plugin-specific API). Spec path count: **156 → 166** (drops one because `/v1/mrql/saved` has GET+POST+PUT on the same path entry). |
+| BH-037 | **fixed** (2026-04-22, c18-obs-search-docs) | Three-surface fix: (1) `models/resource_model.go` declares `ImageHash *ImageHash` as a 1:1 reverse relation (`foreignKey:ResourceId;references:ID`) so `GetResource`'s existing `Preload(clause.Associations)` auto-loads it. (2) `templates/displayResource.tpl` Technical Details section renders a `data-testid="perceptual-hash-row"` panel with `DHash: 0x...` and `AHash: 0x...`; when DHash is zero, shows an amber "uniform/solid-colour image (BH-018)" hint explaining the false-positive class. (3) New `ShowDhashZero` flag on `ResourceSearchQuery` + `models/database_scopes/resource_scope.go` scope; `application_context/admin_context.go`'s `SimilarityInfo.DhashZeroCount` populated in `GetExpensiveStats` (matches both migrated `d_hash_int = 0` and legacy `d_hash = '0000000000000000'`); `templates/adminOverview.tpl` renders a `data-testid="admin-dhash-zero-drilldown"` link to `/resources?ShowDhashZero=1`, gated by Alpine's `x-if="dhashZeroCount > 0"` so empty deployments don't see a dead link. Tests: `server/api_tests/resource_image_hash_preload_test.go`, `server/api_tests/resource_dhash_zero_filter_test.go`, `server/api_tests/admin_dhash_zero_stats_test.go`. E2E: `e2e/tests/c18-bh037-perceptual-hash-visible.spec.ts`. |
 
 ---
 

@@ -44,6 +44,12 @@ type Resource struct {
 	CurrentVersion   *ResourceVersion   `gorm:"foreignKey:CurrentVersionID" json:"currentVersion,omitempty"`
 	Versions         []ResourceVersion  `gorm:"foreignKey:ResourceID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"versions,omitempty"`
 
+	// BH-037: 1:1 reverse side of ImageHash.Resource, exposed so the resource
+	// detail page can surface the perceptual DHash/AHash for observability.
+	// ImageHash.ResourceId is the FK on the image_hashes table; the uniqueIndex
+	// there guarantees at most one row per resource.
+	ImageHash *ImageHash `gorm:"foreignKey:ResourceId;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"imageHash,omitempty"`
+
 	// RenderedHTML is a transient field populated by the API when render=1 is set.
 	RenderedHTML string `gorm:"-" json:"renderedHTML,omitempty"`
 }
