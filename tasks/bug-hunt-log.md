@@ -102,7 +102,8 @@ _(populated by iterations — newest first)_
 - **Fix:** add a middleware to `ShareServer.Start()` (`server/share_server.go:59-84`) that sets these four headers on every response. Apply the same middleware to the primary server for consistency (secondary benefit).
 
 ### BH-031 · Share server block-state write endpoint accepts ANY block type — not just `todos`
-- **Status:** verified (iter 12, code-confirmed at `share_server.go:131-173`)
+- **Status:** **FIXED** (2026-04-22, c8-share-allowlist, PR #30 merged 3bed7dd8 — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 12, code-confirmed at `share_server.go:131-173`)
 - **Severity:** **medium** (genuine public-surface defect — any share token holder can persist arbitrary state changes to any block in the note)
 - **Iter:** 12 · **Workflow:** share server security probes
 - **Repro:**
@@ -149,7 +150,8 @@ _(populated by iterations — newest first)_
 - **Evidence:** iter-11 audit finding #8; `tasks/bug-hunt-evidence/iter-2026-04-22-6/03-group-tree.png`.
 
 ### BH-028 · Download Cockpit accessibility: panel not a dialog, no focus management, progress bars lack ARIA, connection status color-only (3 WCAG A/AA issues)
-- **Status:** verified (iter 11, a11y audit)
+- **Status:** **FIXED** (2026-04-22, c5-jobs-ui-a11y, PR #27 merged f60bd9f3 — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 11, a11y audit)
 - **Severity:** **major** (composite — 1 Serious + 2 Moderate WCAG issues in a component that's the intended recovery surface for BH-025/BH-026)
 - **Iter:** 11 · **Workflow:** downloadCockpit a11y audit
 - **Sub-issues:**
@@ -163,7 +165,8 @@ _(populated by iterations — newest first)_
 - **Evidence:** iter-11 audit findings #5, #6, #7; eval results `panelRole: null, panelAriaModal: null, progressbars: 0, connectionDot.role: null`.
 
 ### BH-027 · Block editor accessibility: 4 WCAG A violations (2 Critical axe-flagged, 2 Serious)
-- **Status:** verified (iter 11, a11y audit — 2 of 4 confirmed by axe-core automated scan as Critical)
+- **Status:** **FIXED** (2026-04-22, c6-block-editor-a11y, PR #28 merged 5460bdae — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 11, a11y audit — 2 of 4 confirmed by axe-core automated scan as Critical)
 - **Severity:** **major** (composite — 2 critical + 2 serious WCAG Level A issues in a primary authoring surface)
 - **Iter:** 11 · **Workflow:** block-editor a11y audit
 - **Sub-issues (in fix-location order):**
@@ -179,7 +182,8 @@ _(populated by iterations — newest first)_
 - **Evidence:** iter-11 audit findings #1–#4; axe-core scan output `{image-alt: critical, select-name: critical}`; `tasks/bug-hunt-evidence/iter-2026-04-22-6/01-block-editor-edit-mode.png`.
 
 ### BH-026 · Download Cockpit panel shows blank title and no download link for completed group-export jobs
-- **Status:** verified (iter 10, live-SSE evidence for 5 completed export jobs)
+- **Status:** **FIXED** (2026-04-22, c5-jobs-ui-a11y, PR #27 merged f60bd9f3 — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 10, live-SSE evidence for 5 completed export jobs)
 - **Severity:** medium (makes the cockpit — the intended post-reload recovery surface — useless for group exports; user has to know the job ID to download the tar)
 - **Iter:** 10 · **Workflow:** operator-migration scenario (paired with BH-025)
 - **Observation:** all 5 completed `source=group-export` jobs in the live SSE `init` payload have `url: ""` and the cockpit panel therefore renders them with:
@@ -193,7 +197,8 @@ _(populated by iterations — newest first)_
 - **Paired with BH-025:** together these two bugs form a complete UX hole for the export flow — BH-025 blanks the export page on reload, BH-026 blanks the cockpit panel's export entries. Either fix helps; both together close the scenario.
 
 ### BH-025 · `adminExport` loses all job tracking on page reload — in-flight exports become invisible, completed exports lose their download link
-- **Status:** verified (iter 10, code-confirmed)
+- **Status:** **FIXED** (2026-04-22, c5-jobs-ui-a11y, PR #27 merged f60bd9f3 — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 10, code-confirmed)
 - **Severity:** **medium** (real-world operator scenario: start export → switch tabs / come back → page is blank → no way to find the tar from the same UI they kicked it off in)
 - **Iter:** 10 · **Workflow:** operator-migration scenario — page reload during / after a long export
 - **Root cause (code-verified):**
@@ -205,7 +210,8 @@ _(populated by iterations — newest first)_
 - **Evidence:** confirmed via iter-10 hunter + code citations above.
 
 ### BH-024 · `GET /v1/note/block/table/query?blockId=<existing-block-with-dangling-queryId>` returns HTTP 500 (should be 404)
-- **Status:** verified (iter 9), **scope narrowed in iter 10** (this is specifically about existing blocks whose `content.queryId` points at a deleted saved query — NOT about missing blocks)
+- **Status:** **FIXED** (2026-04-22, c4-deletion-cascade, PR #26 merged 7abe0e77 — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 9), **scope narrowed in iter 10** (this is specifically about existing blocks whose `content.queryId` points at a deleted saved query — NOT about missing blocks)
 - **Severity:** minor
 - **Iter:** 9 discovered · 10 scope corrected
 - **Repro:**
@@ -218,7 +224,8 @@ _(populated by iterations — newest first)_
 - **Fix:** in the table-block handler, wrap the inner query fetch with `statusCodeForError`, or translate the inner `ErrRecordNotFound` to a 410 Gone / 404 with a clearer message like "referenced query has been deleted". Two-line fix.
 
 ### BH-023 · Alternative filesystem feature (`FILE_ALT_*`) is half-implemented — unreachable from UI, silently ignored via multipart API, and stripped by export/import
-- **Status:** verified (iter 9, code-confirmed in three layers)
+- **Status:** **FIXED** (2026-04-22, c7-alt-fs, PR #29 merged 8467c32f — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 9, code-confirmed in three layers)
 - **Severity:** medium (real data-integrity risk on top of a dead feature — any user relying on alt-fs for archival resources would silently lose the storage binding on re-import)
 - **Iter:** 9 · **Workflow:** alt-fs "archival NAS" scenario
 - **Three separate defects, one composite bug (because they share a root cause: `StorageLocation` isn't threaded through the stack):**
@@ -261,7 +268,8 @@ _(populated by iterations — newest first)_
 - **Note:** this is NOT about adding a full Markdown parser — just matching user expectations for the tokens the app claims to support (the NoteText handler already uses `markdown2` per `displayNoteText.tpl:10`, so there's a precedent for real Markdown elsewhere).
 
 ### BH-020 · Deleting any referenced entity does not scrub block content — 4 block types keep dead pointers (systemic)
-- **Status:** verified (iter 8 gallery; iter 9 scope expanded to references / calendar / table)
+- **Status:** **FIXED** (2026-04-22, c4-deletion-cascade, PR #26 merged 7abe0e77 — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 8 gallery; iter 9 scope expanded to references / calendar / table)
 - **Severity:** minor individually; medium in aggregate (data-integrity issue that compounds silently across the entire block-editor surface)
 - **Iter:** 8 (gallery) + 9 (systemic audit)
 - **Affected block types and what they embed:**
@@ -312,7 +320,8 @@ _(populated by iterations — newest first)_
 - **Evidence:** `tasks/bug-hunt-evidence/iter-2026-04-22-2/b4-control-char-tags.json`.
 
 ### BH-018 · Perceptual-similarity false positives on uniform/solid-color images — `DifferenceHash` returns 0 for all of them, AHash is computed but unused
-- **Status:** verified (iter 6, code-confirmed)
+- **Status:** **FIXED** (2026-04-22, c3-image-hashing, PR #25 merged 5e24866f — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 6, code-confirmed)
 - **Severity:** medium (real correctness bug in a user-visible feature — "Similar Resources" panel and "Merge Others To This" bulk action both surface the false positives)
 - **Iter:** 6 · **Workflow:** perceptual-hash / near-dup detection probe
 - **Observation:** resources 111 (lightblue 300×300 PNG) and 112 (lightblue variant) were expected to match. Instead, 112 ended up listed as similar to 113 (orange 300×300 PNG) — a completely different color. DB shows Hamming distance 0 for both pairs, and in fact for every pair of solid-color images uploaded.
@@ -402,7 +411,8 @@ _(populated by iterations — newest first)_
 - **Evidence:** `tasks/bug-hunt-evidence/iter-2026-04-21-4/16-mrql-no-edit-mode.png`; `mrqlEditor.js:370`, `routes.go:499`.
 
 ### BH-011 · Image ingestion accepts invalid / truncated uploads and silently stores them with `Width=0, Height=0`
-- **Status:** verified (iter 3)
+- **Status:** **FIXED** (2026-04-22, c3-image-hashing, PR #25 merged 5e24866f — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 3)
 - **Severity:** **major** (data integrity — any partial upload survives; cascades to BH-008 and to broken thumbnails, broken perceptual-hash, broken crop, broken `.body` gallery views)
 - **Iter:** 3 · **Workflow:** truncated-PNG probe
 - **Repro steps:**
@@ -433,7 +443,8 @@ _(populated by iterations — newest first)_
 - **Evidence:** `tasks/bug-hunt-evidence/iter-2026-04-21-3/preview-form-year-zero.png`.
 
 ### BH-009 · Schema-editor form-mode: `required` and `pattern` violations never show an error message (silent submit-blocked)
-- **Status:** verified (iter 3, merges hunter findings F1+F2 — same fix location)
+- **Status:** **FIXED** (2026-04-22, c2-form-ux, PR #24 merged 7b7e9fee — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 3, merges hunter findings F1+F2 — same fix location)
 - **Severity:** **major** (user clicks Save on a form with many fields and gets no feedback — just a non-responsive button; catastrophic for discoverability on any non-trivial MetaSchema)
 - **Iter:** 3 · **Workflow:** NoteType MetaSchema authoring → create a note with required+pattern fields
 - **Repro steps:**
@@ -480,7 +491,8 @@ _(populated by iterations — newest first)_
 - **Evidence:** `tasks/bug-hunt-evidence/iter-2026-04-21-2/21-version-compare-layout-bug.png`; template lines 54-78.
 
 ### BH-006 · **Systemic** form-data-loss: every native create/edit-form blows up to a bare error page on server-side validation failure
-- **Status:** verified, scope expanded twice (iter 2: resource-only → iter 3: all 5 create flows → iter 4: edit flows too)
+- **Status:** **FIXED** (2026-04-22, c2-form-ux, PR #24 merged 7b7e9fee — see Fixed / closed table below)
+- **Original status (pre-fix):** verified, scope expanded twice (iter 2: resource-only → iter 3: all 5 create flows → iter 4: edit flows too)
 - **Severity:** **major** (real user-facing data loss on a routine error path — replicated across 6+ entity endpoints, both create and edit)
 - **Iter:** 2 (discovered on resource) + 3 (confirmed systemic on creates) + 4 (confirmed also affects edit forms — group cycle case)
 - **Reproduced endpoints:**
@@ -563,6 +575,18 @@ _(populated by iterations — newest first)_
 | BH-P06 | **fixed** (confirmed iter 4) | `GET /notes?name=pasta&tags=1` correctly pre-populates the Name filter with "pasta". Evidence: `tasks/bug-hunt-evidence/iter-2026-04-21-4/10-notes-filter-prepopulated.png`. |
 | BH-P05 | **fixed** (2026-04-22, c1-error-hygiene, merged 0aa5d39e) | Added `_appContext` + `_requestContext` to `discardFields` denylist in `server/template_handlers/render_template.go`. `.json` error paths no longer serialize server config. Regression test: `server/api_tests/json_error_leaks_appcontext_test.go`. |
 | BH-019 | **fixed** (2026-04-22, c1-error-hygiene, merged 0aa5d39e) | New `application_context/validation/entity_name.go` `SanitizeEntityName` helper rejects NUL bytes, C0/C1 controls (except `\t`), Unicode directional overrides (U+202A–U+202E, U+2066–U+2069), embedded newlines. Wired into tag/group/note/resource/noteType/category create+update. API test: `server/api_tests/entity_name_control_chars_test.go`. |
+| BH-006 | **fixed** (2026-04-22, c2-form-ux, PR #24 merged 7b7e9fee) | New `HandleFormError` helper in `server/http_utils/http_helpers.go` implements Post-Redirect-Get + form-value preservation on HTML-accepting requests. Wired into all 6 entity create/edit handlers. Templates re-populate fields from `queryValues.*` and show an error banner. JSON 400 path unchanged. E2E: `e2e/tests/c2-bh006-form-redirects.spec.ts`. |
+| BH-009 | **fixed** (2026-04-22, c2-form-ux, PR #24 merged 7b7e9fee) | `src/schema-editor/modes/form-mode.ts` now consults `input.validity.{valueMissing,patternMismatch,typeMismatch,tooShort,tooLong,stepMismatch}` on blur and dispatches blur on every input at submit. Error state tracked in reactive `_errors: Map<string,string>`; renders `aria-invalid="true"` + `#field-<name>-error` spans. E2E: `e2e/tests/c2-bh009-schema-editor-validation.spec.ts`. |
+| BH-011 | **fixed** (2026-04-22, c3-image-hashing, PR #25 merged 5e24866f) | Image ingestion in `application_context/resource_media_context.go` now rejects uploads where `image.Decode` errors or bounds are zero, returning HTTP 400 "uploaded file is not a valid image (failed to decode)". API test: `server/api_tests/image_ingestion_rejects_truncated_test.go`. Fixture fix: `cmd/mr/testdata/sample.jpg` replaced with a valid 4×4 JPEG (was malformed, previously masked by the W=0/H=0 bug). |
+| BH-018 | **fixed** (2026-04-22, c3-image-hashing, PR #25 merged 5e24866f) | New `AreSimilar` helper in `hash_worker/worker.go` requires both DHash AND AHash Hamming distances below thresholds before recording a similarity pair. New flag `--hash-ahash-threshold` / `HASH_AHASH_THRESHOLD` (default 5). Unit test: `hash_worker/worker_solid_color_test.go` — solid lightblue + orange NOT recorded as similar; near-duplicate gradients still recorded. |
+| BH-020 | **fixed** (2026-04-22, c4-deletion-cascade, PR #26 merged 7abe0e77) | Shared scrubber `application_context/block_ref_cleanup.go` walks `note_blocks.content` and strips matching IDs from `resourceIds[]`, `groupIds[]`, `calendars[].source.resourceId`, `queryId`. Resource/group/saved-query DELETE handlers call it inside their transaction. One-shot boot migration `MigrateBlockReferencesOnce` scrubs pre-existing orphans, gated by `SKIP_BLOCK_REF_CLEANUP=1` + GORM upsert marker for Postgres compat. Gallery/references/table UI components gracefully render "unavailable" on 404. Tests: `application_context/block_ref_cleanup_test.go` (12 cases) + `server/api_tests/block_ref_cascade_test.go` (3 integration cases). |
+| BH-024 | **fixed** (2026-04-22, c4-deletion-cascade, PR #26 merged 7abe0e77) | Table-block query handler in `server/api_handlers/block_api_handlers.go` now routes the inner query-fetch error through `statusCodeForError` so `gorm.ErrRecordNotFound` yields HTTP 404 instead of 500. API test: `server/api_tests/table_block_dangling_query_returns_404_test.go`. |
+| BH-025 | **fixed** (2026-04-22, c5-jobs-ui-a11y, PR #27 merged f60bd9f3) | `src/components/adminExport.js` `init()` rehydrates from `localStorage.getItem('adminExport:currentJobId')` and subscribes to the jobs SSE stream. On submit the jobId is persisted; on completion or stale rehydrate it is cleared. E2E: `e2e/tests/c5-bh025-admin-export-reload.spec.ts`. |
+| BH-026 | **fixed** (2026-04-22, c5-jobs-ui-a11y, PR #27 merged f60bd9f3) | `getJobTitle()` in `src/components/downloadCockpit.js` falls back to `job.name \|\| 'Group export'` when `job.source === 'group-export'`. New `x-if` branch in `templates/partials/downloadCockpit.tpl` renders `<a href="/v1/exports/{jobId}/download">` when `status === 'completed' && source === 'group-export' && resultPath`. E2E: `e2e/tests/c5-bh026-download-cockpit-group-export-link.spec.ts`. |
+| BH-028 | **fixed** (2026-04-22, c5-jobs-ui-a11y, PR #27 merged f60bd9f3) | Download cockpit panel gains `role="dialog" aria-modal="true" aria-labelledby` + `$watch('isOpen')` focus management (first-focusable on open, trigger-restore on close). Progress bars gain `role="progressbar" aria-valuenow/min/max + aria-label`. Connection-status dot gains `role="img" + aria-label` and color contrast bumped from stone-400 to stone-500/600 for WCAG AA. E2E: `e2e/tests/c5-bh028-download-cockpit-a11y.spec.ts`. |
+| BH-027 | **fixed** (2026-04-22, c6-block-editor-a11y, PR #28 merged 5460bdae) | `templates/partials/blockEditor.tpl` + `src/components/blockEditor.js`: gallery `<img>` gains dynamic `:alt` from `resourceMeta[resId]?.name`; heading-level `<select>` gains `aria-label="Heading level"`; move-up/move-down/delete buttons gain `:aria-label` + live-region announcement on reorder; Add-Block picker trigger gains `aria-expanded/aria-haspopup/aria-controls`; picker dropdown converted to `<ul role="listbox">` with roving tabindex + Arrow/Home/End handlers. E2E: `e2e/tests/accessibility/c6-bh027-block-editor-a11y.spec.ts`. |
+| BH-023 | **fixed** (2026-04-22, c7-alt-fs, PR #29 merged 8467c32f) | Three-layer fix: (1) `archive/manifest.go` `ResourcePayload` gains optional `storage_location` field, forward-compat, NO schema_version bump. Exporter + importer wired in `application_context/export_context.go` + `apply_import.go`. (2) `models/query_models/resource_query.go` `ResourceCreator` + `ResourceFromRemoteCreator` gain `PathName`; `AddResource` in `application_context/resource_upload_context.go` validates against `Config.AltFileSystems` and routes file IO accordingly. (3) `templates/createResource.tpl` renders a `<select name="PathName">` when alt-fs is configured; `altFileSystems` exposed via `resource_template_context.go`. Tests: `application_context/export_import_altfs_test.go`, `server/api_tests/resource_create_pathname_test.go`, `e2e/tests/c7-bh023-alt-fs-select-visible.spec.ts`. |
+| BH-031 | **fixed** (2026-04-22, c8-share-allowlist, PR #30 merged 3bed7dd8) | `server/share_server.go` `handleBlockStateUpdate` resolves the target block's type after note/ownership checks and requires it in an allowlist `map[string]bool{"todos": true}`. Non-matching types return HTTP 403 Forbidden. API test: `server/api_tests/share_server_block_state_allowlist_test.go`. Also exports `ShareServer.Handler()` for in-process testing. |
 
 ---
 
