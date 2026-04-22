@@ -436,3 +436,17 @@ func (s *RuntimeSettings) HashAHashThreshold() uint64 {
 	v, _ := s.getRaw(KeyHashAHashThreshold)
 	return v.(uint64)
 }
+
+// NewContextAuditor returns an Auditor that writes through the context's
+// existing Logger infrastructure. IPAddress/RequestPath/UserAgent are captured
+// automatically from the request via LogFromRequest — we don't pass them
+// explicitly because the existing Logger pipeline already handles that.
+func NewContextAuditor(ctx *MahresourcesContext) Auditor {
+	return &contextAuditor{ctx: ctx}
+}
+
+type contextAuditor struct{ ctx *MahresourcesContext }
+
+func (a *contextAuditor) Audit(action, entityType, entityName, message string, details map[string]any, _ string) {
+	a.ctx.Logger().Info(action, entityType, nil, entityName, message, details)
+}

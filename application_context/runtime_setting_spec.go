@@ -3,6 +3,7 @@ package application_context
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/url"
 	"time"
 )
@@ -249,3 +250,32 @@ func validateSharePublicURL(s string) error {
 	}
 	return nil
 }
+
+// BuildSpecsExported is the main.go-visible accessor for the spec registry.
+func BuildSpecsExported() map[string]SettingSpec { return buildSpecs() }
+
+// BuildDefaultsFromConfig snapshots every in-scope setting from the boot-time
+// MahresourcesConfig into a map keyed by spec key.
+func BuildDefaultsFromConfig(cfg *MahresourcesConfig) map[string]any {
+	return map[string]any{
+		KeyMaxUploadSize:           cfg.MaxUploadSize,
+		KeyMaxImportSize:           cfg.MaxImportSize,
+		KeyMRQLDefaultLimit:        cfg.MRQLDefaultLimit,
+		KeyMRQLQueryTimeout:        cfg.MRQLQueryTimeoutBoot,
+		KeyExportRetention:         cfg.ExportRetention,
+		KeyRemoteConnectTimeout:    cfg.RemoteResourceConnectTimeout,
+		KeyRemoteIdleTimeout:       cfg.RemoteResourceIdleTimeout,
+		KeyRemoteOverallTimeout:    cfg.RemoteResourceOverallTimeout,
+		KeySharePublicURL:          cfg.SharePublicURL,
+		KeyHashSimilarityThreshold: cfg.HashSimilarityThreshold,
+		KeyHashAHashThreshold:      cfg.HashAHashThreshold,
+	}
+}
+
+// NewStdlibSettingsLogger returns a SettingsLogger backed by the stdlib log package.
+func NewStdlibSettingsLogger() SettingsLogger { return stdlibSettingsLogger{} }
+
+type stdlibSettingsLogger struct{}
+
+func (stdlibSettingsLogger) Warn(format string, args ...any)  { log.Printf("WARN: "+format, args...) }
+func (stdlibSettingsLogger) Error(format string, args ...any) { log.Printf("ERROR: "+format, args...) }

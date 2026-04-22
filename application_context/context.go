@@ -78,6 +78,9 @@ type MahresourcesConfig struct {
 	HashPollInterval time.Duration
 	// HashSimilarityThreshold is the maximum Hamming distance for similarity
 	HashSimilarityThreshold int
+	// HashAHashThreshold is the max AHash Hamming distance for the secondary
+	// similarity check. 0 disables.
+	HashAHashThreshold uint64
 	// HashCacheSize is the maximum entries in the hash similarity LRU cache
 	HashCacheSize int
 	// EphemeralMode indicates the server is running in fully ephemeral mode (memory DB + FS)
@@ -106,6 +109,9 @@ type MahresourcesConfig struct {
 	// DefaultMRQLLimitFallback constant (keeps test fixtures that instantiate
 	// MahresourcesConfig{} directly working without updates).
 	MRQLDefaultLimit int
+	// MRQLQueryTimeoutBoot is the boot-time default for the MRQL query timeout.
+	// Runtime overrides live in RuntimeSettings.
+	MRQLQueryTimeoutBoot time.Duration
 }
 
 // MahresourcesInputConfig holds all configuration options that can be passed
@@ -162,6 +168,9 @@ type MahresourcesInputConfig struct {
 	HashPollInterval time.Duration
 	// HashSimilarityThreshold is the maximum Hamming distance for similarity
 	HashSimilarityThreshold int
+	// HashAHashThreshold is the max AHash Hamming distance for the secondary
+	// similarity check. 0 disables.
+	HashAHashThreshold uint64
 	// HashCacheSize is the maximum entries in the hash similarity LRU cache
 	HashCacheSize int
 	// EphemeralMode indicates the server is running in fully ephemeral mode (memory DB + FS)
@@ -180,6 +189,9 @@ type MahresourcesInputConfig struct {
 	// MRQLDefaultLimit is the default LIMIT applied to MRQL queries without an
 	// explicit LIMIT clause (default: 500).
 	MRQLDefaultLimit int
+	// MRQLQueryTimeoutBoot is the boot-time default for the MRQL query timeout.
+	// Runtime overrides live in RuntimeSettings.
+	MRQLQueryTimeoutBoot time.Duration
 }
 
 type MahresourcesLocks struct {
@@ -226,6 +238,8 @@ type MahresourcesContext struct {
 	// Set at startup; used as the fallback when no category is specified and as the
 	// reassignment target when a category is deleted.
 	DefaultResourceCategoryID uint
+	// settings is the runtime-settings service. Installed after AutoMigrate via SetSettings.
+	settings *RuntimeSettings
 }
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
@@ -382,6 +396,20 @@ func (ctx *MahresourcesContext) RunAfterPluginHooks(event string, data map[strin
 // DownloadManager returns the download queue manager for background remote downloads
 func (ctx *MahresourcesContext) DownloadManager() *download_queue.DownloadManager {
 	return ctx.downloadManager
+}
+
+// Settings returns the runtime-settings service. Panics if called before wiring.
+func (ctx *MahresourcesContext) Settings() *RuntimeSettings {
+	if ctx.settings == nil {
+		panic("MahresourcesContext.Settings() called before wiring")
+	}
+	return ctx.settings
+}
+
+// SetSettings installs the runtime-settings service. Called once from main.go
+// after AutoMigrate. Must happen before workers that read through Settings start.
+func (ctx *MahresourcesContext) SetSettings(rs *RuntimeSettings) {
+	ctx.settings = rs
 }
 
 // GetDefaultFs returns the main filesystem (rooted at FileSavePath via
@@ -772,6 +800,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		HashBatchSize:                cfg.HashBatchSize,
 		HashPollInterval:             cfg.HashPollInterval,
 		HashSimilarityThreshold:      cfg.HashSimilarityThreshold,
+		HashAHashThreshold:           cfg.HashAHashThreshold,
 		HashCacheSize:                cfg.HashCacheSize,
 		EphemeralMode:                cfg.EphemeralMode,
 		MemoryDB:                     cfg.MemoryDB,
@@ -784,6 +813,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		MaxImportSize:                cfg.MaxImportSize,
 		MaxUploadSize:                cfg.MaxUploadSize,
 		MRQLDefaultLimit:             cfg.MRQLDefaultLimit,
+		MRQLQueryTimeoutBoot:         cfg.MRQLQueryTimeoutBoot,
 	}), db, mainFs
 }
 

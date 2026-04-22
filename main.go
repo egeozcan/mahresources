@@ -244,6 +244,7 @@ func main() {
 		HashBatchSize:                *hashBatchSize,
 		HashPollInterval:             *hashPollInterval,
 		HashSimilarityThreshold:      *hashSimilarityThreshold,
+		HashAHashThreshold:           *hashAHashThreshold,
 		HashCacheSize:                *hashCacheSize,
 		EphemeralMode:                *ephemeral,
 		SkipFTS:                      *skipFTS,
@@ -252,6 +253,7 @@ func main() {
 		MaxImportSize:                *maxImportSize,
 		MaxUploadSize:                *maxUploadSize,
 		MRQLDefaultLimit:             *mrqlDefaultLimit,
+		MRQLQueryTimeoutBoot:         *mrqlTimeout,
 	}
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)
@@ -354,6 +356,19 @@ func main() {
 			}
 		}
 	}
+
+	// Initialize runtime settings (bucket-A overrides: sizes, timeouts, etc.)
+	settings := application_context.NewRuntimeSettings(
+		db,
+		application_context.NewStdlibSettingsLogger(),
+		application_context.BuildSpecsExported(),
+		application_context.BuildDefaultsFromConfig(context.Config),
+	)
+	if err := settings.Load(); err != nil {
+		log.Fatalf("failed to load runtime settings: %v", err)
+	}
+	settings.SetAuditor(application_context.NewContextAuditor(context))
+	context.SetSettings(settings)
 
 	util.AddInitialData(db)
 
