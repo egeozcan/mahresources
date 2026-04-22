@@ -42,6 +42,13 @@ type persistedEntry struct {
 	reason    string
 }
 
+// Auditor writes an audit log entry. Production implementations delegate to the
+// existing Logger (LogFromRequest). The interface keeps RuntimeSettings
+// testable in isolation.
+type Auditor interface {
+	Audit(action, entityType, entityName, message string, details map[string]any, ipAddress string)
+}
+
 // RuntimeSettings holds a DB-backed cache of runtime-editable overrides.
 // Boot-time defaults live in `defaults`; overrides in `overrides`.
 // Reads take the RWMutex read-lock; writes take the write-lock.
@@ -52,6 +59,7 @@ type RuntimeSettings struct {
 	defaults  map[string]any
 	mu        sync.RWMutex
 	overrides map[string]persistedEntry
+	auditor   Auditor
 }
 
 func NewRuntimeSettings(db *gorm.DB, log SettingsLogger, specs map[string]SettingSpec, defaults map[string]any) *RuntimeSettings {
@@ -127,9 +135,16 @@ func (s *RuntimeSettings) Set(key, rawValue, reason, actor string) error {
 		return fmt.Errorf("db save: %w", err)
 	}
 	s.mu.Lock()
+	oldValue, _ := s.overrideOrDefaultLocked(key)
 	s.overrides[key] = persistedEntry{value: v, updatedAt: now, reason: reason}
+	a := s.auditor
 	s.mu.Unlock()
-	_ = actor // used in Task 6 for log_entries audit
+	if a != nil {
+		msg := fmt.Sprintf("%s: %v → %v (reason: %s)", key, oldValue, v, reason)
+		a.Audit(models.LogActionUpdate, "runtime_setting", key, msg, map[string]any{
+			"oldValue": oldValue, "newValue": v, "reason": reason, "type": string(spec.Type),
+		}, actor)
+	}
 	return nil
 }
 
@@ -142,10 +157,17 @@ func (s *RuntimeSettings) Reset(key, reason, actor string) error {
 		return fmt.Errorf("db delete: %w", err)
 	}
 	s.mu.Lock()
+	oldValue, _ := s.overrideOrDefaultLocked(key)
 	delete(s.overrides, key)
+	bootDefault := s.defaults[key]
+	a := s.auditor
 	s.mu.Unlock()
-	_ = actor
-	_ = reason
+	if a != nil {
+		msg := fmt.Sprintf("%s: %v → %v (reset; reason: %s)", key, oldValue, bootDefault, reason)
+		a.Audit(models.LogActionReset, "runtime_setting", key, msg, map[string]any{
+			"oldValue": oldValue, "newValue": bootDefault, "reason": reason,
+		}, actor)
+	}
 	return nil
 }
 
@@ -190,6 +212,28 @@ func (s *RuntimeSettings) getRaw(key string) (any, bool) {
 	}
 	if d, ok := s.defaults[key]; ok {
 		return d, true
+	}
+	return nil, false
+}
+
+// SetAuditor configures the auditor used by Set/Reset. If nil (the default),
+// no audit row is written — useful in unit tests that don't care.
+func (s *RuntimeSettings) SetAuditor(a Auditor) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.auditor = a
+}
+
+// overrideOrDefaultLocked returns the current effective value under the lock.
+// Caller must hold s.mu (read or write).
+// The second return value is true when the value comes from an override,
+// false when it falls back to the boot default.
+func (s *RuntimeSettings) overrideOrDefaultLocked(key string) (any, bool) {
+	if e, ok := s.overrides[key]; ok {
+		return e.value, true
+	}
+	if d, ok := s.defaults[key]; ok {
+		return d, false
 	}
 	return nil, false
 }

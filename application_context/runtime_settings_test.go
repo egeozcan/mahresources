@@ -259,3 +259,77 @@ func TestRuntimeSettings_TypedGetters_Overrides(t *testing.T) {
 		t.Fatalf("want 2s, got %v", rs.MRQLQueryTimeout())
 	}
 }
+
+// gormAuditor is a test-only Auditor that persists entries to the test DB.
+type gormAuditor struct{ db *gorm.DB }
+
+func (g *gormAuditor) Audit(action, entityType, entityName, message string, _ map[string]any, ipAddress string) {
+	g.db.Create(&models.LogEntry{
+		CreatedAt:  time.Now(),
+		Level:      models.LogLevelInfo,
+		Action:     action,
+		EntityType: entityType,
+		EntityName: entityName,
+		Message:    message,
+		IPAddress:  ipAddress,
+	})
+}
+
+func TestAudit_SetWritesLogEntry(t *testing.T) {
+	db := newTestDB(t)
+	rs := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), defaults())
+	_ = rs.Load()
+	rs.SetAuditor(&gormAuditor{db: db})
+	if err := rs.Set(KeyMaxUploadSize, "1048576", "bump for video", "192.0.2.1"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	var e models.LogEntry
+	if err := db.First(&e, "entity_type = ? AND entity_name = ?", "runtime_setting", KeyMaxUploadSize).Error; err != nil {
+		t.Fatalf("log entry not found: %v", err)
+	}
+	if e.Action != "update" {
+		t.Errorf("action: got %q want update", e.Action)
+	}
+	if e.EntityID != nil {
+		t.Errorf("EntityID: want nil, got %v", *e.EntityID)
+	}
+	if e.IPAddress != "192.0.2.1" {
+		t.Errorf("IPAddress: got %q", e.IPAddress)
+	}
+	if !strings.Contains(e.Message, "1048576") || !strings.Contains(e.Message, "bump for video") {
+		t.Errorf("Message missing old/new/reason: %q", e.Message)
+	}
+}
+
+func TestAudit_ResetWritesLogEntry(t *testing.T) {
+	db := newTestDB(t)
+	rs := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), defaults())
+	_ = rs.Load()
+	rs.SetAuditor(&gormAuditor{db: db})
+	_ = rs.Set(KeyMaxUploadSize, "1048576", "", "192.0.2.1")
+	if err := rs.Reset(KeyMaxUploadSize, "revert", "192.0.2.1"); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	var rows []models.LogEntry
+	db.Where("entity_type = ? AND entity_name = ?", "runtime_setting", KeyMaxUploadSize).Order("created_at asc").Find(&rows)
+	if len(rows) != 2 {
+		t.Fatalf("want 2 log entries, got %d", len(rows))
+	}
+	if rows[1].Action != "reset" {
+		t.Errorf("second entry: want reset, got %q", rows[1].Action)
+	}
+}
+
+func TestAudit_FailedSetNoLogEntry(t *testing.T) {
+	db := newTestDB(t)
+	rs := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), defaults())
+	_ = rs.Load()
+	rs.SetAuditor(&gormAuditor{db: db})
+	// Below min — should reject and not log.
+	_ = rs.Set(KeyMaxUploadSize, "1", "", "192.0.2.1")
+	var count int64
+	db.Model(&models.LogEntry{}).Where("entity_type = ?", "runtime_setting").Count(&count)
+	if count != 0 {
+		t.Fatalf("want 0 log entries on rejection, got %d", count)
+	}
+}

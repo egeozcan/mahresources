@@ -36,4 +36,5 @@ const (
 	LogActionSystem   = "system"
 	LogActionProgress = "progress"
 	LogActionPlugin   = "plugin"
+	LogActionReset    = "reset"
 )
