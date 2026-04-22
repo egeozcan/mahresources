@@ -144,6 +144,10 @@ func (ctx *MahresourcesContext) GetResourcesWithIds(ids *[]uint) ([]*models.Reso
 }
 
 func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.ResourceEditor) (*models.Resource, error) {
+	if err := ValidateEntityName(resourceQuery.Name, "resource"); err != nil {
+		return nil, err
+	}
+
 	hookData := map[string]any{
 		"id":          float64(resourceQuery.ID),
 		"name":        resourceQuery.Name,

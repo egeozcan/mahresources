@@ -63,6 +63,8 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 				// Internal/rendering fields (should not leak to JSON consumers)
 				"_pluginManager":     true,
 				"_statusCode":        true,
+				"_appContext":        true, // BH-P05: contains full MahresourcesConfig (DbDsn, FfmpegPath, FileSavePath, AltFileSystems, ...)
+				"_requestContext":    true, // BH-P05: nested Go request context
 				"currentPath":        true,
 				"pluginMenuItems":    true,
 				"menu":               true,

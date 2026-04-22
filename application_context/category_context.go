@@ -104,6 +104,10 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 }
 
 func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.CategoryEditor) (*models.Category, error) {
+	if err := ValidateEntityName(categoryQuery.Name, "category"); err != nil {
+		return nil, err
+	}
+
 	hookData := map[string]any{
 		"id":          float64(categoryQuery.ID),
 		"name":        categoryQuery.Name,
