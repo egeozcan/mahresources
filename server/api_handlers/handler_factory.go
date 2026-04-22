@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"reflect"
@@ -263,7 +264,11 @@ func CreateTagHandler(writer interfaces.TagsWriter) http.HandlerFunc {
 		}
 
 		if err != nil {
-			http_utils.HandleError(err, w, r, http.StatusBadRequest)
+			redirectTarget := "/tag/new"
+			if creator.ID != 0 {
+				redirectTarget = fmt.Sprintf("/tag/edit?id=%d", creator.ID)
+			}
+			http_utils.HandleFormError(w, r, redirectTarget, err, r.PostForm)
 			return
 		}
 
@@ -366,7 +371,11 @@ func CreateCategoryHandler(ctx interfaces.CategoryCRUDReader) http.HandlerFunc {
 		}
 
 		if err != nil {
-			http_utils.HandleError(err, w, r, http.StatusBadRequest)
+			redirectTarget := "/category/new"
+			if editor.ID != 0 {
+				redirectTarget = fmt.Sprintf("/category/edit?id=%d", editor.ID)
+			}
+			http_utils.HandleFormError(w, r, redirectTarget, err, r.PostForm)
 			return
 		}
 

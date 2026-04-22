@@ -31,9 +31,16 @@ export class SchemaFormMode extends LitElement {
   @property({ type: String }) name = 'Meta';
 
   @state() private _data: any = {};
+  // BH-009: reactive map of fieldId → error message; drives aria-invalid in templates
+  @state() private _errors: Map<string, string> = new Map();
 
   // Light DOM hidden input for form submission
   private _hiddenInput: HTMLInputElement | null = null;
+
+  // Bound submit handler so we can remove it on disconnect
+  private _submitHandler: ((e: Event) => void) | null = null;
+  // Whether we set noValidate on the ancestor form (so we can restore it)
+  private _setNoValidate = false;
 
   // Render in light DOM to inherit Tailwind styles from the host page
   override createRenderRoot() {
@@ -47,6 +54,81 @@ export class SchemaFormMode extends LitElement {
     this._hiddenInput.name = this.name;
     this._hiddenInput.value = JSON.stringify(this.value ?? {});
     this.appendChild(this._hiddenInput);
+
+    // BH-009: Hook the ancestor <form>'s submit event so validation errors
+    // surface even when the user never blurred the field.
+    // Disable native form validation (noValidate) so the browser doesn't block
+    // the submit event before our handler fires (which would prevent us from
+    // showing inline validation errors for schema-driven required fields).
+    const form = this.closest('form');
+    if (form && !form.noValidate) {
+      form.noValidate = true;
+      this._setNoValidate = true;
+    }
+    if (form) {
+      this._submitHandler = (ev: Event) => {
+        // On form submit, validate all schema-managed inputs and set errors in
+        // reactive _errors state. We don't use native `required` to avoid the
+        // browser blocking the submit event before our handler fires.
+        // Walk every input inside schema-form-mode and compute errors directly.
+        const newErrors = new Map<string, string>();
+        this.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+          'input:not([type="hidden"]),textarea'
+        ).forEach((el) => {
+          const id = el.id;
+          if (!id) return;
+          // Dispatch blur so onBlur handlers also fire (for user-typed values)
+          el.dispatchEvent(new FocusEvent('blur', { bubbles: false }));
+          // Directly validate: aria-required is set for required fields.
+          // Since we removed the native `required` attr, check value directly.
+          const isReq = el.getAttribute('aria-required') === 'true';
+          const val = el.value;
+          let errorText = '';
+          const isNumberInput = el instanceof HTMLInputElement && el.type === 'number';
+          if (isReq && val === '') {
+            errorText = 'This field is required';
+          } else if (val !== '') {
+            if (isNumberInput) {
+              const num = parseFloat(val);
+              if (isNaN(num)) {
+                errorText = 'Invalid number';
+              } else {
+                const min = el.getAttribute('min');
+                const max = el.getAttribute('max');
+                const step = el.getAttribute('step');
+                if (min !== null && num < parseFloat(min)) {
+                  errorText = `Must be at least ${min}`;
+                } else if (max !== null && num > parseFloat(max)) {
+                  errorText = `Must be at most ${max}`;
+                } else if (step === '1' && !Number.isInteger(num)) {
+                  errorText = 'Must be a whole number';
+                }
+              }
+            } else {
+              const pat = el.getAttribute('pattern');
+              const minLen = el instanceof HTMLInputElement ? el.minLength : -1;
+              const maxLen = el instanceof HTMLInputElement ? el.maxLength : -1;
+              if (pat && val !== '' && !new RegExp(pat).test(val)) {
+                errorText = `Must match the expected format (${pat})`;
+              } else if (minLen > 0 && val.length < minLen) {
+                errorText = `Must be at least ${minLen} characters`;
+              } else if (maxLen > 0 && val.length > maxLen) {
+                errorText = `Must be at most ${maxLen} characters`;
+              }
+            }
+          }
+          if (errorText) {
+            newErrors.set(id, errorText);
+          }
+        });
+        if (newErrors.size > 0) {
+          this._errors = newErrors;
+          ev.preventDefault();
+          ev.stopPropagation();
+        }
+      };
+      form.addEventListener('submit', this._submitHandler);
+    }
   }
 
   override disconnectedCallback() {
@@ -54,6 +136,18 @@ export class SchemaFormMode extends LitElement {
       this.removeChild(this._hiddenInput);
     }
     this._hiddenInput = null;
+    // Clean up the form submit listener and restore noValidate if we set it
+    const form = this.closest('form');
+    if (this._submitHandler) {
+      if (form) {
+        form.removeEventListener('submit', this._submitHandler);
+      }
+      this._submitHandler = null;
+    }
+    if (this._setNoValidate && form) {
+      form.noValidate = false;
+      this._setNoValidate = false;
+    }
     super.disconnectedCallback();
   }
 
@@ -127,6 +221,21 @@ export class SchemaFormMode extends LitElement {
       composed: true,
     }));
     this.requestUpdate();
+  }
+
+  // BH-009: Store validation errors in reactive state so Lit templates can
+  // render aria-invalid and error text without being overwritten on re-render.
+  private _setError(fieldId: string, message: string) {
+    const updated = new Map(this._errors);
+    updated.set(fieldId, message);
+    this._errors = updated;
+  }
+
+  private _clearError(fieldId: string) {
+    if (!this._errors.has(fieldId)) return;
+    const updated = new Map(this._errors);
+    updated.delete(fieldId);
+    this._errors = updated;
   }
 
   // ─── Render ──────────────────────────────────────────────────────────────
@@ -927,43 +1036,42 @@ export class SchemaFormMode extends LitElement {
     const onBlur = (e: Event) => {
       const input = e.target as HTMLInputElement;
       const val = input.value;
-      const errorSpan = errorId
-        ? (input.closest('div')?.querySelector(`#${errorId}`) as HTMLElement | null)
-        : (input.parentElement?.querySelector('.schema-form-error') as HTMLElement | null);
-      if (val === '' || val === undefined || val === null) {
-        if (errorSpan) errorSpan.textContent = '';
-        input.classList.remove('border-red-500');
-        input.classList.add('border-gray-300');
-        input.removeAttribute('aria-invalid');
-        return;
-      }
-      const num = parseFloat(val);
+      if (!fieldId) return;
       let error = '';
-      if (!isNaN(num)) {
-        if (schema.exclusiveMinimum !== undefined && num <= schema.exclusiveMinimum) {
-          error = `Must be greater than ${schema.exclusiveMinimum}`;
-        } else if (schema.exclusiveMaximum !== undefined && num >= schema.exclusiveMaximum) {
-          error = `Must be less than ${schema.exclusiveMaximum}`;
-        } else if (schema.minimum !== undefined && num < schema.minimum) {
-          error = `Must be at least ${schema.minimum}`;
-        } else if (schema.maximum !== undefined && num > schema.maximum) {
-          error = `Must be at most ${schema.maximum}`;
+      if (isRequired && (val === '' || val === undefined || val === null)) {
+        error = 'This field is required';
+      } else if (val === '' || val === undefined || val === null) {
+        // Empty and not required — clear any previous error
+        this._clearError(fieldId);
+        return;
+      } else {
+        const num = parseFloat(val);
+        if (isNaN(num)) {
+          error = `Invalid ${type} value`;
+        } else {
+          if (schema.exclusiveMinimum !== undefined && num <= schema.exclusiveMinimum) {
+            error = `Must be greater than ${schema.exclusiveMinimum}`;
+          } else if (schema.exclusiveMaximum !== undefined && num >= schema.exclusiveMaximum) {
+            error = `Must be less than ${schema.exclusiveMaximum}`;
+          } else if (schema.minimum !== undefined && num < schema.minimum) {
+            error = `Must be at least ${schema.minimum}`;
+          } else if (schema.maximum !== undefined && num > schema.maximum) {
+            error = `Must be at most ${schema.maximum}`;
+          } else if (type === 'integer' && !Number.isInteger(num)) {
+            error = 'Must be a whole number';
+          } else if (schema.multipleOf !== undefined && num % schema.multipleOf !== 0) {
+            error = `Must be a multiple of ${schema.multipleOf}`;
+          }
         }
       }
-      if (errorSpan) {
-        errorSpan.textContent = error;
-      }
       if (error) {
-        input.classList.add('border-red-500');
-        input.classList.remove('border-gray-300');
-        input.setAttribute('aria-invalid', 'true');
+        this._setError(fieldId, error);
       } else {
-        input.classList.remove('border-red-500');
-        input.classList.add('border-gray-300');
-        input.removeAttribute('aria-invalid');
+        this._clearError(fieldId);
       }
     };
 
+    const currentError = fieldId ? (this._errors.get(fieldId) || '') : '';
     const ariaDescParts = [describedBy, errorId].filter(Boolean).join(' ');
 
     return html`
@@ -974,14 +1082,15 @@ export class SchemaFormMode extends LitElement {
           min=${schema.minimum !== undefined ? schema.minimum : nothing}
           max=${schema.maximum !== undefined ? schema.maximum : nothing}
           .value=${data !== undefined && data !== null ? String(data) : ''}
-          class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-1"
+          class=${`shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm rounded-md mt-1 ${currentError ? 'border-red-500' : 'border-gray-300'}`}
           aria-describedby=${ariaDescParts || nothing}
+          aria-invalid=${currentError ? 'true' : nothing}
           ?required=${!!isRequired}
           aria-required=${isRequired ? 'true' : nothing}
           @input=${onInput}
           @blur=${onBlur}>
         ${constraints.length > 0 ? html`<span class="text-xs text-gray-400 block mt-1">${constraints.join(', ')}</span>` : nothing}
-        <span class="schema-form-error block text-sm text-red-500 mt-1" id=${errorId || nothing} role="alert"></span>
+        <span class="schema-form-error block text-sm text-red-500 mt-1" id=${errorId || nothing} role="alert">${currentError}</span>
       </div>
     `;
   }
@@ -1010,29 +1119,29 @@ export class SchemaFormMode extends LitElement {
     const onBlur = (e: Event) => {
       const input = e.target as HTMLInputElement;
       const val = input.value || '';
-      const errorSpan = errorId
-        ? (input.closest('div')?.querySelector(`#${errorId}`) as HTMLElement | null)
-        : (input.parentElement?.querySelector('.schema-form-error') as HTMLElement | null);
+      if (!fieldId) return;
       let error = '';
-      if (schema.minLength !== undefined && val.length < schema.minLength) {
+      // Check required manually (no native `required` attribute to avoid blocking form submit)
+      if (isRequired && val === '') {
+        error = 'This field is required';
+      } else if (schema.minLength !== undefined && val.length > 0 && val.length < schema.minLength) {
         error = `Must be at least ${schema.minLength} characters`;
       } else if (schema.maxLength !== undefined && val.length > schema.maxLength) {
         error = `Must be at most ${schema.maxLength} characters`;
-      }
-      if (errorSpan) {
-        errorSpan.textContent = error;
+      } else if (schema.pattern !== undefined && val !== '' && !new RegExp(schema.pattern).test(val)) {
+        error = (schema as any).patternDescription
+          || `Must match the expected format (${schema.pattern})`;
+      } else if (input.validity.typeMismatch) {
+        error = `Invalid ${inputType} value`;
       }
       if (error) {
-        input.classList.add('border-red-500');
-        input.classList.remove('border-gray-300');
-        input.setAttribute('aria-invalid', 'true');
+        this._setError(fieldId, error);
       } else {
-        input.classList.remove('border-red-500');
-        input.classList.add('border-gray-300');
-        input.removeAttribute('aria-invalid');
+        this._clearError(fieldId);
       }
     };
 
+    const currentError = fieldId ? (this._errors.get(fieldId) || '') : '';
     const ariaDescParts = [describedBy, errorId].filter(Boolean).join(' ');
 
     return html`
@@ -1043,14 +1152,15 @@ export class SchemaFormMode extends LitElement {
           pattern=${schema.pattern || nothing}
           minlength=${schema.minLength !== undefined ? schema.minLength : nothing}
           maxlength=${schema.maxLength !== undefined ? schema.maxLength : nothing}
-          class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md mt-1"
+          class=${`shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm rounded-md mt-1 ${currentError ? 'border-red-500' : 'border-gray-300'}`}
           aria-describedby=${ariaDescParts || nothing}
+          aria-invalid=${currentError ? 'true' : nothing}
           ?required=${!!isRequired}
           aria-required=${isRequired ? 'true' : nothing}
           @input=${onInput}
           @blur=${onBlur}>
         ${hintText ? html`<span class="text-xs text-gray-400 block mt-1">${hintText}</span>` : nothing}
-        <span class="schema-form-error block text-sm text-red-500 mt-1" id=${errorId || nothing} role="alert"></span>
+        <span class="schema-form-error block text-sm text-red-500 mt-1" id=${errorId || nothing} role="alert">${currentError}</span>
       </div>
     `;
   }

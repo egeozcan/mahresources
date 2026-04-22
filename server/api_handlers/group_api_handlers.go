@@ -111,13 +111,13 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUDReader) func(writer http.Respons
 		}
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleFormError(writer, request, "/group/new", err, request.PostForm)
 			return
 		}
 
 		if editor.ID == 0 {
 			if editor.Name == "" {
-				http_utils.HandleError(fmt.Errorf("group name is required"), writer, request, http.StatusBadRequest)
+				http_utils.HandleFormError(writer, request, "/group/new", fmt.Errorf("group name is required"), request.PostForm)
 				return
 			}
 
@@ -176,7 +176,11 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUDReader) func(writer http.Respons
 		}
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			redirectTarget := "/group/new"
+			if editor.ID != 0 {
+				redirectTarget = fmt.Sprintf("/group/edit?id=%d", editor.ID)
+			}
+			http_utils.HandleFormError(writer, request, redirectTarget, err, request.PostForm)
 			return
 		}
 

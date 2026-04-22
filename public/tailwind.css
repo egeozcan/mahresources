@@ -4374,6 +4374,11 @@
       grid-template-columns: repeat(4, minmax(0, 1fr));
     }
   }
+  .sm\:flex-row {
+    @media (width >= 40rem) {
+      flex-direction: row;
+    }
+  }
   .sm\:items-center {
     @media (width >= 40rem) {
       align-items: center;

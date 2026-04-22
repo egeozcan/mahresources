@@ -141,7 +141,7 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 			res, err := effectiveCtx.AddRemoteResource(&remoteCreator)
 
 			if err != nil {
-				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				http_utils.HandleFormError(writer, request, "/resource/new", err, request.PostForm)
 				return
 			}
 
@@ -158,14 +158,14 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 		creator := query_models.ResourceCreator{ResourceQueryBase: remoteCreator.ResourceQueryBase}
 
 		if request.MultipartForm == nil || request.MultipartForm.File == nil {
-			http_utils.HandleError(fmt.Errorf("no multipart form data found"), writer, request, http.StatusBadRequest)
+			http_utils.HandleFormError(writer, request, "/resource/new", fmt.Errorf("no multipart form data found"), request.PostForm)
 			return
 		}
 
 		files := request.MultipartForm.File["resource"]
 
 		if len(files) == 0 {
-			http_utils.HandleError(fmt.Errorf("no files found to save"), writer, request, http.StatusBadRequest)
+			http_utils.HandleFormError(writer, request, "/resource/new", fmt.Errorf("no files found to save"), request.PostForm)
 			return
 		}
 
@@ -234,8 +234,8 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 				return
 			}
 
-			// HTML clients (standard form uploads) get the normal error page
-			http_utils.HandleError(aggregateError, writer, request, statusCode)
+			// HTML clients (standard form uploads) get PRG back to the create form
+			http_utils.HandleFormError(writer, request, "/resource/new", aggregateError, request.PostForm)
 			return
 		}
 
@@ -337,7 +337,7 @@ func GetResourceAddRemoteHandler(ctx interfaces.ResourceCreator) func(writer htt
 		res, err := effectiveCtx.AddRemoteResource(&creator)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			http_utils.HandleFormError(writer, request, "/resource/new", err, request.PostForm)
 			return
 		}
 
@@ -449,7 +449,15 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 		res, err := effectiveCtx.EditResource(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, errorStatusCode(err))
+			if http_utils.RequestAcceptsHTML(request) {
+				redirectTarget := "/resource/new"
+				if editor.ID != 0 {
+					redirectTarget = fmt.Sprintf("/resource/edit?id=%d", editor.ID)
+				}
+				http_utils.HandleFormError(writer, request, redirectTarget, err, request.PostForm)
+			} else {
+				http_utils.HandleError(err, writer, request, errorStatusCode(err))
+			}
 			return
 		}
 
