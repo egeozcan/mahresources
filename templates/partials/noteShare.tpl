@@ -42,10 +42,6 @@
             }
         },
         getShareUrl() {
-            // BH-033: if SHARE_PUBLIC_URL is not configured, surface only the
-            // relative path. Callers that check shareUrlConfigured first decide
-            // whether to render this as an absolute URL or a "prepend your
-            // public hostname" instruction.
             if (!this.shareUrlConfigured) {
                 return '/s/' + this.shareToken;
             }
