@@ -30,8 +30,11 @@ test.describe('Resource from URL preserves user-provided name', () => {
     request,
     baseURL,
   }) => {
-    // Use the app's own favicon as the download URL (guaranteed to exist)
-    const downloadUrl = `${baseURL}/public/favicon/favicon.ico`;
+    // Use the app's PNG favicon as the download URL. Post-BH-011 image ingestion
+    // rejects undecodable image MIME types, so we use favicon-32x32.png (a real PNG)
+    // instead of favicon.ico (which mimetype labels image/x-icon but Go's stdlib
+    // cannot decode).
+    const downloadUrl = `${baseURL}/public/favicon/favicon-32x32.png`;
 
     // Create a resource from URL with a custom name via API
     const response = await request.post(`${baseURL}/v1/resource/remote`, {

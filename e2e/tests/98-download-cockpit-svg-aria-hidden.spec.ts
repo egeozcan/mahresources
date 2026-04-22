@@ -33,8 +33,12 @@ test.describe('Download cockpit SVG aria-hidden', () => {
     const triggerButton = page.locator('button[aria-label="Open jobs panel"]');
     await triggerButton.click();
 
-    // The close button has aria-label="Close jobs panel"
-    const closeButton = page.locator('button[aria-label="Close jobs panel"]');
+    // The close button has aria-label="Close jobs panel" and lives inside the
+    // open cockpit panel. The trigger button ALSO carries that aria-label when
+    // the panel is open (its label toggles), so scope to the panel dialog to
+    // avoid strict-mode double-match.
+    const closeButton = page
+      .locator('[data-testid="cockpit-panel"] button[aria-label="Close jobs panel"]');
     await expect(closeButton).toBeVisible();
 
     // Its SVG should have aria-hidden="true"

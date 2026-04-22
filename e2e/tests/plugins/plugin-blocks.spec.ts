@@ -38,15 +38,16 @@ test.describe('Plugin Block Types', () => {
     const editButton = page.locator('button', { hasText: 'Edit Blocks' });
     await editButton.click();
 
-    // Open add block picker
-    const addBlockButton = page.locator('button', { hasText: '+ Add Block' });
+    // Open add block picker (BH-027: picker is now a listbox with li role="option")
+    const addBlockButton = page.locator('[data-testid="add-block-trigger"]');
     await addBlockButton.click();
 
-    // Verify counter block type is listed with description
-    const counterOption = page.locator('button:has-text("Counter")').filter({
-      hasText: 'A simple click counter block',
-    });
+    // Verify counter block type is listed (identified by data-block-type for
+    // plugin types the picker renders an option per block type).
+    const counterOption = page
+      .locator('[role="option"][data-block-type="plugin:test-blocks:counter"]');
     await expect(counterOption).toBeVisible();
+    await expect(counterOption).toContainText('A simple click counter block');
 
     // Add a counter block
     await counterOption.click();
