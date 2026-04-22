@@ -84,34 +84,40 @@ describe('Bug 1: enforce nested required when optional object has data', () => {
 import { getPreviewValue } from '../components/schemaEditorModal';
 
 describe('Bug 2: getPreviewValue handles nullable type arrays', () => {
-  it('returns "" for nullable string root { type: ["string", "null"] }', () => {
+  // BH-010 revision: preview-specific semantics now prefer `null` over a
+  // zero-like primitive for nullable root schemas — a nullable integer's
+  // most-correct empty state is null, not 0. Likewise for plain numeric/
+  // string root schemas we return `{}` (JSON.stringify(undefined) → undefined
+  // normalized to '{}'), which renders as the least-surprising empty form.
+  it('returns null for nullable string root { type: ["string", "null"] }', () => {
     const result = getPreviewValue('{"type":["string","null"]}');
-    expect(JSON.parse(result)).toBe('');
+    expect(JSON.parse(result)).toBe(null);
   });
 
-  it('returns 0 for nullable number root { type: ["number", "null"] }', () => {
+  it('returns null for nullable number root { type: ["number", "null"] }', () => {
     const result = getPreviewValue('{"type":["number","null"]}');
-    expect(JSON.parse(result)).toBe(0);
+    expect(JSON.parse(result)).toBe(null);
   });
 
-  it('returns 0 for nullable integer root { type: ["integer", "null"] }', () => {
+  it('returns null for nullable integer root { type: ["integer", "null"] }', () => {
     const result = getPreviewValue('{"type":["integer","null"]}');
-    expect(JSON.parse(result)).toBe(0);
+    expect(JSON.parse(result)).toBe(null);
   });
 
-  it('returns false for nullable boolean root { type: ["boolean", "null"] }', () => {
+  it('returns null for nullable boolean root { type: ["boolean", "null"] }', () => {
+    // null > boolean in preview preference order (null is strictly "no value").
     const result = getPreviewValue('{"type":["boolean","null"]}');
-    expect(JSON.parse(result)).toBe(false);
+    expect(JSON.parse(result)).toBe(null);
   });
 
-  it('returns [] for nullable array root { type: ["array", "null"] }', () => {
+  it('returns null for nullable array root { type: ["array", "null"] }', () => {
     const result = getPreviewValue('{"type":["array","null"]}');
-    expect(JSON.parse(result)).toEqual([]);
+    expect(JSON.parse(result)).toBe(null);
   });
 
-  it('returns {} for nullable object root { type: ["object", "null"] }', () => {
+  it('returns null for nullable object root { type: ["object", "null"] }', () => {
     const result = getPreviewValue('{"type":["object","null"]}');
-    expect(JSON.parse(result)).toEqual({});
+    expect(JSON.parse(result)).toBe(null);
   });
 
   it('returns null for pure null type array { type: ["null"] }', () => {
@@ -119,14 +125,16 @@ describe('Bug 2: getPreviewValue handles nullable type arrays', () => {
     expect(JSON.parse(result)).toBe(null);
   });
 
-  it('prefers non-null type when null comes first { type: ["null", "string"] }', () => {
+  it('returns null when null is present alongside string { type: ["null", "string"] }', () => {
     const result = getPreviewValue('{"type":["null","string"]}');
-    expect(JSON.parse(result)).toBe('');
+    expect(JSON.parse(result)).toBe(null);
   });
 
-  // Existing non-array types should still work
-  it('still handles plain string type', () => {
-    expect(JSON.parse(getPreviewValue('{"type":"string"}'))).toBe('');
+  // Non-array types: BH-010 normalizes undefined to '{}' string.
+  it('normalizes plain string type to {} (renders empty input, not "")', () => {
+    // getPreviewDefaultValue returns undefined for plain string type; normalizer
+    // emits '{}' so the preview form has a valid empty object to start from.
+    expect(getPreviewValue('{"type":"string"}')).toBe('{}');
   });
 
   it('still handles plain object type', () => {

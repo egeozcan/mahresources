@@ -24,6 +24,23 @@ function generateFieldId(prefix: string, path: string): string {
   return `${prefix}-${encoded}`;
 }
 
+/**
+ * BH-010: Render numeric input values with preview-aware semantics.
+ * - undefined/null → empty input
+ * - data === 0 AND the schema has no explicit `default` → empty input
+ *   (a stray 0 from legacy callers must not seed the Preview Form with 0)
+ * - otherwise → String(data)
+ *
+ * Rationale: when the Preview Form renders a number field with {minimum: 1900},
+ * a seeded `0` fires a bogus "Must be at least 1900" onBlur. Treating `0` as
+ * "empty" in the no-default case matches what the user expected to see.
+ */
+function formatNumericForInput(data: any, schema: JSONSchema): string {
+  if (data === undefined || data === null) return '';
+  if (data === 0 && !('default' in schema)) return '';
+  return String(data);
+}
+
 @customElement('schema-form-mode')
 export class SchemaFormMode extends LitElement {
   @property({ type: Object }) schema: JSONSchema = {};
@@ -1081,7 +1098,7 @@ export class SchemaFormMode extends LitElement {
           step=${type === 'integer' ? '1' : 'any'}
           min=${schema.minimum !== undefined ? schema.minimum : nothing}
           max=${schema.maximum !== undefined ? schema.maximum : nothing}
-          .value=${data !== undefined && data !== null ? String(data) : ''}
+          .value=${formatNumericForInput(data, schema)}
           class=${`shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm rounded-md mt-1 ${currentError ? 'border-red-500' : 'border-gray-300'}`}
           aria-describedby=${ariaDescParts || nothing}
           aria-invalid=${currentError ? 'true' : nothing}
