@@ -99,6 +99,7 @@ var templates = map[string]templateInformation{
 	"/admin/overview": {template_context_providers.AdminOverviewContextProvider, "adminOverview.tpl", http.MethodGet},
 	"/admin/export":   {template_context_providers.AdminExportContextProvider, "adminExport.tpl", http.MethodGet},
 	"/admin/import":   {template_context_providers.AdminImportContextProvider, "adminImport.tpl", http.MethodGet},
+	"/admin/shares":   {template_context_providers.AdminSharesContextProvider, "adminShares.tpl", http.MethodGet}, // BH-035
 
 	"/mrql": {template_context_providers.MRQLContextProvider, "mrql.tpl", http.MethodGet},
 }
@@ -350,6 +351,10 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// Note sharing routes
 	router.Methods(http.MethodPost).Path("/v1/note/share").HandlerFunc(api_handlers.GetShareNoteHandler(appContext))
 	router.Methods(http.MethodDelete).Path("/v1/note/share").HandlerFunc(api_handlers.GetUnshareNoteHandler(appContext))
+	// BH-035: centralized /admin/shares dashboard bulk-revoke endpoint. Accepts
+	// form-encoded ids=<noteId> repeats; redirects browser-form consumers back
+	// to /admin/shares, answers JSON for Accept: application/json callers.
+	router.Methods(http.MethodPost).Path("/v1/admin/shares/bulk-revoke").HandlerFunc(api_handlers.GetBulkUnshareNotesHandler(appContext))
 
 	// Note bulk operations
 	router.Methods(http.MethodPost).Path("/v1/notes/addTags").HandlerFunc(api_handlers.GetAddTagsToNotesHandler(appContext))

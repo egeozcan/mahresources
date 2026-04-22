@@ -26,6 +26,11 @@ type Note struct {
 	NoteType    *NoteType `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	NoteTypeId  *uint
 	ShareToken  *string      `gorm:"uniqueIndex;size:32" json:"shareToken,omitempty"`
+	// ShareCreatedAt records when the current ShareToken was minted. Nullable:
+	// existing rows (minted before BH-035) remain NULL; the /admin/shares UI
+	// renders "(unknown)" for them rather than back-filling with an inaccurate
+	// NOW() during migration. Set in ShareNote, cleared in UnshareNote.
+	ShareCreatedAt *time.Time   `gorm:"index" json:"shareCreatedAt,omitempty"`
 	Blocks      []*NoteBlock `gorm:"foreignKey:NoteID" json:"blocks,omitempty"`
 
 	// RenderedHTML is a transient field populated by the API when render=1 is set.

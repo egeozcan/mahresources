@@ -52,6 +52,7 @@ type NoteSharer interface {
 	ShareNote(noteId uint) (string, error)
 	UnshareNote(noteId uint) error
 	GetNoteByShareToken(token string) (*models.Note, error)
+	BulkUnshareNotes(ids []uint) (int, error)
 }
 
 // BulkNoteTagEditor handles bulk tag operations on notes

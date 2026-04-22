@@ -10,6 +10,7 @@ export const STATIC_PAGES = [
   // Dashboard
   { path: '/dashboard', name: 'Dashboard' },
   { path: '/admin/overview', name: 'Admin overview' },
+  { path: '/admin/shares', name: 'Admin shares dashboard' }, // BH-035
   // List pages (show empty state if no data)
   { path: '/notes', name: 'Notes list' },
   { path: '/groups', name: 'Groups list' },

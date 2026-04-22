@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -304,7 +305,14 @@ func (ctx *MahresourcesContext) ShareNote(noteId uint) (string, error) {
 	}
 
 	token := lib.GenerateShareToken()
-	if err := ctx.db.Model(&note).Update("share_token", token).Error; err != nil {
+	// BH-035: record when this token was minted so the admin /admin/shares
+	// dashboard can sort by age and operators have an audit trail. Kept in
+	// the same Updates call so either both persist or neither does.
+	now := time.Now()
+	if err := ctx.db.Model(&note).Updates(map[string]any{
+		"share_token":      token,
+		"share_created_at": now,
+	}).Error; err != nil {
 		return "", err
 	}
 
@@ -318,12 +326,49 @@ func (ctx *MahresourcesContext) UnshareNote(noteId uint) error {
 		return err
 	}
 
-	if err := ctx.db.Model(&note).Update("share_token", nil).Error; err != nil {
+	// BH-035: clear the ShareCreatedAt timestamp alongside the token so the
+	// admin dashboard doesn't show stale "created" dates for unshared notes.
+	if err := ctx.db.Model(&note).Updates(map[string]any{
+		"share_token":      nil,
+		"share_created_at": nil,
+	}).Error; err != nil {
 		return err
 	}
 
 	ctx.Logger().Info(models.LogActionUpdate, "note", &noteId, note.Name, "Removed share token", nil)
 	return nil
+}
+
+// GetSharedNotes returns every note currently holding a share token, ordered
+// by ShareCreatedAt DESC with NULLs (legacy rows minted before BH-035) last.
+// Used by the /admin/shares dashboard. Does NOT preload Blocks or Resources —
+// the dashboard only needs Name, ID, ShareToken, ShareCreatedAt.
+func (ctx *MahresourcesContext) GetSharedNotes() ([]models.Note, error) {
+	var notes []models.Note
+	err := ctx.db.
+		Where("share_token IS NOT NULL").
+		Order("share_created_at DESC NULLS LAST, id DESC").
+		Find(&notes).Error
+	return notes, err
+}
+
+// BulkUnshareNotes revokes share tokens for every note in the ids slice.
+// Non-existent IDs are silently skipped; the return value is the count of
+// notes actually unshared. BH-035 — used by POST /v1/admin/shares/bulk-revoke.
+func (ctx *MahresourcesContext) BulkUnshareNotes(ids []uint) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	var revoked int
+	for _, id := range ids {
+		if err := ctx.UnshareNote(id); err == nil {
+			revoked++
+		}
+		// gorm.ErrRecordNotFound for non-existent IDs is expected; we don't
+		// surface it because the caller is a bulk form action and partial
+		// success is the desired semantic.
+	}
+	return revoked, nil
 }
 
 func (ctx *MahresourcesContext) GetNoteByShareToken(token string) (*models.Note, error) {

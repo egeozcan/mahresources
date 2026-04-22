@@ -2743,6 +2743,9 @@
   .align-middle {
     vertical-align: middle;
   }
+  .align-top {
+    vertical-align: top;
+  }
   .font-mono {
     font-family: var(--font-mono);
   }
@@ -3085,6 +3088,9 @@
   }
   .decoration-indigo-300 {
     text-decoration-color: var(--color-indigo-300);
+  }
+  .decoration-dotted {
+    text-decoration-style: dotted;
   }
   .placeholder-gray-500 {
     &::placeholder {

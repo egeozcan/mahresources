@@ -685,7 +685,13 @@ components:
                 guid:
                     nullable: true
                     type: string
+                hasShare:
+                    type: boolean
                 renderedHTML:
+                    type: string
+                shareCreatedAt:
+                    format: date-time
+                    nullable: true
                     type: string
                 shareToken:
                     nullable: true
@@ -1692,6 +1698,18 @@ paths:
                     description: Successful response
             summary: Get server statistics
             tags:
+                - admin
+    /v1/admin/shares/bulk-revoke:
+        post:
+            operationId: bulkRevokeShares
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Revoke share tokens for a list of note IDs
+            tags:
+                - notes
                 - admin
     /v1/categories:
         get:
