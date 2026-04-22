@@ -702,9 +702,24 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		return &existingResource, tx.Commit().Error
 	}
 
+	// BH-023: select target filesystem based on PathName (alt-fs key).
+	targetFs := ctx.fs
+	if resourceQuery.PathName != "" {
+		if _, ok := ctx.Config.AltFileSystems[resourceQuery.PathName]; !ok {
+			tx.Rollback()
+			return nil, fmt.Errorf("unknown filesystem: %s", resourceQuery.PathName)
+		}
+		altFs, altErr := ctx.GetFsForStorageLocation(&resourceQuery.PathName)
+		if altErr != nil {
+			tx.Rollback()
+			return nil, altErr
+		}
+		targetFs = altFs
+	}
+
 	folder := "/resources/" + hash[0:2] + "/" + hash[2:4] + "/" + hash[4:6] + "/"
 
-	if err := ctx.fs.MkdirAll(folder, 0777); err != nil {
+	if err := targetFs.MkdirAll(folder, 0777); err != nil {
 		tx.Rollback()
 		return nil, err
 	}
@@ -713,14 +728,14 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 	fileExists := false
 
 	filePath := path.Join(folder, hash+fileMime.Extension())
-	stat, statError := ctx.fs.Stat(filePath)
+	stat, statError := targetFs.Stat(filePath)
 
 	if statError == nil && stat != nil {
-		savedFile, err = ctx.fs.Open(filePath)
+		savedFile, err = targetFs.Open(filePath)
 		log.Printf("Reusing stale file at %s", filePath)
 		fileExists = true
 	} else {
-		savedFile, err = ctx.fs.Create(filePath)
+		savedFile, err = targetFs.Create(filePath)
 	}
 
 	if err != nil {
@@ -786,6 +801,11 @@ func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName strin
 		OriginalName:       resourceQuery.OriginalName,
 		Width:              uint(width),
 		Height:             uint(height),
+	}
+	// BH-023: set StorageLocation when an alt-fs key was provided.
+	if resourceQuery.PathName != "" {
+		pn := resourceQuery.PathName
+		res.StorageLocation = &pn
 	}
 
 	if err := tx.Save(res).Error; err != nil {
