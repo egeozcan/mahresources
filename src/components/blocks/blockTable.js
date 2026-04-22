@@ -225,6 +225,9 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode) {
 
       const response = await fetch(`/v1/note/block/table/query?${params}`);
       if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error('Query unavailable');
+        }
         const errData = await response.json().catch(() => ({}));
         throw new Error(errData.error || `HTTP ${response.status}`);
       }

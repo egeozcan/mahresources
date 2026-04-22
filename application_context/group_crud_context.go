@@ -461,9 +461,14 @@ func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 			return err
 		}
 
-		return tx.
+		if err := tx.
 			Select("RelatedResources", "RelatedNotes", "RelatedGroups", "Relationships", "BackRelations", "Tags").
-			Delete(&group).Error
+			Delete(&group).Error; err != nil {
+			return err
+		}
+
+		// BH-020: scrub dangling references from note_blocks
+		return ScrubGroupFromBlocks(tx, groupId)
 	})
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "group", &groupId, groupName, "Deleted group", nil)
