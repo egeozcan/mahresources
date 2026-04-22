@@ -1584,6 +1584,10 @@ func (ctx *MahresourcesContext) loadResourcePayload(
 		Versions:         []archive.ResourceVersionPayload{},
 		Previews:         []archive.PreviewPayload{},
 	}
+	// BH-023: preserve the alt-fs key so import can restore storage binding.
+	if r.StorageLocation != nil && *r.StorageLocation != "" {
+		p.StorageLocation = *r.StorageLocation
+	}
 	p.GUID = ctx.ensureGUID("resources", r.ID, r.GUID)
 
 	if r.OwnerId != nil {

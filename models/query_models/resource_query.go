@@ -21,6 +21,7 @@ type ResourceQueryBase struct {
 
 type ResourceCreator struct {
 	ResourceQueryBase
+	PathName string // BH-023: optional alt-fs key; empty = default filesystem
 }
 
 type ResourceFromLocalCreator struct {
@@ -36,6 +37,7 @@ type ResourceFromRemoteCreator struct {
 	GroupCategoryName string
 	GroupName         string
 	GroupMeta         string
+	PathName          string // BH-023: optional alt-fs key; empty = default filesystem
 }
 
 type ResourceEditor struct {

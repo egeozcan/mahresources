@@ -155,7 +155,8 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.R
 			return
 		}
 
-		creator := query_models.ResourceCreator{ResourceQueryBase: remoteCreator.ResourceQueryBase}
+		// BH-023: thread PathName (alt-fs key) from the decoded form into the creator.
+		creator := query_models.ResourceCreator{ResourceQueryBase: remoteCreator.ResourceQueryBase, PathName: remoteCreator.PathName}
 
 		if request.MultipartForm == nil || request.MultipartForm.File == nil {
 			http_utils.HandleFormError(writer, request, "/resource/new", fmt.Errorf("no multipart form data found"), request.PostForm)

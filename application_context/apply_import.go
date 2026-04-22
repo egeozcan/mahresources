@@ -1331,6 +1331,11 @@ func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.
 		CreatedAt:        rp.CreatedAt,
 		UpdatedAt:        rp.UpdatedAt,
 	}
+	// BH-023: restore alt-fs binding; empty string means default filesystem.
+	if rp.StorageLocation != "" {
+		sl := rp.StorageLocation
+		r.StorageLocation = &sl
+	}
 	if rp.GUID != "" {
 		guid := rp.GUID
 		r.GUID = &guid

@@ -119,7 +119,8 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 func ResourceCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
-			"pageTitle": "Create Resource",
+			"pageTitle":      "Create Resource",
+			"altFileSystems": context.Config.AltFileSystems, // BH-023: expose alt-fs keys for Storage select
 		}.Update(StaticTemplateCtx(request))
 
 		var query query_models.EntityIdQuery
