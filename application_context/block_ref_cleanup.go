@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+	"mahresources/models"
 )
 
 // ScrubResourceFromBlocks removes resourceID from every gallery.resourceIds[]
@@ -300,13 +302,16 @@ func MigrateBlockReferencesOnce(db *gorm.DB) error {
 		}
 	}
 
-	// Record completion using INSERT OR REPLACE (SQLite) / ON CONFLICT (Postgres)
-	return db.Exec(
-		`INSERT INTO plugin_kvs (plugin_name, key, value, created_at, updated_at)
-         VALUES ('_system', ?, 'done', datetime('now'), datetime('now'))
-         ON CONFLICT(plugin_name, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-		markerKey,
-	).Error
+	// Record completion using GORM's upsert (portable SQLite + Postgres)
+	marker := models.PluginKV{
+		PluginName: "_system",
+		Key:        markerKey,
+		Value:      "done",
+	}
+	return db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "plugin_name"}, {Name: "key"}},
+		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
+	}).Create(&marker).Error
 }
 
 // scrubMissingIdsFromArrayField removes IDs from a JSON array field that are not in existing.
