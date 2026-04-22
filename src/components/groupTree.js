@@ -50,16 +50,43 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
         return;
       }
 
+      // Preserve the current tabindex=0 treeitem's group id across re-renders
+      // so keyboard users don't get bounced back to the first node on expand.
+      const prevStop = container.querySelector('li[role="treeitem"][tabindex="0"]');
+      const prevStopId = prevStop ? prevStop.getAttribute('data-group-id') : null;
+
       const ul = document.createElement('ul');
       ul.className = 'tree-chart-list';
-      for (const node of rootNodes) {
-        ul.appendChild(this.renderNode(node, true));
-      }
+      ul.setAttribute('role', 'tree');
+      ul.setAttribute('aria-label', 'Group hierarchy');
+
+      rootNodes.forEach((node, idx) => {
+        ul.appendChild(this.renderNode(node, true, {
+          level: 1,
+          posinset: idx + 1,
+          setsize: rootNodes.length,
+        }));
+      });
 
       container.replaceChildren(ul);
+
+      // BH-029: roving tabindex — exactly one treeitem is tab-stoppable.
+      this._applyRovingTabindex(container, prevStopId);
     },
 
-    renderNode(node, isRoot) {
+    _applyRovingTabindex(container, preferredId = null) {
+      const treeitems = container.querySelectorAll('li[role="treeitem"]');
+      if (treeitems.length === 0) return;
+      treeitems.forEach(li => li.setAttribute('tabindex', '-1'));
+      let target = null;
+      if (preferredId) {
+        target = container.querySelector(`li[role="treeitem"][data-group-id="${preferredId}"]`);
+      }
+      if (!target) target = treeitems[0];
+      target.setAttribute('tabindex', '0');
+    },
+
+    renderNode(node, isRoot, { level = 1, posinset = 1, setsize = 1 } = {}) {
       const isHighlighted = this.highlightedSet.has(node.id);
       const isFocused = node.id === this.containingId;
       const isExpanded = this.expandedNodes.has(node.id);
@@ -73,6 +100,16 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
 
       const li = document.createElement('li');
       if (isRoot) li.className = 'tree-root-node';
+
+      // BH-029: WAI-ARIA Tree View pattern
+      li.setAttribute('role', 'treeitem');
+      li.setAttribute('aria-level', String(level));
+      li.setAttribute('aria-posinset', String(posinset));
+      li.setAttribute('aria-setsize', String(setsize));
+      li.setAttribute('data-group-id', String(node.id));
+      if (hasChildren) {
+        li.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+      }
 
       const a = document.createElement('a');
       a.href = `/group?id=${node.id}`;
@@ -119,9 +156,15 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
 
           const childUl = document.createElement('ul');
           childUl.className = 'tree-chart-list';
-          for (const child of children) {
-            childUl.appendChild(this.renderNode(child, false));
-          }
+          // Nested groups per WAI-ARIA Tree View: role="group".
+          childUl.setAttribute('role', 'group');
+          children.forEach((child, idx) => {
+            childUl.appendChild(this.renderNode(child, false, {
+              level: level + 1,
+              posinset: idx + 1,
+              setsize: children.length,
+            }));
+          });
 
           // If we loaded fewer children than the total, show a "more" link
           if (children.length < node.childCount) {
@@ -168,6 +211,88 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
         this.render();
       } else if (action === 'expand') {
         this.expandNode(nodeId);
+      }
+    },
+
+    /**
+     * BH-029: WAI-ARIA Tree View keyboard pattern.
+     * https://www.w3.org/WAI/ARIA/apg/patterns/treeview/
+     *
+     * Implemented keys:
+     *   ArrowUp / ArrowDown — move focus between visible treeitems
+     *   ArrowRight          — expand (if collapsed) or move to first child (if expanded)
+     *   ArrowLeft           — collapse (if expanded) or move to parent
+     *   Home / End          — first / last visible treeitem
+     */
+    handleKeyDown(e) {
+      const target = e.target.closest('li[role="treeitem"]');
+      if (!target) return;
+      const container = this.$refs.treeContainer;
+      if (!container || !container.contains(target)) return;
+
+      const all = Array.from(container.querySelectorAll('li[role="treeitem"]'));
+      const idx = all.indexOf(target);
+      if (idx < 0) return;
+
+      let next = null;
+      switch (e.key) {
+        case 'ArrowDown':
+          next = all[idx + 1] || target;
+          break;
+        case 'ArrowUp':
+          next = all[idx - 1] || target;
+          break;
+        case 'Home':
+          next = all[0];
+          break;
+        case 'End':
+          next = all[all.length - 1];
+          break;
+        case 'ArrowRight': {
+          const expanded = target.getAttribute('aria-expanded');
+          if (expanded === 'false') {
+            const nodeId = parseInt(target.dataset.groupId, 10);
+            if (!Number.isNaN(nodeId)) {
+              e.preventDefault();
+              this.expandNode(nodeId);
+            }
+            return;
+          }
+          if (expanded === 'true') {
+            const firstChild = target.querySelector(':scope > ul > li[role="treeitem"]');
+            if (firstChild) next = firstChild;
+          }
+          break;
+        }
+        case 'ArrowLeft': {
+          const expanded = target.getAttribute('aria-expanded');
+          if (expanded === 'true') {
+            const nodeId = parseInt(target.dataset.groupId, 10);
+            if (!Number.isNaN(nodeId)) {
+              e.preventDefault();
+              this.expandedNodes.delete(nodeId);
+              this.render();
+              const refocused = container.querySelector(`li[role="treeitem"][data-group-id="${nodeId}"]`);
+              if (refocused) {
+                // _applyRovingTabindex already set tabindex=0 on the same node via preferredId.
+                refocused.focus();
+              }
+            }
+            return;
+          }
+          const parent = target.parentElement?.closest('li[role="treeitem"]');
+          if (parent) next = parent;
+          break;
+        }
+        default:
+          return;
+      }
+
+      if (next && next !== target) {
+        e.preventDefault();
+        all.forEach(li => li.setAttribute('tabindex', '-1'));
+        next.setAttribute('tabindex', '0');
+        next.focus();
       }
     },
 

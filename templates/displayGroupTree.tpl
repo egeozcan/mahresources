@@ -223,6 +223,7 @@
             rootId: {{ rootId }}
         })"
         @click="handleClick($event)"
+        @keydown="handleKeyDown($event)"
     >
         <div class="tree-chart" x-ref="treeContainer">
             <p class="text-stone-500 p-4">Loading tree...</p>
