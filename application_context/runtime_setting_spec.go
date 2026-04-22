@@ -6,7 +6,13 @@ import (
 	"time"
 )
 
-// SettingType discriminates value encoding.
+// SettingType discriminates value encoding on disk.
+//
+// Both SettingTypeInt and SettingTypeInt64 exist deliberately — the typed
+// getters return the matching Go type (int vs int64) so callers don't have
+// to cast. The on-disk envelope carries the discriminator, so a blob encoded
+// as "int" cannot be silently decoded as "int64" (decodeSettingValue returns
+// a type-mismatch error before returning any value).
 type SettingType string
 
 const (
@@ -107,31 +113,31 @@ func decodeSettingValue(typ string, data []byte) (any, error) {
 	case string(SettingTypeInt64):
 		var v int64
 		if err := json.Unmarshal(env.Value, &v); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("decode %s value: %w", typ, err)
 		}
 		return v, nil
 	case string(SettingTypeInt):
 		var v int
 		if err := json.Unmarshal(env.Value, &v); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("decode %s value: %w", typ, err)
 		}
 		return v, nil
 	case string(SettingTypeUint64):
 		var v uint64
 		if err := json.Unmarshal(env.Value, &v); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("decode %s value: %w", typ, err)
 		}
 		return v, nil
 	case string(SettingTypeDuration):
 		var nanos int64
 		if err := json.Unmarshal(env.Value, &nanos); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("decode %s value: %w", typ, err)
 		}
 		return time.Duration(nanos), nil
 	case string(SettingTypeString):
 		var v string
 		if err := json.Unmarshal(env.Value, &v); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("decode %s value: %w", typ, err)
 		}
 		return v, nil
 	}

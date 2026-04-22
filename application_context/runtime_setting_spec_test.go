@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -49,20 +50,7 @@ func TestEnvelopeDurationEncodedAsNanos(t *testing.T) {
 	}
 	// Envelope payload should be the nanosecond count, i.e. 500_000_000.
 	wantSubstr := `"value":500000000`
-	if !contains(string(enc), wantSubstr) {
+	if !strings.Contains(string(enc), wantSubstr) {
 		t.Fatalf("duration envelope %q should contain %q", string(enc), wantSubstr)
 	}
-}
-
-func contains(haystack, needle string) bool {
-	return len(needle) == 0 || (len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0)
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }
