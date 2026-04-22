@@ -49,6 +49,7 @@ import { renderJsonTable } from './tableMaker.js';
 // Import Alpine components
 import { autocompleter } from './components/dropdown.js';
 import { confirmAction } from './components/confirmAction.js';
+import { confirmGroupDelete } from './components/confirmGroupDelete.js';
 import { freeFields, generateParamNameForMeta, getJSONValue, getJSONOrObjValue } from './components/freeFields.js';
 import { registerBulkSelectionStore, bulkSelectionForms, selectableItem, setupBulkSelectionListeners } from './components/bulkSelection.js';
 import { registerSavedSettingStore } from './components/storeConfig.js';
@@ -123,6 +124,7 @@ registerPasteUploadStore(Alpine);
 // Register Alpine data components
 Alpine.data('autocompleter', autocompleter);
 Alpine.data('confirmAction', confirmAction);
+Alpine.data('confirmGroupDelete', confirmGroupDelete);
 Alpine.data('freeFields', freeFields);
 Alpine.data('bulkSelectionForms', bulkSelectionForms);
 Alpine.data('selectableItem', selectableItem);
