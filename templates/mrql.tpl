@@ -213,8 +213,9 @@
             </div>
         </div>
 
-        {# Editor container #}
+        {# Editor container — data-testid lets E2E tests target the underlying CodeMirror input. #}
         <div x-ref="editorContainer"
+             data-testid="mrql-input"
              class="border border-stone-300 rounded-md overflow-hidden bg-white"></div>
 
         {# Validation status #}
@@ -239,10 +240,21 @@
                 <span x-text="executing ? 'Running...' : 'Run'"></span>
                 <kbd class="ml-2 text-xs" aria-hidden="true" x-text="navigator.platform.indexOf('Mac') > -1 ? '⌘↵' : 'Ctrl+Enter'"></kbd>
             </button>
+            {# BH-012: Update button — only rendered when a saved query is loaded + query is valid. #}
+            <button type="button"
+                    x-show="canUpdate"
+                    @click="updateQuery()"
+                    data-testid="mrql-update-button"
+                    :aria-label="'Update saved query ' + loadedSavedQueryName"
+                    class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 cursor-pointer">
+                Update "<span x-text="loadedSavedQueryName"></span>"
+            </button>
+            {# BH-012: Save button — labels "Save as new" when a saved query is loaded. #}
             <button type="button"
                     @click="showSaveDialog = true"
+                    data-testid="mrql-save-as-new-button"
                     class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 cursor-pointer">
-                Save
+                <span x-text="canUpdate ? 'Save as new' : 'Save'"></span>
             </button>
         </div>
     </section>
@@ -255,6 +267,7 @@
                 <div>
                     <label for="mrql-save-name" class="block text-sm font-medium text-stone-700 mb-1">Name</label>
                     <input type="text" id="mrql-save-name" x-model="saveName"
+                           data-testid="mrql-save-name-input"
                            class="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:ring-amber-600 focus:border-amber-600"
                            placeholder="My query" />
                 </div>
@@ -274,6 +287,7 @@
                     </button>
                     <button type="button" @click="saveQuery()"
                             :disabled="!saveName.trim()"
+                            data-testid="mrql-save-confirm-button"
                             class="px-4 py-2 text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800 rounded-md disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 cursor-pointer">
                         Save
                     </button>
@@ -310,6 +324,17 @@
                     <span class="text-xs text-stone-500 font-mono"
                           x-text="'Entity: ' + (['resource','note','group'].includes(result.entityType) ? result.entityType : 'all types')"></span>
                 </div>
+
+                {# BH-013: default-limit banner — shown when no explicit LIMIT was supplied. #}
+                <template x-if="defaultLimitApplied">
+                    <div data-testid="mrql-default-limit-banner"
+                         class="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800 font-mono"
+                         role="status">
+                        Default limit applied (<span x-text="appliedLimit"></span> rows) &mdash; add
+                        <code class="bg-amber-100 px-1 rounded">LIMIT</code>&nbsp;/&nbsp;<code class="bg-amber-100 px-1 rounded">OFFSET</code>
+                        to the query to paginate.
+                    </div>
+                </template>
 
                 {# Warnings (e.g. partial results, truncated buckets, timeouts) #}
                 <template x-if="result.warnings && result.warnings.length > 0">
@@ -489,7 +514,7 @@
     </section>
 
     {# ── Saved Queries Section ───────────────────────────────────── #}
-    <section aria-label="Saved queries">
+    <section aria-label="Saved queries" data-testid="mrql-saved-panel">
         <div class="flex items-center justify-between mb-2">
             <h2 class="text-base font-semibold font-mono text-stone-800">
                 Saved Queries
@@ -502,7 +527,8 @@
         <template x-if="savedQueries.length > 0">
             <ul class="divide-y divide-stone-200 border border-stone-200 rounded-md bg-white">
                 <template x-for="q in savedQueries" :key="q.id">
-                    <li class="flex items-center justify-between px-3 py-2 hover:bg-stone-50 group">
+                    <li class="flex items-center justify-between px-3 py-2 hover:bg-stone-50 group"
+                        :data-saved-id="q.id">
                         <button type="button"
                                 @click="loadSavedQuery(q)"
                                 class="flex-1 text-left min-w-0 cursor-pointer">

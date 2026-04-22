@@ -92,6 +92,11 @@ type MahresourcesConfig struct {
 	ExportRetention time.Duration
 	// MaxImportSize is the upper bound on import tar upload size in bytes
 	MaxImportSize int64
+	// MRQLDefaultLimit is the default LIMIT applied to MRQL queries without an
+	// explicit LIMIT clause. When 0, callers should fall back to the historical
+	// DefaultMRQLLimitFallback constant (keeps test fixtures that instantiate
+	// MahresourcesConfig{} directly working without updates).
+	MRQLDefaultLimit int
 }
 
 // MahresourcesInputConfig holds all configuration options that can be passed
@@ -157,6 +162,9 @@ type MahresourcesInputConfig struct {
 	ExportRetention time.Duration
 	// MaxImportSize is the upper bound on import tar upload size in bytes
 	MaxImportSize int64
+	// MRQLDefaultLimit is the default LIMIT applied to MRQL queries without an
+	// explicit LIMIT clause (default: 500).
+	MRQLDefaultLimit int
 }
 
 type MahresourcesLocks struct {
@@ -758,6 +766,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		MaxJobConcurrency:            cfg.MaxJobConcurrency,
 		ExportRetention:              cfg.ExportRetention,
 		MaxImportSize:                cfg.MaxImportSize,
+		MRQLDefaultLimit:             cfg.MRQLDefaultLimit,
 	}), db, mainFs
 }
 

@@ -169,6 +169,7 @@ func main() {
 
 	// MRQL options
 	mrqlTimeout := flag.Duration("mrql-query-timeout", parseDurationEnv("MRQL_QUERY_TIMEOUT", 10*time.Second), "Maximum execution time for MRQL queries (env: MRQL_QUERY_TIMEOUT)")
+	mrqlDefaultLimit := flag.Int("mrql-default-limit", parseIntEnv("MRQL_DEFAULT_LIMIT", 500), "Default LIMIT applied to MRQL queries without an explicit LIMIT clause (env: MRQL_DEFAULT_LIMIT)")
 
 	// Plugin options
 	pluginPath := flag.String("plugin-path", getEnvOrDefault("PLUGIN_PATH", "./plugins"), "Path to plugin directory (env: PLUGIN_PATH)")
@@ -246,6 +247,7 @@ func main() {
 		MaxJobConcurrency:            *maxJobConcurrency,
 		ExportRetention:              *exportRetention,
 		MaxImportSize:                *maxImportSize,
+		MRQLDefaultLimit:             *mrqlDefaultLimit,
 	}
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)
