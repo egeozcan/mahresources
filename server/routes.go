@@ -118,10 +118,9 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// downloadCockpit can render consistent values without a bespoke provider
 		// on each route. The ms value is consumed by downloadCockpit.js; the
 		// human-readable string is rendered directly in adminExport.tpl.
-		if appContext.Config != nil {
-			ctx["exportRetention"] = appContext.Config.ExportRetention.String()
-			ctx["exportRetentionMs"] = appContext.Config.ExportRetention.Milliseconds()
-		}
+		retention := appContext.Settings().ExportRetention()
+		ctx["exportRetention"] = retention.String()
+		ctx["exportRetentionMs"] = retention.Milliseconds()
 
 		if pm == nil {
 			if strings.HasSuffix(request.URL.Path, ".json") ||
