@@ -131,6 +131,7 @@ func main() {
 	maxJobConcurrency := flag.Int("max-job-concurrency", parseIntEnv("MAX_JOB_CONCURRENCY", 6), "Concurrency budget for the shared background job manager (env: MAX_JOB_CONCURRENCY)")
 	exportRetention := flag.Duration("export-retention", parseDurationEnv("EXPORT_RETENTION", 24*time.Hour), "How long completed group-export tars stay on disk before cleanup (env: EXPORT_RETENTION)")
 	maxImportSize := flag.Int64("max-import-size", parseInt64Env("MAX_IMPORT_SIZE", 10737418240), "Maximum import tar upload size in bytes (env: MAX_IMPORT_SIZE)")
+	maxUploadSize := flag.Int64("max-upload-size", parseInt64Env("MAX_UPLOAD_SIZE", 2<<30), "Maximum per-upload body size in bytes for resource and version uploads (default: 2 GB, env: MAX_UPLOAD_SIZE)")
 	cleanupLogsDays := flag.Int("cleanup-logs-days", parseIntEnv("CLEANUP_LOGS_DAYS", 0), "Delete log entries older than N days on startup (0=disabled) (env: CLEANUP_LOGS_DAYS)")
 
 	// Hash worker options
@@ -247,6 +248,7 @@ func main() {
 		MaxJobConcurrency:            *maxJobConcurrency,
 		ExportRetention:              *exportRetention,
 		MaxImportSize:                *maxImportSize,
+		MaxUploadSize:                *maxUploadSize,
 		MRQLDefaultLimit:             *mrqlDefaultLimit,
 	}
 

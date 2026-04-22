@@ -125,14 +125,24 @@ func GetResourceContentHandler(ctx interfaces.ResourceReader) func(writer http.R
 	}
 }
 
-func GetResourceUploadHandler(ctx interfaces.ResourceCreator) func(writer http.ResponseWriter, request *http.Request) {
+// GetResourceUploadHandler wires the /v1/resource POST endpoint.
+//
+// BH-034: maxUploadSize is read at request time (closure over a getter) so
+// tests and live configuration updates both take effect without re-wiring
+// the router. 0 = unlimited (legacy behaviour). Over-limit requests surface
+// as ParseMultipartForm errors and map to HTTP 400.
+func GetResourceUploadHandler(ctx interfaces.ResourceCreator, maxUploadSize func() int64) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
 		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceCreator)
 
 		var remoteCreator = query_models.ResourceFromRemoteCreator{}
 
-		if err := tryFillStructValuesFromRequest(&remoteCreator, request); err != nil {
+		limit := int64(0)
+		if maxUploadSize != nil {
+			limit = maxUploadSize()
+		}
+		if err := tryFillStructValuesFromRequestWithLimit(&remoteCreator, writer, request, limit); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
