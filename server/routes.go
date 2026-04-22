@@ -563,6 +563,11 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/admin/data-stats").HandlerFunc(api_handlers.GetDataStatsHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/admin/data-stats/expensive").HandlerFunc(api_handlers.GetExpensiveStatsHandler(appContext))
 
+	// Admin runtime settings routes
+	router.Methods(http.MethodGet).Path("/v1/admin/settings").HandlerFunc(api_handlers.GetListSettingsHandler(appContext))
+	router.Methods(http.MethodPut).Path("/v1/admin/settings/{key}").HandlerFunc(api_handlers.GetSetSettingHandler(appContext))
+	router.Methods(http.MethodDelete).Path("/v1/admin/settings/{key}").HandlerFunc(api_handlers.GetResetSettingHandler(appContext))
+
 	// Timeline routes
 	router.Methods(http.MethodGet).Path("/v1/resources/timeline").HandlerFunc(api_handlers.GetResourceTimelineHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/notes/timeline").HandlerFunc(api_handlers.GetNoteTimelineHandler(appContext))

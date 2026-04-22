@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -11,6 +12,10 @@ import (
 
 	"gorm.io/gorm"
 )
+
+// ErrUnknownSetting is returned by Set/Reset when the key is not registered.
+// HTTP handlers use errors.Is to map it to 404.
+var ErrUnknownSetting = errors.New("unknown setting")
 
 // SettingsLogger is the minimal logger surface RuntimeSettings needs.
 // Production passes a thin adapter over log.Printf; tests pass a stub.
@@ -115,7 +120,7 @@ func (s *RuntimeSettings) Load() error {
 func (s *RuntimeSettings) Set(key, rawValue, reason, actor string) error {
 	spec, ok := s.specs[key]
 	if !ok {
-		return fmt.Errorf("unknown setting %q", key)
+		return fmt.Errorf("%w: %q", ErrUnknownSetting, key)
 	}
 	v, err := parseSettingValue(spec, rawValue)
 	if err != nil {
@@ -151,7 +156,7 @@ func (s *RuntimeSettings) Set(key, rawValue, reason, actor string) error {
 // Reset removes the DB row and cache entry for the key.
 func (s *RuntimeSettings) Reset(key, reason, actor string) error {
 	if _, ok := s.specs[key]; !ok {
-		return fmt.Errorf("unknown setting %q", key)
+		return fmt.Errorf("%w: %q", ErrUnknownSetting, key)
 	}
 	if err := s.db.Delete(&models.RuntimeSetting{}, "key = ?", key).Error; err != nil {
 		return fmt.Errorf("db delete: %w", err)
