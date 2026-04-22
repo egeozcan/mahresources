@@ -258,9 +258,6 @@ func main() {
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)
 
-	// Configure MRQL query timeout
-	application_context.MRQLQueryTimeout = *mrqlTimeout
-
 	// Ensure plugin manager is cleaned up on shutdown
 	if context.PluginManager() != nil {
 		defer context.PluginManager().Close()

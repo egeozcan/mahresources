@@ -14,10 +14,6 @@ import (
 	"mahresources/mrql"
 )
 
-// MRQLQueryTimeout is the maximum execution time for MRQL queries.
-// It can be configured via the -mrql-query-timeout flag.
-var MRQLQueryTimeout = 10 * time.Second
-
 // MRQLResult holds the results of executing an MRQL query, organized by entity type.
 type MRQLResult struct {
 	EntityType string            `json:"entityType"`
@@ -144,6 +140,15 @@ func (ctx *MahresourcesContext) defaultMRQLLimit() int {
 	return DefaultMRQLLimitFallback
 }
 
+// mrqlQueryTimeout returns the current MRQL query timeout from runtime settings,
+// falling back to 10s if settings haven't been wired (test contexts).
+func (ctx *MahresourcesContext) mrqlQueryTimeout() time.Duration {
+	if ctx.settings != nil {
+		return ctx.settings.MRQLQueryTimeout()
+	}
+	return 10 * time.Second
+}
+
 // maxBucketedTotalItems caps the total number of entity items materialized
 // across all buckets, preventing a single bucketed query from loading
 // maxBuckets × defaultMRQLLimit entities into memory.
@@ -154,7 +159,7 @@ func (ctx *MahresourcesContext) executeSingleEntity(reqCtx context.Context, pars
 	parsed.EntityType = entityType
 
 	// Derive timeout from the request context so client disconnects cancel the query.
-	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
+	queryCtx, cancel := context.WithTimeout(reqCtx, ctx.mrqlQueryTimeout())
 	defer cancel()
 
 	db, err := mrql.TranslateWithOptions(parsed, ctx.db.WithContext(queryCtx), opts)
@@ -196,7 +201,7 @@ func (ctx *MahresourcesContext) executeSingleEntity(reqCtx context.Context, pars
 // ExecuteMRQLGrouped executes a GROUP BY MRQL query and returns grouped results.
 // The parsed query must have GroupBy set and EntityType populated.
 func (ctx *MahresourcesContext) ExecuteMRQLGrouped(reqCtx context.Context, parsed *mrql.Query) (*MRQLGroupedResult, error) {
-	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
+	queryCtx, cancel := context.WithTimeout(reqCtx, ctx.mrqlQueryTimeout())
 	defer cancel()
 
 	// BH-013: record whether the default kicked in before mutating parsed.Limit.
@@ -428,7 +433,7 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 		clone.Offset = -1
 
 		// Each entity gets its own timeout derived from the request context.
-		entityCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
+		entityCtx, cancel := context.WithTimeout(reqCtx, ctx.mrqlQueryTimeout())
 
 		db, err := mrql.TranslateWithOptions(&clone, ctx.db.WithContext(entityCtx), opts)
 		if err != nil {
@@ -771,7 +776,7 @@ func (ctx *MahresourcesContext) DeleteSavedMRQLQuery(id uint) error {
 func (ctx *MahresourcesContext) ExecuteSingleEntityWithScope(reqCtx context.Context, q *mrql.Query, entityType mrql.EntityType, opts mrql.TranslateOptions, scopeID uint) (*MRQLResult, error) {
 	q.EntityType = entityType
 
-	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
+	queryCtx, cancel := context.WithTimeout(reqCtx, ctx.mrqlQueryTimeout())
 	defer cancel()
 
 	// Pass scope through TranslateOptions so the translator applies the CTE
@@ -822,7 +827,7 @@ func (ctx *MahresourcesContext) ExecuteMRQLGroupedWithScope(reqCtx context.Conte
 		return ctx.ExecuteMRQLGrouped(reqCtx, parsed)
 	}
 
-	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
+	queryCtx, cancel := context.WithTimeout(reqCtx, ctx.mrqlQueryTimeout())
 	defer cancel()
 
 	defaultApplied := parsed.Limit < 0
