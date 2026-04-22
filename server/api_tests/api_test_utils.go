@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/spf13/afero"
 	"gorm.io/driver/sqlite"
@@ -71,8 +72,18 @@ func SetupTestEnv(t *testing.T) *TestContext {
 	util.AddInitialData(db)
 
 	config := &application_context.MahresourcesConfig{
-		DbType: constants.DbTypeSqlite,
-		BindAddress: ":0",
+		DbType:                       constants.DbTypeSqlite,
+		BindAddress:                  ":0",
+		MaxUploadSize:                2 << 30,
+		MaxImportSize:                10 << 30,
+		MRQLDefaultLimit:             500,
+		MRQLQueryTimeoutBoot:         10 * time.Second,
+		ExportRetention:              24 * time.Hour,
+		RemoteResourceConnectTimeout: 30 * time.Second,
+		RemoteResourceIdleTimeout:    60 * time.Second,
+		RemoteResourceOverallTimeout: 30 * time.Minute,
+		HashSimilarityThreshold:      10,
+		HashAHashThreshold:           5,
 	}
 
 	// Mock filesystem
