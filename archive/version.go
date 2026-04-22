@@ -20,3 +20,14 @@ type ErrUnsupportedSchemaVersion struct {
 func (e *ErrUnsupportedSchemaVersion) Error() string {
 	return fmt.Sprintf("archive: unsupported schema_version %d (supported: %v)", e.Got, e.Supported)
 }
+
+// ErrMissingSchemaVersion is returned by Reader.ReadManifest when the
+// manifest.json lacks the `schema_version` field entirely. Distinguished
+// from ErrUnsupportedSchemaVersion (present but invalid value) because
+// "schema_version:0" was previously reported as "unsupported version 0",
+// which misled users who had simply omitted the field. BH-017.
+type ErrMissingSchemaVersion struct{}
+
+func (e *ErrMissingSchemaVersion) Error() string {
+	return "archive: manifest is missing required field `schema_version`"
+}

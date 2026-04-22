@@ -360,7 +360,8 @@ _(populated by iterations — newest first)_
 - **Evidence:** `tasks/bug-hunt-evidence/iter-2026-04-22-1/resource-dup-b-similar-section.png`; code citations above.
 
 ### BH-017 · Missing `schema_version` in a group-import manifest produces the misleading error "unsupported schema_version 0"
-- **Status:** verified (iter 5)
+- **Status:** **FIXED** (2026-04-22, c11-import-ux, PR #XX merged <sha> — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 5)
 - **Severity:** cosmetic (correctness is fine — the import IS rejected; but the message is confusing)
 - **Iter:** 5 · **Workflow:** group import manifest contract probe
 - **Repro:** remove `schema_version` entirely from a valid manifest.json inside the export tar, re-tar, import. Error surfaced: `archive: unsupported schema_version 0 (supported: [1])`.
@@ -368,7 +369,8 @@ _(populated by iterations — newest first)_
 - **Fix:** at manifest parse time, distinguish "field absent" (use a `*int` or a presence flag) from "field == 0"; emit "manifest is missing required field `schema_version`" for the former.
 
 ### BH-016 · Import result UI hides GUID-reused AND GUID-merged entities — shows "0 created" when the import actually re-linked or merged existing ones
-- **Status:** verified (iter 5), scope confirmed broader in iter 6 (merge path also silent)
+- **Status:** **FIXED** (2026-04-22, c11-import-ux, PR #XX merged <sha> — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 5), scope confirmed broader in iter 6 (merge path also silent)
 - **Severity:** minor (misleading feedback; no data loss)
 - **Iter:** 5 (re-link path) + 6 (merge path)
 - **Observation (iter 5, re-link path):** exported a group, deleted it (but not its notes/resources — BH-014's orphan semantics), re-imported the tar. Result: `Groups created: 3, Resources created: 0, Notes created: 0`. The 2 notes + 2 resources were re-linked by GUID but that's invisible.
@@ -615,6 +617,8 @@ _(populated by iterations — newest first)_
 | BH-007 | **fixed** (2026-04-22, c13-cosmetic-cleanup, PR #32 merged fec44787) | `templates/partials/versionPanel.tpl` action bar now uses `flex flex-wrap gap-y-2` so the upload form drops to a second row on narrow widths; the Compare toggle + Compare-Selected share an inner flex row; both action buttons get `whitespace-nowrap` so labels never split mid-label. E2E: `e2e/tests/c13-bh007-version-panel-layout.spec.ts` asserts button height stays within 1.8x its line-height with Compare Selected visible at 1024px. |
 | BH-015 | **fixed** (2026-04-22, c10-jobs-ui-polish, PR #35 merged dd2c68b2) | UI cap: `Math.min(100, ...)` on both label sites (`templates/adminExport.tpl:122`, `src/components/downloadCockpit.js` `formatProgress`). Backend accuracy: new `estimateJSONOverhead(plan)` adds `2 KB manifest + 1 KB × entity count` to `plan.totalBytes` at the end of `buildExportPlan` in `application_context/export_context.go`. Unit: `application_context/export_overhead_test.go`. E2E: `e2e/tests/c10-bh015-export-progress-cap.spec.ts`. |
 | BH-036 | **fixed** (2026-04-22, c10-jobs-ui-polish, PR #35 merged dd2c68b2) | `/admin/export` gains a helper line citing `config.ExportRetention` (`templates/adminExport.tpl` `data-testid="export-retention-helper"`). `downloadCockpit` shows an "Expires in X" line per completed group-export row, computed from `job.completedAt + exportRetentionMs`. Values threaded into every template via `wrapContextWithPlugins` in `server/routes.go`; ms variant shipped to the client via a `<meta name="x-export-retention-ms">` tag on `base.tpl` and read by `downloadCockpit.js` on init. E2E: `e2e/tests/c10-bh036-export-retention-disclosure.spec.ts`. |
+| BH-016 | **fixed** (2026-04-22, c11-import-ux, PR #XX merged <sha>) | `ImportApplyResult` in `application_context/import_plan.go` gains 9 new counters: `MergedGroups/Resources/Notes`, `LinkedByGUIDGroups/Resources/Notes` (reserved — forward-compat), `SkippedByPolicyGroups/Resources/Notes`. Wired into `apply_import.go` at the GUID-collision switches for groups, resources, and notes; `replace` branches also bump `Merged*` (replace is a mutation-heavy variant of merge). `HasMutations()` extended accordingly. `templates/adminImport.tpl` surfaces created + merged + skipped-by-policy per entity type. Unit: `application_context/import_counters_test.go`. |
+| BH-017 | **fixed** (2026-04-22, c11-import-ux, PR #XX merged <sha>) | `archive/reader.go::ReadManifest` now reads the manifest body once, unmarshals into a `map[string]json.RawMessage` to presence-check `schema_version`, then unmarshals into the typed `Manifest`. Absent field → new `ErrMissingSchemaVersion` ("manifest is missing required field `schema_version`"). Present-but-invalid → existing `ErrUnsupportedSchemaVersion`. Unit: `archive/reader_missing_schema_version_test.go`. |
 
 ---
 

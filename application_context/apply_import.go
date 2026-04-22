@@ -1002,6 +1002,7 @@ func (s *applyState) applyGroups() error {
 					switch s.decisions.GUIDCollisionPolicy {
 					case "skip":
 						s.skippedM2M[item.ExportID] = true
+						s.result.SkippedByPolicyGroups++
 						if err := walk(item.Children); err != nil {
 							return err
 						}
@@ -1010,10 +1011,15 @@ func (s *applyState) applyGroups() error {
 						if err := s.mergeGroup(&existing, gp); err != nil {
 							return fmt.Errorf("merge group %q: %w", gp.Name, err)
 						}
+						s.result.MergedGroups++
 					case "replace":
 						if err := s.replaceGroup(&existing, gp); err != nil {
 							return fmt.Errorf("replace group %q: %w", gp.Name, err)
 						}
+						// Replace is a mutation-heavy variant of merge; count it
+						// under MergedGroups so the UI surfaces "existing rows
+						// touched" rather than showing "0 created" alone.
+						s.result.MergedGroups++
 					}
 
 					if err := walk(item.Children); err != nil {
@@ -1264,13 +1270,29 @@ func (s *applyState) applyOneResource(tx *gorm.DB, exportID string, rp *archive.
 			switch s.decisions.GUIDCollisionPolicy {
 			case "skip":
 				s.skippedM2M[exportID] = true
+				s.result.SkippedByPolicyResources++
 				return nil
 			case "merge":
-				return s.mergeResource(tx, &existing, rp)
+				if err := s.mergeResource(tx, &existing, rp); err != nil {
+					return err
+				}
+				s.result.MergedResources++
+				return nil
 			case "replace":
-				return s.replaceResource(tx, &existing, rp, batch)
+				if err := s.replaceResource(tx, &existing, rp, batch); err != nil {
+					return err
+				}
+				// Replace is a mutation-heavy variant of merge; count it under
+				// MergedResources so the UI surfaces that existing rows were
+				// touched rather than showing "0 created" alone.
+				s.result.MergedResources++
+				return nil
 			default:
-				return s.mergeResource(tx, &existing, rp)
+				if err := s.mergeResource(tx, &existing, rp); err != nil {
+					return err
+				}
+				s.result.MergedResources++
+				return nil
 			}
 		}
 	}
@@ -1769,15 +1791,21 @@ func (s *applyState) applyOneNote(tx *gorm.DB, exportID string, np *archive.Note
 			switch s.decisions.GUIDCollisionPolicy {
 			case "skip":
 				s.skippedM2M[exportID] = true
+				s.result.SkippedByPolicyNotes++
 				return nil
 			case "merge":
 				if err := s.mergeNote(tx, &existing, np); err != nil {
 					return fmt.Errorf("merge note %q: %w", np.Name, err)
 				}
+				s.result.MergedNotes++
 			case "replace":
 				if err := s.replaceNote(tx, &existing, np); err != nil {
 					return fmt.Errorf("replace note %q: %w", np.Name, err)
 				}
+				// Replace is a mutation-heavy variant of merge; count it under
+				// MergedNotes so the UI surfaces that existing rows were
+				// touched rather than showing "0 created" alone.
+				s.result.MergedNotes++
 			}
 			return nil
 		}

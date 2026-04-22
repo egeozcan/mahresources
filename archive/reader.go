@@ -64,11 +64,28 @@ func (r *Reader) ReadManifest() (*Manifest, error) {
 	if hdr.Name != "manifest.json" {
 		return nil, fmt.Errorf("archive: first entry %q != manifest.json", hdr.Name)
 	}
+	// BH-017: read the manifest body once so we can parse it twice — once as
+	// a map to presence-check required fields, once into the typed Manifest.
+	// Previously, Go's int zero-value meant an absent `schema_version` field
+	// decoded to 0 and got reported as "unsupported schema_version 0", which
+	// misled users who had simply omitted the field.
+	raw, err := io.ReadAll(r.tr)
+	if err != nil {
+		return nil, fmt.Errorf("archive: read manifest body: %w", err)
+	}
+
+	var rawFields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &rawFields); err != nil {
+		return nil, fmt.Errorf("archive: parse manifest: %w", err)
+	}
+	if _, hasVersion := rawFields["schema_version"]; !hasVersion {
+		return nil, &ErrMissingSchemaVersion{}
+	}
+
 	var m Manifest
-	dec := json.NewDecoder(r.tr)
 	// Do NOT call DisallowUnknownFields — §6.4 requires forward compatibility
 	// with unknown top-level keys.
-	if err := dec.Decode(&m); err != nil {
+	if err := json.Unmarshal(raw, &m); err != nil {
 		return nil, fmt.Errorf("archive: parse manifest: %w", err)
 	}
 	if !isSupportedVersion(m.SchemaVersion) {
