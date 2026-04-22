@@ -651,6 +651,106 @@ export function getDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): an
   return '';
 }
 
+// ─── Preview-specific defaults ──────────────────────────────────────────────
+
+/**
+ * BH-010: getPreviewDefaultValue mirrors getDefaultValue but returns `undefined`
+ * for number/integer/string when no explicit `default` is declared. This is
+ * the right semantics for the Preview Form tab — the user should see an empty
+ * input, not `0` (or an empty string) that then triggers a range-error onBlur.
+ *
+ * Booleans still default to `false` (they can't be "empty"). Objects still
+ * recurse so nested numeric props flow the preview semantics. Arrays default
+ * to [] (no items to seed). enum/const/$ref still resolve their explicit value.
+ */
+export function getPreviewDefaultValue(schema: JSONSchema, rootSchema?: JSONSchema): any {
+  if (schema.$ref) {
+    const resolved = resolveRef(schema.$ref, rootSchema || schema);
+    if (resolved) {
+      const siblings: JSONSchema = { ...schema };
+      delete siblings.$ref;
+      return getPreviewDefaultValue(mergeSchemas(resolved, siblings), rootSchema);
+    }
+  }
+
+  if (schema.allOf && Array.isArray(schema.allOf)) {
+    let merged: JSONSchema = { ...schema };
+    delete merged.allOf;
+    for (const sub of schema.allOf) {
+      let resolved: JSONSchema;
+      if (sub.$ref) {
+        const refResult = resolveRef(sub.$ref, rootSchema || schema);
+        const siblings: JSONSchema = { ...sub };
+        delete siblings.$ref;
+        resolved = refResult ? mergeSchemas(refResult, siblings) : siblings;
+      } else {
+        resolved = sub;
+      }
+      if (resolved) merged = mergeSchemas(merged, resolved);
+    }
+    return getPreviewDefaultValue(merged, rootSchema);
+  }
+
+  if (schema.if) {
+    const baseSchema: JSONSchema = { ...schema };
+    delete baseSchema.if;
+    delete baseSchema.then;
+    delete baseSchema.else;
+    const baseDefault = getPreviewDefaultValue(baseSchema, rootSchema);
+    const conditionMet = evaluateCondition(schema.if, baseDefault, rootSchema);
+    const branch = conditionMet ? (schema.then || {}) : (schema.else || {});
+    const merged = mergeSchemas(baseSchema, branch);
+    return getPreviewDefaultValue(merged, rootSchema);
+  }
+
+  if (schema.default !== undefined) return schema.default;
+  if (schema.const !== undefined) return schema.const;
+  if (schema.enum && Array.isArray(schema.enum) && schema.enum.length > 0) {
+    return schema.enum[0];
+  }
+
+  if (schema.type === 'object') {
+    if (!schema.properties) return {};
+    const obj: any = {};
+    for (const [key, propSchema] of Object.entries(schema.properties)) {
+      obj[key] = getPreviewDefaultValue(propSchema as JSONSchema, rootSchema);
+    }
+    return obj;
+  }
+  if (schema.type === 'array') return [];
+  if (schema.type === 'boolean') return false;
+  if (schema.type === 'number' || schema.type === 'integer') return undefined;
+  if (schema.type === 'string') return undefined;
+  if (schema.type === 'null') return null;
+
+  if (Array.isArray(schema.type)) {
+    // Preview: prefer the least-surprising empty state — null > boolean > object/array > undefined.
+    if (schema.type.includes('null')) return null;
+    if (schema.type.includes('boolean')) return false;
+    if (schema.type.includes('object')) return {};
+    if (schema.type.includes('array')) return [];
+    // string/number/integer → undefined (inputs render empty)
+    return undefined;
+  }
+
+  if (schema.oneOf && schema.oneOf.length > 0) {
+    if (isLabeledEnum(schema)) return schema.oneOf[0].const;
+    return getPreviewDefaultValue(schema.oneOf[0], rootSchema);
+  }
+  if (schema.anyOf && schema.anyOf.length > 0) return getPreviewDefaultValue(schema.anyOf[0], rootSchema);
+
+  // Schemas with properties but no explicit type are implicitly objects
+  if (schema.properties) {
+    const obj: any = {};
+    for (const [key, propSchema] of Object.entries(schema.properties)) {
+      obj[key] = getPreviewDefaultValue(propSchema as JSONSchema, rootSchema);
+    }
+    return obj;
+  }
+
+  return undefined;
+}
+
 // ─── Title case ──────────────────────────────────────────────────────────────
 
 export function titleCase(key: string): string {

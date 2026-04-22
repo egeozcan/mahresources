@@ -75,14 +75,15 @@ describe('Bug 2: schema preview uses correct default value for non-object schema
     expect(src).toContain('getPreviewValue');
   });
 
-  it('module-level getPreviewValue delegates to getDefaultValue for full type coverage', () => {
+  it('module-level getPreviewValue delegates to getPreviewDefaultValue for full type coverage', () => {
     const src = readSource('../components/schemaEditorModal.ts');
-    // The exported getPreviewValue function should delegate to getDefaultValue
-    // which handles all types, composition keywords, and $ref resolution.
+    // BH-010: getPreviewValue now delegates to getPreviewDefaultValue, which
+    // returns `undefined` for number/integer/string with no explicit default
+    // (so inputs render empty instead of seeded with 0 / "").
     const fnMatch = src.match(/export function getPreviewValue[\s\S]*?\n\}/);
     expect(fnMatch).not.toBeNull();
     const body = fnMatch![0];
-    expect(body).toContain('getDefaultValue');
+    expect(body).toContain('getPreviewDefaultValue');
   });
 
   it('template uses getPreviewValue() instead of hardcoded "{}"', () => {
@@ -103,20 +104,23 @@ describe('Bug 2: schema preview uses correct default value for non-object schema
 import { getPreviewValue } from '../components/schemaEditorModal';
 
 describe('Bug 2: getPreviewValue returns correct defaults', () => {
+  // BH-010: preview-specific semantics. `undefined` returns from
+  // getPreviewDefaultValue are normalized to the string '{}' so the
+  // preview-form element always receives a valid JSON object to hydrate.
   it('returns {} for object schemas', () => {
     expect(JSON.parse(getPreviewValue('{"type":"object","properties":{}}'))).toEqual({});
   });
 
-  it('returns "" for string schemas', () => {
-    expect(JSON.parse(getPreviewValue('{"type":"string"}'))).toBe('');
+  it('returns {} (normalized from undefined) for plain string schemas', () => {
+    expect(getPreviewValue('{"type":"string"}')).toBe('{}');
   });
 
-  it('returns 0 for number schemas', () => {
-    expect(JSON.parse(getPreviewValue('{"type":"number"}'))).toBe(0);
+  it('returns {} (normalized from undefined) for plain number schemas', () => {
+    expect(getPreviewValue('{"type":"number"}')).toBe('{}');
   });
 
-  it('returns 0 for integer schemas', () => {
-    expect(JSON.parse(getPreviewValue('{"type":"integer"}'))).toBe(0);
+  it('returns {} (normalized from undefined) for plain integer schemas', () => {
+    expect(getPreviewValue('{"type":"integer"}')).toBe('{}');
   });
 
   it('returns false for boolean schemas', () => {
@@ -127,10 +131,10 @@ describe('Bug 2: getPreviewValue returns correct defaults', () => {
     expect(JSON.parse(getPreviewValue('{"type":"array"}'))).toEqual([]);
   });
 
-  it('returns object default when schema has no type but has properties', () => {
+  it('returns object default when schema has no type but has properties (string prop → undefined)', () => {
     const result = JSON.parse(getPreviewValue('{"properties":{"x":{"type":"string"}}}'));
-    // getDefaultValue now produces full defaults for implicit object schemas
-    expect(result).toEqual({ x: '' });
+    // BH-010: string prop with no default is undefined → dropped by JSON.stringify
+    expect(result).toEqual({});
   });
 
   it('returns {} for invalid JSON (graceful fallback)', () => {

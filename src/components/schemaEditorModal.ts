@@ -4,7 +4,7 @@
  * the <schema-editor> component and the MetaSchema textarea.
  */
 
-import { getDefaultValue } from '../schema-editor/schema-core';
+import { getPreviewDefaultValue } from '../schema-editor/schema-core';
 
 // Alpine.js magic properties injected at runtime
 interface AlpineMagics {
@@ -20,8 +20,12 @@ interface AlpineMagics {
 export function getPreviewValue(schemaStr: string): string {
   try {
     const schema = JSON.parse(schemaStr);
-    const defaultVal = getDefaultValue(schema, schema);
-    return JSON.stringify(defaultVal);
+    // BH-010: use preview-specific defaults so numeric/string fields without
+    // an explicit `default` render empty (not `0`/`""`) in the Preview Form.
+    const defaultVal = getPreviewDefaultValue(schema, schema);
+    // JSON.stringify(undefined) returns `undefined` (not a JSON string); normalize.
+    const serialized = JSON.stringify(defaultVal);
+    return serialized === undefined ? '{}' : serialized;
   } catch {
     return JSON.stringify({});
   }

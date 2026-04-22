@@ -40,10 +40,37 @@ export function blockEditor(noteId, initialBlocks = []) {
         .replace(/'/g, '&#039;');
       // Convert newlines to <br>
       escaped = escaped.replace(/\n/g, '<br>');
+
+      // BH-021: Inline code: `text` -> <code>text</code>
+      // Run BEFORE other inline tokens so inline-code content is immune to
+      // subsequent bold/italic/strike passes (standard GFM-ish behavior).
+      // Stash each <code> span behind a Unicode PUA sentinel so the raw
+      // inner text never meets the bold/italic/strike regexes below.
+      const codeSlots = [];
+      escaped = escaped.replace(/`([^`]+)`/g, (_m, inner) => {
+        const slot = 'CODE' + codeSlots.length + '';
+        codeSlots.push('<code>' + inner + '</code>');
+        return slot;
+      });
+
       // Basic bold: **text** -> <strong>text</strong>
       escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-      // Basic italic: *text* -> <em>text</em>
+      // Basic italic (asterisk form): *text* -> <em>text</em>
       escaped = escaped.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+      // BH-021: Italic (underscore form): _text_ -> <em>text</em>
+      // Boundary rule: the underscore must not be adjacent to a word char
+      // (A-Z a-z 0-9 _), so `snake_case_names` survive untouched. Inner
+      // text must not contain underscores or newlines (keeps the regex
+      // greedy-safe and avoids eating across lines).
+      escaped = escaped.replace(
+        /(^|[^A-Za-z0-9_])_([^_\n]+)_(?=$|[^A-Za-z0-9_])/g,
+        '$1<em>$2</em>'
+      );
+
+      // BH-021: Strikethrough: ~~text~~ -> <s>text</s>
+      escaped = escaped.replace(/~~([^~\n]+)~~/g, '<s>$1</s>');
+
       // Basic links: [text](url) -> <a href="url">text</a>
       escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, href) => {
           const trimmed = href.trim().toLowerCase();
@@ -52,8 +79,12 @@ export function blockEditor(noteId, initialBlocks = []) {
           }
           return `<a href="${href}" class="text-blue-600 hover:underline" target="_blank" rel="noopener">${text}</a>`;
       });
+
+      // Restore inline-code slots last so their contents never see earlier passes.
+      escaped = escaped.replace(/CODE(\d+)/g, (_m, i) => codeSlots[Number(i)]);
       return escaped;
     },
+
 
     async init() {
       // Load block types from API if not already loaded
