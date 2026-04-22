@@ -33,7 +33,8 @@ Canonical log maintained by `/loop` orchestrator. Sub-hunters (Sonnet) append fi
 _(populated by iterations — newest first)_
 
 ### BH-039 · BH-011 image ingestion over-rejects valid SVG/ICO/WebP/AVIF/HEIC uploads with HTTP 400
-- **Status:** verified (discovered during e2e-fixture-repair, 2026-04-22)
+- **Status:** **FIXED** (2026-04-22, c14-ingestion-safety, PR #40 merged eff9f142 — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (discovered during e2e-fixture-repair, 2026-04-22)
 - **Severity:** major (regression) — breaks a previously-working feature (SVG upload, lightbox display) and the `mr resource from-url` CLI path against any `.ico`/non-Go-decodable source
 - **Workflow:** `POST /v1/resource` (multipart) and `/v1/resource/remote` (URL fetch) for image MIME types Go's stdlib cannot decode natively.
 - **Repro:**
@@ -88,7 +89,8 @@ _(populated by iterations — newest first)_
   3. Optional: bulk-revoke from that view, and "revoke-on-expiry" if BH-033's expiry-field fix lands.
 
 ### BH-034 · No request-body size limit on `/v1/resource` (multipart) and `/v1/resource/versions` upload paths
-- **Status:** verified (iter 12 — 25 MB multipart uploaded successfully; code-confirmed)
+- **Status:** **FIXED** (2026-04-22, c14-ingestion-safety, PR #40 merged eff9f142 — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 12 — 25 MB multipart uploaded successfully; code-confirmed)
 - **Severity:** minor today, potentially major in `millions of resources` deployments (CLAUDE.md) — an unbounded POST can exhaust disk
 - **Iter:** 12 · **Workflow:** body-size probe
 - **Root cause (code-verified):**
@@ -495,7 +497,8 @@ _(populated by iterations — newest first)_
 - **Evidence:** `tasks/bug-hunt-evidence/iter-2026-04-21-3/note-blank-title-save.png`; eval results confirming empty error spans with `validityMessage` populated.
 
 ### BH-008 · Crop selection overlay is invisible when image metadata has Width=0 / Height=0
-- **Status:** verified
+- **Status:** **FIXED** (2026-04-22, c14-ingestion-safety, PR #40 merged eff9f142 — see Fixed / closed table below)
+- **Original status (pre-fix):** verified
 - **Severity:** minor (functional: user can submit a crop with no visual feedback and get a server-side error; also masks genuinely broken images behind a useless modal)
 - **Iter:** 2 · **Workflow:** photo-archive (crop modal)
 - **Root cause (code-verified):**
@@ -629,6 +632,9 @@ _(populated by iterations — newest first)_
 | BH-021 | **fixed** (2026-04-22, c15-schema-block-editor, PR #38 merged 22a227c1) | `src/components/blockEditor.js::renderMarkdown` extended with three GFM token passes that were previously missing: `` `code` `` → `<code>` (run FIRST, stashed behind U+E000/U+E001 PUA sentinels so inner text is immune to subsequent bold/italic/strike passes, then restored at the end); `_italic_` → `<em>` with word-boundary anchors `(^|[^A-Za-z0-9_])_(...)_(?=$|[^A-Za-z0-9_])` so `snake_case_identifiers` survive untouched; `~~strike~~` → `<s>`. Existing `**bold**`, `*italic*`, and `[text](url)` behavior preserved. Unit: `src/components/blockEditor-render-markdown.test.ts` (13 cases — new tokens, preserved tokens, word-boundary protection for snake_case, inline-code protection from later passes, HTML escaping). E2E: `e2e/tests/c15-bh021-markdown-tokens.spec.ts` creates a text block with `_world_ \`code\` ~~strike~~ **bold**` and asserts all four renders are present in the `.prose` HTML. |
 | BH-029 | **fixed** (2026-04-22, c17-a11y-batch-3, PR #39 merged 5270e8b1) | `src/components/groupTree.js::render()` + `renderNode()` adopt the WAI-ARIA Tree View pattern. Outer `<ul>` gains `role="tree" + aria-label="Group hierarchy"`. Each `<li>` becomes `role="treeitem"` with `aria-level`, `aria-posinset`, `aria-setsize`, and (when it has children) `aria-expanded`. Child container `<ul>`s get `role="group"`. New `_applyRovingTabindex()` helper sets `tabindex=0` on exactly one treeitem (preserving the current stop across re-renders). New `handleKeyDown($event)` wired via `@keydown` on the tree container: ArrowUp/Down navigate between treeitems, ArrowRight expands (or moves to first child), ArrowLeft collapses (or moves to parent), Home/End jump to first/last. E2E: `e2e/tests/accessibility/c17-bh029-group-tree-a11y.spec.ts` (4 cases — structure, roving tabindex, arrow nav, axe-core clean). |
 | BH-030 | **fixed** (2026-04-22, c17-a11y-batch-3, PR #39 merged 5270e8b1) | `templates/compare.tpl` now applies `aria-label="Changed: <field>"` to every `compare-meta-card--diff` (Content Type, File Size, Dimensions, Hash) so screen-reader and color-blind users get the diff signal without relying on border color. Radiogroups in `templates/partials/compareImage.tpl`, `compareText.tpl`, and `compareInlineText.tpl` implement roving tabindex (`:tabindex` bound to whether the radio is the checked one) and an `onRadiogroupKeydown(e, stateKey, values)` helper on each Alpine data component handles ArrowLeft/Right/Home/End for cycle selection. E2E: `e2e/tests/accessibility/c17-bh030-compare-view-a11y.spec.ts` (4 cases — aria-label on each diff card, single tabindex=0 radio, Arrow key changes selection, axe-core clean). |
+| BH-039 | **fixed** (2026-04-22, c14-ingestion-safety, PR #40 merged eff9f142) | `application_context/resource_upload_context.go` narrows the BH-011 image-decode guard: `errors.Is(decErr, image.ErrFormat)` is the accept-with-zero-dims branch (SVG, ICO, AVIF, HEIC, and any other format Go's stdlib can't sniff); genuine decode errors (truncated PNG, corrupt JPEG) still reject with HTTP 400. API test: `server/api_tests/image_ingestion_accepts_svg_ico_webp_test.go` (SVG + ICO + AVIF accept + truncated-PNG regression guard). Also un-skipped the previously blocked `Lightbox SVG Support` describe in `e2e/tests/13-lingthbox.spec.ts`. |
+| BH-034 | **fixed** (2026-04-22, c14-ingestion-safety, PR #40 merged eff9f142) | New `Config.MaxUploadSize` / flag `--max-upload-size` / env `MAX_UPLOAD_SIZE`, default 2 GB. New helper `tryFillStructValuesFromRequestWithLimit(dst, w, r, maxBytes)` in `server/api_handlers/api_handlers.go` wraps `r.Body = http.MaxBytesReader(w, r.Body, maxBytes)` before the existing multipart parse path. Both `GetResourceUploadHandler` and `GetUploadVersionHandler` now accept a `func() int64` getter (read at request time so tests and live config updates both take effect) and enforce the limit. Over-limit requests surface as HTTP 400 with "http: request body too large"; under-limit uploads unchanged. API test: `server/api_tests/upload_size_limit_test.go`. Docs: new row in CLAUDE.md. |
+| BH-008 | **fixed** (2026-04-22, c14-ingestion-safety, PR #40 merged eff9f142) | `src/components/imageCropper.js` gains a `decodeFailed` flag set on `img.onerror` or `naturalWidth/Height === 0`; `submit()` no-ops when the flag is true, and `reset()` deliberately preserves it (it reflects the image, not per-interaction state). `templates/partials/cropModal.tpl` renders an amber banner (`data-testid="crop-decode-failed-banner"`, `role="status"` + `aria-live="polite"`) when decodeFailed is true, hides the selection overlay and drag hint, and binds `:disabled="decodeFailed || !hasSelection() || isSubmitting"` + `data-testid="crop-submit-button"` on the Crop button. E2E: `e2e/tests/c14-bh008-crop-zero-dims-banner.spec.ts` dispatches `error` on the `<img>` to drive the decode-failed state and asserts banner + disabled Crop. |
 
 ---
 
