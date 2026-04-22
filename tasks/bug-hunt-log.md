@@ -68,7 +68,8 @@ _(populated by iterations — newest first)_
 - **Fix:** extend the resource-context fetch to include DHash/AHash when present, and add a row in the Technical Details collapsible like `Perceptual hash (DHash): 0x0000000000000000 (AHash: 0xabc…)`. Also a small admin-overview drill-down for "resources waiting to be hashed" / "resources where DHash=0" would help operators act on BH-018 proactively.
 
 ### BH-036 · Export UI does not disclose the 24 h (default) retention window — completed tars vanish with no prior warning
-- **Status:** verified (iter 13)
+- **Status:** **FIXED** (2026-04-22, c10-jobs-ui-polish, PR #XX merged <sha> — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 13)
 - **Severity:** minor UX (compounds BH-025 / BH-026 into a genuinely frustrating recovery scenario)
 - **Iter:** 13 · **Workflow:** admin-export surface
 - **Observed:** `/admin/export` renders group picker + scope toggles + fidelity options + "Start export" button. Zero text anywhere referencing `-export-retention` (24 h default) or warning that completed tars expire. The Download Cockpit panel (see BH-028) also shows no per-job countdown or expiry timestamp.
@@ -377,7 +378,8 @@ _(populated by iterations — newest first)_
 - **Connected to:** BH-014 — if the parent-delete UX were clearer, users would less often hit the re-link path, but the counter gap is independent.
 
 ### BH-015 · Export progress percentage overflows 100% for small-payload exports (UI shows 5140%)
-- **Status:** verified (iter 5, code-confirmed)
+- **Status:** **FIXED** (2026-04-22, c10-jobs-ui-polish, PR #XX merged <sha> — see Fixed / closed table below)
+- **Original status (pre-fix):** verified (iter 5, code-confirmed)
 - **Severity:** minor cosmetic (no data impact, but "Export complete (5140%)" looks broken and erodes trust)
 - **Iter:** 5 · **Workflow:** export a group with 2 × 176-byte image resources
 - **Observed:** jobs stream reports `{"progressPercent": 5140.909, "totalSize": 352, "progress": 18096, "source": "group-export"}` — because `totalSize` counts only unique resource blob bytes (352 = 2 × 176) while `progress` counts every byte written to the tar (manifest.json, group/note/resource/schema JSONs, tar block padding — 18 KB total). The ratio blows past 100%.
@@ -611,6 +613,8 @@ _(populated by iterations — newest first)_
 | BH-001 | **fixed** (2026-04-22, c13-cosmetic-cleanup, PR #32 merged fec44787) | Dropped the duplicate `{% include "/partials/sideTitle.tpl" ... %}` from `templates/displayTag.tpl` and `templates/displayNoteText.tpl`; `partials/json.tpl` already owns the `<h2>Meta Data</h2>`. E2E: `e2e/tests/c13-bh001-dup-meta-heading.spec.ts`. |
 | BH-002 | **fixed** (2026-04-22, c13-cosmetic-cleanup, PR #32 merged fec44787) | `renderJsonTable(null)` and `renderJsonTable(undefined)` now return an empty `DocumentFragment` up front in `src/tableMaker.js`, so the `appendChild` call in `templates/partials/json.tpl` no longer throws `TypeError: parameter 1 is not of type 'Node'`. Object guard also simplified now that null/undefined is handled up front. E2E: `e2e/tests/c13-bh002-json-table-null.spec.ts`. |
 | BH-007 | **fixed** (2026-04-22, c13-cosmetic-cleanup, PR #32 merged fec44787) | `templates/partials/versionPanel.tpl` action bar now uses `flex flex-wrap gap-y-2` so the upload form drops to a second row on narrow widths; the Compare toggle + Compare-Selected share an inner flex row; both action buttons get `whitespace-nowrap` so labels never split mid-label. E2E: `e2e/tests/c13-bh007-version-panel-layout.spec.ts` asserts button height stays within 1.8x its line-height with Compare Selected visible at 1024px. |
+| BH-015 | **fixed** (2026-04-22, c10-jobs-ui-polish, PR #XX merged <sha>) | UI cap: `Math.min(100, ...)` on both label sites (`templates/adminExport.tpl:122`, `src/components/downloadCockpit.js` `formatProgress`). Backend accuracy: new `estimateJSONOverhead(plan)` adds `2 KB manifest + 1 KB × entity count` to `plan.totalBytes` at the end of `buildExportPlan` in `application_context/export_context.go`. Unit: `application_context/export_overhead_test.go`. E2E: `e2e/tests/c10-bh015-export-progress-cap.spec.ts`. |
+| BH-036 | **fixed** (2026-04-22, c10-jobs-ui-polish, PR #XX merged <sha>) | `/admin/export` gains a helper line citing `config.ExportRetention` (`templates/adminExport.tpl` `data-testid="export-retention-helper"`). `downloadCockpit` shows an "Expires in X" line per completed group-export row, computed from `job.completedAt + exportRetentionMs`. Values threaded into every template via `wrapContextWithPlugins` in `server/routes.go`; ms variant shipped to the client via a `<meta name="x-export-retention-ms">` tag on `base.tpl` and read by `downloadCockpit.js` on init. E2E: `e2e/tests/c10-bh036-export-retention-disclosure.spec.ts`. |
 
 ---
 
