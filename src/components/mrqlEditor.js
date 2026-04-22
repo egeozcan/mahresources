@@ -13,10 +13,20 @@ export function mrqlEditor() {
     // Results
     result: null,
 
+    // BH-013: banner state, driven by the response's default_limit_applied flag.
+    defaultLimitApplied: false,
+    appliedLimit: 0,
+
     // Save dialog
     saveName: '',
     saveDescription: '',
     saveError: '',
+
+    // BH-012: tracks the saved query currently loaded into the editor so Save
+    // can branch between PUT (update) and POST (create). Cleared when the
+    // editor content diverges from the loaded query (handled via watcher).
+    loadedSavedQueryId: null,
+    loadedSavedQueryName: '',
 
     // Saved queries (initialized from server-rendered JSON, or fetched)
     savedQueries: [],
@@ -36,6 +46,14 @@ export function mrqlEditor() {
       return (this.result.resources?.length || 0)
         + (this.result.notes?.length || 0)
         + (this.result.groups?.length || 0);
+    },
+
+    // BH-012: surface the Update affordance only when a saved query is loaded
+    // and the editor has a non-empty, valid query.
+    get canUpdate() {
+      if (!this.loadedSavedQueryId) return false;
+      if (this.validationError) return false;
+      return this.getQuery().trim().length > 0;
     },
 
     async init() {
@@ -294,6 +312,9 @@ export function mrqlEditor() {
       this.executing = true;
       this.error = '';
       this.result = null;
+      // BH-013: clear the banner state at the start of each request.
+      this.defaultLimitApplied = false;
+      this.appliedLimit = 0;
 
       try {
         const resp = await fetch('/v1/mrql?render=1', {
@@ -309,6 +330,9 @@ export function mrqlEditor() {
         }
 
         this.result = await resp.json();
+        // BH-013: capture the default-limit signal from the response payload.
+        this.defaultLimitApplied = !!(this.result && this.result.default_limit_applied);
+        this.appliedLimit = (this.result && this.result.applied_limit) || 0;
         this.addToHistory(query);
 
         // Update URL so back/forward works (skip if already the same query)
@@ -352,7 +376,50 @@ export function mrqlEditor() {
 
     loadSavedQuery(q) {
       this.setQuery(q.query);
+      // BH-012: remember which saved query we loaded so Save can branch to PUT.
+      this.loadedSavedQueryId = q.id ?? q.ID ?? null;
+      this.loadedSavedQueryName = q.name ?? q.Name ?? '';
       this.execute();
+    },
+
+    // BH-012: reset loaded-saved-query tracking so the next Save acts as a
+    // fresh create (POST) rather than an update of the previously loaded row.
+    clearLoadedSaved() {
+      this.loadedSavedQueryId = null;
+      this.loadedSavedQueryName = '';
+    },
+
+    // BH-012: PUT branch — reuses the loaded saved-query id. Does NOT open
+    // the dialog; the name is preserved.
+    async updateQuery() {
+      if (!this.loadedSavedQueryId) return;
+      const query = this.getQuery().trim();
+      if (!query) return;
+      if (this.validationError) {
+        this.saveError = 'Fix syntax errors before updating';
+        return;
+      }
+      this.saveError = '';
+
+      try {
+        const resp = await fetch('/v1/mrql/saved?id=' + encodeURIComponent(this.loadedSavedQueryId), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: this.loadedSavedQueryName,
+            query: query,
+            description: '',
+          }),
+        });
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => null);
+          this.saveError = errData?.error || errData?.Error || `Update failed (${resp.status})`;
+          return;
+        }
+        await this.fetchSavedQueries();
+      } catch (err) {
+        this.saveError = err.message || 'Network error';
+      }
     },
 
     async saveQuery() {
@@ -383,6 +450,11 @@ export function mrqlEditor() {
           return;
         }
 
+        // BH-012: save-as-new means the current editor contents are now a
+        // brand-new saved query — clear the loaded-id so the next Update
+        // button reference targets nothing (UI hides the button).
+        this.clearLoadedSaved();
+
         this.showSaveDialog = false;
         this.saveName = '';
         this.saveDescription = '';
@@ -401,6 +473,12 @@ export function mrqlEditor() {
         });
 
         if (resp.ok) {
+          // BH-012: if the deleted row is the one currently loaded into the
+          // editor, clear the loaded-id so Update no longer offers to PUT
+          // against a non-existent row.
+          if (this.loadedSavedQueryId && Number(this.loadedSavedQueryId) === Number(id)) {
+            this.clearLoadedSaved();
+          }
           await this.fetchSavedQueries();
         }
       } catch (_) { /* ignore */ }

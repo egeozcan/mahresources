@@ -25,6 +25,12 @@ type MRQLResult struct {
 	Notes      []models.Note     `json:"notes,omitempty"`
 	Groups     []models.Group    `json:"groups,omitempty"`
 	Warnings   []string          `json:"warnings,omitempty"`
+	// DefaultLimitApplied is true when the query had no explicit LIMIT clause
+	// and the server applied the configured default.
+	DefaultLimitApplied bool `json:"default_limit_applied"`
+	// AppliedLimit is the effective LIMIT that was applied — either the value
+	// parsed from the query or the configured default.
+	AppliedLimit int `json:"applied_limit,omitempty"`
 }
 
 // MRQLGroupedResult holds the results of a GROUP BY MRQL query.
@@ -36,6 +42,12 @@ type MRQLGroupedResult struct {
 	Warnings    []string         `json:"warnings,omitempty"`
 	NextOffset  *int             `json:"nextOffset,omitempty"`  // bucketed: offset for next page (nil if no more)
 	TotalGroups int              `json:"totalGroups,omitempty"` // bucketed: total group count (before pagination)
+	// DefaultLimitApplied is true when the query had no explicit LIMIT clause
+	// and the server applied the configured default.
+	DefaultLimitApplied bool `json:"default_limit_applied"`
+	// AppliedLimit is the effective LIMIT that was applied — either the value
+	// parsed from the query or the configured default.
+	AppliedLimit int `json:"applied_limit,omitempty"`
 }
 
 // MRQLBucket is a single group of entities in bucketed mode.
@@ -73,9 +85,17 @@ func (ctx *MahresourcesContext) ExecuteMRQL(reqCtx context.Context, queryStr str
 		// which also clears any OFFSET baked into the query itself.
 		effectiveLimit := parsed.Limit
 		if effectiveLimit < 0 {
-			effectiveLimit = defaultMRQLLimit
+			effectiveLimit = ctx.defaultMRQLLimit()
 		}
 		parsed.Offset = (page - 1) * effectiveLimit
+	}
+
+	// BH-013: compute default-limit flag + applied limit before translation.
+	// parsed.Limit < 0 means "no explicit LIMIT" after request-param overrides.
+	defaultApplied := parsed.Limit < 0
+	appliedLimit := parsed.Limit
+	if defaultApplied {
+		appliedLimit = ctx.defaultMRQLLimit()
 	}
 
 	entityType := mrql.ExtractEntityType(parsed)
@@ -89,16 +109,35 @@ func (ctx *MahresourcesContext) ExecuteMRQL(reqCtx context.Context, queryStr str
 		opts.ScopeGroupID = scopeID
 	}
 
+	var result *MRQLResult
 	if entityType != mrql.EntityUnspecified {
-		return ctx.executeSingleEntity(reqCtx, parsed, entityType, opts)
+		result, err = ctx.executeSingleEntity(reqCtx, parsed, entityType, opts)
+	} else {
+		// Cross-entity: fan out to all three entity types
+		result, err = ctx.executeCrossEntity(reqCtx, parsed, opts)
 	}
-
-	// Cross-entity: fan out to all three entity types
-	return ctx.executeCrossEntity(reqCtx, parsed, opts)
+	if err != nil {
+		return nil, err
+	}
+	result.DefaultLimitApplied = defaultApplied
+	result.AppliedLimit = appliedLimit
+	return result, nil
 }
 
-// defaultMRQLLimit is applied when the query has no explicit LIMIT clause.
-const defaultMRQLLimit = 1000
+// DefaultMRQLLimitFallback is the historical default LIMIT value used when
+// MahresourcesConfig.MRQLDefaultLimit is unset (0). Tests that instantiate
+// MahresourcesConfig{} directly rely on this fallback, and main.go sets a
+// lower default (500) via the --mrql-default-limit flag for real deployments.
+const DefaultMRQLLimitFallback = 1000
+
+// defaultMRQLLimit returns the configured default MRQL LIMIT, or the fallback
+// if none is configured. BH-013.
+func (ctx *MahresourcesContext) defaultMRQLLimit() int {
+	if ctx.Config != nil && ctx.Config.MRQLDefaultLimit > 0 {
+		return ctx.Config.MRQLDefaultLimit
+	}
+	return DefaultMRQLLimitFallback
+}
 
 // maxBucketedTotalItems caps the total number of entity items materialized
 // across all buckets, preventing a single bucketed query from loading
@@ -120,7 +159,7 @@ func (ctx *MahresourcesContext) executeSingleEntity(reqCtx context.Context, pars
 
 	// Apply a default limit cap if the query has no explicit LIMIT.
 	if parsed.Limit < 0 {
-		db = db.Limit(defaultMRQLLimit)
+		db = db.Limit(ctx.defaultMRQLLimit())
 	}
 
 	result := &MRQLResult{EntityType: entityType.String()}
@@ -155,9 +194,12 @@ func (ctx *MahresourcesContext) ExecuteMRQLGrouped(reqCtx context.Context, parse
 	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
 	defer cancel()
 
+	// BH-013: record whether the default kicked in before mutating parsed.Limit.
+	defaultApplied := parsed.Limit < 0
+
 	// Apply default limit when no explicit LIMIT was specified.
 	if parsed.Limit < 0 {
-		parsed.Limit = defaultMRQLLimit
+		parsed.Limit = ctx.defaultMRQLLimit()
 	}
 
 	opts := mrql.TranslateOptions{}
@@ -169,16 +211,24 @@ func (ctx *MahresourcesContext) ExecuteMRQLGrouped(reqCtx context.Context, parse
 		opts.ScopeGroupID = scopeID
 	}
 
+	var result *MRQLGroupedResult
+	var err error
 	if len(parsed.GroupBy.Aggregates) > 0 {
 		// Aggregated: Limit is standard row pagination — no clamping
-		return ctx.executeAggregatedQuery(queryCtx, parsed, opts)
+		result, err = ctx.executeAggregatedQuery(queryCtx, parsed, opts)
+	} else {
+		// Bucketed: clamp per-bucket limit so no single bucket exceeds the item cap
+		if parsed.Limit > maxBucketedTotalItems {
+			parsed.Limit = maxBucketedTotalItems
+		}
+		result, err = ctx.executeBucketedQuery(queryCtx, parsed, opts)
 	}
-
-	// Bucketed: clamp per-bucket limit so no single bucket exceeds the item cap
-	if parsed.Limit > maxBucketedTotalItems {
-		parsed.Limit = maxBucketedTotalItems
+	if err != nil {
+		return nil, err
 	}
-	return ctx.executeBucketedQuery(queryCtx, parsed, opts)
+	result.DefaultLimitApplied = defaultApplied
+	result.AppliedLimit = parsed.Limit
+	return result, nil
 }
 
 func (ctx *MahresourcesContext) executeAggregatedQuery(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLGroupedResult, error) {
@@ -342,7 +392,7 @@ type crossEntityItem struct {
 func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLResult, error) {
 	result := &MRQLResult{EntityType: "all"}
 
-	globalLimit := defaultMRQLLimit
+	globalLimit := ctx.defaultMRQLLimit()
 	if parsed.Limit >= 0 {
 		globalLimit = parsed.Limit
 	}
@@ -730,7 +780,7 @@ func (ctx *MahresourcesContext) ExecuteSingleEntityWithScope(reqCtx context.Cont
 	}
 
 	if q.Limit < 0 {
-		db = db.Limit(defaultMRQLLimit)
+		db = db.Limit(ctx.defaultMRQLLimit())
 	}
 
 	result := &MRQLResult{EntityType: entityType.String()}
@@ -770,18 +820,27 @@ func (ctx *MahresourcesContext) ExecuteMRQLGroupedWithScope(reqCtx context.Conte
 	queryCtx, cancel := context.WithTimeout(reqCtx, MRQLQueryTimeout)
 	defer cancel()
 
-	if parsed.Limit < 0 {
-		parsed.Limit = defaultMRQLLimit
+	defaultApplied := parsed.Limit < 0
+	if defaultApplied {
+		parsed.Limit = ctx.defaultMRQLLimit()
 	}
 
+	var result *MRQLGroupedResult
+	var err error
 	if len(parsed.GroupBy.Aggregates) > 0 {
-		return ctx.executeAggregatedQueryScoped(queryCtx, parsed, scopeID)
+		result, err = ctx.executeAggregatedQueryScoped(queryCtx, parsed, scopeID)
+	} else {
+		if parsed.Limit > maxBucketedTotalItems {
+			parsed.Limit = maxBucketedTotalItems
+		}
+		result, err = ctx.executeBucketedQueryScoped(queryCtx, parsed, scopeID)
 	}
-
-	if parsed.Limit > maxBucketedTotalItems {
-		parsed.Limit = maxBucketedTotalItems
+	if err != nil {
+		return nil, err
 	}
-	return ctx.executeBucketedQueryScoped(queryCtx, parsed, scopeID)
+	result.DefaultLimitApplied = defaultApplied
+	result.AppliedLimit = parsed.Limit
+	return result, nil
 }
 
 // executeAggregatedQueryScoped is like executeAggregatedQuery but applies

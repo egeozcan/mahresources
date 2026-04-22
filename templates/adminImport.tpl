@@ -380,7 +380,7 @@
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
               <span class="font-medium">Import completed</span>
             </div>
-            <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm" data-testid="import-apply-result">
+            <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm" data-testid="import-apply-result-details">
               <dt class="text-stone-500">Groups created</dt>
               <dd x-text="applyResult.created_groups"></dd>
               <dt class="text-stone-500">Groups merged</dt>
