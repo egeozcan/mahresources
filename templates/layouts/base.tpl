@@ -27,6 +27,8 @@
     <meta name="msapplication-TileColor" content="#ffffff">
     <meta name="msapplication-TileImage" content="/public/favicon/ms-icon-144x144.png">
     <meta name="theme-color" content="#ffffff">
+    {# BH-036: expose the export-retention window (ms) so downloadCockpit can render per-job expiry timestamps. #}
+    <meta name="x-export-retention-ms" content="{{ exportRetentionMs|default:0 }}">
     {% block head %}{% endblock %}
     {% plugin_slot "head" %}
 </head>

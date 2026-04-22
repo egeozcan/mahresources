@@ -242,7 +242,32 @@ func (ctx *MahresourcesContext) buildExportPlan(req *ExportRequest) (*exportPlan
 		return nil, err
 	}
 
+	// BH-015: add a JSON-overhead estimate so EstimatedBytes/totalBytes reflect
+	// the actual tar output size (manifest + per-entity JSON files + tar block
+	// padding), not just the sum of blob bytes. Without this, small-payload
+	// exports reported progressPercent well above 100 because the denominator
+	// only counted unique blob bytes while the numerator counted every byte
+	// in the tar.
+	plan.totalBytes += estimateJSONOverhead(plan)
+
 	return plan, nil
+}
+
+// estimateJSONOverhead returns a rough byte-count estimate for the JSON
+// payloads inside the export tar (manifest + per-entity files + tar block
+// padding). It is intentionally conservative — a slight over-estimate is
+// preferable to an under-estimate because the progressPercent denominator
+// should never be smaller than the actual output size. BH-015.
+func estimateJSONOverhead(plan *exportPlan) int64 {
+	const (
+		manifestBaseline int64 = 2 * 1024 // manifest.json scaffolding
+		perEntityBytes   int64 = 1024     // typical size of a single entity's JSON row + tar header padding
+	)
+	entities := int64(len(plan.groupIDs) +
+		len(plan.noteIDs) +
+		len(plan.resourceIDs) +
+		len(plan.seriesIDs))
+	return manifestBaseline + entities*perEntityBytes
 }
 
 // bfsRelatedEntities runs a BFS from in-scope groups, following enabled m2m

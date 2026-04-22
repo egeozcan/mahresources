@@ -891,10 +891,16 @@ func TestEstimateExport_MissingBlobNotCountedInEstimate(t *testing.T) {
 	if est.EstimatedBytes <= 0 {
 		t.Errorf("EstimatedBytes = %d, want >0 (at least the size of exists.png)", est.EstimatedBytes)
 	}
-	// EstimatedBytes should be the size of ONLY the existing blob, not both.
+	// BH-015: EstimatedBytes = existsSize + JSON overhead (2 KB manifest +
+	// 1 KB per entity). Missing blob's bytes must NOT contribute — that's
+	// what this test guards.
 	existsSize := int64(len("AAAA"))
-	if est.EstimatedBytes != existsSize {
-		t.Errorf("EstimatedBytes = %d, want %d (only the existing blob)", est.EstimatedBytes, existsSize)
+	missingSize := int64(len("BBBB"))
+	expectedOverhead := int64(2*1024) + int64(1+2)*int64(1024) // 1 group + 2 resources (res2 counted as a row even though its blob is gone)
+	expected := existsSize + expectedOverhead
+	if est.EstimatedBytes != expected {
+		t.Errorf("EstimatedBytes = %d, want %d (existsSize %d + overhead %d; missingSize %d must NOT be included)",
+			est.EstimatedBytes, expected, existsSize, expectedOverhead, missingSize)
 	}
 }
 

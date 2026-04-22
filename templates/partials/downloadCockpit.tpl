@@ -199,6 +199,15 @@
                                             </a>
                                         </template>
 
+                                        <!-- BH-036: retention expiry timestamp for completed group exports -->
+                                        <template x-if="job.status === 'completed' && job.source === 'group-export' && job.completedAt && exportRetentionMs > 0">
+                                            <p class="mt-0.5 text-xs text-stone-500"
+                                               data-testid="cockpit-job-expiry"
+                                               :title="'Completed ' + new Date(job.completedAt).toLocaleString() + '; expires ' + new Date(new Date(job.completedAt).getTime() + exportRetentionMs).toLocaleString()">
+                                                Expires <span x-text="formatRelativeTime(new Date(job.completedAt).getTime() + exportRetentionMs)"></span>
+                                            </p>
+                                        </template>
+
                                         <!-- Plugin action result link -->
                                         <template x-if="job._isAction && job.status === 'completed' && job.result?.redirect">
                                             <a :href="job.result.redirect"
