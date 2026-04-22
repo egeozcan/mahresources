@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jmoiron/sqlx"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"mahresources/constants"
 	"mahresources/models"
@@ -202,7 +203,13 @@ func (ctx *MahresourcesContext) DeleteQuery(queryId uint) error {
 	}
 	queryName := query.Name
 
-	err := ctx.db.Select(clause.Associations).Delete(&query).Error
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Select(clause.Associations).Delete(&query).Error; err != nil {
+			return err
+		}
+		// BH-020: scrub dangling queryId references from table note_blocks
+		return ScrubQueryFromBlocks(tx, queryId)
+	})
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "query", &queryId, queryName, "Deleted query", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeQuery)

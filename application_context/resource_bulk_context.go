@@ -125,7 +125,9 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 		}
 
 		txCtx.Logger().Info(models.LogActionDelete, "resource", &resourceId, resource.Name, "Deleted resource", nil)
-		return nil
+
+		// BH-020: scrub dangling references from note_blocks
+		return ScrubResourceFromBlocks(txCtx.db, resourceId)
 	})
 
 	if err != nil {
