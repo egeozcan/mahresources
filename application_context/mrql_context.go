@@ -133,6 +133,11 @@ const DefaultMRQLLimitFallback = 1000
 // defaultMRQLLimit returns the configured default MRQL LIMIT, or the fallback
 // if none is configured. BH-013.
 func (ctx *MahresourcesContext) defaultMRQLLimit() int {
+	if ctx.settings != nil {
+		if v := ctx.settings.MRQLDefaultLimit(); v > 0 {
+			return v
+		}
+	}
 	if ctx.Config != nil && ctx.Config.MRQLDefaultLimit > 0 {
 		return ctx.Config.MRQLDefaultLimit
 	}

@@ -62,6 +62,7 @@ func SetupTestEnv(t *testing.T) *TestContext {
 		&models.PluginState{},
 		&models.PluginKV{},
 		&models.SavedMRQLQuery{},
+		&models.RuntimeSetting{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
@@ -89,6 +90,16 @@ func SetupTestEnv(t *testing.T) *TestContext {
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
 
 	appCtx := application_context.NewMahresourcesContext(fs, db, readOnlyDB, config)
+
+	// Wire runtime settings (mirrors main.go boot sequence).
+	settings := application_context.NewRuntimeSettings(
+		db,
+		application_context.NewStdlibSettingsLogger(),
+		application_context.BuildSpecsExported(),
+		application_context.BuildDefaultsFromConfig(config),
+	)
+	_ = settings.Load()
+	appCtx.SetSettings(settings)
 
 	// Ensure default resource category exists and set the resolved ID
 	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}

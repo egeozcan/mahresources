@@ -3,6 +3,7 @@ package api_tests
 import (
 	"crypto/rand"
 	"fmt"
+	"mahresources/application_context"
 	"mahresources/models"
 	"net/http"
 	"testing"
@@ -18,7 +19,9 @@ import (
 // acceptable per the design (plan Task B — "HTTP 413 optional").
 func TestResourceUpload_RejectsOversize(t *testing.T) {
 	tc := SetupTestEnv(t)
-	tc.AppCtx.Config.MaxUploadSize = 1 << 20 // 1 MiB
+	if err := tc.AppCtx.Settings().Set(application_context.KeyMaxUploadSize, "1048576", "test", "test"); err != nil {
+		t.Fatalf("set max upload size: %v", err)
+	}
 
 	buf := make([]byte, 2<<20) // 2 MiB — payload alone exceeds the limit
 	_, _ = rand.Read(buf)
@@ -35,7 +38,9 @@ func TestResourceUpload_RejectsOversize(t *testing.T) {
 // break normal uploads.
 func TestResourceUpload_AcceptsUnderLimit(t *testing.T) {
 	tc := SetupTestEnv(t)
-	tc.AppCtx.Config.MaxUploadSize = 4 << 20 // 4 MiB
+	if err := tc.AppCtx.Settings().Set(application_context.KeyMaxUploadSize, "4194304", "test", "test"); err != nil {
+		t.Fatalf("set max upload size: %v", err)
+	}
 
 	buf := make([]byte, 128<<10) // 128 KiB well under the limit
 	_, _ = rand.Read(buf)
@@ -53,7 +58,9 @@ func TestResourceUpload_AcceptsUnderLimit(t *testing.T) {
 // MaxUploadSize must reject before the file lands on disk.
 func TestResourceVersionUpload_RejectsOversize(t *testing.T) {
 	tc := SetupTestEnv(t)
-	tc.AppCtx.Config.MaxUploadSize = 1 << 20 // 1 MiB
+	if err := tc.AppCtx.Settings().Set(application_context.KeyMaxUploadSize, "1048576", "test", "test"); err != nil {
+		t.Fatalf("set max upload size: %v", err)
+	}
 
 	// Seed a resource so there's something to add a version to.
 	res := &models.Resource{Name: "BH-034 version host", Hash: "bh034-host"}

@@ -32,6 +32,7 @@ func setupTestEnvWithShareConfig(t *testing.T, sharePublicURL string) *TestConte
 		&models.Preview{}, &models.GroupRelation{}, &models.GroupRelationType{},
 		&models.ImageHash{}, &models.ResourceSimilarity{}, &models.LogEntry{},
 		&models.PluginState{}, &models.PluginKV{}, &models.SavedMRQLQuery{},
+		&models.RuntimeSetting{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -48,6 +49,17 @@ func setupTestEnvWithShareConfig(t *testing.T, sharePublicURL string) *TestConte
 	sqlDB, _ := db.DB()
 	roDB := sqlx.NewDb(sqlDB, "sqlite3")
 	appCtx := application_context.NewMahresourcesContext(fs, db, roDB, cfg)
+
+	// Wire runtime settings so Settings().SharePublicURL() reflects the test cfg.
+	settings := application_context.NewRuntimeSettings(
+		db,
+		application_context.NewStdlibSettingsLogger(),
+		application_context.BuildSpecsExported(),
+		application_context.BuildDefaultsFromConfig(cfg),
+	)
+	_ = settings.Load()
+	appCtx.SetSettings(settings)
+
 	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
 	defaultRC.ID = 1
 	db.FirstOrCreate(defaultRC, 1)

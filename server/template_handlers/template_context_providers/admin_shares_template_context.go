@@ -63,8 +63,8 @@ func AdminSharesContextProvider(context *application_context.MahresourcesContext
 		// pongo2).
 		shareBaseUrl := ""
 		shareUrlConfigured := false
-		if context.Config != nil && context.Config.SharePublicURL != "" {
-			shareBaseUrl = strings.TrimRight(context.Config.SharePublicURL, "/")
+		if rawURL := context.Settings().SharePublicURL(); rawURL != "" {
+			shareBaseUrl = strings.TrimRight(rawURL, "/")
 			shareUrlConfigured = true
 		}
 
