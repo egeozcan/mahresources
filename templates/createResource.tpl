@@ -107,6 +107,28 @@
                         </div>
                     </div>
                 </div>
+
+                {% if altFileSystems %}
+                <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-stone-200 sm:pt-5">
+                    <label for="PathName" class="block text-sm font-medium font-mono text-stone-700 sm:mt-px sm:pt-2">
+                        Storage
+                        <span class="block mt-2 text-sm text-stone-500 font-sans">Choose which filesystem to save this resource to.</span>
+                    </label>
+                    <div class="mt-1 sm:mt-0 sm:col-span-2">
+                        <select
+                            id="PathName"
+                            name="PathName"
+                            data-testid="resource-storage-select"
+                            class="max-w-lg block focus:ring-amber-600 focus:border-amber-600 w-full shadow-sm sm:text-sm border-stone-300 rounded-md"
+                        >
+                            <option value="">Default</option>
+                            {% for key, path in altFileSystems %}
+                            <option value="{{ key }}">{{ key }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                {% endif %}
                 {% endif %}
 
                 <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center sm:border-t sm:border-stone-200 sm:pt-5">
