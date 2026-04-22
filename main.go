@@ -119,6 +119,7 @@ func main() {
 	libreOfficePath := flag.String("libreoffice-path", os.Getenv("LIBREOFFICE_PATH"), "Path to LibreOffice binary for office document thumbnails (env: LIBREOFFICE_PATH)")
 	skipFTS := flag.Bool("skip-fts", os.Getenv("SKIP_FTS") == "1", "Skip Full-Text Search initialization (env: SKIP_FTS=1)")
 	skipVersionMigration := flag.Bool("skip-version-migration", os.Getenv("SKIP_VERSION_MIGRATION") == "1", "Skip resource version migration at startup (env: SKIP_VERSION_MIGRATION=1)")
+	skipBlockRefCleanup := flag.Bool("skip-block-ref-cleanup", os.Getenv("SKIP_BLOCK_REF_CLEANUP") == "1", "Skip one-shot cleanup of dangling references in note_blocks (env: SKIP_BLOCK_REF_CLEANUP=1)")
 
 	// Ephemeral/in-memory options
 	memoryDB := flag.Bool("memory-db", os.Getenv("MEMORY_DB") == "1", "Use in-memory SQLite database (env: MEMORY_DB=1)")
@@ -407,6 +408,17 @@ func main() {
 		}()
 	} else {
 		log.Println("Version migration skipped (-skip-version-migration flag or SKIP_VERSION_MIGRATION=1)")
+	}
+
+	// One-shot cleanup of dangling block references (BH-020 — skip with -skip-block-ref-cleanup flag)
+	if !*skipBlockRefCleanup {
+		go func() {
+			if err := application_context.MigrateBlockReferencesOnce(db); err != nil {
+				log.Printf("Warning: block-ref cleanup migration failed: %v", err)
+			}
+		}()
+	} else {
+		log.Println("Block-ref cleanup migration skipped (-skip-block-ref-cleanup flag or SKIP_BLOCK_REF_CLEANUP=1)")
 	}
 
 	// Initialize Full-Text Search (skip with -skip-fts flag or SKIP_FTS=1 env var)
