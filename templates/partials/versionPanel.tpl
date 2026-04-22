@@ -52,26 +52,28 @@
         {% endfor %}
 
         <div class="p-4 bg-stone-50">
-            <div class="flex items-center justify-between">
-                <button @click="compareMode = !compareMode; selected = []"
-                        class="px-3 py-1 text-sm border rounded hover:bg-stone-100"
-                        :class="{ 'bg-amber-100 border-amber-300': compareMode }">
-                    <span x-text="compareMode ? 'Cancel Compare' : 'Compare'"></span>
-                </button>
+            <div class="flex flex-wrap items-center gap-y-2 gap-x-4 justify-between">
+                <div class="flex items-center gap-2">
+                    <button @click="compareMode = !compareMode; selected = []"
+                            class="px-3 py-1 text-sm border rounded hover:bg-stone-100"
+                            :class="{ 'bg-amber-100 border-amber-300': compareMode }">
+                        <span x-text="compareMode ? 'Cancel Compare' : 'Compare'"></span>
+                    </button>
 
-                <template x-if="compareMode && selected.length === 2">
-                    <a :href="'/resource/compare?r1={{ resourceId }}&v1=' + selected[0] + '&v2=' + selected[1]"
-                       class="px-3 py-1 text-sm bg-amber-700 text-white rounded hover:bg-amber-800">
-                        Compare Selected
-                    </a>
-                </template>
+                    <template x-if="compareMode && selected.length === 2">
+                        <a :href="'/resource/compare?r1={{ resourceId }}&v1=' + selected[0] + '&v2=' + selected[1]"
+                           class="px-3 py-1 text-sm bg-amber-700 text-white rounded hover:bg-amber-800 whitespace-nowrap">
+                            Compare Selected
+                        </a>
+                    </template>
+                </div>
 
                 <form action="/v1/resource/versions?resourceId={{ resourceId }}" method="post" enctype="multipart/form-data"
-                      class="flex items-center space-x-2">
+                      class="flex flex-wrap items-center gap-2">
                     <input type="file" name="file" required class="text-sm" aria-label="Upload file for new version">
                     <input type="text" name="comment" placeholder="Comment (optional)"
                            class="px-2 py-1 text-sm border rounded" aria-label="Version comment">
-                    <button type="submit" class="px-3 py-1 text-sm bg-amber-700 text-white rounded hover:bg-amber-800">
+                    <button type="submit" class="px-3 py-1 text-sm bg-amber-700 text-white rounded hover:bg-amber-800 whitespace-nowrap">
                         Upload New Version
                     </button>
                 </form>

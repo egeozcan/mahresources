@@ -1,6 +1,13 @@
 import { updateClipboard } from './index.js';
 
 export function renderJsonTable(data, path = ["$"], key = "") {
+    // BH-002: null/undefined must return a Node so appendChild() is safe.
+    // An empty DocumentFragment appends no children and is the least-surprising
+    // "nothing to render" signal for callers like json.tpl.
+    if (data === null || data === undefined) {
+        return document.createDocumentFragment();
+    }
+
     if (Array.isArray(data)) {
         return generateArrayTable(data, path);
     }
@@ -9,7 +16,7 @@ export function renderJsonTable(data, path = ["$"], key = "") {
         return createDateElement(data.getTime());
     }
 
-    if (typeof data === "object" && data !== undefined && data !== null) {
+    if (typeof data === "object") {
         return generateObjectTable(data, path);
     }
 

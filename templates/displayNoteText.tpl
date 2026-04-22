@@ -51,7 +51,6 @@
     {% endif %}
 
     {% if sc.MetaJson %}
-    {% include "/partials/sideTitle.tpl" with title="Meta Data" %}
     {% include "/partials/json.tpl" with jsonData=note.Meta %}
     {% endif %}
 {% endblock %}
