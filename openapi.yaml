@@ -1551,6 +1551,42 @@ components:
                         type: string
                     type: array
             type: object
+        SettingView:
+            properties:
+                allowZero:
+                    type: boolean
+                bootDefault:
+                    type: object
+                current:
+                    type: object
+                description:
+                    type: string
+                group:
+                    type: string
+                key:
+                    type: string
+                label:
+                    type: string
+                maxNumeric:
+                    nullable: true
+                    type: integer
+                minNumeric:
+                    nullable: true
+                    type: integer
+                overridden:
+                    type: boolean
+                reason:
+                    type: string
+                type:
+                    type: string
+                updatedAt:
+                    format: date-time
+                    nullable: true
+                    readOnly: true
+                    type: string
+            type: object
+        SettingViewPartial:
+            type: object
         Tag:
             properties:
                 CreatedAt:
@@ -1697,6 +1733,63 @@ paths:
                         application/json: {}
                     description: Successful response
             summary: Get server statistics
+            tags:
+                - admin
+    /v1/admin/settings:
+        get:
+            description: Returns all runtime-editable settings with current value, boot default, override metadata, and bounds.
+            operationId: listRuntimeSettings
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/SettingViewPartial'
+                                type: array
+                    description: Successful response
+            summary: List runtime-editable settings
+            tags:
+                - admin
+    /v1/admin/settings/{key}:
+        delete:
+            description: Removes any persisted override for the named setting and reverts to the boot-time flag/env value.
+            operationId: resetRuntimeSetting
+            parameters:
+                - description: Stable setting key.
+                  in: path
+                  name: key
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/SettingView'
+                    description: Successful response
+            summary: Reset a runtime setting to boot default
+            tags:
+                - admin
+        put:
+            description: Persists an override for the named setting. Runtime changes take effect on the next use (no restart).
+            operationId: setRuntimeSetting
+            parameters:
+                - description: Stable setting key; see GET /v1/admin/settings for the list.
+                  in: path
+                  name: key
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/SettingView'
+                    description: Successful response
+            summary: Override a runtime setting
             tags:
                 - admin
     /v1/admin/shares/bulk-revoke:

@@ -2078,6 +2078,48 @@ func registerAdminRoutes(r *openapi.Registry) {
 		Tags:                 []string{"admin"},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
+
+	settingViewType := reflect.TypeOf(application_context.SettingView{})
+	settingViewListType := reflect.TypeOf([]application_context.SettingView{})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/admin/settings",
+		OperationID:          "listRuntimeSettings",
+		Summary:              "List runtime-editable settings",
+		Description:          "Returns all runtime-editable settings with current value, boot default, override metadata, and bounds.",
+		Tags:                 []string{"admin"},
+		ResponseType:         settingViewListType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPut,
+		Path:        "/v1/admin/settings/{key}",
+		OperationID: "setRuntimeSetting",
+		Summary:     "Override a runtime setting",
+		Description: "Persists an override for the named setting. Runtime changes take effect on the next use (no restart).",
+		Tags:        []string{"admin"},
+		PathParams: []openapi.PathParam{
+			{Name: "key", Type: "string", Description: "Stable setting key; see GET /v1/admin/settings for the list."},
+		},
+		ResponseType:         settingViewType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodDelete,
+		Path:        "/v1/admin/settings/{key}",
+		OperationID: "resetRuntimeSetting",
+		Summary:     "Reset a runtime setting to boot default",
+		Description: "Removes any persisted override for the named setting and reverts to the boot-time flag/env value.",
+		Tags:        []string{"admin"},
+		PathParams: []openapi.PathParam{
+			{Name: "key", Type: "string", Description: "Stable setting key."},
+		},
+		ResponseType:         settingViewType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
 }
 
 func registerTimelineRoutes(r *openapi.Registry) {
