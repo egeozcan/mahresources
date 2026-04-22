@@ -11,6 +11,7 @@ import (
 	"mahresources/server/template_handlers/template_entities"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 func NoteListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
@@ -266,11 +267,20 @@ func NoteContextProvider(context *application_context.MahresourcesContext) func(
 			return addErrContext(err, baseContext)
 		}
 
-		// Determine share server base URL if sharing is enabled
+		// BH-033: only emit an absolute share URL when the operator has
+		// explicitly configured SHARE_PUBLIC_URL. The old fallback concatenated
+		// ShareBindAddress + SharePort into http://<bind>:<port>, which is wrong
+		// for every non-loopback deployment: 127.0.0.1, 0.0.0.0, internal
+		// 10.x/192.168.x IPs, container IPs, and internal hostnames all
+		// produce URLs that won't resolve for any external recipient. When
+		// unset, shareBaseUrl stays empty and the template surfaces a warning
+		// so the admin knows why the sidebar is degraded.
 		shareEnabled := context.Config.SharePort != ""
 		shareBaseUrl := ""
-		if shareEnabled {
-			shareBaseUrl = fmt.Sprintf("http://%s:%s", context.Config.ShareBindAddress, context.Config.SharePort)
+		shareUrlConfigured := false
+		if context.Config.SharePublicURL != "" {
+			shareBaseUrl = strings.TrimRight(context.Config.SharePublicURL, "/")
+			shareUrlConfigured = true
 		}
 
 		var sectionConfig models.NoteSectionConfig
@@ -293,10 +303,11 @@ func NoteContextProvider(context *application_context.MahresourcesContext) func(
 				Name: "Delete",
 				Url:  fmt.Sprintf("/v1/note/delete?Id=%v", note.ID),
 			},
-			"mainEntity":     note,
-			"mainEntityType": "note",
-			"shareEnabled":   shareEnabled,
-			"shareBaseUrl":   shareBaseUrl,
+			"mainEntity":         note,
+			"mainEntityType":     "note",
+			"shareEnabled":       shareEnabled,
+			"shareBaseUrl":       shareBaseUrl,
+			"shareUrlConfigured": shareUrlConfigured,
 		}.Update(baseContext)
 	}
 }

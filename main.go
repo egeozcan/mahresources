@@ -167,6 +167,7 @@ func main() {
 	// Share server options
 	sharePort := flag.String("share-port", os.Getenv("SHARE_PORT"), "Port for public share server (env: SHARE_PORT)")
 	shareBindAddress := flag.String("share-bind-address", getEnvOrDefault("SHARE_BIND_ADDRESS", "0.0.0.0"), "Bind address for share server (env: SHARE_BIND_ADDRESS)")
+	sharePublicURL := flag.String("share-public-url", os.Getenv("SHARE_PUBLIC_URL"), "Externally-routable base URL for shared notes (e.g. https://share.example.com). If unset, the share sidebar shows a warning and the relative /s/<token> path instead of synthesizing a bind-address URL (env: SHARE_PUBLIC_URL)")
 
 	// MRQL options
 	mrqlTimeout := flag.Duration("mrql-query-timeout", parseDurationEnv("MRQL_QUERY_TIMEOUT", 10*time.Second), "Maximum execution time for MRQL queries (env: MRQL_QUERY_TIMEOUT)")
@@ -221,6 +222,7 @@ func main() {
 		BindAddress:                  *bindAddress,
 		SharePort:                    *sharePort,
 		ShareBindAddress:             *shareBindAddress,
+		SharePublicURL:               *sharePublicURL,
 		FfmpegPath:                   *ffmpegPath,
 		LibreOfficePath:              *libreOfficePath,
 		AltFileSystems:               altFileSystems,

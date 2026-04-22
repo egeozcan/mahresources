@@ -42,6 +42,12 @@ type MahresourcesConfig struct {
 	BindAddress      string
 	SharePort        string
 	ShareBindAddress string
+	// SharePublicURL is the externally-routable base URL for shared notes
+	// (e.g., "https://share.example.com"). When set, the note sidebar and
+	// the /admin/shares dashboard use it to build {SharePublicURL}/s/<token>.
+	// When unset, the UI renders a warning + the relative /s/<token> path
+	// rather than synthesizing a bind-address URL (BH-033).
+	SharePublicURL string
 	// RemoteResourceConnectTimeout is the timeout for connecting to remote URLs (dial, TLS, response headers)
 	RemoteResourceConnectTimeout time.Duration
 	// RemoteResourceIdleTimeout is how long to wait before erroring if a remote server stops sending data
@@ -115,7 +121,10 @@ type MahresourcesInputConfig struct {
 	LibreOfficePath  string
 	SharePort        string
 	ShareBindAddress string
-	AltFileSystems   map[string]string
+	// SharePublicURL is the externally-routable base URL for shared notes.
+	// Empty by default; see MahresourcesConfig.SharePublicURL. BH-033.
+	SharePublicURL string
+	AltFileSystems map[string]string
 	// MemoryDB uses an in-memory SQLite database (ephemeral, no persistence)
 	MemoryDB bool
 	// MemoryFS uses an in-memory filesystem (ephemeral, no persistence)
@@ -749,6 +758,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		BindAddress:                  cfg.BindAddress,
 		SharePort:                    cfg.SharePort,
 		ShareBindAddress:             cfg.ShareBindAddress,
+		SharePublicURL:               cfg.SharePublicURL,
 		RemoteResourceConnectTimeout: connectTimeout,
 		RemoteResourceIdleTimeout:    idleTimeout,
 		RemoteResourceOverallTimeout: overallTimeout,
