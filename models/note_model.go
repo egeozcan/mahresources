@@ -30,6 +30,11 @@ type Note struct {
 
 	// RenderedHTML is a transient field populated by the API when render=1 is set.
 	RenderedHTML string `gorm:"-" json:"renderedHTML,omitempty"`
+
+	// HasShare is a transient, list-only flag populated by the notes-list context
+	// provider so cards can signal "this note is shared" without ShareToken being
+	// serialized into the HTML (BH-038). It is never persisted.
+	HasShare bool `gorm:"-" json:"hasShare,omitempty"`
 }
 
 func (n *Note) BeforeCreate(tx *gorm.DB) error {

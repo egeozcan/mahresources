@@ -33,6 +33,22 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 			return addErrContext(err, baseContext)
 		}
 
+		// BH-038: strip ShareToken (and Blocks, which the list card never needs)
+		// from the list payload before it reaches the template. partials/note.tpl
+		// serializes `entity|json` into every card's Alpine x-data attribute;
+		// leaving ShareToken in place leaked plaintext tokens into the rendered
+		// HTML of /notes, and via the same provider /notes.json. A shallow copy
+		// is taken per note so the upstream GORM session isn't mutated.
+		cards := make([]models.Note, 0, len(notes))
+		for _, n := range notes {
+			copy := n
+			hasShare := copy.ShareToken != nil && *copy.ShareToken != ""
+			copy.ShareToken = nil
+			copy.Blocks = nil
+			copy.HasShare = hasShare
+			cards = append(cards, copy)
+		}
+
 		noteCount, err := context.GetNoteCount(&query)
 
 		if err != nil {
@@ -77,7 +93,7 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 
 		return pongo2.Context{
 			"pageTitle":   "Notes",
-			"notes":       notes,
+			"notes":       cards,
 			"groups":      groups,
 			"owners":      owners,
 			"pagination":  pagination,
