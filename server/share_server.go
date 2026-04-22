@@ -53,6 +53,13 @@ func NewShareServer(appContext *application_context.MahresourcesContext) *ShareS
 	}
 }
 
+// Handler returns an http.Handler for the share server's routes (useful for testing).
+func (s *ShareServer) Handler() http.Handler {
+	router := mux.NewRouter()
+	s.registerShareRoutes(router)
+	return router
+}
+
 // Start begins the share server on the specified address and port.
 // If port is empty, the server is not started (share feature disabled).
 // The server runs in a goroutine and returns immediately.
@@ -148,16 +155,32 @@ func (s *ShareServer) handleBlockStateUpdate(w http.ResponseWriter, r *http.Requ
 	}
 	blockId := uint(blockIdParsed)
 
-	// Verify block belongs to this note
-	blockBelongsToNote := false
+	// allowedStateBlockTypes is the set of block types that permit state writes via
+	// a share token. Only todos blocks are intended for share-side state writes
+	// (checkbox toggling by anonymous viewers). All other types are read-only.
+	// BH-031: expand this list explicitly if future block types need share-token state writes.
+	var allowedStateBlockTypes = map[string]bool{
+		"todos": true,
+	}
+
+	// Verify block belongs to this note and resolve its type for the allowlist check.
+	var targetBlock *models.NoteBlock
 	for _, block := range note.Blocks {
 		if block.ID == blockId {
-			blockBelongsToNote = true
+			targetBlock = block
 			break
 		}
 	}
-	if !blockBelongsToNote {
+	if targetBlock == nil {
 		http.Error(w, "Block not found", http.StatusNotFound)
+		return
+	}
+
+	// Enforce block-type allowlist: reject non-todo blocks with 403.
+	// The check runs after token→note resolution to avoid leaking block-existence
+	// info on invalid tokens.
+	if !allowedStateBlockTypes[targetBlock.Type] {
+		http.Error(w, "Block type does not allow share-token state writes", http.StatusForbidden)
 		return
 	}
 
