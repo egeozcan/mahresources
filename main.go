@@ -369,6 +369,9 @@ func main() {
 	// Wire the live runtime-settings provider into the download manager so that
 	// timeout and export-retention overrides take effect per download start.
 	context.DownloadManager().SetSettings(context.Settings())
+	// Now that the manager reads retention through RuntimeSettings, run the
+	// startup sweep so the first-pass cleanup honors any persisted override.
+	context.RunStartupExportSweep()
 
 	util.AddInitialData(db)
 

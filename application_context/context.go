@@ -240,6 +240,33 @@ type MahresourcesContext struct {
 	DefaultResourceCategoryID uint
 	// settings is the runtime-settings service. Installed after AutoMigrate via SetSettings.
 	settings *RuntimeSettings
+	// exportSweepFs is the filesystem rooted at FileSavePath used by the
+	// startup export/import sweep. Captured at NewMahresourcesContext so
+	// main.go can trigger the sweep after the DownloadManager has been
+	// swapped over to the live RuntimeSettings provider.
+	exportSweepFs afero.Fs
+}
+
+// RunStartupExportSweep cleans up orphaned export/import tars left over from a
+// previous run. Separated from NewMahresourcesContext so main.go can call it
+// AFTER SetSettings + DownloadManager.SetSettings, ensuring the first-pass
+// retention value reflects any persisted runtime override rather than the boot
+// flag. Safe to call on a nil or unconfigured context.
+func (ctx *MahresourcesContext) RunStartupExportSweep() {
+	if ctx == nil || ctx.exportSweepFs == nil || ctx.downloadManager == nil {
+		return
+	}
+	retention := ctx.downloadManager.ExportRetention()
+	if removed, err := download_queue.SweepOrphanedExports(ctx.exportSweepFs, "_exports", retention); err != nil {
+		log.Printf("warning: SweepOrphanedExports failed: %v", err)
+	} else if removed > 0 {
+		log.Printf("startup: removed %d orphaned export tars", removed)
+	}
+	if removed, err := download_queue.SweepOrphanedExports(ctx.exportSweepFs, "_imports", retention); err != nil {
+		log.Printf("warning: sweep _imports failed: %v", err)
+	} else if removed > 0 {
+		log.Printf("startup: removed %d orphaned import files", removed)
+	}
 }
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
@@ -308,28 +335,12 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		},
 	)
 
-	// Sweep orphaned export tars at startup. `filesystem` is already rooted at
-	// FileSavePath via BasePathFs in disk mode, so the path stays root-relative —
-	// matching how resource_upload_context writes into "/resources/...".
-	removed, sweepErr := download_queue.SweepOrphanedExports(filesystem, "_exports", ctx.downloadManager.ExportRetention())
-	if sweepErr != nil {
-		log.Printf("warning: SweepOrphanedExports failed: %v", sweepErr)
-	} else if removed > 0 {
-		log.Printf("startup: removed %d orphaned export tars", removed)
-	}
-
-	removed, sweepErr = download_queue.SweepOrphanedExports(filesystem, "_imports", ctx.downloadManager.ExportRetention())
-	if sweepErr != nil {
-		log.Printf("warning: sweep _imports failed: %v", sweepErr)
-	} else if removed > 0 {
-		log.Printf("startup: removed %d orphaned import files", removed)
-	}
-
 	// Wire periodic export-tar sweep into the manager's cleanup loop so tars
 	// are purged every 5 minutes, not only at startup. Retention is read
 	// through ctx.downloadManager.ExportRetention() on every sweep so runtime
 	// overrides of export_retention take effect without a process restart.
 	exportFs := filesystem
+	ctx.exportSweepFs = exportFs
 	ctx.downloadManager.SetExportSweepFn(func() {
 		n, err := download_queue.SweepOrphanedExports(exportFs, "_exports", ctx.downloadManager.ExportRetention())
 		if err != nil {

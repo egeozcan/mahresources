@@ -392,3 +392,27 @@ func TestRuntimeSettings_ConcurrentSetKeepsDBAndCacheConsistent(t *testing.T) {
 		t.Fatalf("cache/DB skew: cache=%d db=%d", rs.MaxUploadSize(), rs2.MaxUploadSize())
 	}
 }
+
+// TestContextAuditor_TruncatesOversizeIP guards against Postgres silently
+// rejecting the audit write when the caller passes an oversize string (e.g.
+// an IPv6-with-brackets-and-port value) into the 45-character IPAddress
+// column.
+func TestContextAuditor_TruncatesOversizeIP(t *testing.T) {
+	db := newTestDB(t)
+	ctx := &MahresourcesContext{db: db}
+	rs := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), defaults())
+	_ = rs.Load()
+	rs.SetAuditor(NewContextAuditor(ctx))
+	// 60 chars — over the 45-char IPAddress column limit.
+	oversize := "[2001:0db8:85a3:0000:0000:8a2e:0370:7334]:65535"
+	if err := rs.Set(KeyMaxUploadSize, "1048576", "", oversize); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	var e models.LogEntry
+	if err := db.First(&e, "entity_type = ?", "runtime_setting").Error; err != nil {
+		t.Fatalf("log entry missing: %v", err)
+	}
+	if len(e.IPAddress) > 45 {
+		t.Fatalf("IPAddress not truncated: len=%d value=%q", len(e.IPAddress), e.IPAddress)
+	}
+}

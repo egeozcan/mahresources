@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/gorilla/mux"
 
@@ -38,7 +37,7 @@ func GetSetSettingHandler(ctx *application_context.MahresourcesContext) http.Han
 			http_utils.HandleError(err, w, r, http.StatusBadRequest)
 			return
 		}
-		actor := clientIP(r)
+		actor := application_context.ClientIP(r)
 		if err := ctx.Settings().Set(key, req.Value, req.Reason, actor); err != nil {
 			http_utils.HandleError(err, w, r, classifySettingError(err))
 			return
@@ -52,7 +51,7 @@ func GetResetSettingHandler(ctx *application_context.MahresourcesContext) http.H
 		key := mux.Vars(r)["key"]
 		var req resetSettingRequest
 		_ = json.NewDecoder(r.Body).Decode(&req) // empty body is fine
-		actor := clientIP(r)
+		actor := application_context.ClientIP(r)
 		if err := ctx.Settings().Reset(key, req.Reason, actor); err != nil {
 			http_utils.HandleError(err, w, r, classifySettingError(err))
 			return
@@ -82,14 +81,3 @@ func classifySettingError(err error) int {
 	return http.StatusBadRequest
 }
 
-// clientIP extracts the request IP, honoring X-Forwarded-For if present.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take the leftmost entry if a comma-separated list.
-		if i := strings.Index(xff, ","); i > 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
-	return r.RemoteAddr
-}

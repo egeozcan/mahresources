@@ -151,6 +151,13 @@ func truncateString(s string, maxLen int) string {
 	return string(runes[:maxLen])
 }
 
+// ClientIP extracts the client IP address from the request, normalizing it
+// the same way the Logger pipeline does: prefers X-Forwarded-For (leftmost)
+// then X-Real-IP, then strips the port from RemoteAddr and un-brackets IPv6.
+// The result is truncated to LogEntry.IPAddress's 45-character column limit
+// so audit writers can store it without surprise.
+func ClientIP(r *http.Request) string { return getClientIP(r) }
+
 // getClientIP extracts the client IP address from the request.
 func getClientIP(r *http.Request) string {
 	// Check X-Forwarded-For header first (for proxied requests)

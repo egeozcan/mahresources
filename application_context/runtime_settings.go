@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	stdlog "log"
 	"sort"
 	"strconv"
 	"sync"
@@ -486,11 +487,17 @@ func (a *contextAuditor) Audit(action, entityType, entityName, message string, d
 		Action:     action,
 		EntityType: entityType,
 		EntityID:   nil,
-		EntityName: entityName,
-		Message:    message,
+		EntityName: truncateString(entityName, 255),
+		Message:    truncateString(message, 1000),
 		Details:    detailsJSON,
-		IPAddress:  ipAddress,
+		// Defensive truncation to LogEntry.IPAddress's 45-char limit: the
+		// handler already normalizes via ClientIP but a mistaken caller
+		// passing a raw RemoteAddr (host:port) or IPv6-with-port string must
+		// not break the audit write on Postgres.
+		IPAddress: truncateString(ipAddress, 45),
 	}
 	// Logging failures never propagate — mirrors the existing Logger behavior.
-	_ = a.ctx.db.Create(&entry).Error
+	if err := a.ctx.db.Create(&entry).Error; err != nil {
+		stdlog.Printf("runtime_settings audit: failed to write log_entry: %v", err)
+	}
 }
