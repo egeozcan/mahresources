@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"mahresources/models"
+	"mahresources/models/types"
 
 	"gorm.io/gorm"
 )
@@ -135,15 +137,21 @@ func (s *RuntimeSettings) Set(key, rawValue, reason, actor string) error {
 	}
 	now := time.Now()
 	row := models.RuntimeSetting{Key: key, ValueJSON: string(enc), Reason: reason, UpdatedAt: now}
-	// GORM Save upserts by primary key.
+
+	// Hold the write-lock across the DB mutation AND the cache update so two
+	// concurrent Set/Reset calls on the same key can't commit in one order and
+	// update the cache in the opposite order. The admin-settings path is low
+	// traffic; serializing writes is cheaper than debugging a cache/DB skew.
+	s.mu.Lock()
 	if err := s.db.Save(&row).Error; err != nil {
+		s.mu.Unlock()
 		return fmt.Errorf("db save: %w", err)
 	}
-	s.mu.Lock()
 	oldValue, _ := s.overrideOrDefaultLocked(key)
 	s.overrides[key] = persistedEntry{value: v, updatedAt: now, reason: reason}
 	a := s.auditor
 	s.mu.Unlock()
+
 	if a != nil {
 		msg := fmt.Sprintf("%s: %v → %v (reason: %s)", key, oldValue, v, reason)
 		a.Audit(models.LogActionUpdate, "runtime_setting", key, msg, map[string]any{
@@ -158,10 +166,13 @@ func (s *RuntimeSettings) Reset(key, reason, actor string) error {
 	if _, ok := s.specs[key]; !ok {
 		return fmt.Errorf("%w: %q", ErrUnknownSetting, key)
 	}
+
+	// Same lock discipline as Set — serialize DB + cache mutation.
+	s.mu.Lock()
 	if err := s.db.Delete(&models.RuntimeSetting{}, "key = ?", key).Error; err != nil {
+		s.mu.Unlock()
 		return fmt.Errorf("db delete: %w", err)
 	}
-	s.mu.Lock()
 	oldValue, _ := s.overrideOrDefaultLocked(key)
 	delete(s.overrides, key)
 	bootDefault := s.defaults[key]
@@ -450,16 +461,36 @@ func (s *RuntimeSettings) HashAHashThreshold() uint64 {
 	return v.(uint64)
 }
 
-// NewContextAuditor returns an Auditor that writes through the context's
-// existing Logger infrastructure. IPAddress/RequestPath/UserAgent are captured
-// automatically from the request via LogFromRequest — we don't pass them
-// explicitly because the existing Logger pipeline already handles that.
+// NewContextAuditor returns an Auditor that writes log_entries rows directly
+// via the context's GORM handle. IPAddress is populated from the `actor`
+// argument (callers pass the request's client IP). RequestPath and UserAgent
+// are left empty — the runtime-settings flow doesn't thread the full
+// *http.Request through RuntimeSettings.Set/Reset, so we preserve the single
+// most-important audit signal (origin IP) rather than all three.
 func NewContextAuditor(ctx *MahresourcesContext) Auditor {
 	return &contextAuditor{ctx: ctx}
 }
 
 type contextAuditor struct{ ctx *MahresourcesContext }
 
-func (a *contextAuditor) Audit(action, entityType, entityName, message string, details map[string]any, _ string) {
-	a.ctx.Logger().Info(action, entityType, nil, entityName, message, details)
+func (a *contextAuditor) Audit(action, entityType, entityName, message string, details map[string]any, ipAddress string) {
+	var detailsJSON types.JSON
+	if details != nil {
+		if b, err := json.Marshal(details); err == nil {
+			detailsJSON = types.JSON(b)
+		}
+	}
+	entry := models.LogEntry{
+		CreatedAt:  time.Now(),
+		Level:      models.LogLevelInfo,
+		Action:     action,
+		EntityType: entityType,
+		EntityID:   nil,
+		EntityName: entityName,
+		Message:    message,
+		Details:    detailsJSON,
+		IPAddress:  ipAddress,
+	}
+	// Logging failures never propagate — mirrors the existing Logger behavior.
+	_ = a.ctx.db.Create(&entry).Error
 }

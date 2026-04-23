@@ -333,3 +333,62 @@ func TestAudit_FailedSetNoLogEntry(t *testing.T) {
 		t.Fatalf("want 0 log entries on rejection, got %d", count)
 	}
 }
+
+// TestContextAuditor_PreservesIPAddress guards against a regression where the
+// production auditor (NewContextAuditor) used to ignore the actor parameter and
+// log through LogFromRequest without a request, leaving IPAddress empty on
+// rows created by HTTP admin-settings calls.
+func TestContextAuditor_PreservesIPAddress(t *testing.T) {
+	db := newTestDB(t)
+	ctx := &MahresourcesContext{db: db}
+	rs := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), defaults())
+	_ = rs.Load()
+	rs.SetAuditor(NewContextAuditor(ctx))
+	if err := rs.Set(KeyMaxUploadSize, "1048576", "bump", "203.0.113.42"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	var e models.LogEntry
+	if err := db.First(&e, "entity_type = ? AND entity_name = ?", "runtime_setting", KeyMaxUploadSize).Error; err != nil {
+		t.Fatalf("log entry not found: %v", err)
+	}
+	if e.IPAddress != "203.0.113.42" {
+		t.Fatalf("IPAddress: want 203.0.113.42, got %q", e.IPAddress)
+	}
+	if e.Action != "update" {
+		t.Errorf("Action: got %q", e.Action)
+	}
+	if !strings.Contains(e.Message, "1048576") || !strings.Contains(e.Message, "bump") {
+		t.Errorf("Message missing expected content: %q", e.Message)
+	}
+}
+
+// TestRuntimeSettings_ConcurrentSetKeepsDBAndCacheConsistent exercises the
+// lock discipline that serializes DB mutation + cache update. Without it,
+// concurrent Set calls on the same key could commit DB in one order and
+// update the cache in the opposite order, leaving the runtime value
+// divergent from what survives a restart.
+func TestRuntimeSettings_ConcurrentSetKeepsDBAndCacheConsistent(t *testing.T) {
+	db := newTestDB(t)
+	rs := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), defaults())
+	_ = rs.Load()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 30; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			_ = rs.Set(KeyMaxUploadSize, fmt.Sprintf("%d", int64(1<<20)+int64(n)), "", "")
+		}(i)
+	}
+	wg.Wait()
+
+	// Re-load from DB and compare with the current in-memory value — they
+	// must match.
+	rs2 := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), defaults())
+	if err := rs2.Load(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if rs.MaxUploadSize() != rs2.MaxUploadSize() {
+		t.Fatalf("cache/DB skew: cache=%d db=%d", rs.MaxUploadSize(), rs2.MaxUploadSize())
+	}
+}
