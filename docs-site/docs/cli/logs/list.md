@@ -79,4 +79,4 @@ Paginated wrapper with logs (array of entries), totalCount, page, perPage; each 
 
 - [`mr log get`](../log/get.md)
 - [`mr log entity`](../log/entity.md)
-- [`mr admin`](../admin.md)
+- [`mr admin`](../admin/index.md)

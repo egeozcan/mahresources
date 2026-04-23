@@ -47,6 +47,7 @@ const sidebars: SidebarsConfig = {
         'configuration/database',
         'configuration/storage',
         'configuration/advanced',
+        'configuration/runtime-settings',
       ],
     },
     {

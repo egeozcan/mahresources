@@ -80,6 +80,15 @@ Command-line flags take precedence over environment variables, so a flag overrid
 | `-plugin-path` | `PLUGIN_PATH` | Directory to scan for plugins | `./plugins` |
 | `-plugins-disabled` | `PLUGINS_DISABLED=1` | Disable the plugin system entirely | `false` |
 
+## Runtime vs. boot-only settings
+
+Most flags apply only at startup. A [curated subset](./runtime-settings.md) can
+be changed at runtime via the admin UI, CLI, or API — no restart needed.
+
+Boot-only settings include: database DSN, bind addresses, file save path,
+ephemeral mode, alt filesystems, share port, FTS initialization, worker pool
+sizes, and max DB connections.
+
 ## Common Configurations
 
 ### Minimal Production Setup

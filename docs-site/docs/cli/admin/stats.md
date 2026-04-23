@@ -1,10 +1,11 @@
 ---
-title: mr admin
+title: mr admin stats
 description: Show server and data statistics
-sidebar_label: admin
+sidebar_label: stats
+sidebar_position: 2
 ---
 
-# mr admin
+# mr admin stats
 
 Show administrative statistics about the running server and its data. By default the command fetches three sections — server health (uptime, memory, DB connections), data counts (entity totals), and expensive stats that require full-table scans (hash collisions, dangling references). Together they give a one-page picture of instance size and health.
 
@@ -13,7 +14,7 @@ Use `--server-only` to fetch just the server health block, or `--data-only` to f
 ## Usage
 
 ```bash
-mr admin
+mr admin stats
 ```
 
 ## Examples
@@ -21,19 +22,19 @@ mr admin
 **Full admin stats (human-readable, three sections)**
 
 ```bash
-mr admin
+mr admin stats
 ```
 
 **Server health only**
 
 ```bash
-mr admin --server-only --json
+mr admin stats --server-only --json
 ```
 
 **Data counts only**
 
 ```bash
-mr admin --data-only
+mr admin stats --data-only
 ```
 
 
@@ -62,6 +63,6 @@ Combined stats object &#123;serverStats, dataStats, expensiveStats&#125; in JSON
 
 ## See Also
 
-- [`mr resources versions-cleanup`](./resources/versions-cleanup.md)
-- [`mr jobs list`](./jobs/list.md)
-- [`mr logs list`](./logs/list.md)
+- [`mr resources versions-cleanup`](../resources/versions-cleanup.md)
+- [`mr jobs list`](../jobs/list.md)
+- [`mr logs list`](../logs/list.md)
