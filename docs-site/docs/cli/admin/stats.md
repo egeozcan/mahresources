@@ -2,7 +2,6 @@
 title: mr admin stats
 description: Show server and data statistics
 sidebar_label: stats
-sidebar_position: 2
 ---
 
 # mr admin stats
@@ -22,19 +21,19 @@ mr admin stats
 **Full admin stats (human-readable, three sections)**
 
 ```bash
-mr admin stats
+mr admin
 ```
 
 **Server health only**
 
 ```bash
-mr admin stats --server-only --json
+mr admin --server-only --json
 ```
 
 **Data counts only**
 
 ```bash
-mr admin stats --data-only
+mr admin --data-only
 ```
 
 

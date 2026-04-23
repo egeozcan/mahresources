@@ -9,12 +9,12 @@ sidebar_label: CLI
 | Command | Short | |
 |---------|-------|--|
 | `mr admin` | Server administration commands | [Details](./admin/index.md) |
+| `mr admin settings` | View and manage runtime configuration overrides | [Details](./admin/settings/index.md) |
+| `mr admin settings get` | Show a single runtime setting by key | [Details](./admin/settings/get.md) |
+| `mr admin settings list` | List all runtime settings | [Details](./admin/settings/list.md) |
+| `mr admin settings reset` | Remove a runtime override and revert to boot default | [Details](./admin/settings/reset.md) |
+| `mr admin settings set` | Override a runtime setting | [Details](./admin/settings/set.md) |
 | `mr admin stats` | Show server and data statistics | [Details](./admin/stats.md) |
-| `mr admin settings` | View and manage runtime configuration overrides | [Details](./admin/settings.md) |
-| `mr admin settings get` | Show a single runtime setting by key | [Details](./admin/settings.md#get) |
-| `mr admin settings list` | List all runtime settings | [Details](./admin/settings.md#list) |
-| `mr admin settings reset` | Remove a runtime override and revert to boot default | [Details](./admin/settings.md#reset) |
-| `mr admin settings set` | Override a runtime setting | [Details](./admin/settings.md#set) |
 | `mr categories` | List group categories | [Details](./categories/index.md) |
 | `mr categories list` | List categories | [Details](./categories/list.md) |
 | `mr categories timeline` | Display a timeline of category activity | [Details](./categories/timeline.md) |
