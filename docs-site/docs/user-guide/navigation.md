@@ -211,7 +211,7 @@ Each section includes:
 | Arrow Left / Arrow Right | Previous/next image |
 | Page Up / Page Down | Previous/next image |
 | Enter | Toggle fullscreen |
-| E or F2 | Toggle edit panel |
+| E or F2 | Toggle info panel |
 | T | Toggle quick tag panel |
 | Double-click | Toggle native resolution zoom |
 | Ctrl + Scroll | Zoom toward cursor position |
@@ -248,7 +248,7 @@ Click any image or media preview to open the lightbox viewer.
 - **Zoom** - Scroll wheel or pinch to zoom. Double-click to toggle native resolution.
 - **Zoom Presets** - Click the zoom percentage indicator for presets (Fit, Stretch, 25%-500%) calculated from the image's native resolution.
 - **Pan** - Drag or swipe to move around a zoomed image.
-- **Edit Panel** - Edit the resource name and description in a side panel without leaving the lightbox. Also shows the resource category if one is assigned.
+- **Info Panel** - View resource details (size, dimensions, type, timestamps, owner, category, counts, hash, and more) in a side panel without leaving the lightbox. Name and description are inline editable directly in the panel.
 - **Video** - Play video files directly in the viewer.
 - **Fullscreen** - Enter fullscreen mode to hide all other UI.
 - **Touch** - Pinch-to-zoom, swipe to navigate, two-finger pan.

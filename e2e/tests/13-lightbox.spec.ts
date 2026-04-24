@@ -283,7 +283,7 @@ test.describe('Lightbox Functionality', () => {
     await expect(lightbox).toBeVisible();
 
     // Open the edit panel first
-    const editButton = lightbox.locator('button[title="Edit resource"]');
+    const editButton = lightbox.locator('button[title="Resource info"]');
     await expect(editButton).toBeVisible();
     await editButton.click();
 
@@ -570,7 +570,7 @@ test.describe('Lightbox Loading State', () => {
   });
 });
 
-test.describe('Lightbox Edit Panel', () => {
+test.describe('Lightbox Info Panel', () => {
   let categoryId: number;
   let ownerGroupId: number;
   let testTagId: number;
@@ -635,7 +635,7 @@ test.describe('Lightbox Edit Panel', () => {
     if (categoryId) await apiClient.deleteCategory(categoryId).catch(() => {});
   });
 
-  test('should open edit panel and show resource details', async ({ page }) => {
+  test('should open info panel and show resource details', async ({ page }) => {
     await page.goto('/resources');
     await page.waitForLoadState('load');
 
@@ -646,25 +646,35 @@ test.describe('Lightbox Edit Panel', () => {
     const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"])');
     await expect(lightbox).toBeVisible();
 
-    // Click the Edit button
-    const editButton = lightbox.locator('button[title="Edit resource"]');
-    await editButton.click();
+    // Click the Info button
+    const infoButton = lightbox.locator('button[title="Resource info"]');
+    await infoButton.click();
 
-    // Verify edit panel is visible
-    const editPanel = lightbox.locator('[data-edit-panel]');
-    await expect(editPanel).toBeVisible();
+    // Verify info panel is visible with the new "Info" heading
+    const infoPanel = lightbox.locator('[data-edit-panel]');
+    await expect(infoPanel).toBeVisible();
+    await expect(infoPanel.locator('h2', { hasText: 'Info' })).toBeVisible();
 
-    // Verify name input is visible
-    const nameInput = editPanel.locator('input#lightbox-edit-name');
+    // Verify name input is still visible (inline edit preserved)
+    const nameInput = infoPanel.locator('input#lightbox-edit-name');
     await expect(nameInput).toBeVisible();
 
-    // Verify description textarea is visible
-    const descriptionInput = editPanel.locator('textarea#lightbox-edit-description');
+    // Verify description textarea is still visible (inline edit preserved)
+    const descriptionInput = infoPanel.locator('textarea#lightbox-edit-description');
     await expect(descriptionInput).toBeVisible();
 
+    // Verify the new Details section renders (appears once resourceDetails loads)
+    await expect(
+      infoPanel.locator('#lightbox-info-details-heading'),
+      'Info panel should render the new Details section'
+    ).toBeVisible({ timeout: 10000 });
+
+    // Verify the collapsible Technical section is present and collapsed by default
+    const technicalSummary = infoPanel.locator('summary', { hasText: 'Technical' });
+    await expect(technicalSummary).toBeVisible();
   });
 
-  test('should close edit panel with E key and close lightbox with Escape', async ({ page }) => {
+  test('should close info panel with E key and close lightbox with Escape', async ({ page }) => {
     await page.goto('/resources');
     await page.waitForLoadState('load');
 
@@ -676,7 +686,7 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(lightbox).toBeVisible();
 
     // Open edit panel
-    const editButton = lightbox.locator('button[title="Edit resource"]');
+    const editButton = lightbox.locator('button[title="Resource info"]');
     await editButton.click();
 
     const editPanel = lightbox.locator('[data-edit-panel]');
@@ -695,7 +705,7 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(lightbox).toBeHidden({ timeout: 5000 });
   });
 
-  test('should update resource name from edit panel', async ({ page }) => {
+  test('should update resource name from info panel', async ({ page }) => {
     // Navigate to resources filtered by owner to ensure our test resources are visible
     await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
@@ -711,7 +721,7 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(lightbox).toBeVisible();
 
     // Open edit panel
-    const editButton = lightbox.locator('button[title="Edit resource"]');
+    const editButton = lightbox.locator('button[title="Resource info"]');
     await editButton.click();
 
     // Wait for resource details to load
@@ -904,7 +914,7 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(lightbox).toBeVisible();
 
     // Open edit panel and make a change
-    const editButton = lightbox.locator('button[title="Edit resource"]');
+    const editButton = lightbox.locator('button[title="Resource info"]');
     await editButton.click();
 
     const editPanel = lightbox.locator('[data-edit-panel]');
@@ -977,7 +987,7 @@ test.describe('Lightbox Edit Panel', () => {
     expect(typeof newTagCount).toBe('number');
   });
 
-  test('should restore focus to the same input after navigating with edit panel open', async ({ page }) => {
+  test('should restore focus to the same input after navigating with info panel open', async ({ page }) => {
     await page.goto('/resources');
     await page.waitForLoadState('load');
 
@@ -989,7 +999,7 @@ test.describe('Lightbox Edit Panel', () => {
     await expect(lightbox).toBeVisible();
 
     // Open edit panel
-    const editButton = lightbox.locator('button[title="Edit resource"]');
+    const editButton = lightbox.locator('button[title="Resource info"]');
     await editButton.click();
 
     const editPanel = lightbox.locator('[data-edit-panel]');
@@ -1186,7 +1196,7 @@ test.describe('Lightbox Edit After Pagination', () => {
     await expect(lightboxImage).toBeVisible();
 
     // Open edit panel on this page-2 resource
-    const editButton = lightbox.locator('button[title="Edit resource"]');
+    const editButton = lightbox.locator('button[title="Resource info"]');
     await editButton.click();
 
     const editPanel = lightbox.locator('[data-edit-panel]');
@@ -1255,7 +1265,7 @@ test.describe('Lightbox Edit After Pagination', () => {
     await expect(counter).toContainText('3 / 4', { timeout: 10000 });
 
     // Edit the resource
-    const editButton = lightbox.locator('button[title="Edit resource"]');
+    const editButton = lightbox.locator('button[title="Resource info"]');
     await editButton.click();
 
     const editPanel = lightbox.locator('[data-edit-panel]');

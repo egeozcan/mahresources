@@ -259,17 +259,18 @@
             <span>Edit Tags</span>
         </button>
 
-        <!-- Edit button (hidden when panel is open — panel has its own close button) -->
+        <!-- Info button (hidden when panel is open — panel has its own close button) -->
         <button
             x-show="!$store.lightbox.editPanelOpen"
             @click.stop="$store.lightbox.openEditPanel()"
             class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
-            title="Edit resource"
+            title="Resource info"
+            aria-label="Resource info"
         >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z"></path>
             </svg>
-            <span>Edit</span>
+            <span>Info</span>
         </button>
     </div>
     </div>
@@ -654,7 +655,7 @@
         </div>
     </div>
 
-    <!-- Edit Panel (slides in from right) -->
+    <!-- Info Panel (slides in from right) -->
     <div
         x-show="$store.lightbox.editPanelOpen"
         x-transition:enter="transition ease-out duration-300"
@@ -670,13 +671,13 @@
     >
         <!-- Panel header -->
         <div class="sticky top-0 bg-stone-900 md:bg-stone-900/95 border-b border-stone-700 p-4 flex items-center justify-between z-10">
-            <h2 class="text-lg font-semibold">Edit Resource</h2>
+            <h2 class="text-lg font-semibold">Info</h2>
             <button
                 @click="$store.lightbox.closeEditPanel()"
                 class="p-1.5 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
-                aria-label="Close edit panel"
+                aria-label="Close info panel"
             >
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                 </svg>
             </button>
@@ -687,14 +688,14 @@
             <!-- Loading state -->
             <template x-if="$store.lightbox.detailsLoading && !$store.lightbox.resourceDetails">
                 <div class="flex items-center justify-center py-12">
-                    <svg class="w-8 h-8 animate-spin text-white/50" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <svg class="w-8 h-8 animate-spin text-white/50" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
                 </div>
             </template>
 
-            <!-- Edit form -->
+            <!-- Info content -->
             <template x-if="$store.lightbox.resourceDetails">
                 <div class="space-y-5 relative">
                     <!-- Loading overlay when fetching new resource details -->
@@ -708,13 +709,13 @@
                         x-transition:leave-end="opacity-0"
                         class="absolute inset-0 bg-stone-900/50 flex items-center justify-center z-10 rounded"
                     >
-                        <svg class="w-6 h-6 animate-spin text-white/70" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <svg class="w-6 h-6 animate-spin text-white/70" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
                     </div>
 
-                    <!-- Name field -->
+                    <!-- Name field (inline editable) -->
                     <div>
                         <label for="lightbox-edit-name" class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Name</label>
                         <input
@@ -729,7 +730,7 @@
                         >
                     </div>
 
-                    <!-- Description field -->
+                    <!-- Description field (inline editable) -->
                     <div>
                         <label for="lightbox-edit-description" class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Description</label>
                         <textarea
@@ -743,29 +744,135 @@
                         ></textarea>
                     </div>
 
-                    <!-- Resource Category section -->
-                    <template x-if="$store.lightbox.resourceDetails?.resourceCategory">
-                        <div class="space-y-2">
-                            <label class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Category</label>
-                            <a
-                                :href="'/resourceCategory?id=' + $store.lightbox.resourceDetails.resourceCategory.ID"
-                                class="text-amber-400 hover:text-amber-300 text-sm"
-                                x-text="$store.lightbox.resourceDetails.resourceCategory.Name"
-                            ></a>
+                    <!-- Details section -->
+                    <section aria-labelledby="lightbox-info-details-heading" class="border-t border-stone-700 pt-4">
+                        <h3 id="lightbox-info-details-heading" class="text-sm font-medium font-mono text-stone-300 mb-2">Details</h3>
+                        <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
+                            <dt x-show="$store.lightbox.resourceDetails?.FileSize" class="text-stone-400">Size</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.FileSize" class="text-stone-100 tabular-nums" x-text="$store.lightbox.formatBytes($store.lightbox.resourceDetails?.FileSize)"></dd>
 
-                            {% comment %}KAN-6: Unescaped CustomSidebar HTML is by design. Mahresources is a personal
-                            information management application designed to run on private/internal networks
-                            with no authentication layer. All users are trusted, and CustomSidebar is an
-                            intentional extension point for admin-authored HTML templates.{% endcomment %}
-                            <template x-if="$store.lightbox.resourceDetails.resourceCategory.CustomSidebar">
-                                <div
-                                    x-data="{ entity: $store.lightbox.resourceDetails }"
-                                    x-html="$store.lightbox.resourceDetails.resourceCategory.CustomSidebar"
-                                    class="text-sm text-stone-300 font-sans"
-                                ></div>
-                            </template>
+                            <dt x-show="$store.lightbox.resourceDetails?.Width && $store.lightbox.resourceDetails?.Height" class="text-stone-400">Dimensions</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.Width && $store.lightbox.resourceDetails?.Height" class="text-stone-100 tabular-nums">
+                                <span x-text="$store.lightbox.resourceDetails?.Width"></span>
+                                &times;
+                                <span x-text="$store.lightbox.resourceDetails?.Height"></span>
+                            </dd>
+
+                            <dt x-show="$store.lightbox.resourceDetails?.ContentType" class="text-stone-400">Type</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.ContentType" class="text-stone-100 font-mono break-all" x-text="$store.lightbox.resourceDetails?.ContentType"></dd>
+
+                            <dt x-show="$store.lightbox.resourceDetails?.CreatedAt" class="text-stone-400">Created</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.CreatedAt" class="text-stone-100" x-text="$store.lightbox.formatDateTime($store.lightbox.resourceDetails?.CreatedAt)"></dd>
+
+                            <dt x-show="$store.lightbox.resourceDetails?.UpdatedAt" class="text-stone-400">Updated</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.UpdatedAt" class="text-stone-100" x-text="$store.lightbox.formatDateTime($store.lightbox.resourceDetails?.UpdatedAt)"></dd>
+
+                            <dt x-show="$store.lightbox.resourceDetails?.Owner" class="text-stone-400">Owner</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.Owner">
+                                <a
+                                    :href="'/group?id=' + ($store.lightbox.resourceDetails?.Owner?.ID || '')"
+                                    class="text-amber-400 hover:text-amber-300"
+                                    x-text="$store.lightbox.resourceDetails?.Owner?.Name"
+                                ></a>
+                            </dd>
+
+                            <dt x-show="$store.lightbox.resourceDetails?.resourceCategory" class="text-stone-400">Category</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.resourceCategory">
+                                <a
+                                    :href="'/resourceCategory?id=' + ($store.lightbox.resourceDetails?.resourceCategory?.ID || '')"
+                                    class="text-amber-400 hover:text-amber-300"
+                                    x-text="$store.lightbox.resourceDetails?.resourceCategory?.Name"
+                                ></a>
+                            </dd>
+
+                            <dt x-show="$store.lightbox.resourceDetails?.series" class="text-stone-400">Series</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.series">
+                                <a
+                                    :href="'/series?id=' + ($store.lightbox.resourceDetails?.series?.ID || '')"
+                                    class="text-amber-400 hover:text-amber-300"
+                                    x-text="$store.lightbox.resourceDetails?.series?.Name"
+                                ></a>
+                            </dd>
+                        </dl>
+
+                        <!-- Relationship counts (see full resource page for details) -->
+                        <div
+                            class="mt-3 flex flex-wrap gap-2 text-xs"
+                            x-show="($store.lightbox.resourceDetails?.Tags?.length || 0) + ($store.lightbox.resourceDetails?.Groups?.length || 0) + ($store.lightbox.resourceDetails?.Notes?.length || 0) > 0"
+                        >
+                            <span
+                                x-show="$store.lightbox.resourceDetails?.Tags?.length"
+                                class="inline-flex items-center gap-1 bg-stone-800 border border-stone-700 rounded px-2 py-0.5"
+                            >
+                                <span class="text-stone-400">Tags</span>
+                                <span class="text-stone-100 tabular-nums" x-text="$store.lightbox.resourceDetails?.Tags?.length || 0"></span>
+                            </span>
+                            <span
+                                x-show="$store.lightbox.resourceDetails?.Groups?.length"
+                                class="inline-flex items-center gap-1 bg-stone-800 border border-stone-700 rounded px-2 py-0.5"
+                            >
+                                <span class="text-stone-400">Groups</span>
+                                <span class="text-stone-100 tabular-nums" x-text="$store.lightbox.resourceDetails?.Groups?.length || 0"></span>
+                            </span>
+                            <span
+                                x-show="$store.lightbox.resourceDetails?.Notes?.length"
+                                class="inline-flex items-center gap-1 bg-stone-800 border border-stone-700 rounded px-2 py-0.5"
+                            >
+                                <span class="text-stone-400">Notes</span>
+                                <span class="text-stone-100 tabular-nums" x-text="$store.lightbox.resourceDetails?.Notes?.length || 0"></span>
+                            </span>
                         </div>
-                    </template>
+
+                        {% comment %}KAN-6: Unescaped CustomSidebar HTML is by design. Mahresources is a personal
+                        information management application designed to run on private/internal networks
+                        with no authentication layer. All users are trusted, and CustomSidebar is an
+                        intentional extension point for admin-authored HTML templates.{% endcomment %}
+                        <template x-if="$store.lightbox.resourceDetails?.resourceCategory?.CustomSidebar">
+                            <div
+                                x-data="{ entity: $store.lightbox.resourceDetails }"
+                                x-html="$store.lightbox.resourceDetails.resourceCategory.CustomSidebar"
+                                class="mt-3 text-sm text-stone-300 font-sans"
+                            ></div>
+                        </template>
+                    </section>
+
+                    <!-- Technical section (collapsible) -->
+                    <details class="border-t border-stone-700 pt-4 group">
+                        <summary class="cursor-pointer list-none flex items-center gap-2 text-sm font-medium font-mono text-stone-300 hover:text-stone-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 rounded">
+                            <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                            <span>Technical</span>
+                        </summary>
+                        <dl class="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs font-mono">
+                            <dt x-show="$store.lightbox.resourceDetails?.ID" class="text-stone-400">ID</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.ID" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.ID"></dd>
+
+                            <dt x-show="$store.lightbox.resourceDetails?.guid" class="text-stone-400">GUID</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.guid" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.guid"></dd>
+
+                            <dt x-show="$store.lightbox.resourceDetails?.Hash" class="text-stone-400" x-text="$store.lightbox.resourceDetails?.HashType || 'Hash'"></dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.Hash" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.Hash"></dd>
+
+                            <dt x-show="$store.lightbox.resourceDetails?.OriginalName" class="text-stone-400">Original</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.OriginalName" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.OriginalName"></dd>
+
+                            <dt x-show="$store.lightbox.resourceDetails?.OriginalLocation" class="text-stone-400">Imported from</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.OriginalLocation" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.OriginalLocation"></dd>
+
+                            <dt x-show="$store.lightbox.resourceDetails?.Location" class="text-stone-400">Location</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.Location" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.Location"></dd>
+
+                            <dt x-show="$store.lightbox.resourceDetails?.StorageLocation" class="text-stone-400">Storage</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.StorageLocation" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.StorageLocation"></dd>
+
+                            <dt x-show="$store.lightbox.resourceDetails?.imageHash?.DHash" class="text-stone-400">dHash</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.imageHash?.DHash" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.imageHash?.DHash"></dd>
+
+                            <dt x-show="$store.lightbox.resourceDetails?.imageHash?.AHash" class="text-stone-400">aHash</dt>
+                            <dd x-show="$store.lightbox.resourceDetails?.imageHash?.AHash" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.imageHash?.AHash"></dd>
+                        </dl>
+                    </details>
 
                     <!-- Link to full details page -->
                     <div class="pt-4 border-t border-stone-700">
@@ -773,7 +880,7 @@
                             :href="'/resource?id=' + $store.lightbox.getCurrentItem()?.id"
                             class="inline-flex items-center gap-2 text-amber-400 hover:text-amber-300 text-sm"
                         >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
                             </svg>
                             View full resource details

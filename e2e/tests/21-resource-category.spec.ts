@@ -186,7 +186,7 @@ test.describe('Resource Category Custom Template Rendering', () => {
     await expect(lightbox).toBeVisible();
 
     // Open edit panel (use exact text to avoid matching "Edit Tags" button)
-    const editButton = lightbox.locator('button[title="Edit resource"]');
+    const editButton = lightbox.locator('button[title="Resource info"]');
     await editButton.click();
 
     const editPanel = lightbox.locator('[data-edit-panel]');
@@ -196,7 +196,7 @@ test.describe('Resource Category Custom Template Rendering', () => {
     await page.waitForTimeout(500);
 
     // Verify category name link is visible
-    const categoryLabel = editPanel.locator('label:has-text("Category")');
+    const categoryLabel = editPanel.locator('dt:has-text("Category")');
     await expect(categoryLabel).toBeVisible();
 
     const categoryLink = editPanel.locator(`a:has-text("Template RC ${testRunId}")`);
@@ -235,7 +235,7 @@ test.describe('Resource Category Custom Template Rendering', () => {
       await expect(lightbox).toBeVisible();
 
       // Open edit panel
-      const editButton = lightbox.locator('button[title="Edit resource"]');
+      const editButton = lightbox.locator('button[title="Resource info"]');
       await editButton.click();
 
       const editPanel = lightbox.locator('[data-edit-panel]');
@@ -244,7 +244,7 @@ test.describe('Resource Category Custom Template Rendering', () => {
       await page.waitForTimeout(500);
 
       // Category section should be visible with the "Default" category
-      const categoryLabel = editPanel.locator('label:has-text("Category")');
+      const categoryLabel = editPanel.locator('dt:has-text("Category")');
       await expect(categoryLabel).toBeVisible();
 
       const categoryLink = editPanel.locator('a:has-text("Default")');

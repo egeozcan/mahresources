@@ -32,7 +32,7 @@ export const editPanelMethods = {
     }
 
     this.editPanelOpen = true;
-    this.announce('Edit panel opened');
+    this.announce('Info panel opened');
     await this.fetchResourceDetails();
 
     requestAnimationFrame(() => {
@@ -63,7 +63,27 @@ export const editPanelMethods = {
       this.refreshPageContent();
     }
 
-    this.announce('Edit panel closed');
+    this.announce('Info panel closed');
+  },
+
+  formatBytes(bytes) {
+    const n = Number(bytes);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.min(sizes.length - 1, Math.floor(Math.log(n) / Math.log(k)));
+    return parseFloat((n / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  },
+
+  formatDateTime(value) {
+    if (!value) return '';
+    const d = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(d.getTime())) return '';
+    try {
+      return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    } catch {
+      return d.toLocaleString();
+    }
   },
 
   async refreshPageContent() {
