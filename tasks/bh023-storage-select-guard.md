@@ -2,6 +2,8 @@
 
 ## Status
 
+**Resolved** on 2026-04-24. Fix committed; SQLite + Postgres E2E suites both pass (1499/1499 on each). See **Resolution** section at the bottom for actual root cause and fix.
+
 Pre-existing failure on `master`. Reproduces on both SQLite and Postgres E2E suites. Not caused by the lightbox info-panel work; discovered while running the full test matrix.
 
 Test: `e2e/tests/c7-bh023-alt-fs-select-visible.spec.ts:17` — `BH-023: storage select absent when no alt-fs configured`.
@@ -90,3 +92,52 @@ Test suite surfaces this consistently:
 - SQLite `test:with-server:all` — 1497 passed, **this test fails**, 1 recovered flake.
 - Postgres `test:with-server:postgres` — 1497 passed, **this test fails**, 1 recovered flake.
 - A11y suite — 169/169 unaffected.
+
+## Resolution (2026-04-24)
+
+### Actual root cause
+
+The task's primary hypothesis (Pongo2 truthiness on empty maps) was **wrong**. Pongo2 v4.0.2's `Value.IsTrue()` does use `Len() > 0` for `reflect.Map`, so `{% if altFileSystems %}` correctly evaluates an empty map as false. Confirmed by running a standalone Pongo2 program:
+
+```
+empty map: HIDDEN len=0
+non-empty map: RENDERED len=1
+```
+
+The actual root cause was the **"phantom entry injection"** alternative the task flagged as "unlikely." When the ephemeral server boots, `main.go:109` calls `godotenv.Load(".env")`, which populates process env from any `.env` file in the working directory. The repo ships an `.env.template` with sample values:
+
+```
+FILE_ALT_COUNT=1
+FILE_ALT_PATH_1=/some/folder
+FILE_ALT_NAME_1=some_key
+```
+
+Developers who copy `.env.template` → `.env` (a common onboarding step) end up with a populated `altFileSystems` map at boot, because `main.go:196-208` falls back to `FILE_ALT_*` env vars when no `-alt-fs` flag is passed. The Storage select then correctly renders "Default" + "some_key" — this is expected behavior when alt-fs is configured, not a template bug.
+
+The test failure is therefore a **test-isolation** bug: the Playwright worker spawns `./mahresources -ephemeral` but inherits developer `.env` via `godotenv.Load`, and the spawn call didn't pass an `env:` option to scrub or override it.
+
+A live diagnostic confirmed this. Adding `<!-- DIAG-BH023 altFileSystems len={{ altFileSystems|length }} keys=... -->` next to the guard on a `-ephemeral` server revealed:
+
+```
+<!-- DIAG-BH023 altFileSystems len=1 keys=[some_key=/some/folder] -->
+```
+
+### Fix
+
+Single file: `e2e/fixtures/server-manager.ts`. The spawn in `startServerProcess` now passes an explicit `env` that:
+
+1. Overrides `FILE_ALT_COUNT` to `'0'` — `godotenv.Load` does not overwrite already-set env vars (verified against `godotenv@v1.5.1`), so this neutralizes any `.env` fallback without touching the `.env` file.
+2. Strips any inherited `FILE_ALT_NAME_*` / `FILE_ALT_PATH_*` keys from the child env for belt-and-braces isolation.
+
+Inline comment in the file explains the BH-023 reference and why `FILE_ALT_COUNT=0` specifically works. No template change, no `main.go` change — the template guard and env-fallback behavior were both correct; the fix is purely test-harness hygiene.
+
+### Verification
+
+- `c7-bh023-alt-fs-select-visible.spec.ts`: both tests pass on SQLite and Postgres.
+- Full matrix: Go unit tests (all green), `test:with-server:all` (1499 passed / 3 skipped), `test:with-server:postgres` (1499 passed / 3 skipped), Go Postgres tests (`mrql` + `server/api_tests`, all green).
+- Cross-check with `-alt-fs=archival:/tmp/archival -alt-fs=backup:/tmp/backup` manually: select renders `Default`, `archival`, `backup` as expected.
+
+### Follow-up considerations (not blocked on this fix)
+
+- `.env.template` shipping sample values like `FILE_ALT_COUNT=1` + `FILE_ALT_NAME_1=some_key` silently configures a phantom alt-fs for anyone who copies the template verbatim. Consider commenting these out by default, or at least adding a note that they're illustrative. Left untouched here to keep scope tight.
+- The server's `-ephemeral` flag currently doesn't imply "ignore external config." Developers running `./mahresources -ephemeral` still pick up `.env`. Arguably `-ephemeral` should skip the `godotenv.Load` (or at least skip the `FILE_ALT_*` fallback) to match the "clean state" expectation, but that's a product-level decision and out of scope for a test-isolation fix.

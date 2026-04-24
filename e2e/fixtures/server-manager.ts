@@ -138,6 +138,24 @@ export function startServerProcess(port: number, sharePort: number): ChildProces
     ];
   }
 
+  // Isolate the spawned server from developer-specific .env config.
+  //
+  // BH-023: the server calls godotenv.Load(".env") at startup, which reads
+  // the developer's local .env (commonly copied from .env.template and
+  // containing FILE_ALT_COUNT=1 + FILE_ALT_NAME_1=some_key +
+  // FILE_ALT_PATH_1=/some/folder). godotenv does not override an env var
+  // that is already set, so passing FILE_ALT_COUNT=0 here neutralizes the
+  // .env fallback. Without this, the Storage <select> on /resource/new
+  // renders a phantom "some_key" option and tests that expect no alt-fs
+  // (e.g. c7-bh023-alt-fs-select-visible.spec.ts) fail inconsistently
+  // depending on whether the developer has a populated .env.
+  const childEnv: NodeJS.ProcessEnv = { ...process.env, FILE_ALT_COUNT: '0' };
+  for (const key of Object.keys(childEnv)) {
+    if (key.startsWith('FILE_ALT_NAME_') || key.startsWith('FILE_ALT_PATH_')) {
+      delete childEnv[key];
+    }
+  }
+
   // Discard server stdout/stderr at the kernel level.
   //
   // Using 'pipe' here created a deadlock: cli-doctest's test body is a
@@ -154,6 +172,7 @@ export function startServerProcess(port: number, sharePort: number): ChildProces
     cwd: PROJECT_ROOT,
     stdio: ['ignore', 'ignore', 'ignore'],
     detached: false,
+    env: childEnv,
   });
   proc.on('error', (err) => {
     console.error(`[worker server :${port}] spawn error:`, err.message);
