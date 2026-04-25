@@ -45,6 +45,22 @@ local SUPPORTED_TYPES = {
     ["image/bmp"] = true,
 }
 
+-- fal.ai retention controls — minimize how long fal.ai stores our I/O.
+-- See https://fal.ai/docs/documentation/model-apis/media-expiration
+--   X-Fal-Store-IO: 0  -> never store the JSON payload (default is 30 days)
+--   X-Fal-Object-Lifecycle-Preference -> TTL for the generated output file
+--     1 hour gives comfortable margin over RemoteResourceOverallTimeout (30m)
+--     while keeping the output far shorter than the default (no expiration).
+local function fal_request_headers(api_key)
+    return {
+        Authorization = "Key " .. api_key,
+        ["Content-Type"] = "application/json",
+        ["X-Fal-Store-IO"] = "0",
+        ["X-Fal-Object-Lifecycle-Preference"] =
+            '{"expiration_duration_seconds": 3600}',
+    }
+end
+
 -- Build API request payload based on action and options
 local function build_request(action_id, data_uri, params)
     if action_id == "colorize" then
@@ -212,10 +228,7 @@ local function process_image(resource_id, action_id, params, api_key, job_id)
         api_url,
         payload_json,
         {
-            headers = {
-                Authorization = "Key " .. api_key,
-                ["Content-Type"] = "application/json",
-            },
+            headers = fal_request_headers(api_key),
             timeout = 120,
         }
     )
@@ -577,10 +590,7 @@ function init()
                     api_url,
                     payload_json,
                     {
-                        headers = {
-                            Authorization = "Key " .. api_key,
-                            ["Content-Type"] = "application/json",
-                        },
+                        headers = fal_request_headers(api_key),
                         timeout = 120,
                     }
                 )
