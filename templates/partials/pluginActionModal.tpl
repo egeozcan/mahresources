@@ -28,7 +28,7 @@
                         </template>
 
                         <template x-for="param in (action?.params || [])" :key="param.name">
-                            <div class="plugin-action-modal-field">
+                            <div class="plugin-action-modal-field" x-show="isParamVisible(param)">
                                 <label :for="'plugin-param-' + param.name" class="plugin-action-modal-label">
                                     <span x-text="param.label"></span>
                                     <span x-show="param.required" class="plugin-action-modal-required" aria-hidden="true">*</span>

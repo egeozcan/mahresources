@@ -170,6 +170,71 @@ end
 	}
 }
 
+func TestActionRegistration_ShowWhen(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "conditional", `
+plugin = { name = "conditional", version = "1.0", description = "conditional params" }
+
+function handler(ctx) return { success = true } end
+
+function init()
+    mah.action({
+        id = "process",
+        label = "Process",
+        entity = "resource",
+        params = {
+            { name = "model", type = "select", label = "Model", default = "a", options = {"a", "b"} },
+            { name = "extra_a", type = "text", label = "Extra A", show_when = { model = "a" } },
+            { name = "extra_b", type = "number", label = "Extra B",
+              show_when = { model = "b", advanced = true } },
+        },
+        handler = handler,
+    })
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("NewPluginManager: %v", err)
+	}
+	defer pm.Close()
+	if err := pm.EnablePlugin("conditional"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	actions := pm.GetActions("resource", nil)
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+	a := actions[0]
+	if len(a.Params) != 3 {
+		t.Fatalf("expected 3 params, got %d", len(a.Params))
+	}
+
+	if a.Params[0].ShowWhen != nil {
+		t.Errorf("param[0] should have no ShowWhen, got %v", a.Params[0].ShowWhen)
+	}
+
+	pA := a.Params[1]
+	if pA.ShowWhen == nil {
+		t.Fatalf("param[1] (extra_a) should have ShowWhen set")
+	}
+	if pA.ShowWhen["model"] != "a" {
+		t.Errorf("param[1].ShowWhen[model] = %v, want \"a\"", pA.ShowWhen["model"])
+	}
+
+	pB := a.Params[2]
+	if pB.ShowWhen == nil {
+		t.Fatalf("param[2] (extra_b) should have ShowWhen set")
+	}
+	if pB.ShowWhen["model"] != "b" {
+		t.Errorf("param[2].ShowWhen[model] = %v, want \"b\"", pB.ShowWhen["model"])
+	}
+	if pB.ShowWhen["advanced"] != true {
+		t.Errorf("param[2].ShowWhen[advanced] = %v, want true", pB.ShowWhen["advanced"])
+	}
+}
+
 func TestGetActions_FiltersByContentType(t *testing.T) {
 	dir := t.TempDir()
 	writePlugin(t, dir, "ct-filter", `

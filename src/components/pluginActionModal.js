@@ -46,12 +46,21 @@ export function pluginActionModal() {
             this.action = null;
         },
 
+        isParamVisible(param) {
+            if (!param.show_when) return true;
+            for (const key of Object.keys(param.show_when)) {
+                if (this.formValues[key] !== param.show_when[key]) return false;
+            }
+            return true;
+        },
+
         async submit() {
             if (this.submitting) return;
 
             this.errors = {};
             if (this.action.params) {
                 for (const param of this.action.params) {
+                    if (!this.isParamVisible(param)) continue;
                     if (param.required && !this.formValues[param.name] && this.formValues[param.name] !== 0 && this.formValues[param.name] !== false) {
                         this.errors[param.name] = `${param.label} is required`;
                     }

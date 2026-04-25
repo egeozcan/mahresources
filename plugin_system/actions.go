@@ -8,16 +8,23 @@ import (
 )
 
 // ActionParam describes a single parameter for a plugin action.
+//
+// ShowWhen, when set, gates the param's visibility in the action modal:
+// the param renders only if every key in the map equals the live form
+// value for that key (AND-joined equality). Hidden params are also
+// skipped during required-field validation. The map is plumbed verbatim
+// to the frontend, which interprets it identically.
 type ActionParam struct {
-	Name     string   `json:"name"`
-	Type     string   `json:"type"` // text, textarea, number, select, boolean, hidden
-	Label    string   `json:"label"`
-	Required bool     `json:"required"`
-	Default  any      `json:"default,omitempty"`
-	Options  []string `json:"options,omitempty"`
-	Min      *float64 `json:"min,omitempty"`
-	Max      *float64 `json:"max,omitempty"`
-	Step     *float64 `json:"step,omitempty"`
+	Name     string         `json:"name"`
+	Type     string         `json:"type"` // text, textarea, number, select, boolean, hidden
+	Label    string         `json:"label"`
+	Required bool           `json:"required"`
+	Default  any            `json:"default,omitempty"`
+	Options  []string       `json:"options,omitempty"`
+	Min      *float64       `json:"min,omitempty"`
+	Max      *float64       `json:"max,omitempty"`
+	Step     *float64       `json:"step,omitempty"`
+	ShowWhen map[string]any `json:"show_when,omitempty"`
 }
 
 // ActionFilter restricts which entities an action applies to.
@@ -203,6 +210,11 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 					if s, ok := pTbl.RawGetString("step").(lua.LNumber); ok {
 						f := float64(s)
 						p.Step = &f
+					}
+					if sw := pTbl.RawGetString("show_when"); sw != lua.LNil {
+						if swTbl, ok := sw.(*lua.LTable); ok {
+							p.ShowWhen = luaTableToGoMap(swTbl)
+						}
 					}
 
 					a.Params = append(a.Params, p)
