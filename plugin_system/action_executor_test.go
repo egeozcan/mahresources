@@ -692,11 +692,20 @@ type capturingReader struct {
 }
 
 func (c *capturingReader) ResourcesMatching(ids []uint, f ActionFilter) ([]uint, error) {
+	if c.resourcesFn == nil {
+		return nil, nil
+	}
 	return c.resourcesFn(ids, f)
 }
 func (c *capturingReader) NotesMatching(ids []uint, f ActionFilter) ([]uint, error) {
+	if c.notesFn == nil {
+		return nil, nil
+	}
 	return c.notesFn(ids, f)
 }
 func (c *capturingReader) GroupsMatching(ids []uint, f ActionFilter) ([]uint, error) {
+	if c.groupsFn == nil {
+		return nil, nil
+	}
 	return c.groupsFn(ids, f)
 }
