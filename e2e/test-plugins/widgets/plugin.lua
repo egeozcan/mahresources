@@ -74,19 +74,29 @@ local function render_summary(ctx)
     local show = parse_csv_set(show_str)
     local eid = ctx.entity_id
 
-    -- Gather counts for requested sections.
+    -- Gather counts for requested sections. Each stat links to the
+    -- filtered list view of entities owned by this entity.
     local stats = {}
     if show["resources"] then
         local c = mah.db.count_resources({ owner_id = eid })
-        stats[#stats + 1] = { icon = ICON_FILE, count = c or 0, label = "Resources" }
+        stats[#stats + 1] = {
+            icon = ICON_FILE, count = c or 0, label = "Resources",
+            href = string.format("/resources?OwnerId=%d", eid),
+        }
     end
     if show["notes"] then
         local c = mah.db.count_notes({ owner_id = eid })
-        stats[#stats + 1] = { icon = ICON_NOTE, count = c or 0, label = "Notes" }
+        stats[#stats + 1] = {
+            icon = ICON_NOTE, count = c or 0, label = "Notes",
+            href = string.format("/notes?OwnerId=%d", eid),
+        }
     end
     if show["groups"] then
         local c = mah.db.count_groups({ owner_id = eid })
-        stats[#stats + 1] = { icon = ICON_FOLDER, count = c or 0, label = "Groups" }
+        stats[#stats + 1] = {
+            icon = ICON_FOLDER, count = c or 0, label = "Groups",
+            href = string.format("/groups?OwnerId=%d", eid),
+        }
     end
 
     if #stats == 0 then
@@ -98,8 +108,8 @@ local function render_summary(ctx)
         local parts = { '<div title="Entity summary: resources, notes, groups" class="flex items-center gap-4 text-sm text-gray-600 py-1.5">' }
         for _, s in ipairs(stats) do
             parts[#parts + 1] = string.format(
-                '<span class="flex items-center gap-1">%s <strong>%d</strong> %s</span>',
-                s.icon, s.count, html_escape(s.label)
+                '<a href="%s" title="View %s owned by this entity" class="flex items-center gap-1 hover:text-blue-600 hover:underline">%s <strong>%d</strong> %s</a>',
+                s.href, html_escape(s.label), s.icon, s.count, html_escape(s.label)
             )
         end
         parts[#parts + 1] = '</div>'
@@ -111,12 +121,13 @@ local function render_summary(ctx)
     local parts = { string.format('<div title="Entity summary: resources, notes, groups" class="grid grid-cols-%d gap-3 py-1.5">', cols) }
     for _, s in ipairs(stats) do
         parts[#parts + 1] = string.format(
-            '<div class="rounded-lg border border-gray-200 p-4 text-center">'
+            '<a href="%s" title="View %s owned by this entity"'
+            .. ' class="block rounded-lg border border-gray-200 p-4 text-center text-gray-700 hover:border-blue-400 hover:text-blue-600 hover:shadow-sm transition">'
             .. '<div class="flex justify-center mb-1 text-gray-500">%s</div>'
             .. '<div class="text-2xl font-bold">%d</div>'
             .. '<div class="text-xs text-gray-500">%s</div>'
-            .. '</div>',
-            s.icon, s.count, html_escape(s.label)
+            .. '</a>',
+            s.href, html_escape(s.label), s.icon, s.count, html_escape(s.label)
         )
     end
     parts[#parts + 1] = '</div>'

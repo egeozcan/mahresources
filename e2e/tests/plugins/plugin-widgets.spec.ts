@@ -74,6 +74,20 @@ test.describe('Widgets plugin shortcodes', () => {
     await expect(summaryStrongs).toHaveCount(3, { timeout: 5000 });
   });
 
+  test('summary shortcode items are clickable links to filtered owner lists', async ({ page }) => {
+    await page.goto(`/group?id=${parentGroupId}`);
+    await page.waitForLoadState('load');
+
+    const summary = page.locator('main .flex.items-center.gap-4').first();
+    await expect(summary.locator(`a[href="/resources?OwnerId=${parentGroupId}"]`)).toBeVisible({ timeout: 5000 });
+    await expect(summary.locator(`a[href="/notes?OwnerId=${parentGroupId}"]`)).toBeVisible();
+    await expect(summary.locator(`a[href="/groups?OwnerId=${parentGroupId}"]`)).toBeVisible();
+
+    // Clicking the Groups stat navigates to the filtered groups list.
+    await summary.locator(`a[href="/groups?OwnerId=${parentGroupId}"]`).click();
+    await page.waitForURL(`**/groups?OwnerId=${parentGroupId}`);
+  });
+
   test('gallery shortcode renders or shows empty state', async ({ page }) => {
     await page.goto(`/group?id=${parentGroupId}`);
     await page.waitForLoadState('load');
