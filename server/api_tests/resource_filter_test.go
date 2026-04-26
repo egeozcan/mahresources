@@ -48,4 +48,9 @@ func TestResourceList_FilterByContentTypes(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected 2 resources (image/png + image/jpeg), got %d", len(got))
 	}
+	for _, r := range got {
+		if r.ContentType != "image/png" && r.ContentType != "image/jpeg" {
+			t.Errorf("unexpected content type in response: %s", r.ContentType)
+		}
+	}
 }
