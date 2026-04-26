@@ -505,3 +505,53 @@ func TestValidateActionParams_Standalone(t *testing.T) {
 		t.Errorf("expected 0 errors when optional fields omitted, got %d: %v", len(errs), errs)
 	}
 }
+
+func TestValidateActionParams_EntityRef_MultiFalseAcceptsValidID(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: false, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": 42.0})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for valid single ID, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_MultiFalseRejectsFractional(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: false, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": 1.5})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "positive") {
+		t.Errorf("expected non-integer rejection, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_MultiFalseRejectsWrongType(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: false, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": "42"})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "expected single") {
+		t.Errorf("expected wrong-type rejection on string, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_MultiTrueRejectsWrongType(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": 42.0})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "expected array") {
+		t.Errorf("expected array-required rejection on number, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_MultiTrueRejectsFractionalElement(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{1.0, 2.5}})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "positive") {
+		t.Errorf("expected fractional-element rejection, got: %v", errs)
+	}
+}

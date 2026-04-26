@@ -135,8 +135,6 @@ func ValidateActionParams(action ActionRegistration, params map[string]any) []Va
 				switch v := val.(type) {
 				case float64:
 					id = v
-				case nil:
-					continue
 				default:
 					errs = append(errs, ValidationError{
 						Field:   p.Name,
@@ -144,6 +142,7 @@ func ValidateActionParams(action ActionRegistration, params map[string]any) []Va
 					})
 					continue
 				}
+				// Reject non-integers (e.g. 1.5), zero, and negatives by round-tripping through uint.
 				if id <= 0 || id != float64(uint(id)) {
 					errs = append(errs, ValidationError{
 						Field:   p.Name,
@@ -167,6 +166,7 @@ func ValidateActionParams(action ActionRegistration, params map[string]any) []Va
 					Message: fmt.Sprintf("%s: must have at least %v entries", p.Label, *p.Min),
 				})
 			}
+			// Max=0 is treated as "unlimited" per spec; a real cap requires Max>0.
 			if p.Max != nil && *p.Max > 0 && float64(len(arr)) > *p.Max {
 				errs = append(errs, ValidationError{
 					Field:   p.Name,
@@ -175,6 +175,7 @@ func ValidateActionParams(action ActionRegistration, params map[string]any) []Va
 			}
 			for _, v := range arr {
 				n, ok := v.(float64)
+				// Reject non-integers (e.g. 1.5), zero, and negatives by round-tripping through uint.
 				if !ok || n <= 0 || n != float64(uint(n)) {
 					errs = append(errs, ValidationError{
 						Field:   p.Name,
