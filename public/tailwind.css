@@ -4045,6 +4045,13 @@
       }
     }
   }
+  .hover\:text-stone-900 {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--color-stone-900);
+      }
+    }
+  }
   .hover\:text-yellow-800 {
     &:hover {
       @media (hover: hover) {

@@ -51,7 +51,13 @@ export function pluginActionModal() {
         isParamVisible(param) {
             if (!param.show_when) return true;
             for (const key of Object.keys(param.show_when)) {
-                if (this.formValues[key] !== param.show_when[key]) return false;
+                const expected = param.show_when[key];
+                const actual = this.formValues[key];
+                if (Array.isArray(expected)) {
+                    if (!expected.includes(actual)) return false;
+                } else {
+                    if (actual !== expected) return false;
+                }
             }
             return true;
         },
