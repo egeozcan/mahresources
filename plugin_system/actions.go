@@ -26,6 +26,9 @@ type ActionParam struct {
 	Step        *float64       `json:"step,omitempty"`
 	ShowWhen    map[string]any `json:"show_when,omitempty"`
 	Description string         `json:"description,omitempty"`
+	Entity      string         `json:"entity,omitempty"`  // "resource" | "note" | "group" — required when Type=="entity_ref"
+	Multi       bool           `json:"multi,omitempty"`   // false → single ID; true → array of IDs
+	Filters     *ActionFilter  `json:"filters,omitempty"` // nil = inherit action.Filters
 }
 
 // ActionFilter restricts which entities an action applies to.
