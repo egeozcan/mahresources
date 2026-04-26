@@ -96,30 +96,72 @@ Validation splits along a clear axis to avoid mixing pure-structural and DB-back
 - Count vs `Min`/`Max` (treating `Max==0` as unlimited).
 - Required-when-empty.
 
-**DB-backed — new `(*PluginManager).ValidateActionEntityRefs(action, params) []ValidationError`.** Lives on `PluginManager` because the manager already holds the application context. One batched query **per `entity_ref` param** (not one per entity type), because per-param filter overrides mean two resource params with different `Filters` can't share a single resource query without either over-rejecting or over-accepting:
+**DB-backed — new free function `plugin_system.ValidateActionEntityRefs(reader EntityRefReader, action, params) []ValidationError`.** Pure function in the `plugin_system` package, independent of `PluginManager` (which today has no application-context coupling — it only holds Lua-facing data, HTTP client state, and action job state per `manager.go:80-122`). The function takes an injected `EntityRefReader` interface; the HTTP handler is responsible for constructing and passing it.
+
+```go
+// In plugin_system, alongside ActionFilter / ActionParam.
+type EntityRefReader interface {
+    // Each method returns the subset of requested ids that EXIST and match the filter.
+    // The implementation is responsible for chunking and content-type/category/note-type filtering.
+    ResourcesMatching(ids []uint, filter ActionFilter) ([]uint, error)
+    NotesMatching(ids []uint, filter ActionFilter) ([]uint, error)
+    GroupsMatching(ids []uint, filter ActionFilter) ([]uint, error)
+}
+```
+
+**Wire-up.** Implementation lives in `application_context` as a thin wrapper around the existing typed readers (similar to how `pluginDBAdapter` wraps them but for a different purpose). Concretely:
+
+```go
+// In application_context, e.g. action_entity_ref_reader.go
+type actionEntityRefReader struct{ ctx *MahresourcesContext }
+
+func NewActionEntityRefReader(ctx *MahresourcesContext) plugin_system.EntityRefReader {
+    return &actionEntityRefReader{ctx: ctx}
+}
+
+func (a *actionEntityRefReader) ResourcesMatching(ids []uint, filter plugin_system.ActionFilter) ([]uint, error) {
+    // Chunk ids in batches of 500 (see "Chunking" below), call ctx.GetResources for each
+    // batch with &query_models.ResourceSearchQuery{Ids: chunk, ContentTypes: filter.ContentTypes},
+    // collect returned IDs, return.
+}
+// (NotesMatching / GroupsMatching analogous.)
+```
+
+The `PluginActionRunner` interface in `server/api_handlers/action_handlers.go:15-17` gains one method:
+
+```go
+type PluginActionRunner interface {
+    PluginManager() *plugin_system.PluginManager
+    ActionEntityRefReader() plugin_system.EntityRefReader  // NEW
+}
+```
+
+The runner is implemented by the application context itself (or whatever struct currently implements it — confirm during implementation by checking the wiring in `mahresources/main.go` or `server/routes.go`). Adding the method requires returning `NewActionEntityRefReader(ctx)` cached at startup (or per-call — it's a thin wrapper).
+
+**Validator algorithm.** One query **per `entity_ref` param** (not one per entity type), because per-param filter overrides mean two resource params with different `Filters` can't share a single resource query without either over-rejecting or over-accepting:
 
 1. Iterate `entity_ref` params present in `params`.
 2. For each, resolve effective filter: per-param `Filters` if set, else inherit `action.Filters`.
-3. Issue one query for that param using the appropriate search query model with `Ids = <param's IDs>` and the effective filter populated (`ContentTypes` for resources, `Categories` for groups, `NoteTypeIds` for notes — see "Backend filter additions" below).
-4. Compare returned IDs to the requested set; emit a `ValidationError` per missing or filter-rejected ID, scoped to that param's `Field` name.
+3. Call the appropriate `EntityRefReader` method with the param's IDs and effective filter.
+4. Compute the set difference (requested − returned); emit a `ValidationError` per missing or filter-rejected ID, scoped to that param's `Field` name.
 
-**Important: bypass the Lua-facing plugin DB adapter.** This validation path must NOT go through `application_context/plugin_db_adapter.go`'s `QueryNotes`/`QueryResources`/`QueryGroups`. Three reasons:
+**Why bypass the Lua-facing adapter.** Even if `PluginManager` did hold the context, `application_context/plugin_db_adapter.go`'s `QueryNotes`/`QueryResources`/`QueryGroups` would be wrong:
 
-1. **Missing filter mappings.** The adapter's `buildResourceQuery` / `buildNoteQuery` / `buildGroupQuery` helpers (lines 170-237) don't map `ids`, `content_types` (plural), `categories` (plural), or `note_type_ids` (plural). They were built for Lua-facing convenience and only expose a subset of the underlying query model fields.
-2. **Result cap.** `queryLimit` (line 144-155) defaults to 20 and caps at 100. A plugin author validating, say, 50 resource IDs against a tag filter could silently drop matches and produce false-rejection `ValidationError`s.
-3. **Result shape.** The adapter's row maps drop fields we'd need to confirm filter pass (e.g., the resource adapter doesn't return `category_id`).
+- **Missing filter mappings.** `buildResourceQuery` / `buildNoteQuery` / `buildGroupQuery` (lines 170-237) don't map `ids`, `content_types` (plural), `categories` (plural), or `note_type_ids` (plural).
+- **Result cap.** `queryLimit` (line 144-155) defaults to 20 and caps at 100; would silently drop matches for >100 IDs.
+- **Result shape.** Adapter row maps drop fields needed to confirm filter pass (e.g., resource adapter doesn't return `category_id`).
 
-Instead, `ValidateActionEntityRefs` calls the application context's typed readers directly: `ctx.GetResources(0, len(ids), &ResourceSearchQuery{Ids: ids, ContentTypes: filter.ContentTypes})` and the analogous calls for notes/groups. The query models already support the `Ids` field with `IN (?)` scope wiring (`resource_scope.go:18-19`, `note_scope.go:31-32`, `group_scope.go:19-20`). This path also bypasses the Lua adapter's offset/limit caps.
+`ResourcesMatching`/`NotesMatching`/`GroupsMatching` go directly through the typed readers (`ctx.GetResources` etc.) using the underlying `*SearchQuery` models — which already support `Ids` with `IN (?)` scope wiring (`resource_scope.go:18-19`, `note_scope.go:31-32`, `group_scope.go:19-20`).
 
-**Chunking for large ID sets.** SQLite's variable-binding limit (~999 by default; 32766 in newer builds) constrains how many IDs `IN (?)` can take in one query. `ValidateActionEntityRefs` chunks IDs in batches of `500` per query when `len(ids) > 500`, accumulating results across batches. Realistic entity_ref payloads are far below this; the chunk threshold exists as a safety floor, not the steady-state path.
+**Chunking for large ID sets.** SQLite's variable-binding limit (~999 by default; 32766 in newer builds) constrains `IN (?)`. The `EntityRefReader` implementation chunks IDs in batches of `500` per query, accumulating results. Realistic entity_ref payloads are far below this; the chunk threshold is a safety floor, not the steady-state path.
 
 The N of the outer per-param loop is the number of `entity_ref` params on the action, which is almost always 1 and realistically capped at a handful. An optimization to batch by `(entity, effectiveFilter)` tuple is possible but not worth the complexity for v1.
 
 **Where each runs (no duplication):**
 
-- `GetActionRunHandler` (`server/api_handlers/action_handlers.go:77`) calls `ValidateActionParams` first, then `ValidateActionEntityRefs` (only if structural validation passed). Both responses serialize via the existing `errors` JSON shape at line 119-124. This is the single point of DB validation.
+- `GetActionRunHandler` (`server/api_handlers/action_handlers.go:77`) calls `ValidateActionParams` first, then `ValidateActionEntityRefs(ctx.ActionEntityRefReader(), action, params)` (only if structural validation passed). Both responses serialize via the existing `errors` JSON shape at line 119-124. This is the single point of DB validation.
 - `RunAction` and `RunActionAsync` (the engine entrypoints called from the handler and from internal callers) keep their existing `ValidateActionParams` call as defense-in-depth for structural correctness, but **do not** call `ValidateActionEntityRefs` — they trust their inputs. This avoids per-job DB hits for async fan-out (one bulk `entity_ids=[1,2,...,50]` request validates entity refs once at HTTP entry, not 50 times).
-- The `PluginActionRunner` interface in `action_handlers.go:15-17` doesn't need changes; the handler reaches `ValidateActionEntityRefs` via the same `ctx.PluginManager()` it already uses.
+- The `PluginActionRunner` interface in `action_handlers.go:15-17` gains an `ActionEntityRefReader()` method (see "DB-backed" below for the wiring).
 
 **Contract:** when a Lua handler reads `ctx.params.<entity_ref_name>`, every ID in the result is guaranteed to exist and match the filter at the time of the HTTP request. (No re-check at handler call time — TOCTOU between validation and handler execution is accepted, same as for any other param.)
 
@@ -162,9 +204,16 @@ Backward-compatible: scalar values use equality (existing path); array values us
    - `default = "both"` → union of trigger + bulk-selection (deduplicated, trigger first)
    - `default = ""` → `[]`
 
-   **Entity-type compatibility.** Trigger and bulk-selection IDs are only meaningful when their source entity type matches `param.entity`. The trigger source is `action.entityType` (the modal's `entityType` field). The bulk-selection store's entity type is exposed by the existing `bulkSelection` Alpine store (current page entity). When `param.entity !== sourceEntityType`, the contributing source resolves to empty (silent — the picker just opens with fewer or no prefills). Worked example: an action on a resource page declares `entity_ref entity = "group"`. With `default = "trigger"`, the trigger entity (a resource ID) is incompatible, so the picker opens empty. With `default = "both"` and a bulk-selection of group cards on a different page (rare in practice), the selection contributes; otherwise both contribute nothing.
+   **Entity-type compatibility.** Trigger and bulk-selection IDs are only meaningful when their source entity type matches `param.entity`. Both sources share a single source-entity type — `action.entityType` (the modal's `entityType` field, set by the launcher).
 
-   This is a runtime resolution, not a parse-time error: a plugin author legitimately may want `default = "trigger"` on a `group` entity_ref because the action is also placed on group pages where it works, while gracefully degrading on resource pages.
+   - **Trigger source type** = `action.entityType` (always; `entityIds` are entities of this type by definition).
+   - **Bulk-selection source type** is *also* `action.entityType`, by construction. The existing `bulkSelection` Alpine store (`src/components/bulkSelection.js:14-22`) has no `entityType` field today — but it doesn't need one. Pages are entity-type-scoped (a resource list page only has resource cards; a group list page only has group cards), so the IDs in the store are always of the page's entity type. The launcher (card menu, bulk action bar, sidebar) inherits that type and passes it as `action.entityType`. Therefore the bulk store's IDs are guaranteed to be of `action.entityType` at the moment the modal opens.
+
+   When `param.entity !== action.entityType`, both contributors resolve to empty (silent — the picker just opens with fewer or no prefills). Worked example: an action on a resource page declares `entity_ref entity = "group"`. With `default = "trigger"`, the trigger entity (a resource ID) is incompatible, so the picker opens empty. With `default = "selection"`, the bulk-selection IDs are also resource IDs, also incompatible, also empty. With `default = "both"`, both empty. The user picks groups from scratch via the picker.
+
+   This is a runtime resolution, not a parse-time error: a plugin author may legitimately want `default = "trigger"` on a `group` entity_ref because the action is also placed on group pages where it works, while gracefully degrading on resource pages.
+
+   **Why no `entityType` field on the `bulkSelection` store.** Adding one would require every page that uses bulk selection to declare its entity type at store-init time. The current launcher-passes-entityType pattern already conveys this information through the action modal event detail (`pluginActionsBulk.tpl` includes `entityType: '{{ entityType }}'`); deriving compatibility from `action.entityType` reuses what's already plumbed without new state.
 
 3. Store the array in `formValues[param.name]`. For `multi=false`, take the first element only and store a single number (or `null`) instead. A plugin author setting `default = "both"` with `multi=false` is a configuration error, rejected at `parseActionTable` time.
 
@@ -316,7 +365,7 @@ Update fal.ai's own `mah.doc` for the `edit` action with the new param and updat
 - **Go unit tests** in `plugin_system/actions_test.go` and `action_executor_test.go`:
   - `parseActionTable`: valid `entity_ref` with each entity type; invalid `entity` value; missing `entity`; `multi` parsing; `filters` override parsing; `default = "both"` with `multi = false` rejected; `required = true` combined with `show_when` rejected (the constraint from the show_when section).
   - `ValidateActionParams` (pure-structural arm): `multi=false` rejects array; `multi=true` accepts empty array when `min=0`; min/max violations; required-when-empty; non-positive ID rejected; non-numeric value rejected. (No DB hit.)
-  - `ValidateActionEntityRefs` (DB-backed): rejection of non-existent IDs; rejection of IDs that fail the inherited action filter; rejection of IDs that fail a per-param filter override; **two `entity_ref` params on the same action with different per-param filters validate independently and each enforces its own filter** (regression for the per-param batching decision); success path returns no errors. Backed by an in-memory test DB with seeded resources/notes/groups.
+  - `ValidateActionEntityRefs` (DB-backed): tested with a fake `EntityRefReader` (returns a configurable subset of requested IDs) — rejection of non-existent IDs; rejection of IDs that fail the inherited action filter; rejection of IDs that fail a per-param filter override; **two `entity_ref` params on the same action with different per-param filters validate independently and each enforces its own filter** (regression for the per-param batching decision); success path returns no errors. The fake reader exercises the dependency-injection boundary; an integration test in `application_context` separately covers the real `actionEntityRefReader` against a seeded test DB (chunking, content-type filter, category filter, note-type filter).
 - **Go API test** in `server/api_tests/plugin_api_test.go`: POST `/v1/jobs/action/run` with `entity_ref` params, including content-type filter rejection, missing-entity rejection, and successful multi-resource flow. Also assert that bulk fan-out (`entity_ids = [1,2,...,N]`) validates entity refs **once** (not N times) — verifiable by counting query log lines or by injecting a counting wrapper around the entity reader during the test.
 - **Backend filter unit tests** in `models/database_scopes` or equivalent: `ResourceSearchQuery.ContentTypes` produces the expected `IN (?)` SQL and matches only listed types; coexists with the existing scalar `ContentType` LIKE filter without conflict.
 - **Frontend filter-plumbing test** (Vitest or equivalent if frontend tests exist; otherwise covered by E2E): `cardActionMenu.runAction` dispatches `filters` and `bulk_max` in the event detail; `pluginActionModal.open()` reads `filters` from the detail and exposes it on `this.action`.
