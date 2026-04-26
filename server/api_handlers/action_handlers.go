@@ -124,6 +124,21 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 			return
 		}
 
+		// DB-backed validation of entity_ref params (single point — RunAction does not repeat).
+		if reader := ctx.ActionEntityRefReader(); reader != nil {
+			refErrs, err := plugin_system.ValidateActionEntityRefs(reader, action, req.Params)
+			if err != nil {
+				http_utils.HandleError(fmt.Errorf("entity ref validation: %w", err), w, r, http.StatusInternalServerError)
+				return
+			}
+			if len(refErrs) > 0 {
+				w.Header().Set("Content-Type", constants.JSON)
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"errors": refErrs})
+				return
+			}
+		}
+
 		if action.Async {
 			// Async execution: create jobs for each entity ID.
 			jobIDs := make([]string, 0, len(req.EntityIDs))

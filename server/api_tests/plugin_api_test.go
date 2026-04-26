@@ -3,9 +3,14 @@ package api_tests
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
+	"mahresources/plugin_system"
+	"mahresources/server/api_handlers"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -134,4 +139,133 @@ type errorReader struct {
 
 func (r *errorReader) Read(p []byte) (int, error) {
 	return 0, r.err
+}
+
+// enableTestPluginWithEntityRef writes a Lua plugin that defines an entity_ref
+// param to pluginDir and returns a fully-loaded *plugin_system.PluginManager.
+// The plugin name is "ref-plugin", action id "act", param name "extras"
+// (multi=true, entity=resource).
+func enableTestPluginWithEntityRef(t *testing.T, pluginDir string) *plugin_system.PluginManager {
+	t.Helper()
+	pluginName := "ref-plugin"
+	pluginSubDir := filepath.Join(pluginDir, pluginName)
+	if err := os.MkdirAll(pluginSubDir, 0755); err != nil {
+		t.Fatalf("enableTestPluginWithEntityRef: MkdirAll: %v", err)
+	}
+	lua := `
+plugin = { name = "ref-plugin", version = "1.0", description = "entity ref test plugin" }
+
+function init()
+    mah.action({
+        id = "act",
+        label = "Act",
+        entity = "resource",
+        params = {
+            { name = "extras", type = "entity_ref", entity = "resource", multi = true, label = "Extras" },
+        },
+        handler = function(ctx) return { success = true } end,
+    })
+end
+`
+	if err := os.WriteFile(filepath.Join(pluginSubDir, "plugin.lua"), []byte(lua), 0644); err != nil {
+		t.Fatalf("enableTestPluginWithEntityRef: WriteFile: %v", err)
+	}
+	pm, err := plugin_system.NewPluginManager(pluginDir)
+	if err != nil {
+		t.Fatalf("enableTestPluginWithEntityRef: NewPluginManager: %v", err)
+	}
+	t.Cleanup(func() { pm.Close() })
+	if err := pm.EnablePlugin(pluginName); err != nil {
+		t.Fatalf("enableTestPluginWithEntityRef: EnablePlugin: %v", err)
+	}
+	return pm
+}
+
+// testPluginRunner implements api_handlers.PluginActionRunner using an
+// arbitrary PluginManager and EntityRefReader. Used in action-run tests
+// that need to bypass the main router.
+type testPluginRunner struct {
+	pm     *plugin_system.PluginManager
+	reader plugin_system.EntityRefReader
+}
+
+func (r *testPluginRunner) PluginManager() *plugin_system.PluginManager      { return r.pm }
+func (r *testPluginRunner) ActionEntityRefReader() plugin_system.EntityRefReader { return r.reader }
+
+// countingReader wraps an EntityRefReader and counts each method call.
+type countingReader struct {
+	inner plugin_system.EntityRefReader
+	calls int
+}
+
+func (c *countingReader) ResourcesMatching(ids []uint, f plugin_system.ActionFilter) ([]uint, error) {
+	c.calls++
+	return c.inner.ResourcesMatching(ids, f)
+}
+func (c *countingReader) NotesMatching(ids []uint, f plugin_system.ActionFilter) ([]uint, error) {
+	c.calls++
+	return c.inner.NotesMatching(ids, f)
+}
+func (c *countingReader) GroupsMatching(ids []uint, f plugin_system.ActionFilter) ([]uint, error) {
+	c.calls++
+	return c.inner.GroupsMatching(ids, f)
+}
+
+func TestActionRun_RejectsNonExistentEntityRef(t *testing.T) {
+	tc := SetupTestEnv(t)
+	pluginDir := t.TempDir()
+	pm := enableTestPluginWithEntityRef(t, pluginDir)
+
+	runner := &testPluginRunner{
+		pm:     pm,
+		reader: tc.AppCtx.ActionEntityRefReader(),
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/jobs/action/run", api_handlers.GetActionRunHandler(runner))
+
+	body := `{"plugin":"ref-plugin","action":"act","entity_ids":[1],"params":{"extras":[999999]}}`
+	req, _ := http.NewRequest("POST", "/v1/jobs/action/run", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "999999") {
+		t.Errorf("expected error to reference missing ID 999999, got: %s", rr.Body.String())
+	}
+}
+
+func TestActionRun_BulkFanoutValidatesEntityRefsOnce(t *testing.T) {
+	tc := SetupTestEnv(t)
+	pluginDir := t.TempDir()
+	pm := enableTestPluginWithEntityRef(t, pluginDir)
+
+	// Create a real resource so entity_ref validation finds it.
+	r1 := tc.CreateResourceWithType(t, "test-resource", "image/png")
+
+	counter := &countingReader{inner: tc.AppCtx.ActionEntityRefReader()}
+	runner := &testPluginRunner{
+		pm:     pm,
+		reader: counter,
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/jobs/action/run", api_handlers.GetActionRunHandler(runner))
+
+	body := fmt.Sprintf(
+		`{"plugin":"ref-plugin","action":"act","entity_ids":[1,2,3,4,5],"params":{"extras":[%d]}}`,
+		r1.ID,
+	)
+	req, _ := http.NewRequest("POST", "/v1/jobs/action/run", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if counter.calls != 1 {
+		t.Errorf("expected 1 entity_ref validation call across bulk fan-out, got %d (status=%d body=%s)",
+			counter.calls, rr.Code, rr.Body.String())
+	}
 }
