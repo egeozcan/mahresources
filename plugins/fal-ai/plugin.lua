@@ -136,7 +136,7 @@ end
 -- Build API request payload based on action and options.
 -- resource_id is used by actions that need to look up source-image properties
 -- (e.g. restore auto-detects the aspect_ratio from the source's dimensions).
-local function build_request(action_id, data_uri, params, resource_id)
+local function build_request(action_id, data_uri, params, resource_id, extra_data_uris)
     if action_id == "colorize" then
         mah.log("info", "[fal.ai] build_request: action=colorize, endpoint=" .. FAL_ENDPOINTS.colorize)
         return FAL_ENDPOINTS.colorize, {image_url = data_uri}
@@ -277,8 +277,12 @@ local function build_request(action_id, data_uri, params, resource_id)
 
         elseif model == "nanobanana2" then
             -- NanoBanana2ImageToImageInput.safety_tolerance is a string enum '1'..'6', not a number.
+            local image_urls = {data_uri}
+            for _, du in ipairs(extra_data_uris or {}) do
+                image_urls[#image_urls + 1] = du
+            end
             local payload = {
-                image_urls = {data_uri},
+                image_urls = image_urls,
                 prompt = prompt,
             }
             apply_str(payload, "aspect_ratio", params.nanobanana2_aspect_ratio)
@@ -293,8 +297,12 @@ local function build_request(action_id, data_uri, params, resource_id)
             --   Flux2TurboEditImageInput  has guidance_scale (number) but NO safety_tolerance.
             --   Flux2ProImageEditInput    has safety_tolerance (string enum '1'..'5') but NO guidance_scale.
             local endpoint = FAL_ENDPOINTS[model] or FAL_ENDPOINTS.flux2
+            local image_urls = {data_uri}
+            for _, du in ipairs(extra_data_uris or {}) do
+                image_urls[#image_urls + 1] = du
+            end
             local payload = {
-                image_urls = {data_uri},
+                image_urls = image_urls,
                 prompt = prompt,
             }
             if model == "flux2pro" then
@@ -417,8 +425,24 @@ local function process_image(resource_id, action_id, params, api_key, job_id)
         mah.job_progress(job_id, 10, "Preparing image...")
     end
 
+    -- Build the full image-URI list for multi-image actions (edit: flux2, flux2pro, nanobanana2).
+    -- extra_images uses default="trigger" so the frontend prefills the source resource; the handler
+    -- iterates that list directly (no re-prepending). When show_when hides the param (e.g. flux1dev
+    -- or non-edit actions), params.extra_images is nil and we fall back to source-only.
+    local all_image_uris = {}
+    local extras = params.extra_images
+    if extras and #extras > 0 then
+        for _, eid in ipairs(extras) do
+            local du, _ = build_data_uri(eid)
+            all_image_uris[#all_image_uris + 1] = du
+        end
+    else
+        -- show_when hid the param for this model (e.g. flux1dev), or user cleared it.
+        all_image_uris[1] = data_uri
+    end
+
     -- Build API request
-    local endpoint, payload = build_request(action_id, data_uri, params, resource_id)
+    local endpoint, payload = build_request(action_id, data_uri, params, resource_id, all_image_uris)
     if not endpoint then
         mah.log("error", "[fal.ai] process_image: unknown action " .. action_id)
         error("Unknown action: " .. action_id)
@@ -902,6 +926,16 @@ function init()
             {name = "flux1dev_acceleration", type = "select", label = "Acceleration",
                 default = "none", options = {"none", "regular", "high"},
                 show_when = {model = "flux1dev"}},
+
+            {
+                name = "extra_images", type = "entity_ref", entity = "resource",
+                label = "Additional Images", multi = true,
+                min = 0, max = 9,
+                default = "trigger",
+                description = "Reference images sent alongside the source. Only Flux 2, Flux 2 Pro, and Nano Banana 2 use these.",
+                show_when = { model = {"flux2", "flux2pro", "nanobanana2"} },
+                filters = { content_types = IMAGE_CONTENT_TYPES },
+            },
 
             OUTPUT_MODE_PARAM,
         },
