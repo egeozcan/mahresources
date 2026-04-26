@@ -11,9 +11,10 @@ import (
 	"strconv"
 )
 
-// PluginActionRunner provides access to the plugin manager for action endpoints.
+// PluginActionRunner provides access to plugin-action infrastructure.
 type PluginActionRunner interface {
 	PluginManager() *plugin_system.PluginManager
+	ActionEntityRefReader() plugin_system.EntityRefReader
 }
 
 // actionRunRequest is the JSON body for POST /v1/jobs/action/run

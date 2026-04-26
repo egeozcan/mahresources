@@ -385,6 +385,12 @@ func (ctx *MahresourcesContext) PluginManager() *plugin_system.PluginManager {
 	return ctx.pluginManager
 }
 
+// ActionEntityRefReader returns an EntityRefReader bound to this context.
+// Used by GetActionRunHandler to validate entity_ref param IDs.
+func (ctx *MahresourcesContext) ActionEntityRefReader() plugin_system.EntityRefReader {
+	return NewActionEntityRefReader(ctx)
+}
+
 // RegisterAltFs adds an alternative filesystem under the given key. This is
 // used at startup (via NewMahresourcesContext from config) and in tests that
 // need to inject an in-memory alt-fs without going through disk paths.
