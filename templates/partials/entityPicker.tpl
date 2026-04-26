@@ -1,7 +1,8 @@
 {# Generic Entity Picker Modal #}
-<div x-show="$store.entityPicker.isOpen"
+<div x-data
+     x-show="$store.entityPicker.isOpen"
      x-cloak
-     class="fixed inset-0 z-50 overflow-y-auto"
+     class="fixed inset-0 overflow-y-auto" style="z-index: 70"
      role="dialog"
      aria-modal="true"
      aria-labelledby="entity-picker-title"
