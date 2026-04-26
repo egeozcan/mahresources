@@ -2,6 +2,7 @@ import { test, expect, getWorkerBaseUrl } from '../../fixtures/base.fixture';
 import { ApiClient } from '../../helpers/api-client';
 import { request as pwRequest } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
 
 // This suite covers the entity_ref param type via fal.ai's edit action,
 // which is the first concrete consumer of the entity_ref param type.
@@ -21,10 +22,8 @@ async function ensureFalAiEnabled(baseURL: string) {
  */
 async function createResourceWithMime(baseURL: string, filePath: string, name: string, mimeType: string) {
   const ctx = await pwRequest.newContext({ baseURL });
-  const fs = await import('fs');
-  const pathModule = await import('path');
   const fileBuffer = fs.readFileSync(filePath);
-  const fileName = pathModule.basename(filePath);
+  const fileName = path.basename(filePath);
 
   const response = await ctx.post(`${baseURL}/v1/resource`, {
     multipart: {
@@ -33,6 +32,11 @@ async function createResourceWithMime(baseURL: string, filePath: string, name: s
     },
   });
 
+  if (!response.ok()) {
+    const body = await response.text();
+    await ctx.dispose();
+    throw new Error(`Resource creation failed: ${response.status()} ${body}`);
+  }
   const resources = await response.json();
   await ctx.dispose();
   if (!resources || resources.length === 0) throw new Error('No resource returned');

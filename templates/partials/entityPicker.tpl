@@ -2,7 +2,7 @@
 <div x-data
      x-show="$store.entityPicker.isOpen"
      x-cloak
-     class="fixed inset-0 overflow-y-auto" style="z-index: 70"
+     class="fixed inset-0 overflow-y-auto entity-picker-overlay-top"
      role="dialog"
      aria-modal="true"
      aria-labelledby="entity-picker-title"

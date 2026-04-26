@@ -1039,6 +1039,11 @@ html {
     background: #fafaf9;
 }
 
+/* Entity picker modal — sits above plugin-action-overlay (z-index: 60) */
+.entity-picker-overlay-top {
+    z-index: 70;
+}
+
 /* Plugin action modal */
 .plugin-action-overlay {
     position: fixed;
