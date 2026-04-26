@@ -6,7 +6,7 @@ export const entityConfigs = {
     entityLabel: 'Resources',
     searchEndpoint: '/v1/resources',
     maxResults: 50,
-    searchParams: (query, filters, maxResults) => {
+    searchParams: (query, filters, lockedFilters, maxResults) => {
       const params = new URLSearchParams({ MaxResults: String(maxResults) });
       if (query) params.set('name', query);
       if (filters.tags) {
@@ -34,7 +34,7 @@ export const entityConfigs = {
     entityLabel: 'Groups',
     searchEndpoint: '/v1/groups',
     maxResults: 50,
-    searchParams: (query, filters, maxResults) => {
+    searchParams: (query, filters, lockedFilters, maxResults) => {
       const params = new URLSearchParams({ MaxResults: String(maxResults) });
       if (query) params.set('name', query);
       if (filters.category) params.set('categoryId', filters.category);
