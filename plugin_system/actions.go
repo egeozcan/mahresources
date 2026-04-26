@@ -216,8 +216,15 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 		}
 	}
 
-	// Validate entity_ref params.
+	// Validate all params.
 	for i, p := range a.Params {
+		// required=true cannot be combined with show_when: the server validates
+		// required fields before show_when stripping, so a hidden param would
+		// always fail the required check when the controlling param hides it.
+		if p.Required && len(p.ShowWhen) > 0 {
+			return nil, fmt.Errorf("param %q: required=true cannot be combined with show_when (server validates required before show_when stripping; see spec)", p.Name)
+		}
+
 		if p.Type == "entity_ref" {
 			if p.Entity == "" {
 				return nil, fmt.Errorf("param %q: type 'entity_ref' requires 'entity' field", p.Name)

@@ -698,6 +698,33 @@ end
 	}
 }
 
+func TestActionRegistration_RejectsRequiredWithShowWhen(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "bad-plugin", `
+plugin = { name = "bad-plugin", version = "1.0", description = "" }
+function init()
+    mah.action({
+        id = "x", label = "X", entity = "resource",
+        params = {
+            { name = "model", type = "select", label = "Model", options = {"a","b"}, default = "a" },
+            { name = "extra", type = "text", label = "Extra", required = true,
+              show_when = { model = "b" } },
+        },
+        handler = function(ctx) return { success = true } end,
+    })
+end
+`)
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("NewPluginManager: %v", err)
+	}
+	defer pm.Close()
+	err = pm.EnablePlugin("bad-plugin")
+	if err == nil || !strings.Contains(err.Error(), "required") || !strings.Contains(err.Error(), "show_when") {
+		t.Errorf("expected required+show_when rejection, got: %v", err)
+	}
+}
+
 func TestActionRegistration_Validation(t *testing.T) {
 	dir := t.TempDir()
 	writePlugin(t, dir, "bad-action", `
