@@ -87,8 +87,8 @@ The `entity_ref` param type lets a plugin action accept references to one or mor
     entity      = "resource",                                    -- "resource" | "note" | "group"
     multi       = true,                                          -- false → single ID; true → array of IDs
     required    = false,
-    min         = 0,                                             -- multi only; default 0
-    max         = 9,                                             -- multi only; nil/0 = unlimited
+    min         = 0,                                             -- multi only; omit for no minimum
+    max         = 9,                                             -- multi only; omit or set to 0 for no maximum
     default     = "trigger",                                     -- "trigger" | "selection" | "both" | ""
     filters     = { content_types = {"image/jpeg", "image/png"} }, -- optional; inherits action.filters when omitted
     show_when   = { model = {"flux2", "nanobanana2"} },         -- standard show_when

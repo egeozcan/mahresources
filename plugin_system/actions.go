@@ -16,7 +16,7 @@ import (
 // to the frontend, which interprets it identically.
 type ActionParam struct {
 	Name        string         `json:"name"`
-	Type        string         `json:"type"` // text, textarea, number, select, boolean, hidden, info
+	Type        string         `json:"type"` // text, textarea, number, select, boolean, hidden, info, entity_ref
 	Label       string         `json:"label"`
 	Required    bool           `json:"required"`
 	// Default is the parameter's default value. For most types any matching
