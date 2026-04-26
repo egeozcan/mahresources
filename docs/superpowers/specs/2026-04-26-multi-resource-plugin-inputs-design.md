@@ -96,14 +96,24 @@ Validation splits along a clear axis to avoid mixing pure-structural and DB-back
 - Count vs `Min`/`Max` (treating `Max==0` as unlimited).
 - Required-when-empty.
 
-**DB-backed — new `(*PluginManager).ValidateActionEntityRefs(action, params) []ValidationError`.** Lives on `PluginManager` because the manager already holds the application context (which exposes resource/note/group readers via `mah.db.*`). One batched query **per `entity_ref` param** (not one per entity type), because per-param filter overrides mean two resource params with different `Filters` can't share a single resource query without either over-rejecting or over-accepting:
+**DB-backed — new `(*PluginManager).ValidateActionEntityRefs(action, params) []ValidationError`.** Lives on `PluginManager` because the manager already holds the application context. One batched query **per `entity_ref` param** (not one per entity type), because per-param filter overrides mean two resource params with different `Filters` can't share a single resource query without either over-rejecting or over-accepting:
 
 1. Iterate `entity_ref` params present in `params`.
 2. For each, resolve effective filter: per-param `Filters` if set, else inherit `action.Filters`.
-3. Issue one `query_*` call for that param with `Ids = <param's IDs>` and the effective filter (`ContentTypes` for resources, `Categories` for groups, `NoteTypeIds` for notes — see "Backend filter additions" below).
+3. Issue one query for that param using the appropriate search query model with `Ids = <param's IDs>` and the effective filter populated (`ContentTypes` for resources, `Categories` for groups, `NoteTypeIds` for notes — see "Backend filter additions" below).
 4. Compare returned IDs to the requested set; emit a `ValidationError` per missing or filter-rejected ID, scoped to that param's `Field` name.
 
-The N for this loop is the number of `entity_ref` params on the action, which is almost always 1 and realistically capped at a handful. An optimization to batch by `(entity, effectiveFilter)` tuple is possible but not worth the complexity for v1.
+**Important: bypass the Lua-facing plugin DB adapter.** This validation path must NOT go through `application_context/plugin_db_adapter.go`'s `QueryNotes`/`QueryResources`/`QueryGroups`. Three reasons:
+
+1. **Missing filter mappings.** The adapter's `buildResourceQuery` / `buildNoteQuery` / `buildGroupQuery` helpers (lines 170-237) don't map `ids`, `content_types` (plural), `categories` (plural), or `note_type_ids` (plural). They were built for Lua-facing convenience and only expose a subset of the underlying query model fields.
+2. **Result cap.** `queryLimit` (line 144-155) defaults to 20 and caps at 100. A plugin author validating, say, 50 resource IDs against a tag filter could silently drop matches and produce false-rejection `ValidationError`s.
+3. **Result shape.** The adapter's row maps drop fields we'd need to confirm filter pass (e.g., the resource adapter doesn't return `category_id`).
+
+Instead, `ValidateActionEntityRefs` calls the application context's typed readers directly: `ctx.GetResources(0, len(ids), &ResourceSearchQuery{Ids: ids, ContentTypes: filter.ContentTypes})` and the analogous calls for notes/groups. The query models already support the `Ids` field with `IN (?)` scope wiring (`resource_scope.go:18-19`, `note_scope.go:31-32`, `group_scope.go:19-20`). This path also bypasses the Lua adapter's offset/limit caps.
+
+**Chunking for large ID sets.** SQLite's variable-binding limit (~999 by default; 32766 in newer builds) constrains how many IDs `IN (?)` can take in one query. `ValidateActionEntityRefs` chunks IDs in batches of `500` per query when `len(ids) > 500`, accumulating results across batches. Realistic entity_ref payloads are far below this; the chunk threshold exists as a safety floor, not the steady-state path.
+
+The N of the outer per-param loop is the number of `entity_ref` params on the action, which is almost always 1 and realistically capped at a handful. An optimization to batch by `(entity, effectiveFilter)` tuple is possible but not worth the complexity for v1.
 
 **Where each runs (no duplication):**
 
@@ -151,6 +161,11 @@ Backward-compatible: scalar values use equality (existing path); array values us
    - `default = "selection"` → IDs from the global bulk-selection store, if any, else `[]`
    - `default = "both"` → union of trigger + bulk-selection (deduplicated, trigger first)
    - `default = ""` → `[]`
+
+   **Entity-type compatibility.** Trigger and bulk-selection IDs are only meaningful when their source entity type matches `param.entity`. The trigger source is `action.entityType` (the modal's `entityType` field). The bulk-selection store's entity type is exposed by the existing `bulkSelection` Alpine store (current page entity). When `param.entity !== sourceEntityType`, the contributing source resolves to empty (silent — the picker just opens with fewer or no prefills). Worked example: an action on a resource page declares `entity_ref entity = "group"`. With `default = "trigger"`, the trigger entity (a resource ID) is incompatible, so the picker opens empty. With `default = "both"` and a bulk-selection of group cards on a different page (rare in practice), the selection contributes; otherwise both contribute nothing.
+
+   This is a runtime resolution, not a parse-time error: a plugin author legitimately may want `default = "trigger"` on a `group` entity_ref because the action is also placed on group pages where it works, while gracefully degrading on resource pages.
+
 3. Store the array in `formValues[param.name]`. For `multi=false`, take the first element only and store a single number (or `null`) instead. A plugin author setting `default = "both"` with `multi=false` is a configuration error, rejected at `parseActionTable` time.
 
 **Rendering** (`pluginActionModal.tpl`) gets a new `x-if` arm for `param.type === 'entity_ref'`:
@@ -209,7 +224,11 @@ Three changes:
    - `entityType: 'note'`, `searchEndpoint: '/v1/notes'`
    - Search by name; user-tunable `tags` filter (matching the resource config pattern)
    - No tabs (notes don't have a "this note's notes" relationship)
-   - Card-style render
+   - `renderItem: 'noteCard'` — a new render branch in `entityPicker.tpl`. Today the template only has `renderItem === 'thumbnail'` (resource grid, line 151) and `renderItem === 'groupCard'` (line 196), and `groupCard` is hard-coded with group-specific labels (`'Unnamed Group'` fallback, `Owner.Name` breadcrumb, `ResourceCount`/`NoteCount` metadata, `Category` badge). A `note` config cannot reuse `groupCard` without showing wrong/empty fields. Two paths:
+     - **(a) Add a `noteCard` render branch (chosen for v1).** Mirrors `groupCard`'s structure but with note-specific bits: `'Unnamed Note'` fallback, `NoteType.Name` instead of `Category.Name` in the badge, `ResourceCount` for "N resources" if the note list endpoint returns it, no `NoteCount` line. Smaller, lower-risk change.
+     - **(b) Refactor `groupCard` into a generic `entityCard` driven by config-supplied label/metadata accessors.** Cleaner long-term but a refactor of working code; deferred.
+
+   Implementation chooses (a) and leaves (b) as a noted future cleanup.
 
 ### Backend filter additions
 
@@ -306,6 +325,8 @@ Update fal.ai's own `mah.doc` for the `edit` action with the new param and updat
   - Verify `entity_ref` field is hidden when `model=clarity` (single-image upscaler).
   - Verify bulk-selection prefill: select 3 cards, click action that uses `entity_ref` with `default = "selection"`, verify chips already show those 3.
   - Verify filter rejection: try to select a non-image resource, picker doesn't show it.
+  - Verify entity-type prefill incompatibility: an action on a resource page with an `entity_ref entity = "group" default = "trigger"` opens with an empty picker (the resource trigger ID is not used as a group ID).
+  - Verify chunking: a payload with 600 IDs validates correctly without falling off the SQLite parameter limit (seed enough resources to make this realistic, or test with mocked DB).
 - **E2E (CLI)**: the `mr` CLI does not currently expose an action-run command (`cmd/mr/commands/plugins.go` only has enable/disable/settings/purge-data). CLI E2E for `entity_ref` params is therefore out of scope for this design. If a `mr plugin action run` command is added later, its argument parsing should accept entity-ref params via a repeatable flag (e.g., `--ref extra_images=1,2,3`).
 
 Per CLAUDE.md, run the full Go unit suite, browser E2E in parallel with the existing CLI E2E suite (which still has unrelated coverage), and the Postgres test suite before final commit.
