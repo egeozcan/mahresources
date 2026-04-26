@@ -127,6 +127,62 @@ func ValidateActionParams(action ActionRegistration, params map[string]any) []Va
 					Message: fmt.Sprintf("%s must be at most %v", p.Label, *p.Max),
 				})
 			}
+
+		case "entity_ref":
+			if !p.Multi {
+				// Expect single number (or null).
+				var id float64
+				switch v := val.(type) {
+				case float64:
+					id = v
+				case nil:
+					continue
+				default:
+					errs = append(errs, ValidationError{
+						Field:   p.Name,
+						Message: fmt.Sprintf("%s: expected single ID number", p.Label),
+					})
+					continue
+				}
+				if id <= 0 || id != float64(uint(id)) {
+					errs = append(errs, ValidationError{
+						Field:   p.Name,
+						Message: fmt.Sprintf("%s: ID must be a positive integer", p.Label),
+					})
+				}
+				continue
+			}
+			// Multi: expect []any of float64.
+			arr, ok := val.([]any)
+			if !ok {
+				errs = append(errs, ValidationError{
+					Field:   p.Name,
+					Message: fmt.Sprintf("%s: expected array of IDs", p.Label),
+				})
+				continue
+			}
+			if p.Min != nil && float64(len(arr)) < *p.Min {
+				errs = append(errs, ValidationError{
+					Field:   p.Name,
+					Message: fmt.Sprintf("%s: must have at least %v entries", p.Label, *p.Min),
+				})
+			}
+			if p.Max != nil && *p.Max > 0 && float64(len(arr)) > *p.Max {
+				errs = append(errs, ValidationError{
+					Field:   p.Name,
+					Message: fmt.Sprintf("%s: must have at most %v entries", p.Label, *p.Max),
+				})
+			}
+			for _, v := range arr {
+				n, ok := v.(float64)
+				if !ok || n <= 0 || n != float64(uint(n)) {
+					errs = append(errs, ValidationError{
+						Field:   p.Name,
+						Message: fmt.Sprintf("%s: each ID must be a positive integer", p.Label),
+					})
+					break
+				}
+			}
 		}
 	}
 

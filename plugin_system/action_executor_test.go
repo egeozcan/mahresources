@@ -378,6 +378,58 @@ end
 	}
 }
 
+func TestValidateActionParams_EntityRef_MultiFalseRejectsArray(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: false, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{1.0, 2.0}})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "expected single") {
+		t.Errorf("expected single-id rejection, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_MultiTrueAcceptsEmpty(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{}})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_MinViolation(t *testing.T) {
+	one := 1.0
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Min: &one, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{}})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "at least") {
+		t.Errorf("expected min violation, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_MaxViolation(t *testing.T) {
+	two := 2.0
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Max: &two, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{1.0, 2.0, 3.0}})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "at most") {
+		t.Errorf("expected max violation, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_NonPositiveID(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{0.0}})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "positive") {
+		t.Errorf("expected non-positive ID rejection, got: %v", errs)
+	}
+}
+
 func TestValidateActionParams_Standalone(t *testing.T) {
 	minVal := float64(1)
 	maxVal := float64(100)
