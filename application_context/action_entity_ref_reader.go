@@ -19,6 +19,9 @@ func NewActionEntityRefReader(ctx *MahresourcesContext) plugin_system.EntityRefR
 }
 
 func chunkUints(ids []uint, size int) [][]uint {
+	if len(ids) == 0 {
+		return nil
+	}
 	if len(ids) <= size {
 		return [][]uint{ids}
 	}

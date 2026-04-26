@@ -74,6 +74,29 @@ func createResourceWithType(t *testing.T, ctx *MahresourcesContext, name, conten
 	return r
 }
 
+// createNoteType inserts a NoteType with the given name directly into the test DB.
+func createNoteType(t *testing.T, ctx *MahresourcesContext, name string) *models.NoteType {
+	t.Helper()
+	nt := &models.NoteType{Name: name}
+	if err := ctx.db.Create(nt).Error; err != nil {
+		t.Fatalf("createNoteType(%q): %v", name, err)
+	}
+	return nt
+}
+
+// createNoteWithType inserts a Note linked to the given NoteType directly into the test DB.
+func createNoteWithType(t *testing.T, ctx *MahresourcesContext, title string, noteTypeID uint) *models.Note {
+	t.Helper()
+	n := &models.Note{
+		Name:       title,
+		NoteTypeId: &noteTypeID,
+	}
+	if err := ctx.db.Create(n).Error; err != nil {
+		t.Fatalf("createNoteWithType(%q, nt=%d): %v", title, noteTypeID, err)
+	}
+	return n
+}
+
 // createCategory inserts a Category with the given name and returns it.
 func createCategory(t *testing.T, ctx *MahresourcesContext, name string) *models.Category {
 	t.Helper()
@@ -152,5 +175,45 @@ func TestActionEntityRefReader_Chunking(t *testing.T) {
 	}
 	if len(matched) != 600 {
 		t.Fatalf("expected 600 matches across chunks, got %d", len(matched))
+	}
+}
+
+func TestActionEntityRefReader_NotesMatching_FiltersByNoteType(t *testing.T) {
+	ctx := createIsolatedTestContext(t)
+	nt1 := createNoteType(t, ctx, "Type 1")
+	nt2 := createNoteType(t, ctx, "Type 2")
+	n1 := createNoteWithType(t, ctx, "n1", nt1.ID)
+	n2 := createNoteWithType(t, ctx, "n2", nt2.ID)
+	n3 := createNoteWithType(t, ctx, "n3", nt2.ID)
+
+	reader := NewActionEntityRefReader(ctx)
+	matched, err := reader.NotesMatching(
+		[]uint{n1.ID, n2.ID, n3.ID},
+		plugin_system.ActionFilter{NoteTypeIDs: []uint{nt1.ID}},
+	)
+	if err != nil {
+		t.Fatalf("NotesMatching: %v", err)
+	}
+	if len(matched) != 1 {
+		t.Fatalf("expected 1 match, got %d (%v)", len(matched), matched)
+	}
+	if matched[0] != n1.ID {
+		t.Errorf("expected n1.ID (%d), got %v", n1.ID, matched)
+	}
+}
+
+func TestActionEntityRefReader_EmptyInputReturnsEmpty(t *testing.T) {
+	ctx := createIsolatedTestContext(t)
+	// Seed some resources to confirm we're NOT returning them.
+	createResourceWithType(t, ctx, "a.png", "image/png")
+	createResourceWithType(t, ctx, "b.png", "image/png")
+
+	reader := NewActionEntityRefReader(ctx)
+	matched, err := reader.ResourcesMatching([]uint{}, plugin_system.ActionFilter{})
+	if err != nil {
+		t.Fatalf("ResourcesMatching: %v", err)
+	}
+	if len(matched) != 0 {
+		t.Errorf("expected 0 matches for empty input, got %d (%v)", len(matched), matched)
 	}
 }
