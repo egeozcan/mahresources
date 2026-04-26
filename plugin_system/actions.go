@@ -19,6 +19,9 @@ type ActionParam struct {
 	Type        string         `json:"type"` // text, textarea, number, select, boolean, hidden, info
 	Label       string         `json:"label"`
 	Required    bool           `json:"required"`
+	// Default is the parameter's default value. For most types any matching
+	// value is accepted; for Type=="entity_ref" it must be one of
+	// "trigger" | "selection" | "both" | "" (omitting the field defaults to "trigger").
 	Default     any            `json:"default,omitempty"`
 	Options     []string       `json:"options,omitempty"`
 	Min         *float64       `json:"min,omitempty"`

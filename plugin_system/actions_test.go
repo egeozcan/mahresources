@@ -675,6 +675,29 @@ end
 	}
 }
 
+func TestActionRegistration_EntityRefParam_RejectsNonStringDefault(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "bad-plugin", `
+plugin = { name = "bad-plugin", version = "1.0", description = "" }
+function init()
+    mah.action({
+        id = "x", label = "X", entity = "resource",
+        params = { { name = "extras", type = "entity_ref", entity = "resource", default = 42, label = "X" } },
+        handler = function(ctx) return { success = true } end,
+    })
+end
+`)
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("NewPluginManager: %v", err)
+	}
+	defer pm.Close()
+	err = pm.EnablePlugin("bad-plugin")
+	if err == nil || !strings.Contains(err.Error(), "default must be a string for entity_ref") {
+		t.Errorf("expected non-string default error, got: %v", err)
+	}
+}
+
 func TestActionRegistration_Validation(t *testing.T) {
 	dir := t.TempDir()
 	writePlugin(t, dir, "bad-action", `
