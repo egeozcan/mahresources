@@ -87,14 +87,28 @@ The 1MB body limit at `server/api_handlers/action_handlers.go:86` is unchanged a
 
 ### Server-Side Validation (`plugin_system/action_executor.go`)
 
-`ValidateActionParams` gains an `entity_ref` arm that handles the structural cases (type assertion to `float64` / `[]any`, ID > 0, count vs `Min`/`Max`). A new helper, `validateEntityRefIDs(ctx, entity, ids, effectiveFilter)`, runs after structural validation and:
+Validation splits along a clear axis to avoid mixing pure-structural and DB-backed checks (and to avoid duplicating the DB hit):
 
-1. Resolves the effective filter: per-param `Filters` if set, else inherits `action.Filters`.
-2. Looks up all referenced entities in one batched query (using existing `query_resources` / `query_notes` / `query_groups` plumbing — keys: `id IN (?)`) to confirm existence.
-3. For each entity, checks the filter using the same comparison logic as `actionMatchesFilters` (`actions.go:274`): content_type for resources, category_id for groups, note_type_id for notes.
-4. Returns a `ValidationError` per missing or filter-rejected ID.
+**Pure-structural — stays in `ValidateActionParams(action, params) []ValidationError`.** Existing signature unchanged. New `entity_ref` arm here only handles things resolvable without a DB:
 
-This runs before the Lua handler is invoked, so handlers can trust every ID in `ctx.params.<name>` exists and matches the filter.
+- Wire-shape: `multi=false` requires `float64` (or `nil`); `multi=true` requires `[]any` of `float64`. Reject mismatches.
+- IDs are positive integers (round-trip through `uint`).
+- Count vs `Min`/`Max` (treating `Max==0` as unlimited).
+- Required-when-empty.
+
+**DB-backed — new `(*PluginManager).ValidateActionEntityRefs(action, params) []ValidationError`.** Lives on `PluginManager` because the manager already holds the application context (which exposes resource/note/group readers via `mah.db.*`). For each `entity_ref` param present in `params`:
+
+1. Resolve effective filter: per-param `Filters` if set, else inherit `action.Filters`.
+2. Batched existence + filter check using a single `query_*` call per entity type with `Ids` and the appropriate filter set (`ContentTypes` for resources — see "Backend filter additions" below; `CategoryIDs` for groups; `NoteTypeIDs` for notes).
+3. Compare returned IDs to the requested set; emit a `ValidationError` per missing or filter-rejected ID.
+
+**Where each runs (no duplication):**
+
+- `GetActionRunHandler` (`server/api_handlers/action_handlers.go:77`) calls `ValidateActionParams` first, then `ValidateActionEntityRefs` (only if structural validation passed). Both responses serialize via the existing `errors` JSON shape at line 119-124. This is the single point of DB validation.
+- `RunAction` and `RunActionAsync` (the engine entrypoints called from the handler and from internal callers) keep their existing `ValidateActionParams` call as defense-in-depth for structural correctness, but **do not** call `ValidateActionEntityRefs` — they trust their inputs. This avoids per-job DB hits for async fan-out (one bulk `entity_ids=[1,2,...,50]` request validates entity refs once at HTTP entry, not 50 times).
+- The `PluginActionRunner` interface in `action_handlers.go:15-17` doesn't need changes; the handler reaches `ValidateActionEntityRefs` via the same `ctx.PluginManager()` it already uses.
+
+**Contract:** when a Lua handler reads `ctx.params.<entity_ref_name>`, every ID in the result is guaranteed to exist and match the filter at the time of the HTTP request. (No re-check at handler call time — TOCTOU between validation and handler execution is accepted, same as for any other param.)
 
 ### `parseActionTable` (`plugin_system/actions.go`)
 
@@ -144,31 +158,79 @@ Backward-compatible: scalar values use equality (existing path); array values us
 Clicking the add button:
 
 ```js
+const existing = param.multi
+    ? (formValues[param.name] || [])
+    : (formValues[param.name] != null ? [formValues[param.name]] : []);
+
 Alpine.store('entityPicker').open({
     entityType: param.entity,
-    existingIds: formValues[param.name] || [],
-    lockedFilters: effectiveFilters,    // new option (see Picker extension below)
-    onConfirm: ids => formValues[param.name] = [...formValues[param.name], ...ids],
+    existingIds: existing,
+    lockedFilters: effectiveFilters,        // new option (see Picker extension below)
+    multiSelect: param.multi,                // tells the picker whether to allow >1 selection
+    onConfirm: ids => {
+        if (param.multi) {
+            // Append, dedupe, preserve order
+            const seen = new Set(formValues[param.name] || []);
+            const next = [...(formValues[param.name] || [])];
+            for (const id of ids) {
+                if (!seen.has(id)) { seen.add(id); next.push(id); }
+            }
+            formValues[param.name] = next;
+        } else {
+            // Single-select: replace; store scalar (or null if cleared)
+            formValues[param.name] = ids.length > 0 ? ids[0] : null;
+        }
+    },
 });
 ```
+
+Note: `entityPicker` already enforces single-vs-multi via its own confirm button (today it always allows multi-select; a `multiSelect: false` mode that auto-confirms on click of the first item is a small additional change to `entityPicker.js`).
 
 **Validation** (client-side, before submit): required, min, max enforced the same way other params are. The existing `visibleParams` pruning at `pluginActionModal.js:77-87` automatically strips `entity_ref` fields hidden by `show_when` — no changes needed.
 
 ### Picker Extension (`src/components/picker/entityPicker.js` + `entityConfigs.js`)
 
-Two changes:
+Three changes:
 
-1. **`open()` accepts a new `lockedFilters` option** (separate from user-tunable `filters`). Locked filters are not exposed in the filter UI and are appended to the search URL via the entity config's `searchParams` builder. The searchParams signature becomes `(query, filters, lockedFilters, maxResults)`.
+1. **Make the picker DOM globally available.** Today `templates/partials/entityPicker.tpl` is included only from `templates/partials/blockEditor.tpl:920`, so on resource/group/note pages where the action modal lives, opening the `entityPicker` Alpine store would mutate state with no DOM to render against. Add `{% include "partials/entityPicker.tpl" %}` to the global base layout (`templates/layouts/base.tpl`) next to the existing `pluginActionModal.tpl` include, so any page that renders the action modal also renders the picker overlay. Verify after the change that there's exactly one picker DOM tree per page (no duplication when blockEditor is also present).
 
-   - `resource` config: extend `searchParams` to translate `lockedFilters.content_types` into the resource list endpoint's MIME filter param (the exact param name — `Mime` or similar — to be confirmed during implementation by inspecting `server/api_handlers/resource_handlers.go`).
-   - `group` config: translate `lockedFilters.category_ids` into repeated `categoryId` params.
+2. **`open()` accepts a new `lockedFilters` option** (separate from user-tunable `filters`). Locked filters are not exposed in the filter UI and are appended to the search URL via the entity config's `searchParams` builder. The `searchParams` signature becomes `(query, filters, lockedFilters, maxResults)`.
+
+   - `resource` config: translate `lockedFilters.content_types` (a `string[]`) into a repeated `ContentTypes` query param (see "Backend filter additions" below for the new server-side support — the existing scalar `ContentType` LIKE param can't express a multi-value allowlist).
+   - `group` config: translate `lockedFilters.category_ids` into repeated `categoryId` params (the endpoint already accepts one; widen to repeated).
    - `note` config (new): handles `lockedFilters.note_type_ids`.
 
-2. **New `note` entity config** in `entityConfigs.js`:
+3. **New `note` entity config** in `entityConfigs.js`:
    - `entityType: 'note'`, `searchEndpoint: '/v1/notes'`
    - Search by name; user-tunable `tags` filter (matching the resource config pattern)
    - No tabs (notes don't have a "this note's notes" relationship)
    - Card-style render
+
+### Backend filter additions
+
+Required so `lockedFilters.content_types` actually constrains the picker (today `ResourceSearchQuery.ContentType` is a single string compared with an escaped contains-LIKE in `models/database_scopes/resource_scope.go:106-107` — it cannot express the fal.ai action's multi-value image MIME allowlist):
+
+- **`ResourceSearchQuery`** (`models/query_models/resource_query.go:48`) gains a `ContentTypes []string` field for an exact-match `IN (?)` allowlist. Existing scalar `ContentType` (LIKE) remains, unchanged.
+- **`resource_scope.go`** gets a new branch alongside the existing scalar one:
+  ```go
+  if len(query.ContentTypes) > 0 {
+      db = db.Where("content_type IN ?", query.ContentTypes)
+  }
+  ```
+- **Resource list HTTP handler** (`server/api_handlers/resource_handlers.go`): parse repeated `ContentTypes` query params (e.g., `?ContentTypes=image/jpeg&ContentTypes=image/png`) into the new field. Confirm exact handler/binding plumbing during implementation; the existing scalar field uses `schema` struct-tag binding so the addition should be straightforward.
+- Equivalent additions for groups (`CategoryIDs []uint` on the search query if not already present) and notes (`NoteTypeIDs []uint` on the search query) so the filter logic in `ValidateActionEntityRefs` and the picker share the same backend mechanism.
+
+These additions are also useful outside this feature — bulk filtering by multiple content types is a common UX request — so they're not "feature-tax" code.
+
+### Frontend filter plumbing
+
+For the picker to inherit the action's `filters`, the action filters must reach the modal. Today `pluginActionModal.open()` (`pluginActionModal.js:14-44`) copies a fixed list of fields from the event detail and **omits `filters`**. Two of the three launchers already include filters (the two `.tpl` launchers spread `{{ action|json }}` via `Object.assign`), but `cardActionMenu.runAction()` (`cardActionMenu.js:6-21`) hand-picks fields and drops `filters` and `bulk_max`.
+
+Required changes:
+
+- **`pluginActionModal.open()`**: add `filters: detail.filters` to the copied action object. Without this, even launchers that send filters can't make them available to `entity_ref` rendering.
+- **`cardActionMenu.runAction()`**: include `filters: action.filters` (and, while we're touching it, `bulk_max: action.bulk_max`) in the dispatched `detail` object so card-launched actions get the same data as sidebar/bulk-launched ones.
+- The two `.tpl` launchers (`pluginActionsSidebar.tpl`, `pluginActionsBulk.tpl`) already pass filters via `{{ action|json }}` and need no changes.
 
 ### fal.ai Wiring (`plugins/fal-ai/plugin.lua`)
 
@@ -216,9 +278,12 @@ Update fal.ai's own `mah.doc` for the `edit` action with the new param and updat
 ## Testing
 
 - **Go unit tests** in `plugin_system/actions_test.go` and `action_executor_test.go`:
-  - `parseActionTable`: valid `entity_ref` with each entity type; invalid `entity` value; missing `entity`; `multi` parsing; `filters` override parsing.
-  - `ValidateActionParams`: `multi=false` rejects array; `multi=true` accepts empty array when `min=0`; min/max violations; required-when-empty; rejection of non-existent IDs; rejection of IDs that fail the filter.
-- **Go API test** in `server/api_tests/plugin_api_test.go`: POST `/v1/jobs/action/run` with `entity_ref` params, including content-type filter rejection, missing-entity rejection, and successful multi-resource flow.
+  - `parseActionTable`: valid `entity_ref` with each entity type; invalid `entity` value; missing `entity`; `multi` parsing; `filters` override parsing; `default = "both"` with `multi = false` rejected.
+  - `ValidateActionParams` (pure-structural arm): `multi=false` rejects array; `multi=true` accepts empty array when `min=0`; min/max violations; required-when-empty; non-positive ID rejected; non-numeric value rejected. (No DB hit.)
+  - `ValidateActionEntityRefs` (DB-backed): rejection of non-existent IDs; rejection of IDs that fail the inherited action filter; rejection of IDs that fail a per-param filter override; success path returns no errors. Backed by an in-memory test DB with seeded resources/notes/groups.
+- **Go API test** in `server/api_tests/plugin_api_test.go`: POST `/v1/jobs/action/run` with `entity_ref` params, including content-type filter rejection, missing-entity rejection, and successful multi-resource flow. Also assert that bulk fan-out (`entity_ids = [1,2,...,N]`) validates entity refs **once** (not N times) — verifiable by counting query log lines or by injecting a counting wrapper around the entity reader during the test.
+- **Backend filter unit tests** in `models/database_scopes` or equivalent: `ResourceSearchQuery.ContentTypes` produces the expected `IN (?)` SQL and matches only listed types; coexists with the existing scalar `ContentType` LIKE filter without conflict.
+- **Frontend filter-plumbing test** (Vitest or equivalent if frontend tests exist; otherwise covered by E2E): `cardActionMenu.runAction` dispatches `filters` and `bulk_max` in the event detail; `pluginActionModal.open()` reads `filters` from the detail and exposes it on `this.action`.
 - **E2E (Playwright)** in `e2e/tests/plugins/`:
   - Open AI Edit modal on an image resource with `model=flux2`, click "Add resources", pick two from picker, verify chips render and submit succeeds against a mocked fal.ai endpoint (or a fixture endpoint hosted by the test server). If mocking fal.ai is impractical, gate the test behind a `FAL_API_KEY` env var and skip in CI.
   - Verify `entity_ref` field is hidden when `model=clarity` (single-image upscaler).
@@ -237,9 +302,10 @@ Per CLAUDE.md, run the full Go unit suite, browser E2E in parallel with the exis
 
 ## Open Questions / Investigation During Implementation
 
-- Exact name of the resource list endpoint's MIME filter param (`Mime` vs `ContentType` vs other) — confirm by reading `server/api_handlers/resource_handlers.go` during implementation.
+- Exact `schema` struct-tag plumbing for the new repeated `ContentTypes` query param on the resource list handler — confirm during implementation by inspecting `server/api_handlers/resource_handlers.go` and the existing `Tags`/`Groups` repeated-field handling for the same handler.
 - Whether fal.ai HTTP can be mocked at the transport layer for E2E tests, or whether E2E for fal.ai-specific flows must be gated behind a real API key.
 - Whether the `entityPicker` chip render needs a thumbnail-loading helper or whether the existing entity config provides enough metadata in search results to render chips without an extra fetch per chip.
+- Whether `entityPicker.js` needs broader refactoring to support `multiSelect: false` (auto-confirm on first click) vs. just adding the option to the existing flow — confirm during implementation.
 
 ## Out of Scope
 
