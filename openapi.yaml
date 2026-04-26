@@ -1345,6 +1345,10 @@ components:
             properties:
                 ContentType:
                     type: string
+                ContentTypes:
+                    items:
+                        type: string
+                    type: array
                 CreatedAfter:
                     type: string
                 CreatedBefore:
@@ -5399,6 +5403,14 @@ paths:
                   name: ContentType
                   schema:
                     type: string
+                - explode: true
+                  in: query
+                  name: ContentTypes
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
                 - in: query
                   name: OwnerId
                   schema:
@@ -5741,6 +5753,14 @@ paths:
                   name: ContentType
                   schema:
                     type: string
+                - explode: true
+                  in: query
+                  name: ContentTypes
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
                 - in: query
                   name: OwnerId
                   schema:

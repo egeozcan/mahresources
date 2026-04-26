@@ -49,6 +49,7 @@ type ResourceSearchQuery struct {
 	Name               string
 	Description        string
 	ContentType        string
+	ContentTypes       []string
 	OwnerId            uint
 	ResourceCategoryId uint
 	Groups             []uint
