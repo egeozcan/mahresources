@@ -277,9 +277,9 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
 
         elseif model == "nanobanana2" then
             -- NanoBanana2ImageToImageInput.safety_tolerance is a string enum '1'..'6', not a number.
-            local image_urls = {data_uri}
-            for _, du in ipairs(extra_data_uris or {}) do
-                image_urls[#image_urls + 1] = du
+            local image_urls = extra_data_uris or {}
+            if #image_urls == 0 then
+                image_urls = {data_uri}
             end
             local payload = {
                 image_urls = image_urls,
@@ -289,7 +289,7 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
             apply_str(payload, "resolution", params.nanobanana2_resolution)
             apply_str(payload, "output_format", params.nanobanana2_output_format)
             apply_str(payload, "safety_tolerance", params.nanobanana2_safety_tolerance)
-            mah.log("info", "[fal.ai] build_request: nanobanana2 edit mode, aspect=" .. tostring(payload.aspect_ratio) .. ", res=" .. tostring(payload.resolution) .. ", safety=" .. tostring(payload.safety_tolerance))
+            mah.log("info", "[fal.ai] build_request: nanobanana2 edit mode, image_count=" .. #image_urls .. ", aspect=" .. tostring(payload.aspect_ratio) .. ", res=" .. tostring(payload.resolution) .. ", safety=" .. tostring(payload.safety_tolerance))
             return FAL_ENDPOINTS.nanobanana2, payload
 
         else
@@ -297,9 +297,9 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
             --   Flux2TurboEditImageInput  has guidance_scale (number) but NO safety_tolerance.
             --   Flux2ProImageEditInput    has safety_tolerance (string enum '1'..'5') but NO guidance_scale.
             local endpoint = FAL_ENDPOINTS[model] or FAL_ENDPOINTS.flux2
-            local image_urls = {data_uri}
-            for _, du in ipairs(extra_data_uris or {}) do
-                image_urls[#image_urls + 1] = du
+            local image_urls = extra_data_uris or {}
+            if #image_urls == 0 then
+                image_urls = {data_uri}
             end
             local payload = {
                 image_urls = image_urls,
@@ -314,7 +314,7 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
                 apply_str(payload, "image_size", params.flux2_image_size)
                 apply_str(payload, "output_format", params.flux2_output_format)
             end
-            mah.log("info", "[fal.ai] build_request: using endpoint=" .. endpoint .. ", image_size=" .. tostring(payload.image_size) .. ", output_format=" .. tostring(payload.output_format) .. ", safety=" .. tostring(payload.safety_tolerance) .. ", guidance=" .. tostring(payload.guidance_scale))
+            mah.log("info", "[fal.ai] build_request: using endpoint=" .. endpoint .. ", image_count=" .. #image_urls .. ", image_size=" .. tostring(payload.image_size) .. ", output_format=" .. tostring(payload.output_format) .. ", safety=" .. tostring(payload.safety_tolerance) .. ", guidance=" .. tostring(payload.guidance_scale))
             return endpoint, payload
         end
 
@@ -432,6 +432,7 @@ local function process_image(resource_id, action_id, params, api_key, job_id)
     local all_image_uris = {}
     local extras = params.extra_images
     if extras and #extras > 0 then
+        mah.log("info", "[fal.ai] process_image: loading " .. #extras .. " extra image(s)")
         for _, eid in ipairs(extras) do
             local du, _ = build_data_uri(eid)
             all_image_uris[#all_image_uris + 1] = du
