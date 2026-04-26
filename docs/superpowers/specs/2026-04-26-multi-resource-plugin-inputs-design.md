@@ -96,11 +96,14 @@ Validation splits along a clear axis to avoid mixing pure-structural and DB-back
 - Count vs `Min`/`Max` (treating `Max==0` as unlimited).
 - Required-when-empty.
 
-**DB-backed — new `(*PluginManager).ValidateActionEntityRefs(action, params) []ValidationError`.** Lives on `PluginManager` because the manager already holds the application context (which exposes resource/note/group readers via `mah.db.*`). For each `entity_ref` param present in `params`:
+**DB-backed — new `(*PluginManager).ValidateActionEntityRefs(action, params) []ValidationError`.** Lives on `PluginManager` because the manager already holds the application context (which exposes resource/note/group readers via `mah.db.*`). One batched query **per `entity_ref` param** (not one per entity type), because per-param filter overrides mean two resource params with different `Filters` can't share a single resource query without either over-rejecting or over-accepting:
 
-1. Resolve effective filter: per-param `Filters` if set, else inherit `action.Filters`.
-2. Batched existence + filter check using a single `query_*` call per entity type with `Ids` and the appropriate filter set (`ContentTypes` for resources — see "Backend filter additions" below; `CategoryIDs` for groups; `NoteTypeIDs` for notes).
-3. Compare returned IDs to the requested set; emit a `ValidationError` per missing or filter-rejected ID.
+1. Iterate `entity_ref` params present in `params`.
+2. For each, resolve effective filter: per-param `Filters` if set, else inherit `action.Filters`.
+3. Issue one `query_*` call for that param with `Ids = <param's IDs>` and the effective filter (`ContentTypes` for resources, `Categories` for groups, `NoteTypeIds` for notes — see "Backend filter additions" below).
+4. Compare returned IDs to the requested set; emit a `ValidationError` per missing or filter-rejected ID, scoped to that param's `Field` name.
+
+The N for this loop is the number of `entity_ref` params on the action, which is almost always 1 and realistically capped at a handful. An optimization to batch by `(entity, effectiveFilter)` tuple is possible but not worth the complexity for v1.
 
 **Where each runs (no duplication):**
 
@@ -134,7 +137,9 @@ show_when = { model = {"flux2", "flux2pro", "nanobanana2"} }
 
 Backward-compatible: scalar values use equality (existing path); array values use `includes`. Implementation is one branch in `pluginActionModal.js:51-57` (`isParamVisible`).
 
-`show_when` is purely client-side per the comment at `actions.go:13-16` ("plumbed verbatim to the frontend, which interprets it identically"). The server doesn't evaluate it — the frontend strips hidden params via `visibleParams` (`pluginActionModal.js:77-87`) and the server treats stripped params as absent (skipped by the `!exists` early-return in `ValidateActionParams`). No Go-side change is required for the array-value extension.
+`show_when` remains purely client-side per the comment at `actions.go:13-16`. The server doesn't evaluate it. The frontend strips hidden params via `visibleParams` (`pluginActionModal.js:77-87`); for non-required params, the server then skips them via the `!exists` early-return at `action_executor.go:79-82`.
+
+**Constraint: `required = true` cannot be combined with `show_when`.** The required check at `action_executor.go:71-77` runs *before* the absent-skip, so a stripped-because-hidden required param fails server validation as missing. `parseActionTable` enforces this: any param that declares both `required = true` and `show_when` is rejected at plugin load time with a clear error message. The fal.ai `extra_images` param uses `show_when` and is non-required, so it works under this constraint. Lifting the constraint would require teaching the server to evaluate `show_when` against the submitted form values — deferred until a real plugin needs it.
 
 ### Frontend Modal (`pluginActionModal.js` + `templates/partials/pluginActionModal.tpl`)
 
@@ -196,9 +201,9 @@ Three changes:
 
 2. **`open()` accepts a new `lockedFilters` option** (separate from user-tunable `filters`). Locked filters are not exposed in the filter UI and are appended to the search URL via the entity config's `searchParams` builder. The `searchParams` signature becomes `(query, filters, lockedFilters, maxResults)`.
 
-   - `resource` config: translate `lockedFilters.content_types` (a `string[]`) into a repeated `ContentTypes` query param (see "Backend filter additions" below for the new server-side support — the existing scalar `ContentType` LIKE param can't express a multi-value allowlist).
-   - `group` config: translate `lockedFilters.category_ids` into repeated `categoryId` params (the endpoint already accepts one; widen to repeated).
-   - `note` config (new): handles `lockedFilters.note_type_ids`.
+   - `resource` config: translate `lockedFilters.content_types` (`string[]`) into a repeated `ContentTypes` query param. The existing scalar `ContentType` (LIKE) param stays unused by the picker. See "Backend filter additions" below — the new server-side `ContentTypes` field is required because the existing scalar can't express a multi-value allowlist.
+   - `group` config: translate `lockedFilters.category_ids` (`uint[]`) into a repeated `Categories` query param. The `Categories []uint` field already exists on `GroupSearchQuery` (`models/query_models/group_query.go:31`) and is wired in `group_scope.go:174-175` with `IN ?` semantics — no backend change needed.
+   - `note` config (new): translate `lockedFilters.note_type_ids` (`uint[]`) into a repeated `NoteTypeIds` query param. Today `NoteSearchQuery` only has the scalar `NoteTypeId` (`models/query_models/note_query.go:38`); see "Backend filter additions" below for the plural addition.
 
 3. **New `note` entity config** in `entityConfigs.js`:
    - `entityType: 'note'`, `searchEndpoint: '/v1/notes'`
@@ -208,19 +213,31 @@ Three changes:
 
 ### Backend filter additions
 
-Required so `lockedFilters.content_types` actually constrains the picker (today `ResourceSearchQuery.ContentType` is a single string compared with an escaped contains-LIKE in `models/database_scopes/resource_scope.go:106-107` — it cannot express the fal.ai action's multi-value image MIME allowlist):
+Each entity-type filter that `ValidateActionEntityRefs` and the picker need has a different starting point in the existing query layer:
 
-- **`ResourceSearchQuery`** (`models/query_models/resource_query.go:48`) gains a `ContentTypes []string` field for an exact-match `IN (?)` allowlist. Existing scalar `ContentType` (LIKE) remains, unchanged.
-- **`resource_scope.go`** gets a new branch alongside the existing scalar one:
-  ```go
-  if len(query.ContentTypes) > 0 {
-      db = db.Where("content_type IN ?", query.ContentTypes)
-  }
-  ```
-- **Resource list HTTP handler** (`server/api_handlers/resource_handlers.go`): parse repeated `ContentTypes` query params (e.g., `?ContentTypes=image/jpeg&ContentTypes=image/png`) into the new field. Confirm exact handler/binding plumbing during implementation; the existing scalar field uses `schema` struct-tag binding so the addition should be straightforward.
-- Equivalent additions for groups (`CategoryIDs []uint` on the search query if not already present) and notes (`NoteTypeIDs []uint` on the search query) so the filter logic in `ValidateActionEntityRefs` and the picker share the same backend mechanism.
+- **Resources — needs new field.** `ResourceSearchQuery.ContentType` is a single string compared with an escaped contains-LIKE (`resource_scope.go:106-107`); it can't express a multi-value exact-match allowlist. Add:
+  - `ResourceSearchQuery.ContentTypes []string` (`models/query_models/resource_query.go:48`).
+  - New scope branch in `resource_scope.go` alongside the existing scalar one:
+    ```go
+    if len(query.ContentTypes) > 0 {
+        db = db.Where("content_type IN ?", query.ContentTypes)
+    }
+    ```
+  - Resource list HTTP handler (`server/api_handlers/resource_handlers.go`): bind repeated `ContentTypes` query params. The existing repeated fields (e.g., `Tags`, `Groups`) on the same handler are the reference for binding shape — confirm exact `gorilla/schema` glue during implementation.
 
-These additions are also useful outside this feature — bulk filtering by multiple content types is a common UX request — so they're not "feature-tax" code.
+- **Groups — already supported.** `GroupSearchQuery.Categories []uint` exists (`group_query.go:31`) and is wired in `group_scope.go:174-175` with `IN ?`. No new field, no scope change. The picker's `lockedFilters.category_ids` translates to a repeated `Categories` query param (using gorilla/schema's default repeated-field binding). `ValidateActionEntityRefs` populates `GroupSearchQuery.Categories` directly from the effective filter's `category_ids`.
+
+- **Notes — needs new field.** `NoteSearchQuery.NoteTypeId` (`note_query.go:38`) is scalar; multi-value is not expressible. Add:
+  - `NoteSearchQuery.NoteTypeIds []uint`.
+  - New scope branch in the corresponding note scope file:
+    ```go
+    if len(query.NoteTypeIds) > 0 {
+        db = db.Where("notes.note_type_id IN ?", query.NoteTypeIds)
+    }
+    ```
+  - Note list HTTP handler: bind repeated `NoteTypeIds` query params.
+
+These additions (resource `ContentTypes` and note `NoteTypeIds`) are useful beyond this feature — multi-value bulk filtering is a common UX request — so they're not feature-tax code. The naming matches the action-filter side of the equation: `ActionFilter.ContentTypes`, `ActionFilter.NoteTypeIDs` (preserving the existing `IDs` capitalization on the action side).
 
 ### Frontend filter plumbing
 
@@ -278,9 +295,9 @@ Update fal.ai's own `mah.doc` for the `edit` action with the new param and updat
 ## Testing
 
 - **Go unit tests** in `plugin_system/actions_test.go` and `action_executor_test.go`:
-  - `parseActionTable`: valid `entity_ref` with each entity type; invalid `entity` value; missing `entity`; `multi` parsing; `filters` override parsing; `default = "both"` with `multi = false` rejected.
+  - `parseActionTable`: valid `entity_ref` with each entity type; invalid `entity` value; missing `entity`; `multi` parsing; `filters` override parsing; `default = "both"` with `multi = false` rejected; `required = true` combined with `show_when` rejected (the constraint from the show_when section).
   - `ValidateActionParams` (pure-structural arm): `multi=false` rejects array; `multi=true` accepts empty array when `min=0`; min/max violations; required-when-empty; non-positive ID rejected; non-numeric value rejected. (No DB hit.)
-  - `ValidateActionEntityRefs` (DB-backed): rejection of non-existent IDs; rejection of IDs that fail the inherited action filter; rejection of IDs that fail a per-param filter override; success path returns no errors. Backed by an in-memory test DB with seeded resources/notes/groups.
+  - `ValidateActionEntityRefs` (DB-backed): rejection of non-existent IDs; rejection of IDs that fail the inherited action filter; rejection of IDs that fail a per-param filter override; **two `entity_ref` params on the same action with different per-param filters validate independently and each enforces its own filter** (regression for the per-param batching decision); success path returns no errors. Backed by an in-memory test DB with seeded resources/notes/groups.
 - **Go API test** in `server/api_tests/plugin_api_test.go`: POST `/v1/jobs/action/run` with `entity_ref` params, including content-type filter rejection, missing-entity rejection, and successful multi-resource flow. Also assert that bulk fan-out (`entity_ids = [1,2,...,N]`) validates entity refs **once** (not N times) — verifiable by counting query log lines or by injecting a counting wrapper around the entity reader during the test.
 - **Backend filter unit tests** in `models/database_scopes` or equivalent: `ResourceSearchQuery.ContentTypes` produces the expected `IN (?)` SQL and matches only listed types; coexists with the existing scalar `ContentType` LIKE filter without conflict.
 - **Frontend filter-plumbing test** (Vitest or equivalent if frontend tests exist; otherwise covered by E2E): `cardActionMenu.runAction` dispatches `filters` and `bulk_max` in the event detail; `pluginActionModal.open()` reads `filters` from the detail and exposes it on `this.action`.
