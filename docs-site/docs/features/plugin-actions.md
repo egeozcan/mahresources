@@ -64,7 +64,7 @@ Parameters define the input fields shown to the user before the action runs.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | Yes | Parameter key passed to the handler |
-| `type` | string | Yes | `"text"`, `"textarea"`, `"number"`, `"select"`, `"boolean"`, `"hidden"` |
+| `type` | string | Yes | `"text"`, `"textarea"`, `"number"`, `"select"`, `"boolean"`, `"hidden"`, `"info"`, `"entity_ref"` |
 | `label` | string | Yes | Display label |
 | `required` | boolean | No | Whether the field must be filled |
 | `default` | any | No | Default value |
@@ -72,6 +72,57 @@ Parameters define the input fields shown to the user before the action runs.
 | `min` | number | No | Minimum value for `"number"` type |
 | `max` | number | No | Maximum value for `"number"` type |
 | `step` | number | No | Step increment for `"number"` type |
+
+## Entity Reference Parameters
+
+The `entity_ref` param type lets a plugin action accept references to one or more resources, notes, or groups as additional input. Use cases: an image-edit action that takes multiple source images, a "merge two notes" action, a "tag groups by another group's tags" action.
+
+### Schema
+
+```lua
+{
+    name        = "extra_images",
+    type        = "entity_ref",
+    label       = "Additional Images",
+    entity      = "resource",                                    -- "resource" | "note" | "group"
+    multi       = true,                                          -- false → single ID; true → array of IDs
+    required    = false,
+    min         = 0,                                             -- multi only; default 0
+    max         = 9,                                             -- multi only; nil/0 = unlimited
+    default     = "trigger",                                     -- "trigger" | "selection" | "both" | ""
+    filters     = { content_types = {"image/jpeg", "image/png"} }, -- optional; inherits action.filters when omitted
+    show_when   = { model = {"flux2", "nanobanana2"} },         -- standard show_when
+    description = "Reference images sent alongside the source.",
+}
+```
+
+### Behavior
+
+- The picker UI opens layered over the action modal. It applies the effective filter (per-param `filters` if set, else inherits `action.filters`).
+- The handler receives the IDs as `ctx.params.<name>` — a Lua number for `multi=false`, a Lua table of numbers for `multi=true`. Server-side validation guarantees every ID exists and matches the filter at request time.
+- `default` controls what the picker is prefilled with:
+  - `"trigger"` (default when omitted) — the entity the action was launched from.
+  - `"selection"` — IDs from the current bulk-selection store.
+  - `"both"` — union of trigger and selection (requires `multi=true`).
+  - `""` — empty; user picks every entry.
+- Trigger and selection are silently ignored if `param.entity` does not match the action's launch entity type. (Example: an action declared `entity = "resource"` with an `entity_ref entity = "group" default = "trigger"` will open with an empty picker on resource pages, since the trigger resource ID is not a valid group ID.)
+
+### Constraints
+
+- `required = true` cannot be combined with `show_when` (any param type, not just `entity_ref`). The server validates required fields before show_when stripping; a hidden required field would fail validation as missing. Workaround: leave `required` false and validate in the handler.
+- `default = "both"` requires `multi = true`.
+- `entity` must be one of `"resource"`, `"note"`, `"group"`. Other values are rejected at plugin load time.
+
+## `show_when` Array Values
+
+`show_when` accepts arrays as any-of equality:
+
+```lua
+show_when = { model = {"flux2", "flux2pro", "nanobanana2"} }
+-- Visible when formValues.model is any of the listed values.
+```
+
+Scalar values continue to use strict equality (existing behavior, unchanged).
 
 ## Action Filters
 
