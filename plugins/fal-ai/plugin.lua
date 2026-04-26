@@ -108,6 +108,20 @@ local function auto_aspect_ratio_for(resource_id)
     return pick_aspect_ratio(info.width, info.height)
 end
 
+-- Build a base64 data URI for a resource. Returns (data_uri, mime_type) or
+-- raises an error via `error()` if the resource can't be loaded or is in an
+-- unsupported format.
+local function build_data_uri(resource_id)
+    local base64_data, mime_type = mah.db.get_resource_data(resource_id)
+    if not base64_data then
+        error("Failed to read resource file data for #" .. tostring(resource_id))
+    end
+    if not SUPPORTED_TYPES[mime_type] then
+        error("Unsupported image format: " .. mime_type .. " for resource #" .. tostring(resource_id))
+    end
+    return "data:" .. mime_type .. ";base64," .. base64_data, mime_type
+end
+
 -- Apply a numeric param to payload only when it parses as a number.
 local function apply_num(payload, key, val)
     local n = tonumber(val)
@@ -394,28 +408,14 @@ end
 local function process_image(resource_id, action_id, params, api_key, job_id)
     mah.log("info", "[fal.ai] process_image: resource_id=" .. tostring(resource_id) .. ", action=" .. action_id)
 
-    -- Get resource data
+    -- Build data URI (validates format; raises on failure so pcall in make_handler catches it)
     mah.log("info", "[fal.ai] process_image: loading resource data for resource #" .. tostring(resource_id))
-    local base64_data, mime_type = mah.db.get_resource_data(resource_id)
-    if not base64_data then
-        mah.log("error", "[fal.ai] process_image: failed to read resource file data for resource #" .. tostring(resource_id))
-        error("Failed to read resource file data")
-    end
-    mah.log("info", "[fal.ai] process_image: resource data loaded, mime_type=" .. tostring(mime_type) .. ", base64_length=" .. #base64_data)
-
-    -- Validate supported format
-    if not SUPPORTED_TYPES[mime_type] then
-        mah.log("error", "[fal.ai] process_image: unsupported format " .. tostring(mime_type) .. " for resource #" .. tostring(resource_id))
-        error("Unsupported image format: " .. mime_type .. ". Only raster images (PNG, JPEG, WebP) are supported.")
-    end
+    local data_uri, mime_type = build_data_uri(resource_id)
+    mah.log("info", "[fal.ai] process_image: data URI built, total size=" .. #data_uri .. " bytes, mime=" .. mime_type)
 
     if job_id then
         mah.job_progress(job_id, 10, "Preparing image...")
     end
-
-    -- Build data URI
-    local data_uri = "data:" .. mime_type .. ";base64," .. base64_data
-    mah.log("info", "[fal.ai] process_image: data URI built, total size=" .. #data_uri .. " bytes")
 
     -- Build API request
     local endpoint, payload = build_request(action_id, data_uri, params, resource_id)
