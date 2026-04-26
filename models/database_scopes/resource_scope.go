@@ -109,7 +109,7 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 		}
 
 		if len(query.ContentTypes) > 0 {
-			dbQuery = dbQuery.Where("content_type IN ?", query.ContentTypes)
+			dbQuery = dbQuery.Where("resources.content_type IN ?", query.ContentTypes)
 		}
 
 		if query.OriginalName != "" {
