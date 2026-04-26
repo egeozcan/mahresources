@@ -268,4 +268,43 @@ func TestActionRun_BulkFanoutValidatesEntityRefsOnce(t *testing.T) {
 		t.Errorf("expected 1 entity_ref validation call across bulk fan-out, got %d (status=%d body=%s)",
 			counter.calls, rr.Code, rr.Body.String())
 	}
+	if rr.Code != http.StatusOK && rr.Code != http.StatusAccepted {
+		t.Errorf("expected 200 or 202 after successful validation, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestActionRun_ReaderErrorReturns500(t *testing.T) {
+	tc := SetupTestEnv(t)
+	_ = tc // SetupTestEnv is required for DB init; runner bypasses the main router.
+	pluginDir := t.TempDir()
+	pm := enableTestPluginWithEntityRef(t, pluginDir)
+
+	runner := &testPluginRunner{
+		pm:     pm,
+		reader: &failingReader{err: fmt.Errorf("simulated db down")},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/jobs/action/run", api_handlers.GetActionRunHandler(runner))
+
+	body := `{"plugin":"ref-plugin","action":"act","entity_ids":[1],"params":{"extras":[42]}}`
+	req, _ := http.NewRequest("POST", "/v1/jobs/action/run", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on reader error, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+type failingReader struct{ err error }
+
+func (f *failingReader) ResourcesMatching(ids []uint, filter plugin_system.ActionFilter) ([]uint, error) {
+	return nil, f.err
+}
+func (f *failingReader) NotesMatching(ids []uint, filter plugin_system.ActionFilter) ([]uint, error) {
+	return nil, f.err
+}
+func (f *failingReader) GroupsMatching(ids []uint, filter plugin_system.ActionFilter) ([]uint, error) {
+	return nil, f.err
 }
