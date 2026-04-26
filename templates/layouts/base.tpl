@@ -92,6 +92,7 @@
         {% include "/partials/pasteUpload.tpl" %}
         {% include "/partials/downloadCockpit.tpl" %}
         {% include "/partials/pluginActionModal.tpl" %}
+        {% include "partials/entityPicker.tpl" %}
         {% plugin_slot "scripts" %}
     </div>
 </body>
