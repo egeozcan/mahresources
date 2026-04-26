@@ -54,13 +54,17 @@ export function pluginActionModal() {
             const compatible = param.entity === action.entityType;
             let ids = [];
             if ((def === 'trigger' || def === 'both') && compatible && action.entityIds) {
+                // For single-entity placement entityIds has one element; for bulk it has all
+                // selected IDs. Spreading the full array is intentional — the caller limits
+                // to ids[0] for multi=false params below.
                 ids.push(...action.entityIds.map(Number));
             }
             if ((def === 'selection' || def === 'both') && compatible) {
                 const sel = window.Alpine?.store('bulkSelection');
                 if (sel && sel.selectedIds) {
                     for (const id of sel.selectedIds) {
-                        if (!ids.includes(id)) ids.push(id);
+                        const numId = Number(id);
+                        if (!ids.includes(numId)) ids.push(numId);
                     }
                 }
             }
