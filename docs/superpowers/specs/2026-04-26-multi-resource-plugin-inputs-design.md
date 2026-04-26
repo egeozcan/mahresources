@@ -96,7 +96,9 @@ Validation splits along a clear axis to avoid mixing pure-structural and DB-back
 - Count vs `Min`/`Max` (treating `Max==0` as unlimited).
 - Required-when-empty.
 
-**DB-backed — new free function `plugin_system.ValidateActionEntityRefs(reader EntityRefReader, action, params) []ValidationError`.** Pure function in the `plugin_system` package, independent of `PluginManager` (which today has no application-context coupling — it only holds Lua-facing data, HTTP client state, and action job state per `manager.go:80-122`). The function takes an injected `EntityRefReader` interface; the HTTP handler is responsible for constructing and passing it.
+**DB-backed — new free function `plugin_system.ValidateActionEntityRefs(reader EntityRefReader, action, params) ([]ValidationError, error)`.** Pure function in the `plugin_system` package, independent of `PluginManager` (which today has no application-context coupling — it only holds Lua-facing data, HTTP client state, and action job state per `manager.go:80-122`). The function takes an injected `EntityRefReader` interface; the HTTP handler is responsible for constructing and passing it.
+
+**Two-channel return shape.** The function distinguishes user-correctable validation problems (missing or filter-rejected IDs → `[]ValidationError` → HTTP 400) from infrastructure failures (DB unreachable, reader returns an error → `error` → HTTP 500). When the `error` is non-nil, the `[]ValidationError` slice is meaningless and the handler must not surface it. When `error` is nil, the slice is the complete list of per-ID problems (possibly empty).
 
 ```go
 // In plugin_system, alongside ActionFilter / ActionParam.
@@ -142,8 +144,10 @@ The runner is implemented by the application context itself (or whatever struct 
 
 1. Iterate `entity_ref` params present in `params`.
 2. For each, resolve effective filter: per-param `Filters` if set, else inherit `action.Filters`.
-3. Call the appropriate `EntityRefReader` method with the param's IDs and effective filter.
+3. Call the appropriate `EntityRefReader` method with the param's IDs and effective filter. **If the reader returns a non-nil `error`, abort the loop and return `(nil, fmt.Errorf("validating entity refs for param %q: %w", p.Name, err))` immediately** — DB/infrastructure failures are not user-correctable and must not be presented as validation errors.
 4. Compute the set difference (requested − returned); emit a `ValidationError` per missing or filter-rejected ID, scoped to that param's `Field` name.
+
+After the loop completes without reader errors, return `(errs, nil)` where `errs` may be empty.
 
 **Why bypass the Lua-facing adapter.** Even if `PluginManager` did hold the context, `application_context/plugin_db_adapter.go`'s `QueryNotes`/`QueryResources`/`QueryGroups` would be wrong:
 
@@ -159,7 +163,12 @@ The N of the outer per-param loop is the number of `entity_ref` params on the ac
 
 **Where each runs (no duplication):**
 
-- `GetActionRunHandler` (`server/api_handlers/action_handlers.go:77`) calls `ValidateActionParams` first, then `ValidateActionEntityRefs(ctx.ActionEntityRefReader(), action, params)` (only if structural validation passed). Both responses serialize via the existing `errors` JSON shape at line 119-124. This is the single point of DB validation.
+- `GetActionRunHandler` (`server/api_handlers/action_handlers.go:77`) calls `ValidateActionParams` first; if it returns no errors, then calls `ValidateActionEntityRefs(ctx.ActionEntityRefReader(), action, params)`. The two-channel return splits cleanly:
+  - non-nil `error` → `http_utils.HandleError(err, w, r, http.StatusInternalServerError)`. The validation IDs slice is not surfaced.
+  - nil `error` and non-empty `[]ValidationError` → existing 400 path with the `errors` JSON shape at `action_handlers.go:119-124`.
+  - nil `error` and empty slice → proceed to dispatch (sync or async).
+
+  This is the single point of DB validation.
 - `RunAction` and `RunActionAsync` (the engine entrypoints called from the handler and from internal callers) keep their existing `ValidateActionParams` call as defense-in-depth for structural correctness, but **do not** call `ValidateActionEntityRefs` — they trust their inputs. This avoids per-job DB hits for async fan-out (one bulk `entity_ids=[1,2,...,50]` request validates entity refs once at HTTP entry, not 50 times).
 - The `PluginActionRunner` interface in `action_handlers.go:15-17` gains an `ActionEntityRefReader()` method (see "DB-backed" below for the wiring).
 
@@ -365,7 +374,8 @@ Update fal.ai's own `mah.doc` for the `edit` action with the new param and updat
 - **Go unit tests** in `plugin_system/actions_test.go` and `action_executor_test.go`:
   - `parseActionTable`: valid `entity_ref` with each entity type; invalid `entity` value; missing `entity`; `multi` parsing; `filters` override parsing; `default = "both"` with `multi = false` rejected; `required = true` combined with `show_when` rejected (the constraint from the show_when section).
   - `ValidateActionParams` (pure-structural arm): `multi=false` rejects array; `multi=true` accepts empty array when `min=0`; min/max violations; required-when-empty; non-positive ID rejected; non-numeric value rejected. (No DB hit.)
-  - `ValidateActionEntityRefs` (DB-backed): tested with a fake `EntityRefReader` (returns a configurable subset of requested IDs) — rejection of non-existent IDs; rejection of IDs that fail the inherited action filter; rejection of IDs that fail a per-param filter override; **two `entity_ref` params on the same action with different per-param filters validate independently and each enforces its own filter** (regression for the per-param batching decision); success path returns no errors. The fake reader exercises the dependency-injection boundary; an integration test in `application_context` separately covers the real `actionEntityRefReader` against a seeded test DB (chunking, content-type filter, category filter, note-type filter).
+  - `ValidateActionEntityRefs` (DB-backed): tested with a fake `EntityRefReader` (returns a configurable subset of requested IDs) — rejection of non-existent IDs; rejection of IDs that fail the inherited action filter; rejection of IDs that fail a per-param filter override; **two `entity_ref` params on the same action with different per-param filters validate independently and each enforces its own filter** (regression for the per-param batching decision); success path returns `(nil, nil)`-equivalent (empty slice + nil error); **reader-returns-error path returns `(nil, err)` and the validation slice is not populated** (regression for the two-channel return shape — first reader error short-circuits the loop). The fake reader exercises the dependency-injection boundary; an integration test in `application_context` separately covers the real `actionEntityRefReader` against a seeded test DB (chunking, content-type filter, category filter, note-type filter).
+  - `GetActionRunHandler`: reader-error path returns HTTP 500 (not 400 with a `errors` body); validation-error path returns HTTP 400 with the `errors` body; success path proceeds to dispatch.
 - **Go API test** in `server/api_tests/plugin_api_test.go`: POST `/v1/jobs/action/run` with `entity_ref` params, including content-type filter rejection, missing-entity rejection, and successful multi-resource flow. Also assert that bulk fan-out (`entity_ids = [1,2,...,N]`) validates entity refs **once** (not N times) — verifiable by counting query log lines or by injecting a counting wrapper around the entity reader during the test.
 - **Backend filter unit tests** in `models/database_scopes` or equivalent: `ResourceSearchQuery.ContentTypes` produces the expected `IN (?)` SQL and matches only listed types; coexists with the existing scalar `ContentType` LIKE filter without conflict.
 - **Frontend filter-plumbing test** (Vitest or equivalent if frontend tests exist; otherwise covered by E2E): `cardActionMenu.runAction` dispatches `filters` and `bulk_max` in the event detail; `pluginActionModal.open()` reads `filters` from the detail and exposes it on `this.action`.
