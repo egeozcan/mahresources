@@ -14,36 +14,18 @@ import (
 	"mahresources/models"
 )
 
-// createNoteType inserts a NoteType with the given name directly into the test
-// database and returns the created record (with its auto-assigned ID).
-func createNoteType(t *testing.T, tc *TestContext, name string) *models.NoteType {
-	t.Helper()
-	nt := &models.NoteType{Name: name}
-	require.NoError(t, tc.DB.Create(nt).Error)
-	return nt
-}
-
-// createNoteWithType inserts a Note with the given name and the supplied
-// NoteTypeId directly into the test database.
-func createNoteWithType(t *testing.T, tc *TestContext, name string, noteTypeId uint) *models.Note {
-	t.Helper()
-	n := &models.Note{Name: name, NoteTypeId: &noteTypeId}
-	require.NoError(t, tc.DB.Create(n).Error)
-	return n
-}
-
 // TestNoteList_FilterByNoteTypeIds verifies that repeated NoteTypeIds query
 // params are bound by gorilla/schema and passed through to the database IN-list
 // filter, returning only notes whose note_type_id is in the requested set.
 func TestNoteList_FilterByNoteTypeIds(t *testing.T) {
 	tc := SetupTestEnv(t)
 
-	nt1 := createNoteType(t, tc, "Type 1")
-	nt2 := createNoteType(t, tc, "Type 2")
-	nt3 := createNoteType(t, tc, "Type 3")
-	createNoteWithType(t, tc, "n1", nt1.ID)
-	createNoteWithType(t, tc, "n2", nt2.ID)
-	createNoteWithType(t, tc, "n3", nt3.ID)
+	nt1 := tc.CreateNoteType(t, "Type 1")
+	nt2 := tc.CreateNoteType(t, "Type 2")
+	nt3 := tc.CreateNoteType(t, "Type 3")
+	tc.CreateNoteWithType(t, "n1", nt1.ID)
+	tc.CreateNoteWithType(t, "n2", nt2.ID)
+	tc.CreateNoteWithType(t, "n3", nt3.ID)
 
 	url := fmt.Sprintf("/v1/notes?NoteTypeIds=%d&NoteTypeIds=%d", nt1.ID, nt2.ID)
 	req, err := http.NewRequest("GET", url, nil)

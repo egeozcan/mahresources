@@ -190,6 +190,40 @@ func (tc *TestContext) CreateDummyBlock(noteID uint, blockType, content, positio
 	return block
 }
 
+// CreateResourceWithType inserts a Resource with the given name and content type
+// directly into the test database. It is intentionally minimal — no file bytes
+// are stored — because the content-type filter operates purely on the DB column.
+func (tc *TestContext) CreateResourceWithType(t *testing.T, name, contentType string) *models.Resource {
+	t.Helper()
+	r := &models.Resource{Name: name, ContentType: contentType}
+	if err := tc.DB.Create(r).Error; err != nil {
+		t.Fatalf("CreateResourceWithType: %v", err)
+	}
+	return r
+}
+
+// CreateNoteType inserts a NoteType with the given name directly into the test
+// database and returns the created record (with its auto-assigned ID).
+func (tc *TestContext) CreateNoteType(t *testing.T, name string) *models.NoteType {
+	t.Helper()
+	nt := &models.NoteType{Name: name}
+	if err := tc.DB.Create(nt).Error; err != nil {
+		t.Fatalf("CreateNoteType: %v", err)
+	}
+	return nt
+}
+
+// CreateNoteWithType inserts a Note with the given name and the supplied
+// NoteTypeId directly into the test database.
+func (tc *TestContext) CreateNoteWithType(t *testing.T, name string, noteTypeId uint) *models.Note {
+	t.Helper()
+	n := &models.Note{Name: name, NoteTypeId: &noteTypeId}
+	if err := tc.DB.Create(n).Error; err != nil {
+		t.Fatalf("CreateNoteWithType: %v", err)
+	}
+	return n
+}
+
 // requireJsonPatch skips the test if SQLite json_patch is not available (needs json1 build tag).
 func requireJsonPatch(t *testing.T, db *gorm.DB) {
 	t.Helper()

@@ -13,25 +13,15 @@ import (
 	"mahresources/models"
 )
 
-// createResourceWithType inserts a Resource with the given name and content type
-// directly into the test database. It is intentionally minimal — no file bytes
-// are stored — because the content-type filter operates purely on the DB column.
-func createResourceWithType(t *testing.T, tc *TestContext, name, contentType string) *models.Resource {
-	t.Helper()
-	r := &models.Resource{Name: name, ContentType: contentType}
-	require.NoError(t, tc.DB.Create(r).Error)
-	return r
-}
-
 // TestResourceList_FilterByContentTypes verifies that repeated ContentTypes
 // query params are bound and passed through to the database filter, returning
 // only resources whose content_type is in the requested set.
 func TestResourceList_FilterByContentTypes(t *testing.T) {
 	tc := SetupTestEnv(t)
 
-	createResourceWithType(t, tc, "a.png", "image/png")
-	createResourceWithType(t, tc, "b.jpg", "image/jpeg")
-	createResourceWithType(t, tc, "c.pdf", "application/pdf")
+	tc.CreateResourceWithType(t, "a.png", "image/png")
+	tc.CreateResourceWithType(t, "b.jpg", "image/jpeg")
+	tc.CreateResourceWithType(t, "c.pdf", "application/pdf")
 
 	req, err := http.NewRequest("GET", "/v1/resources?ContentTypes=image%2Fpng&ContentTypes=image%2Fjpeg", nil)
 	require.NoError(t, err)
