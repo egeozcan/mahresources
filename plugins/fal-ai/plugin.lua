@@ -20,6 +20,8 @@ local FAL_ENDPOINTS = {
     bria_creative = "bria/upscale/creative",
     topaz = "fal-ai/topaz/upscale/image",
     restore = "fal-ai/image-apps-v2/photo-restoration",
+    codeformer = "fal-ai/codeformer",
+    swin2sr = "fal-ai/swin2sr",
     flux2 = "fal-ai/flux-2/turbo/edit",
     flux2pro = "fal-ai/flux-2-pro/edit",
     flux1dev = "fal-ai/flux/dev/image-to-image",
@@ -67,6 +69,45 @@ local function apply_str(payload, key, val)
     if val ~= nil and val ~= "" then payload[key] = val end
 end
 
+-- Aspect ratio enum supported by image-apps-v2/photo-restoration. The model
+-- always reshapes its output to one of these — `enhance_resolution=false`
+-- does NOT preserve the source ratio (verified empirically: a 512×512 source
+-- came back as 4096×3072 even with enhance_resolution=false). To keep the
+-- restoration from changing aspect ratio, we always send the closest enum.
+local ASPECT_ENUMS = {
+    {ratio = "1:1",  value = 1.0},
+    {ratio = "16:9", value = 16 / 9},
+    {ratio = "9:16", value = 9 / 16},
+    {ratio = "4:3",  value = 4 / 3},
+    {ratio = "3:4",  value = 3 / 4},
+}
+
+-- Pick the aspect_ratio enum whose decimal ratio is closest to width/height.
+-- Returns nil if dimensions are missing/invalid (caller should then omit the
+-- aspect_ratio param and let the model use its own default).
+local function pick_aspect_ratio(width, height)
+    local w = tonumber(width)
+    local h = tonumber(height)
+    if not w or not h or w <= 0 or h <= 0 then return nil end
+    local source = w / h
+    local best, best_diff = nil, math.huge
+    for _, e in ipairs(ASPECT_ENUMS) do
+        local d = math.abs(source - e.value)
+        if d < best_diff then
+            best_diff = d
+            best = e.ratio
+        end
+    end
+    return best
+end
+
+-- Look up a resource's dimensions and return the closest aspect_ratio enum.
+local function auto_aspect_ratio_for(resource_id)
+    local info = mah.db.get_resource(resource_id)
+    if not info then return nil end
+    return pick_aspect_ratio(info.width, info.height)
+end
+
 -- Apply a numeric param to payload only when it parses as a number.
 local function apply_num(payload, key, val)
     local n = tonumber(val)
@@ -78,8 +119,10 @@ local function apply_bool(payload, key, val)
     if val ~= nil then payload[key] = (val == "true" or val == true) end
 end
 
--- Build API request payload based on action and options
-local function build_request(action_id, data_uri, params)
+-- Build API request payload based on action and options.
+-- resource_id is used by actions that need to look up source-image properties
+-- (e.g. restore auto-detects the aspect_ratio from the source's dimensions).
+local function build_request(action_id, data_uri, params, resource_id)
     if action_id == "colorize" then
         mah.log("info", "[fal.ai] build_request: action=colorize, endpoint=" .. FAL_ENDPOINTS.colorize)
         return FAL_ENDPOINTS.colorize, {image_url = data_uri}
@@ -149,6 +192,35 @@ local function build_request(action_id, data_uri, params)
         end
 
     elseif action_id == "restore" then
+        local model = params.model or "photo_restoration"
+        mah.log("info", "[fal.ai] build_request: action=restore, model=" .. model)
+
+        if model == "codeformer" then
+            -- Face-focused restoration. Output dims = input × upscale_factor;
+            -- aspect ratio is preserved by the model (no width/height/aspect
+            -- params in the schema).
+            local payload = {image_url = data_uri}
+            apply_num(payload, "fidelity", params.codeformer_fidelity)
+            apply_num(payload, "upscale_factor", params.codeformer_upscale_factor)
+            apply_bool(payload, "face_upscale", params.codeformer_face_upscale)
+            apply_bool(payload, "aligned", params.codeformer_aligned)
+            apply_bool(payload, "only_center_face", params.codeformer_only_center_face)
+            mah.log("info", "[fal.ai] build_request: codeformer fidelity=" .. tostring(payload.fidelity) .. ", upscale_factor=" .. tostring(payload.upscale_factor) .. ", face_upscale=" .. tostring(payload.face_upscale))
+            return FAL_ENDPOINTS.codeformer, payload
+
+        elseif model == "swin2sr" then
+            -- Generic super-resolution; preserves aspect ratio. The `real_sr`
+            -- task is trained on real-world degraded photos and is the closest
+            -- equivalent to "restore" for non-portrait sources.
+            local payload = {image_url = data_uri}
+            apply_str(payload, "task", params.swin2sr_task)
+            mah.log("info", "[fal.ai] build_request: swin2sr task=" .. tostring(payload.task))
+            return FAL_ENDPOINTS.swin2sr, payload
+        end
+
+        -- photo_restoration (image-apps-v2): default. Always 4K-reshapes; we
+        -- compensate by auto-picking the aspect_ratio enum closest to the
+        -- source's actual dimensions when the user hasn't overridden.
         local payload = {
             image_url = data_uri,
             enable_safety_checker = false,
@@ -156,11 +228,16 @@ local function build_request(action_id, data_uri, params)
         apply_bool(payload, "fix_colors", params.fix_colors)
         apply_bool(payload, "remove_scratches", params.remove_scratches)
         apply_bool(payload, "enhance_resolution", params.enhance_resolution)
-        -- image-apps-v2 expects AspectRatio as an object {ratio = "4:3"}, not a bare string.
-        if params.aspect_ratio ~= nil and params.aspect_ratio ~= "" then
-            payload.aspect_ratio = { ratio = params.aspect_ratio }
+        local ratio = params.aspect_ratio
+        local resolved_via = "user"
+        if ratio == nil or ratio == "" or ratio == "auto" then
+            ratio = resource_id and auto_aspect_ratio_for(resource_id) or nil
+            resolved_via = "auto"
         end
-        mah.log("info", "[fal.ai] build_request: action=restore, fix_colors=" .. tostring(payload.fix_colors) .. ", remove_scratches=" .. tostring(payload.remove_scratches) .. ", enhance_resolution=" .. tostring(payload.enhance_resolution) .. ", aspect_ratio=" .. tostring(params.aspect_ratio))
+        if ratio ~= nil and ratio ~= "" then
+            payload.aspect_ratio = { ratio = ratio }
+        end
+        mah.log("info", "[fal.ai] build_request: photo_restoration fix_colors=" .. tostring(payload.fix_colors) .. ", remove_scratches=" .. tostring(payload.remove_scratches) .. ", enhance_resolution=" .. tostring(payload.enhance_resolution) .. ", aspect_ratio=" .. tostring(ratio) .. " (" .. resolved_via .. ")")
         return FAL_ENDPOINTS.restore, payload
 
     elseif action_id == "edit" then
@@ -341,7 +418,7 @@ local function process_image(resource_id, action_id, params, api_key, job_id)
     mah.log("info", "[fal.ai] process_image: data URI built, total size=" .. #data_uri .. " bytes")
 
     -- Build API request
-    local endpoint, payload = build_request(action_id, data_uri, params)
+    local endpoint, payload = build_request(action_id, data_uri, params, resource_id)
     if not endpoint then
         mah.log("error", "[fal.ai] process_image: unknown action " .. action_id)
         error("Unknown action: " .. action_id)
@@ -693,11 +770,63 @@ function init()
         async = true,
         filters = { content_types = IMAGE_CONTENT_TYPES },
         params = {
-            {name = "fix_colors", type = "boolean", label = "Fix Colors", default = true},
-            {name = "remove_scratches", type = "boolean", label = "Remove Scratches", default = true},
-            {name = "enhance_resolution", type = "boolean", label = "Enhance Resolution", default = true},
-            {name = "aspect_ratio", type = "select", label = "4K Output Aspect Ratio",
-                default = "4:3", options = {"1:1", "16:9", "9:16", "4:3", "3:4"}},
+            {name = "model", type = "select", label = "Model",
+                default = "photo_restoration",
+                options = {"photo_restoration", "codeformer", "swin2sr"}},
+
+            -- Per-model strengths/weaknesses, gated by show_when so only the
+            -- selected model's note appears.
+            {name = "model_info_photo_restoration", type = "info",
+                label = "Photo Restoration — best for combined fixes",
+                description = "Strengths: only model here that explicitly removes scratches and fixes color fading in one pass. Best for a generic 'old damaged photo' input.\n\nWeaknesses: always upscales to 4K and reshapes to one of {1:1, 16:9, 9:16, 4:3, 3:4}. Sources whose ratio doesn't fall on those five (e.g. 3:2, 21:9) snap to the closest one. Aspect ratio mode 'auto' below picks the closest enum to your source's actual dimensions.",
+                show_when = {model = "photo_restoration"}},
+            {name = "model_info_codeformer", type = "info",
+                label = "CodeFormer — best for old portraits and family photos",
+                description = "Strengths: face-focused transformer; preserves aspect ratio exactly. Output dimensions = source × upscale_factor. Cheap (~$0.0021/megapixel).\n\nWeaknesses: only restores faces well — backgrounds get less attention. No explicit scratch removal or color repair (pair with the Colorize action for color-faded sources). For scenes without faces, prefer SWIN2SR.",
+                show_when = {model = "codeformer"}},
+            {name = "model_info_swin2sr", type = "info",
+                label = "SWIN2SR — best for degraded scenes and non-portrait sources",
+                description = "Strengths: generic super-resolution; preserves aspect ratio exactly. The 'real_sr' task is trained on real-world degraded photos — closest fit to 'restore' for landscapes, documents, street photos, etc.\n\nWeaknesses: no face-specific enhancement (use CodeFormer for portraits). No explicit scratch removal or color repair. Pricier (~$0.025/megapixel).",
+                show_when = {model = "swin2sr"}},
+
+            -- photo_restoration (image-apps-v2): full restoration in one pass.
+            -- Always reshapes the output to a 4K image with one of 5 aspect
+            -- ratio enums; the "auto" option matches source dims to the closest
+            -- enum so the aspect ratio is preserved.
+            {name = "fix_colors", type = "boolean", label = "Fix Colors", default = true,
+                show_when = {model = "photo_restoration"}},
+            {name = "remove_scratches", type = "boolean", label = "Remove Scratches", default = true,
+                show_when = {model = "photo_restoration"}},
+            {name = "enhance_resolution", type = "boolean", label = "Enhance Resolution", default = true,
+                show_when = {model = "photo_restoration"}},
+            {name = "aspect_ratio", type = "select", label = "Output Aspect Ratio",
+                default = "auto",
+                options = {"auto", "1:1", "16:9", "9:16", "4:3", "3:4"},
+                show_when = {model = "photo_restoration"}},
+
+            -- CodeFormer: face-focused restoration. Preserves aspect ratio
+            -- exactly (output dims = input × upscale_factor).
+            {name = "codeformer_fidelity", type = "number", label = "Fidelity (identity vs. quality)",
+                default = 0.5, min = 0, max = 1, step = 0.05,
+                show_when = {model = "codeformer"}},
+            {name = "codeformer_upscale_factor", type = "number", label = "Upscale Factor",
+                default = 2, min = 1, max = 4, step = 1,
+                show_when = {model = "codeformer"}},
+            {name = "codeformer_face_upscale", type = "boolean", label = "Upscale Faces", default = true,
+                show_when = {model = "codeformer"}},
+            {name = "codeformer_aligned", type = "boolean", label = "Faces Pre-Aligned", default = false,
+                show_when = {model = "codeformer"}},
+            {name = "codeformer_only_center_face", type = "boolean", label = "Only Center Face", default = false,
+                show_when = {model = "codeformer"}},
+
+            -- SWIN2SR: generic super-resolution. Preserves aspect ratio.
+            -- "real_sr" is trained on real-world degraded photos and is the
+            -- closest fit to a "restore" use case for non-portrait sources.
+            {name = "swin2sr_task", type = "select", label = "Task",
+                default = "real_sr",
+                options = {"real_sr", "classical_sr", "compressed_sr"},
+                show_when = {model = "swin2sr"}},
+
             OUTPUT_MODE_PARAM,
         },
         handler = make_handler("restore"),
@@ -987,13 +1116,19 @@ function init()
         description = "Restore and enhance old or damaged photographs using AI.",
         category = "Action",
         attrs = {
-            { name = "fix_colors", type = "boolean", default = "true", description = "Fix color issues in the photo" },
-            { name = "remove_scratches", type = "boolean", default = "true", description = "Remove scratches and damage" },
-            { name = "enhance_resolution", type = "boolean", default = "true", description = "Improve image clarity and detail" },
-            { name = "aspect_ratio", type = "select", default = "4:3", description = "4K output aspect ratio: 1:1, 16:9, 9:16, 4:3, 3:4" },
+            { name = "model", type = "select", default = "photo_restoration", description = "Restoration backend: photo_restoration (combined fix), codeformer (faces), swin2sr (scenes)" },
+            { name = "fix_colors / remove_scratches / enhance_resolution / aspect_ratio", type = "various", description = "photo_restoration controls. aspect_ratio defaults to 'auto', which picks the closest enum to the source's actual dimensions. Other options: 1:1, 16:9, 9:16, 4:3, 3:4. (Shown when model=photo_restoration.)" },
+            { name = "codeformer_*", type = "various", description = "CodeFormer controls: fidelity (identity vs. quality, 0-1), upscale_factor (1-4), face_upscale, aligned, only_center_face. (Shown when model=codeformer.)" },
+            { name = "swin2sr_task", type = "select", default = "real_sr", description = "SWIN2SR task: real_sr (degraded real-world photos), classical_sr, or compressed_sr. (Shown when model=swin2sr.)" },
+        },
+        examples = {
+            { title = "Photo restoration (default)", code = "Combined color/scratch/quality fix in one pass.", notes = "Model: fal-ai/image-apps-v2/photo-restoration. Always reshapes to a 4K aspect_ratio enum; 'auto' matches the source's actual ratio." },
+            { title = "Old portrait", code = "Use CodeFormer with fidelity 0.5-0.7 for old family photos with faces.", notes = "Model: fal-ai/codeformer. Preserves aspect ratio exactly." },
+            { title = "Old scene/landscape", code = "Use SWIN2SR with task=real_sr for degraded non-portrait photos.", notes = "Model: fal-ai/swin2sr. Preserves aspect ratio exactly." },
         },
         notes = {
-            "Also enhances resolution as part of the restoration process.",
+            "photo_restoration is the only model here that addresses scratches and color fading explicitly — but it always 4K-reshapes the output to one of {1:1, 16:9, 9:16, 4:3, 3:4} enums. The 'auto' aspect_ratio setting compensates by sending the closest enum to the source's actual dimensions; sources whose ratio doesn't fall on one of those five (e.g. 3:2, 21:9) snap to the closest one.",
+            "codeformer and swin2sr both preserve aspect ratio exactly but don't do explicit color/scratch repair — they're denoise + super-resolution. Pair them with the Colorize action if the source is also color-faded.",
             "Result is added as a new version of the original resource.",
             "Available from both detail view and card view.",
         },

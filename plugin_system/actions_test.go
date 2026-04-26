@@ -235,6 +235,57 @@ end
 	}
 }
 
+func TestActionRegistration_InfoTypeAndDescription(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "info-plugin", `
+plugin = { name = "info-plugin", version = "1.0", description = "info type" }
+
+function handler(ctx) return { success = true } end
+
+function init()
+    mah.action({
+        id = "process",
+        label = "Process",
+        entity = "resource",
+        params = {
+            { name = "model", type = "select", label = "Model", default = "a", options = {"a", "b"} },
+            { name = "model_info_a", type = "info", label = "About A",
+              description = "Mode A is the simple path.",
+              show_when = { model = "a" } },
+            { name = "amount", type = "number", label = "Amount", default = 1,
+              description = "Pick a value between 1 and 10." },
+        },
+        handler = handler,
+    })
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("NewPluginManager: %v", err)
+	}
+	defer pm.Close()
+	if err := pm.EnablePlugin("info-plugin"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	actions := pm.GetActions("resource", nil)
+	if len(actions) != 1 || len(actions[0].Params) != 3 {
+		t.Fatalf("unexpected action shape: %+v", actions)
+	}
+	params := actions[0].Params
+
+	if params[1].Type != "info" {
+		t.Errorf("params[1].Type = %q, want \"info\"", params[1].Type)
+	}
+	if params[1].Description != "Mode A is the simple path." {
+		t.Errorf("params[1].Description = %q, want help body", params[1].Description)
+	}
+	if params[2].Description != "Pick a value between 1 and 10." {
+		t.Errorf("params[2].Description = %q, want help body", params[2].Description)
+	}
+}
+
 func TestGetActions_FiltersByContentType(t *testing.T) {
 	dir := t.TempDir()
 	writePlugin(t, dir, "ct-filter", `

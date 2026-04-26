@@ -28,11 +28,20 @@
                         </template>
 
                         <template x-for="param in (action?.params || [])" :key="param.name">
-                            <div class="plugin-action-modal-field" x-show="isParamVisible(param)">
-                                <label :for="'plugin-param-' + param.name" class="plugin-action-modal-label">
-                                    <span x-text="param.label"></span>
-                                    <span x-show="param.required" class="plugin-action-modal-required" aria-hidden="true">*</span>
-                                </label>
+                            <div class="plugin-action-modal-field" x-show="isParamVisible(param)" :class="{'plugin-action-modal-field--info': param.type === 'info'}">
+                                <template x-if="param.type === 'info'">
+                                    <div class="plugin-action-modal-info" role="note">
+                                        <span x-show="param.label" class="plugin-action-modal-info-title" x-text="param.label"></span>
+                                        <span class="plugin-action-modal-info-body" x-text="param.description"></span>
+                                    </div>
+                                </template>
+
+                                <template x-if="param.type !== 'info'">
+                                    <label :for="'plugin-param-' + param.name" class="plugin-action-modal-label">
+                                        <span x-text="param.label"></span>
+                                        <span x-show="param.required" class="plugin-action-modal-required" aria-hidden="true">*</span>
+                                    </label>
+                                </template>
 
                                 <template x-if="param.type === 'text' || param.type === 'hidden'">
                                     <input :type="param.type" :id="'plugin-param-' + param.name"
@@ -85,6 +94,10 @@
                                                x-model="formValues[param.name]"
                                                class="plugin-action-modal-checkbox">
                                     </div>
+                                </template>
+
+                                <template x-if="param.description && param.type !== 'info'">
+                                    <span class="plugin-action-modal-help" x-text="param.description"></span>
                                 </template>
 
                                 <template x-if="errors[param.name]">

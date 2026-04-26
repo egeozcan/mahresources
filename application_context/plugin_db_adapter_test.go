@@ -3,6 +3,7 @@
 package application_context
 
 import (
+	"image/color"
 	"testing"
 	"time"
 )
@@ -302,6 +303,33 @@ func TestPluginDBAdapter_PatchTag(t *testing.T) {
 	}
 	if patched["description"] != "orig desc" {
 		t.Errorf("expected description preserved, got %v", patched["description"])
+	}
+}
+
+// fal-ai's restore action picks an aspect_ratio enum from the source's actual
+// width/height to keep the model from reshaping a non-4:3 image. The adapter
+// must surface these dimensions on GetResourceData so the Lua plugin can read
+// them; previously only name/description/meta/content_type/etc. were returned.
+func TestPluginDBAdapter_GetResourceData_IncludesDimensions(t *testing.T) {
+	ctx := createTestContext(t)
+	adapter := &pluginDBAdapter{ctx: ctx}
+
+	jpeg := makeJPEG(t, 1600, 900, color.RGBA{R: 200, G: 100, B: 50, A: 255})
+	resourceID := seedImageResource(t, ctx, "image/jpeg", jpeg, 1600, 900)
+
+	data, err := adapter.GetResourceData(resourceID)
+	if err != nil {
+		t.Fatalf("GetResourceData failed: %v", err)
+	}
+
+	if w, ok := data["width"].(float64); !ok || w != 1600 {
+		t.Errorf("width: got %v (%T), want 1600", data["width"], data["width"])
+	}
+	if h, ok := data["height"].(float64); !ok || h != 900 {
+		t.Errorf("height: got %v (%T), want 900", data["height"], data["height"])
+	}
+	if fs, ok := data["file_size"].(float64); !ok || fs != float64(len(jpeg)) {
+		t.Errorf("file_size: got %v (%T), want %d", data["file_size"], data["file_size"], len(jpeg))
 	}
 }
 

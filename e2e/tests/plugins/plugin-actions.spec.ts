@@ -321,6 +321,107 @@ test.describe('Plugin Actions UI - Detail Pages', () => {
     await expect(resultArea).not.toBeVisible();
   });
 
+  test('hidden show_when params are stripped from submission body', async ({ page }) => {
+    // Regression for the fal-ai restore aspect_ratio bug: the modal kept the
+    // default value of a hidden conditional param in formValues and submitted
+    // it anyway. Hidden params must not appear in the request body.
+    await page.goto(`/resource?id=${resourceId}`);
+    await page.waitForLoadState('load');
+
+    await page.getByRole('button', { name: 'Conditional Demo' }).click();
+
+    const modal = page.locator('[aria-labelledby="plugin-action-modal-title"]');
+    await expect(modal).toBeVisible();
+
+    // Default mode=a, so extra_a is visible and extra_b is hidden.
+    await expect(modal.locator('#plugin-param-extra_a')).toBeVisible();
+    await expect(modal.locator('#plugin-param-extra_b')).not.toBeVisible();
+
+    // Switch to mode=b, hiding extra_a (whose default "alpha" is still in formValues).
+    await modal.locator('#plugin-param-mode').selectOption('b');
+    await expect(modal.locator('#plugin-param-extra_a')).not.toBeVisible();
+    await expect(modal.locator('#plugin-param-extra_b')).toBeVisible();
+
+    const reqPromise = page.waitForRequest(
+      (req) => req.url().endsWith('/v1/jobs/action/run') && req.method() === 'POST',
+    );
+    await modal.getByRole('button', { name: 'Run' }).click();
+    const req = await reqPromise;
+    const body = req.postDataJSON();
+
+    expect(body.params.mode).toBe('b');
+    expect(body.params.extra_b).toBe('beta');
+    expect(body.params).not.toHaveProperty('extra_a');
+  });
+
+  test('info-type params render contextual help and never reach the request body', async ({ page }) => {
+    // The fal-ai restore action uses type='info' params to surface model
+    // strengths/weaknesses. The help block must render with show_when, look
+    // distinct from form fields (no input), and never appear in the submission.
+    await page.goto(`/resource?id=${resourceId}`);
+    await page.waitForLoadState('load');
+
+    await page.getByRole('button', { name: 'Conditional Demo' }).click();
+
+    const modal = page.locator('[aria-labelledby="plugin-action-modal-title"]');
+    await expect(modal).toBeVisible();
+
+    // Mode=a → info_for_a is visible.
+    const note = modal.locator('[role="note"]');
+    await expect(note).toBeVisible();
+    await expect(note).toContainText('About Mode A');
+    await expect(note).toContainText('Mode A is the default');
+
+    // Switching mode hides the note.
+    await modal.locator('#plugin-param-mode').selectOption('b');
+    await expect(note).not.toBeVisible();
+
+    // Switch back to a so we can confirm submission excludes info params.
+    await modal.locator('#plugin-param-mode').selectOption('a');
+    await expect(note).toBeVisible();
+
+    const reqPromise = page.waitForRequest(
+      (req) => req.url().endsWith('/v1/jobs/action/run') && req.method() === 'POST',
+    );
+    await modal.getByRole('button', { name: 'Run' }).click();
+    const req = await reqPromise;
+    const body = req.postDataJSON();
+
+    expect(body.params).not.toHaveProperty('info_for_a');
+  });
+
+  test('boolean show_when matches a JS boolean from a checkbox', async ({ page }) => {
+    // Regression for the fal-ai aspect_ratio fix: aspect_ratio is gated on
+    // enhance_resolution=true (Lua boolean). The modal's checkbox binds a JS
+    // boolean via x-model; this test confirms that show_when={advanced=true}
+    // (Lua bool → Go bool → JSON true) matches the JS boolean and gates the
+    // dependent param's visibility and submission accordingly.
+    await page.goto(`/resource?id=${resourceId}`);
+    await page.waitForLoadState('load');
+
+    await page.getByRole('button', { name: 'Conditional Demo' }).click();
+
+    const modal = page.locator('[aria-labelledby="plugin-action-modal-title"]');
+    await expect(modal).toBeVisible();
+
+    // advanced=false by default → tuning is hidden.
+    await expect(modal.locator('#plugin-param-tuning')).not.toBeVisible();
+
+    // Toggle advanced=true → tuning becomes visible.
+    await modal.locator('#plugin-param-advanced').check();
+    await expect(modal.locator('#plugin-param-tuning')).toBeVisible();
+
+    const reqPromise = page.waitForRequest(
+      (req) => req.url().endsWith('/v1/jobs/action/run') && req.method() === 'POST',
+    );
+    await modal.getByRole('button', { name: 'Run' }).click();
+    const req = await reqPromise;
+    const body = req.postDataJSON();
+
+    expect(body.params.advanced).toBe(true);
+    expect(body.params.tuning).toBe('deep');
+  });
+
   test('async action submission opens jobs panel', async ({ page }) => {
     await page.goto(`/resource?id=${resourceId}`);
     await page.waitForLoadState('load');

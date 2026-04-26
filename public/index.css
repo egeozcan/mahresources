@@ -1128,6 +1128,42 @@ html {
     padding: 0.5rem 1.25rem;
 }
 
+.plugin-action-modal-field--info {
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+}
+
+.plugin-action-modal-info {
+    display: block;
+    padding: 0.625rem 0.75rem;
+    border-left: 3px solid var(--nav-hover);
+    background: var(--bg-muted, #f8fafc);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    color: var(--nav-text);
+    font-size: 0.8125rem;
+    line-height: 1.4;
+}
+
+.plugin-action-modal-info-title {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 0.125rem;
+}
+
+.plugin-action-modal-info-body {
+    display: block;
+    color: var(--nav-text-muted);
+    white-space: pre-line;
+}
+
+.plugin-action-modal-help {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--nav-text-muted);
+    font-size: 0.75rem;
+    line-height: 1.4;
+}
+
 .plugin-action-modal-label {
     display: block;
     font-size: 0.8125rem;

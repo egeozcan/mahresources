@@ -15,16 +15,17 @@ import (
 // skipped during required-field validation. The map is plumbed verbatim
 // to the frontend, which interprets it identically.
 type ActionParam struct {
-	Name     string         `json:"name"`
-	Type     string         `json:"type"` // text, textarea, number, select, boolean, hidden
-	Label    string         `json:"label"`
-	Required bool           `json:"required"`
-	Default  any            `json:"default,omitempty"`
-	Options  []string       `json:"options,omitempty"`
-	Min      *float64       `json:"min,omitempty"`
-	Max      *float64       `json:"max,omitempty"`
-	Step     *float64       `json:"step,omitempty"`
-	ShowWhen map[string]any `json:"show_when,omitempty"`
+	Name        string         `json:"name"`
+	Type        string         `json:"type"` // text, textarea, number, select, boolean, hidden, info
+	Label       string         `json:"label"`
+	Required    bool           `json:"required"`
+	Default     any            `json:"default,omitempty"`
+	Options     []string       `json:"options,omitempty"`
+	Min         *float64       `json:"min,omitempty"`
+	Max         *float64       `json:"max,omitempty"`
+	Step        *float64       `json:"step,omitempty"`
+	ShowWhen    map[string]any `json:"show_when,omitempty"`
+	Description string         `json:"description,omitempty"`
 }
 
 // ActionFilter restricts which entities an action applies to.
@@ -215,6 +216,9 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 						if swTbl, ok := sw.(*lua.LTable); ok {
 							p.ShowWhen = luaTableToGoMap(swTbl)
 						}
+					}
+					if d := pTbl.RawGetString("description"); d != lua.LNil {
+						p.Description = d.String()
 					}
 
 					a.Params = append(a.Params, p)

@@ -30,6 +30,8 @@ export function pluginActionModal() {
             this.formValues = {};
             if (action.params) {
                 for (const param of action.params) {
+                    // 'info' params render static help text and have no input value.
+                    if (param.type === 'info') continue;
                     this.formValues[param.name] = param.default ?? (param.type === 'boolean' ? false : '');
                 }
             }
@@ -60,6 +62,7 @@ export function pluginActionModal() {
             this.errors = {};
             if (this.action.params) {
                 for (const param of this.action.params) {
+                    if (param.type === 'info') continue;
                     if (!this.isParamVisible(param)) continue;
                     if (param.required && !this.formValues[param.name] && this.formValues[param.name] !== 0 && this.formValues[param.name] !== false) {
                         this.errors[param.name] = `${param.label} is required`;
@@ -67,6 +70,20 @@ export function pluginActionModal() {
                 }
             }
             if (Object.keys(this.errors).length > 0) return;
+
+            // Strip values for params that are currently hidden by show_when so
+            // a stale default (e.g. an aspect_ratio left at "4:3" after toggling
+            // enhance_resolution off) doesn't leak into the request body.
+            const visibleParams = {};
+            if (this.action.params) {
+                for (const param of this.action.params) {
+                    if (param.type === 'info') continue;
+                    if (!this.isParamVisible(param)) continue;
+                    visibleParams[param.name] = this.formValues[param.name];
+                }
+            } else {
+                Object.assign(visibleParams, this.formValues);
+            }
 
             this.submitting = true;
             try {
@@ -77,7 +94,7 @@ export function pluginActionModal() {
                         plugin: this.action.plugin,
                         action: this.action.action,
                         entity_ids: this.action.entityIds.map(Number),
-                        params: this.formValues,
+                        params: visibleParams,
                     }),
                 });
 

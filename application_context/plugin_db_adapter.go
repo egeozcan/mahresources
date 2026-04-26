@@ -60,6 +60,9 @@ func (a *pluginDBAdapter) GetResourceData(id uint) (map[string]any, error) {
 		"content_type":      resource.ContentType,
 		"original_filename": resource.OriginalName,
 		"hash":              resource.Hash,
+		"width":             float64(resource.Width),
+		"height":            float64(resource.Height),
+		"file_size":         float64(resource.FileSize),
 	}
 	if resource.OwnerId != nil {
 		result["owner_id"] = float64(*resource.OwnerId)
