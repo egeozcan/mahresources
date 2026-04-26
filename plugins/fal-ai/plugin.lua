@@ -1182,6 +1182,7 @@ function init()
             { name = "nanobanana2_aspect_ratio / nanobanana2_resolution / nanobanana2_output_format / nanobanana2_safety_tolerance", type = "various", description = "Nano Banana 2 controls (shown when model=nanobanana2). safety_tolerance is a string '1'..'6'." },
             { name = "strength", type = "number", default = "0.75", description = "Edit strength 0.1-1.0 (shown when model=flux1dev)" },
             { name = "flux1dev_num_inference_steps / flux1dev_guidance_scale / flux1dev_acceleration", type = "various", description = "Flux 1 Dev controls (shown when model=flux1dev). safety_tolerance is not in the schema for this endpoint." },
+            { name = "extra_images", type = "entity_ref", description = "Additional resource IDs sent alongside the source. Only Flux 2, Flux 2 Pro, and Nano Banana 2 use these. Defaults to the trigger resource (the source image) — picker lets the user add more or remove the source." },
         },
         examples = {
             { title = "Change background", code = 'Prompt: "change the background to a sunset beach"' },
@@ -1190,8 +1191,8 @@ function init()
         notes = {
             "Result is added as a new version of the original resource.",
             "Available from detail view only.",
-            "Flux 2 and Flux 2 Pro accept multiple input images.",
-            "Flux 1 Dev supports a strength parameter for controlling edit intensity.",
+            "Flux 2, Flux 2 Pro, and Nano Banana 2 accept multiple input images via the 'Additional Images' picker. The trigger image is included by default.",
+            "Flux 1 Dev accepts only a single input image and supports a strength parameter.",
         },
     })
 
