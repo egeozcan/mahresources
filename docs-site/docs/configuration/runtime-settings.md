@@ -43,6 +43,6 @@ the key as `entity_name`, old→new values in `message`, and the request IP in
 
 ## CLI reference
 
-See [`mr admin settings`](../cli/admin/settings.md).
+See [`mr admin settings`](../cli/admin/settings/index.md).
 
 <!-- SCREENSHOT: /admin/settings — regenerate via retake-screenshots skill -->
