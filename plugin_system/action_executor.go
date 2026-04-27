@@ -160,6 +160,16 @@ func ValidateActionParams(action ActionRegistration, params map[string]any) []Va
 				})
 				continue
 			}
+			// Required check for multi: the top-level required check above
+			// treats any present slice as "exists", so an empty array would
+			// pass even when Required=true and Min is unset.
+			if p.Required && len(arr) == 0 {
+				errs = append(errs, ValidationError{
+					Field:   p.Name,
+					Message: fmt.Sprintf("%s is required", p.Label),
+				})
+				continue
+			}
 			if p.Min != nil && float64(len(arr)) < *p.Min {
 				errs = append(errs, ValidationError{
 					Field:   p.Name,

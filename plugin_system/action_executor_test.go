@@ -399,6 +399,30 @@ func TestValidateActionParams_EntityRef_MultiTrueAcceptsEmpty(t *testing.T) {
 	}
 }
 
+func TestValidateActionParams_EntityRef_RequiredMultiEmptyArrayRejected(t *testing.T) {
+	// Required + Multi + Min=nil should still reject an empty array. The
+	// generic required check (line 71) treats any present slice as "exists",
+	// so the multi entity_ref branch must enforce Required itself.
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Required: true, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{}})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "required") {
+		t.Errorf("expected required violation for empty multi entity_ref, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_RequiredMultiNonEmptyAccepted(t *testing.T) {
+	// Required + Multi with a non-empty array passes the required check.
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Required: true, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{1.0}})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for non-empty required multi entity_ref, got: %v", errs)
+	}
+}
+
 func TestValidateActionParams_EntityRef_MinViolation(t *testing.T) {
 	one := 1.0
 	a := ActionRegistration{Params: []ActionParam{
