@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -378,6 +379,82 @@ end
 	}
 }
 
+func TestValidateActionParams_EntityRef_MultiFalseRejectsArray(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: false, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{1.0, 2.0}})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "expected single") {
+		t.Errorf("expected single-id rejection, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_MultiTrueAcceptsEmpty(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{}})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_RequiredMultiEmptyArrayRejected(t *testing.T) {
+	// Required + Multi + Min=nil should still reject an empty array. The
+	// generic required check (line 71) treats any present slice as "exists",
+	// so the multi entity_ref branch must enforce Required itself.
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Required: true, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{}})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "required") {
+		t.Errorf("expected required violation for empty multi entity_ref, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_RequiredMultiNonEmptyAccepted(t *testing.T) {
+	// Required + Multi with a non-empty array passes the required check.
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Required: true, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{1.0}})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for non-empty required multi entity_ref, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_MinViolation(t *testing.T) {
+	one := 1.0
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Min: &one, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{}})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "at least") {
+		t.Errorf("expected min violation, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_MaxViolation(t *testing.T) {
+	two := 2.0
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Max: &two, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{1.0, 2.0, 3.0}})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "at most") {
+		t.Errorf("expected max violation, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_NonPositiveID(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{0.0}})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "positive") {
+		t.Errorf("expected non-positive ID rejection, got: %v", errs)
+	}
+}
+
 func TestValidateActionParams_Standalone(t *testing.T) {
 	minVal := float64(1)
 	maxVal := float64(100)
@@ -452,4 +529,207 @@ func TestValidateActionParams_Standalone(t *testing.T) {
 	if len(errs) != 0 {
 		t.Errorf("expected 0 errors when optional fields omitted, got %d: %v", len(errs), errs)
 	}
+}
+
+func TestValidateActionParams_EntityRef_MultiFalseAcceptsValidID(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: false, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": 42.0})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for valid single ID, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_MultiFalseRejectsFractional(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: false, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": 1.5})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "positive") {
+		t.Errorf("expected non-integer rejection, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_MultiFalseRejectsWrongType(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: false, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": "42"})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "expected single") {
+		t.Errorf("expected wrong-type rejection on string, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_MultiTrueRejectsWrongType(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": 42.0})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "expected array") {
+		t.Errorf("expected array-required rejection on number, got: %v", errs)
+	}
+}
+
+func TestValidateActionParams_EntityRef_MultiTrueRejectsFractionalElement(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Label: "X"},
+	}}
+	errs := ValidateActionParams(a, map[string]any{"x": []any{1.0, 2.5}})
+	if len(errs) == 0 || !strings.Contains(errs[0].Message, "positive") {
+		t.Errorf("expected fractional-element rejection, got: %v", errs)
+	}
+}
+
+// fakeEntityRefReader returns the configured subset of requested IDs and
+// optionally returns a synthetic error.
+type fakeEntityRefReader struct {
+	resourcesReturn []uint
+	notesReturn     []uint
+	groupsReturn    []uint
+	err             error
+	capturedFilter  ActionFilter
+}
+
+func (f *fakeEntityRefReader) ResourcesMatching(ids []uint, filter ActionFilter) ([]uint, error) {
+	f.capturedFilter = filter
+	return f.resourcesReturn, f.err
+}
+func (f *fakeEntityRefReader) NotesMatching(ids []uint, filter ActionFilter) ([]uint, error) {
+	f.capturedFilter = filter
+	return f.notesReturn, f.err
+}
+func (f *fakeEntityRefReader) GroupsMatching(ids []uint, filter ActionFilter) ([]uint, error) {
+	f.capturedFilter = filter
+	return f.groupsReturn, f.err
+}
+
+func TestValidateActionEntityRefs_RejectsMissingIDs(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Label: "X"},
+	}}
+	reader := &fakeEntityRefReader{resourcesReturn: []uint{1}} // 2 missing
+	errs, err := ValidateActionEntityRefs(reader, a, map[string]any{"x": []any{1.0, 2.0}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(errs) != 1 || !strings.Contains(errs[0].Message, "2") {
+		t.Errorf("expected missing-2 error, got: %v", errs)
+	}
+}
+
+func TestValidateActionEntityRefs_InheritsActionFilter(t *testing.T) {
+	a := ActionRegistration{
+		Filters: ActionFilter{ContentTypes: []string{"image/png"}},
+		Params: []ActionParam{
+			{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Label: "X"},
+		},
+	}
+	reader := &fakeEntityRefReader{resourcesReturn: []uint{1, 2}}
+	_, err := ValidateActionEntityRefs(reader, a, map[string]any{"x": []any{1.0, 2.0}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(reader.capturedFilter.ContentTypes) != 1 || reader.capturedFilter.ContentTypes[0] != "image/png" {
+		t.Errorf("expected inherited ContentTypes filter, got: %v", reader.capturedFilter)
+	}
+}
+
+func TestValidateActionEntityRefs_PerParamFilterOverridesAction(t *testing.T) {
+	a := ActionRegistration{
+		Filters: ActionFilter{ContentTypes: []string{"image/png"}},
+		Params: []ActionParam{
+			{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Label: "X",
+				Filters: &ActionFilter{ContentTypes: []string{"image/jpeg"}}},
+		},
+	}
+	reader := &fakeEntityRefReader{resourcesReturn: []uint{1}}
+	_, err := ValidateActionEntityRefs(reader, a, map[string]any{"x": []any{1.0}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(reader.capturedFilter.ContentTypes) != 1 || reader.capturedFilter.ContentTypes[0] != "image/jpeg" {
+		t.Errorf("expected per-param override, got: %v", reader.capturedFilter)
+	}
+}
+
+func TestValidateActionEntityRefs_ReaderErrorBubblesUp(t *testing.T) {
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "x", Type: "entity_ref", Entity: "resource", Multi: true, Label: "X"},
+	}}
+	reader := &fakeEntityRefReader{err: fmt.Errorf("db down")}
+	errs, err := ValidateActionEntityRefs(reader, a, map[string]any{"x": []any{1.0}})
+	if err == nil || !strings.Contains(err.Error(), "db down") {
+		t.Errorf("expected error to bubble up, got err=%v errs=%v", err, errs)
+	}
+	if errs != nil {
+		t.Errorf("validation errors slice should be nil on infra error, got: %v", errs)
+	}
+}
+
+func TestValidateActionEntityRefs_TwoParamsBatchIndependently(t *testing.T) {
+	// Two resource entity_ref params with different filters → two reader calls,
+	// each with its own filter.
+	type capture struct {
+		filter ActionFilter
+		ids    []uint
+	}
+	var captures []capture
+	r := &capturingReader{
+		resourcesFn: func(ids []uint, f ActionFilter) ([]uint, error) {
+			captures = append(captures, capture{filter: f, ids: ids})
+			return ids, nil // accept all
+		},
+	}
+	a := ActionRegistration{Params: []ActionParam{
+		{Name: "primary", Type: "entity_ref", Entity: "resource", Multi: true, Label: "P",
+			Filters: &ActionFilter{ContentTypes: []string{"image/png"}}},
+		{Name: "secondary", Type: "entity_ref", Entity: "resource", Multi: true, Label: "S",
+			Filters: &ActionFilter{ContentTypes: []string{"image/svg+xml"}}},
+	}}
+	_, err := ValidateActionEntityRefs(r, a, map[string]any{
+		"primary":   []any{1.0, 2.0},
+		"secondary": []any{3.0},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(captures) != 2 {
+		t.Fatalf("expected 2 reader calls, got %d", len(captures))
+	}
+	// Sort or check both — order may depend on map iteration.
+	seen := map[string]bool{}
+	for _, c := range captures {
+		seen[c.filter.ContentTypes[0]] = true
+	}
+	if !seen["image/png"] || !seen["image/svg+xml"] {
+		t.Errorf("expected both filters to appear in calls, got: %v", captures)
+	}
+}
+
+// capturingReader is a small variant of fakeEntityRefReader where each method
+// is supplied as a closure so tests can capture per-call state.
+type capturingReader struct {
+	resourcesFn func([]uint, ActionFilter) ([]uint, error)
+	notesFn     func([]uint, ActionFilter) ([]uint, error)
+	groupsFn    func([]uint, ActionFilter) ([]uint, error)
+}
+
+func (c *capturingReader) ResourcesMatching(ids []uint, f ActionFilter) ([]uint, error) {
+	if c.resourcesFn == nil {
+		return nil, nil
+	}
+	return c.resourcesFn(ids, f)
+}
+func (c *capturingReader) NotesMatching(ids []uint, f ActionFilter) ([]uint, error) {
+	if c.notesFn == nil {
+		return nil, nil
+	}
+	return c.notesFn(ids, f)
+}
+func (c *capturingReader) GroupsMatching(ids []uint, f ActionFilter) ([]uint, error) {
+	if c.groupsFn == nil {
+		return nil, nil
+	}
+	return c.groupsFn(ids, f)
 }

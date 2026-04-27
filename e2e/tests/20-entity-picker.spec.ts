@@ -451,7 +451,7 @@ test.describe('Entity Picker - Group Selection', () => {
     await expect(pickerModal).toBeVisible();
 
     // Find the already-added group and check for "Added" badge (use .flex to target group cards)
-    const addedBadge = pickerModal.locator('[role="option"].flex').filter({ hasText: 'Selectable Test Group' }).locator('text=Added');
+    const addedBadge = pickerModal.locator('[role="option"].flex').filter({ hasText: 'Selectable Test Group' }).locator('text=Added').first();
     await expect(addedBadge).toBeVisible();
 
     // Close modal for next test

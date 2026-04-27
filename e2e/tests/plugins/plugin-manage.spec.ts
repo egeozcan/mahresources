@@ -130,7 +130,8 @@ test.describe('Plugin Management', () => {
     await page.goto('/plugins/manage');
     await page.waitForLoadState('load');
 
-    const apiKeyInput = page.getByTestId('setting-api_key');
+    const bannerForm = page.getByTestId('plugin-settings-test-banner');
+    const apiKeyInput = bannerForm.getByTestId('setting-api_key');
     await expect(apiKeyInput).toHaveValue('persistent-key');
   });
 

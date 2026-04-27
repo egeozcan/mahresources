@@ -36,6 +36,7 @@ type NoteQuery struct {
 	Ids             []uint
 	MetaQuery       []ColumnMeta
 	NoteTypeId      uint
+	NoteTypeIds     []uint
 	Shared          *bool
 }
 

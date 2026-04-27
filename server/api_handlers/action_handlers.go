@@ -11,9 +11,10 @@ import (
 	"strconv"
 )
 
-// PluginActionRunner provides access to the plugin manager for action endpoints.
+// PluginActionRunner provides access to plugin-action infrastructure.
 type PluginActionRunner interface {
 	PluginManager() *plugin_system.PluginManager
+	ActionEntityRefReader() plugin_system.EntityRefReader
 }
 
 // actionRunRequest is the JSON body for POST /v1/jobs/action/run
@@ -120,6 +121,27 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 			w.Header().Set("Content-Type", constants.JSON)
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]any{"errors": validationErrs})
+			return
+		}
+
+		// DB-backed entity_ref validation happens here exactly once. RunAction and
+		// RunActionAsync repeat the cheaper structural ValidateActionParams check
+		// for defense-in-depth, but never call ValidateActionEntityRefs, so no
+		// redundant DB round-trips occur during bulk fan-out.
+		reader := ctx.ActionEntityRefReader()
+		if reader == nil {
+			http_utils.HandleError(fmt.Errorf("entity ref reader unavailable"), w, r, http.StatusInternalServerError)
+			return
+		}
+		refErrs, err := plugin_system.ValidateActionEntityRefs(reader, action, req.Params)
+		if err != nil {
+			http_utils.HandleError(fmt.Errorf("entity ref validation: %w", err), w, r, http.StatusInternalServerError)
+			return
+		}
+		if len(refErrs) > 0 {
+			w.Header().Set("Content-Type", constants.JSON)
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"errors": refErrs})
 			return
 		}
 

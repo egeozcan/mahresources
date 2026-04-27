@@ -113,6 +113,10 @@ func NoteQuery(query *query_models.NoteQuery, ignoreSort bool, originalDB *gorm.
 			dbQuery = dbQuery.Where("note_type_id = ?", query.NoteTypeId)
 		}
 
+		if len(query.NoteTypeIds) > 0 {
+			dbQuery = dbQuery.Where("notes.note_type_id IN ?", query.NoteTypeIds)
+		}
+
 		dbQuery = ApplyMetaQuery(dbQuery, query.MetaQuery, "notes.meta")
 
 		if query.Shared != nil {

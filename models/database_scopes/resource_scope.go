@@ -108,6 +108,10 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			dbQuery = dbQuery.Where("resources.content_type "+likeOperator+" ?"+esc, p)
 		}
 
+		if len(query.ContentTypes) > 0 {
+			dbQuery = dbQuery.Where("resources.content_type IN ?", query.ContentTypes)
+		}
+
 		if query.OriginalName != "" {
 			p, esc := LikePattern(query.OriginalName)
 			dbQuery = dbQuery.Where("resources.original_name "+likeOperator+" ?"+esc, p)

@@ -818,6 +818,10 @@ components:
                     type: string
                 NoteTypeId:
                     type: integer
+                NoteTypeIds:
+                    items:
+                        type: integer
+                    type: array
                 OwnerId:
                     type: integer
                 Shared:
@@ -1345,6 +1349,10 @@ components:
             properties:
                 ContentType:
                     type: string
+                ContentTypes:
+                    items:
+                        type: string
+                    type: array
                 CreatedAfter:
                     type: string
                 CreatedBefore:
@@ -3917,6 +3925,14 @@ paths:
                   name: NoteTypeId
                   schema:
                     type: integer
+                - explode: true
+                  in: query
+                  name: NoteTypeIds
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
                 - in: query
                   name: Shared
                   schema:
@@ -4134,6 +4150,14 @@ paths:
                   name: NoteTypeId
                   schema:
                     type: integer
+                - explode: true
+                  in: query
+                  name: NoteTypeIds
+                  schema:
+                    items:
+                        type: integer
+                    type: array
+                  style: form
                 - in: query
                   name: Shared
                   schema:
@@ -5399,6 +5423,14 @@ paths:
                   name: ContentType
                   schema:
                     type: string
+                - explode: true
+                  in: query
+                  name: ContentTypes
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
                 - in: query
                   name: OwnerId
                   schema:
@@ -5741,6 +5773,14 @@ paths:
                   name: ContentType
                   schema:
                     type: string
+                - explode: true
+                  in: query
+                  name: ContentTypes
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
                 - in: query
                   name: OwnerId
                   schema:

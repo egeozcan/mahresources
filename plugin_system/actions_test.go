@@ -552,6 +552,179 @@ end
 	}
 }
 
+func TestActionRegistration_EntityRefParam_BasicFields(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "ref-plugin", `
+plugin = { name = "ref-plugin", version = "1.0", description = "ref test" }
+
+function init()
+    mah.action({
+        id = "ref-action",
+        label = "Ref Action",
+        entity = "resource",
+        params = {
+            { name = "extras", type = "entity_ref", entity = "resource", multi = true,
+              label = "Extras", min = 0, max = 5, default = "trigger",
+              filters = { content_types = {"image/png"} } },
+        },
+        handler = function(ctx) return { success = true } end,
+    })
+end
+`)
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("NewPluginManager: %v", err)
+	}
+	defer pm.Close()
+	if err := pm.EnablePlugin("ref-plugin"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	actions := pm.GetActions("resource", nil)
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+	p := actions[0].Params[0]
+	if p.Type != "entity_ref" {
+		t.Errorf("Type=%q", p.Type)
+	}
+	if p.Entity != "resource" {
+		t.Errorf("Entity=%q", p.Entity)
+	}
+	if !p.Multi {
+		t.Errorf("Multi=false")
+	}
+	if p.Default != "trigger" {
+		t.Errorf("Default=%v", p.Default)
+	}
+	if p.Filters == nil {
+		t.Fatalf("Filters nil")
+	}
+	if len(p.Filters.ContentTypes) != 1 || p.Filters.ContentTypes[0] != "image/png" {
+		t.Errorf("Filters.ContentTypes=%v", p.Filters.ContentTypes)
+	}
+}
+
+func TestActionRegistration_EntityRefParam_RejectsMissingEntity(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "bad-plugin", `
+plugin = { name = "bad-plugin", version = "1.0", description = "" }
+function init()
+    mah.action({
+        id = "x", label = "X", entity = "resource",
+        params = { { name = "extras", type = "entity_ref", label = "X" } },
+        handler = function(ctx) return { success = true } end,
+    })
+end
+`)
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("NewPluginManager: %v", err)
+	}
+	defer pm.Close()
+	err = pm.EnablePlugin("bad-plugin")
+	if err == nil || !strings.Contains(err.Error(), "requires 'entity' field") {
+		t.Errorf("expected entity-required error, got: %v", err)
+	}
+}
+
+func TestActionRegistration_EntityRefParam_RejectsBadEntity(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "bad-plugin", `
+plugin = { name = "bad-plugin", version = "1.0", description = "" }
+function init()
+    mah.action({
+        id = "x", label = "X", entity = "resource",
+        params = { { name = "extras", type = "entity_ref", entity = "tag", label = "X" } },
+        handler = function(ctx) return { success = true } end,
+    })
+end
+`)
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("NewPluginManager: %v", err)
+	}
+	defer pm.Close()
+	err = pm.EnablePlugin("bad-plugin")
+	if err == nil || !strings.Contains(err.Error(), "must be 'resource', 'note', or 'group'") {
+		t.Errorf("expected entity-value error, got: %v", err)
+	}
+}
+
+func TestActionRegistration_EntityRefParam_RejectsBothWithSingle(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "bad-plugin", `
+plugin = { name = "bad-plugin", version = "1.0", description = "" }
+function init()
+    mah.action({
+        id = "x", label = "X", entity = "resource",
+        params = { { name = "extras", type = "entity_ref", entity = "resource", default = "both", label = "X" } },
+        handler = function(ctx) return { success = true } end,
+    })
+end
+`)
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("NewPluginManager: %v", err)
+	}
+	defer pm.Close()
+	err = pm.EnablePlugin("bad-plugin")
+	if err == nil || !strings.Contains(err.Error(), "default 'both' requires multi=true") {
+		t.Errorf("expected both-requires-multi error, got: %v", err)
+	}
+}
+
+func TestActionRegistration_EntityRefParam_RejectsNonStringDefault(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "bad-plugin", `
+plugin = { name = "bad-plugin", version = "1.0", description = "" }
+function init()
+    mah.action({
+        id = "x", label = "X", entity = "resource",
+        params = { { name = "extras", type = "entity_ref", entity = "resource", default = 42, label = "X" } },
+        handler = function(ctx) return { success = true } end,
+    })
+end
+`)
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("NewPluginManager: %v", err)
+	}
+	defer pm.Close()
+	err = pm.EnablePlugin("bad-plugin")
+	if err == nil || !strings.Contains(err.Error(), "default must be a string for entity_ref") {
+		t.Errorf("expected non-string default error, got: %v", err)
+	}
+}
+
+func TestActionRegistration_RejectsRequiredWithShowWhen(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "bad-plugin", `
+plugin = { name = "bad-plugin", version = "1.0", description = "" }
+function init()
+    mah.action({
+        id = "x", label = "X", entity = "resource",
+        params = {
+            { name = "model", type = "select", label = "Model", options = {"a","b"}, default = "a" },
+            { name = "extra", type = "text", label = "Extra", required = true,
+              show_when = { model = "b" } },
+        },
+        handler = function(ctx) return { success = true } end,
+    })
+end
+`)
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatalf("NewPluginManager: %v", err)
+	}
+	defer pm.Close()
+	err = pm.EnablePlugin("bad-plugin")
+	if err == nil || !strings.Contains(err.Error(), "required") || !strings.Contains(err.Error(), "show_when") {
+		t.Errorf("expected required+show_when rejection, got: %v", err)
+	}
+}
+
 func TestActionRegistration_Validation(t *testing.T) {
 	dir := t.TempDir()
 	writePlugin(t, dir, "bad-action", `

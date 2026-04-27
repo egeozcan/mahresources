@@ -916,6 +916,5 @@
     {# Live region for screen reader announcements #}
     <div x-ref="liveRegion" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
-    {# Entity Picker Modal #}
-    {% include "partials/entityPicker.tpl" %}
+
 </div>

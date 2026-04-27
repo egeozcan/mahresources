@@ -127,10 +127,157 @@ func ValidateActionParams(action ActionRegistration, params map[string]any) []Va
 					Message: fmt.Sprintf("%s must be at most %v", p.Label, *p.Max),
 				})
 			}
+
+		case "entity_ref":
+			if !p.Multi {
+				// Expect single number (or null).
+				var id float64
+				switch v := val.(type) {
+				case float64:
+					id = v
+				default:
+					errs = append(errs, ValidationError{
+						Field:   p.Name,
+						Message: fmt.Sprintf("%s: expected single ID number", p.Label),
+					})
+					continue
+				}
+				// Reject non-integers (e.g. 1.5), zero, and negatives by round-tripping through uint.
+				if id <= 0 || id != float64(uint(id)) {
+					errs = append(errs, ValidationError{
+						Field:   p.Name,
+						Message: fmt.Sprintf("%s: ID must be a positive integer", p.Label),
+					})
+				}
+				continue
+			}
+			// Multi: expect []any of float64.
+			arr, ok := val.([]any)
+			if !ok {
+				errs = append(errs, ValidationError{
+					Field:   p.Name,
+					Message: fmt.Sprintf("%s: expected array of IDs", p.Label),
+				})
+				continue
+			}
+			// Required check for multi: the top-level required check above
+			// treats any present slice as "exists", so an empty array would
+			// pass even when Required=true and Min is unset.
+			if p.Required && len(arr) == 0 {
+				errs = append(errs, ValidationError{
+					Field:   p.Name,
+					Message: fmt.Sprintf("%s is required", p.Label),
+				})
+				continue
+			}
+			if p.Min != nil && float64(len(arr)) < *p.Min {
+				errs = append(errs, ValidationError{
+					Field:   p.Name,
+					Message: fmt.Sprintf("%s: must have at least %v entries", p.Label, *p.Min),
+				})
+			}
+			// Max=0 is treated as "unlimited" per spec; a real cap requires Max>0.
+			if p.Max != nil && *p.Max > 0 && float64(len(arr)) > *p.Max {
+				errs = append(errs, ValidationError{
+					Field:   p.Name,
+					Message: fmt.Sprintf("%s: must have at most %v entries", p.Label, *p.Max),
+				})
+			}
+			for _, v := range arr {
+				n, ok := v.(float64)
+				// Reject non-integers (e.g. 1.5), zero, and negatives by round-tripping through uint.
+				if !ok || n <= 0 || n != float64(uint(n)) {
+					errs = append(errs, ValidationError{
+						Field:   p.Name,
+						Message: fmt.Sprintf("%s: each ID must be a positive integer", p.Label),
+					})
+					break
+				}
+			}
 		}
 	}
 
 	return errs
+}
+
+// ValidateActionEntityRefs performs DB-backed validation of entity_ref params.
+// Returns ([]ValidationError, nil) for user-correctable problems (missing or
+// filter-rejected IDs); returns (nil, error) when the reader/DB fails.
+//
+// Caller (typically GetActionRunHandler) must run ValidateActionParams first
+// to confirm structural correctness; this function assumes shapes are valid.
+func ValidateActionEntityRefs(reader EntityRefReader, action ActionRegistration, params map[string]any) ([]ValidationError, error) {
+	var errs []ValidationError
+
+	for _, p := range action.Params {
+		if p.Type != "entity_ref" {
+			continue
+		}
+		val, exists := params[p.Name]
+		if !exists || val == nil {
+			continue
+		}
+
+		// Coerce IDs into []uint.
+		var ids []uint
+		if p.Multi {
+			arr, ok := val.([]any)
+			if !ok {
+				continue // structural validator would have caught this
+			}
+			for _, v := range arr {
+				if n, ok := v.(float64); ok && n > 0 {
+					ids = append(ids, uint(n))
+				}
+			}
+		} else {
+			if n, ok := val.(float64); ok && n > 0 {
+				ids = []uint{uint(n)}
+			}
+		}
+		if len(ids) == 0 {
+			continue
+		}
+
+		// Resolve effective filter.
+		filter := action.Filters
+		if p.Filters != nil {
+			filter = *p.Filters
+		}
+
+		// Dispatch to the reader.
+		var matched []uint
+		var err error
+		switch p.Entity {
+		case "resource":
+			matched, err = reader.ResourcesMatching(ids, filter)
+		case "note":
+			matched, err = reader.NotesMatching(ids, filter)
+		case "group":
+			matched, err = reader.GroupsMatching(ids, filter)
+		default:
+			return nil, fmt.Errorf("validating entity refs for param %q: unknown entity type %q", p.Name, p.Entity)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("validating entity refs for param %q: %w", p.Name, err)
+		}
+
+		// Compute set difference: requested - matched.
+		matchedSet := make(map[uint]bool, len(matched))
+		for _, id := range matched {
+			matchedSet[id] = true
+		}
+		for _, id := range ids {
+			if !matchedSet[id] {
+				errs = append(errs, ValidationError{
+					Field:   p.Name,
+					Message: fmt.Sprintf("%s: ID %d not found or does not match filter", p.Label, id),
+				})
+			}
+		}
+	}
+
+	return errs, nil
 }
 
 // RunAction executes a registered plugin action synchronously. It locates

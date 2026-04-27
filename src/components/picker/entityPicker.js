@@ -26,6 +26,10 @@ export function registerEntityPickerStore(Alpine) {
     selectedIds: new Set(),
     existingIds: new Set(),
 
+    // Picker options
+    lockedFilters: {},
+    multiSelect: true,
+
     // Callback
     onConfirm: null,
 
@@ -33,10 +37,12 @@ export function registerEntityPickerStore(Alpine) {
     searchDebounceTimer: null,
     requestAborter: null,
 
-    open({ entityType, noteId = null, existingIds = [], onConfirm }) {
+    open({ entityType, noteId = null, existingIds = [], lockedFilters = {}, multiSelect = true, onConfirm }) {
       this.config = getEntityConfig(entityType);
       this.noteId = noteId;
       this.existingIds = new Set(existingIds);
+      this.lockedFilters = lockedFilters;
+      this.multiSelect = multiSelect;
       this.onConfirm = onConfirm;
       this.selectedIds = new Set();
       this.searchQuery = '';
@@ -67,6 +73,8 @@ export function registerEntityPickerStore(Alpine) {
       this.results = [];
       this.tabResults = {};
       this.selectedIds = new Set();
+      this.lockedFilters = {};
+      this.multiSelect = true;
       this.config = null;
       // Clean up pending debounce timer
       if (this.searchDebounceTimer) {
@@ -112,7 +120,7 @@ export function registerEntityPickerStore(Alpine) {
       this.error = null;
 
       const maxResults = this.config.maxResults || 50;
-      const params = this.config.searchParams(this.searchQuery.trim(), this.filterValues, maxResults);
+      const params = this.config.searchParams(this.searchQuery.trim(), this.filterValues, this.lockedFilters, maxResults);
       const url = `${this.config.searchEndpoint}?${params}`;
 
       const { abort, ready } = abortableFetch(url);
@@ -176,7 +184,11 @@ export function registerEntityPickerStore(Alpine) {
 
     toggleSelection(itemId) {
       if (this.existingIds.has(itemId)) return;
-
+      if (!this.multiSelect) {
+        this.selectedIds = new Set([itemId]);
+        this.confirm(); // auto-confirm in single-select mode
+        return;
+      }
       if (this.selectedIds.has(itemId)) {
         this.selectedIds.delete(itemId);
       } else {

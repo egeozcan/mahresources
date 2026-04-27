@@ -16,9 +16,12 @@ import (
 // to the frontend, which interprets it identically.
 type ActionParam struct {
 	Name        string         `json:"name"`
-	Type        string         `json:"type"` // text, textarea, number, select, boolean, hidden, info
+	Type        string         `json:"type"` // text, textarea, number, select, boolean, hidden, info, entity_ref
 	Label       string         `json:"label"`
 	Required    bool           `json:"required"`
+	// Default is the parameter's default value. For most types any matching
+	// value is accepted; for Type=="entity_ref" it must be one of
+	// "trigger" | "selection" | "both" | "" (omitting the field defaults to "trigger").
 	Default     any            `json:"default,omitempty"`
 	Options     []string       `json:"options,omitempty"`
 	Min         *float64       `json:"min,omitempty"`
@@ -26,6 +29,9 @@ type ActionParam struct {
 	Step        *float64       `json:"step,omitempty"`
 	ShowWhen    map[string]any `json:"show_when,omitempty"`
 	Description string         `json:"description,omitempty"`
+	Entity      string         `json:"entity,omitempty"`  // "resource" | "note" | "group" — required when Type=="entity_ref"
+	Multi       bool           `json:"multi,omitempty"`   // false → single ID; true → array of IDs
+	Filters     *ActionFilter  `json:"filters,omitempty"` // nil = inherit action.Filters
 }
 
 // ActionFilter restricts which entities an action applies to.
@@ -136,36 +142,7 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 	// Optional: filters
 	if v := tbl.RawGetString("filters"); v != lua.LNil {
 		if filtersTbl, ok := v.(*lua.LTable); ok {
-			// content_types
-			if ct := filtersTbl.RawGetString("content_types"); ct != lua.LNil {
-				if ctTbl, ok := ct.(*lua.LTable); ok {
-					ctTbl.ForEach(func(_, val lua.LValue) {
-						if s, ok := val.(lua.LString); ok {
-							a.Filters.ContentTypes = append(a.Filters.ContentTypes, string(s))
-						}
-					})
-				}
-			}
-			// category_ids
-			if ci := filtersTbl.RawGetString("category_ids"); ci != lua.LNil {
-				if ciTbl, ok := ci.(*lua.LTable); ok {
-					ciTbl.ForEach(func(_, val lua.LValue) {
-						if n, ok := val.(lua.LNumber); ok {
-							a.Filters.CategoryIDs = append(a.Filters.CategoryIDs, uint(n))
-						}
-					})
-				}
-			}
-			// note_type_ids
-			if ni := filtersTbl.RawGetString("note_type_ids"); ni != lua.LNil {
-				if niTbl, ok := ni.(*lua.LTable); ok {
-					niTbl.ForEach(func(_, val lua.LValue) {
-						if n, ok := val.(lua.LNumber); ok {
-							a.Filters.NoteTypeIDs = append(a.Filters.NoteTypeIDs, uint(n))
-						}
-					})
-				}
-			}
+			a.Filters = parseFiltersTable(filtersTbl)
 		}
 	}
 
@@ -220,6 +197,18 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 					if d := pTbl.RawGetString("description"); d != lua.LNil {
 						p.Description = d.String()
 					}
+					if e := pTbl.RawGetString("entity"); e != lua.LNil {
+						p.Entity = e.String()
+					}
+					if m, ok := pTbl.RawGetString("multi").(lua.LBool); ok {
+						p.Multi = bool(m)
+					}
+					if f := pTbl.RawGetString("filters"); f != lua.LNil {
+						if fTbl, ok := f.(*lua.LTable); ok {
+							af := parseFiltersTable(fTbl)
+							p.Filters = &af
+						}
+					}
 
 					a.Params = append(a.Params, p)
 				}
@@ -227,7 +216,78 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 		}
 	}
 
+	// Validate all params.
+	for i, p := range a.Params {
+		// required=true cannot be combined with show_when: the server validates
+		// required fields before show_when stripping, so a hidden param would
+		// always fail the required check when the controlling param hides it.
+		if p.Required && len(p.ShowWhen) > 0 {
+			return nil, fmt.Errorf("param %q: required=true cannot be combined with show_when (server validates required before show_when stripping; see spec)", p.Name)
+		}
+
+		if p.Type == "entity_ref" {
+			if p.Entity == "" {
+				return nil, fmt.Errorf("param %q: type 'entity_ref' requires 'entity' field", p.Name)
+			}
+			if p.Entity != "resource" && p.Entity != "note" && p.Entity != "group" {
+				return nil, fmt.Errorf("param %q: entity must be 'resource', 'note', or 'group', got %q", p.Name, p.Entity)
+			}
+			// Default for `default` field is "trigger" when omitted.
+			if p.Default == nil {
+				a.Params[i].Default = "trigger"
+			}
+			// Validate `default` value.
+			if d, ok := a.Params[i].Default.(string); ok {
+				if d != "trigger" && d != "selection" && d != "both" && d != "" {
+					return nil, fmt.Errorf("param %q: default must be 'trigger', 'selection', 'both', or '', got %q", p.Name, d)
+				}
+				if d == "both" && !p.Multi {
+					return nil, fmt.Errorf("param %q: default 'both' requires multi=true", p.Name)
+				}
+			} else {
+				return nil, fmt.Errorf("param %q: default must be a string for entity_ref", p.Name)
+			}
+		}
+	}
+
 	return a, nil
+}
+
+// parseFiltersTable parses a Lua table into an ActionFilter struct.
+// Used for both action-level and per-param filter parsing.
+func parseFiltersTable(tbl *lua.LTable) ActionFilter {
+	var f ActionFilter
+	// content_types
+	if ct := tbl.RawGetString("content_types"); ct != lua.LNil {
+		if ctTbl, ok := ct.(*lua.LTable); ok {
+			ctTbl.ForEach(func(_, val lua.LValue) {
+				if s, ok := val.(lua.LString); ok {
+					f.ContentTypes = append(f.ContentTypes, string(s))
+				}
+			})
+		}
+	}
+	// category_ids
+	if ci := tbl.RawGetString("category_ids"); ci != lua.LNil {
+		if ciTbl, ok := ci.(*lua.LTable); ok {
+			ciTbl.ForEach(func(_, val lua.LValue) {
+				if n, ok := val.(lua.LNumber); ok {
+					f.CategoryIDs = append(f.CategoryIDs, uint(n))
+				}
+			})
+		}
+	}
+	// note_type_ids
+	if ni := tbl.RawGetString("note_type_ids"); ni != lua.LNil {
+		if niTbl, ok := ni.(*lua.LTable); ok {
+			niTbl.ForEach(func(_, val lua.LValue) {
+				if n, ok := val.(lua.LNumber); ok {
+					f.NoteTypeIDs = append(f.NoteTypeIDs, uint(n))
+				}
+			})
+		}
+	}
+	return f
 }
 
 // GetActions returns all actions matching the given entity type.

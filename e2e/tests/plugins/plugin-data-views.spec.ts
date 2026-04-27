@@ -127,7 +127,8 @@ test.describe('Data-views plugin shortcodes', () => {
 
     // Should show "Health" label with the gauge value
     await expect(page.locator('main >> text=Health')).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('main >> text=72')).toBeVisible();
+    // Use the specific font-mono span rendered by the meter shortcode, not a broad text match
+    await expect(page.locator('main span.font-mono.font-bold', { hasText: '72' })).toBeVisible();
   });
 
   test('sparkline renders inline SVG', async ({ page }) => {

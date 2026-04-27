@@ -1,11 +1,12 @@
 {# Generic Entity Picker Modal #}
-<div x-show="$store.entityPicker.isOpen"
+<div x-data
+     x-show="$store.entityPicker.isOpen"
      x-cloak
-     class="fixed inset-0 z-50 overflow-y-auto"
+     class="fixed inset-0 overflow-y-auto entity-picker-overlay-top"
      role="dialog"
      aria-modal="true"
      aria-labelledby="entity-picker-title"
-     @keydown.escape.window="$store.entityPicker.close()">
+     @keydown.escape.window="if ($store.entityPicker.isOpen) { $event.stopImmediatePropagation(); $store.entityPicker.close(); }">
     {# Backdrop #}
     <div class="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
          tabindex="-1"
@@ -250,6 +251,61 @@
                                     <span x-show="item.ResourceCount > 0" class="flex-shrink-0" x-text="item.ResourceCount + ' resources'"></span>
                                     <span x-show="item.NoteCount > 0" class="flex-shrink-0" x-text="item.NoteCount + ' notes'"></span>
                                     <span x-show="item.Category?.Name" class="px-1.5 py-0.5 bg-stone-100 text-stone-600 rounded truncate max-w-[120px]" x-text="item.Category?.Name"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                {# Results grid - Note cards #}
+                <div x-show="!$store.entityPicker.loading && $store.entityPicker.displayResults.length > 0 && $store.entityPicker.config?.renderItem === 'noteCard'"
+                     :class="$store.entityPicker.config?.gridColumns || 'grid-cols-2'"
+                     class="grid gap-3"
+                     role="listbox"
+                     :aria-label="'Available ' + ($store.entityPicker.config?.entityLabel?.toLowerCase() || 'items')">
+                    <template x-for="item in $store.entityPicker.displayResults" :key="$store.entityPicker.config.getItemId(item)">
+                        <div @click="$store.entityPicker.toggleSelection($store.entityPicker.config.getItemId(item))"
+                             @keydown.enter.prevent="$store.entityPicker.toggleSelection($store.entityPicker.config.getItemId(item))"
+                             @keydown.space.prevent="$store.entityPicker.toggleSelection($store.entityPicker.config.getItemId(item))"
+                             tabindex="0"
+                             class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-amber-600"
+                             :class="{
+                                 'ring-2 ring-amber-600 border-amber-600 bg-amber-50': $store.entityPicker.isSelected($store.entityPicker.config.getItemId(item)),
+                                 'opacity-50 cursor-not-allowed bg-stone-50': $store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item)),
+                                 'border-stone-200 hover:border-stone-300 hover:bg-stone-50': !$store.entityPicker.isSelected($store.entityPicker.config.getItemId(item)) && !$store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item))
+                             }"
+                             role="option"
+                             :aria-selected="$store.entityPicker.isSelected($store.entityPicker.config.getItemId(item))"
+                             :aria-disabled="$store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item))"
+                             :aria-label="(item.Name || 'Unnamed Note') + ($store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item)) ? ' (already added)' : '')">
+                            {# Note icon #}
+                            <div class="w-14 h-14 flex-shrink-0 bg-stone-100 rounded overflow-hidden">
+                                <div class="w-full h-full flex items-center justify-center text-stone-400">
+                                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                                    </svg>
+                                </div>
+                            </div>
+                            {# Content #}
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-start justify-between">
+                                    <p class="font-medium text-stone-900 truncate" x-text="item.Name || 'Unnamed Note'"></p>
+                                    {# Selection indicator #}
+                                    <div x-show="$store.entityPicker.isSelected($store.entityPicker.config.getItemId(item))"
+                                         class="ml-2 w-5 h-5 bg-amber-700 rounded-full flex items-center justify-center flex-shrink-0">
+                                        <svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                        </svg>
+                                    </div>
+                                    {# Already added badge #}
+                                    <span x-show="$store.entityPicker.isAlreadyAdded($store.entityPicker.config.getItemId(item))"
+                                          class="ml-2 text-xs bg-stone-200 text-stone-600 px-1.5 py-0.5 rounded flex-shrink-0">Added</span>
+                                </div>
+                                {# Breadcrumb #}
+                                <p x-show="item.Owner?.Name" class="text-xs text-stone-500 truncate" x-text="item.Owner?.Name"></p>
+                                {# Metadata #}
+                                <div class="flex items-center gap-2 mt-1 text-xs text-stone-500 overflow-hidden">
+                                    <span x-show="item.NoteType?.Name" class="px-1.5 py-0.5 bg-stone-100 text-stone-600 rounded truncate max-w-[120px]" x-text="item.NoteType?.Name"></span>
                                 </div>
                             </div>
                         </div>

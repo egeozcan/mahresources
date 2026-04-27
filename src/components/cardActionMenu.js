@@ -16,6 +16,8 @@ export function cardActionMenu() {
                     async: action.async,
                     params: action.params,
                     confirm: action.confirm,
+                    filters: action.filters,
+                    bulk_max: action.bulk_max,
                 }
             }));
         }
