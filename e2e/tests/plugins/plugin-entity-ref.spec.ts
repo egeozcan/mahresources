@@ -104,6 +104,88 @@ test.describe('entity_ref param: fal.ai edit action', () => {
     await expect(chips).toContainText(`#${r2.ID}`);
   });
 
+  test('picker search input is interactable when opened from action modal', async ({ page, baseURL }) => {
+    // Regression: the action modal's x-trap kept stealing focus from the
+    // picker (a sibling overlay), so users could not type into the picker's
+    // search field. Verify the search input retains focus and accepts typed
+    // text, and that Tab-navigation lands on a focusable element inside the
+    // picker rather than snapping back into the action modal.
+    const ctx = await pwRequest.newContext({ baseURL: baseURL! });
+    const client = new ApiClient(ctx, baseURL!);
+    const runId = Date.now() + Math.floor(Math.random() * 100000);
+    const r = await client.createResource({
+      filePath: path.join(__dirname, '../../test-assets/sample-image-37.png'),
+      name: `entity-ref-trap-${runId}`,
+    });
+    await ctx.dispose();
+
+    await page.goto(`/resource?id=${r.ID}`);
+    await page.waitForLoadState('load');
+
+    await page.getByRole('button', { name: 'AI Edit' }).click();
+    const modal = page.locator('[aria-labelledby="plugin-action-modal-title"]');
+    await expect(modal).toBeVisible();
+
+    await modal.getByRole('button', { name: 'Add resources' }).click();
+    const picker = page.locator('[aria-labelledby="entity-picker-title"]');
+    await expect(picker).toBeVisible();
+
+    const searchInput = picker.locator('input[placeholder="Search by name..."]');
+    await searchInput.click();
+    // toBeFocused asserts the picker's search input — not the action modal's
+    // first input — actually owns focus after clicking.
+    await expect(searchInput).toBeFocused();
+
+    // Type via keyboard so we exercise the focus path; if the trap snaps
+    // focus back to the action modal, the chars land in the modal's prompt
+    // textarea instead of the search field.
+    await page.keyboard.type('xyzzy-search');
+    await expect(searchInput).toHaveValue('xyzzy-search');
+
+    // Tab from the search input should move focus to a control inside the
+    // picker (filter inputs or the results region), not back into the action
+    // modal's form fields.
+    await page.keyboard.press('Tab');
+    const focusedInsidePicker = await page.evaluate(() => {
+      const pickerEl = document.querySelector('[aria-labelledby="entity-picker-title"]');
+      const active = document.activeElement;
+      return !!(pickerEl && active && pickerEl.contains(active));
+    });
+    expect(focusedInsidePicker).toBe(true);
+  });
+
+  test('Escape closes only the picker, not the underlying action modal', async ({ page, baseURL }) => {
+    // Both modals listen for window-level Escape via @keydown.escape.window.
+    // Pressing Escape while the picker is open must close only the topmost
+    // dialog (the picker); the action modal must stay open so the user can
+    // continue editing parameters.
+    const ctx = await pwRequest.newContext({ baseURL: baseURL! });
+    const client = new ApiClient(ctx, baseURL!);
+    const runId = Date.now() + Math.floor(Math.random() * 100000);
+    const r = await client.createResource({
+      filePath: path.join(__dirname, '../../test-assets/sample-image-38.png'),
+      name: `entity-ref-esc-${runId}`,
+    });
+    await ctx.dispose();
+
+    await page.goto(`/resource?id=${r.ID}`);
+    await page.waitForLoadState('load');
+
+    await page.getByRole('button', { name: 'AI Edit' }).click();
+    const modal = page.locator('[aria-labelledby="plugin-action-modal-title"]');
+    await expect(modal).toBeVisible();
+
+    await modal.getByRole('button', { name: 'Add resources' }).click();
+    const picker = page.locator('[aria-labelledby="entity-picker-title"]');
+    await expect(picker).toBeVisible();
+
+    await page.keyboard.press('Escape');
+
+    // Only the picker should close; the action modal must remain visible.
+    await expect(picker).not.toBeVisible();
+    await expect(modal).toBeVisible();
+  });
+
   test('extra_images field is hidden for flux1dev model', async ({ page, baseURL }) => {
     const ctx = await pwRequest.newContext({ baseURL: baseURL! });
     const client = new ApiClient(ctx, baseURL!);

@@ -1,7 +1,7 @@
 <div x-data="pluginActionModal()" x-cloak>
     <template x-if="isOpen">
         <div class="plugin-action-overlay" @click.self="close()" @keydown.escape.window="isOpen && close()">
-            <div class="plugin-action-modal" role="dialog" aria-modal="true" aria-labelledby="plugin-action-modal-title" x-trap.noscroll="isOpen">
+            <div class="plugin-action-modal" role="dialog" aria-modal="true" aria-labelledby="plugin-action-modal-title" x-trap.noscroll="isOpen && !$store.entityPicker.isOpen">
                 <header class="plugin-action-modal-header">
                     <h3 x-text="action?.label" id="plugin-action-modal-title" class="plugin-action-modal-title"></h3>
                     <button @click="close()" class="plugin-action-modal-close" aria-label="Close">&times;</button>

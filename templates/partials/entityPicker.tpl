@@ -6,7 +6,7 @@
      role="dialog"
      aria-modal="true"
      aria-labelledby="entity-picker-title"
-     @keydown.escape.window="$store.entityPicker.close()">
+     @keydown.escape.window="if ($store.entityPicker.isOpen) { $event.stopImmediatePropagation(); $store.entityPicker.close(); }">
     {# Backdrop #}
     <div class="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
          tabindex="-1"
