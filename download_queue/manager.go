@@ -21,6 +21,7 @@ const (
 	MaxQueueSize               = 100
 	JobRetentionDuration       = 1 * time.Hour
 	PausedJobRetentionDuration = 24 * time.Hour
+	MaxResourceNameLength      = 1000
 )
 
 // ManagerConfig controls runtime parameters of the DownloadManager. Zero
@@ -170,6 +171,32 @@ func generateShortID() string {
 		return fmt.Sprintf("%08x", time.Now().UnixNano()&0xFFFFFFFF)
 	}
 	return hex.EncodeToString(b)
+}
+
+func trimResourceName(name string) string {
+	if len(name) <= MaxResourceNameLength {
+		return name
+	}
+
+	ext := path.Ext(name)
+	if ext != "" && len(ext) < MaxResourceNameLength {
+		stemLimit := MaxResourceNameLength - len(ext)
+		return trimStringBytes(name[:len(name)-len(ext)], stemLimit) + ext
+	}
+
+	return trimStringBytes(name, MaxResourceNameLength)
+}
+
+func trimStringBytes(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	for i := range value {
+		if i >= limit {
+			return value[:i]
+		}
+	}
+	return value[:limit]
 }
 
 // makeRoomForNewJob evicts old jobs to make space for a new one.
@@ -413,6 +440,7 @@ func (dm *DownloadManager) downloadWithProgress(job *DownloadJob) (*models.Resou
 	if name == "" {
 		name = path.Base(job.URL)
 	}
+	name = trimResourceName(name)
 
 	// Use existing AddResource logic
 	originalName := job.creator.OriginalName

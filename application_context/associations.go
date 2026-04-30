@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"fmt"
+	"path"
 
 	"gorm.io/gorm"
 	"mahresources/application_context/validation"
@@ -37,6 +38,32 @@ func ValidateEntityName(name, entityType string) error {
 		return fmt.Errorf("%s %s", entityType, err.Error())
 	}
 	return nil
+}
+
+func TrimEntityName(name string) string {
+	if len(name) <= MaxEntityNameLength {
+		return name
+	}
+
+	ext := path.Ext(name)
+	if ext != "" && len(ext) < MaxEntityNameLength {
+		stemLimit := MaxEntityNameLength - len(ext)
+		return trimStringBytes(name[:len(name)-len(ext)], stemLimit) + ext
+	}
+
+	return trimStringBytes(name, MaxEntityNameLength)
+}
+
+func trimStringBytes(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	for i := range value {
+		if i >= limit {
+			return value[:i]
+		}
+	}
+	return value[:limit]
 }
 
 // ValidateAssociationIDs checks that all given IDs exist in the database for the model type T.

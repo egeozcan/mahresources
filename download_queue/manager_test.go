@@ -3,7 +3,12 @@ package download_queue
 import (
 	"context"
 	"errors"
+	"io"
+	"mahresources/models"
 	"mahresources/models/query_models"
+	"mahresources/server/interfaces"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,6 +17,16 @@ import (
 
 	"github.com/spf13/afero"
 )
+
+type capturingResourceCreator struct {
+	name string
+}
+
+func (c *capturingResourceCreator) AddResource(file interfaces.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+	_, _ = io.Copy(io.Discard, file)
+	c.name = resourceQuery.Name
+	return &models.Resource{ID: 1, Name: resourceQuery.Name}, nil
+}
 
 // createTestManager creates a DownloadManager for testing with a small max queue size
 func createTestManager() *DownloadManager {
@@ -37,6 +52,38 @@ func addTestJob(dm *DownloadManager, id string, status JobStatus) *DownloadJob {
 	dm.jobs[id] = job
 	dm.jobOrder = append(dm.jobOrder, id)
 	return job
+}
+
+func TestDownloadWithProgressTrimsDerivedResourceName(t *testing.T) {
+	resourceCtx := &capturingResourceCreator{}
+	dm := createTestManager()
+	dm.resourceCtx = resourceCtx
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("downloaded content"))
+	}))
+	defer server.Close()
+
+	longPathPart := strings.Repeat("a", 1200) + ".jpg"
+	job := &DownloadJob{
+		ID:      "long-name",
+		URL:     server.URL + "/" + longPathPart,
+		Status:  JobStatusDownloading,
+		creator: &query_models.ResourceFromRemoteCreator{},
+		ctx:     context.Background(),
+	}
+
+	_, err := dm.downloadWithProgress(job)
+	if err != nil {
+		t.Fatalf("downloadWithProgress returned error: %v", err)
+	}
+
+	if got := len(resourceCtx.name); got > 1000 {
+		t.Fatalf("derived resource name length = %d, want <= 1000", got)
+	}
+	if !strings.HasSuffix(resourceCtx.name, ".jpg") {
+		t.Fatalf("derived resource name = %q, want to preserve extension", resourceCtx.name)
+	}
 }
 
 // TestMakeRoomForNewJob tests the eviction priority logic

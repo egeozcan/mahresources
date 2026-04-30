@@ -265,6 +265,7 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 			if name == "" {
 				name = path.Base(url)
 			}
+			name = TrimEntityName(name)
 
 			res, err := ctx.AddResource(timeoutBody, resourceQuery.FileName, &query_models.ResourceCreator{
 				ResourceQueryBase: query_models.ResourceQueryBase{
