@@ -1,5 +1,5 @@
 {% if versions %}
-<details class="detail-collapsible mb-6" x-data="{ compareMode: false, selected: [] }" {% if versions|length > 1 %}open{% endif %}>
+<details class="detail-collapsible mb-6" x-data="{ compareMode: false, selected: [], allVersionNumbers: [{% for v in versions %}{{ v.VersionNumber }}{% if not forloop.last %},{% endif %}{% endfor %}] }" {% if versions|length > 1 %}open{% endif %}>
     <summary>Versions ({{ versions|length }})</summary>
     <div class="detail-panel-body">
         {% for version in versions %}
@@ -54,7 +54,7 @@
         <div class="p-4 bg-stone-50">
             <div class="flex flex-wrap items-center gap-y-2 gap-x-4 justify-between">
                 <div class="flex items-center gap-2">
-                    <button @click="compareMode = !compareMode; selected = []"
+                    <button @click="compareMode = !compareMode; selected = compareMode && allVersionNumbers.length === 2 ? [...allVersionNumbers] : []"
                             class="px-3 py-1 text-sm border rounded hover:bg-stone-100"
                             :class="{ 'bg-amber-100 border-amber-300': compareMode }">
                         <span x-text="compareMode ? 'Cancel Compare' : 'Compare'"></span>
