@@ -111,11 +111,8 @@ test.describe.serial('Version Compare UI', () => {
     const count = await checkboxes.count();
     expect(count).toBeGreaterThanOrEqual(2);
 
-    // Select two versions
-    await checkboxes.first().check({ force: true });
-    await checkboxes.nth(1).check({ force: true });
-
-    // Compare Selected link should appear
+    // With exactly 2 versions, auto-select fires automatically — "Compare Selected" should already be visible
+    // (auto-select sets both checkboxes when there are exactly 2 versions)
     const compareLink = page.locator('a:has-text("Compare Selected")');
     await expect(compareLink).toBeVisible();
 

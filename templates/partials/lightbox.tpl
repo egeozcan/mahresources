@@ -188,6 +188,19 @@
 
     <!-- Bottom bar with counter, resolution, and controls (in flow, does not cover media) -->
     <div class="flex flex-wrap justify-between items-center gap-1 px-4 py-2 text-white text-sm z-20">
+        <!-- Quick Tag button (hidden when panel is open — panel has its own close button) -->
+        <button
+            x-show="!$store.lightbox.quickTagPanelOpen"
+            @click.stop="$store.lightbox.openQuickTagPanel()"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            title="Edit tags"
+        >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z"></path>
+            </svg>
+            <span>Edit Tags</span>
+        </button>
+
         <!-- Counter -->
         <div class="bg-black/50 px-3 py-1 rounded">
             <span x-text="$store.lightbox.currentIndex + 1"></span>
@@ -240,24 +253,12 @@
         ></a>
 
         <!-- Name -->
-        <div
+        <a
             x-show="$store.lightbox.getCurrentItem()?.name"
-            class="bg-black/50 px-3 py-1 rounded max-w-[30vw] truncate hidden md:block"
+            :href="'/resource?id=' + $store.lightbox.getCurrentItem()?.id"
+            class="bg-black/50 px-3 py-1 rounded max-w-[30vw] truncate hidden md:block hover:bg-white/20 transition-colors"
             x-text="$store.lightbox.getCurrentItem()?.name"
-        ></div>
-
-        <!-- Quick Tag button (hidden when panel is open — panel has its own close button) -->
-        <button
-            x-show="!$store.lightbox.quickTagPanelOpen"
-            @click.stop="$store.lightbox.openQuickTagPanel()"
-            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
-            title="Edit tags"
-        >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z"></path>
-            </svg>
-            <span>Edit Tags</span>
-        </button>
+        ></a>
 
         <!-- Info button (hidden when panel is open — panel has its own close button) -->
         <button

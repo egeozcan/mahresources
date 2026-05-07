@@ -66,16 +66,7 @@ test.describe('BH-007: version-compare action bar layout', () => {
     await expect(compareButton).toBeVisible();
     await compareButton.click();
 
-    // Check two versions.
-    const checkboxes = page.locator('details input[type="checkbox"]');
-    await expect(checkboxes.first()).toBeVisible();
-    const cbCount = await checkboxes.count();
-    expect(cbCount).toBeGreaterThanOrEqual(2);
-    await checkboxes.nth(0).check({ force: true });
-    await checkboxes.nth(1).check({ force: true });
-
-    // Compare Selected link must now be visible — this is the third flex child
-    // that caused the wrap.
+    // With exactly 2 versions, auto-select fires — "Compare Selected" appears immediately.
     await expect(page.locator('a:has-text("Compare Selected")')).toBeVisible();
 
     const uploadBtn = page.getByRole('button', { name: /Upload New Version/ });
