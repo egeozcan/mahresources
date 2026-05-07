@@ -27,6 +27,11 @@ export const navigationState = {
 
   // Reference to trigger element for focus restoration
   triggerElement: null,
+
+  // Cache of preloaded image URLs (kept in-memory by the Image objects we hold)
+  _preloadedUrls: new Set(),
+  _preloadedImages: [],
+  _preloadAheadCount: 5,
 };
 
 export const navigationMethods = {
@@ -157,10 +162,31 @@ export const navigationMethods = {
     this.announce(`Opened ${mediaType}: ${item?.name || 'media'}. ${this.currentIndex + 1} of ${this.items.length}`);
 
     this.scheduleMediaCheck();
+    this._preloadUpcoming();
 
     // Restore quick tag panel from localStorage if it was previously open
     if (this.quickTagPanelOpen) {
       this.fetchResourceDetails();
+    }
+  },
+
+  _preloadUpcoming() {
+    const ahead = this._preloadAheadCount || 5;
+    const end = Math.min(this.items.length, this.currentIndex + 1 + ahead);
+    for (let i = this.currentIndex + 1; i < end; i++) {
+      const item = this.items[i];
+      if (!item || !this.isImage(item.contentType)) continue;
+      if (this._preloadedUrls.has(item.viewUrl)) continue;
+      this._preloadedUrls.add(item.viewUrl);
+      const img = new Image();
+      img.decoding = 'async';
+      img.src = item.viewUrl;
+      this._preloadedImages.push(img);
+    }
+    // Cap retained references so the cache cannot grow unboundedly during long sessions.
+    const cap = (this._preloadAheadCount || 5) * 6;
+    if (this._preloadedImages.length > cap) {
+      this._preloadedImages.splice(0, this._preloadedImages.length - cap);
     }
   },
 
@@ -224,6 +250,7 @@ export const navigationMethods = {
       this.loading = true;
       this.announcePosition();
       this.scheduleMediaCheck();
+      this._preloadUpcoming();
       this.onResourceChange();
     } else if (this.hasNextPage) {
       await this.loadNextPage();
@@ -232,6 +259,7 @@ export const navigationMethods = {
         this.loading = true;
         this.announcePosition();
         this.scheduleMediaCheck();
+        this._preloadUpcoming();
         this.onResourceChange();
       }
     }
@@ -248,6 +276,7 @@ export const navigationMethods = {
       this.loading = true;
       this.announcePosition();
       this.scheduleMediaCheck();
+      this._preloadUpcoming();
       this.onResourceChange();
     } else if (this.hasPrevPage) {
       const prevItemCount = await this.loadPrevPage();
@@ -256,6 +285,7 @@ export const navigationMethods = {
         this.loading = true;
         this.announcePosition();
         this.scheduleMediaCheck();
+        this._preloadUpcoming();
         this.onResourceChange();
       }
     }
