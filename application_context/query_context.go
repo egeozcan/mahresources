@@ -146,53 +146,27 @@ func (ctx *MahresourcesContext) GetDatabaseSchema() (map[string][]string, error)
 	}
 
 	// SQLite path
-	tableRows, err := sqlDB.Query(
-		`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`,
+	rows, err := sqlDB.Query(
+		`SELECT m.name as table_name, p.name as column_name
+		 FROM sqlite_master m
+		 JOIN pragma_table_info(m.name) p
+		 WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%'
+		 ORDER BY m.name, p.cid`,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("querying sqlite tables: %w", err)
+		return nil, fmt.Errorf("querying sqlite schema: %w", err)
 	}
-	defer tableRows.Close()
+	defer rows.Close()
 
-	var tables []string
-	for tableRows.Next() {
-		var name string
-		if err := tableRows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("scanning sqlite table name: %w", err)
+	for rows.Next() {
+		var table, column string
+		if err := rows.Scan(&table, &column); err != nil {
+			return nil, fmt.Errorf("scanning sqlite schema row: %w", err)
 		}
-		tables = append(tables, name)
-	}
-	if err := tableRows.Err(); err != nil {
-		return nil, err
+		schema[table] = append(schema[table], column)
 	}
 
-	for _, table := range tables {
-		colRows, err := sqlDB.Query(fmt.Sprintf(`PRAGMA table_info("%s")`, table))
-		if err != nil {
-			return nil, fmt.Errorf("querying columns for table %s: %w", table, err)
-		}
-
-		var columns []string
-		for colRows.Next() {
-			var cid int
-			var name, colType string
-			var notNull, pk int
-			var dfltValue *string
-			if err := colRows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
-				colRows.Close()
-				return nil, fmt.Errorf("scanning column info for table %s: %w", table, err)
-			}
-			columns = append(columns, name)
-		}
-		colRows.Close()
-		if err := colRows.Err(); err != nil {
-			return nil, err
-		}
-
-		schema[table] = columns
-	}
-
-	return schema, nil
+	return schema, rows.Err()
 }
 
 func (ctx *MahresourcesContext) DeleteQuery(queryId uint) error {
