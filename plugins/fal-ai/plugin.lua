@@ -22,6 +22,11 @@ local FAL_ENDPOINTS = {
     restore = "fal-ai/image-apps-v2/photo-restoration",
     codeformer = "fal-ai/codeformer",
     swin2sr = "fal-ai/swin2sr",
+    nafnet_denoise = "fal-ai/nafnet/denoise",
+    nafnet_deblur = "fal-ai/nafnet/deblur",
+    drct = "fal-ai/drct-super-resolution",
+    aura_sr = "fal-ai/aura-sr",
+    post_processing = "fal-ai/post-processing",
     flux2 = "fal-ai/flux-2/turbo/edit",
     flux2pro = "fal-ai/flux-2-pro/edit",
     flux1dev = "fal-ai/flux/dev/image-to-image",
@@ -191,6 +196,25 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
             mah.log("info", "[fal.ai] build_request: using Topaz Upscaler, model=" .. tostring(payload.model) .. ", factor=" .. tostring(payload.upscale_factor))
             return FAL_ENDPOINTS.topaz, payload
 
+        elseif model == "drct" then
+            -- DRCT super-resolution: degradation-aware (trained on Real-ESRGAN-style
+            -- degradation pipeline), so it handles JPEG-compressed inputs better than
+            -- pure-SR models. Preserves aspect ratio (uniform upscale).
+            local payload = {image_url = data_uri}
+            apply_num(payload, "upscale_factor", params.drct_upscale_factor)
+            mah.log("info", "[fal.ai] build_request: using DRCT, factor=" .. tostring(payload.upscale_factor))
+            return FAL_ENDPOINTS.drct, payload
+
+        elseif model == "aura_sr" then
+            -- Aura SR: tile-based 4x GAN. The v2 checkpoint handles JPEG-degraded
+            -- inputs noticeably better than v1.
+            local payload = {image_url = data_uri}
+            apply_num(payload, "upscale_factor", params.aura_sr_upscale_factor)
+            apply_bool(payload, "overlapping_tiles", params.aura_sr_overlapping_tiles)
+            apply_str(payload, "checkpoint", params.aura_sr_checkpoint)
+            mah.log("info", "[fal.ai] build_request: using Aura SR, checkpoint=" .. tostring(payload.checkpoint))
+            return FAL_ENDPOINTS.aura_sr, payload
+
         else
             -- Clarity (default). Safety checker stays off; existing prompt defaults preserved via param defaults.
             local payload = {image_url = data_uri, enable_safety_checker = false}
@@ -230,6 +254,23 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
             apply_str(payload, "task", params.swin2sr_task)
             mah.log("info", "[fal.ai] build_request: swin2sr task=" .. tostring(payload.task))
             return FAL_ENDPOINTS.swin2sr, payload
+
+        elseif model == "nafnet_denoise" then
+            -- NAFNet denoise: fal explicitly markets this for ISO noise and
+            -- compression artifacts (JPEG blockiness, ringing, banding). Pure
+            -- restoration — no upscale, preserves resolution + aspect ratio.
+            local payload = {image_url = data_uri}
+            apply_num(payload, "seed", params.nafnet_seed)
+            mah.log("info", "[fal.ai] build_request: nafnet/denoise")
+            return FAL_ENDPOINTS.nafnet_denoise, payload
+
+        elseif model == "nafnet_deblur" then
+            -- NAFNet deblur: companion to denoise — fixes camera shake / motion
+            -- blur. No upscale, preserves resolution + aspect ratio.
+            local payload = {image_url = data_uri}
+            apply_num(payload, "seed", params.nafnet_seed)
+            mah.log("info", "[fal.ai] build_request: nafnet/deblur")
+            return FAL_ENDPOINTS.nafnet_deblur, payload
         end
 
         -- photo_restoration (image-apps-v2): default. Always 4K-reshapes; we
@@ -317,6 +358,23 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
             mah.log("info", "[fal.ai] build_request: using endpoint=" .. endpoint .. ", image_count=" .. #image_urls .. ", image_size=" .. tostring(payload.image_size) .. ", output_format=" .. tostring(payload.output_format) .. ", safety=" .. tostring(payload.safety_tolerance) .. ", guidance=" .. tostring(payload.guidance_scale))
             return endpoint, payload
         end
+
+    elseif action_id == "polish" then
+        -- post-processing: sharpen / grain / etc. We expose only the sharpen
+        -- group since that's the useful follow-up after a denoise pass; the
+        -- model has ~50 other params left at their defaults (all gated by
+        -- enable_* flags, all default off).
+        local payload = {image_url = data_uri, enable_sharpen = true}
+        apply_str(payload, "sharpen_mode", params.sharpen_mode)
+        apply_num(payload, "sharpen_radius", params.sharpen_radius)
+        apply_num(payload, "sharpen_alpha", params.sharpen_alpha)
+        apply_num(payload, "noise_radius", params.noise_radius)
+        apply_num(payload, "preserve_edges", params.preserve_edges)
+        apply_num(payload, "smart_sharpen_strength", params.smart_sharpen_strength)
+        apply_num(payload, "smart_sharpen_ratio", params.smart_sharpen_ratio)
+        apply_num(payload, "cas_amount", params.cas_amount)
+        mah.log("info", "[fal.ai] build_request: post-processing sharpen mode=" .. tostring(payload.sharpen_mode))
+        return FAL_ENDPOINTS.post_processing, payload
 
     elseif action_id == "vectorize" then
         mah.log("info", "[fal.ai] build_request: action=vectorize, endpoint=" .. FAL_ENDPOINTS.vectorize)
@@ -681,7 +739,7 @@ function init()
         filters = { content_types = IMAGE_CONTENT_TYPES },
         params = {
             {name = "model", type = "select", label = "Model", default = "clarity",
-                options = {"clarity", "esrgan", "creative", "seedvr", "bria_creative", "topaz"}},
+                options = {"clarity", "esrgan", "creative", "seedvr", "bria_creative", "topaz", "drct", "aura_sr"}},
 
             -- Clarity
             {name = "clarity_prompt", type = "text", label = "Prompt",
@@ -779,6 +837,22 @@ function init()
                 options = {"jpeg", "png"},
                 show_when = {model = "topaz"}},
 
+            -- DRCT super-resolution: degradation-aware (handles JPEG-compressed inputs).
+            {name = "drct_upscale_factor", type = "number", label = "Upscale Factor",
+                default = 4, min = 1, max = 4, step = 1,
+                show_when = {model = "drct"}},
+
+            -- Aura SR: tile-based GAN. v2 checkpoint handles JPEG-degraded inputs better.
+            {name = "aura_sr_checkpoint", type = "select", label = "Checkpoint",
+                default = "v2", options = {"v1", "v2"},
+                show_when = {model = "aura_sr"}},
+            {name = "aura_sr_upscale_factor", type = "number", label = "Upscale Factor",
+                default = 4, min = 1, max = 4, step = 1,
+                show_when = {model = "aura_sr"}},
+            {name = "aura_sr_overlapping_tiles", type = "boolean", label = "Overlapping Tiles (smoother seams)",
+                default = true,
+                show_when = {model = "aura_sr"}},
+
             OUTPUT_MODE_PARAM,
         },
         handler = make_handler("upscale"),
@@ -797,7 +871,8 @@ function init()
         params = {
             {name = "model", type = "select", label = "Model",
                 default = "photo_restoration",
-                options = {"photo_restoration", "codeformer", "swin2sr"}},
+                options = {"photo_restoration", "codeformer", "swin2sr",
+                           "nafnet_denoise", "nafnet_deblur"}},
 
             -- Per-model strengths/weaknesses, gated by show_when so only the
             -- selected model's note appears.
@@ -813,6 +888,14 @@ function init()
                 label = "SWIN2SR — best for degraded scenes and non-portrait sources",
                 description = "Strengths: generic super-resolution; preserves aspect ratio exactly. The 'real_sr' task is trained on real-world degraded photos — closest fit to 'restore' for landscapes, documents, street photos, etc.\n\nWeaknesses: no face-specific enhancement (use CodeFormer for portraits). No explicit scratch removal or color repair. Pricier (~$0.025/megapixel).",
                 show_when = {model = "swin2sr"}},
+            {name = "model_info_nafnet_denoise", type = "info",
+                label = "NAFNet Denoise — best for JPEG / compression artifacts",
+                description = "Strengths: the only fal.ai model explicitly trained for ISO noise and compression artifacts (JPEG blockiness, ringing, color banding from heavy recompression — e.g. WhatsApp / Instagram screenshots). Pure restoration: no upscale, preserves resolution and aspect ratio exactly. Cheap (~$0.0225/megapixel).\n\nWeaknesses: doesn't increase resolution — pair with an Upscale action (DRCT or Aura SR v2 are both degradation-aware) if you also need to scale up. Doesn't restore faces specifically (use CodeFormer for that).",
+                show_when = {model = "nafnet_denoise"}},
+            {name = "model_info_nafnet_deblur", type = "info",
+                label = "NAFNet Deblur — best for camera shake and motion blur",
+                description = "Strengths: companion to NAFNet Denoise; targets motion blur and out-of-focus softness. Preserves resolution and aspect ratio. Cheap (~$0.0225/megapixel).\n\nWeaknesses: doesn't address compression artifacts (use NAFNet Denoise for that) or upscale. Run denoise first, then deblur, when both problems are present.",
+                show_when = {model = "nafnet_deblur"}},
 
             -- photo_restoration (image-apps-v2): full restoration in one pass.
             -- Always reshapes the output to a 4K image with one of 5 aspect
@@ -851,6 +934,11 @@ function init()
                 default = "real_sr",
                 options = {"real_sr", "classical_sr", "compressed_sr"},
                 show_when = {model = "swin2sr"}},
+
+            -- NAFNet (denoise + deblur share the same `seed` param). Both are
+            -- pure restoration: no upscale, aspect ratio preserved exactly.
+            {name = "nafnet_seed", type = "number", label = "Seed (optional, for reproducibility)",
+                show_when = {model = {"nafnet_denoise", "nafnet_deblur"}}},
 
             OUTPUT_MODE_PARAM,
         },
@@ -956,7 +1044,54 @@ function init()
         handler = make_handler("vectorize"),
     })
 
-    mah.log("info", "[fal.ai] init: registered 5 actions (colorize, upscale, restore, edit, vectorize)")
+    -- Polish: detail only (post-processing finishing pass — typically run after a denoise / restore)
+    mah.action({
+        id = "polish",
+        label = "Polish",
+        description = "Sharpen the image (post-processing finishing pass, typically after Restore)",
+        icon = "sparkles",
+        entity = "resource",
+        placement = {"detail"},
+        async = true,
+        filters = { content_types = IMAGE_CONTENT_TYPES },
+        params = {
+            {name = "sharpen_mode", type = "select", label = "Sharpen Mode",
+                default = "smart",
+                options = {"basic", "smart", "cas"}},
+
+            -- basic
+            {name = "sharpen_radius", type = "number", label = "Radius",
+                default = 1, min = 1, max = 10, step = 1,
+                show_when = {sharpen_mode = "basic"}},
+            {name = "sharpen_alpha", type = "number", label = "Strength",
+                default = 1, min = 0, max = 5, step = 0.1,
+                show_when = {sharpen_mode = "basic"}},
+
+            -- smart (good default for post-denoise)
+            {name = "noise_radius", type = "number", label = "Noise Radius",
+                default = 7, min = 1, max = 20, step = 1,
+                show_when = {sharpen_mode = "smart"}},
+            {name = "preserve_edges", type = "number", label = "Preserve Edges",
+                default = 0.75, min = 0, max = 1, step = 0.05,
+                show_when = {sharpen_mode = "smart"}},
+            {name = "smart_sharpen_strength", type = "number", label = "Strength",
+                default = 5, min = 0, max = 20, step = 0.5,
+                show_when = {sharpen_mode = "smart"}},
+            {name = "smart_sharpen_ratio", type = "number", label = "Ratio",
+                default = 0.5, min = 0, max = 1, step = 0.05,
+                show_when = {sharpen_mode = "smart"}},
+
+            -- cas (Contrast-Adaptive Sharpen)
+            {name = "cas_amount", type = "number", label = "CAS Amount",
+                default = 0.8, min = 0, max = 1, step = 0.05,
+                show_when = {sharpen_mode = "cas"}},
+
+            OUTPUT_MODE_PARAM,
+        },
+        handler = make_handler("polish"),
+    })
+
+    mah.log("info", "[fal.ai] init: registered 6 actions (colorize, upscale, restore, edit, vectorize, polish)")
 
     -- Generate Image page
     mah.page("generate", function(ctx)
@@ -1123,13 +1258,15 @@ function init()
         description = "Increase image resolution using AI upscaling models.",
         category = "Action",
         attrs = {
-            { name = "model", type = "select", default = "clarity", description = "Upscaling backend: clarity, esrgan, creative, seedvr, bria_creative, topaz" },
+            { name = "model", type = "select", default = "clarity", description = "Upscaling backend: clarity, esrgan, creative, seedvr, bria_creative, topaz, drct, aura_sr" },
             { name = "clarity_*", type = "various", description = "Clarity controls: prompt, negative_prompt, upscale_factor, creativity, resemblance, guidance_scale, num_inference_steps (shown when model=clarity)" },
             { name = "esrgan_*", type = "various", description = "ESRGAN controls: esrgan_model variant, scale, face mode, output_format (shown when model=esrgan)" },
             { name = "creative_*", type = "various", description = "Creative Upscaler controls: prompt, scale, creativity, detail, shape_preservation (shown when model=creative)" },
             { name = "seedvr_*", type = "various", description = "SeedVR controls: upscale_mode (factor|target), upscale_factor or target_resolution, noise_scale, output_format (shown when model=seedvr)" },
             { name = "bria_preserve_alpha", type = "boolean", default = "true", description = "Preserve alpha channel (shown when model=bria_creative)" },
             { name = "topaz_*", type = "various", description = "Topaz controls: topaz_model preset, upscale_factor, subject_detection, face_enhancement, output_format (shown when model=topaz)" },
+            { name = "drct_upscale_factor", type = "number", default = "4", description = "DRCT upscale factor 1-4 (shown when model=drct)" },
+            { name = "aura_sr_*", type = "various", description = "Aura SR controls: checkpoint (v1|v2, default v2), upscale_factor, overlapping_tiles (shown when model=aura_sr)" },
         },
         examples = {
             { title = "Clarity Upscaler (default)", code = "Uses prompt-guided upscaling with quality-focused defaults.", notes = "Model: fal-ai/clarity-upscaler" },
@@ -1138,6 +1275,8 @@ function init()
             { title = "SeedVR", code = "High-quality upscaling with SeedVR model.", notes = "Model: fal-ai/seedvr/upscale/image" },
             { title = "Bria Creative", code = "Creative upscaling by Bria AI.", notes = "Model: bria/upscale/creative" },
             { title = "Topaz", code = "Detail-preserving upscaling by Topaz Labs.", notes = "Model: fal-ai/topaz/upscale/image" },
+            { title = "DRCT", code = "Degradation-aware super-resolution; handles JPEG-compressed sources better than pure-SR models.", notes = "Model: fal-ai/drct-super-resolution" },
+            { title = "Aura SR", code = "Tile-based 4x GAN. Use checkpoint=v2 for JPEG-degraded inputs.", notes = "Model: fal-ai/aura-sr" },
         },
         notes = {
             "Result is added as a new version of the original resource.",
@@ -1151,15 +1290,18 @@ function init()
         description = "Restore and enhance old or damaged photographs using AI.",
         category = "Action",
         attrs = {
-            { name = "model", type = "select", default = "photo_restoration", description = "Restoration backend: photo_restoration (combined fix), codeformer (faces), swin2sr (scenes)" },
+            { name = "model", type = "select", default = "photo_restoration", description = "Restoration backend: photo_restoration (combined fix), codeformer (faces), swin2sr (scenes), nafnet_denoise (compression artifacts), nafnet_deblur (motion blur)" },
             { name = "fix_colors / remove_scratches / enhance_resolution / aspect_ratio", type = "various", description = "photo_restoration controls. aspect_ratio defaults to 'auto', which picks the closest enum to the source's actual dimensions. Other options: 1:1, 16:9, 9:16, 4:3, 3:4. (Shown when model=photo_restoration.)" },
             { name = "codeformer_*", type = "various", description = "CodeFormer controls: fidelity (identity vs. quality, 0-1), upscale_factor (1-4), face_upscale, aligned, only_center_face. (Shown when model=codeformer.)" },
             { name = "swin2sr_task", type = "select", default = "real_sr", description = "SWIN2SR task: real_sr (degraded real-world photos), classical_sr, or compressed_sr. (Shown when model=swin2sr.)" },
+            { name = "nafnet_seed", type = "number", description = "Optional seed for nafnet_denoise / nafnet_deblur reproducibility." },
         },
         examples = {
             { title = "Photo restoration (default)", code = "Combined color/scratch/quality fix in one pass.", notes = "Model: fal-ai/image-apps-v2/photo-restoration. Always reshapes to a 4K aspect_ratio enum; 'auto' matches the source's actual ratio." },
             { title = "Old portrait", code = "Use CodeFormer with fidelity 0.5-0.7 for old family photos with faces.", notes = "Model: fal-ai/codeformer. Preserves aspect ratio exactly." },
             { title = "Old scene/landscape", code = "Use SWIN2SR with task=real_sr for degraded non-portrait photos.", notes = "Model: fal-ai/swin2sr. Preserves aspect ratio exactly." },
+            { title = "JPEG / compression artifacts", code = "Use NAFNet Denoise on heavily-recompressed images (WhatsApp / Instagram screenshots, social-media downloads).", notes = "Model: fal-ai/nafnet/denoise. Pure restoration — preserves resolution and aspect ratio. Pair with an Upscale step (DRCT or Aura SR v2) if you also need to scale up." },
+            { title = "Motion blur / camera shake", code = "Use NAFNet Deblur. Run after Denoise if both blur and compression artifacts are present.", notes = "Model: fal-ai/nafnet/deblur. Preserves resolution and aspect ratio." },
         },
         notes = {
             "photo_restoration is the only model here that addresses scratches and color fading explicitly — but it always 4K-reshapes the output to one of {1:1, 16:9, 9:16, 4:3, 3:4} enums. The 'auto' aspect_ratio setting compensates by sending the closest enum to the source's actual dimensions; sources whose ratio doesn't fall on one of those five (e.g. 3:2, 21:9) snap to the closest one.",
@@ -1193,6 +1335,24 @@ function init()
             "Available from detail view only.",
             "Flux 2, Flux 2 Pro, and Nano Banana 2 accept multiple input images via the 'Additional Images' picker. The trigger image is included by default.",
             "Flux 1 Dev accepts only a single input image and supports a strength parameter.",
+        },
+    })
+
+    mah.doc({
+        name = "polish",
+        label = "Polish",
+        description = "Sharpen an image as a finishing pass. Useful after a Restore (NAFNet Denoise especially) to recover detail that the denoise step softened.",
+        category = "Action",
+        attrs = {
+            { name = "sharpen_mode", type = "select", default = "smart", description = "basic (radius+alpha), smart (edge-aware, good after denoise), or cas (Contrast-Adaptive Sharpen)" },
+            { name = "sharpen_radius / sharpen_alpha", type = "various", description = "basic-mode controls (shown when sharpen_mode=basic)" },
+            { name = "noise_radius / preserve_edges / smart_sharpen_strength / smart_sharpen_ratio", type = "various", description = "smart-mode controls (shown when sharpen_mode=smart)" },
+            { name = "cas_amount", type = "number", default = "0.8", description = "CAS strength 0-1 (shown when sharpen_mode=cas)" },
+        },
+        notes = {
+            "Backed by fal-ai/post-processing. Only the sharpen group is exposed; all other post-processing knobs (grain, color, vignette, glow, etc.) stay at their off-by-default values.",
+            "Recommended workflow: Restore (NAFNet Denoise) → Polish (smart mode) → optional Upscale.",
+            "Result is added as a new version of the original resource by default.",
         },
     })
 
