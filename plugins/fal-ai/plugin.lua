@@ -470,6 +470,98 @@ local function create_clone_from_url(resource_id, result_url, action_id)
     return new_resource
 end
 
+-- Submit a request to the fal.ai queue API and poll until COMPLETED.
+-- Avoids the 120s sync timeout on `fal.run/` (cold starts on less-popular models
+-- like nafnet/denoise can exceed it). Returns the parsed result table on success;
+-- on failure raises via error() with a descriptive message.
+--
+-- Polling cadence: starts at 1s, grows linearly to a max of 5s, capped at 15min total.
+-- The progress range [progress_start, progress_end] is reported via mah.job_progress
+-- (if job_id is provided) as the request moves IN_QUEUE -> IN_PROGRESS -> COMPLETED.
+local function fal_submit_and_wait(endpoint, payload, api_key, job_id, progress_start, progress_end)
+    local headers = fal_request_headers(api_key)
+    local payload_json = mah.json.encode(payload)
+    local submit_url = "https://queue.fal.run/" .. endpoint
+    mah.log("info", "[fal.ai] queue submit: POST " .. submit_url .. " (payload=" .. #payload_json .. " bytes)")
+
+    local resp = mah.http.post_sync(submit_url, payload_json, {headers = headers, timeout = 60})
+    if resp.error then
+        error("HTTP submit failed: " .. resp.error)
+    end
+    if resp.status_code ~= 200 and resp.status_code ~= 201 then
+        error("API submit error (status " .. tostring(resp.status_code) .. "): " .. (resp.body or ""):sub(1, 500))
+    end
+
+    local submit_result = mah.json.decode(resp.body)
+    if not submit_result or not submit_result.status_url or not submit_result.response_url then
+        error("Submit response missing status_url/response_url: " .. (resp.body or ""):sub(1, 300))
+    end
+
+    local request_id = submit_result.request_id or "?"
+    mah.log("info", "[fal.ai] queue submit: request_id=" .. request_id .. ", status_url=" .. submit_result.status_url)
+
+    local span = (progress_end or 70) - (progress_start or 20)
+    if span < 0 then span = 0 end
+
+    -- Poll until terminal state. 15 min cap = plenty for any current fal.ai model.
+    local max_wait_s = 15 * 60
+    local elapsed = 0
+    local delay = 1
+    local last_status = ""
+    while elapsed < max_wait_s do
+        mah.sleep(delay)
+        elapsed = elapsed + delay
+        if delay < 5 then delay = delay + 1 end
+
+        local status_resp = mah.http.get_sync(submit_result.status_url, {headers = headers, timeout = 30})
+        if status_resp.error then
+            mah.log("warn", "[fal.ai] queue poll: transient error, will retry: " .. status_resp.error)
+        elseif status_resp.status_code == 200 then
+            local s = mah.json.decode(status_resp.body) or {}
+            if s.status ~= last_status then
+                mah.log("info", "[fal.ai] queue poll: request_id=" .. request_id .. " status=" .. tostring(s.status) .. " (elapsed=" .. elapsed .. "s)")
+                last_status = s.status or ""
+            end
+            if s.status == "COMPLETED" then
+                if job_id then
+                    mah.job_progress(job_id, (progress_start or 20) + span, "Fetching result...")
+                end
+                local result_resp = mah.http.get_sync(submit_result.response_url, {headers = headers, timeout = 60})
+                if result_resp.error then
+                    error("HTTP result fetch failed: " .. result_resp.error)
+                end
+                if result_resp.status_code ~= 200 then
+                    error("API result error (status " .. tostring(result_resp.status_code) .. "): " .. (result_resp.body or ""):sub(1, 500))
+                end
+                local result = mah.json.decode(result_resp.body)
+                if not result then
+                    error("Failed to parse result body")
+                end
+                if result.error then
+                    error("fal.ai reported error: " .. tostring(result.error))
+                end
+                return result
+            elseif s.status == "IN_QUEUE" then
+                if job_id and span > 0 then
+                    mah.job_progress(job_id, (progress_start or 20), "Queued (position " .. tostring(s.queue_position or 0) .. ")...")
+                end
+            elseif s.status == "IN_PROGRESS" then
+                if job_id and span > 0 then
+                    -- Crude linear ramp toward progress_end - 5; we don't know real %.
+                    local pct = (progress_start or 20) + math.floor(span * 0.6)
+                    mah.job_progress(job_id, pct, "Processing on fal.ai...")
+                end
+            elseif s.status == "FAILED" or s.status == "CANCELLED" then
+                error("fal.ai request " .. tostring(s.status) .. ": " .. (status_resp.body or ""):sub(1, 500))
+            end
+        else
+            mah.log("warn", "[fal.ai] queue poll: status=" .. tostring(status_resp.status_code) .. ", body=" .. (status_resp.body or ""):sub(1, 200))
+        end
+    end
+
+    error("fal.ai request timed out after " .. max_wait_s .. "s (request_id=" .. request_id .. ")")
+end
+
 -- Call fal.ai API and create a new resource from the result
 local function process_image(resource_id, action_id, params, api_key, job_id)
     mah.log("info", "[fal.ai] process_image: resource_id=" .. tostring(resource_id) .. ", action=" .. action_id)
@@ -508,46 +600,12 @@ local function process_image(resource_id, action_id, params, api_key, job_id)
     end
 
     if job_id then
-        mah.job_progress(job_id, 20, "Calling fal.ai API...")
+        mah.job_progress(job_id, 20, "Submitting to fal.ai...")
     end
 
-    -- Call fal.ai API (sync — needed because async callbacks can't fire during action execution)
-    local api_url = "https://fal.run/" .. endpoint
-    mah.log("info", "[fal.ai] process_image: POST " .. api_url)
-    local payload_json = mah.json.encode(payload)
-    mah.log("info", "[fal.ai] process_image: payload size=" .. #payload_json .. " bytes, timeout=120s")
+    -- Use queue API + polling so cold-starts >120s (e.g. nafnet/denoise) don't time out.
+    local result = fal_submit_and_wait(endpoint, payload, api_key, job_id, 20, 70)
 
-    local resp = mah.http.post_sync(
-        api_url,
-        payload_json,
-        {
-            headers = fal_request_headers(api_key),
-            timeout = 120,
-        }
-    )
-
-    if resp.error then
-        mah.log("error", "[fal.ai] process_image: HTTP request failed: " .. resp.error)
-        error("HTTP request failed: " .. resp.error)
-    end
-
-    mah.log("info", "[fal.ai] process_image: response status=" .. tostring(resp.status_code) .. ", body_length=" .. tostring(resp.body and #resp.body or 0))
-
-    if resp.status_code ~= 200 then
-        mah.log("error", "[fal.ai] process_image: API error: status=" .. tostring(resp.status_code) .. ", body=" .. (resp.body or ""):sub(1, 500))
-        error("API error (status " .. tostring(resp.status_code) .. "): " .. (resp.body or ""):sub(1, 500))
-    end
-
-    if job_id then
-        mah.job_progress(job_id, 70, "Processing result...")
-    end
-
-    -- Parse response
-    local result = mah.json.decode(resp.body)
-    if not result then
-        mah.log("error", "[fal.ai] process_image: failed to parse API response")
-        error("Failed to parse API response")
-    end
     if result.msg and result.msg ~= "" then
         mah.log("error", "[fal.ai] process_image: API returned message: " .. result.msg)
         error(result.msg)
@@ -1146,38 +1204,14 @@ function init()
                     end
                 end
 
-                mah.job_progress(jid, 20, "Calling fal.ai API...")
+                mah.job_progress(jid, 20, "Submitting to fal.ai...")
 
-                local api_url = "https://fal.run/" .. endpoint
-                mah.log("info", "[fal.ai] generate job: POST " .. api_url)
-                local payload_json = mah.json.encode(payload)
-
-                local resp = mah.http.post_sync(
-                    api_url,
-                    payload_json,
-                    {
-                        headers = fal_request_headers(api_key),
-                        timeout = 120,
-                    }
-                )
-
-                if resp.error then
-                    mah.job_fail(jid, "HTTP error: " .. resp.error)
+                local ok, result_or_err = pcall(fal_submit_and_wait, endpoint, payload, api_key, jid, 20, 70)
+                if not ok then
+                    mah.job_fail(jid, tostring(result_or_err))
                     return
                 end
-
-                if resp.status_code ~= 200 then
-                    mah.job_fail(jid, "API error (status " .. tostring(resp.status_code) .. "): " .. (resp.body or ""):sub(1, 200))
-                    return
-                end
-
-                mah.job_progress(jid, 70, "Processing result...")
-
-                local result = mah.json.decode(resp.body)
-                if not result then
-                    mah.job_fail(jid, "Failed to parse API response")
-                    return
-                end
+                local result = result_or_err
 
                 local result_url = get_result_url(result)
                 if not result_url then

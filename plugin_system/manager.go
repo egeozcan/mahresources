@@ -807,6 +807,21 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		return 1
 	}))
 
+	// mah.sleep(seconds) - blocks the current Lua VM for the given duration.
+	// Bounded to [0, 30] seconds to prevent abuse. Useful for polling external
+	// async APIs (e.g. fal.ai queue) from within a sync action handler.
+	mahMod.RawSetString("sleep", L.NewFunction(func(L *lua.LState) int {
+		secs := L.CheckNumber(1)
+		if secs < 0 {
+			secs = 0
+		}
+		if secs > 30 {
+			secs = 30
+		}
+		time.Sleep(time.Duration(float64(secs) * float64(time.Second)))
+		return 0
+	}))
+
 	pm.registerDbModule(L, mahMod)
 	pm.registerHttpModule(L, mahMod)
 	pm.registerJsonModule(L, mahMod)
