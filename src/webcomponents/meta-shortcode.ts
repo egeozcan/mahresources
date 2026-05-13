@@ -1,5 +1,5 @@
 // src/webcomponents/meta-shortcode.ts
-import { LitElement, html, nothing, type TemplateResult } from 'lit';
+import { LitElement, html, nothing, type TemplateResult, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { detectShape, getBuiltinRenderer } from '../schema-editor/display-renderers';
 import type { JSONSchema } from '../schema-editor/schema-core';
@@ -55,6 +55,17 @@ export class MetaShortcode extends LitElement {
 
   override createRenderRoot() {
     return this;
+  }
+
+  // When valueStr changes externally (e.g. Alpine morph updates the attribute
+  // after a download-completed resource swap), clear cached display state so
+  // _value() falls through to the new valueStr and plugin renders refresh.
+  override willUpdate(changedProperties: PropertyValues) {
+    if (changedProperties.has('valueStr') && !changedProperties.has('_currentValue')) {
+      this._currentValue = undefined;
+      this._pluginHtml = null;
+      this._pluginError = false;
+    }
   }
 
   private get _schema(): JSONSchema | null {

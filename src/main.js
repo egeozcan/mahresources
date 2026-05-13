@@ -204,8 +204,21 @@ window.addEventListener('download-completed', async (e) => {
       // Use Alpine morph to smoothly update the content
       Alpine.morph(listContainer, newListContainer, {
         updating(el, toEl, childrenOnly, skip) {
-          // Preserve Alpine state where possible
+          // Preserve Alpine state only when the underlying entity hasn't changed.
+          // When downloads complete, placeholder cards are replaced with real
+          // resources; copying old state across entity swaps would make sliders
+          // and other interactive controls still reference stale entity data.
           if (el._x_dataStack) {
+            const oldEntity = el._x_dataStack[0]?.entity;
+            if (oldEntity && oldEntity.ID) {
+              const xDataAttr = toEl.getAttribute?.('x-data');
+              if (xDataAttr) {
+                const match = xDataAttr.match(/"ID"\s*:\s*(\d+)/);
+                if (match && parseInt(match[1], 10) !== oldEntity.ID) {
+                  return; // Entity changed — let Alpine re-initialize from new x-data
+                }
+              }
+            }
             toEl._x_dataStack = el._x_dataStack;
           }
         }
