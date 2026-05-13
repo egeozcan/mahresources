@@ -201,26 +201,23 @@ window.addEventListener('download-completed', async (e) => {
     const newListContainer = doc.querySelector('.list-container');
 
     if (newListContainer) {
-      // Use Alpine morph to smoothly update the content
-      Alpine.morph(listContainer, newListContainer, {
-        updating(el, toEl, childrenOnly, skip) {
-          // Preserve Alpine state only when the underlying entity hasn't changed.
-          // When downloads complete, placeholder cards are replaced with real
-          // resources; copying old state across entity swaps would make sliders
-          // and other interactive controls still reference stale entity data.
-          if (el._x_dataStack) {
-            const oldEntity = el._x_dataStack[0]?.entity;
-            if (oldEntity && oldEntity.ID) {
-              const xDataAttr = toEl.getAttribute?.('x-data');
-              if (xDataAttr) {
-                const match = xDataAttr.match(/"ID"\s*:\s*(\d+)/);
-                if (match && parseInt(match[1], 10) !== oldEntity.ID) {
-                  return; // Entity changed — let Alpine re-initialize from new x-data
-                }
-              }
-            }
-            toEl._x_dataStack = el._x_dataStack;
-          }
+      // Remember x-data texts before morph so we can detect changes.
+      const xDataBefore = new Map();
+      listContainer.querySelectorAll('[x-data]').forEach((el) => {
+        xDataBefore.set(el, el.getAttribute('x-data'));
+      });
+
+      // Morph: Alpine copies _x_dataStack across elements, then
+      // patchAttributes updates the x-data *attribute*, but Alpine never
+      // re-reads the attribute — the stale _x_dataStack persists.
+      Alpine.morph(listContainer, newListContainer);
+
+      // Destroy + re-init any element whose x-data attribute changed.
+      xDataBefore.forEach((oldVal, el) => {
+        if (!el.isConnected) return; // removed by morph
+        if (el.getAttribute('x-data') !== oldVal) {
+          window.Alpine.destroyTree(el);
+          window.Alpine.initTree(el);
         }
       });
 
