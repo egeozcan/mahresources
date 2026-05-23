@@ -283,6 +283,23 @@
             <img height="300" src="/v1/resource/preview?id={{ resource.ID }}&height=300&v={{ resource.Hash }}" alt="Preview of {{ resource.Name }}">
         </a>
     </div>
+    <div class="sidebar-group" x-data='customThumbnail({"resourceId": {{ resource.ID }}})' @paste.window="onPaste">
+        {% include "/partials/sideTitle.tpl" with title="Custom Thumbnail" %}
+        <p class="text-xs text-stone-600 mb-2">Upload an image to replace the auto-generated thumbnail, or regenerate from source. Paste an image anywhere on the page to upload.</p>
+        <input type="file" x-ref="fileInput" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" @change="onFileChosen">
+        <div class="flex flex-wrap gap-2">
+            <button type="button" @click="triggerFilePick" :disabled="isBusy"
+                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50">
+                Upload Image
+            </button>
+            <button type="button" @click="regenerate" :disabled="isBusy"
+                class="inline-flex justify-center py-2 px-4 border border-stone-400 shadow-sm text-sm font-medium font-mono rounded-md text-stone-700 bg-stone-100 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-400 disabled:opacity-50">
+                Regenerate from Source
+            </button>
+        </div>
+        <p x-show="statusMessage" x-text="statusMessage" class="text-xs text-emerald-700 mt-2" role="status"></p>
+        <p x-show="errorMessage" x-text="errorMessage" class="text-xs text-red-700 mt-2" role="alert"></p>
+    </div>
     {% endif %}
 
     <div class="sidebar-group">

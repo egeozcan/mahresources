@@ -5000,6 +5000,20 @@ paths:
             tags:
                 - resources
     /v1/resource/preview:
+        delete:
+            operationId: clearResourceThumbnail
+            parameters:
+                - in: query
+                  name: ID
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Clear stored thumbnails so the next request regenerates them from source
+            tags:
+                - resources
         get:
             operationId: getResourcePreview
             parameters:
@@ -5020,6 +5034,45 @@ paths:
                 "200":
                     description: Successful response
             summary: Get a preview image for a resource
+            tags:
+                - resources
+        post:
+            operationId: setCustomResourceThumbnail
+            parameters:
+                - in: query
+                  name: ID
+                  required: true
+                  schema:
+                    type: integer
+            requestBody:
+                content:
+                    multipart/form-data:
+                        schema:
+                            properties:
+                                thumbnail:
+                                    format: binary
+                                    type: string
+                            type: object
+                required: true
+            responses:
+                "200":
+                    description: Successful response
+            summary: Replace a resource's thumbnail with a user-uploaded image
+            tags:
+                - resources
+    /v1/resource/preview/clear:
+        post:
+            operationId: clearResourceThumbnailViaPost
+            parameters:
+                - in: query
+                  name: ID
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Clear stored thumbnails (POST alias of DELETE /v1/resource/preview)
             tags:
                 - resources
     /v1/resource/recalculateDimensions:

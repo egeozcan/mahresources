@@ -1044,6 +1044,39 @@ func registerResourceRoutes(r *openapi.Registry) {
 
 	r.Register(openapi.RouteInfo{
 		Method:              http.MethodPost,
+		Path:                "/v1/resource/preview",
+		OperationID:         "setCustomResourceThumbnail",
+		Summary:             "Replace a resource's thumbnail with a user-uploaded image",
+		Tags:                []string{"resources"},
+		IDQueryParam:        "ID",
+		IDRequired:          true,
+		HasFileUpload:       true,
+		FileFieldName:       "thumbnail",
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeMultipart},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodDelete,
+		Path:         "/v1/resource/preview",
+		OperationID:  "clearResourceThumbnail",
+		Summary:      "Clear stored thumbnails so the next request regenerates them from source",
+		Tags:         []string{"resources"},
+		IDQueryParam: "ID",
+		IDRequired:   true,
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodPost,
+		Path:         "/v1/resource/preview/clear",
+		OperationID:  "clearResourceThumbnailViaPost",
+		Summary:      "Clear stored thumbnails (POST alias of DELETE /v1/resource/preview)",
+		Tags:         []string{"resources"},
+		IDQueryParam: "ID",
+		IDRequired:   true,
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:              http.MethodPost,
 		Path:                "/v1/resource/recalculateDimensions",
 		OperationID:         "bulkRecalculateDimensions",
 		Summary:             "Recalculate dimensions for resources (bulk)",

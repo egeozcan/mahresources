@@ -506,7 +506,10 @@ func GetResourceThumbnailHandler(ctx interfaces.ResourceThumbnailLoader) func(wr
 			return
 		}
 
-		e := fmt.Sprintf(`"%v-%d-%d"`, resource.Hash, query.Width, query.Height)
+		// Include the latest preview row ID so custom-thumbnail uploads or
+		// regenerate (clear-thumbnails) actions invalidate any client cache.
+		previewVersion := ctx.LatestPreviewVersion(request.Context(), query.ID)
+		e := fmt.Sprintf(`"%v-%d-%d-%d"`, resource.Hash, query.Width, query.Height, previewVersion)
 
 		writer.Header().Set("Etag", e)
 		writer.Header().Set("Cache-Control", "max-age=2592000")
@@ -537,6 +540,118 @@ func GetResourceThumbnailHandler(ctx interfaces.ResourceThumbnailLoader) func(wr
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
+	}
+}
+
+// PostResourceCustomThumbnailHandler accepts a multipart upload (form field
+// "thumbnail") and replaces the resource's existing previews with the
+// supplied image. The new image is resized down and re-encoded as JPEG. On
+// success returns 204; invalid or undecodable images return 400.
+func PostResourceCustomThumbnailHandler(
+	ctx interfaces.ResourceThumbnailWriter,
+	maxUploadSize func() int64,
+) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		// Multipart requests can't go through tryFillStructValuesFromRequest
+		// for the ID without giving up access to the uploaded file (decoder
+		// drains PostForm only). Read the ID directly from the URL query.
+		resourceID, err := resourceIDFromRequest(request)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		limit := int64(0)
+		if maxUploadSize != nil {
+			limit = maxUploadSize()
+		}
+		if limit > 0 {
+			request.Body = http.MaxBytesReader(writer, request.Body, limit)
+		}
+
+		if err := request.ParseMultipartForm(32 << 20); err != nil {
+			http_utils.HandleError(fmt.Errorf("failed to parse multipart form: %w", err), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if request.MultipartForm == nil || request.MultipartForm.File == nil {
+			http_utils.HandleError(errors.New("no multipart form data found"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		files := request.MultipartForm.File["thumbnail"]
+		if len(files) == 0 {
+			http_utils.HandleError(errors.New("no thumbnail file supplied (expected form field 'thumbnail')"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		file, err := files[0].Open()
+		if err != nil {
+			http_utils.HandleError(fmt.Errorf("failed to open uploaded thumbnail: %w", err), writer, request, http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+
+		if err := ctx.SetCustomThumbnail(request.Context(), resourceID, file); err != nil {
+			var invalid *application_context.InvalidThumbnailError
+			if errors.As(err, &invalid) {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", resourceID)) {
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// resourceIDFromRequest extracts a positive uint resource ID from either the
+// URL query (?id= / ?ID=) or, falling back, the form body. It does NOT consume
+// the multipart body so callers can still read file uploads afterwards.
+func resourceIDFromRequest(request *http.Request) (uint, error) {
+	q := request.URL.Query()
+	raw := q.Get("id")
+	if raw == "" {
+		raw = q.Get("ID")
+	}
+	if raw == "" && request.Form != nil {
+		raw = request.Form.Get("id")
+	}
+	if raw == "" {
+		return 0, errors.New("resource id is required")
+	}
+	parsed, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil || parsed == 0 {
+		return 0, errors.New("resource id must be a positive integer")
+	}
+	return uint(parsed), nil
+}
+
+// DeleteResourceCustomThumbnailHandler removes all stored previews for the
+// resource so that the next thumbnail request regenerates them automatically.
+func DeleteResourceCustomThumbnailHandler(
+	ctx interfaces.ResourceThumbnailWriter,
+) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		resourceID, err := resourceIDFromRequest(request)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if err := ctx.ClearThumbnails(request.Context(), resourceID); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			return
+		}
+
+		if http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", resourceID)) {
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
 	}
 }
 

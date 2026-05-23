@@ -99,4 +99,11 @@ type ResourceMetaReader interface {
 type ResourceThumbnailLoader interface {
 	ResourceReader
 	LoadOrCreateThumbnailForResource(resourceId, width, height uint, ctx context.Context) (*models.Preview, error)
+	LatestPreviewVersion(ctx context.Context, resourceId uint) uint
+}
+
+// ResourceThumbnailWriter handles custom-thumbnail uploads and reset.
+type ResourceThumbnailWriter interface {
+	SetCustomThumbnail(ctx context.Context, resourceId uint, reader io.Reader) error
+	ClearThumbnails(ctx context.Context, resourceId uint) error
 }

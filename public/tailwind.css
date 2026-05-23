@@ -2281,6 +2281,9 @@
   .border-stone-300 {
     border-color: var(--color-stone-300);
   }
+  .border-stone-400 {
+    border-color: var(--color-stone-400);
+  }
   .border-stone-500 {
     border-color: var(--color-stone-500);
   }

@@ -61,12 +61,34 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(
 	isImage := strings.HasPrefix(resource.ContentType, "image/") && resource.ContentType != "image/svg+xml"
 	isSVG := resource.ContentType == "image/svg+xml"
 
+	// If a canonical/custom null thumbnail (Width=0, Height=0) already exists,
+	// every requested size is derived from it instead of re-decoding the
+	// original file. For images and SVGs this is how user-uploaded custom
+	// thumbnails take precedence; for videos and office docs it is the
+	// existing optimization.
+	var customNull models.Preview
+	hasCustomNull := false
+	if err := ctx.db.WithContext(httpContext).
+		Where("resource_id = ? AND width = 0 AND height = 0", resourceId).
+		Omit(clause.Associations).
+		First(&customNull).Error; err == nil {
+		hasCustomNull = true
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("error checking for custom thumbnail: %w", err)
+	}
+
 	// For images and SVGs, derive the actual target dimensions from the
 	// resource's known aspect ratio. Lookups and saves use these so callers
 	// requesting only height never collide with the legacy (0, H) rows.
 	targetW, targetH := width, height
-	if isImage || isSVG {
-		tW, tH := computeActualTargetDims(resource, width, height)
+	if isImage || isSVG || hasCustomNull {
+		srcW, srcH := resource.Width, resource.Height
+		if hasCustomNull {
+			if aw, ah, decErr := decodeImageDimensions(customNull.Data); decErr == nil {
+				srcW, srcH = aw, ah
+			}
+		}
+		tW, tH := computeActualTargetDims(models.Resource{Width: srcW, Height: srcH}, width, height)
 		if tW > 0 || tH > 0 {
 			targetW, targetH = tW, tH
 		}
@@ -81,13 +103,37 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(
 		return nil, fmt.Errorf("error retrieving existing thumbnail: %w", err)
 	}
 
+	var fileBytes []byte
+
+	// Custom thumbnail short-circuit: resize from the canonical null thumbnail.
+	// No filesystem access or external converters needed.
+	if hasCustomNull {
+		fileBytes, err = ctx.generateImageThumbnail(customNull.Data, targetW, targetH)
+		if err != nil {
+			return nil, fmt.Errorf("error resizing custom thumbnail: %w", err)
+		}
+		saveW, saveH := targetW, targetH
+		if aw, ah, decErr := decodeImageDimensions(fileBytes); decErr == nil {
+			saveW, saveH = aw, ah
+		}
+		preview := &models.Preview{
+			Data:        fileBytes,
+			Width:       saveW,
+			Height:      saveH,
+			ContentType: "image/jpeg",
+			ResourceId:  &resource.ID,
+		}
+		if err := ctx.db.WithContext(httpContext).Save(preview).Error; err != nil {
+			return nil, fmt.Errorf("error saving custom thumbnail variant: %w", err)
+		}
+		return preview, nil
+	}
+
 	// Get the filesystem interface for the resource's storage location
 	fs, storageError := ctx.GetFsForStorageLocation(resource.StorageLocation)
 	if storageError != nil {
 		return nil, fmt.Errorf("error getting filesystem: %w", storageError)
 	}
-
-	var fileBytes []byte
 
 	switch {
 	case isSVG:

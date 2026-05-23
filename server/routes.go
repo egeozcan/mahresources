@@ -415,6 +415,10 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/resource/edit").HandlerFunc(api_handlers.GetResourceEditHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/resource/view").HandlerFunc(api_handlers.GetResourceContentHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/resource/preview").HandlerFunc(api_handlers.GetResourceThumbnailHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/resource/preview").HandlerFunc(api_handlers.PostResourceCustomThumbnailHandler(appContext, func() int64 { return appContext.Settings().MaxUploadSize() }))
+	router.Methods(http.MethodDelete).Path("/v1/resource/preview").HandlerFunc(api_handlers.DeleteResourceCustomThumbnailHandler(appContext))
+	// Some browser environments cannot send DELETE from forms; provide a POST alias.
+	router.Methods(http.MethodPost).Path("/v1/resource/preview/clear").HandlerFunc(api_handlers.DeleteResourceCustomThumbnailHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resource/recalculateDimensions").HandlerFunc(api_handlers.GetBulkCalculateDimensionsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resources/setDimensions").HandlerFunc(api_handlers.GetResourceSetDimensionsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resources/addTags").HandlerFunc(api_handlers.GetAddTagsToResourcesHandler(appContext))
