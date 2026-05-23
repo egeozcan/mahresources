@@ -147,6 +147,9 @@ export const navigationMethods = {
     document.body.style.left = '0';
     document.body.style.right = '0';
     document.body.style.overflow = 'hidden';
+    // Prevent browser back/forward swipe gesture on Mac trackpads
+    this._savedOverscrollBehaviorX = document.body.style.overscrollBehaviorX;
+    document.body.style.overscrollBehaviorX = 'none';
 
     this.currentIndex = index;
     this.isOpen = true;
@@ -220,6 +223,8 @@ export const navigationMethods = {
     document.body.style.left = '';
     document.body.style.right = '';
     document.body.style.overflow = '';
+    // Restore overscroll behavior
+    document.body.style.overscrollBehaviorX = this._savedOverscrollBehaviorX ?? '';
     window.scrollTo(0, savedY);
 
     if (this.requestAborter) {

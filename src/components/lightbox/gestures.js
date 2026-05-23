@@ -207,8 +207,11 @@ export const gestureMethods = {
   handleWheel(event) {
     if (this.isVideo(this.getCurrentItem()?.contentType)) return;
 
+    // Always prevent default for wheel events in the lightbox to stop
+    // browser back/forward swipe gestures on Mac trackpads.
+    event.preventDefault();
+
     if (event.ctrlKey) {
-      event.preventDefault();
       this.disableAnimations();
 
       const media = this.getMediaElement();
@@ -252,8 +255,6 @@ export const gestureMethods = {
       const absNav = Math.abs(navDelta);
 
       if (absNav > 10) {
-        event.preventDefault();
-
         if (this._wheelDebounce) {
           const dirChanged = Math.sign(navDelta) !== this._wheelNavDirection;
           const timeSinceNav = performance.now() - this._wheelNavTime;
@@ -308,7 +309,6 @@ export const gestureMethods = {
         }
       }
     } else {
-      event.preventDefault();
       this.disableAnimations();
       this.panX -= event.deltaX / this.zoomLevel;
       this.panY -= event.deltaY / this.zoomLevel;
