@@ -575,6 +575,29 @@ local function process_image(resource_id, action_id, params, api_key, job_id)
         mah.job_progress(job_id, 10, "Preparing image...")
     end
 
+    -- Pre-pad image for photo_restoration to prevent aspect ratio warping.
+    -- The model always reshapes output to the selected fixed ratio, so
+    -- adding white borders to the input ensures the content stays proportional.
+    if action_id == "restore" and (params.model or "photo_restoration") == "photo_restoration" then
+        local ratio = params.aspect_ratio
+        if ratio == nil or ratio == "" or ratio == "auto" then
+            ratio = auto_aspect_ratio_for(resource_id)
+        end
+        if ratio then
+            -- The Go binding returns (padded_uri, w, h) on success or (nil, err)
+            -- on failure -- it does NOT raise, so pcall reports ok=true even when
+            -- padding failed. Guard on `padded` being non-nil, otherwise we'd
+            -- silently null out data_uri and send the API a payload with no image.
+            local ok, padded, w_or_err, h = pcall(mah.image.pad_to_aspect_ratio, data_uri, ratio)
+            if ok and padded then
+                mah.log("info", "[fal.ai] process_image: padded to " .. ratio .. " (" .. tostring(w_or_err) .. "x" .. tostring(h) .. ")")
+                data_uri = padded
+            else
+                mah.log("warn", "[fal.ai] process_image: padding failed (" .. tostring(padded or w_or_err) .. "), sending original")
+            end
+        end
+    end
+
     -- Build the full image-URI list for multi-image actions (edit: flux2, flux2pro, nanobanana2).
     -- extra_images uses default="trigger" so the frontend prefills the source resource; the handler
     -- iterates that list directly (no re-prepending). When show_when hides the param (e.g. flux1dev
