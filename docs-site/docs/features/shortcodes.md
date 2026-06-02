@@ -175,7 +175,7 @@ In a custom template:
 
 ### Block Syntax
 
-`[mrql]` supports block mode, where the inner content becomes a per-item template:
+`[mrql]` supports block mode, where the inner content becomes a per-item template. Instead of choosing one of the built-in formats, you write the HTML for a single result and the query repeats it once per entity:
 
 ```
 [mrql query='type = resource AND tags = "recipe"' limit="5"]
@@ -186,19 +186,140 @@ In a custom template:
 [/mrql]
 ```
 
-Each result entity gets its own shortcode context, so `[meta]`, `[property]`, `[conditional]`, nested `[mrql]`, and plugin shortcodes all work inside the block body.
+The block body is rendered once for each result, with that entity bound as the current context. This is the same mechanism as a category's CustomMRQLResult template, except it lives inline in the field instead of on the category.
 
-**Precedence rules:**
+#### What works inside the block body
 
-- Block template overrides any `customMRQLResult` set on the entity's category
-- Block template overrides the `format` attribute (the block body is the format)
-- Empty or whitespace-only blocks (`[mrql query="..."][/mrql]`) fall back to normal rendering
+Each result entity gets its own shortcode context (entity type, ID, meta, and the category's MetaSchema), so every shortcode resolves against the current item:
 
-**Result modes:**
+| Shortcode | Behavior inside the block body |
+|-----------|--------------------------------|
+| `[property path="..."]` | Reads a struct field off the current item (`Name`, `Description`, `ContentType`, `CreatedAt`, ...) |
+| `[meta path="..."]` | Reads the current item's meta JSON, rendered schema-aware using that item's own category MetaSchema |
+| `[meta path="..." editable=true]` | Edits target the current item; the pencil writes back to that specific entity |
+| `[conditional ...]...[/conditional]` | Branches on the current item's meta, fields, or a nested query, including `[else]` |
+| `[mrql ...]` | A nested query; `scope` keywords resolve relative to the current item (see [Nested queries and scope](#nested-queries-and-scope)) |
+| `[plugin:name:shortcode ...]` | Plugin shortcodes receive the current item context |
 
-- **Flat queries:** Block template applied per entity
-- **Bucketed GROUP BY:** Block template applied per entity within each bucket; bucket headers render normally
-- **Aggregated GROUP BY:** Block template ignored; aggregated table renders as usual
+Because the body is HTML, you can wrap shortcodes in any markup (grids, cards, badges) and Tailwind classes.
+
+#### Precedence rules
+
+- Block template overrides any CustomMRQLResult set on the entity's category. The inline body always wins.
+- Block template overrides the `format` attribute. When a non-empty body is present, `format` is ignored (the body *is* the format). For example, `[mrql query="..." format=table]...body...[/mrql]` renders the body, not a table.
+- Empty or whitespace-only blocks fall back to normal rendering. The body is trimmed first, so `[mrql query="..."][/mrql]` and `[mrql query="..."]\n[/mrql]` behave exactly like the self-closing form and honor `format` / CustomMRQLResult as usual.
+
+#### Result modes
+
+| Query mode | Block template behavior |
+|------------|-------------------------|
+| Flat (no `GROUP BY`) | Body rendered once per entity |
+| Bucketed `GROUP BY` (with `buckets`) | Body rendered once per entity *within* each bucket; bucket header bars render normally |
+| Aggregated `GROUP BY` | Body ignored; the aggregated table renders as usual (aggregated rows are not entities, so there is nothing to bind) |
+
+#### Empty results
+
+When the query matches nothing, the block renders the standard `No results.` placeholder. The `[mrql]` block has no `[else]` branch. To show a fallback message when a query is empty, wrap the block in a `[conditional mrql="..."]`:
+
+```
+[conditional mrql='type = resource AND tags = "recipe"' gt="0"]
+  [mrql query='type = resource AND tags = "recipe"' limit="5"]
+    <div class="recipe-card"><h3>[property path="Name"]</h3></div>
+  [/mrql]
+[else]
+  <p class="text-stone-400">No recipes yet.</p>
+[/conditional]
+```
+
+#### Combining with other attributes
+
+Block mode composes with every non-`format` attribute. `query` or `saved`, `limit`, `buckets`, and `scope` all still apply; only `format` is superseded by the body.
+
+```
+[mrql saved="recent-uploads" limit="8" scope="root"]
+  <article class="p-3 border rounded-md">
+    <a href="/resource?id=[property path='ID']">[property path="Name"]</a>
+    <span class="text-xs text-stone-500">[property path="ContentType"]</span>
+  </article>
+[/mrql]
+```
+
+#### Nested queries and scope
+
+A nested `[mrql]` inside a block body runs in the current item's context, so its `scope` keywords resolve relative to *that* item rather than the page entity:
+
+- `scope="entity"` (default) -- the current item's own group subtree
+- `scope="parent"` -- the current item's parent group subtree
+- `scope="root"` -- the root of the current item's ownership chain
+- `scope="global"` -- no scope filter
+
+This makes drill-down dashboards possible. The outer query lists groups; the inner query counts or lists their contents:
+
+```
+[mrql query='type = group AND category = 3' limit="10"]
+  <section class="mb-6">
+    <h3>[property path="Name"]</h3>
+    <p>Resources in this group:</p>
+    [mrql query='type = resource' format=compact scope="entity"]
+  </section>
+[/mrql]
+```
+
+Nesting is bounded by the recursion limit of 10 levels (`maxRecursionDepth`). Beyond that, unprocessed shortcodes are left as literal text.
+
+#### Heterogeneous results
+
+A query without a `type` filter can return mixed entity types (resources, notes, groups). The same block body is applied to every item, so reference only fields common to all of them (`Name`, `Description`, `CreatedAt`) or branch on the type first:
+
+```
+[mrql query='tags = "featured"' limit="12"]
+  [conditional field="ContentType" not-empty="true"]
+    <figure><img src="/v1/resource/preview?id=[property path='ID']&height=200" alt="[property path='Name']"></figure>
+  [else]
+    <p class="font-medium">[property path="Name"]</p>
+  [/conditional]
+[/mrql]
+```
+
+#### More examples
+
+Photo gallery from a query:
+
+```html
+[mrql query='type = resource AND contentType ~ "image/*"' limit="12" scope="entity"]
+  <a href="/resource?id=[property path='ID']" class="block">
+    <img src="/v1/resource/preview?id=[property path='ID']&height=128"
+         alt="[property path='Name']"
+         class="w-full h-32 object-cover rounded-md" />
+  </a>
+[/mrql]
+```
+
+Bucketed by owner, each item rendered as a custom card:
+
+```html
+[mrql query='type = note GROUP BY owner.name' buckets="6"]
+  <div class="py-1">
+    <a href="/note?id=[property path='ID']">[property path="Name"]</a>
+    [meta path="status" hide-empty=true]
+  </div>
+[/mrql]
+```
+
+Status board mixing meta, conditionals, and HTML:
+
+```html
+[mrql query='type = group AND category = 5' limit="20"]
+  <div class="flex items-center gap-2 py-1">
+    <span class="font-medium">[property path="Name"]</span>
+    [conditional path="status" eq="active"]
+      <span class="text-green-600 text-xs">active</span>
+    [else]
+      <span class="text-stone-400 text-xs">idle</span>
+    [/conditional]
+  </div>
+[/mrql]
+```
 
 ## `[conditional]` -- Conditional Display
 
