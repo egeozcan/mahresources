@@ -931,6 +931,33 @@ func GetCropResourceHandler(ctx interfaces.ResourceMediaProcessor) func(writer h
 	}
 }
 
+func GetTrimVideoHandler(ctx interfaces.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var editor = query_models.TrimVideoQuery{}
+
+		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if editor.ID == 0 {
+			http_utils.HandleError(errors.New("resource id is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		err := ctx.TrimVideo(request.Context(), editor.ID, editor.Start, editor.End, editor.Comment)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
+			return
+		}
+
+		if !http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", editor.ID)) {
+			writeJSONOk(writer)
+		}
+	}
+}
+
 func GetBulkCalculateDimensionsHandler(ctx interfaces.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkQuery{}

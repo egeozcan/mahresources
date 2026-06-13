@@ -313,6 +313,8 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 				ID:   resource.ID,
 			},
 			"isImage":        resource.IsImage(),
+			"isVideo":        resource.IsVideo(),
+			"videoDuration":  0.0,
 			"mainEntity":     resource,
 			"mainEntityType": "resource",
 		}
@@ -324,6 +326,13 @@ func ResourceContextProvider(context *application_context.MahresourcesContext) f
 			sectionConfig = models.ResolveResourceSectionConfig(nil)
 		}
 		result["sc"] = sectionConfig
+
+		// Probe video duration for the trim slider (best-effort, errors logged but not fatal)
+		if resource.IsVideo() {
+			if dur, err := context.ProbeVideoDuration(resource.ID); err == nil {
+				result["videoDuration"] = dur
+			}
+		}
 
 		if resource.OwnerId != nil && sectionConfig.Breadcrumb {
 			parents, err := context.FindParentsOfGroup(*resource.OwnerId)

@@ -97,3 +97,10 @@ type CropResourceQuery struct {
 	Height  int
 	Comment string
 }
+
+type TrimVideoQuery struct {
+	ID      uint
+	Start   string
+	End     string
+	Comment string
+}

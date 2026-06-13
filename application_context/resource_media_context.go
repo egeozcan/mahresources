@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1656,4 +1657,351 @@ func (ctx *MahresourcesContext) CropResource(
 	ctx.OnResourceFileChanged(resourceId)
 
 	return nil
+}
+
+// TrimVideo trims a video resource to the given time range and stores the result
+// as a new ResourceVersion, following the same pattern as CropResource for images.
+func (ctx *MahresourcesContext) TrimVideo(
+	httpContext context.Context,
+	resourceId uint,
+	start, end, comment string,
+) error {
+	// Validate time parameters
+	if start == "" {
+		return errors.New("start time is required")
+	}
+	if end == "" {
+		return errors.New("end time is required")
+	}
+
+	startSec, err := parseTimeToSeconds(start)
+	if err != nil {
+		return fmt.Errorf("invalid start time %q: %w", start, err)
+	}
+	endSec, err := parseTimeToSeconds(end)
+	if err != nil {
+		return fmt.Errorf("invalid end time %q: %w", end, err)
+	}
+
+	if startSec < 0 {
+		return fmt.Errorf("start time cannot be negative: %s", start)
+	}
+	if endSec <= startSec {
+		return fmt.Errorf("end time (%s) must be after start time (%s)", end, start)
+	}
+
+	// Serialize per-resource version operations
+	ctx.locks.VersionUploadLock.Acquire(resourceId)
+	defer ctx.locks.VersionUploadLock.Release(resourceId)
+
+	var resource models.Resource
+	if err := ctx.db.First(&resource, resourceId).Error; err != nil {
+		return err
+	}
+
+	if !resource.IsVideo() {
+		return errors.New("resource must be a video")
+	}
+
+	fs, err := ctx.GetFsForStorageLocation(resource.StorageLocation)
+	if err != nil {
+		return err
+	}
+
+	// Determine if we can use a local file path (fast seeking) or need stdin fallback
+	localPath, isLocal := resolveLocalFilePath(fs, resource.GetCleanLocation())
+
+	// Compute duration string for -t (more reliable than -to with stream copy)
+	duration := fmt.Sprintf("%.3f", endSec-startSec)
+
+	var outBuf bytes.Buffer
+	var trimErr error
+
+	if isLocal {
+		trimErr = ctx.trimVideoFile(httpContext, localPath, start, duration, &outBuf)
+	} else {
+		trimErr = ctx.trimVideoReader(httpContext, fs, resource.GetCleanLocation(), start, duration, &outBuf)
+	}
+
+	if trimErr != nil {
+		return fmt.Errorf("failed to trim video: %w", trimErr)
+	}
+
+	if outBuf.Len() == 0 {
+		return errors.New("ffmpeg produced no output")
+	}
+
+	trimmedBytes := outBuf.Bytes()
+
+	// Determine output extension — preserve original container format
+	ext := filepath.Ext(resource.GetCleanLocation())
+	if ext == "" {
+		ext = ".mp4"
+	}
+
+	hash := computeSHA1(trimmedBytes)
+	contentType := resource.ContentType
+	location := buildVersionResourcePath(hash, ext)
+
+	if exists, _ := afero.Exists(ctx.fs, location); !exists {
+		if err := ctx.storeVersionFile(location, trimmedBytes); err != nil {
+			return err
+		}
+	}
+
+	// Lazy migration: materialize v1 if this resource predates versioning
+	var versionCount int64
+	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Count(&versionCount)
+	if versionCount == 0 {
+		v1 := models.ResourceVersion{
+			ResourceID:      resourceId,
+			VersionNumber:   1,
+			Hash:            resource.Hash,
+			HashType:        resource.HashType,
+			FileSize:        resource.FileSize,
+			ContentType:     resource.ContentType,
+			Width:           resource.Width,
+			Height:          resource.Height,
+			Location:        resource.Location,
+			StorageLocation: resource.StorageLocation,
+			Comment:         "Original (before trim)",
+		}
+		if err := ctx.db.Create(&v1).Error; err != nil {
+			return fmt.Errorf("failed to create initial version: %w", err)
+		}
+	}
+
+	var maxVersion int
+	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).
+		Select("COALESCE(MAX(version_number), 0)").Scan(&maxVersion)
+
+	versionComment := strings.TrimSpace(comment)
+	if versionComment == "" {
+		versionComment = fmt.Sprintf("Trimmed from %s to %s", start, end)
+	}
+
+	version := models.ResourceVersion{
+		ResourceID:    resourceId,
+		VersionNumber: maxVersion + 1,
+		Hash:          hash,
+		HashType:      "SHA1",
+		FileSize:      int64(len(trimmedBytes)),
+		ContentType:   contentType,
+		Width:         resource.Width,
+		Height:        resource.Height,
+		Location:      location,
+		Comment:       versionComment,
+	}
+
+	tx := ctx.db.Begin()
+	if err := tx.Create(&version).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	resourceUpdates := map[string]interface{}{
+		"current_version_id": version.ID,
+		"hash":               version.Hash,
+		"hash_type":          version.HashType,
+		"location":           version.Location,
+		"storage_location":   version.StorageLocation,
+		"content_type":       version.ContentType,
+		"width":              version.Width,
+		"height":             version.Height,
+		"file_size":          version.FileSize,
+	}
+	if err := tx.Model(&models.Resource{}).Where("id = ?", resourceId).
+		Updates(resourceUpdates).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err := tx.Where("resource_id = ?", resourceId).Delete(&models.Preview{}).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+
+	ctx.OnResourceFileChanged(resourceId)
+
+	return nil
+}
+
+// parseTimeToSeconds parses a time string (e.g. "90", "1.5", "1:30", "00:01:30") into seconds.
+func parseTimeToSeconds(s string) (float64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, errors.New("empty time string")
+	}
+
+	// Try HH:MM:SS or MM:SS format first
+	if strings.Contains(s, ":") {
+		parts := strings.Split(s, ":")
+		if len(parts) < 2 || len(parts) > 3 {
+			return 0, fmt.Errorf("invalid time format %q (expected HH:MM:SS, MM:SS, or seconds)", s)
+		}
+		if len(parts) == 3 {
+			h, err1 := strconv.ParseFloat(parts[0], 64)
+			m, err2 := strconv.ParseFloat(parts[1], 64)
+			sec, err3 := strconv.ParseFloat(parts[2], 64)
+			if err1 != nil || err2 != nil || err3 != nil {
+				return 0, fmt.Errorf("time must be a valid HH:MM:SS duration, got %q", s)
+			}
+			return h*3600 + m*60 + sec, nil
+		}
+		// MM:SS
+		m, err1 := strconv.ParseFloat(parts[0], 64)
+		sec, err2 := strconv.ParseFloat(parts[1], 64)
+		if err1 != nil || err2 != nil {
+			return 0, fmt.Errorf("time must be a valid MM:SS duration, got %q", s)
+		}
+		return m*60 + sec, nil
+	}
+
+	// Plain seconds
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, fmt.Errorf("time must be a valid duration, got %q", s)
+	}
+	return f, nil
+}
+
+// trimVideoFile trims a video using a local file path with re-encoding.
+// Stream copy (-c copy) is unreliable for accurate trimming due to keyframe
+// alignment issues, so we always re-encode with a fast preset.
+func (ctx *MahresourcesContext) trimVideoFile(
+	httpContext context.Context,
+	filePath, start, duration string,
+	outBuf *bytes.Buffer,
+) error {
+	cmd := exec.CommandContext(httpContext, ctx.Config.FfmpegPath,
+		"-y",
+		"-ss", start,
+		"-i", filePath,
+		"-t", duration,
+		"-c:v", "libx264",
+		"-preset", "fast",
+		"-crf", "23",
+		"-c:a", "aac",
+		"-movflags", "frag_keyframe+empty_moov",
+		"-f", "mp4",
+		"pipe:1",
+	)
+
+	var stderr bytes.Buffer
+	cmd.Stdout = outBuf
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if httpContext.Err() != nil {
+			return httpContext.Err()
+		}
+		return fmt.Errorf("ffmpeg error: %w (stderr: %s)", err, truncateStderr(stderr.String(), 500))
+	}
+
+	return nil
+}
+
+// trimVideoReader trims a video from an afero filesystem reader (stdin-based ffmpeg).
+func (ctx *MahresourcesContext) trimVideoReader(
+	httpContext context.Context,
+	fs afero.Fs,
+	location, start, duration string,
+	outBuf *bytes.Buffer,
+) error {
+	select {
+	case <-httpContext.Done():
+		return httpContext.Err()
+	default:
+	}
+
+	file, err := fs.Open(location)
+	if err != nil {
+		return fmt.Errorf("failed to open video file: %w", err)
+	}
+	defer file.Close()
+
+	cmd := exec.CommandContext(httpContext, ctx.Config.FfmpegPath,
+		"-y",
+		"-i", "pipe:0",
+		"-ss", start,
+		"-t", duration,
+		"-c:v", "libx264",
+		"-preset", "fast",
+		"-crf", "23",
+		"-c:a", "aac",
+		"-movflags", "frag_keyframe+empty_moov",
+		"-f", "mp4",
+		"pipe:1",
+	)
+
+	cmd.Stdin = file
+	cmd.Stdout = outBuf
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if httpContext.Err() != nil {
+			return httpContext.Err()
+		}
+		return fmt.Errorf("ffmpeg error: %w (stderr: %s)", err, truncateStderr(stderr.String(), 500))
+	}
+
+	return nil
+}
+
+// ffprobePath derives the ffprobe binary path from the configured ffmpeg path.
+func (ctx *MahresourcesContext) ffprobePath() string {
+	if ctx.Config.FfmpegPath == "" || ctx.Config.FfmpegPath == "ffmpeg" {
+		return "ffprobe"
+	}
+	return strings.Replace(ctx.Config.FfmpegPath, "ffmpeg", "ffprobe", 1)
+}
+
+// ProbeVideoDuration returns the duration of a video resource in seconds.
+// Uses ffprobe to probe the file. Returns 0 and an error if the resource
+// is not a video or probing fails.
+func (ctx *MahresourcesContext) ProbeVideoDuration(resourceId uint) (float64, error) {
+	var resource models.Resource
+	if err := ctx.db.First(&resource, resourceId).Error; err != nil {
+		return 0, err
+	}
+
+	if !resource.IsVideo() {
+		return 0, errors.New("resource is not a video")
+	}
+
+	fs, err := ctx.GetFsForStorageLocation(resource.StorageLocation)
+	if err != nil {
+		return 0, err
+	}
+
+	localPath, isLocal := resolveLocalFilePath(fs, resource.GetCleanLocation())
+	if !isLocal {
+		return 0, errors.New("video duration probing requires a local filesystem")
+	}
+
+	cmd := exec.Command(ctx.ffprobePath(),
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "csv=p=0",
+		localPath,
+	)
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	if err := cmd.Run(); err != nil {
+		return 0, fmt.Errorf("ffprobe failed: %w", err)
+	}
+
+	duration, err := strconv.ParseFloat(strings.TrimSpace(stdout.String()), 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse duration: %w", err)
+	}
+
+	return duration, nil
 }

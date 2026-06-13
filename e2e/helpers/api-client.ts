@@ -642,6 +642,7 @@ export class ApiClient {
     seriesSlug?: string;
     seriesId?: number;
     meta?: string;
+    contentType?: string;
   }): Promise<{ ID: number; Name: string; ContentType: string }> {
     const fs = await import('fs');
     const pathModule = await import('path');
@@ -658,7 +659,7 @@ export class ApiClient {
     const multipartData: Record<string, MultipartValue> = {
       resource: {
         name: fileName,
-        mimeType: 'image/png',
+        mimeType: data.contentType || 'image/png',
         buffer: fileBuffer,
       },
       Name: data.name,

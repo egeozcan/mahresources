@@ -73,6 +73,7 @@ func SetupTestEnv(t *testing.T) *TestContext {
 
 	config := &application_context.MahresourcesConfig{
 		DbType:                       constants.DbTypeSqlite,
+		FfmpegPath:                   "ffmpeg",
 		BindAddress:                  ":0",
 		MaxUploadSize:                2 << 30,
 		MaxImportSize:                10 << 30,

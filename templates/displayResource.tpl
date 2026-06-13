@@ -344,6 +344,77 @@
     {% endif %}
     {% endif %}
 
+    {% if sc.ImageOperations %}
+    {% if isVideo %}
+    <div class="sidebar-group" x-data="videoTrimmer({ resourceId: {{ resource.ID }}, videoDuration: {{ videoDuration }} })" data-trim-section="{{ resource.ID }}">
+        {% include "/partials/sideTitle.tpl" with title="Trim Video" %}
+        <p class="text-xs text-stone-600 mb-2">Drag the handles to select a range, or type exact times below. The result is saved as a new version.</p>
+
+        {# Dual-range slider #}
+        <div class="w-[90%] mx-auto mb-3" x-show="duration > 0">
+            <div class="relative h-16 flex items-center cursor-pointer select-none"
+                x-ref="sliderTrack"
+                @pointerdown="onTrackPointerDown($event)"
+                @pointermove="onPointerMove($event)"
+                @pointerup="onPointerUp($event)"
+                @pointercancel="onPointerUp($event)">
+                {# Track background #}
+                <div class="absolute inset-x-0 h-3 bg-stone-200 rounded-full"></div>
+                {# Selected range #}
+                <div class="absolute h-3 bg-amber-500 rounded-full"
+                    :style="'left:' + sliderStartPct + '%; width:' + sliderRangePct + '%'"></div>
+                {# Start thumb #}
+                <div class="absolute w-5 h-5 bg-emerald-600 rounded-full shadow border-2 border-white -translate-x-1/2 cursor-grab active:cursor-grabbing"
+                    :style="'left:' + sliderStartPct + '%'"
+                    @pointerdown="onThumbPointerDown('start', $event)"
+                    aria-label="Start" role="slider" :aria-valuenow="start" :aria-valuemin="0" :aria-valuemax="duration"></div>
+                {# End thumb #}
+                <div class="absolute w-5 h-5 bg-red-600 rounded-full shadow border-2 border-white -translate-x-1/2 cursor-grab active:cursor-grabbing"
+                    :style="'left:' + sliderEndPct + '%'"
+                    @pointerdown="onThumbPointerDown('end', $event)"
+                    aria-label="End" role="slider" :aria-valuenow="end" :aria-valuemin="0" :aria-valuemax="duration"></div>
+            </div>
+            {# Time labels #}
+            <div class="flex justify-between text-xs text-stone-500 mt-1">
+                <span x-text="formatTime(start)"></span>
+                <span x-text="formatTime(end)"></span>
+            </div>
+        </div>
+
+        {# Text inputs for precise editing #}
+        <div class="grid grid-cols-2 gap-2">
+            <div>
+                <label for="trim-start-{{ resource.ID }}" class="block text-xs font-medium text-stone-700 mb-1">Start (s)</label>
+                <input id="trim-start-{{ resource.ID }}" type="text" x-model="startText"
+                    @input="syncFromText('start')"
+                    class="w-full rounded-md border-stone-300 text-sm"
+                    placeholder="0">
+            </div>
+            <div>
+                <label for="trim-end-{{ resource.ID }}" class="block text-xs font-medium text-stone-700 mb-1">End (s)</label>
+                <input id="trim-end-{{ resource.ID }}" type="text" x-model="endText"
+                    @input="syncFromText('end')"
+                    class="w-full rounded-md border-stone-300 text-sm"
+                    :placeholder="duration ? duration.toFixed(1) : ''">
+            </div>
+        </div>
+        <div class="mt-2">
+            <label for="trim-comment-{{ resource.ID }}" class="block text-xs font-medium text-stone-700 mb-1">Comment (optional)</label>
+            <input id="trim-comment-{{ resource.ID }}" type="text" x-model="comment"
+                class="w-full rounded-md border-stone-300 text-sm"
+                placeholder="e.g. Cut intro">
+        </div>
+        <p x-show="validationError" x-text="validationError" class="text-xs text-amber-700 mt-2" role="alert"></p>
+        <button type="button" @click="submit" :disabled="isSubmitting || !hasTimes()"
+            class="mt-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50">
+            <span x-show="!isSubmitting">Trim Video</span>
+            <span x-show="isSubmitting">Trimming…</span>
+        </button>
+        <p x-show="errorMessage" x-text="errorMessage" class="text-xs text-red-700 mt-2" role="alert"></p>
+    </div>
+    {% endif %}
+    {% endif %}
+
     {% if sc.MetaJson %}
     <div class="sidebar-group">
         {% include "/partials/json.tpl" with jsonData=resource.Meta %}

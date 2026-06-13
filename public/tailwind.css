@@ -343,6 +343,9 @@
   .inset-0 {
     inset: calc(var(--spacing) * 0);
   }
+  .inset-x-0 {
+    inset-inline: calc(var(--spacing) * 0);
+  }
   .inset-y-0 {
     inset-block: calc(var(--spacing) * 0);
   }
@@ -1632,6 +1635,9 @@
   .w-\[18px\] {
     width: 18px;
   }
+  .w-\[90\%\] {
+    width: 90%;
+  }
   .w-\[90vw\] {
     width: 90vw;
   }
@@ -2304,6 +2310,9 @@
   }
   .border-transparent {
     border-color: transparent;
+  }
+  .border-white {
+    border-color: var(--color-white);
   }
   .border-yellow-200 {
     border-color: var(--color-yellow-200);
@@ -4349,6 +4358,11 @@
   .focus-visible\:ring-stone-400 {
     &:focus-visible {
       --tw-ring-color: var(--color-stone-400);
+    }
+  }
+  .active\:cursor-grabbing {
+    &:active {
+      cursor: grabbing;
     }
   }
   .disabled\:cursor-not-allowed {
