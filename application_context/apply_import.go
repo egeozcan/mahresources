@@ -223,8 +223,8 @@ type collectBlobVisitor struct {
 	hashMapBuilt    bool
 }
 
-func (v *collectBlobVisitor) OnGroup(p *archive.GroupPayload) error   { return v.collector.OnGroup(p) }
-func (v *collectBlobVisitor) OnNote(p *archive.NotePayload) error     { return v.collector.OnNote(p) }
+func (v *collectBlobVisitor) OnGroup(p *archive.GroupPayload) error { return v.collector.OnGroup(p) }
+func (v *collectBlobVisitor) OnNote(p *archive.NotePayload) error   { return v.collector.OnNote(p) }
 func (v *collectBlobVisitor) OnResource(p *archive.ResourcePayload) error {
 	return v.collector.OnResource(p)
 }
@@ -547,6 +547,7 @@ func (s *applyState) applySchemaDefDecisions() error {
 				cat.CustomSummary = def.CustomSummary
 				cat.CustomAvatar = def.CustomAvatar
 				cat.CustomMRQLResult = def.CustomMRQLResult
+				cat.CustomCSS = def.CustomCSS
 				cat.MetaSchema = def.MetaSchema
 				if def.GUID != "" {
 					guid := def.GUID
@@ -624,6 +625,7 @@ func (s *applyState) applySchemaDefDecisions() error {
 				nt.CustomSummary = def.CustomSummary
 				nt.CustomAvatar = def.CustomAvatar
 				nt.CustomMRQLResult = def.CustomMRQLResult
+				nt.CustomCSS = def.CustomCSS
 				nt.MetaSchema = def.MetaSchema
 				if def.GUID != "" {
 					guid := def.GUID
@@ -697,6 +699,7 @@ func (s *applyState) applySchemaDefDecisions() error {
 				rc.CustomSummary = def.CustomSummary
 				rc.CustomAvatar = def.CustomAvatar
 				rc.CustomMRQLResult = def.CustomMRQLResult
+				rc.CustomCSS = def.CustomCSS
 				rc.MetaSchema = def.MetaSchema
 				rc.AutoDetectRules = def.AutoDetectRules
 				if def.GUID != "" {
@@ -1486,6 +1489,7 @@ func (s *applyState) resolveResourceCategoryID(rp *archive.ResourcePayload) uint
 	}
 	return 1
 }
+
 // mergeResource updates an existing resource's non-blob scalar fields (incoming wins),
 // deep-merges meta/ownMeta, resolves owner and resource category, and unions M2M tags.
 // Blob-derived metadata (ContentType, Width, Height, FileSize, ContentCategory) and

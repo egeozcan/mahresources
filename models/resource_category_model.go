@@ -33,6 +33,11 @@ type ResourceCategory struct {
 	// in [mrql] query results. Processed entirely server-side; Alpine directives are not
 	// initialized in the rendered output.
 	CustomMRQLResult string `gorm:"type:text"`
+	// CustomCSS is injected as a page-level <style> block on pages that render this category's
+	// templates (resource detail page, resource list pages, and [mrql] result cards that use a
+	// CustomMRQLResult template), so the other Custom* slots can be styled globally. Shortcodes are
+	// processed server-side; an entity variable is available.
+	CustomCSS string `gorm:"type:text"`
 	// MetaSchema is a JSON schema for the meta field of resources in this category
 	MetaSchema string `gorm:"type:text"`
 	// AutoDetectRules is a JSON rule set for auto-detecting this category on upload

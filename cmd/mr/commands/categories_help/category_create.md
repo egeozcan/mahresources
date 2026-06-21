@@ -7,10 +7,12 @@ relatedCmds: category get, category edit-name, categories list
 # Long
 
 Create a new Category. `--name` is required; `--description` is optional
-free-form text. The optional `--custom-header`, `--custom-sidebar`,
-`--custom-summary`, `--custom-avatar`, and `--custom-mrql-result` flags
-accept template or HTML strings applied to Groups assigned to this
-category. `--meta-schema` and `--section-config` take JSON strings
+free-form text. The optional `--custom-header`, `--custom-css`,
+`--custom-sidebar`, `--custom-summary`, `--custom-avatar`, and
+`--custom-mrql-result` flags accept template or HTML strings applied to
+Groups assigned to this category. `--custom-css` is injected as a
+`<style>` block on detail and list pages. `--meta-schema` and
+`--section-config` take JSON strings
 controlling structured metadata and which sections render on group
 detail pages. On success prints a confirmation line with the new ID;
 pass the global `--json` flag to emit the full record for scripting.

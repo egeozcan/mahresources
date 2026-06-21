@@ -52,11 +52,11 @@ type Counts struct {
 	Groups      int `json:"groups"`
 	ShellGroups int `json:"shell_groups,omitempty"`
 	Notes       int `json:"notes"`
-	Resources int `json:"resources"`
-	Series    int `json:"series"`
-	Blobs     int `json:"blobs"`
-	Previews  int `json:"previews"`
-	Versions  int `json:"versions"`
+	Resources   int `json:"resources"`
+	Series      int `json:"series"`
+	Blobs       int `json:"blobs"`
+	Previews    int `json:"previews"`
+	Versions    int `json:"versions"`
 }
 
 type Entries struct {
@@ -294,6 +294,7 @@ type CategoryDef struct {
 	CustomSummary    string         `json:"custom_summary"`
 	CustomAvatar     string         `json:"custom_avatar"`
 	CustomMRQLResult string         `json:"custom_mrql_result"`
+	CustomCSS        string         `json:"custom_css"`
 	MetaSchema       string         `json:"meta_schema"`
 	SectionConfig    map[string]any `json:"section_config"`
 }

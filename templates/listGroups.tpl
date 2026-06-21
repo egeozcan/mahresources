@@ -1,5 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
+{% block head %}{% custom_css groups %}{% endblock %}
+
 {% block prebody %}
     {% include "/partials/boxSelect.tpl" with options=displayOptions %}
     {% include "/partials/bulkEditorGroup.tpl" %}

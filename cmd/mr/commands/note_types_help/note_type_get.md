@@ -11,7 +11,8 @@ single-NoteType GET endpoint, so the CLI fetches the full list and
 filters in-process; this is slower than a direct lookup on large
 instances. The table output shows five core fields (ID, Name, Description,
 Created, Updated). The `--json` flag emits the full server response,
-including MetaSchema, SectionConfig, CustomHeader, and other Custom* fields.
+including MetaSchema, SectionConfig, CustomHeader, CustomCSS, and other
+Custom* fields.
 
 # Example
 
@@ -24,4 +25,4 @@ including MetaSchema, SectionConfig, CustomHeader, and other Custom* fields.
   # mr-doctest: create a note type with a meta schema, fetch via --json, assert the widened fields survive
   NAME="doctest-nt-$$-$RANDOM"
   NTID=$(mr note-type create --name "$NAME" --meta-schema '{"type":"object"}' --json | jq -r '.ID // .id')
-  mr note-type get $NTID --json | jq -e 'has("MetaSchema") or has("metaSchema") or has("SectionConfig") or has("sectionConfig") or has("CustomHeader") or has("customHeader")'
+  mr note-type get $NTID --json | jq -e 'has("MetaSchema") or has("metaSchema") or has("SectionConfig") or has("sectionConfig") or has("CustomHeader") or has("customHeader") or has("CustomCSS") or has("customCSS")'

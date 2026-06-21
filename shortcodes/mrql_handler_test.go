@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -412,4 +413,40 @@ func TestMRQLBlockChildContextWithMeta(t *testing.T) {
 	assert.Contains(t, html, `data-path="rating"`)
 	assert.Contains(t, html, `data-entity-id="1"`)
 	assert.Contains(t, html, `data-entity-id="2"`)
+}
+
+// Inline [mrql] shortcode injects each category's CustomCSS once (deduped), raw, but only for
+// categories whose items render a custom card (CustomMRQLResult set).
+func TestMRQLShortcodeCustomCSS(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "flat",
+		Items: []QueryResultItem{
+			// Two items of resource category 7 -> CSS emitted once.
+			{EntityType: "resource", EntityID: 1, CategoryID: 7, Entity: testEntity{ID: 1, Name: "A"}, Meta: []byte(`{}`),
+				CustomMRQLResult: `<div class="rc">[property path="Name"]</div>`, CustomCSS: `.rc > b { color: red }`},
+			{EntityType: "resource", EntityID: 2, CategoryID: 7, Entity: testEntity{ID: 2, Name: "B"}, Meta: []byte(`{}`),
+				CustomMRQLResult: `<div class="rc">[property path="Name"]</div>`, CustomCSS: `.rc > b { color: red }`},
+			// Note type 7 (different entity type, same numeric id) -> its own block.
+			{EntityType: "note", EntityID: 3, CategoryID: 7, Entity: testEntity{ID: 3, Name: "N"}, Meta: []byte(`{}`),
+				CustomMRQLResult: `<p>[property path="Name"]</p>`, CustomCSS: `.nt {}`},
+			// Group category 9 has CustomCSS but NO custom card -> skipped (default card, no hook).
+			{EntityType: "group", EntityID: 4, CategoryID: 9, Entity: testEntity{ID: 4, Name: "G"}, Meta: []byte(`{}`),
+				CustomCSS: `.skip {}`},
+		},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{Name: "mrql", Attrs: map[string]string{"query": "x"}, Raw: `[mrql query="x"]`}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+
+	// Raw, unescaped CSS, deduped to one block for resource category 7.
+	assert.Contains(t, html, `<style data-mr-custom-css="resource:7">.rc > b { color: red }</style>`)
+	assert.Equal(t, 1, strings.Count(html, `data-mr-custom-css="resource:7"`), "resource category 7 CSS should appear once")
+	assert.NotContains(t, html, "&gt;")
+	// Distinct entity type with the same numeric id gets its own block.
+	assert.Contains(t, html, `data-mr-custom-css="note:7"`)
+	// Category 9 has no custom card, so its CustomCSS is not emitted.
+	assert.NotContains(t, html, ".skip {}")
 }

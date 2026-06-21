@@ -92,7 +92,7 @@ func newResourceCategoryGetCmd(c *client.Client, opts *output.Options) *cobra.Co
 }
 
 func newResourceCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	var name, description, customHeader, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
+	var name, description, customHeader, customCSS, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
 
 	help := helptext.Load(resourceCategoriesHelpFS, "resource_categories_help/resource_category_create.md")
 	cmd := &cobra.Command{
@@ -108,6 +108,9 @@ func newResourceCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra
 			}
 			if customHeader != "" {
 				body["CustomHeader"] = customHeader
+			}
+			if customCSS != "" {
+				body["CustomCSS"] = customCSS
 			}
 			if customSidebar != "" {
 				body["CustomSidebar"] = customSidebar
@@ -151,6 +154,7 @@ func newResourceCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra
 	cmd.MarkFlagRequired("name")
 	cmd.Flags().StringVar(&description, "description", "", "Resource category description")
 	cmd.Flags().StringVar(&customHeader, "custom-header", "", "Custom header HTML")
+	cmd.Flags().StringVar(&customCSS, "custom-css", "", "Custom CSS injected as a <style> block on detail/list pages")
 	cmd.Flags().StringVar(&customSidebar, "custom-sidebar", "", "Custom sidebar HTML")
 	cmd.Flags().StringVar(&customSummary, "custom-summary", "", "Custom summary HTML")
 	cmd.Flags().StringVar(&customAvatar, "custom-avatar", "", "Custom avatar HTML")

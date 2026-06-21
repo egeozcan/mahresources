@@ -98,7 +98,6 @@ test.describe.serial('Resource trim', () => {
       const data = Alpine.$data(el);
       data.startText = '5';
       data.endText = '';
-      data.updateValidation();
     });
 
     // Button should be disabled when end is empty

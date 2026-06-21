@@ -41,6 +41,10 @@
                         <dd>Top of the note detail page, above the description</dd>
                     </div>
                     <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom CSS</dt>
+                        <dd>CSS injected as a <code class="bg-stone-100 px-1 rounded">&lt;style&gt;</code> block on the note detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template</dd>
+                    </div>
+                    <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Sidebar</dt>
                         <dd>Note detail page sidebar (both default and wide layouts)</dd>
                     </div>
@@ -138,6 +142,7 @@
         </div>
 
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=noteType.CustomHeader mode="html" description="Rendered at the top of the note detail page, above the description." %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=noteType.CustomCSS mode="css" description="Injected as a <style> block on the note detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template." %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=noteType.CustomSidebar mode="html" description="Rendered in the note detail page sidebar (both default and wide layouts)." %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=noteType.CustomSummary mode="html" description="Rendered on note cards in list views, below the title." %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=noteType.CustomAvatar mode="html" description="Replaces the default initials avatar on note cards." %}

@@ -1,5 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
+{% block head %}{% custom_css note %}{% endblock %}
+
 {% block body %}
     <a class="text-amber-700" href="/note?id={{ note.ID }}">Go back to the note</a>
     {% if sc.Content %}

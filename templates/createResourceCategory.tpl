@@ -36,6 +36,10 @@
                         <dd>Top of the resource detail page, above the description</dd>
                     </div>
                     <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom CSS</dt>
+                        <dd>CSS injected as a <code class="bg-stone-100 px-1 rounded">&lt;style&gt;</code> block on the resource detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template</dd>
+                    </div>
+                    <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Sidebar</dt>
                         <dd>Resource detail page sidebar and lightbox panel</dd>
                     </div>
@@ -133,6 +137,7 @@
         </div>
 
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=resourceCategory.CustomHeader mode="html" description="Rendered at the top of the resource detail page, above the description." %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=resourceCategory.CustomCSS mode="css" description="Injected as a <style> block on the resource detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template." %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=resourceCategory.CustomSidebar mode="html" description="Rendered in the resource detail page sidebar and lightbox panel." %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=resourceCategory.CustomSummary mode="html" description="Rendered on resource cards in list views, below the title." %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=resourceCategory.CustomAvatar mode="html" description="Shown next to the category name on resource cards." %}

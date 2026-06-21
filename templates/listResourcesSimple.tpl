@@ -1,5 +1,7 @@
 {% extends "/layouts/gallery.tpl" %}
 
+{% block head %}{% custom_css resources %}{% endblock %}
+
 {% block top %}
     <div class="my-4">{% include "/partials/boxSelect.tpl" with options=displayOptions %}</div>
 {% endblock %}

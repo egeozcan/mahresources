@@ -85,6 +85,7 @@ func buildCategory(creator *query_models.CategoryCreator) (models.Category, erro
 		CustomSummary:    creator.CustomSummary,
 		CustomAvatar:     creator.CustomAvatar,
 		CustomMRQLResult: creator.CustomMRQLResult,
+		CustomCSS:        creator.CustomCSS,
 		MetaSchema:       creator.MetaSchema,
 	}, nil
 }
@@ -120,6 +121,7 @@ func buildResourceCategory(creator *query_models.ResourceCategoryCreator) (model
 		CustomSummary:    creator.CustomSummary,
 		CustomAvatar:     creator.CustomAvatar,
 		CustomMRQLResult: creator.CustomMRQLResult,
+		CustomCSS:        creator.CustomCSS,
 		MetaSchema:       creator.MetaSchema,
 		AutoDetectRules:  creator.AutoDetectRules,
 	}, nil
@@ -187,6 +189,7 @@ func buildNoteType(editor *query_models.NoteTypeEditor) (models.NoteType, error)
 		CustomSidebar: editor.CustomSidebar,
 		CustomSummary: editor.CustomSummary,
 		CustomAvatar:  editor.CustomAvatar,
+		CustomCSS:     editor.CustomCSS,
 	}, nil
 }
 

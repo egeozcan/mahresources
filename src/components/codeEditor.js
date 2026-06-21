@@ -83,6 +83,8 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {})
         this.loadHTML();
       } else if (mode === 'json') {
         this.loadJSON();
+      } else if (mode === 'css') {
+        this.loadCSS();
       }
     },
 
@@ -117,6 +119,13 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {})
       const { json } = await import('@codemirror/lang-json');
       this.view.dispatch({
         effects: this.langCompartment.reconfigure(json()),
+      });
+    },
+
+    async loadCSS() {
+      const { css } = await import('@codemirror/lang-css');
+      this.view.dispatch({
+        effects: this.langCompartment.reconfigure(css()),
       });
     },
 

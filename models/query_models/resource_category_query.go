@@ -9,6 +9,7 @@ type ResourceCategoryCreator struct {
 	CustomSummary    string
 	CustomAvatar     string
 	CustomMRQLResult string
+	CustomCSS        string
 	MetaSchema       string
 	AutoDetectRules  string
 	SectionConfig    string

@@ -275,6 +275,9 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 					if _, sent := raw["CustomMRQLResult"]; !sent {
 						editor.CustomMRQLResult = existing.CustomMRQLResult
 					}
+					if _, sent := raw["CustomCSS"]; !sent {
+						editor.CustomCSS = existing.CustomCSS
+					}
 					if _, sent := raw["MetaSchema"]; !sent {
 						editor.MetaSchema = existing.MetaSchema
 					}
@@ -310,6 +313,9 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 					}
 					if editor.CustomMRQLResult == "" && !formHasField(request, "CustomMRQLResult") {
 						editor.CustomMRQLResult = existing.CustomMRQLResult
+					}
+					if editor.CustomCSS == "" && !formHasField(request, "CustomCSS") {
+						editor.CustomCSS = existing.CustomCSS
 					}
 					if editor.MetaSchema == "" && !formHasField(request, "MetaSchema") {
 						editor.MetaSchema = existing.MetaSchema

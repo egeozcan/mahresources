@@ -113,6 +113,8 @@ func convertResultItems(result *application_context.MRQLResult, appCtx *applicat
 		if r.ResourceCategory != nil {
 			item.MetaSchema = r.ResourceCategory.MetaSchema
 			item.CustomMRQLResult = r.ResourceCategory.CustomMRQLResult
+			item.CustomCSS = r.ResourceCategory.CustomCSS
+			item.CategoryID = r.ResourceCategory.ID
 		}
 		// Populate scope fields
 		if r.OwnerId != nil && *r.OwnerId > 0 {
@@ -144,6 +146,8 @@ func convertResultItems(result *application_context.MRQLResult, appCtx *applicat
 		if n.NoteType != nil {
 			item.MetaSchema = n.NoteType.MetaSchema
 			item.CustomMRQLResult = n.NoteType.CustomMRQLResult
+			item.CustomCSS = n.NoteType.CustomCSS
+			item.CategoryID = n.NoteType.ID
 		}
 		// Populate scope fields
 		if n.OwnerId != nil && *n.OwnerId > 0 {
@@ -175,6 +179,8 @@ func convertResultItems(result *application_context.MRQLResult, appCtx *applicat
 		if g.Category != nil {
 			item.MetaSchema = g.Category.MetaSchema
 			item.CustomMRQLResult = g.Category.CustomMRQLResult
+			item.CustomCSS = g.Category.CustomCSS
+			item.CategoryID = g.Category.ID
 		}
 		// Groups are their own scope
 		item.ScopeGroupID = g.ID

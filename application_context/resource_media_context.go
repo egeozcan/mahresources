@@ -1711,7 +1711,7 @@ func (ctx *MahresourcesContext) TrimVideo(
 	// Determine if we can use a local file path (fast seeking) or need stdin fallback
 	localPath, isLocal := resolveLocalFilePath(fs, resource.GetCleanLocation())
 
-	// Compute duration string for -t (more reliable than -to with stream copy)
+	// Pass the clip length to ffmpeg as -t (duration) rather than -to (end time).
 	duration := fmt.Sprintf("%.3f", endSec-startSec)
 
 	var outBuf bytes.Buffer
@@ -1733,14 +1733,14 @@ func (ctx *MahresourcesContext) TrimVideo(
 
 	trimmedBytes := outBuf.Bytes()
 
-	// Determine output extension — preserve original container format
-	ext := filepath.Ext(resource.GetCleanLocation())
-	if ext == "" {
-		ext = ".mp4"
-	}
+	// ffmpeg always transcodes to an MP4 container (libx264/aac, -f mp4), so the
+	// output extension and content type are MP4 regardless of the source format.
+	// Storing them with the original (e.g. .webm) extension would serve MP4 bytes
+	// under a mismatched content type and break playback/downloads.
+	ext := ".mp4"
+	contentType := "video/mp4"
 
 	hash := computeSHA1(trimmedBytes)
-	contentType := resource.ContentType
 	location := buildVersionResourcePath(hash, ext)
 
 	if exists, _ := afero.Exists(ctx.fs, location); !exists {
@@ -1954,11 +1954,14 @@ func (ctx *MahresourcesContext) trimVideoReader(
 }
 
 // ffprobePath derives the ffprobe binary path from the configured ffmpeg path.
+// It only rewrites the basename, so a path like "/opt/ffmpeg-6.0/bin/ffmpeg"
+// resolves to "/opt/ffmpeg-6.0/bin/ffprobe" rather than mangling a parent dir.
 func (ctx *MahresourcesContext) ffprobePath() string {
 	if ctx.Config.FfmpegPath == "" || ctx.Config.FfmpegPath == "ffmpeg" {
 		return "ffprobe"
 	}
-	return strings.Replace(ctx.Config.FfmpegPath, "ffmpeg", "ffprobe", 1)
+	dir, base := filepath.Split(ctx.Config.FfmpegPath)
+	return dir + strings.Replace(base, "ffmpeg", "ffprobe", 1)
 }
 
 // ProbeVideoDuration returns the duration of a video resource in seconds.
@@ -1984,7 +1987,12 @@ func (ctx *MahresourcesContext) ProbeVideoDuration(resourceId uint) (float64, er
 		return 0, errors.New("video duration probing requires a local filesystem")
 	}
 
-	cmd := exec.Command(ctx.ffprobePath(),
+	// Bound the probe so a corrupt or pathological file can't hang the request
+	// goroutine that renders the resource detail page.
+	probeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(probeCtx, ctx.ffprobePath(),
 		"-v", "error",
 		"-show_entries", "format=duration",
 		"-of", "csv=p=0",
@@ -1995,6 +2003,9 @@ func (ctx *MahresourcesContext) ProbeVideoDuration(resourceId uint) (float64, er
 	cmd.Stdout = &stdout
 
 	if err := cmd.Run(); err != nil {
+		if probeCtx.Err() != nil {
+			return 0, fmt.Errorf("ffprobe timed out: %w", probeCtx.Err())
+		}
 		return 0, fmt.Errorf("ffprobe failed: %w", err)
 	}
 

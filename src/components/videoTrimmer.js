@@ -16,32 +16,6 @@ export function videoTrimmer({ resourceId, videoDuration = 0 }) {
     comment: '',
     isSubmitting: false,
     errorMessage: '',
-    _validationError: '',
-
-    // Validation computed reactively on every input change
-    updateValidation() {
-      const s = parseFloat(this.startText);
-      const e = parseFloat(this.endText);
-      if (isNaN(s) || s < 0) {
-        this._validationError = 'Start must be a non-negative number.';
-      } else if (isNaN(e) || e <= 0) {
-        this._validationError = 'End must be a positive number.';
-      } else if (e <= s) {
-        this._validationError = 'End must be after start.';
-      } else {
-        this._validationError = '';
-      }
-    },
-
-    get validationError() {
-      return this._validationError || '';
-    },
-
-    // -- slider helpers --
-
-    init() {
-      this.updateValidation();
-    },
 
     // -- slider helpers --
 
@@ -80,7 +54,6 @@ export function videoTrimmer({ resourceId, videoDuration = 0 }) {
     syncFromSlider() {
       this.startText = this.start.toFixed(1);
       this.endText = this.end.toFixed(1);
-      this.updateValidation();
     },
 
     // -- slider thumb drag --

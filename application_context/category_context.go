@@ -81,6 +81,7 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 		CustomSummary:    categoryQuery.CustomSummary,
 		CustomAvatar:     categoryQuery.CustomAvatar,
 		CustomMRQLResult: categoryQuery.CustomMRQLResult,
+		CustomCSS:        categoryQuery.CustomCSS,
 		MetaSchema:       categoryQuery.MetaSchema,
 	}
 	if categoryQuery.SectionConfig != "" {
@@ -138,6 +139,7 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	category.CustomSummary = categoryQuery.CustomSummary
 	category.CustomAvatar = categoryQuery.CustomAvatar
 	category.CustomMRQLResult = categoryQuery.CustomMRQLResult
+	category.CustomCSS = categoryQuery.CustomCSS
 	category.MetaSchema = categoryQuery.MetaSchema
 	if categoryQuery.SectionConfig != "" {
 		category.SectionConfig = types.JSON(categoryQuery.SectionConfig)

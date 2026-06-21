@@ -13,6 +13,7 @@ export interface Category extends Entity {
   CustomSidebar?: string;
   CustomSummary?: string;
   CustomAvatar?: string;
+  CustomCSS?: string;
   MetaSchema?: string;
   SectionConfig?: string;
 }
@@ -22,6 +23,7 @@ export interface ResourceCategory extends Entity {
   CustomSidebar?: string;
   CustomSummary?: string;
   CustomAvatar?: string;
+  CustomCSS?: string;
   MetaSchema?: string;
   AutoDetectRules?: string;
   SectionConfig?: string;
@@ -32,6 +34,7 @@ export interface NoteType extends Entity {
   CustomSidebar?: string;
   CustomSummary?: string;
   CustomAvatar?: string;
+  CustomCSS?: string;
   MetaSchema?: string;
   SectionConfig?: string;
 }
@@ -232,6 +235,7 @@ export class ApiClient {
     if (options?.CustomSidebar) formData.append('CustomSidebar', options.CustomSidebar);
     if (options?.CustomSummary) formData.append('CustomSummary', options.CustomSummary);
     if (options?.CustomAvatar) formData.append('CustomAvatar', options.CustomAvatar);
+    if (options?.CustomCSS) formData.append('CustomCSS', options.CustomCSS);
     if (options?.MetaSchema) formData.append('MetaSchema', options.MetaSchema);
     if (options?.SectionConfig) formData.append('SectionConfig', options.SectionConfig);
 
@@ -259,6 +263,7 @@ export class ApiClient {
       CustomSidebar?: string;
       CustomSummary?: string;
       CustomAvatar?: string;
+      CustomCSS?: string;
       MetaSchema?: string;
       AutoDetectRules?: string;
       SectionConfig?: string;
@@ -271,6 +276,7 @@ export class ApiClient {
     if (options?.CustomSidebar) formData.append('CustomSidebar', options.CustomSidebar);
     if (options?.CustomSummary) formData.append('CustomSummary', options.CustomSummary);
     if (options?.CustomAvatar) formData.append('CustomAvatar', options.CustomAvatar);
+    if (options?.CustomCSS) formData.append('CustomCSS', options.CustomCSS);
     if (options?.MetaSchema) formData.append('MetaSchema', options.MetaSchema);
     if (options?.AutoDetectRules) formData.append('AutoDetectRules', options.AutoDetectRules);
     if (options?.SectionConfig) formData.append('SectionConfig', options.SectionConfig);
@@ -303,6 +309,7 @@ export class ApiClient {
     if (options?.CustomSidebar) formData.append('CustomSidebar', options.CustomSidebar);
     if (options?.CustomSummary) formData.append('CustomSummary', options.CustomSummary);
     if (options?.CustomAvatar) formData.append('CustomAvatar', options.CustomAvatar);
+    if (options?.CustomCSS) formData.append('CustomCSS', options.CustomCSS);
     if (options?.MetaSchema) formData.append('MetaSchema', options.MetaSchema);
     if (options?.SectionConfig) formData.append('SectionConfig', options.SectionConfig);
 

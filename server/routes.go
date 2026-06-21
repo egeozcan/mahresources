@@ -257,6 +257,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			r.ResourceCategory.CustomSidebar = shortcodes.Process(reqCtx, r.ResourceCategory.CustomSidebar, metaCtx, pluginRenderer, executor)
 			r.ResourceCategory.CustomSummary = shortcodes.Process(reqCtx, r.ResourceCategory.CustomSummary, metaCtx, pluginRenderer, executor)
 			r.ResourceCategory.CustomAvatar = shortcodes.Process(reqCtx, r.ResourceCategory.CustomAvatar, metaCtx, pluginRenderer, executor)
+			r.ResourceCategory.CustomCSS = shortcodes.Process(reqCtx, r.ResourceCategory.CustomCSS, metaCtx, pluginRenderer, executor)
 		}
 	case "group":
 		if g, ok := mainEntity.(*models.Group); ok && g.Category != nil {
@@ -275,6 +276,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			g.Category.CustomSidebar = shortcodes.Process(reqCtx, g.Category.CustomSidebar, metaCtx, pluginRenderer, executor)
 			g.Category.CustomSummary = shortcodes.Process(reqCtx, g.Category.CustomSummary, metaCtx, pluginRenderer, executor)
 			g.Category.CustomAvatar = shortcodes.Process(reqCtx, g.Category.CustomAvatar, metaCtx, pluginRenderer, executor)
+			g.Category.CustomCSS = shortcodes.Process(reqCtx, g.Category.CustomCSS, metaCtx, pluginRenderer, executor)
 		}
 	case "note":
 		if n, ok := mainEntity.(*models.Note); ok && n.NoteType != nil {
@@ -292,6 +294,7 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			n.NoteType.CustomSidebar = shortcodes.Process(reqCtx, n.NoteType.CustomSidebar, metaCtx, pluginRenderer, executor)
 			n.NoteType.CustomSummary = shortcodes.Process(reqCtx, n.NoteType.CustomSummary, metaCtx, pluginRenderer, executor)
 			n.NoteType.CustomAvatar = shortcodes.Process(reqCtx, n.NoteType.CustomAvatar, metaCtx, pluginRenderer, executor)
+			n.NoteType.CustomCSS = shortcodes.Process(reqCtx, n.NoteType.CustomCSS, metaCtx, pluginRenderer, executor)
 		}
 	}
 }

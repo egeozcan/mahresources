@@ -35,9 +35,11 @@ type QueryResultItem struct {
 	Meta             json.RawMessage
 	MetaSchema       string
 	CustomMRQLResult string
-	ScopeGroupID     uint // precomputed: owning group ID (or sentinel for ownerless)
-	ParentGroupID    uint // precomputed: owner's owner ID
-	RootGroupID      uint // precomputed: root of ownership chain
+	CustomCSS        string // category-level CustomCSS, injected once per category as a <style> block
+	CategoryID       uint   // category/type ID, used to dedupe CustomCSS emission
+	ScopeGroupID     uint   // precomputed: owning group ID (or sentinel for ownerless)
+	ParentGroupID    uint   // precomputed: owner's owner ID
+	RootGroupID      uint   // precomputed: root of ownership chain
 }
 
 // QueryResultGroup is a bucket of QueryResultItems sharing a common key.

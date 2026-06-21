@@ -1,5 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
+{% block head %}{% custom_css notes %}{% endblock %}
+
 {% block prebody %}
     {% include "/partials/boxSelect.tpl" with options=displayOptions %}
     {% include "/partials/bulkEditorNote.tpl" %}

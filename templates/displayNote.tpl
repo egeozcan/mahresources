@@ -1,5 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
+{% block head %}{% custom_css note %}{% endblock %}
+
 {% block body %}
     {% plugin_slot "note_detail_before" %}
     <div x-data="{ entity: {{ note|json }} }" data-paste-context='{"type":"note","id":{{ note.ID }},"ownerId":{{ note.OwnerId|default:"null" }},"name":"{{ note.Name|escapejs }}"}'>

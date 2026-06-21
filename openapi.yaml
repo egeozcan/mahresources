@@ -46,6 +46,8 @@ components:
                     type: string
                 CustomAvatar:
                     type: string
+                CustomCSS:
+                    type: string
                 CustomHeader:
                     type: string
                 CustomMRQLResult:
@@ -82,6 +84,8 @@ components:
         CategoryEditor:
             properties:
                 CustomAvatar:
+                    type: string
+                CustomCSS:
                     type: string
                 CustomHeader:
                     type: string
@@ -852,6 +856,8 @@ components:
                     type: string
                 CustomAvatar:
                     type: string
+                CustomCSS:
+                    type: string
                 CustomHeader:
                     type: string
                 CustomMRQLResult:
@@ -888,6 +894,8 @@ components:
         NoteTypeEditor:
             properties:
                 CustomAvatar:
+                    type: string
+                CustomCSS:
                     type: string
                 CustomHeader:
                     type: string
@@ -1125,6 +1133,8 @@ components:
                     type: string
                 CustomAvatar:
                     type: string
+                CustomCSS:
+                    type: string
                 CustomHeader:
                     type: string
                 CustomMRQLResult:
@@ -1163,6 +1173,8 @@ components:
                 AutoDetectRules:
                     type: string
                 CustomAvatar:
+                    type: string
+                CustomCSS:
                     type: string
                 CustomHeader:
                     type: string
@@ -1684,6 +1696,17 @@ components:
                     type: array
                 hasMore:
                     $ref: '#/components/schemas/TimelineHasMore'
+            type: object
+        TrimVideoQuery:
+            properties:
+                Comment:
+                    type: string
+                End:
+                    type: string
+                ID:
+                    type: integer
+                Start:
+                    type: string
             type: object
         VersionCleanupQuery:
             properties:
@@ -5976,6 +5999,24 @@ paths:
             tags:
                 - resources
                 - timeline
+    /v1/resources/trim:
+        post:
+            operationId: trimResourceVideo
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/TrimVideoQuery'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/TrimVideoQuery'
+                required: true
+            responses:
+                "200":
+                    description: Successful response
+            summary: Trim a video resource to a time range and save the result as a new version
+            tags:
+                - resources
     /v1/resources/versions/cleanup:
         post:
             operationId: bulkCleanupVersions

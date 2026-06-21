@@ -8,11 +8,12 @@ relatedCmds: resource-category get, resource-category edit-name, resource-catego
 
 Create a new resource category. `--name` is required; all other flags
 are optional, including a plain `--description`, presentation
-fields (`--custom-header`, `--custom-sidebar`, `--custom-summary`,
-`--custom-avatar`, `--custom-mrql-result`) and structural fields
-(`--meta-schema`, `--section-config`). On success prints a confirmation
-line with the new ID; pass the global `--json` flag to emit the full
-record for scripting.
+fields (`--custom-header`, `--custom-css`, `--custom-sidebar`,
+`--custom-summary`, `--custom-avatar`, `--custom-mrql-result`) and
+structural fields (`--meta-schema`, `--section-config`). `--custom-css`
+is injected as a `<style>` block on detail and list pages. On success
+prints a confirmation line with the new ID; pass the global `--json`
+flag to emit the full record for scripting.
 
 # Example
 

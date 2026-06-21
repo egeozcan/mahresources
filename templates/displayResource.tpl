@@ -1,5 +1,7 @@
 {% extends "/layouts/base.tpl" %}
 
+{% block head %}{% custom_css resource %}{% endblock %}
+
 {% block body %}
     {% plugin_slot "resource_detail_before" %}
     <div x-data="{ entity: {{ resource|json }} }">

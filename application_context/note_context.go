@@ -444,6 +444,7 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 	noteType.CustomSummary = query.CustomSummary
 	noteType.CustomAvatar = query.CustomAvatar
 	noteType.CustomMRQLResult = query.CustomMRQLResult
+	noteType.CustomCSS = query.CustomCSS
 	noteType.MetaSchema = query.MetaSchema
 	if query.SectionConfig != "" {
 		noteType.SectionConfig = types.JSON(query.SectionConfig)

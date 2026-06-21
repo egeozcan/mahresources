@@ -68,6 +68,7 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 		CustomSummary:    query.CustomSummary,
 		CustomAvatar:     query.CustomAvatar,
 		CustomMRQLResult: query.CustomMRQLResult,
+		CustomCSS:        query.CustomCSS,
 		MetaSchema:       query.MetaSchema,
 		AutoDetectRules:  query.AutoDetectRules,
 	}
@@ -104,6 +105,7 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	resourceCategory.CustomSummary = query.CustomSummary
 	resourceCategory.CustomAvatar = query.CustomAvatar
 	resourceCategory.CustomMRQLResult = query.CustomMRQLResult
+	resourceCategory.CustomCSS = query.CustomCSS
 	resourceCategory.MetaSchema = query.MetaSchema
 	resourceCategory.AutoDetectRules = query.AutoDetectRules
 	if query.SectionConfig != "" {

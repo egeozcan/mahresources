@@ -41,6 +41,10 @@
                         <dd>Top of the group detail page, above the description</dd>
                     </div>
                     <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom CSS</dt>
+                        <dd>CSS injected as a <code class="bg-stone-100 px-1 rounded">&lt;style&gt;</code> block on the group detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template</dd>
+                    </div>
+                    <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Sidebar</dt>
                         <dd>Right sidebar on the group detail page</dd>
                     </div>
@@ -138,6 +142,7 @@
         </div>
 
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=category.CustomHeader mode="html" description="Rendered at the top of the group detail page, above the description." %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=category.CustomCSS mode="css" description="Injected as a <style> block on the group detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template." %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=category.CustomSidebar mode="html" description="Rendered in the group detail page sidebar." %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=category.CustomSummary mode="html" description="Rendered on group cards in list views, below the title." %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=category.CustomAvatar mode="html" description="Replaces the default initials avatar on group cards." %}

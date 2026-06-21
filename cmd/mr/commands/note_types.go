@@ -98,7 +98,7 @@ func newNoteTypeGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newNoteTypeCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	var name, description, customHeader, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
+	var name, description, customHeader, customCSS, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
 
 	help := helptext.Load(noteTypesHelpFS, "note_types_help/note_type_create.md")
 	cmd := &cobra.Command{
@@ -114,6 +114,9 @@ func newNoteTypeCreateCmd(c *client.Client, opts *output.Options) *cobra.Command
 			}
 			if customHeader != "" {
 				body["CustomHeader"] = customHeader
+			}
+			if customCSS != "" {
+				body["CustomCSS"] = customCSS
 			}
 			if customSidebar != "" {
 				body["CustomSidebar"] = customSidebar
@@ -157,6 +160,7 @@ func newNoteTypeCreateCmd(c *client.Client, opts *output.Options) *cobra.Command
 	cmd.MarkFlagRequired("name")
 	cmd.Flags().StringVar(&description, "description", "", "Note type description")
 	cmd.Flags().StringVar(&customHeader, "custom-header", "", "Custom header HTML")
+	cmd.Flags().StringVar(&customCSS, "custom-css", "", "Custom CSS injected as a <style> block on detail/list pages")
 	cmd.Flags().StringVar(&customSidebar, "custom-sidebar", "", "Custom sidebar HTML")
 	cmd.Flags().StringVar(&customSummary, "custom-summary", "", "Custom summary HTML")
 	cmd.Flags().StringVar(&customAvatar, "custom-avatar", "", "Custom avatar HTML")
@@ -169,7 +173,7 @@ func newNoteTypeCreateCmd(c *client.Client, opts *output.Options) *cobra.Command
 
 func newNoteTypeEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var id uint
-	var name, description, customHeader, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
+	var name, description, customHeader, customCSS, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
 
 	help := helptext.Load(noteTypesHelpFS, "note_types_help/note_type_edit.md")
 	cmd := &cobra.Command{
@@ -188,6 +192,9 @@ func newNoteTypeEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			}
 			if cmd.Flags().Changed("custom-header") {
 				body["CustomHeader"] = customHeader
+			}
+			if cmd.Flags().Changed("custom-css") {
+				body["CustomCSS"] = customCSS
 			}
 			if cmd.Flags().Changed("custom-sidebar") {
 				body["CustomSidebar"] = customSidebar
@@ -227,6 +234,7 @@ func newNoteTypeEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "Note type name")
 	cmd.Flags().StringVar(&description, "description", "", "Note type description")
 	cmd.Flags().StringVar(&customHeader, "custom-header", "", "Custom header HTML")
+	cmd.Flags().StringVar(&customCSS, "custom-css", "", "Custom CSS injected as a <style> block on detail/list pages")
 	cmd.Flags().StringVar(&customSidebar, "custom-sidebar", "", "Custom sidebar HTML")
 	cmd.Flags().StringVar(&customSummary, "custom-summary", "", "Custom summary HTML")
 	cmd.Flags().StringVar(&customAvatar, "custom-avatar", "", "Custom avatar HTML")

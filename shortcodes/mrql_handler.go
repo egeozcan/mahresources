@@ -63,7 +63,55 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 		inner = renderFlat(reqCtx, result.Items, format, ctx, renderer, executor, depth)
 	}
 
-	return fmt.Sprintf(`<div class="mrql-results">%s</div>`, inner)
+	// Prepend each distinct category's CustomCSS (once) so inline [mrql] custom cards are styled
+	// the same way the /mrql page styles them.
+	cssPrefix := renderResultCSS(reqCtx, result, renderer, executor, depth)
+
+	return fmt.Sprintf(`<div class="mrql-results">%s%s</div>`, cssPrefix, inner)
+}
+
+// renderResultCSS emits a deduped <style> block for each distinct category among the result items
+// that render a custom card (CustomMRQLResult set), so the inline [mrql] shortcode styles its custom
+// cards the same way the /mrql API path does (see mrqlCategoryCSS in mrql_api_handlers.go). Categories
+// without a custom card are skipped — a default card carries no per-category hook to target. The CSS is
+// emitted unescaped per the KAN-6 trust model, and shortcodes inside it are processed with the first
+// matching item's context.
+func renderResultCSS(reqCtx context.Context, result *QueryResult, renderer PluginRenderer, executor QueryExecutor, depth int) string {
+	if result == nil {
+		return ""
+	}
+	seen := map[string]bool{}
+	var b strings.Builder
+	emit := func(items []QueryResultItem) {
+		for i := range items {
+			it := &items[i]
+			if it.CustomMRQLResult == "" || strings.TrimSpace(it.CustomCSS) == "" {
+				continue
+			}
+			key := it.EntityType + ":" + strconv.FormatUint(uint64(it.CategoryID), 10)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			childCtx := MetaShortcodeContext{
+				EntityType:    it.EntityType,
+				EntityID:      it.EntityID,
+				Meta:          it.Meta,
+				MetaSchema:    it.MetaSchema,
+				Entity:        it.Entity,
+				ScopeGroupID:  it.ScopeGroupID,
+				ParentGroupID: it.ParentGroupID,
+				RootGroupID:   it.RootGroupID,
+			}
+			css := processWithDepth(reqCtx, it.CustomCSS, childCtx, renderer, executor, depth+1)
+			b.WriteString(`<style data-mr-custom-css="` + key + `">` + css + `</style>`)
+		}
+	}
+	emit(result.Items)
+	for i := range result.Groups {
+		emit(result.Groups[i].Items)
+	}
+	return b.String()
 }
 
 // applyBlockTemplate stamps every entity item in the result with the block

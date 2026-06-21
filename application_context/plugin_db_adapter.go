@@ -5,14 +5,14 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
+	"mime/multipart"
 	"net/url"
-	"time"
 	"strings"
+	"time"
 )
 
 // pluginDBAdapter implements plugin_system.EntityQuerier using MahresourcesContext.
@@ -697,45 +697,48 @@ func tagToMap(t *models.Tag) map[string]any {
 
 func categoryToMap(c *models.Category) map[string]any {
 	return map[string]any{
-		"id":                  float64(c.ID),
-		"name":                c.Name,
-		"description":         c.Description,
-		"custom_header":       c.CustomHeader,
-		"custom_sidebar":      c.CustomSidebar,
-		"custom_summary":      c.CustomSummary,
-		"custom_avatar":       c.CustomAvatar,
-		"custom_mrql_result":  c.CustomMRQLResult,
-		"meta_schema":         c.MetaSchema,
+		"id":                 float64(c.ID),
+		"name":               c.Name,
+		"description":        c.Description,
+		"custom_header":      c.CustomHeader,
+		"custom_sidebar":     c.CustomSidebar,
+		"custom_summary":     c.CustomSummary,
+		"custom_avatar":      c.CustomAvatar,
+		"custom_mrql_result": c.CustomMRQLResult,
+		"custom_css":         c.CustomCSS,
+		"meta_schema":        c.MetaSchema,
 	}
 }
 
 func resourceCategoryToMap(rc *models.ResourceCategory) map[string]any {
 	return map[string]any{
-		"id":                  float64(rc.ID),
-		"name":                rc.Name,
-		"description":         rc.Description,
-		"custom_header":       rc.CustomHeader,
-		"custom_sidebar":      rc.CustomSidebar,
-		"custom_summary":      rc.CustomSummary,
-		"custom_avatar":       rc.CustomAvatar,
-		"custom_mrql_result":  rc.CustomMRQLResult,
-		"meta_schema":         rc.MetaSchema,
-		"auto_detect_rules":   rc.AutoDetectRules,
+		"id":                 float64(rc.ID),
+		"name":               rc.Name,
+		"description":        rc.Description,
+		"custom_header":      rc.CustomHeader,
+		"custom_sidebar":     rc.CustomSidebar,
+		"custom_summary":     rc.CustomSummary,
+		"custom_avatar":      rc.CustomAvatar,
+		"custom_mrql_result": rc.CustomMRQLResult,
+		"custom_css":         rc.CustomCSS,
+		"meta_schema":        rc.MetaSchema,
+		"auto_detect_rules":  rc.AutoDetectRules,
 	}
 }
 
 func noteTypeToMap(nt *models.NoteType) map[string]any {
 	return map[string]any{
-		"id":                  float64(nt.ID),
-		"name":                nt.Name,
-		"description":         nt.Description,
-		"custom_header":       nt.CustomHeader,
-		"custom_sidebar":      nt.CustomSidebar,
-		"custom_summary":      nt.CustomSummary,
-		"custom_avatar":       nt.CustomAvatar,
-		"custom_mrql_result":  nt.CustomMRQLResult,
-		"meta_schema":         nt.MetaSchema,
-		"section_config":      string(nt.SectionConfig),
+		"id":                 float64(nt.ID),
+		"name":               nt.Name,
+		"description":        nt.Description,
+		"custom_header":      nt.CustomHeader,
+		"custom_sidebar":     nt.CustomSidebar,
+		"custom_summary":     nt.CustomSummary,
+		"custom_avatar":      nt.CustomAvatar,
+		"custom_mrql_result": nt.CustomMRQLResult,
+		"custom_css":         nt.CustomCSS,
+		"meta_schema":        nt.MetaSchema,
+		"section_config":     string(nt.SectionConfig),
 	}
 }
 
@@ -998,6 +1001,7 @@ func (a *pluginDBAdapter) CreateCategory(opts map[string]any) (map[string]any, e
 		CustomSummary:    getStringOpt(opts, "custom_summary"),
 		CustomAvatar:     getStringOpt(opts, "custom_avatar"),
 		CustomMRQLResult: getStringOpt(opts, "custom_mrql_result"),
+		CustomCSS:        getStringOpt(opts, "custom_css"),
 		MetaSchema:       getStringOpt(opts, "meta_schema"),
 	}
 	cat, err := a.ctx.CreateCategory(creator)
@@ -1017,6 +1021,7 @@ func (a *pluginDBAdapter) UpdateCategory(id uint, opts map[string]any) (map[stri
 			CustomSummary:    getStringOpt(opts, "custom_summary"),
 			CustomAvatar:     getStringOpt(opts, "custom_avatar"),
 			CustomMRQLResult: getStringOpt(opts, "custom_mrql_result"),
+			CustomCSS:        getStringOpt(opts, "custom_css"),
 			MetaSchema:       getStringOpt(opts, "meta_schema"),
 		},
 		ID: id,
@@ -1046,6 +1051,7 @@ func (a *pluginDBAdapter) PatchCategory(id uint, opts map[string]any) (map[strin
 			CustomSummary:    patchString(opts, "custom_summary", cat.CustomSummary),
 			CustomAvatar:     patchString(opts, "custom_avatar", cat.CustomAvatar),
 			CustomMRQLResult: patchString(opts, "custom_mrql_result", cat.CustomMRQLResult),
+			CustomCSS:        patchString(opts, "custom_css", cat.CustomCSS),
 			MetaSchema:       patchString(opts, "meta_schema", cat.MetaSchema),
 		},
 		ID: id,
@@ -1068,6 +1074,7 @@ func (a *pluginDBAdapter) CreateResourceCategory(opts map[string]any) (map[strin
 		CustomSummary:    getStringOpt(opts, "custom_summary"),
 		CustomAvatar:     getStringOpt(opts, "custom_avatar"),
 		CustomMRQLResult: getStringOpt(opts, "custom_mrql_result"),
+		CustomCSS:        getStringOpt(opts, "custom_css"),
 		MetaSchema:       getStringOpt(opts, "meta_schema"),
 		AutoDetectRules:  getStringOpt(opts, "auto_detect_rules"),
 	}
@@ -1088,6 +1095,7 @@ func (a *pluginDBAdapter) UpdateResourceCategory(id uint, opts map[string]any) (
 			CustomSummary:    getStringOpt(opts, "custom_summary"),
 			CustomAvatar:     getStringOpt(opts, "custom_avatar"),
 			CustomMRQLResult: getStringOpt(opts, "custom_mrql_result"),
+			CustomCSS:        getStringOpt(opts, "custom_css"),
 			MetaSchema:       getStringOpt(opts, "meta_schema"),
 			AutoDetectRules:  getStringOpt(opts, "auto_detect_rules"),
 		},
@@ -1118,6 +1126,7 @@ func (a *pluginDBAdapter) PatchResourceCategory(id uint, opts map[string]any) (m
 			CustomSummary:    patchString(opts, "custom_summary", rc.CustomSummary),
 			CustomAvatar:     patchString(opts, "custom_avatar", rc.CustomAvatar),
 			CustomMRQLResult: patchString(opts, "custom_mrql_result", rc.CustomMRQLResult),
+			CustomCSS:        patchString(opts, "custom_css", rc.CustomCSS),
 			MetaSchema:       patchString(opts, "meta_schema", rc.MetaSchema),
 			AutoDetectRules:  patchString(opts, "auto_detect_rules", rc.AutoDetectRules),
 		},
@@ -1142,6 +1151,7 @@ func (a *pluginDBAdapter) CreateNoteType(opts map[string]any) (map[string]any, e
 		CustomSummary:    getStringOpt(opts, "custom_summary"),
 		CustomAvatar:     getStringOpt(opts, "custom_avatar"),
 		CustomMRQLResult: getStringOpt(opts, "custom_mrql_result"),
+		CustomCSS:        getStringOpt(opts, "custom_css"),
 		MetaSchema:       getStringOpt(opts, "meta_schema"),
 		SectionConfig:    getStringOpt(opts, "section_config"),
 	}
@@ -1162,6 +1172,7 @@ func (a *pluginDBAdapter) UpdateNoteType(id uint, opts map[string]any) (map[stri
 		CustomSummary:    getStringOpt(opts, "custom_summary"),
 		CustomAvatar:     getStringOpt(opts, "custom_avatar"),
 		CustomMRQLResult: getStringOpt(opts, "custom_mrql_result"),
+		CustomCSS:        getStringOpt(opts, "custom_css"),
 		MetaSchema:       getStringOpt(opts, "meta_schema"),
 		SectionConfig:    getStringOpt(opts, "section_config"),
 	}
@@ -1190,8 +1201,9 @@ func (a *pluginDBAdapter) PatchNoteType(id uint, opts map[string]any) (map[strin
 		CustomSummary:    patchString(opts, "custom_summary", nt.CustomSummary),
 		CustomAvatar:     patchString(opts, "custom_avatar", nt.CustomAvatar),
 		CustomMRQLResult: patchString(opts, "custom_mrql_result", nt.CustomMRQLResult),
+		CustomCSS:        patchString(opts, "custom_css", nt.CustomCSS),
 		MetaSchema:       patchString(opts, "meta_schema", nt.MetaSchema),
-		SectionConfig: patchString(opts, "section_config", string(nt.SectionConfig)),
+		SectionConfig:    patchString(opts, "section_config", string(nt.SectionConfig)),
 	}
 	result, err := a.ctx.CreateOrUpdateNoteType(editor)
 	if err != nil {

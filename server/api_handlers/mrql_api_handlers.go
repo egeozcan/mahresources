@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"mahresources/application_context"
 	"mahresources/constants"
@@ -88,12 +90,33 @@ func resolveAPIScopeFields(appCtx *application_context.MahresourcesContext, enti
 	return
 }
 
+// mrqlCategoryCSS returns a deduped <style> block carrying a category's CustomCSS the first
+// time that category is seen in a result set, and "" afterwards. This is the /mrql API path:
+// result cards carry their markup in RenderedHTML, rendered client-side via x-html on the /mrql
+// page, so prepending the <style> to the first card of each category is what makes CustomCSS apply
+// there. (The inline [mrql] shortcode has its own equivalent, renderResultCSS in shortcodes/
+// mrql_handler.go.) The block is only meaningful alongside a CustomMRQLResult — otherwise there is
+// no custom card HTML for it to style. Emitted unescaped per the KAN-6 trust model, matching the
+// custom_css template tag used on detail/list pages.
+func mrqlCategoryCSS(reqCtx context.Context, seen map[string]bool, entityType string, catID uint, css string, mctx shortcodes.MetaShortcodeContext, pluginRenderer shortcodes.PluginRenderer, executor shortcodes.QueryExecutor) string {
+	if strings.TrimSpace(css) == "" {
+		return ""
+	}
+	key := entityType + ":" + strconv.FormatUint(uint64(catID), 10)
+	if seen[key] {
+		return ""
+	}
+	seen[key] = true
+	return "<style data-mr-custom-css=\"" + key + "\">" + shortcodes.Process(reqCtx, css, mctx, pluginRenderer, executor) + "</style>"
+}
+
 // renderMRQLCustomTemplates processes CustomMRQLResult templates for each result entity
 // and populates the RenderedHTML field when a template is configured.
 func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, result *application_context.MRQLResult, reqCtx context.Context) {
 	reqCtx = plugin_system.WithMRQLCache(reqCtx)
 	executor := template_filters.BuildQueryExecutor(appCtx)
 	pluginRenderer := buildPluginRenderer(appCtx, reqCtx)
+	cssSeen := map[string]bool{}
 
 	for i := range result.Resources {
 		r := &result.Resources[i]
@@ -110,7 +133,8 @@ func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, 
 				Meta: json.RawMessage(r.Meta), MetaSchema: r.ResourceCategory.MetaSchema,
 				Entity: r, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 			}
-			r.RenderedHTML = shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, pluginRenderer, executor)
+			r.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "resource", r.ResourceCategory.ID, r.ResourceCategory.CustomCSS, mctx, pluginRenderer, executor) +
+				shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
 	}
 
@@ -129,7 +153,8 @@ func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, 
 				Meta: json.RawMessage(n.Meta), MetaSchema: n.NoteType.MetaSchema,
 				Entity: n, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 			}
-			n.RenderedHTML = shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, pluginRenderer, executor)
+			n.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "note", n.NoteType.ID, n.NoteType.CustomCSS, mctx, pluginRenderer, executor) +
+				shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
 	}
 
@@ -148,7 +173,8 @@ func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, 
 				Meta: json.RawMessage(g.Meta), MetaSchema: g.Category.MetaSchema,
 				Entity: g, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 			}
-			g.RenderedHTML = shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, pluginRenderer, executor)
+			g.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "group", g.Category.ID, g.Category.CustomCSS, mctx, pluginRenderer, executor) +
+				shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
 	}
 }
@@ -162,6 +188,7 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 
 	executor := template_filters.BuildQueryExecutor(appCtx)
 	pluginRenderer := buildPluginRenderer(appCtx, reqCtx)
+	cssSeen := map[string]bool{}
 
 	for bIdx := range result.Groups {
 		bucket := &result.Groups[bIdx]
@@ -182,7 +209,8 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 						Meta: json.RawMessage(r.Meta), MetaSchema: r.ResourceCategory.MetaSchema,
 						Entity: r, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 					}
-					r.RenderedHTML = shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, pluginRenderer, executor)
+					r.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "resource", r.ResourceCategory.ID, r.ResourceCategory.CustomCSS, mctx, pluginRenderer, executor) +
+						shortcodes.Process(reqCtx, r.ResourceCategory.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}
 			}
 			bucket.Items = items
@@ -202,7 +230,8 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 						Meta: json.RawMessage(n.Meta), MetaSchema: n.NoteType.MetaSchema,
 						Entity: n, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 					}
-					n.RenderedHTML = shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, pluginRenderer, executor)
+					n.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "note", n.NoteType.ID, n.NoteType.CustomCSS, mctx, pluginRenderer, executor) +
+						shortcodes.Process(reqCtx, n.NoteType.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}
 			}
 			bucket.Items = items
@@ -222,7 +251,8 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 						Meta: json.RawMessage(g.Meta), MetaSchema: g.Category.MetaSchema,
 						Entity: g, ScopeGroupID: scopeID, ParentGroupID: parentID, RootGroupID: rootID,
 					}
-					g.RenderedHTML = shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, pluginRenderer, executor)
+					g.RenderedHTML = mrqlCategoryCSS(reqCtx, cssSeen, "group", g.Category.ID, g.Category.CustomCSS, mctx, pluginRenderer, executor) +
+						shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, pluginRenderer, executor)
 				}
 			}
 			bucket.Items = items

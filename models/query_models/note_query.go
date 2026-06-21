@@ -49,6 +49,7 @@ type NoteTypeEditor struct {
 	CustomSummary    string
 	CustomAvatar     string
 	CustomMRQLResult string
+	CustomCSS        string
 	MetaSchema       string
 	SectionConfig    string
 }

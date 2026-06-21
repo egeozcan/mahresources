@@ -1,5 +1,5 @@
 ---
-outputShape: Updated NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/Sidebar/Summary/Avatar/MRQLResult, CreatedAt, UpdatedAt
+outputShape: Updated NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/CSS/Sidebar/Summary/Avatar/MRQLResult, CreatedAt, UpdatedAt
 exitCodes: 0 on success; 1 on any error
 relatedCmds: note-type edit-name, note-type edit-description, note-type get
 ---
@@ -9,9 +9,12 @@ relatedCmds: note-type edit-name, note-type edit-description, note-type get
 Edit a note type. `--id` is required; every other flag is optional and
 only fields explicitly passed are modified (server-side PATCH
 semantics). Use this command when you need to change the `MetaSchema`,
-`SectionConfig`, or any of the Custom* rendering fields; the dedicated
-`edit-name` / `edit-description` commands only touch those two scoped
-fields.
+`SectionConfig`, or any of the Custom* rendering fields
+(`--custom-header`, `--custom-css`, `--custom-sidebar`,
+`--custom-summary`, `--custom-avatar`, `--custom-mrql-result`); the
+dedicated `edit-name` / `edit-description` commands only touch those two
+scoped fields. `--custom-css` is injected as a `<style>` block on detail
+and list pages.
 
 # Example
 
