@@ -4,6 +4,29 @@
             // Allow navigation unless focus is on an input, textarea, or select
             const activeEl = document.activeElement;
             return !activeEl || !['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName);
+        },
+        canShortcut() {
+            // For Space/Enter, which ACTIVATE the focused control: bail when focus is on a
+            // button or video so they don't hijack button activation (BH: M3) or video
+            // play/pause (BH: H2), and bail inside a panel (BH: H3).
+            const el = document.activeElement;
+            if (!el) return true;
+            if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'VIDEO'].includes(el.tagName)) return false;
+            if (el.isContentEditable) return false;
+            if (el.closest && el.closest('[data-quick-tag-panel], [data-edit-panel]')) return false;
+            return true;
+        },
+        canPanelShortcut() {
+            // For the global letter/digit quick-tag shortcuts: still fire when a toolbar
+            // button is focused (so the keyboard tagging workflow works right after open),
+            // but bail in a text field or anywhere inside a panel — e.g. the auto-focused
+            // 'Add tag?' confirm button — which would otherwise eat the keystroke (BH: H3).
+            const el = document.activeElement;
+            if (!el) return true;
+            if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return false;
+            if (el.isContentEditable) return false;
+            if (el.closest && el.closest('[data-quick-tag-panel], [data-edit-panel]')) return false;
+            return true;
         }
     }"
     x-show="$store.lightbox.isOpen"
@@ -14,35 +37,35 @@
     @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
     @keydown.page-up.window.prevent="$store.lightbox.isOpen && $store.lightbox.prev()"
     @keydown.page-down.window.prevent="$store.lightbox.isOpen && $store.lightbox.next()"
-    @keydown.space.window="$store.lightbox.isOpen && canNavigate() && ($event.preventDefault(), $store.lightbox.next())"
-    @keydown.enter.window="$store.lightbox.isOpen && canNavigate() && !document.activeElement?.closest('[data-edit-panel], [data-quick-tag-panel]') && $store.lightbox.toggleFullscreen()"
-    @keydown.e.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
-    @keydown.f2.window.prevent="$store.lightbox.isOpen && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
-    @keydown.t.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.quickTagPanelOpen ? $store.lightbox.closeQuickTagPanel() : $store.lightbox.openQuickTagPanel())"
-    @keydown.1.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(0, $event)"
-    @keydown.2.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(1, $event)"
-    @keydown.3.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(2, $event)"
-    @keydown.4.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(3, $event)"
-    @keydown.5.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(4, $event)"
-    @keydown.6.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(5, $event)"
-    @keydown.7.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(6, $event)"
-    @keydown.8.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(7, $event)"
-    @keydown.9.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(8, $event)"
-    @keyup.1.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(0)"
-    @keyup.2.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(1)"
-    @keyup.3.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(2)"
-    @keyup.4.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(3)"
-    @keyup.5.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(4)"
-    @keyup.6.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(5)"
-    @keyup.7.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(6)"
-    @keyup.8.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(7)"
-    @keyup.9.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(8)"
-    @keyup.0.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.focusTagEditor())"
-    @keydown.z.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(0)"
-    @keydown.x.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(1)"
-    @keydown.c.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(2)"
-    @keydown.v.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(3)"
-    @keydown.b.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(4)"
+    @keydown.space.window="$store.lightbox.isOpen && canShortcut() && ($event.preventDefault(), $store.lightbox.next())"
+    @keydown.enter.window="$store.lightbox.isOpen && canShortcut() && $store.lightbox.toggleFullscreen()"
+    @keydown.e.window="$store.lightbox.isOpen && !$event.repeat && canPanelShortcut() && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
+    @keydown.f2.window.prevent="$store.lightbox.isOpen && !$event.repeat && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
+    @keydown.t.window="$store.lightbox.isOpen && !$event.repeat && canPanelShortcut() && ($store.lightbox.quickTagPanelOpen ? $store.lightbox.closeQuickTagPanel() : $store.lightbox.openQuickTagPanel())"
+    @keydown.1.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeydown(0, $event)"
+    @keydown.2.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeydown(1, $event)"
+    @keydown.3.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeydown(2, $event)"
+    @keydown.4.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeydown(3, $event)"
+    @keydown.5.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeydown(4, $event)"
+    @keydown.6.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeydown(5, $event)"
+    @keydown.7.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeydown(6, $event)"
+    @keydown.8.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeydown(7, $event)"
+    @keydown.9.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeydown(8, $event)"
+    @keyup.1.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeyup(0)"
+    @keyup.2.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeyup(1)"
+    @keyup.3.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeyup(2)"
+    @keyup.4.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeyup(3)"
+    @keyup.5.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeyup(4)"
+    @keyup.6.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeyup(5)"
+    @keyup.7.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeyup(6)"
+    @keyup.8.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeyup(7)"
+    @keyup.9.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeyup(8)"
+    @keyup.0.window="$store.lightbox.isOpen && canPanelShortcut() && ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.focusTagEditor())"
+    @keydown.z.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && !$event.repeat && $store.lightbox.switchTab(0)"
+    @keydown.x.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && !$event.repeat && $store.lightbox.switchTab(1)"
+    @keydown.c.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && !$event.repeat && $store.lightbox.switchTab(2)"
+    @keydown.v.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && !$event.repeat && $store.lightbox.switchTab(3)"
+    @keydown.b.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && !$event.repeat && $store.lightbox.switchTab(4)"
     @touchstart="$store.lightbox.handleTouchStart($event)"
     @touchmove="$store.lightbox.handleTouchMove($event)"
     @touchend="$store.lightbox.handleTouchEnd($event)"
@@ -79,12 +102,15 @@
         <!-- Loading spinner (shown while media is loading) -->
         <div
             x-show="$store.lightbox.loading"
+            :aria-busy="$store.lightbox.loading ? 'true' : 'false'"
+            role="status"
             class="absolute inset-0 flex items-center justify-center pointer-events-none z-10"
         >
-            <svg class="w-12 h-12 text-white animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <svg aria-hidden="true" class="w-12 h-12 text-white animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
+            <span class="sr-only">Loading media</span>
         </div>
 
         <!-- Media content -->
@@ -100,7 +126,7 @@
                     :style="{ transform: `scale(${$store.lightbox.zoomLevel}) translate(${$store.lightbox.panX}px, ${$store.lightbox.panY}px)`, transformOrigin: 'center center' }"
                     x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                     @load="$store.lightbox.onMediaLoaded()"
-                    @error="$store.lightbox.onMediaLoaded()"
+                    @error="$store.lightbox.onMediaError()"
                 >
             </template>
 
@@ -118,7 +144,7 @@
                         :style="{ transform: `scale(${$store.lightbox.zoomLevel}) translate(${$store.lightbox.panX}px, ${$store.lightbox.panY}px)`, transformOrigin: 'center center' }"
                         x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                         @load="$store.lightbox.onMediaLoaded()"
-                        @error="$store.lightbox.onMediaLoaded()"
+                        @error="$store.lightbox.onMediaError()"
                     >
                         <!-- Fallback to img if object fails -->
                         <img
@@ -143,7 +169,7 @@
                     :class="$store.lightbox._mediaMaxWidthClass()"
                     x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                     @loadeddata="$store.lightbox.onMediaLoaded()"
-                    @error="$store.lightbox.onMediaLoaded()"
+                    @error="$store.lightbox.onMediaError()"
                 >
                     Your browser does not support video playback.
                 </video>

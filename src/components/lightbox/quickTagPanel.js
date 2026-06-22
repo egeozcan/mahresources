@@ -43,9 +43,11 @@ export const quickTagPanelState = {
 export const quickTagPanelMethods = {
   // ==================== Persistence ====================
 
-  _loadQuickTagsFromStorage() {
+  _loadQuickTagsFromStorage(fromStorageEvent = false) {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      // On a cross-tab storage event read the primary key directly; on initial load also
+      // consult any recovery snapshot (BH: L3).
+      const raw = fromStorageEvent ? localStorage.getItem(STORAGE_KEY) : this._readStorageRaw();
       if (!raw) return;
       const data = JSON.parse(raw);
 
@@ -78,31 +80,96 @@ export const quickTagPanelMethods = {
         data.version = 3;
       }
 
-      // Load each field independently
-      try {
-        if (Array.isArray(data.quickSlots)) {
-          this.quickSlots = [
-            padArray(data.quickSlots[0], 9),
-            padArray(data.quickSlots[1], 9),
-            padArray(data.quickSlots[2], 9),
-            padArray(data.quickSlots[3], 9),
-          ];
-        }
-      } catch (e) {
-        console.warn('Failed to load quickSlots from storage:', e);
+      const incomingSlots = Array.isArray(data.quickSlots) ? [
+        padArray(data.quickSlots[0], 9),
+        padArray(data.quickSlots[1], 9),
+        padArray(data.quickSlots[2], 9),
+        padArray(data.quickSlots[3], 9),
+      ] : null;
+      const incomingRecents = Array.isArray(data.recentTags) ? padArray(data.recentTags, 9) : null;
+
+      if (fromStorageEvent) {
+        // Cross-tab sync: merge per-slot so a concurrent edit in THIS tab is not clobbered
+        // by another tab's snapshot, and never sync transient UI state (panel open / active
+        // tab) across tabs (BH: L4).
+        if (incomingSlots) this.quickSlots = this._mergeQuickSlots(this.quickSlots, incomingSlots);
+        if (incomingRecents) this.recentTags = this._mergeRecentTags(this.recentTags, incomingRecents);
+        return;
       }
+
+      // Initial load: adopt the persisted state wholesale.
+      if (incomingSlots) this.quickSlots = incomingSlots;
       if (typeof data.drawerOpen === 'boolean') {
         this.quickTagPanelOpen = data.drawerOpen;
       }
       if (typeof data.activeTab === 'number' && data.activeTab >= 0 && data.activeTab <= 4) {
         this.activeTab = data.activeTab;
       }
-      if (Array.isArray(data.recentTags)) {
-        this.recentTags = padArray(data.recentTags, 9);
-      }
+      if (incomingRecents) this.recentTags = incomingRecents;
     } catch (e) {
       console.warn('Failed to load quick tags from storage:', e);
     }
+  },
+
+  // Read the persisted payload, falling back to the most recent recovery snapshot written
+  // when an earlier save hit a quota error, then promoting it back to the primary key so the
+  // recovery copy is actually consumed rather than orphaned (BH: L3).
+  _readStorageRaw() {
+    const primary = localStorage.getItem(STORAGE_KEY);
+    if (primary) return primary;
+
+    const prefix = `${STORAGE_KEY}_recover_`;
+    let bestKey = null;
+    let bestSuffix = '';
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(prefix)) {
+        const suffix = key.slice(prefix.length);
+        if (suffix > bestSuffix) { bestSuffix = suffix; bestKey = key; }
+      }
+    }
+    if (!bestKey) return null;
+
+    const recovered = localStorage.getItem(bestKey);
+    try {
+      if (recovered) localStorage.setItem(STORAGE_KEY, recovered);
+      // Iterate downward so removals do not shift indices we have yet to visit.
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(prefix)) localStorage.removeItem(key);
+      }
+    } catch { /* still full — leave the recovery copy for next time */ }
+    return recovered;
+  },
+
+  _mergeQuickSlots(current, incoming) {
+    const merged = [];
+    for (let tab = 0; tab < 4; tab++) {
+      const cur = current[tab] || Array(9).fill(null);
+      const inc = incoming[tab] || Array(9).fill(null);
+      const row = [];
+      for (let i = 0; i < 9; i++) {
+        // Keep this tab's slot when it is set; otherwise adopt the other tab's slot. This
+        // preserves concurrent edits to *different* slots without losing either side.
+        row.push(cur[i] != null ? cur[i] : (inc[i] ?? null));
+      }
+      merged.push(row);
+    }
+    return merged;
+  },
+
+  _mergeRecentTags(current, incoming) {
+    const merged = [];
+    for (let i = 0; i < 9; i++) {
+      const a = current[i];
+      const b = incoming[i];
+      if (a && b) {
+        merged.push((b.ts || 0) > (a.ts || 0) ? b : a);
+      } else {
+        merged.push(a || b || null);
+      }
+    }
+    return merged;
   },
 
   _saveQuickTagsToStorage() {
@@ -120,14 +187,19 @@ export const quickTagPanelMethods = {
       try {
         const date = new Date().toISOString().slice(0, 10);
         localStorage.setItem(`${STORAGE_KEY}_recover_${date}`, payload);
-      } catch { /* recovery save also failed — nothing more to do */ }
+        // Surface the failure instead of swallowing it (BH: L3).
+        this.announce?.('Could not save quick tag settings — storage is full. A recovery copy was kept.');
+      } catch {
+        this.announce?.('Could not save quick tag settings — browser storage is full.');
+      }
     }
   },
 
   _initStorageSync() {
     window.addEventListener('storage', (event) => {
       if (event.key === STORAGE_KEY) {
-        this._loadQuickTagsFromStorage();
+        // Merge rather than clobber so a concurrent edit in this tab survives (BH: L4).
+        this._loadQuickTagsFromStorage(true);
       }
     });
   },
@@ -165,9 +237,13 @@ export const quickTagPanelMethods = {
     this.quickTagPanelOpen = true;
     this._saveQuickTagsToStorage();
     this.announce('Edit tags panel opened');
+    // The panel narrows the media viewport — re-clamp pan so a zoomed image stays on
+    // screen (BH: M7). rAF lets the new width class apply first.
+    requestAnimationFrame(() => this.constrainPan());
 
-    // Ensure resource details are loaded (reuses editPanel cache)
-    this.fetchResourceDetails();
+    // Ensure resource details are loaded (reuses editPanel cache), revalidating against
+    // the server so a stale cached entry is refreshed on (re)open (BH: L5).
+    this.fetchResourceDetails(undefined, true);
   },
 
   closeQuickTagPanel() {
@@ -176,6 +252,8 @@ export const quickTagPanelMethods = {
     this._cancelLongPress();
     this.quickTagPanelOpen = false;
     this._saveQuickTagsToStorage();
+    // The media viewport widens again — re-clamp pan to the new bounds (BH: M7).
+    requestAnimationFrame(() => this.constrainPan());
 
     // Only refresh when both panels are closed — the last panel to close triggers the refresh
     if (!this.editPanelOpen && this.needsRefreshOnClose) {
@@ -339,17 +417,22 @@ export const quickTagPanelMethods = {
 
     const endpoint = action === 'add' ? '/v1/resources/addTags' : '/v1/resources/removeTags';
 
-    // Optimistic UI update
-    if (this.resourceDetails) {
-      if (!this.resourceDetails.Tags) this.resourceDetails.Tags = [];
+    // Capture the edited details object. After the await the user may have navigated, so
+    // this.resourceDetails could belong to a different resource; writing it back into the
+    // cache under resourceId — or rolling back onto it — would poison that entry (BH: H5).
+    const details = this.resourceDetails;
+
+    // Optimistic UI update on the captured object
+    if (details) {
+      if (!details.Tags) details.Tags = [];
       for (const tag of tags) {
         if (action === 'add') {
-          if (!this.resourceDetails.Tags.some(t => t.ID === tag.ID)) {
-            this.resourceDetails.Tags.push(tag);
+          if (!details.Tags.some(t => t.ID === tag.ID)) {
+            details.Tags.push(tag);
           }
         } else {
-          const idx = this.resourceDetails.Tags.findIndex(t => t.ID === tag.ID);
-          if (idx !== -1) this.resourceDetails.Tags.splice(idx, 1);
+          const idx = details.Tags.findIndex(t => t.ID === tag.ID);
+          if (idx !== -1) details.Tags.splice(idx, 1);
         }
       }
     }
@@ -371,8 +454,8 @@ export const quickTagPanelMethods = {
         throw new Error(`Failed to ${action} tags: ${response.status}`);
       }
 
-      if (this.resourceDetails) {
-        this.detailsCache.set(resourceId, { ...this.resourceDetails });
+      if (details) {
+        this.detailsCache.set(resourceId, { ...details });
       }
       this.needsRefreshOnClose = true;
 
@@ -387,9 +470,20 @@ export const quickTagPanelMethods = {
       }
     } catch (err) {
       console.error(`Failed to ${action} tags:`, err);
-      // Roll back optimistic update
+      // Roll back the optimistic update on the captured object (the one we mutated),
+      // and drop the now-uncertain cache entry for this specific resource.
+      if (details) {
+        for (const tag of tags) {
+          if (action === 'add') {
+            const idx = details.Tags ? details.Tags.findIndex(t => t.ID === tag.ID) : -1;
+            if (idx !== -1) details.Tags.splice(idx, 1);
+          } else {
+            if (!details.Tags) details.Tags = [];
+            if (!details.Tags.some(t => t.ID === tag.ID)) details.Tags.push(tag);
+          }
+        }
+      }
       this.detailsCache.delete(resourceId);
-      await this.fetchResourceDetails();
       this.announce(`Failed to ${action} tags`);
     }
   },

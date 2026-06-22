@@ -11,6 +11,9 @@ export const editPanelState = {
   detailsLoading: false,
   detailsCache: new Map(),
   detailsAborter: null,
+  // Monotonic token so a stale/aborted fetch cannot flip detailsLoading off while a
+  // newer fetch is still in flight (BH: M2).
+  _detailsReq: 0,
 
   // Tag editing
   _savingTagIds: new Set(),
@@ -33,7 +36,11 @@ export const editPanelMethods = {
 
     this.editPanelOpen = true;
     this.announce('Info panel opened');
-    await this.fetchResourceDetails();
+    // The panel narrows the media viewport — re-clamp any existing pan so a zoomed image
+    // does not slide off-screen (BH: M7). rAF lets the new width class apply first.
+    requestAnimationFrame(() => this.constrainPan());
+    // Revalidate against the server on (re)open so stale cached details are refreshed (BH: L5).
+    await this.fetchResourceDetails(undefined, true);
 
     requestAnimationFrame(() => {
       const panel = document.querySelector('[data-edit-panel]');
@@ -48,6 +55,8 @@ export const editPanelMethods = {
 
   closeEditPanel() {
     this.editPanelOpen = false;
+    // The media viewport widens again — re-clamp pan to the new bounds (BH: M7).
+    requestAnimationFrame(() => this.constrainPan());
 
     if (!this.quickTagPanelOpen) {
       if (this.detailsAborter) {
@@ -153,14 +162,17 @@ export const editPanelMethods = {
     }
   },
 
-  async fetchResourceDetails(id) {
+  async fetchResourceDetails(id, forceRefresh = false) {
     const resourceId = id ?? this.getCurrentItem()?.id;
     if (!resourceId) return;
 
     const cached = this.detailsCache.get(resourceId);
     if (cached) {
       this.resourceDetails = cached;
-      return;
+      // Fast path: use the cache for an instant paint. When forceRefresh is set (a panel
+      // was (re)opened) we still fall through to revalidate against the server so an
+      // out-of-band change made elsewhere is not shown stale forever (BH: L5).
+      if (!forceRefresh) return;
     }
 
     // Evict oldest entry if cache exceeds max size
@@ -168,6 +180,7 @@ export const editPanelMethods = {
       this.detailsCache.delete(this.detailsCache.keys().next().value);
     }
 
+    const reqId = ++this._detailsReq;
     this.detailsLoading = true;
 
     if (this.detailsAborter) {
@@ -197,7 +210,11 @@ export const editPanelMethods = {
         this.announce('Failed to load resource details');
       }
     } finally {
-      this.detailsLoading = false;
+      // Only the most recent request may clear the loading flag — an earlier aborted
+      // request must not turn the spinner off while this newer one is still pending (BH: M2).
+      if (reqId === this._detailsReq) {
+        this.detailsLoading = false;
+      }
     }
   },
 
@@ -236,12 +253,16 @@ export const editPanelMethods = {
     const resourceId = this.getCurrentItem()?.id;
     if (!resourceId || !this.resourceDetails) return;
 
-    const oldName = this.resourceDetails.Name;
+    // Capture the details object and item being edited. After the await the user may have
+    // navigated, making this.resourceDetails belong to a different resource; writing that
+    // live object back into the cache under resourceId would poison it (BH: H5).
+    const details = this.resourceDetails;
+    const item = this.items[this.currentIndex];
+
+    const oldName = details.Name;
     if (newName === oldName) return;
 
-    this.resourceDetails.Name = newName;
-
-    const item = this.items[this.currentIndex];
+    details.Name = newName;
     if (item) {
       item.name = newName;
     }
@@ -260,15 +281,17 @@ export const editPanelMethods = {
         throw new Error(`Failed to update name: ${response.status}`);
       }
 
-      this.detailsCache.set(resourceId, { ...this.resourceDetails });
+      this.detailsCache.set(resourceId, { ...details });
       this.needsRefreshOnClose = true;
       this.announce('Name updated');
     } catch (err) {
       console.error('Failed to update name:', err);
-      this.resourceDetails.Name = oldName;
+      details.Name = oldName;
       if (item) {
         item.name = oldName;
       }
+      // The cached copy for this resource is now uncertain — drop it so a later view refetches.
+      this.detailsCache.delete(resourceId);
       this.announce('Failed to update name');
     }
   },
@@ -277,10 +300,14 @@ export const editPanelMethods = {
     const resourceId = this.getCurrentItem()?.id;
     if (!resourceId || !this.resourceDetails) return;
 
-    const oldDescription = this.resourceDetails.Description;
+    // Capture the edited object so a post-await navigation cannot misdirect the cache
+    // write or rollback (BH: H5).
+    const details = this.resourceDetails;
+
+    const oldDescription = details.Description;
     if (newDescription === oldDescription) return;
 
-    this.resourceDetails.Description = newDescription;
+    details.Description = newDescription;
 
     try {
       const formData = new FormData();
@@ -296,12 +323,13 @@ export const editPanelMethods = {
         throw new Error(`Failed to update description: ${response.status}`);
       }
 
-      this.detailsCache.set(resourceId, { ...this.resourceDetails });
+      this.detailsCache.set(resourceId, { ...details });
       this.needsRefreshOnClose = true;
       this.announce('Description updated');
     } catch (err) {
       console.error('Failed to update description:', err);
-      this.resourceDetails.Description = oldDescription;
+      details.Description = oldDescription;
+      this.detailsCache.delete(resourceId);
       this.announce('Failed to update description');
     }
   },
@@ -314,12 +342,15 @@ export const editPanelMethods = {
 
     this._savingTagIds.add(tag.ID);
 
-    if (this.resourceDetails) {
-      if (!this.resourceDetails.Tags) {
-        this.resourceDetails.Tags = [];
+    // Capture the edited details object so a post-await navigation cannot misdirect the
+    // cache write or rollback onto a different resource (BH: H5).
+    const details = this.resourceDetails;
+    if (details) {
+      if (!details.Tags) {
+        details.Tags = [];
       }
-      if (!this.resourceDetails.Tags.some(t => t.ID === tag.ID)) {
-        this.resourceDetails.Tags.push(tag);
+      if (!details.Tags.some(t => t.ID === tag.ID)) {
+        details.Tags.push(tag);
       }
     }
 
@@ -338,8 +369,8 @@ export const editPanelMethods = {
         throw new Error(`Failed to add tag: ${response.status}`);
       }
 
-      if (this.resourceDetails) {
-        this.detailsCache.set(resourceId, { ...this.resourceDetails });
+      if (details) {
+        this.detailsCache.set(resourceId, { ...details });
       }
       this.needsRefreshOnClose = true;
       this.announce(`Added tag: ${tag.Name}`);
@@ -348,12 +379,13 @@ export const editPanelMethods = {
       this.recordRecentTag(tag);
     } catch (err) {
       console.error('Failed to add tag:', err);
-      if (this.resourceDetails?.Tags) {
-        const idx = this.resourceDetails.Tags.findIndex(t => t.ID === tag.ID);
+      if (details?.Tags) {
+        const idx = details.Tags.findIndex(t => t.ID === tag.ID);
         if (idx !== -1) {
-          this.resourceDetails.Tags.splice(idx, 1);
+          details.Tags.splice(idx, 1);
         }
       }
+      this.detailsCache.delete(resourceId);
       this.announce('Failed to add tag');
       throw err;
     } finally {
@@ -365,10 +397,12 @@ export const editPanelMethods = {
     const resourceId = this.getCurrentItem()?.id;
     if (!resourceId) return;
 
-    if (this.resourceDetails?.Tags) {
-      const idx = this.resourceDetails.Tags.findIndex(t => t.ID === tag.ID);
+    // Capture the edited details object (BH: H5).
+    const details = this.resourceDetails;
+    if (details?.Tags) {
+      const idx = details.Tags.findIndex(t => t.ID === tag.ID);
       if (idx !== -1) {
-        this.resourceDetails.Tags.splice(idx, 1);
+        details.Tags.splice(idx, 1);
       }
     }
 
@@ -387,16 +421,17 @@ export const editPanelMethods = {
         throw new Error(`Failed to remove tag: ${response.status}`);
       }
 
-      if (this.resourceDetails) {
-        this.detailsCache.set(resourceId, { ...this.resourceDetails });
+      if (details) {
+        this.detailsCache.set(resourceId, { ...details });
       }
       this.needsRefreshOnClose = true;
       this.announce(`Removed tag: ${tag.Name}`);
     } catch (err) {
       console.error('Failed to remove tag:', err);
-      if (this.resourceDetails?.Tags) {
-        this.resourceDetails.Tags.push(tag);
+      if (details?.Tags && !details.Tags.some(t => t.ID === tag.ID)) {
+        details.Tags.push(tag);
       }
+      this.detailsCache.delete(resourceId);
       this.announce('Failed to remove tag');
       throw err;
     }

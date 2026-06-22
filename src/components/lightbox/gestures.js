@@ -14,6 +14,9 @@ export const gestureState = {
   pinchStartCenterY: null,
   pinchCenterX: null,
   pinchCenterY: null,
+  // True once the two-finger distance changed materially, i.e. it was a real pinch-zoom
+  // rather than a flat two-finger swipe — used to suppress accidental swipe-nav (BH: H6).
+  _pinchScaleDeviated: false,
 
   // Pinch zoom-toward-center tracking
   pinchOriginX: null,
@@ -64,9 +67,24 @@ export const gestureMethods = {
       return;
     }
 
+    // Three or more fingers: reset all gesture state and bail so leftover single/pinch
+    // coordinates cannot drive a phantom swipe when fingers lift (BH: M6).
+    if (event.touches.length > 2) {
+      this.touchStartX = null;
+      this.touchStartY = null;
+      this.pinchStartDistance = null;
+      this._pinchScaleDeviated = false;
+      return;
+    }
+
     if (event.touches.length === 2) {
       // Pinch gesture start
       event.preventDefault();
+      // Clear any single-finger swipe coordinate so the leftover value cannot be used as a
+      // swipe origin once the pinch decays back to one finger (BH: M5).
+      this.touchStartX = null;
+      this.touchStartY = null;
+      this._pinchScaleDeviated = false;
       this.pinchStartDistance = this.getPinchDistance(event.touches);
       this.pinchStartZoom = this.zoomLevel;
       const center = this.getPinchCenter(event.touches);
@@ -112,6 +130,11 @@ export const gestureMethods = {
         this.disableAnimations();
         const currentDistance = this.getPinchDistance(event.touches);
         const scale = currentDistance / this.pinchStartDistance;
+        // Record whether the finger distance changed materially: a true pinch-zoom, vs a
+        // flat two-finger swipe where the fingers stay roughly equidistant (BH: H6).
+        if (Math.abs(scale - 1) > 0.15) {
+          this._pinchScaleDeviated = true;
+        }
         this.setZoomLevel(this.pinchStartZoom * scale);
 
         if (this.pinchOriginX !== null) {
@@ -143,7 +166,11 @@ export const gestureMethods = {
         this.setZoomLevel(this.minZoom);
       }
 
-      if (!this.isZoomed() && this.pinchStartCenterX !== null && this.pinchCenterX !== null) {
+      // Only treat the two-finger gesture as a navigation swipe when the fingers stayed
+      // roughly equidistant (a real two-finger swipe). A pinch-zoom that happens to drift
+      // sideways and end back at <= 1x must NOT navigate (BH: H6).
+      if (!this.isZoomed() && !this._pinchScaleDeviated &&
+          this.pinchStartCenterX !== null && this.pinchCenterX !== null) {
         const diffX = this.pinchStartCenterX - this.pinchCenterX;
         if (Math.abs(diffX) > 50 && !this._navDebounce) {
           this._navDebounce = true;
@@ -166,7 +193,20 @@ export const gestureMethods = {
       this.pinchOriginY = null;
       this.pinchImageX = null;
       this.pinchImageY = null;
+      this._pinchScaleDeviated = false;
+      // Clear any stale single-finger swipe origin so a follow-on one-finger drag does not
+      // measure against a pre-pinch coordinate (BH: M5).
+      this.touchStartX = null;
+      this.touchStartY = null;
       this.announceZoom();
+      return;
+    }
+
+    // If fingers are still on the screen, this is not a completed single-finger swipe —
+    // do not navigate from an arbitrary lifted finger (BH: M6).
+    if (event.touches.length > 0) {
+      this.touchStartX = null;
+      this.touchStartY = null;
       return;
     }
 
@@ -328,6 +368,8 @@ export const gestureMethods = {
       const el = media.element;
       const displayedWidth = el.clientWidth;
       const displayedHeight = el.clientHeight;
+      // A still-loading or zero-dimension image would make nativeZoom NaN (BH: C1).
+      if (!displayedWidth || !displayedHeight) return;
 
       const nativeWidth = el.naturalWidth || displayedWidth;
       const nativeHeight = el.naturalHeight || displayedHeight;

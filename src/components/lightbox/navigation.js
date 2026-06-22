@@ -130,8 +130,10 @@ export const navigationMethods = {
     this.currentPage = 1;
     this.loadedPages = new Set([1]);
     this.pageSize = 50;
-    // The group page preloads 5 resources; if fewer exist, there are no more
-    this.hasNextPage = containerItems.length >= 5;
+    // The group/series page preloads up to 5 resources (pageLimitCustom(5) server-side),
+    // counted BEFORE filtering out non-media. Deriving this from the filtered `containerItems`
+    // would hide collection media whenever the preview mixes media and non-media (BH: H1).
+    this.hasNextPage = links.length >= 5;
     this.hasPrevPage = false;
 
     const index = containerItems.findIndex(item => item.id === resourceId);
@@ -141,6 +143,11 @@ export const navigationMethods = {
   },
 
   open(index) {
+    // Guard against an empty list or an out-of-bounds index (e.g. a gallery whose
+    // clicked thumbnail index does not map 1:1 onto the filtered media list — BH: L1).
+    if (!this.items || this.items.length === 0) return;
+    const safeIndex = Math.max(0, Math.min(index | 0, this.items.length - 1));
+
     this._savedScrollY = window.scrollY;
     document.body.style.position = 'fixed';
     document.body.style.top = `-${this._savedScrollY}px`;
@@ -151,7 +158,7 @@ export const navigationMethods = {
     this._savedOverscrollBehaviorX = document.body.style.overscrollBehaviorX;
     document.body.style.overscrollBehaviorX = 'none';
 
-    this.currentIndex = index;
+    this.currentIndex = safeIndex;
     this.isOpen = true;
     this.loading = true;
 
@@ -183,13 +190,21 @@ export const navigationMethods = {
       this._preloadedUrls.add(item.viewUrl);
       const img = new Image();
       img.decoding = 'async';
+      // Track the (relative) viewUrl separately: img.src resolves to an absolute URL,
+      // so we cannot use it to delete the matching entry from _preloadedUrls (BH: L6).
+      img._viewUrl = item.viewUrl;
       img.src = item.viewUrl;
       this._preloadedImages.push(img);
     }
     // Cap retained references so the cache cannot grow unboundedly during long sessions.
+    // Keep _preloadedUrls in lock-step with the retained images: evicting a URL also lets
+    // it be re-preloaded later if the user navigates back to it (BH: L6).
     const cap = (this._preloadAheadCount || 5) * 6;
     if (this._preloadedImages.length > cap) {
-      this._preloadedImages.splice(0, this._preloadedImages.length - cap);
+      const removed = this._preloadedImages.splice(0, this._preloadedImages.length - cap);
+      for (const img of removed) {
+        this._preloadedUrls.delete(img._viewUrl);
+      }
     }
   },
 
@@ -232,6 +247,12 @@ export const navigationMethods = {
       this.requestAborter = null;
     }
 
+    // Release the preloaded-image cache so decoded bitmaps are not held between sessions.
+    // (`items`/`loadedPages` are reassigned wholesale by every open() path, so they do not
+    // leak across sessions; they only grow within a single uninterrupted paging session — BH: L7.)
+    this._preloadedUrls.clear();
+    this._preloadedImages = [];
+
     if (this.triggerElement) {
       this.triggerElement.focus({ preventScroll: true });
       this.triggerElement = null;
@@ -258,11 +279,13 @@ export const navigationMethods = {
       this._preloadUpcoming();
       this.onResourceChange();
     } else if (this.hasNextPage) {
-      await this.loadNextPage();
+      const loaded = await this.loadNextPage();
       if (this.currentIndex < this.items.length - 1) {
         this.currentIndex++;
         this.loading = true;
-        this.announcePosition();
+        // Combine the "loaded more" status with the position so the shared (single-slot)
+        // live region does not clobber the page-load message with the position (BH: M9).
+        this.announcePosition(loaded > 0 ? `Loaded ${loaded} more items. ` : '');
         this.scheduleMediaCheck();
         this._preloadUpcoming();
         this.onResourceChange();
@@ -288,7 +311,8 @@ export const navigationMethods = {
       if (prevItemCount > 0) {
         this.currentIndex = prevItemCount - 1;
         this.loading = true;
-        this.announcePosition();
+        // Combine the load status with the position so it isn't clobbered (BH: M9).
+        this.announcePosition(`Loaded ${prevItemCount} previous items. `);
         this.scheduleMediaCheck();
         this._preloadUpcoming();
         this.onResourceChange();
@@ -296,9 +320,9 @@ export const navigationMethods = {
     }
   },
 
-  announcePosition() {
+  announcePosition(prefix = '') {
     const item = this.getCurrentItem();
-    this.announce(`${item?.name || 'Media'}, ${this.currentIndex + 1} of ${this.items.length}`);
+    this.announce(`${prefix}${item?.name || 'Media'}, ${this.currentIndex + 1} of ${this.items.length}`);
   },
 
   async loadNextPage() {
@@ -306,7 +330,7 @@ export const navigationMethods = {
 
     if (this.loadedPages.has(nextPage)) {
       this.currentPage = nextPage;
-      return;
+      return 0;
     }
 
     this.pageLoading = true;
@@ -318,7 +342,7 @@ export const navigationMethods = {
       if (newItems.length === 0) {
         this.hasNextPage = false;
         this.announce('No more items');
-        return;
+        return 0;
       }
 
       this.items = [...this.items, ...newItems];
@@ -326,12 +350,15 @@ export const navigationMethods = {
       this.currentPage = nextPage;
       this.hasNextPage = hasNextPage;
 
-      this.announce(`Loaded ${newItems.length} more items`);
+      // The "loaded N more" status is announced (combined with position) by next() so it
+      // is not immediately clobbered by the position announcement (BH: M9).
+      return newItems.length;
     } catch (err) {
       if (err.name !== 'AbortError') {
         console.error('Failed to load next page:', err);
         this.announce('Failed to load more items');
       }
+      return 0;
     } finally {
       this.pageLoading = false;
     }
@@ -358,9 +385,12 @@ export const navigationMethods = {
       this.items = [...newItems, ...this.items];
       this.currentIndex += prevItemCount;
       this.loadedPages.add(prevPage);
+      // Track the page the user is now viewing, matching loadNextPage. Without this the
+      // backward-pagination boundary stalls for one keypress (BH: M1).
+      this.currentPage = prevPage;
       this.hasPrevPage = prevPage > 1;
 
-      this.announce(`Loaded ${prevItemCount} previous items`);
+      // Status announced (combined with position) by prev() to avoid clobbering (BH: M9).
       return prevItemCount;
     } catch (err) {
       if (err.name !== 'AbortError') {
@@ -436,6 +466,15 @@ export const navigationMethods = {
 
   onMediaLoaded() {
     this.loading = false;
+  },
+
+  onMediaError() {
+    // A broken/404 media file otherwise leaves the spinner silently vanishing with no
+    // signal to assistive tech that the load failed (BH: M8).
+    this.loading = false;
+    const item = this.getCurrentItem();
+    const mediaType = this.isVideo(item?.contentType) ? 'video' : this.isSvg(item?.contentType) ? 'SVG' : 'image';
+    this.announce(`Failed to load ${mediaType}: ${item?.name || 'media'}`);
   },
 
   checkIfMediaLoaded(el) {

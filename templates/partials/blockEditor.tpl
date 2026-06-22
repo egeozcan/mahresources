@@ -179,7 +179,7 @@
                                 <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                                     <template x-for="(resId, idx) in resourceIds" :key="resId">
                                         <a :href="'/v1/resource/view?id=' + resId"
-                                           @click.prevent="openGalleryLightbox(idx)"
+                                           @click.prevent="openGalleryLightbox(resId, $event)"
                                            class="block aspect-square bg-stone-100 rounded overflow-hidden cursor-pointer hover:opacity-90 transition-opacity">
                                             <img :src="'/v1/resource/preview?id=' + resId"
                                                  :alt="(resourceMeta[resId]?.name) || ('Resource ' + resId)"

@@ -48,6 +48,19 @@ export function registerLightboxStore(Alpine) {
         this.handleWheel(event);
       };
       document.addEventListener('wheel', this._handleWheelEvent, { passive: false });
+
+      // Re-clamp pan when the viewport changes size while zoomed, so a panned image cannot
+      // be stranded off-screen after a resize or device rotation (BH: L2). Debounced.
+      this._handleViewportResize = () => {
+        if (!this.isOpen || !this.isZoomed()) return;
+        if (this._resizeDebounce) clearTimeout(this._resizeDebounce);
+        this._resizeDebounce = setTimeout(() => {
+          this._resizeDebounce = null;
+          if (this.isOpen && this.isZoomed()) this.constrainPan();
+        }, 150);
+      };
+      window.addEventListener('resize', this._handleViewportResize);
+      window.addEventListener('orientationchange', this._handleViewportResize);
     },
 
     destroy() {
@@ -57,6 +70,13 @@ export function registerLightboxStore(Alpine) {
       }
       if (this._handleWheelEvent) {
         document.removeEventListener('wheel', this._handleWheelEvent);
+      }
+      if (this._handleViewportResize) {
+        window.removeEventListener('resize', this._handleViewportResize);
+        window.removeEventListener('orientationchange', this._handleViewportResize);
+      }
+      if (this._resizeDebounce) {
+        clearTimeout(this._resizeDebounce);
       }
       if (this._liveRegion) {
         this._liveRegion.destroy();

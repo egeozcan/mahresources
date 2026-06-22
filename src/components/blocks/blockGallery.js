@@ -71,7 +71,7 @@ export function blockGallery(block, saveContentFn, getEditMode, noteId) {
       });
     },
 
-    openGalleryLightbox(index) {
+    openGalleryLightbox(resourceId, event) {
       const lightbox = Alpine.store('lightbox');
       if (!lightbox) return;
 
@@ -92,13 +92,23 @@ export function blockGallery(block, saveContentFn, getEditMode, noteId) {
         item.contentType?.startsWith('video/')
       );
 
-      if (items.length === 0) return;
+      // Map the clicked resource id to its index within the FILTERED media list. The
+      // thumbnails iterate the unfiltered resourceIds, so the loop index does not line up
+      // with `items` once a non-media resource is present (BH: L1).
+      const index = items.findIndex(item => item.id === resourceId);
+      if (index === -1) {
+        // Non-media (e.g. a PDF) — open the raw resource view, mirroring the list lightbox.
+        if (event?.currentTarget?.href) window.location.href = event.currentTarget.href;
+        return;
+      }
 
-      // Set items and open lightbox
+      // Set items and open lightbox. Record the trigger so focus is restored to the clicked
+      // thumbnail on close, consistent with every other entry point (BH: H4).
       lightbox.items = items;
       lightbox.loadedPages = new Set([1]);
       lightbox.hasNextPage = false;
       lightbox.hasPrevPage = false;
+      lightbox.triggerElement = event?.currentTarget || null;
       lightbox.open(index);
     },
 
