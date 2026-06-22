@@ -29,13 +29,11 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
         _previewAborter: null,
 
         init() {
-            this.calculateColumns();
+            this.columns = this.calculateColumns();
             this.fetchBuckets();
 
             this._resizeObserver = new ResizeObserver(() => {
-                // P3 fix: calculate without mutating first, then compare + assign
-                const width = this.$el ? this.$el.clientWidth : 720;
-                const newCols = Math.max(5, Math.min(30, Math.floor(width / 60)));
+                const newCols = this.calculateColumns();
                 if (newCols !== this.columns) {
                     this.columns = newCols;
                     this.fetchBuckets();
@@ -62,8 +60,7 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
         calculateColumns() {
             const width = this.$el ? this.$el.clientWidth : 720;
             const cols = Math.floor(width / 60);
-            this.columns = Math.max(5, Math.min(30, cols));
-            return this.columns;
+            return Math.max(5, Math.min(30, cols));
         },
 
         get rangeLabel() {
