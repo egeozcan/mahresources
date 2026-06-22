@@ -280,11 +280,6 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
         async selectBar(index, barType) {
             // Toggle off if clicking same bar
             if (this.selectedBar === index && this.selectedBarType === barType) {
-                // P3 fix: abort in-flight preview before closing
-                if (this._previewAborter) {
-                    this._previewAborter();
-                    this._previewAborter = null;
-                }
                 this.closePreview();
                 this.renderChart();
                 return;
@@ -372,6 +367,13 @@ export default function timeline({ apiUrl, entityType, defaultView }) {
         },
 
         closePreview() {
+            // Abort any in-flight preview fetch so a slow response can't land
+            // after the panel has been closed. Centralized here so every close
+            // path (toggle-off, navigation, granularity/mode changes) aborts.
+            if (this._previewAborter) {
+                this._previewAborter();
+                this._previewAborter = null;
+            }
             this.selectedBar = null;
             this.selectedBarType = null;
             this.previewHtml = '';
