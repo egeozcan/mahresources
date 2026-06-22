@@ -15,6 +15,7 @@
 /public/*.html
 /*.output.png
 /=file
+/server.log
 .aider*
 
 # E2E test artifacts

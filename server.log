@@ -1,1 +1,0 @@
-go: go.mod requires go >= 1.25.6 (runnigo: download go1.25.6: golang.org/toolchain@v0.0.1-go1.25.6.linux-amd64: Get "https://proxy.golang.org/golang.org/toolchain/@v/v0.0.1-go1.25.6.linux-amd64.zip": dial tcp 74.125.132.141:443: i/o timeout
