@@ -9,9 +9,12 @@ sidebar_label: edit
 Edit a note type. `--id` is required; every other flag is optional and
 only fields explicitly passed are modified (server-side PATCH
 semantics). Use this command when you need to change the `MetaSchema`,
-`SectionConfig`, or any of the Custom* rendering fields; the dedicated
-`edit-name` / `edit-description` commands only touch those two scoped
-fields.
+`SectionConfig`, or any of the Custom* rendering fields
+(`--custom-header`, `--custom-css`, `--custom-sidebar`,
+`--custom-summary`, `--custom-avatar`, `--custom-mrql-result`); the
+dedicated `edit-name` / `edit-description` commands only touch those two
+scoped fields. `--custom-css` is injected as a `<style>` block on detail
+and list pages.
 
 ## Usage
 
@@ -44,6 +47,7 @@ mr note-types list --json | jq '.[] | select(.ID == 1).CustomSummary'
 | `--name` | string | `` | Note type name |
 | `--description` | string | `` | Note type description |
 | `--custom-header` | string | `` | Custom header HTML |
+| `--custom-css` | string | `` | Custom CSS injected as a &lt;style&gt; block on detail/list pages |
 | `--custom-sidebar` | string | `` | Custom sidebar HTML |
 | `--custom-summary` | string | `` | Custom summary HTML |
 | `--custom-avatar` | string | `` | Custom avatar HTML |
@@ -61,7 +65,7 @@ mr note-types list --json | jq '.[] | select(.ID == 1).CustomSummary'
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Updated NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/Sidebar/Summary/Avatar/MRQLResult, CreatedAt, UpdatedAt
+Updated NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/CSS/Sidebar/Summary/Avatar/MRQLResult, CreatedAt, UpdatedAt
 
 ## Exit Codes
 

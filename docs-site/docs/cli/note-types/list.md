@@ -57,7 +57,7 @@ mr note-types list --json | jq -r '.[].Name'
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Array of NoteType objects with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/Sidebar/Summary/Avatar/MRQLResult, CreatedAt, UpdatedAt
+Array of NoteType objects with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/CSS/Sidebar/Summary/Avatar/MRQLResult, CreatedAt, UpdatedAt
 
 ## Exit Codes
 

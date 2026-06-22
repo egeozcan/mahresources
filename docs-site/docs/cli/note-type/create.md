@@ -10,8 +10,12 @@ Create a new note type. `--name` is required; all other fields are
 optional. Pass a JSON Schema string to `--meta-schema` to constrain the
 metadata shape of Notes of this type, and a JSON object to
 `--section-config` to control which sections render on note detail
-pages. The Custom* flags accept raw HTML or Pongo2 template strings
-that the server injects into note pages and MRQL result cards.
+pages. The Custom* flags (`--custom-header`, `--custom-css`,
+`--custom-sidebar`, `--custom-summary`, `--custom-avatar`,
+`--custom-mrql-result`) accept raw HTML or Pongo2 template strings that
+the server injects into note pages and MRQL result cards;
+`--custom-css` is injected as a `<style>` block on detail and list
+pages.
 
 On success prints a confirmation line with the new ID; pass the global
 `--json` flag to emit the full created record for scripting.
@@ -51,6 +55,7 @@ NT=$(mr note-type create --name "Code Review" --json | jq -r .ID)
 | `--name` | string | `` | Note type name (required) **(required)** |
 | `--description` | string | `` | Note type description |
 | `--custom-header` | string | `` | Custom header HTML |
+| `--custom-css` | string | `` | Custom CSS injected as a &lt;style&gt; block on detail/list pages |
 | `--custom-sidebar` | string | `` | Custom sidebar HTML |
 | `--custom-summary` | string | `` | Custom summary HTML |
 | `--custom-avatar` | string | `` | Custom avatar HTML |
@@ -68,7 +73,7 @@ NT=$(mr note-type create --name "Code Review" --json | jq -r .ID)
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Created NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/Sidebar/Summary/Avatar/MRQLResult, CreatedAt, UpdatedAt
+Created NoteType with ID, Name, Description, MetaSchema, SectionConfig, CustomHeader/CSS/Sidebar/Summary/Avatar/MRQLResult, CreatedAt, UpdatedAt
 
 ## Exit Codes
 

@@ -7,10 +7,12 @@ sidebar_label: create
 # mr category create
 
 Create a new Category. `--name` is required; `--description` is optional
-free-form text. The optional `--custom-header`, `--custom-sidebar`,
-`--custom-summary`, `--custom-avatar`, and `--custom-mrql-result` flags
-accept template or HTML strings applied to Groups assigned to this
-category. `--meta-schema` and `--section-config` take JSON strings
+free-form text. The optional `--custom-header`, `--custom-css`,
+`--custom-sidebar`, `--custom-summary`, `--custom-avatar`, and
+`--custom-mrql-result` flags accept template or HTML strings applied to
+Groups assigned to this category. `--custom-css` is injected as a
+`<style>` block on detail and list pages. `--meta-schema` and
+`--section-config` take JSON strings
 controlling structured metadata and which sections render on group
 detail pages. On success prints a confirmation line with the new ID;
 pass the global `--json` flag to emit the full record for scripting.
@@ -43,6 +45,7 @@ ID=$(mr category create --name "Location" --description "Places you know about" 
 | `--name` | string | `` | Category name (required) **(required)** |
 | `--description` | string | `` | Category description |
 | `--custom-header` | string | `` | Custom header HTML |
+| `--custom-css` | string | `` | Custom CSS injected as a &lt;style&gt; block on detail/list pages |
 | `--custom-sidebar` | string | `` | Custom sidebar HTML |
 | `--custom-summary` | string | `` | Custom summary HTML |
 | `--custom-avatar` | string | `` | Custom avatar HTML |

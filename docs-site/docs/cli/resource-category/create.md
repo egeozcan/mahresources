@@ -8,11 +8,12 @@ sidebar_label: create
 
 Create a new resource category. `--name` is required; all other flags
 are optional, including a plain `--description`, presentation
-fields (`--custom-header`, `--custom-sidebar`, `--custom-summary`,
-`--custom-avatar`, `--custom-mrql-result`) and structural fields
-(`--meta-schema`, `--section-config`). On success prints a confirmation
-line with the new ID; pass the global `--json` flag to emit the full
-record for scripting.
+fields (`--custom-header`, `--custom-css`, `--custom-sidebar`,
+`--custom-summary`, `--custom-avatar`, `--custom-mrql-result`) and
+structural fields (`--meta-schema`, `--section-config`). `--custom-css`
+is injected as a `<style>` block on detail and list pages. On success
+prints a confirmation line with the new ID; pass the global `--json`
+flag to emit the full record for scripting.
 
 ## Usage
 
@@ -42,6 +43,7 @@ ID=$(mr resource-category create --name "Scans" --description "scanned documents
 | `--name` | string | `` | Resource category name (required) **(required)** |
 | `--description` | string | `` | Resource category description |
 | `--custom-header` | string | `` | Custom header HTML |
+| `--custom-css` | string | `` | Custom CSS injected as a &lt;style&gt; block on detail/list pages |
 | `--custom-sidebar` | string | `` | Custom sidebar HTML |
 | `--custom-summary` | string | `` | Custom summary HTML |
 | `--custom-avatar` | string | `` | Custom avatar HTML |

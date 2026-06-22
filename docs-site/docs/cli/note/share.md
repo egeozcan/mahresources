@@ -8,8 +8,10 @@ sidebar_label: share
 
 Generate a share token for a note, making it readable via the public
 `/s/<token>` share URL without authentication. Calling `share` on a
-note that is already shared rotates the token, invalidating any
-previous share URL. The response contains both the raw token and the
+note that is already shared is idempotent: it returns the existing
+token rather than minting a new one, so previously issued share URLs
+keep working. To rotate the token, run `note unshare` first and then
+`share` again. The response contains both the raw token and the
 relative share URL for convenience.
 
 ## Usage

@@ -11,7 +11,8 @@ single-NoteType GET endpoint, so the CLI fetches the full list and
 filters in-process; this is slower than a direct lookup on large
 instances. The table output shows five core fields (ID, Name, Description,
 Created, Updated). The `--json` flag emits the full server response,
-including MetaSchema, SectionConfig, CustomHeader, and other Custom* fields.
+including MetaSchema, SectionConfig, CustomHeader, CustomCSS, and other
+Custom* fields.
 
 ## Usage
 
