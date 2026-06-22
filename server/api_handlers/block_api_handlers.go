@@ -200,7 +200,10 @@ func ReorderBlocksHandler(ctx interfaces.BlockWriter) func(http.ResponseWriter, 
 		}
 
 		if err := ctx.ReorderBlocks(body.NoteID, body.Positions); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			// Use StatusBadRequest (400) for validation errors from ReorderBlocks.
+			// Currently, ReorderBlocks returns errors for duplicate positions
+			// and mismatched block IDs, which are client-side input errors.
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
