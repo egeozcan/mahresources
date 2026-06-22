@@ -14,25 +14,49 @@ func (ctx *MahresourcesContext) EnsurePluginStates() ([]models.PluginState, erro
 		return nil, nil
 	}
 
-	for _, dp := range ctx.pluginManager.DiscoveredPlugins() {
-		var count int64
-		ctx.db.Model(&models.PluginState{}).Where("plugin_name = ?", dp.Name).Count(&count)
-		if count == 0 {
-			state := models.PluginState{
-				PluginName: dp.Name,
-				Enabled:    false,
+	discovered := ctx.pluginManager.DiscoveredPlugins()
+
+	if len(discovered) > 0 {
+		// De-duplicate discovered names before checking existence.
+		discoveredMap := make(map[string]struct{}, len(discovered))
+		var uniqueNames []string
+		for _, dp := range discovered {
+			if _, ok := discoveredMap[dp.Name]; !ok {
+				discoveredMap[dp.Name] = struct{}{}
+				uniqueNames = append(uniqueNames, dp.Name)
 			}
-			if err := ctx.db.Create(&state).Error; err != nil {
-				return nil, fmt.Errorf("creating plugin state for %q: %w", dp.Name, err)
+		}
+
+		var existingNames []string
+		if err := ctx.db.Model(&models.PluginState{}).
+			Where("plugin_name IN ?", uniqueNames).
+			Pluck("plugin_name", &existingNames).Error; err != nil {
+			return nil, err
+		}
+
+		existingMap := make(map[string]struct{}, len(existingNames))
+		for _, name := range existingNames {
+			existingMap[name] = struct{}{}
+		}
+
+		var toCreate []models.PluginState
+		for _, name := range uniqueNames {
+			if _, ok := existingMap[name]; !ok {
+				toCreate = append(toCreate, models.PluginState{
+					PluginName: name,
+					Enabled:    false,
+				})
+			}
+		}
+
+		if len(toCreate) > 0 {
+			if err := ctx.db.Create(&toCreate).Error; err != nil {
+				return nil, fmt.Errorf("batch creating plugin states: %w", err)
 			}
 		}
 	}
 
-	var states []models.PluginState
-	if err := ctx.db.Order("plugin_name").Find(&states).Error; err != nil {
-		return nil, err
-	}
-	return states, nil
+	return ctx.GetPluginStates()
 }
 
 // GetPluginStates returns all plugin states from the database.
