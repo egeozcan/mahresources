@@ -185,8 +185,8 @@ describe('flattenSchema', () => {
     };
     const fields = flattenSchema(schema);
     expect(fields).toEqual([
-      { path: 'name', label: 'Full Name', type: 'string', enum: null },
-      { path: 'age', label: 'Age', type: 'integer', enum: null },
+      { path: 'name', label: 'Full Name', type: 'string', enum: null, enumLabels: null },
+      { path: 'age', label: 'Age', type: 'integer', enum: null, enumLabels: null },
     ]);
   });
 
@@ -204,7 +204,7 @@ describe('flattenSchema', () => {
     };
     const fields = flattenSchema(schema);
     expect(fields).toEqual([
-      { path: 'address.city', label: 'Address › City', type: 'string', enum: null },
+      { path: 'address.city', label: 'Address › City', type: 'string', enum: null, enumLabels: null },
     ]);
   });
 
@@ -307,12 +307,12 @@ describe('flattenSchema', () => {
 describe('intersectFields', () => {
   it('returns common fields only', () => {
     const list1 = [
-      { path: 'name', label: 'Name', type: 'string' as const, enum: null },
-      { path: 'age', label: 'Age', type: 'integer' as const, enum: null },
+      { path: 'name', label: 'Name', type: 'string' as const, enum: null, enumLabels: null },
+      { path: 'age', label: 'Age', type: 'integer' as const, enum: null, enumLabels: null },
     ];
     const list2 = [
-      { path: 'name', label: 'Name', type: 'string' as const, enum: null },
-      { path: 'email', label: 'Email', type: 'string' as const, enum: null },
+      { path: 'name', label: 'Name', type: 'string' as const, enum: null, enumLabels: null },
+      { path: 'email', label: 'Email', type: 'string' as const, enum: null, enumLabels: null },
     ];
     const result = intersectFields([list1, list2]);
     expect(result).toHaveLength(1);
@@ -320,15 +320,15 @@ describe('intersectFields', () => {
   });
 
   it('falls back to string on type conflict', () => {
-    const list1 = [{ path: 'x', label: 'X', type: 'string' as const, enum: null }];
-    const list2 = [{ path: 'x', label: 'X', type: 'number' as const, enum: null }];
+    const list1 = [{ path: 'x', label: 'X', type: 'string' as const, enum: null, enumLabels: null }];
+    const list2 = [{ path: 'x', label: 'X', type: 'number' as const, enum: null, enumLabels: null }];
     const result = intersectFields([list1, list2]);
     expect(result[0].type).toBe('string');
   });
 
   it('merges integer and number to number', () => {
-    const list1 = [{ path: 'x', label: 'X', type: 'integer' as const, enum: null }];
-    const list2 = [{ path: 'x', label: 'X', type: 'number' as const, enum: null }];
+    const list1 = [{ path: 'x', label: 'X', type: 'integer' as const, enum: null, enumLabels: null }];
+    const list2 = [{ path: 'x', label: 'X', type: 'number' as const, enum: null, enumLabels: null }];
     const result = intersectFields([list1, list2]);
     expect(result[0].type).toBe('number');
   });
