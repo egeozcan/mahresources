@@ -122,27 +122,70 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		}
 
 		backups := make(map[string]types.JSON)
-
 		for _, loser := range losers {
 			backupData, err := json.Marshal(loser)
 			if err != nil {
 				return err
 			}
 			backups[fmt.Sprintf("group_%v", loser.ID)] = backupData
+		}
 
-			// Merge meta
-			switch altCtx.Config.DbType {
-			case constants.DbTypePosgres:
-				err = altCtx.db.Exec(`UPDATE groups SET meta = coalesce(nullif((SELECT meta FROM groups WHERE id = ?), 'null'::jsonb), '{}'::jsonb) || coalesce(nullif(meta, 'null'::jsonb), '{}'::jsonb) WHERE id = ?`, loser.ID, winnerId).Error
-			case constants.DbTypeSqlite:
-				err = altCtx.db.Exec(`UPDATE groups SET meta = json_patch(coalesce(nullif((SELECT meta FROM groups WHERE id = ?), 'null'), '{}'), coalesce(nullif(meta, 'null'), '{}')) WHERE id = ?`, loser.ID, winnerId).Error
-			default:
-				err = errors.New("db doesn't support merging meta")
-			}
-			if err != nil {
-				return err
-			}
+		// Merge all losers' meta into the winner in a single batched operation,
+		// avoiding the previous N+1 (one UPDATE per loser). Winner keys always
+		// win on conflict; among losers, the lowest-id loser wins, which is
+		// deterministic and consistent across Postgres and SQLite.
+		var err error
+		switch altCtx.Config.DbType {
+		case constants.DbTypePosgres:
+			err = altCtx.db.Exec(`
+				UPDATE groups SET meta = (
+					SELECT coalesce(jsonb_object_agg(key, value), '{}'::jsonb)
+					FROM (
+						SELECT DISTINCT ON (key) key, value
+						FROM (
+							SELECT key, value, 1 AS priority, 0 AS ord
+								FROM jsonb_each(coalesce(nullif(meta, 'null'::jsonb), '{}'::jsonb))
+							UNION ALL
+							SELECT key, value, 2 AS priority, g.id AS ord
+								FROM groups g, jsonb_each(coalesce(nullif(g.meta, 'null'::jsonb), '{}'::jsonb))
+								WHERE g.id IN ?
+						) s
+						ORDER BY key, priority ASC, ord ASC
+					) t
+				) WHERE id = ?`, loserIds, winnerId).Error
+		case constants.DbTypeSqlite:
+			// Aggregate loser meta in Go (lowest-id loser wins on conflict) and
+			// apply with a single json_patch so the winner's keys take precedence.
+			sortedLosers := make([]*models.Group, len(losers))
+			copy(sortedLosers, losers)
+			sort.Slice(sortedLosers, func(i, j int) bool { return sortedLosers[i].ID < sortedLosers[j].ID })
 
+			mergedLosersMeta := make(map[string]any)
+			for _, loser := range sortedLosers {
+				var m map[string]any
+				if uErr := json.Unmarshal(loser.Meta, &m); uErr == nil {
+					for k, v := range m {
+						if _, exists := mergedLosersMeta[k]; !exists {
+							mergedLosersMeta[k] = v
+						}
+					}
+				}
+			}
+			if len(mergedLosersMeta) > 0 {
+				mergedMetaBytes, mErr := json.Marshal(mergedLosersMeta)
+				if mErr != nil {
+					return mErr
+				}
+				err = altCtx.db.Exec(`UPDATE groups SET meta = json_patch(?, coalesce(nullif(meta, 'null'), '{}')) WHERE id = ?`, string(mergedMetaBytes), winnerId).Error
+			}
+		default:
+			err = errors.New("db doesn't support merging meta")
+		}
+		if err != nil {
+			return err
+		}
+
+		for _, loser := range losers {
 			if err := altCtx.DeleteGroup(loser.ID); err != nil {
 				return err
 			}
