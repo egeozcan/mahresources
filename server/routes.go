@@ -579,7 +579,9 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/search").HandlerFunc(scopedAPI(appContext, api_handlers.GetGlobalSearchHandler))
 
 	// Download Queue (background remote downloads)
-	router.Methods(http.MethodPost).Path("/v1/download/submit").HandlerFunc(api_handlers.GetDownloadSubmitHandler(appContext))
+	// Submit runs on a request-scoped context so a group-limited principal can
+	// only target groups inside its subtree (the worker itself runs unscoped).
+	router.Methods(http.MethodPost).Path("/v1/download/submit").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadSubmitHandler))
 	router.Methods(http.MethodGet).Path("/v1/download/queue").HandlerFunc(api_handlers.GetDownloadQueueHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/download/cancel").HandlerFunc(api_handlers.GetDownloadCancelHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/download/pause").HandlerFunc(api_handlers.GetDownloadPauseHandler(appContext))
@@ -588,7 +590,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/download/events").HandlerFunc(api_handlers.GetDownloadEventsHandler(appContext))
 
 	// Jobs routes (new canonical paths — download routes above kept as aliases)
-	router.Methods(http.MethodPost).Path("/v1/jobs/download/submit").HandlerFunc(api_handlers.GetDownloadSubmitHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/jobs/download/submit").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadSubmitHandler))
 	router.Methods(http.MethodGet).Path("/v1/jobs/queue").HandlerFunc(api_handlers.GetDownloadQueueHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/jobs/cancel").HandlerFunc(api_handlers.GetDownloadCancelHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/jobs/pause").HandlerFunc(api_handlers.GetDownloadPauseHandler(appContext))

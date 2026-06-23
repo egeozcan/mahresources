@@ -18,6 +18,15 @@ type DownloadQueueReader interface {
 	DownloadManager() *download_queue.DownloadManager
 }
 
+// DownloadSubmitter adds group-visibility checks so the submit handler can
+// confine a group-limited principal's download targets to its subtree. The
+// request-scoped *MahresourcesContext satisfies it; GroupVisible is a no-op
+// (always true) for admins, the auth-off super-user, and unscoped users.
+type DownloadSubmitter interface {
+	DownloadManager() *download_queue.DownloadManager
+	GroupVisible(id uint) bool
+}
+
 // principalOwnerID returns a pointer to the principal's user ID, or nil for the
 // system/super-user (auth disabled) or an unauthenticated request. Used to tag
 // background jobs with their creator.
@@ -42,7 +51,7 @@ func jobVisibleToPrincipal(p *auth.Principal, owner *uint) bool {
 
 // GetDownloadSubmitHandler handles POST /v1/download/submit
 // Submits URL(s) for background download
-func GetDownloadSubmitHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetDownloadSubmitHandler(ctx DownloadSubmitter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var creator query_models.ResourceFromRemoteCreator
 
@@ -54,6 +63,29 @@ func GetDownloadSubmitHandler(ctx DownloadQueueReader) func(writer http.Response
 		if creator.URL == "" {
 			http_utils.HandleError(fmt.Errorf("URL is required"), writer, request, http.StatusBadRequest)
 			return
+		}
+
+		// The download worker creates resources on the unscoped system context, so
+		// a group-limited principal could otherwise plant data outside its subtree
+		// by naming an out-of-scope owner/group (or creating a new top-level group
+		// via GroupName). Validate the target here, before enqueuing, and refuse
+		// out-of-scope targets fail-closed. GroupVisible is always true for
+		// unscoped/admin/auth-off callers, so this is a no-op for them.
+		if actionScopeRestricted(auth.PrincipalFromContext(request.Context())) {
+			if creator.GroupName != "" {
+				http_utils.HandleError(fmt.Errorf("group-limited accounts cannot create a group via download; target an existing group in your scope"), writer, request, http.StatusForbidden)
+				return
+			}
+			if creator.OwnerId == 0 || !ctx.GroupVisible(creator.OwnerId) {
+				http_utils.HandleError(fmt.Errorf("download target group is outside your permitted scope"), writer, request, http.StatusForbidden)
+				return
+			}
+			for _, g := range creator.Groups {
+				if !ctx.GroupVisible(g) {
+					http_utils.HandleError(fmt.Errorf("download target group is outside your permitted scope"), writer, request, http.StatusForbidden)
+					return
+				}
+			}
 		}
 
 		jobs, err := ctx.DownloadManager().SubmitMultiple(&creator)
@@ -105,6 +137,23 @@ func GetDownloadQueueHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 	}
 }
 
+// jobMutationDenied reports whether a job control action (cancel/pause/resume/
+// retry) on jobID must be refused because the job exists but is not visible to
+// the caller. When the job is unknown it returns false so the manager call can
+// surface its own not-found error. A denied mutation is reported as 404 (not
+// 403) so job IDs cannot be enumerated, matching GetDownloadJobHandler.
+func jobMutationDenied(ctx DownloadQueueReader, r *http.Request, jobID string) bool {
+	dm := ctx.DownloadManager()
+	if dm == nil {
+		return false
+	}
+	job, ok := dm.GetJob(jobID)
+	if !ok {
+		return false
+	}
+	return !jobVisibleToPrincipal(auth.PrincipalFromContext(r.Context()), job.GetOwnerUserID())
+}
+
 // GetDownloadCancelHandler handles POST /v1/download/cancel
 // Cancels a download job by ID
 func GetDownloadCancelHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
@@ -116,6 +165,11 @@ func GetDownloadCancelHandler(ctx DownloadQueueReader) func(writer http.Response
 
 		if jobID == "" {
 			http_utils.HandleError(fmt.Errorf("job id is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if jobMutationDenied(ctx, request, jobID) {
+			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
 			return
 		}
 
@@ -143,6 +197,11 @@ func GetDownloadPauseHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 			return
 		}
 
+		if jobMutationDenied(ctx, request, jobID) {
+			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
+			return
+		}
+
 		if err := ctx.DownloadManager().Pause(jobID); err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
@@ -167,6 +226,11 @@ func GetDownloadResumeHandler(ctx DownloadQueueReader) func(writer http.Response
 			return
 		}
 
+		if jobMutationDenied(ctx, request, jobID) {
+			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
+			return
+		}
+
 		if err := ctx.DownloadManager().Resume(jobID); err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
@@ -188,6 +252,11 @@ func GetDownloadRetryHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 
 		if jobID == "" {
 			http_utils.HandleError(fmt.Errorf("job id is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if jobMutationDenied(ctx, request, jobID) {
+			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
 			return
 		}
 

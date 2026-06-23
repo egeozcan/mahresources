@@ -33,6 +33,24 @@ type GroupImporter interface {
 	GetDefaultFs() afero.Fs
 }
 
+// importJobDenied reports whether the import job identified by jobID exists but
+// is not visible to the caller (a different user's job). Parse/apply jobs are
+// owner-tagged at submit; the lifecycle handlers (plan/apply/result/delete)
+// must not let another user inspect, apply, or delete them by guessing the ID.
+// Unknown jobs return false so the handler's own not-found path runs. Reported
+// as 404 (not 403) so IDs cannot be enumerated.
+func importJobDenied(ctx GroupImporter, r *http.Request, jobID string) bool {
+	dm := ctx.DownloadManager()
+	if dm == nil {
+		return false
+	}
+	job, ok := dm.GetJob(jobID)
+	if !ok {
+		return false
+	}
+	return !jobVisibleToPrincipal(auth.PrincipalFromContext(r.Context()), job.GetOwnerUserID())
+}
+
 // GetImportParseHandler — POST /v1/groups/import/parse
 //
 // Accepts a multipart file upload, stages the tar under _imports/, and enqueues
@@ -168,6 +186,10 @@ func GetImportPlanHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Req
 			http.Error(w, "jobId path parameter is required", http.StatusBadRequest)
 			return
 		}
+		if importJobDenied(ctx, r, jobID) {
+			http.Error(w, "import job not found", http.StatusNotFound)
+			return
+		}
 
 		plan, err := ctx.LoadImportPlan(jobID)
 		if err != nil {
@@ -194,6 +216,10 @@ func GetImportResultHandler(ctx GroupImporter) func(http.ResponseWriter, *http.R
 		jobID := vars["jobId"]
 		if jobID == "" {
 			http.Error(w, "jobId path parameter is required", http.StatusBadRequest)
+			return
+		}
+		if importJobDenied(ctx, r, jobID) {
+			http.Error(w, "import job not found", http.StatusNotFound)
 			return
 		}
 
@@ -225,6 +251,10 @@ func GetImportApplyHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Re
 		parseJobID := vars["jobId"]
 		if parseJobID == "" {
 			http.Error(w, "jobId path parameter is required", http.StatusBadRequest)
+			return
+		}
+		if importJobDenied(ctx, r, parseJobID) {
+			http.Error(w, "import job not found", http.StatusNotFound)
 			return
 		}
 
@@ -363,6 +393,10 @@ func GetImportDeleteHandler(ctx GroupImporter) func(http.ResponseWriter, *http.R
 		jobID := vars["jobId"]
 		if jobID == "" {
 			http.Error(w, "jobId path parameter is required", http.StatusBadRequest)
+			return
+		}
+		if importJobDenied(ctx, r, jobID) {
+			http.Error(w, "import job not found", http.StatusNotFound)
 			return
 		}
 

@@ -140,11 +140,29 @@ func loginAndMintToken(baseURL, username, password, name string) (string, error)
 		return "", fmt.Errorf("login failed: HTTP %d", resp.StatusCode)
 	}
 
+	// Minting a token is a state-changing, cookie-authenticated request, so when
+	// the server has auth enabled it requires the session's CSRF token. Read it
+	// from /v1/auth/me (which echoes csrfToken for the current session) and send
+	// it as the X-CSRF-Token header. With auth disabled the token is empty and
+	// the header is simply ignored.
+	csrfToken, err := fetchCSRFToken(hc, base)
+	if err != nil {
+		return "", err
+	}
+
 	if name == "" {
 		name = "mr cli"
 	}
 	mintBody, _ := json.Marshal(map[string]string{"name": name})
-	resp2, err := hc.Post(base+"/v1/account/tokens", "application/json", bytes.NewReader(mintBody))
+	mintReq, err := http.NewRequest(http.MethodPost, base+"/v1/account/tokens", bytes.NewReader(mintBody))
+	if err != nil {
+		return "", err
+	}
+	mintReq.Header.Set("Content-Type", "application/json")
+	if csrfToken != "" {
+		mintReq.Header.Set("X-CSRF-Token", csrfToken)
+	}
+	resp2, err := hc.Do(mintReq)
 	if err != nil {
 		return "", err
 	}
@@ -162,4 +180,25 @@ func loginAndMintToken(baseURL, username, password, name string) (string, error)
 		return "", fmt.Errorf("server did not return a token")
 	}
 	return out.Token, nil
+}
+
+// fetchCSRFToken reads the current session's CSRF token from /v1/auth/me using
+// the (cookie-bearing) http client. Returns "" when the server has auth disabled
+// (no token is issued), which is not an error.
+func fetchCSRFToken(hc *http.Client, base string) (string, error) {
+	resp, err := hc.Get(base + "/v1/auth/me")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("could not read session info: HTTP %d", resp.StatusCode)
+	}
+	var me struct {
+		CsrfToken string `json:"csrfToken"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&me); err != nil {
+		return "", err
+	}
+	return me.CsrfToken, nil
 }
