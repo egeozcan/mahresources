@@ -88,6 +88,112 @@ func TestScopedUser_StoredQueryDenied(t *testing.T) {
 	}
 }
 
+// relationCount returns how many group_relations rows link from→to.
+func relationCount(tc *TestContext, from, to uint) int64 {
+	var n int64
+	tc.DB.Model(&models.GroupRelation{}).Where("from_group_id = ? AND to_group_id = ?", from, to).Count(&n)
+	return n
+}
+
+// P1: GetGroup preloads Relationships/BackRelations, which are not owner-scoped,
+// so a scoped principal viewing an in-scope group must not see relations to (or
+// the IDs of) out-of-subtree groups.
+func TestScopedUser_GroupDetailRelationsConfined(t *testing.T) {
+	tc := setupAuthEnv(t)
+	root := &models.Group{Name: "gd-root"}
+	tc.DB.Create(root)
+	child := &models.Group{Name: "gd-child", OwnerId: &root.ID}
+	tc.DB.Create(child)
+	outside := &models.Group{Name: "gd-outside"}
+	tc.DB.Create(outside)
+	rt := &models.GroupRelationType{Name: "gd-rt"}
+	tc.DB.Create(rt)
+	// root → child (in-subtree) and root → outside (admin-created, external)
+	tc.DB.Create(&models.GroupRelation{FromGroupId: &root.ID, ToGroupId: &child.ID, RelationTypeId: &rt.ID})
+	tc.DB.Create(&models.GroupRelation{FromGroupId: &root.ID, ToGroupId: &outside.ID, RelationTypeId: &rt.ID})
+
+	scoped := tc.AppCtx.WithPrincipal(&auth.Principal{UserID: 4, Role: models.RoleUser, ScopeGroupID: &root.ID})
+	g, err := scoped.GetGroup(root.ID)
+	if err != nil {
+		t.Fatalf("GetGroup: %v", err)
+	}
+	for _, rel := range g.Relationships {
+		if rel.ToGroupId != nil && *rel.ToGroupId == outside.ID {
+			t.Fatalf("scoped group detail must not expose the relation to the out-of-subtree group")
+		}
+	}
+	var sawIn bool
+	for _, rel := range g.Relationships {
+		if rel.ToGroupId != nil && *rel.ToGroupId == child.ID {
+			sawIn = true
+		}
+	}
+	if !sawIn {
+		t.Fatalf("scoped group detail should include the in-subtree relation")
+	}
+}
+
+// P1: cloning an in-scope group must not mint relations to out-of-subtree groups.
+func TestScopedUser_CloneSkipsExternalRelations(t *testing.T) {
+	tc := setupAuthEnv(t)
+	root := &models.Group{Name: "cl-root"}
+	tc.DB.Create(root)
+	a := &models.Group{Name: "cl-a", OwnerId: &root.ID}
+	tc.DB.Create(a)
+	b := &models.Group{Name: "cl-b", OwnerId: &root.ID}
+	tc.DB.Create(b)
+	outside := &models.Group{Name: "cl-outside"}
+	tc.DB.Create(outside)
+	rt := &models.GroupRelationType{Name: "cl-rt"}
+	tc.DB.Create(rt)
+	tc.DB.Create(&models.GroupRelation{FromGroupId: &a.ID, ToGroupId: &b.ID, RelationTypeId: &rt.ID})
+	tc.DB.Create(&models.GroupRelation{FromGroupId: &a.ID, ToGroupId: &outside.ID, RelationTypeId: &rt.ID})
+
+	scoped := tc.AppCtx.WithPrincipal(&auth.Principal{UserID: 4, Role: models.RoleUser, ScopeGroupID: &root.ID})
+	clone, err := scoped.DuplicateGroup(a.ID)
+	if err != nil {
+		t.Fatalf("DuplicateGroup: %v", err)
+	}
+	if relationCount(tc, clone.ID, outside.ID) != 0 {
+		t.Fatalf("clone must not have a relation to the out-of-subtree group")
+	}
+	if relationCount(tc, clone.ID, b.ID) == 0 {
+		t.Fatalf("clone should carry the in-subtree relation")
+	}
+}
+
+// P1: merging in-scope groups must not transfer relations to out-of-subtree
+// groups onto the winner.
+func TestScopedUser_MergeSkipsExternalRelations(t *testing.T) {
+	tc := setupAuthEnv(t)
+	root := &models.Group{Name: "mg-root"}
+	tc.DB.Create(root)
+	winner := &models.Group{Name: "mg-winner", OwnerId: &root.ID}
+	tc.DB.Create(winner)
+	loser := &models.Group{Name: "mg-loser", OwnerId: &root.ID}
+	tc.DB.Create(loser)
+	inGroup := &models.Group{Name: "mg-in", OwnerId: &root.ID}
+	tc.DB.Create(inGroup)
+	outside := &models.Group{Name: "mg-outside"}
+	tc.DB.Create(outside)
+	rt := &models.GroupRelationType{Name: "mg-rt"}
+	tc.DB.Create(rt)
+	// loser → outside (external) and loser → inGroup (in-subtree)
+	tc.DB.Create(&models.GroupRelation{FromGroupId: &loser.ID, ToGroupId: &outside.ID, RelationTypeId: &rt.ID})
+	tc.DB.Create(&models.GroupRelation{FromGroupId: &loser.ID, ToGroupId: &inGroup.ID, RelationTypeId: &rt.ID})
+
+	scoped := tc.AppCtx.WithPrincipal(&auth.Principal{UserID: 4, Role: models.RoleUser, ScopeGroupID: &root.ID})
+	if err := scoped.MergeGroups(winner.ID, []uint{loser.ID}); err != nil {
+		t.Fatalf("MergeGroups: %v", err)
+	}
+	if relationCount(tc, winner.ID, outside.ID) != 0 {
+		t.Fatalf("merge must not transfer the relation to the out-of-subtree group")
+	}
+	if relationCount(tc, winner.ID, inGroup.ID) == 0 {
+		t.Fatalf("merge should transfer the in-subtree relation to the winner")
+	}
+}
+
 // P1: group relations are not an owner-scoped table, so a scoped principal must
 // not read relations (or the endpoint group IDs) outside its subtree.
 func TestScopedUser_RelationsConfined(t *testing.T) {

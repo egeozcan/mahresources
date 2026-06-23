@@ -25,7 +25,7 @@ func NewAuthCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		Annotations: authExitCodes,
 	}
 	cmd.AddCommand(newAuthLoginCmd(c, opts))
-	cmd.AddCommand(newAuthLogoutCmd())
+	cmd.AddCommand(newAuthLogoutCmd(c))
 	cmd.AddCommand(newAuthWhoamiCmd(c, opts))
 	return cmd
 }
@@ -52,7 +52,7 @@ func newAuthLoginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := client.StoreToken(token); err != nil {
+			if err := client.StoreToken(c.BaseURL, token); err != nil {
 				return err
 			}
 			fmt.Println("Logged in. API token stored.")
@@ -65,13 +65,13 @@ func newAuthLoginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	return cmd
 }
 
-func newAuthLogoutCmd() *cobra.Command {
+func newAuthLogoutCmd(c *client.Client) *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Remove the stored API token",
-		Long:  "Delete the locally stored API token so this machine is no longer authenticated. This does not revoke the token on the server; use `mr token revoke` to invalidate it everywhere.",
+		Long:  "Delete the locally stored API token for the current --server so this machine is no longer authenticated to it. Tokens stored for other servers are left intact. This does not revoke the token on the server; use `mr token revoke` to invalidate it everywhere.",
 		Example: strings.Join([]string{
-			"  # Forget the stored credentials on this machine",
+			"  # Forget the stored credentials for the current server",
 			"  mr auth logout",
 			"",
 			"  # Logout is safe to run even when not logged in",
@@ -79,7 +79,7 @@ func newAuthLogoutCmd() *cobra.Command {
 		}, "\n"),
 		Annotations: authExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := client.ClearToken(); err != nil {
+			if err := client.ClearToken(c.BaseURL); err != nil {
 				return err
 			}
 			fmt.Println("Logged out (local token cleared).")

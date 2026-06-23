@@ -77,11 +77,25 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		}
 
 		// Batch SQL transfers — group_relations (both directions)
-		// group_relations is a full entity with relation_type_id, name, description — transfer all columns
-		if err := altCtx.db.Exec("INSERT INTO group_relations (from_group_id, to_group_id, relation_type_id, name, description, created_at, updated_at) SELECT ?, to_group_id, relation_type_id, name, description, created_at, updated_at FROM group_relations WHERE from_group_id IN ? AND to_group_id != ? ON CONFLICT DO NOTHING", winnerId, loserIds, winnerId).Error; err != nil {
+		// group_relations is a full entity with relation_type_id, name, description — transfer all columns.
+		// Raw SQL bypasses the GORM scope callbacks, so for a group-limited principal
+		// confine the transferred relations' far endpoint to the subtree: a loser's
+		// relation to an out-of-subtree group is left untouched rather than re-pointed
+		// at the (in-scope) winner. No-op for unscoped/admin.
+		subtreeIDs, scopedMerge, _ := altCtx.subtreeScopeIDs()
+		outFilter, inFilter := "", ""
+		outArgs := []any{winnerId, loserIds, winnerId}
+		inArgs := []any{winnerId, loserIds, winnerId}
+		if scopedMerge {
+			outFilter = " AND to_group_id IN ?"
+			outArgs = append(outArgs, subtreeIDs)
+			inFilter = " AND from_group_id IN ?"
+			inArgs = append(inArgs, subtreeIDs)
+		}
+		if err := altCtx.db.Exec("INSERT INTO group_relations (from_group_id, to_group_id, relation_type_id, name, description, created_at, updated_at) SELECT ?, to_group_id, relation_type_id, name, description, created_at, updated_at FROM group_relations WHERE from_group_id IN ? AND to_group_id != ?"+outFilter+" ON CONFLICT DO NOTHING", outArgs...).Error; err != nil {
 			return err
 		}
-		if err := altCtx.db.Exec("INSERT INTO group_relations (from_group_id, to_group_id, relation_type_id, name, description, created_at, updated_at) SELECT from_group_id, ?, relation_type_id, name, description, created_at, updated_at FROM group_relations WHERE to_group_id IN ? AND from_group_id != ? ON CONFLICT DO NOTHING", winnerId, loserIds, winnerId).Error; err != nil {
+		if err := altCtx.db.Exec("INSERT INTO group_relations (from_group_id, to_group_id, relation_type_id, name, description, created_at, updated_at) SELECT from_group_id, ?, relation_type_id, name, description, created_at, updated_at FROM group_relations WHERE to_group_id IN ? AND from_group_id != ?"+inFilter+" ON CONFLICT DO NOTHING", inArgs...).Error; err != nil {
 			return err
 		}
 
@@ -412,8 +426,31 @@ func (ctx *MahresourcesContext) DuplicateGroup(id uint) (*models.Group, error) {
 		return nil, err
 	}
 
+	// For a group-limited principal, only copy relations whose far endpoint is
+	// inside the subtree, so cloning an in-scope group (which an admin may have
+	// linked to an external group) does not mint new relations referencing groups
+	// outside the caller's scope. inSubtree is true-for-all when unscoped.
+	subtreeIDs, scopedClone, denyClone := ctx.subtreeScopeIDs()
+	allowed := make(map[uint]struct{}, len(subtreeIDs))
+	for _, gid := range subtreeIDs {
+		allowed[gid] = struct{}{}
+	}
+	inSubtree := func(gid *uint) bool {
+		if !scopedClone {
+			return true
+		}
+		if denyClone || gid == nil {
+			return false
+		}
+		_, ok := allowed[*gid]
+		return ok
+	}
+
 	// Copy outgoing relationships (original is FromGroup)
 	for _, rel := range original.Relationships {
+		if !inSubtree(rel.ToGroupId) {
+			continue
+		}
 		newRel := models.GroupRelation{
 			FromGroupId:    &result.ID,
 			ToGroupId:      rel.ToGroupId,
@@ -427,6 +464,9 @@ func (ctx *MahresourcesContext) DuplicateGroup(id uint) (*models.Group, error) {
 
 	// Copy incoming relationships (original is ToGroup)
 	for _, rel := range original.BackRelations {
+		if !inSubtree(rel.FromGroupId) {
+			continue
+		}
 		newRel := models.GroupRelation{
 			FromGroupId:    rel.FromGroupId,
 			ToGroupId:      &result.ID,

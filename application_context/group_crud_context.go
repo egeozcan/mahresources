@@ -356,6 +356,24 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 	var group models.Group
 
+	// group_relations is not an owner-scoped table, so a group-limited principal
+	// viewing an in-scope group could otherwise read its relations to (and the
+	// IDs of) out-of-subtree groups. Confine each preloaded relation's far
+	// endpoint to the subtree; fail-closed when the subtree is unresolvable.
+	ids, scoped, deny := ctx.subtreeScopeIDs()
+	relCond := func(farCol string) func(*gorm.DB) *gorm.DB {
+		return func(tx *gorm.DB) *gorm.DB {
+			switch {
+			case deny:
+				return tx.Where("1 = 0")
+			case scoped:
+				return tx.Where(farCol+" IN ?", ids)
+			default:
+				return tx
+			}
+		}
+	}
+
 	err := ctx.db.
 		Preload("OwnGroups", pageLimit).
 		Preload("OwnGroups.Category").
@@ -367,10 +385,10 @@ func (ctx *MahresourcesContext) GetGroup(id uint) (*models.Group, error) {
 		Preload("Tags").
 		Preload("Owner").
 		Preload("Category", pageLimit).
-		Preload("Relationships").
+		Preload("Relationships", relCond("to_group_id")).
 		Preload("Relationships.ToGroup").
 		Preload("Relationships.RelationType").
-		Preload("BackRelations").
+		Preload("BackRelations", relCond("from_group_id")).
 		Preload("BackRelations.FromGroup").
 		Preload("BackRelations.RelationType").
 		First(&group, id).Error

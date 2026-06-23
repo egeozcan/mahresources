@@ -26,7 +26,7 @@ type Client struct {
 // When the server has auth disabled the token is simply ignored.
 func New(baseURL string) *Client {
 	hc := &http.Client{}
-	if token := ResolveToken(); token != "" {
+	if token := ResolveToken(baseURL); token != "" {
 		hc.Transport = &authTransport{token: token, base: http.DefaultTransport}
 	}
 	return &Client{
@@ -48,18 +48,60 @@ func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(req)
 }
 
-// ResolveToken returns the API token from MR_TOKEN, or the stored credentials
-// file, or "" if none is configured.
-func ResolveToken() string {
+// ResolveToken returns the API token to use for baseURL. The MR_TOKEN env var is
+// an explicit global override and takes precedence; otherwise the stored token
+// for baseURL's origin is returned (or "" if none). Stored tokens are bound to a
+// server origin so a token minted against one server is never sent to a
+// different host.
+func ResolveToken(baseURL string) string {
 	if t := strings.TrimSpace(os.Getenv("MR_TOKEN")); t != "" {
 		return t
 	}
-	if path := tokenFilePath(); path != "" {
-		if b, err := os.ReadFile(path); err == nil {
-			return strings.TrimSpace(string(b))
-		}
+	return readTokenMap()[normalizeOrigin(baseURL)]
+}
+
+// normalizeOrigin reduces a server URL to its scheme://host[:port] origin
+// (lowercased) — the key under which that server's token is stored.
+func normalizeOrigin(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		return strings.ToLower(u.Scheme + "://" + u.Host)
 	}
-	return ""
+	return strings.ToLower(strings.TrimRight(raw, "/"))
+}
+
+// readTokenMap loads the origin→token map from the credentials file. A legacy
+// single-token file (pre-origin-binding) is not valid JSON and yields an empty
+// map, which forces a re-login that rewrites the file in the new format — so a
+// stale global token is never reused across origins.
+func readTokenMap() map[string]string {
+	m := map[string]string{}
+	path := tokenFilePath()
+	if path == "" {
+		return m
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return m
+	}
+	_ = json.Unmarshal(b, &m)
+	return m
+}
+
+// writeTokenMap persists the origin→token map (0600).
+func writeTokenMap(m map[string]string) error {
+	path := tokenFilePath()
+	if path == "" {
+		return fmt.Errorf("could not determine token file path")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0600)
 }
 
 // tokenFilePath returns the path to the stored token file. Honors MR_TOKEN_FILE,
@@ -78,28 +120,30 @@ func tokenFilePath() string {
 	return filepath.Join(home, ".config", "mahresources", "token")
 }
 
-// StoreToken persists the API token to the credentials file (0600).
-func StoreToken(token string) error {
-	path := tokenFilePath()
-	if path == "" {
-		return fmt.Errorf("could not determine token file path")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(strings.TrimSpace(token)+"\n"), 0600)
+// StoreToken persists token for baseURL's origin (0600), leaving any tokens for
+// other servers intact.
+func StoreToken(baseURL, token string) error {
+	m := readTokenMap()
+	m[normalizeOrigin(baseURL)] = strings.TrimSpace(token)
+	return writeTokenMap(m)
 }
 
-// ClearToken removes the stored credentials file.
-func ClearToken() error {
-	path := tokenFilePath()
-	if path == "" {
+// ClearToken removes the stored token for baseURL's origin. The credentials file
+// is deleted only when no tokens remain.
+func ClearToken(baseURL string) error {
+	m := readTokenMap()
+	delete(m, normalizeOrigin(baseURL))
+	if len(m) == 0 {
+		path := tokenFilePath()
+		if path == "" {
+			return nil
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 		return nil
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	return writeTokenMap(m)
 }
 
 // apiError represents an error response from the API.
