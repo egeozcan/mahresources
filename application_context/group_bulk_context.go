@@ -53,36 +53,64 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 			return err
 		}
 
-		// Batch SQL transfers — tags
+		// Raw SQL below bypasses the GORM scope callbacks, so for a group-limited
+		// principal every transferred association's far endpoint must be confined to
+		// the subtree: a loser's association to an out-of-subtree group/note/resource
+		// is left untouched rather than re-pointed at the (in-scope) winner. The
+		// added filters are no-ops for an unscoped principal (admin/system/editor),
+		// and fail-closed when the subtree could not be resolved (subtreeIDs empty →
+		// IN () matches nothing). subtreeIDs are group IDs; notes/resources are
+		// confined via their owner_id (the same column the read scope uses).
+		subtreeIDs, scopedMerge, _ := altCtx.subtreeScopeIDs()
+
+		// Batch SQL transfers — tags (tags are global, never owner-scoped)
 		if err := altCtx.db.Exec("INSERT INTO group_tags (group_id, tag_id) SELECT ?, tag_id FROM group_tags WHERE group_id IN ? ON CONFLICT DO NOTHING", winnerId, loserIds).Error; err != nil {
 			return err
 		}
 
-		// Batch SQL transfers — related groups (both directions, exclude self-references)
-		if err := altCtx.db.Exec("INSERT INTO group_related_groups (group_id, related_group_id) SELECT ?, related_group_id FROM group_related_groups WHERE group_id IN ? AND related_group_id != ? ON CONFLICT DO NOTHING", winnerId, loserIds, winnerId).Error; err != nil {
+		// Batch SQL transfers — related groups (both directions, exclude self-references).
+		// Far endpoint is the other group: out-direction → related_group_id, in-direction → group_id.
+		relGroupsOutFilter, relGroupsInFilter := "", ""
+		relGroupsOutArgs := []any{winnerId, loserIds, winnerId}
+		relGroupsInArgs := []any{winnerId, loserIds, winnerId}
+		if scopedMerge {
+			relGroupsOutFilter = " AND related_group_id IN ?"
+			relGroupsOutArgs = append(relGroupsOutArgs, subtreeIDs)
+			relGroupsInFilter = " AND group_id IN ?"
+			relGroupsInArgs = append(relGroupsInArgs, subtreeIDs)
+		}
+		if err := altCtx.db.Exec("INSERT INTO group_related_groups (group_id, related_group_id) SELECT ?, related_group_id FROM group_related_groups WHERE group_id IN ? AND related_group_id != ?"+relGroupsOutFilter+" ON CONFLICT DO NOTHING", relGroupsOutArgs...).Error; err != nil {
 			return err
 		}
-		if err := altCtx.db.Exec("INSERT INTO group_related_groups (group_id, related_group_id) SELECT group_id, ? FROM group_related_groups WHERE related_group_id IN ? AND group_id != ? ON CONFLICT DO NOTHING", winnerId, loserIds, winnerId).Error; err != nil {
+		if err := altCtx.db.Exec("INSERT INTO group_related_groups (group_id, related_group_id) SELECT group_id, ? FROM group_related_groups WHERE related_group_id IN ? AND group_id != ?"+relGroupsInFilter+" ON CONFLICT DO NOTHING", relGroupsInArgs...).Error; err != nil {
 			return err
 		}
 
-		// Batch SQL transfers — related notes
-		if err := altCtx.db.Exec("INSERT INTO groups_related_notes (group_id, note_id) SELECT ?, note_id FROM groups_related_notes WHERE group_id IN ? ON CONFLICT DO NOTHING", winnerId, loserIds).Error; err != nil {
+		// Batch SQL transfers — related notes (far endpoint is a note; scope by note owner).
+		relNotesFilter := ""
+		relNotesArgs := []any{winnerId, loserIds}
+		if scopedMerge {
+			relNotesFilter = " AND note_id IN (SELECT id FROM notes WHERE owner_id IN ?)"
+			relNotesArgs = append(relNotesArgs, subtreeIDs)
+		}
+		if err := altCtx.db.Exec("INSERT INTO groups_related_notes (group_id, note_id) SELECT ?, note_id FROM groups_related_notes WHERE group_id IN ?"+relNotesFilter+" ON CONFLICT DO NOTHING", relNotesArgs...).Error; err != nil {
 			return err
 		}
 
-		// Batch SQL transfers — related resources
-		if err := altCtx.db.Exec("INSERT INTO groups_related_resources (group_id, resource_id) SELECT ?, resource_id FROM groups_related_resources WHERE group_id IN ? ON CONFLICT DO NOTHING", winnerId, loserIds).Error; err != nil {
+		// Batch SQL transfers — related resources (far endpoint is a resource; scope by resource owner).
+		relResFilter := ""
+		relResArgs := []any{winnerId, loserIds}
+		if scopedMerge {
+			relResFilter = " AND resource_id IN (SELECT id FROM resources WHERE owner_id IN ?)"
+			relResArgs = append(relResArgs, subtreeIDs)
+		}
+		if err := altCtx.db.Exec("INSERT INTO groups_related_resources (group_id, resource_id) SELECT ?, resource_id FROM groups_related_resources WHERE group_id IN ?"+relResFilter+" ON CONFLICT DO NOTHING", relResArgs...).Error; err != nil {
 			return err
 		}
 
 		// Batch SQL transfers — group_relations (both directions)
 		// group_relations is a full entity with relation_type_id, name, description — transfer all columns.
-		// Raw SQL bypasses the GORM scope callbacks, so for a group-limited principal
-		// confine the transferred relations' far endpoint to the subtree: a loser's
-		// relation to an out-of-subtree group is left untouched rather than re-pointed
-		// at the (in-scope) winner. No-op for unscoped/admin.
-		subtreeIDs, scopedMerge, _ := altCtx.subtreeScopeIDs()
+		// Far endpoint: out-direction → to_group_id, in-direction → from_group_id.
 		outFilter, inFilter := "", ""
 		outArgs := []any{winnerId, loserIds, winnerId}
 		inArgs := []any{winnerId, loserIds, winnerId}

@@ -95,6 +95,15 @@ func relationCount(tc *TestContext, from, to uint) int64 {
 	return n
 }
 
+// joinCount counts rows in an owner-scoped group join table (group_related_groups,
+// groups_related_notes, groups_related_resources) linking group_id=group to
+// farCol=other. Used to assert merge transfers stay inside the subtree.
+func joinCount(tc *TestContext, table, farCol string, group, other uint) int64 {
+	var n int64
+	tc.DB.Table(table).Where("group_id = ? AND "+farCol+" = ?", group, other).Count(&n)
+	return n
+}
+
 // P1: GetGroup preloads Relationships/BackRelations, which are not owner-scoped,
 // so a scoped principal viewing an in-scope group must not see relations to (or
 // the IDs of) out-of-subtree groups.
@@ -162,8 +171,11 @@ func TestScopedUser_CloneSkipsExternalRelations(t *testing.T) {
 	}
 }
 
-// P1: merging in-scope groups must not transfer relations to out-of-subtree
-// groups onto the winner.
+// P1: merging in-scope groups must not transfer associations to out-of-subtree
+// groups, notes, or resources onto the winner. Raw-SQL transfers for every
+// owner-scoped join table (group_relations, group_related_groups,
+// groups_related_notes, groups_related_resources) must confine the far endpoint
+// to the subtree; in-subtree links are still carried over.
 func TestScopedUser_MergeSkipsExternalRelations(t *testing.T) {
 	tc := setupAuthEnv(t)
 	root := &models.Group{Name: "mg-root"}
@@ -182,15 +194,88 @@ func TestScopedUser_MergeSkipsExternalRelations(t *testing.T) {
 	tc.DB.Create(&models.GroupRelation{FromGroupId: &loser.ID, ToGroupId: &outside.ID, RelationTypeId: &rt.ID})
 	tc.DB.Create(&models.GroupRelation{FromGroupId: &loser.ID, ToGroupId: &inGroup.ID, RelationTypeId: &rt.ID})
 
+	// Owner-scoped join-table associations on the loser: an in-subtree and an
+	// external endpoint for each of related-groups, related-notes, related-resources.
+	inNote := &models.Note{Name: "mg-note-in", OwnerId: &root.ID}
+	tc.DB.Create(inNote)
+	outNote := &models.Note{Name: "mg-note-out", OwnerId: &outside.ID}
+	tc.DB.Create(outNote)
+	inRes := &models.Resource{Name: "mg-res-in", OwnerId: &root.ID}
+	tc.DB.Create(inRes)
+	outRes := &models.Resource{Name: "mg-res-out", OwnerId: &outside.ID}
+	tc.DB.Create(outRes)
+	tc.DB.Exec("INSERT INTO group_related_groups (group_id, related_group_id) VALUES (?, ?)", loser.ID, inGroup.ID)
+	tc.DB.Exec("INSERT INTO group_related_groups (group_id, related_group_id) VALUES (?, ?)", loser.ID, outside.ID)
+	tc.DB.Exec("INSERT INTO groups_related_notes (group_id, note_id) VALUES (?, ?)", loser.ID, inNote.ID)
+	tc.DB.Exec("INSERT INTO groups_related_notes (group_id, note_id) VALUES (?, ?)", loser.ID, outNote.ID)
+	tc.DB.Exec("INSERT INTO groups_related_resources (group_id, resource_id) VALUES (?, ?)", loser.ID, inRes.ID)
+	tc.DB.Exec("INSERT INTO groups_related_resources (group_id, resource_id) VALUES (?, ?)", loser.ID, outRes.ID)
+
 	scoped := tc.AppCtx.WithPrincipal(&auth.Principal{UserID: 4, Role: models.RoleUser, ScopeGroupID: &root.ID})
 	if err := scoped.MergeGroups(winner.ID, []uint{loser.ID}); err != nil {
 		t.Fatalf("MergeGroups: %v", err)
 	}
+
+	// group_relations
 	if relationCount(tc, winner.ID, outside.ID) != 0 {
 		t.Fatalf("merge must not transfer the relation to the out-of-subtree group")
 	}
 	if relationCount(tc, winner.ID, inGroup.ID) == 0 {
 		t.Fatalf("merge should transfer the in-subtree relation to the winner")
+	}
+	// group_related_groups (far endpoint is the other group)
+	if joinCount(tc, "group_related_groups", "related_group_id", winner.ID, outside.ID) != 0 {
+		t.Fatalf("merge must not transfer the related-group link to the out-of-subtree group")
+	}
+	if joinCount(tc, "group_related_groups", "related_group_id", winner.ID, inGroup.ID) == 0 {
+		t.Fatalf("merge should transfer the in-subtree related-group link")
+	}
+	// groups_related_notes (far endpoint is a note, scoped by note owner)
+	if joinCount(tc, "groups_related_notes", "note_id", winner.ID, outNote.ID) != 0 {
+		t.Fatalf("merge must not transfer the note link to the out-of-subtree note")
+	}
+	if joinCount(tc, "groups_related_notes", "note_id", winner.ID, inNote.ID) == 0 {
+		t.Fatalf("merge should transfer the in-subtree note link")
+	}
+	// groups_related_resources (far endpoint is a resource, scoped by resource owner)
+	if joinCount(tc, "groups_related_resources", "resource_id", winner.ID, outRes.ID) != 0 {
+		t.Fatalf("merge must not transfer the resource link to the out-of-subtree resource")
+	}
+	if joinCount(tc, "groups_related_resources", "resource_id", winner.ID, inRes.ID) == 0 {
+		t.Fatalf("merge should transfer the in-subtree resource link")
+	}
+}
+
+// Backstop: an admin (unscoped) merge transfers ALL associations, including ones
+// whose far endpoint is an arbitrary external group/note/resource. This guards
+// against the scope filters accidentally applying to unscoped principals.
+func TestAdminMergeTransfersAllAssociations(t *testing.T) {
+	tc := setupAuthEnv(t)
+	winner := &models.Group{Name: "am-winner"}
+	tc.DB.Create(winner)
+	loser := &models.Group{Name: "am-loser"}
+	tc.DB.Create(loser)
+	other := &models.Group{Name: "am-other"}
+	tc.DB.Create(other)
+	note := &models.Note{Name: "am-note"}
+	tc.DB.Create(note)
+	res := &models.Resource{Name: "am-res"}
+	tc.DB.Create(res)
+	tc.DB.Exec("INSERT INTO group_related_groups (group_id, related_group_id) VALUES (?, ?)", loser.ID, other.ID)
+	tc.DB.Exec("INSERT INTO groups_related_notes (group_id, note_id) VALUES (?, ?)", loser.ID, note.ID)
+	tc.DB.Exec("INSERT INTO groups_related_resources (group_id, resource_id) VALUES (?, ?)", loser.ID, res.ID)
+
+	if err := tc.AppCtx.MergeGroups(winner.ID, []uint{loser.ID}); err != nil {
+		t.Fatalf("admin MergeGroups: %v", err)
+	}
+	if joinCount(tc, "group_related_groups", "related_group_id", winner.ID, other.ID) == 0 {
+		t.Fatalf("admin merge should transfer the related-group link")
+	}
+	if joinCount(tc, "groups_related_notes", "note_id", winner.ID, note.ID) == 0 {
+		t.Fatalf("admin merge should transfer the note link")
+	}
+	if joinCount(tc, "groups_related_resources", "resource_id", winner.ID, res.ID) == 0 {
+		t.Fatalf("admin merge should transfer the resource link")
 	}
 }
 
