@@ -27,6 +27,21 @@ import (
 type GroupExporter interface {
 	EstimateExport(req *application_context.ExportRequest) (*application_context.ExportEstimate, error)
 	StreamExport(ctx context.Context, req *application_context.ExportRequest, dst io.Writer, report application_context.ReporterFn) error
+	// GroupVisible reports whether the (request-scoped) caller may see a group.
+	GroupVisible(id uint) bool
+}
+
+// ensureGroupsVisible rejects the request when any requested root group is
+// outside a group-limited principal's subtree, so a scoped user cannot export a
+// subtree they cannot otherwise see.
+func ensureGroupsVisible(ctx GroupExporter, ids []uint, w http.ResponseWriter) bool {
+	for _, id := range ids {
+		if !ctx.GroupVisible(id) {
+			http.Error(w, "group not found or not permitted", http.StatusNotFound)
+			return false
+		}
+	}
+	return true
 }
 
 // GroupExporterWithManager extends GroupExporter with access to the download
@@ -44,6 +59,9 @@ func GetExportEstimateHandler(ctx GroupExporter) func(http.ResponseWriter, *http
 		var req application_context.ExportRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !ensureGroupsVisible(ctx, req.RootGroupIDs, w) {
 			return
 		}
 		est, err := ctx.EstimateExport(&req)
@@ -68,6 +86,9 @@ func GetExportSubmitHandler(ctx GroupExporterWithManager, fs afero.Fs) func(http
 		}
 		if len(req.RootGroupIDs) == 0 {
 			http.Error(w, "rootGroupIds is required", http.StatusBadRequest)
+			return
+		}
+		if !ensureGroupsVisible(ctx, req.RootGroupIDs, w) {
 			return
 		}
 

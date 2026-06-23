@@ -13,6 +13,12 @@ import (
 // RegisterAPIRoutesWithOpenAPI registers all API routes with the OpenAPI registry.
 // This function is called by the openapi-gen CLI tool to generate the spec.
 func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
+	// Authentication
+	registerAuthRoutes(registry)
+
+	// Users & account management
+	registerUserAccountRoutes(registry)
+
 	// Notes
 	registerNoteRoutes(registry)
 
@@ -78,6 +84,113 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 
 	// Timeline
 	registerTimelineRoutes(registry)
+}
+
+// authLoginRequestType documents the JSON body accepted by POST /v1/auth/login.
+var authLoginRequestType = reflect.TypeOf(struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}{})
+
+func registerAuthRoutes(r *openapi.Registry) {
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/auth/login",
+		OperationID:          "login",
+		Summary:              "Authenticate and start a session",
+		Description:          "Exchanges a username/password for a session cookie. Only meaningful when auth is enabled.",
+		Tags:                 []string{"auth"},
+		RequestType:          authLoginRequestType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/auth/logout",
+		OperationID:          "logout",
+		Summary:              "End the current session",
+		Tags:                 []string{"auth"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/auth/me",
+		OperationID:          "currentUser",
+		Summary:              "Return the authenticated principal and its capabilities",
+		Tags:                 []string{"auth"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+}
+
+// userRequestType documents the JSON body for user create/update.
+var userRequestType = reflect.TypeOf(struct {
+	ID           uint   `json:"id"`
+	Username     string `json:"username"`
+	DisplayName  string `json:"displayName"`
+	Password     string `json:"password"`
+	Role         string `json:"role"`
+	ScopeGroupId *uint  `json:"scopeGroupId"`
+	Disabled     bool   `json:"disabled"`
+}{})
+
+func registerUserAccountRoutes(r *openapi.Registry) {
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/users", OperationID: "listUsers",
+		Summary: "List user accounts (admin)", Tags: []string{"users"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodPost, Path: "/v1/users", OperationID: "createUser",
+		Summary: "Create a user account (admin)", Tags: []string{"users"},
+		RequestType:          userRequestType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/user", OperationID: "getUser",
+		Summary: "Get a user account (admin)", Tags: []string{"users"},
+		IDQueryParam: "id", IDRequired: true,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodPost, Path: "/v1/user", OperationID: "updateUser",
+		Summary: "Update a user account (admin)", Tags: []string{"users"},
+		RequestType:          userRequestType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodPost, Path: "/v1/user/delete", OperationID: "deleteUser",
+		Summary: "Delete a user account (admin)", Tags: []string{"users"},
+		IDQueryParam: "id", IDRequired: true,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodPost, Path: "/v1/account/password", OperationID: "changeOwnPassword",
+		Summary: "Change the authenticated user's password", Tags: []string{"account"},
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/account/tokens", OperationID: "listOwnTokens",
+		Summary: "List the authenticated user's API tokens", Tags: []string{"account"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodPost, Path: "/v1/account/tokens", OperationID: "createOwnToken",
+		Summary: "Mint a new API token (returned once)", Tags: []string{"account"},
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodPost, Path: "/v1/account/tokens/delete", OperationID: "revokeOwnToken",
+		Summary: "Revoke one of the authenticated user's API tokens", Tags: []string{"account"},
+		IDQueryParam: "id", IDRequired: true,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
 }
 
 func registerNoteShareRoutes(r *openapi.Registry) {
@@ -1531,8 +1644,8 @@ Request body fields:
 Query parameter:
   - render (0 or 1) — when 1, populates each result row's RenderedHTML using
     the entity's CustomMRQLResult template.`,
-		Tags:                 mrqlTag,
-		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		Tags:                mrqlTag,
+		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ExtraQueryParams: []openapi.QueryParam{
 			{Name: "render", Type: "integer", Description: "Set to 1 to render CustomMRQLResult templates"},
 		},
@@ -1605,26 +1718,26 @@ Request body fields:
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:       http.MethodPut,
-		Path:         "/v1/mrql/saved",
-		OperationID:  "updateSavedMRQLQuery",
-		Summary:      "Update a saved MRQL query",
-		Tags:         mrqlTag,
-		IDQueryParam: "id",
-		IDRequired:   true,
+		Method:               http.MethodPut,
+		Path:                 "/v1/mrql/saved",
+		OperationID:          "updateSavedMRQLQuery",
+		Summary:              "Update a saved MRQL query",
+		Tags:                 mrqlTag,
+		IDQueryParam:         "id",
+		IDRequired:           true,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseType:         savedMRQLType,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:       http.MethodPost,
-		Path:         "/v1/mrql/saved/delete",
-		OperationID:  "deleteSavedMRQLQuery",
-		Summary:      "Delete a saved MRQL query",
-		Tags:         mrqlTag,
-		IDQueryParam: "id",
-		IDRequired:   true,
+		Method:               http.MethodPost,
+		Path:                 "/v1/mrql/saved/delete",
+		OperationID:          "deleteSavedMRQLQuery",
+		Summary:              "Delete a saved MRQL query",
+		Tags:                 mrqlTag,
+		IDQueryParam:         "id",
+		IDRequired:           true,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})

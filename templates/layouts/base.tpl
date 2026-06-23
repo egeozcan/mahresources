@@ -49,6 +49,18 @@
                     {% block settings %}{% endblock %}
                 </div>
             </div>
+            {% if currentUser %}
+            <div x-cloak x-data="{ active: false }" class="account relative">
+                <button class="p-1 text-sm font-mono" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)" title="Account" aria-label="Account menu" :aria-expanded="active.toString()" aria-haspopup="true">{{ currentUser.Username }}</button>
+                <div x-show="active" x-cloak class="absolute right-0 top-full mt-1 w-44 bg-white shadow-lg ring-1 ring-black/5 z-50 p-2 rounded text-sm">
+                    <div class="px-1 py-1 text-stone-500 font-mono">{{ currentUser.Role }}</div>
+                    <a href="/account" class="block px-1 py-1 rounded hover:bg-stone-100">Account</a>
+                    <form method="POST" action="/logout">
+                        <button type="submit" class="w-full text-left px-1 py-1 rounded hover:bg-stone-100">Sign out</button>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
         </div>
         {% block header %}{% endblock %}
     </header>

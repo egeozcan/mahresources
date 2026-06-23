@@ -44,13 +44,19 @@ func BuildPrimaryRouter(appContext *application_context.MahresourcesContext, fs 
 	})
 
 	filePathPrefix := "/files/"
-	router.PathPrefix(filePathPrefix).Handler(http.StripPrefix(filePathPrefix, http.FileServer(afero.NewHttpFs(fs).Dir("/"))))
+	// Guard the raw file server: a group-limited principal may only download files
+	// belonging to resources inside its subtree (no-op when auth is disabled).
+	router.PathPrefix(filePathPrefix).Handler(
+		guardedFileServer(appContext, filePathPrefix,
+			http.StripPrefix(filePathPrefix, http.FileServer(afero.NewHttpFs(fs).Dir("/")))))
 	router.PathPrefix("/public/").Handler(http.StripPrefix("/public/", mimeTypeHandler(http.FileServer(http.Dir("./public")))))
 
 	for key, systemName := range altFs {
 		system := createCachedStorage(systemName)
 		pathKey := fmt.Sprintf("/%v/", key)
-		router.PathPrefix(pathKey).Handler(http.StripPrefix(pathKey, http.FileServer(afero.NewHttpFs(system).Dir("/"))))
+		router.PathPrefix(pathKey).Handler(
+			guardedFileServer(appContext, pathKey,
+				http.StripPrefix(pathKey, http.FileServer(afero.NewHttpFs(system).Dir("/")))))
 	}
 
 	return router
@@ -69,9 +75,13 @@ func CreateServer(appContext *application_context.MahresourcesContext, fs afero.
 	// primary-server CSP is tracked as a separate follow-up so it can be
 	// audited and rolled out on its own cadence, without reverting the
 	// share-server hardening BH-032 shipped.
+	// Wrap order (outermost first): security headers, then authentication. The
+	// auth middleware resolves the request principal (or rejects unauthenticated
+	// access when auth is enabled); when auth is disabled it injects an implicit
+	// administrator so behaviour matches the historical no-auth deployment.
 	return &http.Server{
 		Addr:         appContext.Config.BindAddress,
-		Handler:      withPrimarySecurityHeaders(router),
+		Handler:      withPrimarySecurityHeaders(withAuthentication(appContext, withAuthorization(appContext, router))),
 		WriteTimeout: 45 * time.Minute,
 		ReadTimeout:  45 * time.Minute,
 	}

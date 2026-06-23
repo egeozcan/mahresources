@@ -32,6 +32,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0
 	github.com/yuin/goldmark v1.8.2
 	github.com/yuin/gopher-lua v1.1.2
+	golang.org/x/crypto v0.53.0
 	golang.org/x/image v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/postgres v1.6.0
@@ -107,7 +108,6 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.39.0 // indirect
 	go.opentelemetry.io/otel/trace v1.41.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect

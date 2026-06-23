@@ -20,12 +20,86 @@ type Client struct {
 	httpClient *http.Client
 }
 
-// New creates a new API client for the given base URL.
+// New creates a new API client for the given base URL. If an API token is
+// available (MR_TOKEN env, or the stored credentials file written by
+// `mr auth login`), every request is authenticated with it via a Bearer header.
+// When the server has auth disabled the token is simply ignored.
 func New(baseURL string) *Client {
+	hc := &http.Client{}
+	if token := ResolveToken(); token != "" {
+		hc.Transport = &authTransport{token: token, base: http.DefaultTransport}
+	}
 	return &Client{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
-		httpClient: &http.Client{},
+		httpClient: hc,
 	}
+}
+
+// authTransport injects an Authorization: Bearer header on every request.
+type authTransport struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.token != "" && req.Header.Get("Authorization") == "" {
+		req.Header.Set("Authorization", "Bearer "+t.token)
+	}
+	return t.base.RoundTrip(req)
+}
+
+// ResolveToken returns the API token from MR_TOKEN, or the stored credentials
+// file, or "" if none is configured.
+func ResolveToken() string {
+	if t := strings.TrimSpace(os.Getenv("MR_TOKEN")); t != "" {
+		return t
+	}
+	if path := tokenFilePath(); path != "" {
+		if b, err := os.ReadFile(path); err == nil {
+			return strings.TrimSpace(string(b))
+		}
+	}
+	return ""
+}
+
+// tokenFilePath returns the path to the stored token file. Honors MR_TOKEN_FILE,
+// then XDG_CONFIG_HOME, then ~/.config/mahresources/token.
+func tokenFilePath() string {
+	if p := os.Getenv("MR_TOKEN_FILE"); p != "" {
+		return p
+	}
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
+		return filepath.Join(dir, "mahresources", "token")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".config", "mahresources", "token")
+}
+
+// StoreToken persists the API token to the credentials file (0600).
+func StoreToken(token string) error {
+	path := tokenFilePath()
+	if path == "" {
+		return fmt.Errorf("could not determine token file path")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(strings.TrimSpace(token)+"\n"), 0600)
+}
+
+// ClearToken removes the stored credentials file.
+func ClearToken() error {
+	path := tokenFilePath()
+	if path == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // apiError represents an error response from the API.

@@ -16,6 +16,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/afero"
 	"gorm.io/gorm"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/download_queue"
 	"mahresources/fts"
@@ -112,6 +113,17 @@ type MahresourcesConfig struct {
 	// MRQLQueryTimeoutBoot is the boot-time default for the MRQL query timeout.
 	// Runtime overrides live in RuntimeSettings.
 	MRQLQueryTimeoutBoot time.Duration
+
+	// AuthEnabled turns on user accounts + RBAC. When false (default) the server
+	// behaves exactly as the historical no-auth deployment: every request runs as
+	// an implicit administrator.
+	AuthEnabled bool
+	// SessionTTL is how long a browser login session stays valid.
+	SessionTTL time.Duration
+	// SessionCookieName is the name of the session cookie.
+	SessionCookieName string
+	// SessionCookieSecure marks the session cookie Secure (HTTPS-only).
+	SessionCookieSecure bool
 }
 
 // MahresourcesInputConfig holds all configuration options that can be passed
@@ -192,6 +204,18 @@ type MahresourcesInputConfig struct {
 	// MRQLQueryTimeoutBoot is the boot-time default for the MRQL query timeout.
 	// Runtime overrides live in RuntimeSettings.
 	MRQLQueryTimeoutBoot time.Duration
+
+	// AuthEnabled turns on user accounts + RBAC (env: AUTH_ENABLED=1).
+	AuthEnabled bool
+	// SessionTTL is how long a browser login session stays valid.
+	SessionTTL time.Duration
+	// SessionCookieSecure marks the session cookie Secure (HTTPS-only).
+	SessionCookieSecure bool
+	// CreateAdminUser/CreateAdminPassword bootstrap an admin account at startup
+	// when set. Idempotent: an existing account with that username is reset to an
+	// enabled admin with the given password.
+	CreateAdminUser     string
+	CreateAdminPassword string
 }
 
 type MahresourcesLocks struct {
@@ -222,6 +246,10 @@ type MahresourcesContext struct {
 	// currentRequest holds the current HTTP request for logging purposes.
 	// This is set per-request via WithRequest() to capture request metadata in logs.
 	currentRequest *http.Request
+	// principal is the authenticated identity for this (request-scoped) context.
+	// Set by WithRequest/WithPrincipal. nil on the singleton context, which is
+	// treated as an unrestricted "system" caller (background workers, migrations).
+	principal *auth.Principal
 	// hashQueue is a channel to queue resources for async hash processing
 	hashQueue chan<- uint
 	// thumbnailQueue is a channel to queue video resources for async thumbnail generation
@@ -270,6 +298,10 @@ func (ctx *MahresourcesContext) RunStartupExportSweep() {
 }
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
+	// Install RBAC group-subtree scoping callbacks. They are no-ops unless a
+	// query runs on a db whose context carries a scope filter (see scoping.go).
+	registerScopeCallbacks(db)
+
 	altFileSystems := make(map[string]afero.Fs, len(config.AltFileSystems))
 
 	for key, path := range config.AltFileSystems {
@@ -455,6 +487,12 @@ func (ctx *MahresourcesContext) WithRequest(r *http.Request) any {
 	// Create a shallow copy to avoid modifying the original
 	ctxCopy := *ctx
 	ctxCopy.currentRequest = r
+	// Carry the authenticated principal and apply group-subtree scoping so that
+	// write handlers (which already route through WithRequest) are confined to a
+	// group-limited principal's subtree.
+	p := auth.PrincipalFromContext(r.Context())
+	ctxCopy.principal = p
+	applyPrincipalScope(&ctxCopy, ctx, p)
 	return &ctxCopy
 }
 
@@ -800,6 +838,12 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		videoThumbLockTimeout = 60 * time.Second
 	}
 
+	// Apply default session TTL (30 days) when auth is enabled without one set.
+	sessionTTL := cfg.SessionTTL
+	if sessionTTL == 0 {
+		sessionTTL = 30 * 24 * time.Hour
+	}
+
 	return NewMahresourcesContext(mainFs, db, readOnlyDb, &MahresourcesConfig{
 		DbType:                       dbType,
 		DbDsn:                        dbDsn,
@@ -838,6 +882,10 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		MaxUploadSize:                cfg.MaxUploadSize,
 		MRQLDefaultLimit:             cfg.MRQLDefaultLimit,
 		MRQLQueryTimeoutBoot:         cfg.MRQLQueryTimeoutBoot,
+		AuthEnabled:                  cfg.AuthEnabled,
+		SessionTTL:                   sessionTTL,
+		SessionCookieName:            "mr_session",
+		SessionCookieSecure:          cfg.SessionCookieSecure,
 	}), db, mainFs
 }
 

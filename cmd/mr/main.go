@@ -49,6 +49,8 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&quiet, "quiet", false, "Only output IDs")
 	rootCmd.PersistentFlags().IntVar(&page, "page", 1, "Page number for list commands (default page size: 50)")
 
+	rootCmd.AddCommand(commands.NewAuthCmd(c, opts))
+	rootCmd.AddCommand(commands.NewTokensCmd(c, opts))
 	rootCmd.AddCommand(commands.NewTagCmd(c, opts))
 	rootCmd.AddCommand(commands.NewTagsCmd(c, opts, &page))
 	rootCmd.AddCommand(commands.NewCategoryCmd(c, opts))

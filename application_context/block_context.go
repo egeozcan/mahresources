@@ -122,11 +122,22 @@ func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor
 // GetBlock retrieves a single block by ID
 func (ctx *MahresourcesContext) GetBlock(id uint) (*models.NoteBlock, error) {
 	var block models.NoteBlock
-	return &block, ctx.db.First(&block, id).Error
+	if err := ctx.db.First(&block, id).Error; err != nil {
+		return &block, err
+	}
+	// RBAC: a block is only visible if its owning note is in scope.
+	if !ctx.NoteVisible(block.NoteID) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &block, nil
 }
 
 // GetBlocksForNote retrieves all blocks for a note, ordered by position
 func (ctx *MahresourcesContext) GetBlocksForNote(noteID uint) ([]models.NoteBlock, error) {
+	// RBAC: blocks are confined to notes the principal can see.
+	if !ctx.NoteVisible(noteID) {
+		return []models.NoteBlock{}, nil
+	}
 	var blocks []models.NoteBlock
 	err := ctx.db.Where("note_id = ?", noteID).Order("position ASC").Find(&blocks).Error
 	return blocks, err

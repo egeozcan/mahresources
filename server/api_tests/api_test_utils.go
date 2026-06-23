@@ -33,6 +33,13 @@ type TestContext struct {
 
 // SetupTestEnv creates a fresh in-memory database and application context for each test
 func SetupTestEnv(t *testing.T) *TestContext {
+	return setupTestEnvWithConfig(t, nil)
+}
+
+// setupTestEnvWithConfig is the configurable core of SetupTestEnv. The optional
+// mutate callback adjusts the MahresourcesConfig before the context is built,
+// letting tests enable auth or tweak other settings without duplicating setup.
+func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.MahresourcesConfig)) *TestContext {
 	// Use unique in-memory SQLite database per test to avoid interference
 	// The test name is sanitized to create a unique database name
 	dbName := fmt.Sprintf("file:%s?mode=memory&cache=private", t.Name())
@@ -64,6 +71,9 @@ func SetupTestEnv(t *testing.T) *TestContext {
 		&models.PluginKV{},
 		&models.SavedMRQLQuery{},
 		&models.RuntimeSetting{},
+		&models.User{},
+		&models.Session{},
+		&models.ApiToken{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
@@ -98,6 +108,10 @@ func SetupTestEnv(t *testing.T) *TestContext {
 	// For sqlite in memory, we can just pass the underlying sql.DB if compatible or nil if not strictly used in write ops tested here
 	// context.go NewMahresourcesContext takes *sqlx.DB.
 	// gorm DB.DB() returns *sql.DB.
+	if mutate != nil {
+		mutate(config)
+	}
+
 	sqlDB, _ := db.DB()
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
 
@@ -125,7 +139,7 @@ func SetupTestEnv(t *testing.T) *TestContext {
 
 	return &TestContext{
 		AppCtx: appCtx,
-		Router: serverInstance.Handler, 
+		Router: serverInstance.Handler,
 		DB:     db,
 	}
 }

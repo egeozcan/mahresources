@@ -31,6 +31,8 @@ func (m *mockExporter) StreamExport(_ context.Context, _ *application_context.Ex
 	return nil
 }
 
+func (m *mockExporter) GroupVisible(_ uint) bool { return true }
+
 func (m *mockExporter) DownloadManager() *download_queue.DownloadManager {
 	return nil
 }

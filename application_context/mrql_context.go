@@ -104,6 +104,14 @@ func (ctx *MahresourcesContext) ExecuteMRQL(reqCtx context.Context, queryStr str
 		}
 		opts.ScopeGroupID = scopeID
 	}
+	// RBAC: a group-limited principal's queries are force-scoped to their subtree
+	// regardless of any user-supplied SCOPE, and a principal that must be scoped
+	// but has no subtree is denied (empty result).
+	if scopeID, forced, deny := ctx.principalForcedScope(); deny {
+		return &MRQLResult{EntityType: entityType.String()}, nil
+	} else if forced {
+		opts.ScopeGroupID = scopeID
+	}
 
 	var result *MRQLResult
 	if entityType != mrql.EntityUnspecified {
@@ -218,6 +226,12 @@ func (ctx *MahresourcesContext) ExecuteMRQLGrouped(reqCtx context.Context, parse
 		if err != nil {
 			return nil, err
 		}
+		opts.ScopeGroupID = scopeID
+	}
+	// RBAC force-scope (see ExecuteMRQL). A denied principal gets an empty result.
+	if scopeID, forced, deny := ctx.principalForcedScope(); deny {
+		return &MRQLGroupedResult{}, nil
+	} else if forced {
 		opts.ScopeGroupID = scopeID
 	}
 

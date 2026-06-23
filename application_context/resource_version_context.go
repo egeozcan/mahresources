@@ -44,6 +44,10 @@ func (ctx *MahresourcesContext) CountHashReferences(hash string) (int64, error) 
 // GetVersions returns all versions for a resource, ordered by version number descending
 // If no versions exist (resource not yet migrated), returns a virtual v1 based on current resource state
 func (ctx *MahresourcesContext) GetVersions(resourceID uint) ([]models.ResourceVersion, error) {
+	// RBAC: versions are confined to resources the principal can see.
+	if !ctx.ResourceVisible(resourceID) {
+		return []models.ResourceVersion{}, nil
+	}
 	var versions []models.ResourceVersion
 	err := ctx.db.Where("resource_id = ?", resourceID).Order("version_number DESC").Find(&versions).Error
 	if err != nil {
@@ -84,11 +88,18 @@ func (ctx *MahresourcesContext) GetVersion(versionID uint) (*models.ResourceVers
 	if err != nil {
 		return nil, err
 	}
+	// RBAC: a version is only visible if its resource is in scope.
+	if !ctx.ResourceVisible(version.ResourceID) {
+		return nil, gorm.ErrRecordNotFound
+	}
 	return &version, nil
 }
 
 // GetVersionByNumber returns a specific version by resource ID and version number
 func (ctx *MahresourcesContext) GetVersionByNumber(resourceID uint, versionNumber int) (*models.ResourceVersion, error) {
+	if !ctx.ResourceVisible(resourceID) {
+		return nil, gorm.ErrRecordNotFound
+	}
 	var version models.ResourceVersion
 	err := ctx.db.Where("resource_id = ? AND version_number = ?", resourceID, versionNumber).First(&version).Error
 	if err != nil {

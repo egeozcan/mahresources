@@ -19,7 +19,8 @@
         </a>
         {% endfor %}
 
-        <!-- Admin dropdown -->
+        <!-- Admin dropdown (editor and above; the server enforces per-item access) -->
+        {% if not authEnabled or currentUser.CanEditorWrite %}
         <div class="navbar-dropdown" @click.outside="adminOpen = false" @keydown.escape="if (adminOpen) { adminOpen = false; $el.querySelector('button').focus(); }">
             <button @click="adminOpen = !adminOpen"
                     class="navbar-link navbar-link--dropdown"
@@ -49,8 +50,17 @@
                     {{ adminEntry.Name }}
                 </a>
                 {% endfor %}
+                {% if not authEnabled or currentUser.IsAdmin %}
+                <a href="/admin/users"
+                   class="navbar-dropdown-item {% if '/admin/users' == path %}navbar-dropdown-item--active{% endif %}"
+                   @click="adminOpen = false"
+                   role="menuitem">
+                    Users
+                </a>
+                {% endif %}
             </div>
         </div>
+        {% endif %}
 
         {% if hasPluginManager %}
         <div class="navbar-dropdown" @click.outside="pluginsOpen = false" @keydown.escape="if (pluginsOpen) { pluginsOpen = false; $el.querySelector('button').focus(); }">
@@ -118,6 +128,7 @@
             {% endfor %}
         </div>
 
+        {% if not authEnabled or currentUser.CanEditorWrite %}
         <div class="navbar-mobile-divider"></div>
 
         <div class="navbar-mobile-section">
@@ -129,7 +140,15 @@
                 {{ adminEntry.Name }}
             </a>
             {% endfor %}
+            {% if not authEnabled or currentUser.IsAdmin %}
+            <a href="/admin/users"
+               class="navbar-mobile-link {% if '/admin/users' == path %}navbar-mobile-link--active{% endif %}"
+               @click="mobileOpen = false">
+                Users
+            </a>
+            {% endif %}
         </div>
+        {% endif %}
 
         {% if hasPluginManager %}
         <div class="navbar-mobile-divider"></div>

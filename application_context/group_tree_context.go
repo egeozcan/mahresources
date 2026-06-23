@@ -15,6 +15,21 @@ func (ctx *MahresourcesContext) GetGroupTreeRoots(limit int) ([]query_models.Gro
 
 	results := make([]query_models.GroupTreeNode, 0)
 
+	// RBAC: a group-limited principal's tree is rooted at its scope group, not at
+	// the global roots (owner_id IS NULL). A denied principal gets an empty tree.
+	if scopeID, forced, deny := ctx.principalForcedScope(); deny {
+		return results, nil
+	} else if forced {
+		err := ctx.db.Raw(`
+			SELECT g.id, g.name, g.owner_id, COALESCE(c.name, '') AS category_name,
+			       (SELECT COUNT(*) FROM groups ch WHERE ch.owner_id = g.id) AS child_count
+			FROM groups g
+			LEFT JOIN categories c ON c.id = g.category_id
+			WHERE g.id = ?
+		`, scopeID).Scan(&results).Error
+		return results, err
+	}
+
 	err := ctx.db.Raw(`
 		SELECT g.id, g.name, g.owner_id, COALESCE(c.name, '') AS category_name,
 		       (SELECT COUNT(*) FROM groups ch WHERE ch.owner_id = g.id) AS child_count
@@ -40,6 +55,13 @@ func (ctx *MahresourcesContext) GetGroupTreeChildren(parentID uint, limit int) (
 	}
 
 	results := make([]query_models.GroupTreeNode, 0)
+
+	// RBAC: a scoped principal may only expand groups inside its subtree. The
+	// children of an in-subtree group are themselves in-subtree, so a single
+	// visibility check on the parent suffices.
+	if !ctx.GroupVisible(parentID) {
+		return results, nil
+	}
 
 	err := ctx.db.Raw(`
 		SELECT g.id, g.name, g.owner_id, COALESCE(c.name, '') AS category_name,
@@ -87,6 +109,11 @@ func (ctx *MahresourcesContext) GetGroupTreeDown(rootID uint, maxLevels int, chi
 	}
 	if childLimit <= 0 || childLimit > 100 {
 		childLimit = 50
+	}
+
+	// RBAC: a scoped principal may only walk down from a group inside its subtree.
+	if !ctx.GroupVisible(rootID) {
+		return []query_models.GroupTreeRow{}, nil
 	}
 
 	var results []query_models.GroupTreeRow
