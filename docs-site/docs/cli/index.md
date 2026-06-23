@@ -15,6 +15,10 @@ sidebar_label: CLI
 | `mr admin settings reset` | Remove a runtime override and revert to boot default | [Details](./admin/settings/reset.md) |
 | `mr admin settings set` | Override a runtime setting | [Details](./admin/settings/set.md) |
 | `mr admin stats` | Show server and data statistics | [Details](./admin/stats.md) |
+| `mr auth` | Log in, log out, and inspect the current identity | [Details](./auth/index.md) |
+| `mr auth login` | Authenticate and store an API token | [Details](./auth/login.md) |
+| `mr auth logout` | Remove the stored API token | [Details](./auth/logout.md) |
+| `mr auth whoami` | Show the authenticated principal | [Details](./auth/whoami.md) |
 | `mr categories` | List group categories | [Details](./categories/index.md) |
 | `mr categories list` | List categories | [Details](./categories/list.md) |
 | `mr categories timeline` | Display a timeline of category activity | [Details](./categories/timeline.md) |
@@ -200,3 +204,7 @@ sidebar_label: CLI
 | `mr tags list` | List tags | [Details](./tags/list.md) |
 | `mr tags merge` | Merge tags into a winner | [Details](./tags/merge.md) |
 | `mr tags timeline` | Display a timeline of tag activity | [Details](./tags/timeline.md) |
+| `mr token` | Manage your API tokens | [Details](./token/index.md) |
+| `mr token create` | Mint a new API token | [Details](./token/create.md) |
+| `mr token list` | List your API tokens | [Details](./token/list.md) |
+| `mr token revoke` | Revoke one of your API tokens | [Details](./token/revoke.md) |
