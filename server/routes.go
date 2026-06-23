@@ -660,10 +660,12 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/plugin/settings").HandlerFunc(api_handlers.GetPluginSettingsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/plugin/purge-data").HandlerFunc(api_handlers.GetPluginPurgeDataHandler(appContext))
 
-	// Plugin block render endpoint (must be before the catch-all)
-	router.Methods(http.MethodGet).Path("/v1/plugins/{pluginName}/block/render").HandlerFunc(
-		api_handlers.GetPluginBlockRenderHandler(appContext),
-	)
+	// Plugin block render endpoint (must be before the catch-all). Request-scoped
+	// so a group-limited principal can only render blocks whose owning note is in
+	// its subtree (GetBlock/GetNote enforce visibility on the scoped context).
+	router.Methods(http.MethodGet).Path("/v1/plugins/{pluginName}/block/render").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api_handlers.GetPluginBlockRenderHandler(scopedCtx(appContext, r))(w, r)
+	})
 
 	// Plugin display render endpoint (must be before the catch-all)
 	router.Methods(http.MethodPost).Path("/v1/plugins/{pluginName}/display/render").HandlerFunc(
