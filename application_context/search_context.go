@@ -81,8 +81,15 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 		}, nil
 	}
 
+	// RBAC: the result cache is keyed on the term alone and shared process-wide,
+	// so it must be bypassed for group-limited principals to avoid leaking
+	// (or being poisoned by) results from another scope. Their per-type queries
+	// are still scoped by the GORM callbacks (search uses ctx.db).
+	_, scopeForced, scopeDeny := ctx.principalForcedScope()
+	cacheable := !scopeForced && !scopeDeny
+
 	// Check server-side cache first (only for default type searches to keep cache key simple)
-	if ctx.searchCache != nil && len(query.Types) == 0 {
+	if cacheable && ctx.searchCache != nil && len(query.Types) == 0 {
 		cacheKey := strings.ToLower(searchTerm)
 		if cached, ok := ctx.searchCache.Get(cacheKey); ok {
 			// Total reflects all cached results; apply limit only for the returned slice
@@ -102,7 +109,7 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 	// Use a higher limit for caching to support subsequent queries with different limits
 	// Only use cacheLimit when we're going to cache (default type searches)
 	searchLimit := query.Limit
-	shouldCache := ctx.searchCache != nil && len(query.Types) == 0
+	shouldCache := cacheable && ctx.searchCache != nil && len(query.Types) == 0
 	if shouldCache {
 		searchLimit = 50 // Cache up to 50 results
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
@@ -437,12 +438,13 @@ func PluginAPIHandler(ctx *application_context.MahresourcesContext) func(http.Re
 		}
 
 		pageCtx := plugin_system.PageContext{
-			Path:    r.URL.String(),
-			Method:  r.Method,
-			Query:   queryMap,
-			Params:  make(map[string]any),
-			Headers: headerMap,
-			Body:    body,
+			Path:      r.URL.String(),
+			Method:    r.Method,
+			Query:     queryMap,
+			Params:    make(map[string]any),
+			Headers:   headerMap,
+			Body:      body,
+			Principal: auth.DescribeContext(r.Context()),
 		}
 
 		resp := pm.HandleAPI(pluginName, r.Method, apiPath, pageCtx)

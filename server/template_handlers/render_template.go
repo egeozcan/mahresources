@@ -118,3 +118,26 @@ func RenderNotFound(writer http.ResponseWriter, request *http.Request, contextEn
 		http.Error(writer, "404 page not found", http.StatusNotFound)
 	}
 }
+
+// RenderForbidden renders a styled 403 page using the error template, so an
+// authorization or CSRF rejection shows the app chrome instead of a bare
+// http.Error string. The optional contextEnricher adds plugin context (menu
+// items, etc.); pass nil when unavailable. message is the human-readable reason.
+func RenderForbidden(writer http.ResponseWriter, request *http.Request, message string, contextEnricher func(ctx pongo2.Context) pongo2.Context) {
+	renderer := pongo2.NewSet("", loaders.MustNewLocalFileSystemLoader("./templates", make(map[string]string)))
+	errorTpl := pongo2.Must(renderer.FromFile("error.tpl"))
+	context := template_context_providers.StaticTemplateCtx(request)
+	if message == "" {
+		message = "You do not have permission to access this page."
+	}
+	context["errorMessage"] = message
+	context["pageTitle"] = "403 Forbidden"
+	if contextEnricher != nil {
+		context = contextEnricher(context)
+	}
+	writer.Header().Set("Content-Type", constants.HTML)
+	writer.WriteHeader(http.StatusForbidden)
+	if err := errorTpl.ExecuteWriter(context, writer); err != nil {
+		http.Error(writer, "403 forbidden", http.StatusForbidden)
+	}
+}

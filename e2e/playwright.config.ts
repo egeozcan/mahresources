@@ -28,9 +28,20 @@ export default defineConfig({
     {
       // All browser tests — no project dependencies needed because each worker
       // gets its own ephemeral server (zero cross-worker DB contention).
+      // Auth specs are excluded here; they need an auth-enabled server and run
+      // under the dedicated `auth` project below.
       name: 'default',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: ['**/cli/**'],
+      testIgnore: ['**/cli/**', '**/auth/**'],
+    },
+    {
+      // Per-role RBAC browser specs. Each worker starts its own auth-enabled
+      // ephemeral server (see auth.fixture.ts) with a bootstrapped admin.
+      name: 'auth',
+      testDir: './tests/auth',
+      fullyParallel: false,
+      use: { ...devices['Desktop Chrome'] },
+      workers: process.env.CI ? 1 : 2,
     },
     {
       name: 'cli',

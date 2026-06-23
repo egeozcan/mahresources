@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -255,6 +256,24 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 		if resourceQuery.Height != 0 {
 			resource.Height = resourceQuery.Height
 		}
+		// Validate the (possibly changed) owner against the caller's scope. The
+		// scope UPDATE callback only matches the row by its *current* owner, so
+		// without this a group-limited principal could relocate a resource it owns
+		// into another subtree (or orphan it). Mirror CreateOrUpdateNote: the new
+		// owner must resolve through the (scoped) transaction db, and a scoped
+		// principal may not clear the owner. No-op for admins / unscoped users /
+		// the auth-off system. Use the transaction's db (tx), never the outer
+		// ctx.db — a non-transaction query here would need a second connection and
+		// deadlock under a single-connection pool.
+		if resourceQuery.OwnerId != 0 {
+			var ownerCheck models.Group
+			if err := tx.Select("id").First(&ownerCheck, resourceQuery.OwnerId).Error; err != nil {
+				return errors.New("owner group not found")
+			}
+		} else if altCtx.isScopedPrincipal() {
+			return errors.New("owner group not found")
+		}
+
 		resource.OwnerId = uintPtrOrNil(resourceQuery.OwnerId)
 		if resourceQuery.OwnerId != 0 {
 			resource.Owner = &models.Group{ID: resourceQuery.OwnerId}
@@ -326,7 +345,12 @@ func (ctx *MahresourcesContext) EditResource(resourceQuery *query_models.Resourc
 			resource.Series = nil
 		}
 
-		if err := tx.Save(&resource).Error; err != nil {
+		// Omit the Owner belongs-to so Save does not upsert the owner group: the
+		// owner_id FK column is written regardless, and upserting the stub group
+		// {ID} would fire the scope create-callback (the stub has a nil owner),
+		// which rejects the edit for a group-limited principal even when the new
+		// owner is inside its subtree.
+		if err := tx.Omit("Owner").Save(&resource).Error; err != nil {
 			return err
 		}
 

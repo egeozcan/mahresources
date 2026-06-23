@@ -58,6 +58,15 @@ func (ctx *MahresourcesContext) SetCustomThumbnail(
 		return errors.New("resource id is required")
 	}
 
+	// RBAC: a group-limited principal may only mutate previews for resources in
+	// its subtree. The mutations below re-bind the DB to the bare HTTP request
+	// context (for cancellation), which drops the GORM scope filter, and the
+	// previews table is not itself owner-scoped — so visibility must be asserted
+	// explicitly here. Unscoped/admin principals always pass.
+	if !ctx.ResourceVisible(resourceID) {
+		return gorm.ErrRecordNotFound
+	}
+
 	// Confirm the resource exists so we surface a clean error rather than
 	// orphaning a Preview row referencing a missing ID.
 	var resource models.Resource
@@ -128,6 +137,12 @@ func (ctx *MahresourcesContext) ClearThumbnails(
 ) error {
 	if resourceID == 0 {
 		return errors.New("resource id is required")
+	}
+	// RBAC: confine a group-limited principal to its subtree. The delete targets
+	// the (un-scoped) previews table via the bare request context, so visibility
+	// must be asserted explicitly. Unscoped/admin principals always pass.
+	if !ctx.ResourceVisible(resourceID) {
+		return gorm.ErrRecordNotFound
 	}
 	if err := ctx.db.WithContext(httpContext).
 		Where("resource_id = ?", resourceID).

@@ -90,12 +90,27 @@ function createWorkerDatabase(adminDsn: string): string {
   }
 }
 
+/** Bootstrap admin credentials for auth-enabled test servers. */
+export const AUTH_ADMIN_USERNAME = 'admin';
+export const AUTH_ADMIN_PASSWORD = 'adminpw';
+
+export interface StartServerOptions {
+  /** Enable user accounts + RBAC and bootstrap an admin (admin/adminpw). */
+  auth?: boolean;
+}
+
 /**
  * Spawn a mahresources server on the given ports.
  * Uses Postgres if PG_DSN env var is set, otherwise ephemeral SQLite.
  */
-export function startServerProcess(port: number, sharePort: number): ChildProcess {
+export function startServerProcess(port: number, sharePort: number, opts: StartServerOptions = {}): ChildProcess {
   const pgDsn = process.env.PG_DSN;
+
+  // Auth-enabled servers bootstrap an admin so the per-role specs can log in and
+  // create the other roles. A no-op for the default (auth-off) suites.
+  const authArgs = opts.auth
+    ? ['-auth', `-create-admin-user=${AUTH_ADMIN_USERNAME}`, `-create-admin-password=${AUTH_ADMIN_PASSWORD}`]
+    : [];
 
   let args: string[];
   // BH-033: ephemeral test servers set SHARE_PUBLIC_URL to the actual
@@ -121,6 +136,7 @@ export function startServerProcess(port: number, sharePort: number): ChildProces
       '-thumb-worker-disabled',
       '-skip-version-migration',
       '-plugin-path=./e2e/test-plugins',
+      ...authArgs,
     ];
   } else {
     // SQLite ephemeral mode (default)
@@ -135,6 +151,7 @@ export function startServerProcess(port: number, sharePort: number): ChildProces
       '-skip-version-migration',
       '-max-db-connections=1',
       '-plugin-path=./e2e/test-plugins',
+      ...authArgs,
     ];
   }
 
@@ -185,11 +202,11 @@ export function startServerProcess(port: number, sharePort: number): ChildProces
  * Start an ephemeral server with retry on port conflicts.
  * Returns the running server info.
  */
-export async function startServer(maxAttempts = 3): Promise<ServerInfo> {
+export async function startServer(maxAttempts = 3, opts: StartServerOptions = {}): Promise<ServerInfo> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const port = await findAvailablePort();
     const sharePort = await findAvailablePort();
-    const proc = startServerProcess(port, sharePort);
+    const proc = startServerProcess(port, sharePort, opts);
 
     try {
       // Postgres migration takes longer on first boot

@@ -1,0 +1,48 @@
+package models
+
+import (
+	"time"
+
+	"mahresources/models/types"
+
+	"gorm.io/gorm"
+)
+
+// User is a login account. Authentication is opt-in: when it is disabled the
+// server runs every request as an implicit administrator and no User rows are
+// consulted. See the auth package for the request-time Principal derived from a User.
+type User struct {
+	ID        uint      `gorm:"primarykey"`
+	CreatedAt time.Time `gorm:"index"`
+	UpdatedAt time.Time `gorm:"index"`
+	GUID      *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
+
+	Username    string `gorm:"uniqueIndex;size:128" json:"username"`
+	DisplayName string `json:"displayName"`
+	// PasswordHash is a bcrypt hash. Never serialized.
+	PasswordHash string `json:"-"`
+	Role         Role   `gorm:"index;size:16" json:"role"`
+
+	// ScopeGroupId confines a user/guest to a Group and its subtree. Required for
+	// guests, optional for users, and forced nil for admins/editors.
+	ScopeGroupId *uint  `gorm:"index" json:"scopeGroupId,omitempty"`
+	ScopeGroup   *Group `gorm:"foreignKey:ScopeGroupId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"-"`
+
+	// Disabled blocks login and invalidates active sessions/tokens without
+	// deleting the account.
+	Disabled bool `gorm:"index" json:"disabled"`
+
+	LastLoginAt *time.Time `json:"lastLoginAt,omitempty"`
+}
+
+func (u *User) BeforeCreate(tx *gorm.DB) error {
+	if u.GUID == nil {
+		guid := types.NewUUIDv7()
+		u.GUID = &guid
+	}
+	return nil
+}
+
+func (u User) GetId() uint            { return u.ID }
+func (u User) GetName() string        { return limit(u.Username, 200) }
+func (u User) GetDescription() string { return u.DisplayName }

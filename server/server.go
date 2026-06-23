@@ -28,29 +28,27 @@ func BuildPrimaryRouter(appContext *application_context.MahresourcesContext, fs 
 
 	registerRoutes(router, appContext)
 
-	// Build a context enricher that adds plugin info to the 404 page,
+	// Build a context enricher that adds plugin info to error pages (404/403),
 	// mirroring what wrapContextWithPlugins does for normal routes.
-	var notFoundEnricher func(ctx pongo2.Context) pongo2.Context
-	if pm := appContext.PluginManager(); pm != nil {
-		notFoundEnricher = func(ctx pongo2.Context) pongo2.Context {
-			ctx["_pluginManager"] = pm
-			ctx["pluginMenuItems"] = pm.GetMenuItems()
-			ctx["hasPluginManager"] = true
-			return ctx
-		}
-	}
+	notFoundEnricher := pluginMenuEnricher(appContext)
 	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		template_handlers.RenderNotFound(w, r, notFoundEnricher)
 	})
 
 	filePathPrefix := "/files/"
-	router.PathPrefix(filePathPrefix).Handler(http.StripPrefix(filePathPrefix, http.FileServer(afero.NewHttpFs(fs).Dir("/"))))
+	// Guard the raw file server: a group-limited principal may only download files
+	// belonging to resources inside its subtree (no-op when auth is disabled).
+	router.PathPrefix(filePathPrefix).Handler(
+		guardedFileServer(appContext, filePathPrefix,
+			http.StripPrefix(filePathPrefix, http.FileServer(afero.NewHttpFs(fs).Dir("/")))))
 	router.PathPrefix("/public/").Handler(http.StripPrefix("/public/", mimeTypeHandler(http.FileServer(http.Dir("./public")))))
 
 	for key, systemName := range altFs {
 		system := createCachedStorage(systemName)
 		pathKey := fmt.Sprintf("/%v/", key)
-		router.PathPrefix(pathKey).Handler(http.StripPrefix(pathKey, http.FileServer(afero.NewHttpFs(system).Dir("/"))))
+		router.PathPrefix(pathKey).Handler(
+			guardedFileServer(appContext, pathKey,
+				http.StripPrefix(pathKey, http.FileServer(afero.NewHttpFs(system).Dir("/")))))
 	}
 
 	return router
@@ -69,12 +67,41 @@ func CreateServer(appContext *application_context.MahresourcesContext, fs afero.
 	// primary-server CSP is tracked as a separate follow-up so it can be
 	// audited and rolled out on its own cadence, without reverting the
 	// share-server hardening BH-032 shipped.
+	// Wrap order (outermost first): security headers, then authentication, then
+	// CSRF, then authorization. The auth middleware resolves the request
+	// principal (or rejects unauthenticated access when auth is enabled); when
+	// auth is disabled it injects an implicit administrator so behaviour matches
+	// the historical no-auth deployment. CSRF runs after auth (so the session
+	// token is on the context) and before authz; it is a no-op when auth is off.
 	return &http.Server{
 		Addr:         appContext.Config.BindAddress,
-		Handler:      withPrimarySecurityHeaders(router),
+		Handler:      withPrimarySecurityHeaders(withAuthentication(appContext, withCSRFProtection(appContext, withAuthorization(appContext, router)))),
 		WriteTimeout: 45 * time.Minute,
 		ReadTimeout:  45 * time.Minute,
 	}
+}
+
+// pluginMenuEnricher returns a context enricher that injects plugin nav info
+// (menu items, manager handle) into a template context, or nil when no plugin
+// manager is configured. Shared by the 404 and 403 error pages so they render
+// with the same chrome as normal routes.
+func pluginMenuEnricher(appContext *application_context.MahresourcesContext) func(ctx pongo2.Context) pongo2.Context {
+	pm := appContext.PluginManager()
+	if pm == nil {
+		return nil
+	}
+	return func(ctx pongo2.Context) pongo2.Context {
+		ctx["_pluginManager"] = pm
+		ctx["pluginMenuItems"] = pm.GetMenuItems()
+		ctx["hasPluginManager"] = true
+		return ctx
+	}
+}
+
+// renderForbiddenPage renders the styled 403 page for browser navigations,
+// enriched with plugin nav so it matches the rest of the app.
+func renderForbiddenPage(appContext *application_context.MahresourcesContext, w http.ResponseWriter, r *http.Request, message string) {
+	template_handlers.RenderForbidden(w, r, message, pluginMenuEnricher(appContext))
 }
 
 func createCachedStorage(path string) afero.Fs {

@@ -177,6 +177,17 @@ func main() {
 	pluginPath := flag.String("plugin-path", getEnvOrDefault("PLUGIN_PATH", "./plugins"), "Path to plugin directory (env: PLUGIN_PATH)")
 	pluginsDisabled := flag.Bool("plugins-disabled", os.Getenv("PLUGINS_DISABLED") == "1", "Disable all plugins (env: PLUGINS_DISABLED=1)")
 
+	// Authentication options (opt-in). When disabled (default) every request runs
+	// as an implicit administrator, matching the historical no-auth deployment.
+	authEnabled := flag.Bool("auth", os.Getenv("AUTH_ENABLED") == "1", "Enable user accounts + RBAC (env: AUTH_ENABLED=1)")
+	sessionTTL := flag.Duration("session-ttl", parseDurationEnv("SESSION_TTL", 30*24*time.Hour), "How long a browser login session stays valid (env: SESSION_TTL)")
+	sessionCookieSecure := flag.Bool("session-cookie-secure", os.Getenv("SESSION_COOKIE_SECURE") == "1", "Mark the session cookie Secure (HTTPS-only) (env: SESSION_COOKIE_SECURE=1)")
+	createAdminUser := flag.String("create-admin-user", os.Getenv("CREATE_ADMIN_USER"), "Bootstrap: create or reset this admin username at startup (env: CREATE_ADMIN_USER)")
+	createAdminPassword := flag.String("create-admin-password", os.Getenv("CREATE_ADMIN_PASSWORD"), "Bootstrap: password for -create-admin-user (env: CREATE_ADMIN_PASSWORD)")
+	loginMaxAttempts := flag.Int("login-max-attempts", parseIntEnv("LOGIN_MAX_ATTEMPTS", 0), "Max failed login attempts per client IP within -login-attempt-window before throttling with HTTP 429; 0 disables (env: LOGIN_MAX_ATTEMPTS)")
+	loginAttemptWindow := flag.Duration("login-attempt-window", parseDurationEnv("LOGIN_ATTEMPT_WINDOW", 15*time.Minute), "Sliding window for -login-max-attempts and the lockout duration once it is hit (env: LOGIN_ATTEMPT_WINDOW)")
+	trustProxyHeaders := flag.Bool("trust-proxy-headers", os.Getenv("TRUST_PROXY_HEADERS") == "1", "Trust X-Forwarded-For for the client IP in login rate-limiting; enable only behind a trusted reverse proxy (env: TRUST_PROXY_HEADERS=1)")
+
 	flag.Parse()
 
 	// Build alt file systems map from flags or fall back to env vars
@@ -254,6 +265,14 @@ func main() {
 		MaxUploadSize:                *maxUploadSize,
 		MRQLDefaultLimit:             *mrqlDefaultLimit,
 		MRQLQueryTimeoutBoot:         *mrqlTimeout,
+		AuthEnabled:                  *authEnabled,
+		SessionTTL:                   *sessionTTL,
+		SessionCookieSecure:          *sessionCookieSecure,
+		LoginRateLimit:               *loginMaxAttempts,
+		LoginRateWindow:              *loginAttemptWindow,
+		TrustProxyHeaders:            *trustProxyHeaders,
+		CreateAdminUser:              *createAdminUser,
+		CreateAdminPassword:          *createAdminPassword,
 	}
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)
@@ -323,6 +342,7 @@ func main() {
 		&models.Group{},             // FK to Category (self-referencing Owner is handled by GORM)
 		&models.GroupRelationType{}, // FK to Category
 		&models.Resource{},          // FK to ResourceCategory, Series, Group
+		&models.User{},              // FK to Group (ScopeGroupId)
 		// Tables with FK to Resource/Group/Note
 		&models.Note{},               // FK to Group, NoteType; many2many with Resource
 		&models.ResourceVersion{},    // FK to Resource
@@ -331,6 +351,8 @@ func main() {
 		&models.GroupRelation{},      // FK to Group, GroupRelationType
 		&models.ImageHash{},          // FK to Resource
 		&models.ResourceSimilarity{}, // FK to Resource
+		&models.Session{},            // FK to User
+		&models.ApiToken{},           // FK to User
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
 	}
@@ -374,6 +396,26 @@ func main() {
 	context.RunStartupExportSweep()
 
 	util.AddInitialData(db)
+
+	// Bootstrap an admin account from flags/env when requested. Idempotent and
+	// independent of whether auth is currently enabled, so an operator can seed
+	// credentials before flipping -auth on.
+	if cfg.CreateAdminUser != "" {
+		if cfg.CreateAdminPassword == "" {
+			log.Fatal("-create-admin-user requires -create-admin-password")
+		}
+		if u, err := context.EnsureAdminUser(cfg.CreateAdminUser, cfg.CreateAdminPassword); err != nil {
+			log.Fatalf("failed to bootstrap admin user: %v", err)
+		} else {
+			log.Printf("bootstrapped admin user %q (id=%d)", u.Username, u.ID)
+		}
+	}
+	if context.Config.AuthEnabled {
+		if n, err := context.CountUsers(); err == nil && n == 0 {
+			log.Println("WARNING: -auth is enabled but no user accounts exist; " +
+				"use -create-admin-user/-create-admin-password to bootstrap an administrator")
+		}
+	}
 
 	// Initialize plugin states in DB and activate enabled plugins
 	if context.PluginManager() != nil {

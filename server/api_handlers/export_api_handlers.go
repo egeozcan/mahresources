@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/afero"
 
 	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/download_queue"
 )
@@ -27,6 +28,23 @@ import (
 type GroupExporter interface {
 	EstimateExport(req *application_context.ExportRequest) (*application_context.ExportEstimate, error)
 	StreamExport(ctx context.Context, req *application_context.ExportRequest, dst io.Writer, report application_context.ReporterFn) error
+	// GroupVisible reports whether the (request-scoped) caller may see a group.
+	GroupVisible(id uint) bool
+	// Principal returns the request principal (for export-download ownership).
+	Principal() *auth.Principal
+}
+
+// ensureGroupsVisible rejects the request when any requested root group is
+// outside a group-limited principal's subtree, so a scoped user cannot export a
+// subtree they cannot otherwise see.
+func ensureGroupsVisible(ctx GroupExporter, ids []uint, w http.ResponseWriter) bool {
+	for _, id := range ids {
+		if !ctx.GroupVisible(id) {
+			http.Error(w, "group not found or not permitted", http.StatusNotFound)
+			return false
+		}
+	}
+	return true
 }
 
 // GroupExporterWithManager extends GroupExporter with access to the download
@@ -44,6 +62,9 @@ func GetExportEstimateHandler(ctx GroupExporter) func(http.ResponseWriter, *http
 		var req application_context.ExportRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !ensureGroupsVisible(ctx, req.RootGroupIDs, w) {
 			return
 		}
 		est, err := ctx.EstimateExport(&req)
@@ -70,12 +91,19 @@ func GetExportSubmitHandler(ctx GroupExporterWithManager, fs afero.Fs) func(http
 			http.Error(w, "rootGroupIds is required", http.StatusBadRequest)
 			return
 		}
+		if !ensureGroupsVisible(ctx, req.RootGroupIDs, w) {
+			return
+		}
 
 		runFn := buildExportRunFn(ctx, fs, &req)
 		job, err := ctx.DownloadManager().SubmitJob(download_queue.JobSourceGroupExport, "queued", runFn)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
+		}
+		// Record the owner so only they (or an admin) can download the archive.
+		if p := ctx.Principal(); p != nil && !p.SuperUser && p.UserID != 0 {
+			job.SetOwnerUserID(p.UserID)
 		}
 
 		w.Header().Set("Content-Type", constants.JSON)
@@ -176,6 +204,15 @@ func GetExportDownloadHandler(ctx GroupExporterWithManager, fs afero.Fs) func(ht
 		if !ok {
 			http.Error(w, "job not found", http.StatusNotFound)
 			return
+		}
+		// RBAC: only the job's owner (or an admin / the implicit super-user) may
+		// download the archive. 404 (not 403) to avoid confirming the job exists.
+		if p := ctx.Principal(); p != nil && !p.IsAdmin() {
+			owner := job.GetOwnerUserID()
+			if owner == nil || *owner != p.UserID {
+				http.Error(w, "job not found", http.StatusNotFound)
+				return
+			}
 		}
 		if job.GetStatus() != download_queue.JobStatusCompleted {
 			http.Error(w, "job not completed (status: "+string(job.GetStatus())+")", http.StatusConflict)

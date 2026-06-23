@@ -13,6 +13,7 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/archive"
+	"mahresources/auth"
 	"mahresources/download_queue"
 	"mahresources/server/api_handlers"
 )
@@ -30,6 +31,10 @@ func (m *mockExporter) EstimateExport(req *application_context.ExportRequest) (*
 func (m *mockExporter) StreamExport(_ context.Context, _ *application_context.ExportRequest, _ io.Writer, _ application_context.ReporterFn) error {
 	return nil
 }
+
+func (m *mockExporter) GroupVisible(_ uint) bool { return true }
+
+func (m *mockExporter) Principal() *auth.Principal { return auth.SystemPrincipal() }
 
 func (m *mockExporter) DownloadManager() *download_queue.DownloadManager {
 	return nil

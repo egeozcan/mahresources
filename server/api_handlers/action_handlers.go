@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
@@ -11,10 +12,38 @@ import (
 	"strconv"
 )
 
-// PluginActionRunner provides access to plugin-action infrastructure.
+// PluginActionRunner provides access to plugin-action infrastructure. The
+// *Visible methods are consulted when the request runs as a group-limited
+// principal so an action can only target entities inside that principal's
+// subtree (they return true for unrestricted principals).
 type PluginActionRunner interface {
 	PluginManager() *plugin_system.PluginManager
 	ActionEntityRefReader() plugin_system.EntityRefReader
+	ResourceVisible(id uint) bool
+	NoteVisible(id uint) bool
+	GroupVisible(id uint) bool
+}
+
+// actionScopeRestricted reports whether the request principal is group-limited,
+// so its plugin actions must be confined to its subtree.
+func actionScopeRestricted(p *auth.Principal) bool {
+	return p != nil && !p.IsAdmin() && (p.IsScoped() || p.RequiresScope())
+}
+
+// entityVisibleForAction reports whether the target entity is visible to the
+// (scoped) context for the action's entity type. Entity types that are not
+// subtree-scoped (tags, categories, ...) are always allowed.
+func entityVisibleForAction(ctx PluginActionRunner, entity string, id uint) bool {
+	switch entity {
+	case "resource":
+		return ctx.ResourceVisible(id)
+	case "note":
+		return ctx.NoteVisible(id)
+	case "group":
+		return ctx.GroupVisible(id)
+	default:
+		return true
+	}
 }
 
 // actionRunRequest is the JSON body for POST /v1/jobs/action/run
@@ -116,6 +145,23 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 			return
 		}
 
+		// RBAC: a group-limited principal may only run an action on entities
+		// inside its subtree. The entity-ref params are scoped automatically
+		// because the entity-ref reader runs on this request-scoped context, but
+		// the primary entity_ids must be checked explicitly.
+		reqPrincipal := auth.PrincipalFromContext(r.Context())
+		if actionScopeRestricted(reqPrincipal) {
+			for _, eid := range req.EntityIDs {
+				if !entityVisibleForAction(ctx, action.Entity, eid) {
+					http_utils.HandleError(
+						fmt.Errorf("one or more target entities are outside your scope"),
+						w, r, http.StatusForbidden,
+					)
+					return
+				}
+			}
+		}
+
 		// Validate params upfront.
 		if validationErrs := plugin_system.ValidateActionParams(action, req.Params); len(validationErrs) > 0 {
 			w.Header().Set("Content-Type", constants.JSON)
@@ -146,10 +192,13 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 		}
 
 		if action.Async {
-			// Async execution: create jobs for each entity ID.
+			// Async execution: create jobs for each entity ID, tagged with the
+			// submitting user so the job listing/SSE only surface them to that
+			// user (and admins).
+			owner := principalOwnerID(reqPrincipal)
 			jobIDs := make([]string, 0, len(req.EntityIDs))
 			for _, eid := range req.EntityIDs {
-				jobID, err := pm.RunActionAsync(req.Plugin, req.Action, eid, req.Params)
+				jobID, err := pm.RunActionAsyncForOwner(owner, req.Plugin, req.Action, eid, req.Params)
 				if err != nil {
 					http_utils.HandleError(fmt.Errorf("failed to start async action for entity %d: %w", eid, err), w, r, http.StatusInternalServerError)
 					return
@@ -206,7 +255,8 @@ func GetActionJobHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 		}
 
 		job := pm.GetActionJob(jobID)
-		if job == nil {
+		if job == nil || !jobVisibleToPrincipal(auth.PrincipalFromContext(r.Context()), job.Owner()) {
+			// Non-owners get a 404 (not 403) so job IDs can't be enumerated.
 			http_utils.HandleError(fmt.Errorf("action job %q not found", jobID), w, r, http.StatusNotFound)
 			return
 		}

@@ -20,20 +20,32 @@ const (
 
 // ActionJob represents an asynchronous plugin action execution.
 type ActionJob struct {
-	ID         string         `json:"id"`
-	Source     string         `json:"source"`     // always "plugin"
-	PluginName string         `json:"pluginName"`
-	ActionID   string         `json:"actionId"`
-	Label      string         `json:"label"`
-	EntityID   uint           `json:"entityId"`
-	EntityType string         `json:"entityType"`
-	Status     string         `json:"status"`            // pending, running, completed, failed
-	Progress   int            `json:"progress"`           // 0-100
-	Message    string         `json:"message"`
-	Result     map[string]any `json:"result,omitempty"`
+	ID           string         `json:"id"`
+	Source       string         `json:"source"` // always "plugin"
+	PluginName   string         `json:"pluginName"`
+	ActionID     string         `json:"actionId"`
+	Label        string         `json:"label"`
+	EntityID     uint           `json:"entityId"`
+	EntityType   string         `json:"entityType"`
+	Status       string         `json:"status"`   // pending, running, completed, failed
+	Progress     int            `json:"progress"` // 0-100
+	Message      string         `json:"message"`
+	Result       map[string]any `json:"result,omitempty"`
 	CreatedAt    time.Time      `json:"createdAt"`
 	mu           sync.RWMutex
 	lastNotified time.Time // tracks when the last SSE notification was sent for throttling
+	// ownerUserID is the user that submitted the action (RBAC). It is never
+	// serialized to JSON; callers read it via Owner() to decide visibility so a
+	// non-admin only sees the jobs it created.
+	ownerUserID *uint
+}
+
+// Owner returns the user that submitted the action job, or nil when it was
+// created without an authenticated user (e.g. auth disabled).
+func (j *ActionJob) Owner() *uint {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.ownerUserID
 }
 
 // ActionJobEvent represents a change in action job state for SSE broadcasting.
@@ -49,17 +61,18 @@ func (j *ActionJob) Snapshot() ActionJob { //nolint:govet // returns a field-by-
 	defer j.mu.RUnlock()
 
 	snap := ActionJob{
-		ID:         j.ID,
-		Source:     j.Source,
-		PluginName: j.PluginName,
-		ActionID:   j.ActionID,
-		Label:      j.Label,
-		EntityID:   j.EntityID,
-		EntityType: j.EntityType,
-		Status:     j.Status,
-		Progress:   j.Progress,
-		Message:    j.Message,
-		CreatedAt:  j.CreatedAt,
+		ID:          j.ID,
+		Source:      j.Source,
+		PluginName:  j.PluginName,
+		ActionID:    j.ActionID,
+		Label:       j.Label,
+		EntityID:    j.EntityID,
+		EntityType:  j.EntityType,
+		Status:      j.Status,
+		Progress:    j.Progress,
+		Message:     j.Message,
+		CreatedAt:   j.CreatedAt,
+		ownerUserID: j.ownerUserID,
 	}
 
 	// Shallow copy of Result is safe because results are write-once:
@@ -83,8 +96,16 @@ func generateActionJobID() string {
 	return hex.EncodeToString(b)
 }
 
-// RunActionAsync validates and starts an async action execution, returning the job ID.
+// RunActionAsync validates and starts an async action execution, returning the
+// job ID. The job is created without an owner; use RunActionAsyncForOwner to
+// record the submitting user for RBAC visibility.
 func (pm *PluginManager) RunActionAsync(pluginName, actionID string, entityID uint, params map[string]any) (string, error) {
+	return pm.RunActionAsyncForOwner(nil, pluginName, actionID, entityID, params)
+}
+
+// RunActionAsyncForOwner is RunActionAsync but tags the job with the submitting
+// user so it is only listed/streamed to that user (and admins).
+func (pm *PluginManager) RunActionAsyncForOwner(ownerUserID *uint, pluginName, actionID string, entityID uint, params map[string]any) (string, error) {
 	if pm.closed.Load() {
 		return "", fmt.Errorf("plugin manager is closed")
 	}
@@ -101,17 +122,18 @@ func (pm *PluginManager) RunActionAsync(pluginName, actionID string, entityID ui
 
 	jobID := generateActionJobID()
 	job := &ActionJob{
-		ID:         jobID,
-		Source:     "plugin",
-		PluginName: pluginName,
-		ActionID:   actionID,
-		Label:      action.Label,
-		EntityID:   entityID,
-		EntityType: action.Entity,
-		Status:     "pending",
-		Progress:   0,
-		Message:    "Waiting to start...",
-		CreatedAt:  time.Now(),
+		ID:          jobID,
+		Source:      "plugin",
+		PluginName:  pluginName,
+		ActionID:    actionID,
+		Label:       action.Label,
+		EntityID:    entityID,
+		EntityType:  action.Entity,
+		Status:      "pending",
+		Progress:    0,
+		Message:     "Waiting to start...",
+		CreatedAt:   time.Now(),
+		ownerUserID: ownerUserID,
 	}
 
 	pm.actionJobsMu.Lock()

@@ -14,6 +14,16 @@ import (
 )
 
 func (ctx *MahresourcesContext) RunReadOnlyQuery(queryId uint, params map[string]any) (*sqlx.Rows, error) {
+	// Saved queries are arbitrary SQL executed on the unscoped read-only DB, which
+	// the group-subtree scope callbacks cannot constrain. There is no safe way to
+	// confine arbitrary SQL to a subtree, so deny it outright to group-limited
+	// principals (fail-closed). Admins, the system context, and unscoped users run
+	// it as before. The MRQL saved-query path remains available to them (it is
+	// force-scoped at the executor).
+	if ctx.isScopedPrincipal() {
+		return nil, errors.New("saved SQL queries are not available for group-limited accounts")
+	}
+
 	var query models.Query
 
 	if err := ctx.db.First(&query, queryId).Error; err != nil {

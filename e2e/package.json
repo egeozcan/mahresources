@@ -16,6 +16,8 @@
     "test:cli": "playwright test --project=cli",
     "test:with-server:cli": "node scripts/run-tests.js test --project=cli",
     "test:with-server:cli-doctest": "node scripts/run-tests.js test --project=cli-doctest",
+    "test:auth": "playwright test --project=auth",
+    "test:with-server:auth": "node scripts/run-tests.js test --project=auth",
     "test:with-server:a11y": "node scripts/run-tests.js test tests/accessibility/",
     "test:with-server:all": "node scripts/run-all-tests.js",
     "test:with-server:postgres": "node scripts/run-tests-postgres.js test"

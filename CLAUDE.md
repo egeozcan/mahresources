@@ -141,6 +141,27 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-share-port` | `SHARE_PORT` | Port for the public share server (leave empty to disable the share feature) |
 | `-share-bind-address` | `SHARE_BIND_ADDRESS` | Bind address for the share server (default: `0.0.0.0`) |
 | `-share-public-url` | `SHARE_PUBLIC_URL` | Externally-routable base URL for shared notes (e.g. `https://share.example.com`). When set, the share sidebar and `/admin/shares` render absolute links as `{SHARE_PUBLIC_URL}/s/<token>`. When unset, the UI shows a warning and the relative `/s/<token>` path only — no bind-address fallback (BH-033). |
+| `-auth` | `AUTH_ENABLED=1` | Enable user accounts + RBAC. Off by default: when disabled, every request runs as an implicit administrator and behaviour matches the historical no-auth deployment (existing deployments, the `mr` CLI, and tests are unaffected). |
+| `-session-ttl` | `SESSION_TTL` | How long a browser login session stays valid (default: 720h / 30 days). |
+| `-session-cookie-secure` | `SESSION_COOKIE_SECURE=1` | Mark the session cookie `Secure` (HTTPS-only). Enable behind TLS. |
+| `-create-admin-user` | `CREATE_ADMIN_USER` | Bootstrap: create (or reset to enabled admin) this username at startup. Idempotent. Requires `-create-admin-password`. |
+| `-create-admin-password` | `CREATE_ADMIN_PASSWORD` | Password for `-create-admin-user`. |
+| `-login-max-attempts` | `LOGIN_MAX_ATTEMPTS` | Max failed login attempts per client IP within `-login-attempt-window` before throttling with HTTP 429. `0` (default) disables login rate-limiting. In-memory and per-process (counters reset on restart). |
+| `-login-attempt-window` | `LOGIN_ATTEMPT_WINDOW` | Sliding window for `-login-max-attempts`, and the lockout duration once it is hit (default: 15m). Login throttling is keyed on **both** the client IP and the target username (so neither an IP nor an account can be brute-forced past the limit). |
+| `-trust-proxy-headers` | `TRUST_PROXY_HEADERS=1` | Trust `X-Forwarded-For` when deriving the client IP for login rate-limiting. **Off by default**: a directly-exposed server lets a client forge `X-Forwarded-For` to defeat per-IP throttling. Enable only when behind a trusted reverse proxy. |
+
+### Authentication & roles
+
+Auth is **opt-in**. With `-auth` set, requests must authenticate via a browser session cookie (login at `/login`) or a per-user API token (`Authorization: Bearer <token>`, used by the `mr` CLI). Four roles:
+
+- **admin** — full access, including system settings, plugin management, categories, and user administration (`/admin/users`).
+- **editor** — CRUD on entities, except creating/editing Categories and Resource Categories, and no system settings.
+- **user** — CRUD on resources and notes (plus subgroups, tagging, note sharing, group import/export, and plugin-action execution); optionally confined to a single Group's subtree.
+- **guest** — read-only, always confined to a single Group's subtree.
+
+Group-limited users/guests are confined to their scope group and all of its descendants across lists, single-item reads, search, MRQL, file serving, group export, and writes (fail-closed). Bootstrap the first admin with `-create-admin-user`/`-create-admin-password`. The `mr` CLI authenticates with `mr auth login` (stores an API token) or the `MR_TOKEN` env var.
+
+CSRF: the session cookie is `SameSite=Lax`, which blocks cross-site state-changing (POST/PUT/DELETE) requests; API-token (Bearer) requests carry no ambient cookie and are not CSRF-exposed. Layered on top of that baseline is a per-session synchronizer token (defense-in-depth): each session carries a random `Session.CsrfToken`, published to the page in a `<meta name="csrf-token">` tag and on `/v1/auth/me`. State-changing, cookie-authenticated requests must echo it via the `X-CSRF-Token` header (the JS `fetch` wrapper adds it automatically), the `csrf_token` query parameter (native multipart upload forms), or a `csrf_token` urlencoded form field; the `withCSRFProtection` middleware rejects mismatches with 403. The check is a no-op when auth is disabled, and skips safe methods, the login/logout flow, read-via-POST endpoints, and Bearer requests. The CSRF middleware never reads multipart or JSON bodies, so per-upload size limits are preserved.
 
 Alternative file systems via flags use format `-alt-fs=key:path` (can be repeated).
 Via env vars, use `FILE_ALT_COUNT=N` with `FILE_ALT_NAME_1`, `FILE_ALT_PATH_1`, etc.
@@ -270,7 +291,7 @@ npm run report         # View HTML test report
 
 ## Important Notes
 
-- No authentication/authorization - designed for private networks only
+- Authentication/authorization is **opt-in** (`-auth`). Off by default — designed for private networks — but when enabled it adds user accounts + four RBAC roles (admin/editor/user/guest) with group-subtree scoping. See the "Authentication & roles" section above.
 - Fully aware that we can inject all kinds of content via unescaped via CustomHeader, CustomSidebar, etc. and that's okay.
 - A11y is important. Very important.
 - The group export/import archive format (manifest schema version 1) is a stable public contract. `archive/manifest.go` defines the schema. Rules: readers reject unknown major `schema_version` values with a clear error; unknown top-level keys in the manifest are silently ignored (forward compatibility). Breaking changes require bumping `schema_version`. Do not change field names, remove fields, or alter semantics without a version bump.

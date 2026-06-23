@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/afero"
 
 	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/download_queue"
 )
@@ -30,6 +31,24 @@ type GroupImporter interface {
 	DeleteImportFiles(jobID string) error
 	DownloadManager() *download_queue.DownloadManager
 	GetDefaultFs() afero.Fs
+}
+
+// importJobDenied reports whether the import job identified by jobID exists but
+// is not visible to the caller (a different user's job). Parse/apply jobs are
+// owner-tagged at submit; the lifecycle handlers (plan/apply/result/delete)
+// must not let another user inspect, apply, or delete them by guessing the ID.
+// Unknown jobs return false so the handler's own not-found path runs. Reported
+// as 404 (not 403) so IDs cannot be enumerated.
+func importJobDenied(ctx GroupImporter, r *http.Request, jobID string) bool {
+	dm := ctx.DownloadManager()
+	if dm == nil {
+		return false
+	}
+	job, ok := dm.GetJob(jobID)
+	if !ok {
+		return false
+	}
+	return !jobVisibleToPrincipal(auth.PrincipalFromContext(r.Context()), job.GetOwnerUserID())
 }
 
 // GetImportParseHandler — POST /v1/groups/import/parse
@@ -111,6 +130,10 @@ func GetImportParseHandler(ctx GroupImporter, maxSize func() int64) func(http.Re
 		// jobs; we repurpose it as "source file path".
 		job.SetURL(finalPath)
 
+		if owner := principalOwnerID(auth.PrincipalFromContext(r.Context())); owner != nil {
+			job.SetOwnerUserID(*owner)
+		}
+
 		w.Header().Set("Content-Type", constants.JSON)
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]any{"jobId": job.ID})
@@ -163,6 +186,10 @@ func GetImportPlanHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Req
 			http.Error(w, "jobId path parameter is required", http.StatusBadRequest)
 			return
 		}
+		if importJobDenied(ctx, r, jobID) {
+			http.Error(w, "import job not found", http.StatusNotFound)
+			return
+		}
 
 		plan, err := ctx.LoadImportPlan(jobID)
 		if err != nil {
@@ -189,6 +216,10 @@ func GetImportResultHandler(ctx GroupImporter) func(http.ResponseWriter, *http.R
 		jobID := vars["jobId"]
 		if jobID == "" {
 			http.Error(w, "jobId path parameter is required", http.StatusBadRequest)
+			return
+		}
+		if importJobDenied(ctx, r, jobID) {
+			http.Error(w, "import job not found", http.StatusNotFound)
 			return
 		}
 
@@ -220,6 +251,10 @@ func GetImportApplyHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Re
 		parseJobID := vars["jobId"]
 		if parseJobID == "" {
 			http.Error(w, "jobId path parameter is required", http.StatusBadRequest)
+			return
+		}
+		if importJobDenied(ctx, r, parseJobID) {
+			http.Error(w, "import job not found", http.StatusNotFound)
 			return
 		}
 
@@ -271,6 +306,10 @@ func GetImportApplyHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Re
 			_ = fs.Rename(consumedPath, planPath)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
+		}
+
+		if owner := principalOwnerID(auth.PrincipalFromContext(r.Context())); owner != nil {
+			job.SetOwnerUserID(*owner)
 		}
 
 		w.Header().Set("Content-Type", constants.JSON)
@@ -354,6 +393,10 @@ func GetImportDeleteHandler(ctx GroupImporter) func(http.ResponseWriter, *http.R
 		jobID := vars["jobId"]
 		if jobID == "" {
 			http.Error(w, "jobId path parameter is required", http.StatusBadRequest)
+			return
+		}
+		if importJobDenied(ctx, r, jobID) {
+			http.Error(w, "import job not found", http.StatusNotFound)
 			return
 		}
 

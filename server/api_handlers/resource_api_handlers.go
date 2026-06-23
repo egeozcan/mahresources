@@ -598,7 +598,9 @@ func PostResourceCustomThumbnailHandler(
 				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 				return
 			}
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			// A not-found error means the resource does not exist or is outside the
+			// caller's subtree (RBAC) — both surface as 404, never 500.
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 
@@ -644,7 +646,9 @@ func DeleteResourceCustomThumbnailHandler(
 		}
 
 		if err := ctx.ClearThumbnails(request.Context(), resourceID); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+			// A not-found error means the resource does not exist or is outside the
+			// caller's subtree (RBAC) — both surface as 404, never 500.
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
 			return
 		}
 

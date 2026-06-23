@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"encoding/json"
 	"fmt"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/download_queue"
 	"mahresources/models/query_models"
@@ -17,9 +18,40 @@ type DownloadQueueReader interface {
 	DownloadManager() *download_queue.DownloadManager
 }
 
+// DownloadSubmitter adds group-visibility checks so the submit handler can
+// confine a group-limited principal's download targets to its subtree. The
+// request-scoped *MahresourcesContext satisfies it; GroupVisible is a no-op
+// (always true) for admins, the auth-off super-user, and unscoped users.
+type DownloadSubmitter interface {
+	DownloadManager() *download_queue.DownloadManager
+	GroupVisible(id uint) bool
+}
+
+// principalOwnerID returns a pointer to the principal's user ID, or nil for the
+// system/super-user (auth disabled) or an unauthenticated request. Used to tag
+// background jobs with their creator.
+func principalOwnerID(p *auth.Principal) *uint {
+	if p == nil || p.SuperUser || p.UserID == 0 {
+		return nil
+	}
+	id := p.UserID
+	return &id
+}
+
+// jobVisibleToPrincipal reports whether a background job with the given owner is
+// visible to the principal. Admins and the system super-user (auth disabled) see
+// every job; any other authenticated user sees only the jobs it created. A job
+// with no recorded owner is therefore hidden from non-admins (fail-closed).
+func jobVisibleToPrincipal(p *auth.Principal, owner *uint) bool {
+	if p == nil || p.IsAdmin() {
+		return true
+	}
+	return owner != nil && *owner == p.UserID
+}
+
 // GetDownloadSubmitHandler handles POST /v1/download/submit
 // Submits URL(s) for background download
-func GetDownloadSubmitHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetDownloadSubmitHandler(ctx DownloadSubmitter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var creator query_models.ResourceFromRemoteCreator
 
@@ -33,6 +65,29 @@ func GetDownloadSubmitHandler(ctx DownloadQueueReader) func(writer http.Response
 			return
 		}
 
+		// The download worker creates resources on the unscoped system context, so
+		// a group-limited principal could otherwise plant data outside its subtree
+		// by naming an out-of-scope owner/group (or creating a new top-level group
+		// via GroupName). Validate the target here, before enqueuing, and refuse
+		// out-of-scope targets fail-closed. GroupVisible is always true for
+		// unscoped/admin/auth-off callers, so this is a no-op for them.
+		if actionScopeRestricted(auth.PrincipalFromContext(request.Context())) {
+			if creator.GroupName != "" {
+				http_utils.HandleError(fmt.Errorf("group-limited accounts cannot create a group via download; target an existing group in your scope"), writer, request, http.StatusForbidden)
+				return
+			}
+			if creator.OwnerId == 0 || !ctx.GroupVisible(creator.OwnerId) {
+				http_utils.HandleError(fmt.Errorf("download target group is outside your permitted scope"), writer, request, http.StatusForbidden)
+				return
+			}
+			for _, g := range creator.Groups {
+				if !ctx.GroupVisible(g) {
+					http_utils.HandleError(fmt.Errorf("download target group is outside your permitted scope"), writer, request, http.StatusForbidden)
+					return
+				}
+			}
+		}
+
 		jobs, err := ctx.DownloadManager().SubmitMultiple(&creator)
 		if err != nil {
 			// "no valid URLs provided" is a client validation error (400),
@@ -43,6 +98,14 @@ func GetDownloadSubmitHandler(ctx DownloadQueueReader) func(writer http.Response
 			}
 			http_utils.HandleError(err, writer, request, status)
 			return
+		}
+
+		// Tag each job with its creator so the queue/SSE only surface it to that
+		// user (and admins).
+		if owner := principalOwnerID(auth.PrincipalFromContext(request.Context())); owner != nil {
+			for _, job := range jobs {
+				job.SetOwnerUserID(*owner)
+			}
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
@@ -58,13 +121,37 @@ func GetDownloadSubmitHandler(ctx DownloadQueueReader) func(writer http.Response
 // Returns all jobs in the queue
 func GetDownloadQueueHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		jobs := ctx.DownloadManager().GetJobs()
+		p := auth.PrincipalFromContext(request.Context())
+		all := ctx.DownloadManager().GetJobs()
+		jobs := make([]*download_queue.DownloadJob, 0, len(all))
+		for _, job := range all {
+			if jobVisibleToPrincipal(p, job.GetOwnerUserID()) {
+				jobs = append(jobs, job)
+			}
+		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(map[string]any{
 			"jobs": jobs,
 		})
 	}
+}
+
+// jobMutationDenied reports whether a job control action (cancel/pause/resume/
+// retry) on jobID must be refused because the job exists but is not visible to
+// the caller. When the job is unknown it returns false so the manager call can
+// surface its own not-found error. A denied mutation is reported as 404 (not
+// 403) so job IDs cannot be enumerated, matching GetDownloadJobHandler.
+func jobMutationDenied(ctx DownloadQueueReader, r *http.Request, jobID string) bool {
+	dm := ctx.DownloadManager()
+	if dm == nil {
+		return false
+	}
+	job, ok := dm.GetJob(jobID)
+	if !ok {
+		return false
+	}
+	return !jobVisibleToPrincipal(auth.PrincipalFromContext(r.Context()), job.GetOwnerUserID())
 }
 
 // GetDownloadCancelHandler handles POST /v1/download/cancel
@@ -78,6 +165,11 @@ func GetDownloadCancelHandler(ctx DownloadQueueReader) func(writer http.Response
 
 		if jobID == "" {
 			http_utils.HandleError(fmt.Errorf("job id is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if jobMutationDenied(ctx, request, jobID) {
+			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
 			return
 		}
 
@@ -105,6 +197,11 @@ func GetDownloadPauseHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 			return
 		}
 
+		if jobMutationDenied(ctx, request, jobID) {
+			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
+			return
+		}
+
 		if err := ctx.DownloadManager().Pause(jobID); err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
@@ -126,6 +223,11 @@ func GetDownloadResumeHandler(ctx DownloadQueueReader) func(writer http.Response
 
 		if jobID == "" {
 			http_utils.HandleError(fmt.Errorf("job id is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if jobMutationDenied(ctx, request, jobID) {
+			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
 			return
 		}
 
@@ -153,6 +255,11 @@ func GetDownloadRetryHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 			return
 		}
 
+		if jobMutationDenied(ctx, request, jobID) {
+			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
+			return
+		}
+
 		if err := ctx.DownloadManager().Retry(jobID); err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
@@ -174,7 +281,9 @@ func GetDownloadJobHandler(ctx DownloadQueueReader) func(http.ResponseWriter, *h
 			return
 		}
 		job, ok := ctx.DownloadManager().GetJob(id)
-		if !ok {
+		if !ok || !jobVisibleToPrincipal(auth.PrincipalFromContext(r.Context()), job.GetOwnerUserID()) {
+			// A non-owner is told the job does not exist rather than that it
+			// exists-but-is-forbidden, so job IDs can't be enumerated.
 			http_utils.HandleError(fmt.Errorf("job not found"), w, r, http.StatusNotFound)
 			return
 		}
@@ -205,6 +314,11 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 			return
 		}
 
+		// Background jobs are per-user: a non-admin only receives the jobs it
+		// created, so it can't observe other users' download URLs, import/export
+		// progress, or action targets.
+		p := auth.PrincipalFromContext(request.Context())
+
 		// Subscribe to download events
 		downloadEvents, unsubscribeDownload := ctx.DownloadManager().Subscribe()
 		defer unsubscribeDownload()
@@ -217,15 +331,25 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 			defer pm.UnsubscribeActionJobs(actionEvents)
 		}
 
-		// Send initial state with both download jobs and action jobs
-		initData := map[string]any{
-			"jobs": ctx.DownloadManager().GetJobs(),
+		// Send initial state with both download jobs and action jobs, filtered to
+		// what this principal may see.
+		visibleDownloads := make([]*download_queue.DownloadJob, 0)
+		for _, job := range ctx.DownloadManager().GetJobs() {
+			if jobVisibleToPrincipal(p, job.GetOwnerUserID()) {
+				visibleDownloads = append(visibleDownloads, job)
+			}
 		}
+		initData := map[string]any{"jobs": visibleDownloads}
+		visibleActions := make([]*plugin_system.ActionJob, 0)
 		if pm != nil {
-			initData["actionJobs"] = pm.GetAllActionJobs()
-		} else {
-			initData["actionJobs"] = []plugin_system.ActionJob{}
+			allActions := pm.GetAllActionJobs()
+			for i := range allActions {
+				if jobVisibleToPrincipal(p, allActions[i].Owner()) {
+					visibleActions = append(visibleActions, &allActions[i])
+				}
+			}
 		}
+		initData["actionJobs"] = visibleActions
 		initialData, _ := json.Marshal(initData)
 		fmt.Fprintf(writer, "event: init\ndata: %s\n\n", initialData)
 		flusher.Flush()
@@ -237,6 +361,9 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 				if !ok {
 					return
 				}
+				if !jobVisibleToPrincipal(p, event.Job.GetOwnerUserID()) {
+					continue
+				}
 				data, _ := json.Marshal(event)
 				fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", event.Type, data)
 				flusher.Flush()
@@ -247,6 +374,9 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 				if !ok {
 					// Action events channel closed; continue with download-only
 					actionEvents = nil
+					continue
+				}
+				if !jobVisibleToPrincipal(p, event.Job.Owner()) {
 					continue
 				}
 				data, _ := json.Marshal(map[string]any{"job": event.Job})
