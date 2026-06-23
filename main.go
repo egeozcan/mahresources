@@ -186,6 +186,7 @@ func main() {
 	createAdminPassword := flag.String("create-admin-password", os.Getenv("CREATE_ADMIN_PASSWORD"), "Bootstrap: password for -create-admin-user (env: CREATE_ADMIN_PASSWORD)")
 	loginMaxAttempts := flag.Int("login-max-attempts", parseIntEnv("LOGIN_MAX_ATTEMPTS", 0), "Max failed login attempts per client IP within -login-attempt-window before throttling with HTTP 429; 0 disables (env: LOGIN_MAX_ATTEMPTS)")
 	loginAttemptWindow := flag.Duration("login-attempt-window", parseDurationEnv("LOGIN_ATTEMPT_WINDOW", 15*time.Minute), "Sliding window for -login-max-attempts and the lockout duration once it is hit (env: LOGIN_ATTEMPT_WINDOW)")
+	trustProxyHeaders := flag.Bool("trust-proxy-headers", os.Getenv("TRUST_PROXY_HEADERS") == "1", "Trust X-Forwarded-For for the client IP in login rate-limiting; enable only behind a trusted reverse proxy (env: TRUST_PROXY_HEADERS=1)")
 
 	flag.Parse()
 
@@ -269,6 +270,7 @@ func main() {
 		SessionCookieSecure:          *sessionCookieSecure,
 		LoginRateLimit:               *loginMaxAttempts,
 		LoginRateWindow:              *loginAttemptWindow,
+		TrustProxyHeaders:            *trustProxyHeaders,
 		CreateAdminUser:              *createAdminUser,
 		CreateAdminPassword:          *createAdminPassword,
 	}

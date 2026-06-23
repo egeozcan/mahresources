@@ -517,7 +517,10 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	seriesFactory := api_handlers.NewCRUDHandlerFactory("series", "series", seriesReader, seriesWriter)
 	router.Methods(http.MethodGet).Path("/v1/seriesList").HandlerFunc(seriesFactory.ListHandler())
 	router.Methods(http.MethodPost).Path("/v1/series/create").HandlerFunc(seriesFactory.CreateHandler())
-	router.Methods(http.MethodGet).Path("/v1/series").HandlerFunc(api_handlers.GetSeriesHandler(appContext))
+	// Scoped: the series detail preloads its Resources, which must be confined to
+	// the caller's subtree (a group-limited principal must not read another
+	// tenant's resources through a shared series).
+	router.Methods(http.MethodGet).Path("/v1/series").HandlerFunc(scopedAPI(appContext, api_handlers.GetSeriesHandler))
 	router.Methods(http.MethodPost).Path("/v1/series").HandlerFunc(api_handlers.GetUpdateSeriesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/series/delete").HandlerFunc(api_handlers.GetDeleteSeriesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/series/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Series](basicSeriesWriter, "series"))

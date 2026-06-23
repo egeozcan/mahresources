@@ -103,7 +103,20 @@ func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationType
 func (ctx *MahresourcesContext) GetRelation(id uint) (*models.GroupRelation, error) {
 	var relation models.GroupRelation
 
-	return &relation, ctx.db.Preload(clause.Associations, pageLimit).First(&relation, id).Error
+	if err := ctx.db.Preload(clause.Associations, pageLimit).First(&relation, id).Error; err != nil {
+		return nil, err
+	}
+	// group_relations is not owner-scoped, so a scoped principal could otherwise
+	// read a relation (and its endpoint group IDs) outside its subtree. Require
+	// both endpoints visible; fail-closed to not-found otherwise.
+	if ctx.isScopedPrincipal() {
+		fromVisible := relation.FromGroupId != nil && ctx.GroupVisible(*relation.FromGroupId)
+		toVisible := relation.ToGroupId != nil && ctx.GroupVisible(*relation.ToGroupId)
+		if !fromVisible || !toVisible {
+			return nil, gorm.ErrRecordNotFound
+		}
+	}
+	return &relation, nil
 }
 
 func (ctx *MahresourcesContext) GetRelationType(id uint) (*models.GroupRelationType, error) {
@@ -268,15 +281,38 @@ func (ctx *MahresourcesContext) GetRelationTypesCount(query *query_models.Relati
 func (ctx *MahresourcesContext) GetRelations(offset int, maxResults int, query *query_models.GroupRelationshipQuery) ([]*models.GroupRelation, error) {
 	var groupRelations []*models.GroupRelation
 
-	return groupRelations, ctx.db.Scopes(database_scopes.RelationQuery(query)).Preload(clause.Associations, pageLimit).Limit(maxResults).Offset(offset).Find(&groupRelations).Error
+	db, deny := ctx.scopeRelationQuery(ctx.db.Scopes(database_scopes.RelationQuery(query)))
+	if deny {
+		return []*models.GroupRelation{}, nil
+	}
+	return groupRelations, db.Preload(clause.Associations, pageLimit).Limit(maxResults).Offset(offset).Find(&groupRelations).Error
 }
 
 func (ctx *MahresourcesContext) GetRelationsCount(query *query_models.GroupRelationshipQuery) (int64, error) {
-	var groupRelation models.GroupRelation
 	var count int64
-	err := ctx.db.Scopes(database_scopes.RelationQuery(query)).Model(&groupRelation).Count(&count).Error
+	db, deny := ctx.scopeRelationQuery(ctx.db.Scopes(database_scopes.RelationQuery(query)))
+	if deny {
+		return 0, nil
+	}
+	return count, db.Model(&models.GroupRelation{}).Count(&count).Error
+}
 
-	return count, err
+// scopeRelationQuery confines a group-relation query to relations whose BOTH
+// endpoints are inside the caller's subtree. group_relations is not an
+// owner-bearing table, so the GORM scope callback never touches it; without this
+// a group-limited principal would learn the IDs and existence of out-of-subtree
+// groups via the raw from_group_id/to_group_id columns (the preloaded group
+// objects are nil-filtered, but the integer FKs are not). Returns deny=true
+// (fail-closed) when the subtree could not be resolved. No-op for unscoped/admin.
+func (ctx *MahresourcesContext) scopeRelationQuery(db *gorm.DB) (*gorm.DB, bool) {
+	ids, isScoped, mustDeny := ctx.subtreeScopeIDs()
+	if mustDeny {
+		return db, true
+	}
+	if isScoped {
+		return db.Where("from_group_id IN ? AND to_group_id IN ?", ids, ids), false
+	}
+	return db, false
 }
 
 func (ctx *MahresourcesContext) GetRelationTypesWithIds(ids *[]uint) ([]*models.GroupRelationType, error) {

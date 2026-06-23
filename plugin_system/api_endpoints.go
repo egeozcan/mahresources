@@ -89,6 +89,9 @@ func (pm *PluginManager) HandleAPI(pluginName, method, path string, ctx PageCont
 	if ctx.Body != "" {
 		ctxData["body"] = ctx.Body
 	}
+	if ctx.Principal != nil {
+		ctxData["principal"] = ctx.Principal
+	}
 
 	tbl := goToLuaTable(L, ctxData)
 

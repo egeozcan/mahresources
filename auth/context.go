@@ -39,3 +39,26 @@ func CSRFTokenFromContext(ctx context.Context) string {
 	t, _ := ctx.Value(csrfTokenKey).(string)
 	return t
 }
+
+// DescribeContext returns a plain map describing the principal on ctx, or nil
+// when none is present. It lets subsystems that must not import the auth package
+// (e.g. plugins, which receive plain Lua tables) see the caller's identity and
+// role so they can make their own authorization decisions.
+func DescribeContext(ctx context.Context) map[string]any {
+	p := PrincipalFromContext(ctx)
+	if p == nil {
+		return nil
+	}
+	var scopeGroupID any
+	if p.ScopeGroupID != nil {
+		scopeGroupID = *p.ScopeGroupID
+	}
+	return map[string]any{
+		"userId":       p.UserID,
+		"username":     p.Username,
+		"role":         string(p.Role),
+		"isAdmin":      p.IsAdmin(),
+		"scopeGroupId": scopeGroupID,
+		"superUser":    p.SuperUser,
+	}
+}

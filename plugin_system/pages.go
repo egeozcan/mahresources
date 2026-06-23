@@ -16,6 +16,12 @@ type PageContext struct {
 	Params  map[string]any
 	Headers map[string]any
 	Body    string
+	// Principal describes the authenticated caller (userId, username, role,
+	// isAdmin, scopeGroupId, superUser), or nil when auth is disabled. Plugins
+	// receive it as ctx.principal so they can authorize their own endpoints —
+	// the core only applies coarse read/write capability, and plugin DB access is
+	// not group-subtree scoped.
+	Principal map[string]any
 }
 
 // HandlePage executes the Lua page handler for the given plugin and path,
@@ -66,6 +72,9 @@ func (pm *PluginManager) HandlePage(pluginName, path string, ctx PageContext) (s
 	}
 	if ctx.Body != "" {
 		ctxData["body"] = ctx.Body
+	}
+	if ctx.Principal != nil {
+		ctxData["principal"] = ctx.Principal
 	}
 
 	tbl := goToLuaTable(L, ctxData)

@@ -131,6 +131,11 @@ type MahresourcesConfig struct {
 	// LoginRateWindow is the sliding window over which failed login attempts are
 	// counted (and the lockout duration once the limit is hit).
 	LoginRateWindow time.Duration
+	// TrustProxyHeaders controls whether X-Forwarded-For is trusted when deriving
+	// the client IP (for login rate-limiting). Off by default: when the server is
+	// exposed directly, a client controls XFF and could otherwise spoof it to
+	// defeat the per-IP limiter. Enable only when behind a trusted reverse proxy.
+	TrustProxyHeaders bool
 }
 
 // MahresourcesInputConfig holds all configuration options that can be passed
@@ -223,6 +228,9 @@ type MahresourcesInputConfig struct {
 	LoginRateLimit int
 	// LoginRateWindow is the sliding window for LoginRateLimit.
 	LoginRateWindow time.Duration
+	// TrustProxyHeaders trusts X-Forwarded-For for the client IP (login
+	// rate-limiting). Off by default; enable only behind a trusted proxy.
+	TrustProxyHeaders bool
 	// CreateAdminUser/CreateAdminPassword bootstrap an admin account at startup
 	// when set. Idempotent: an existing account with that username is reset to an
 	// enabled admin with the given password.
@@ -503,6 +511,13 @@ func (ctx *MahresourcesContext) WithRequest(r *http.Request) any {
 	// write handlers (which already route through WithRequest) are confined to a
 	// group-limited principal's subtree.
 	p := auth.PrincipalFromContext(r.Context())
+	// If this context is already scoped to the same principal (e.g. it came from
+	// scopedAPI's WithPrincipal for this request), its db is already confined to
+	// the subtree — reuse it instead of resolving the subtree (and walking the
+	// recursive group-tree CTE) a second time for the same request.
+	if ctx.principal != nil && ctx.principal == p {
+		return &ctxCopy
+	}
 	ctxCopy.principal = p
 	applyPrincipalScope(&ctxCopy, ctx, p)
 	return &ctxCopy
@@ -919,6 +934,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		SessionCookieSecure:          cfg.SessionCookieSecure,
 		LoginRateLimit:               cfg.LoginRateLimit,
 		LoginRateWindow:              cfg.LoginRateWindow,
+		TrustProxyHeaders:            cfg.TrustProxyHeaders,
 	}), db, mainFs
 }
 

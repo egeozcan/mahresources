@@ -86,10 +86,14 @@ func (ctx *MahresourcesContext) GetGroupTreeChildren(parentID uint, limit int) (
 // A defensive ceiling of 1_000_000 rows is applied.
 func (ctx *MahresourcesContext) collectSubtreeGroupIDs(rootID uint) ([]uint, error) {
 	var ids []uint
+	// UNION (not UNION ALL) deduplicates within the recursion, so a group-tree
+	// cycle (which write-time guards prevent, but a direct DB edit or import could
+	// introduce) terminates instead of looping to the 1M-row ceiling and injecting
+	// a giant IN-list into every scoped query.
 	err := ctx.db.Raw(`
 		WITH RECURSIVE tree AS (
 			SELECT id FROM groups WHERE id = ?
-			UNION ALL
+			UNION
 			SELECT g.id FROM groups g JOIN tree ON g.owner_id = tree.id
 		)
 		SELECT id FROM tree

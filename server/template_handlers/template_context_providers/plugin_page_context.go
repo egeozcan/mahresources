@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/flosch/pongo2/v4"
+	"mahresources/auth"
 	"mahresources/plugin_system"
 )
 
@@ -93,12 +94,13 @@ func PluginPageContextProvider(pm *plugin_system.PluginManager) func(request *ht
 		}
 
 		pageCtx := plugin_system.PageContext{
-			Path:    request.URL.String(),
-			Method:  request.Method,
-			Query:   queryMap,
-			Params:  paramsMap,
-			Headers: headerMap,
-			Body:    body,
+			Path:      request.URL.String(),
+			Method:    request.Method,
+			Query:     queryMap,
+			Params:    paramsMap,
+			Headers:   headerMap,
+			Body:      body,
+			Principal: auth.DescribeContext(request.Context()),
 		}
 
 		html, err := pm.HandlePage(pluginName, pagePath, pageCtx)

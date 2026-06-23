@@ -1,9 +1,45 @@
 package server
 
 import (
+	"net/http/httptest"
 	"testing"
 	"time"
 )
+
+// Per-account throttling: the same username brute-forced from rotating IPs is
+// still blocked once the per-user key hits the limit.
+func TestLoginRateLimiter_PerUsernameAcrossIPs(t *testing.T) {
+	l := newLoginRateLimiter(3, time.Hour)
+	for i, ip := range []string{"1.1.1.1", "2.2.2.2", "3.3.3.3"} {
+		keys := loginKeys(ip, "victim")
+		if !l.allowedAll(keys) {
+			t.Fatalf("attempt %d should be allowed", i+1)
+		}
+		l.recordFailureAll(keys)
+	}
+	// A 4th attempt from a brand-new IP is blocked by the per-username key.
+	if l.allowedAll(loginKeys("4.4.4.4", "victim")) {
+		t.Fatalf("per-username limit should block across rotating IPs")
+	}
+	// A different account from a fresh IP is unaffected.
+	if !l.allowedAll(loginKeys("9.9.9.9", "other")) {
+		t.Fatalf("a different account from a fresh IP should be allowed")
+	}
+}
+
+// clientIP ignores X-Forwarded-For unless trustProxy is set.
+func TestClientIP_XFFTrust(t *testing.T) {
+	r := httptest.NewRequest("POST", "/login", nil)
+	r.RemoteAddr = "10.0.0.5:1111"
+	r.Header.Set("X-Forwarded-For", "1.2.3.4")
+
+	if got := clientIP(r, false); got != "10.0.0.5" {
+		t.Fatalf("untrusted clientIP should use RemoteAddr, got %q", got)
+	}
+	if got := clientIP(r, true); got != "1.2.3.4" {
+		t.Fatalf("trusted clientIP should use X-Forwarded-For, got %q", got)
+	}
+}
 
 func TestLoginRateLimiter_BlocksAfterLimit(t *testing.T) {
 	l := newLoginRateLimiter(3, time.Hour)

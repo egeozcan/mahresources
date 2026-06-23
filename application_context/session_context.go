@@ -75,6 +75,17 @@ func (ctx *MahresourcesContext) ValidateSession(rawToken string) (*models.User, 
 		return nil, nil, ErrUserDisabled
 	}
 
+	// Backfill a CSRF token for sessions created before the CsrfToken column
+	// existed (in-place upgrade across the unreleased branch). Without this an
+	// otherwise-valid session would be 403'd on every state-changing request
+	// because the synchronizer-token check sees an empty expected token.
+	if session.CsrfToken == "" {
+		if tok, genErr := auth.GenerateToken(); genErr == nil {
+			session.CsrfToken = tok
+			ctx.db.Model(&models.Session{}).Where("id = ?", session.ID).Update("csrf_token", tok)
+		}
+	}
+
 	if time.Since(session.LastSeenAt) > sessionTouchInterval {
 		now := time.Now()
 		ctx.db.Model(&models.Session{}).Where("id = ?", session.ID).Update("last_seen_at", now)

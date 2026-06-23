@@ -19,7 +19,7 @@ func startSession(appCtx *application_context.MahresourcesContext, w http.Respon
 	if err != nil {
 		return nil, err
 	}
-	raw, _, err := appCtx.CreateSession(user.ID, appCtx.SessionTTL(), r.UserAgent(), clientIP(r))
+	raw, _, err := appCtx.CreateSession(user.ID, appCtx.SessionTTL(), r.UserAgent(), clientIP(r, appCtx.TrustProxyHeaders()))
 	if err != nil {
 		return nil, err
 	}
@@ -33,17 +33,18 @@ func LoginSubmitHandler(appCtx *application_context.MahresourcesContext, limiter
 	return func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		next := safeLocalPath(r.FormValue("next"), "/dashboard")
-		ip := clientIP(r)
-		if !limiter.allowed(ip) {
+		username := r.FormValue("username")
+		keys := loginKeys(clientIP(r, appCtx.TrustProxyHeaders()), username)
+		if !limiter.allowedAll(keys) {
 			http.Redirect(w, r, "/login?error=rate&next="+url.QueryEscape(next), http.StatusFound)
 			return
 		}
-		if _, err := startSession(appCtx, w, r, r.FormValue("username"), r.FormValue("password")); err != nil {
-			limiter.recordFailure(ip)
+		if _, err := startSession(appCtx, w, r, username, r.FormValue("password")); err != nil {
+			limiter.recordFailureAll(keys)
 			http.Redirect(w, r, "/login?error=1&next="+url.QueryEscape(next), http.StatusFound)
 			return
 		}
-		limiter.reset(ip)
+		limiter.resetAll(keys)
 		http.Redirect(w, r, next, http.StatusFound)
 	}
 }
@@ -63,19 +64,19 @@ func LogoutHandler(appCtx *application_context.MahresourcesContext) http.Handler
 // APILoginHandler authenticates via JSON or form body and returns the user.
 func APILoginHandler(appCtx *application_context.MahresourcesContext, limiter *loginRateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ip := clientIP(r)
-		if !limiter.allowed(ip) {
+		username, password := readCredentials(r)
+		keys := loginKeys(clientIP(r, appCtx.TrustProxyHeaders()), username)
+		if !limiter.allowedAll(keys) {
 			writeAuthJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many login attempts; try again later"})
 			return
 		}
-		username, password := readCredentials(r)
 		user, err := startSession(appCtx, w, r, username, password)
 		if err != nil {
-			limiter.recordFailure(ip)
+			limiter.recordFailureAll(keys)
 			writeAuthJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 			return
 		}
-		limiter.reset(ip)
+		limiter.resetAll(keys)
 		writeAuthJSON(w, http.StatusOK, user)
 	}
 }
@@ -150,13 +151,31 @@ func safeLocalPath(target, def string) string {
 	return target
 }
 
-// clientIP returns the request's source IP, preferring X-Forwarded-For when set.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i >= 0 {
-			return strings.TrimSpace(xff[:i])
+// loginKeys returns the rate-limit keys for a login attempt: one for the source
+// IP and one for the target username. Throttling on both means neither an IP nor
+// an account can be brute-forced past the limit, and rotating the source (e.g.
+// spoofed XFF behind a proxy) still can't grant unlimited guesses against one
+// account.
+func loginKeys(ip, username string) []string {
+	keys := []string{"ip:" + ip}
+	if u := strings.TrimSpace(strings.ToLower(username)); u != "" {
+		keys = append(keys, "user:"+u)
+	}
+	return keys
+}
+
+// clientIP returns the request's source IP. X-Forwarded-For is honored only when
+// trustProxy is set (the server is behind a trusted reverse proxy); otherwise it
+// is ignored, because a directly-exposed server lets a client forge XFF to defeat
+// per-IP login rate-limiting. Falls back to the TCP peer address.
+func clientIP(r *http.Request, trustProxy bool) string {
+	if trustProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if i := strings.IndexByte(xff, ','); i >= 0 {
+				return strings.TrimSpace(xff[:i])
+			}
+			return strings.TrimSpace(xff)
 		}
-		return strings.TrimSpace(xff)
 	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host
