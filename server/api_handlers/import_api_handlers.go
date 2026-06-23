@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/afero"
 
 	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/download_queue"
 )
@@ -110,6 +111,10 @@ func GetImportParseHandler(ctx GroupImporter, maxSize func() int64) func(http.Re
 		// job was cancelled while still queued). URL is unused for generic
 		// jobs; we repurpose it as "source file path".
 		job.SetURL(finalPath)
+
+		if owner := principalOwnerID(auth.PrincipalFromContext(r.Context())); owner != nil {
+			job.SetOwnerUserID(*owner)
+		}
 
 		w.Header().Set("Content-Type", constants.JSON)
 		w.WriteHeader(http.StatusAccepted)
@@ -271,6 +276,10 @@ func GetImportApplyHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Re
 			_ = fs.Rename(consumedPath, planPath)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
+		}
+
+		if owner := principalOwnerID(auth.PrincipalFromContext(r.Context())); owner != nil {
+			job.SetOwnerUserID(*owner)
 		}
 
 		w.Header().Set("Content-Type", constants.JSON)

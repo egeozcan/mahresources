@@ -603,16 +603,20 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 		api_handlers.GetExportDownloadHandler(scopedCtx(appContext, r), appContext.GetDefaultFs())(w, r)
 	})
 
-	// Group imports
-	router.Methods(http.MethodPost).Path("/v1/groups/import/parse").HandlerFunc(api_handlers.GetImportParseHandler(appContext, func() int64 { return appContext.Settings().MaxImportSize() }))
-	router.Methods(http.MethodGet).Path("/v1/imports/{jobId}/plan").HandlerFunc(api_handlers.GetImportPlanHandler(appContext))
-	router.Methods(http.MethodDelete).Path("/v1/imports/{jobId}").HandlerFunc(api_handlers.GetImportDeleteHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/imports/{jobId}/apply").HandlerFunc(api_handlers.GetImportApplyHandler(appContext))
-	router.Methods(http.MethodGet).Path("/v1/imports/{jobId}/result").HandlerFunc(api_handlers.GetImportResultHandler(appContext))
+	// Group imports. Import creates new top-level groups, which a group-limited
+	// principal could not place inside its subtree, so the whole import surface
+	// is denied to scoped users/guests (fail-closed); unscoped users, editors,
+	// and admins import as before.
+	router.Methods(http.MethodPost).Path("/v1/groups/import/parse").HandlerFunc(denyScopedPrincipal(api_handlers.GetImportParseHandler(appContext, func() int64 { return appContext.Settings().MaxImportSize() })))
+	router.Methods(http.MethodGet).Path("/v1/imports/{jobId}/plan").HandlerFunc(denyScopedPrincipal(api_handlers.GetImportPlanHandler(appContext)))
+	router.Methods(http.MethodDelete).Path("/v1/imports/{jobId}").HandlerFunc(denyScopedPrincipal(api_handlers.GetImportDeleteHandler(appContext)))
+	router.Methods(http.MethodPost).Path("/v1/imports/{jobId}/apply").HandlerFunc(denyScopedPrincipal(api_handlers.GetImportApplyHandler(appContext)))
+	router.Methods(http.MethodGet).Path("/v1/imports/{jobId}/result").HandlerFunc(denyScopedPrincipal(api_handlers.GetImportResultHandler(appContext)))
 
-	// Plugin action routes
+	// Plugin action routes. The run handler is request-scoped so a group-limited
+	// principal can only target entities inside its subtree.
 	router.Methods(http.MethodGet).Path("/v1/plugin/actions").HandlerFunc(api_handlers.GetPluginActionsHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/jobs/action/run").HandlerFunc(api_handlers.GetActionRunHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/jobs/action/run").HandlerFunc(scopedAPI(appContext, api_handlers.GetActionRunHandler))
 	router.Methods(http.MethodGet).Path("/v1/jobs/action/job").HandlerFunc(api_handlers.GetActionJobHandler(appContext))
 
 	// Logs (read-only)

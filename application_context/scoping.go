@@ -127,6 +127,31 @@ func applyPrincipalScope(dst *MahresourcesContext, base *MahresourcesContext, p 
 	dst.db = base.db.WithContext(scopedCtx)
 }
 
+// subtreeScopeIDs resolves the set of group IDs a scoped principal may touch.
+// It exists for raw-SQL paths that bypass the GORM scope callbacks (e.g. the
+// multi-table meta-key query whose FROM clause the callback can't match):
+//
+//   - scoped=false           → unrestricted (admin / system / unscoped user);
+//     the caller adds no filter.
+//   - scoped=true, deny=false → ids holds the resolvable subtree; the caller
+//     must constrain its query to these IDs.
+//   - scoped=true, deny=true  → the principal must be scoped but the subtree
+//     could not be resolved; the caller must match no rows (fail-closed).
+func (ctx *MahresourcesContext) subtreeScopeIDs() (ids []uint, scoped bool, deny bool) {
+	scopeID, forced, mustDeny := ctx.principalForcedScope()
+	if mustDeny {
+		return nil, true, true
+	}
+	if !forced {
+		return nil, false, false
+	}
+	resolved, err := ctx.collectSubtreeGroupIDs(scopeID)
+	if err != nil || len(resolved) == 0 {
+		return nil, true, true // fail-closed
+	}
+	return resolved, true, false
+}
+
 // isScopedPrincipal reports whether the current principal is group-limited, so
 // callers can gate by-ID raw-SQL paths (group tree, blocks, versions, exports)
 // that bypass the GORM scope callbacks.

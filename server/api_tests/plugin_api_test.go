@@ -189,8 +189,14 @@ type testPluginRunner struct {
 	reader plugin_system.EntityRefReader
 }
 
-func (r *testPluginRunner) PluginManager() *plugin_system.PluginManager      { return r.pm }
+func (r *testPluginRunner) PluginManager() *plugin_system.PluginManager          { return r.pm }
 func (r *testPluginRunner) ActionEntityRefReader() plugin_system.EntityRefReader { return r.reader }
+
+// These tests exercise the handler directly (no request principal), so the
+// runner is unrestricted: every entity is visible, matching admin / auth-off.
+func (r *testPluginRunner) ResourceVisible(uint) bool { return true }
+func (r *testPluginRunner) NoteVisible(uint) bool     { return true }
+func (r *testPluginRunner) GroupVisible(uint) bool    { return true }
 
 // countingReader wraps an EntityRefReader and counts each method call.
 type countingReader struct {

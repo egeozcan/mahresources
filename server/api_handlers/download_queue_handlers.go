@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"encoding/json"
 	"fmt"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/download_queue"
 	"mahresources/models/query_models"
@@ -15,6 +16,28 @@ import (
 // DownloadQueueReader is the interface for reading download queue state
 type DownloadQueueReader interface {
 	DownloadManager() *download_queue.DownloadManager
+}
+
+// principalOwnerID returns a pointer to the principal's user ID, or nil for the
+// system/super-user (auth disabled) or an unauthenticated request. Used to tag
+// background jobs with their creator.
+func principalOwnerID(p *auth.Principal) *uint {
+	if p == nil || p.SuperUser || p.UserID == 0 {
+		return nil
+	}
+	id := p.UserID
+	return &id
+}
+
+// jobVisibleToPrincipal reports whether a background job with the given owner is
+// visible to the principal. Admins and the system super-user (auth disabled) see
+// every job; any other authenticated user sees only the jobs it created. A job
+// with no recorded owner is therefore hidden from non-admins (fail-closed).
+func jobVisibleToPrincipal(p *auth.Principal, owner *uint) bool {
+	if p == nil || p.IsAdmin() {
+		return true
+	}
+	return owner != nil && *owner == p.UserID
 }
 
 // GetDownloadSubmitHandler handles POST /v1/download/submit
@@ -45,6 +68,14 @@ func GetDownloadSubmitHandler(ctx DownloadQueueReader) func(writer http.Response
 			return
 		}
 
+		// Tag each job with its creator so the queue/SSE only surface it to that
+		// user (and admins).
+		if owner := principalOwnerID(auth.PrincipalFromContext(request.Context())); owner != nil {
+			for _, job := range jobs {
+				job.SetOwnerUserID(*owner)
+			}
+		}
+
 		writer.Header().Set("Content-Type", constants.JSON)
 		writer.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(writer).Encode(map[string]any{
@@ -58,7 +89,14 @@ func GetDownloadSubmitHandler(ctx DownloadQueueReader) func(writer http.Response
 // Returns all jobs in the queue
 func GetDownloadQueueHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		jobs := ctx.DownloadManager().GetJobs()
+		p := auth.PrincipalFromContext(request.Context())
+		all := ctx.DownloadManager().GetJobs()
+		jobs := make([]*download_queue.DownloadJob, 0, len(all))
+		for _, job := range all {
+			if jobVisibleToPrincipal(p, job.GetOwnerUserID()) {
+				jobs = append(jobs, job)
+			}
+		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(map[string]any{
@@ -174,7 +212,9 @@ func GetDownloadJobHandler(ctx DownloadQueueReader) func(http.ResponseWriter, *h
 			return
 		}
 		job, ok := ctx.DownloadManager().GetJob(id)
-		if !ok {
+		if !ok || !jobVisibleToPrincipal(auth.PrincipalFromContext(r.Context()), job.GetOwnerUserID()) {
+			// A non-owner is told the job does not exist rather than that it
+			// exists-but-is-forbidden, so job IDs can't be enumerated.
 			http_utils.HandleError(fmt.Errorf("job not found"), w, r, http.StatusNotFound)
 			return
 		}
@@ -205,6 +245,11 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 			return
 		}
 
+		// Background jobs are per-user: a non-admin only receives the jobs it
+		// created, so it can't observe other users' download URLs, import/export
+		// progress, or action targets.
+		p := auth.PrincipalFromContext(request.Context())
+
 		// Subscribe to download events
 		downloadEvents, unsubscribeDownload := ctx.DownloadManager().Subscribe()
 		defer unsubscribeDownload()
@@ -217,15 +262,25 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 			defer pm.UnsubscribeActionJobs(actionEvents)
 		}
 
-		// Send initial state with both download jobs and action jobs
-		initData := map[string]any{
-			"jobs": ctx.DownloadManager().GetJobs(),
+		// Send initial state with both download jobs and action jobs, filtered to
+		// what this principal may see.
+		visibleDownloads := make([]*download_queue.DownloadJob, 0)
+		for _, job := range ctx.DownloadManager().GetJobs() {
+			if jobVisibleToPrincipal(p, job.GetOwnerUserID()) {
+				visibleDownloads = append(visibleDownloads, job)
+			}
 		}
+		initData := map[string]any{"jobs": visibleDownloads}
+		visibleActions := make([]*plugin_system.ActionJob, 0)
 		if pm != nil {
-			initData["actionJobs"] = pm.GetAllActionJobs()
-		} else {
-			initData["actionJobs"] = []plugin_system.ActionJob{}
+			allActions := pm.GetAllActionJobs()
+			for i := range allActions {
+				if jobVisibleToPrincipal(p, allActions[i].Owner()) {
+					visibleActions = append(visibleActions, &allActions[i])
+				}
+			}
 		}
+		initData["actionJobs"] = visibleActions
 		initialData, _ := json.Marshal(initData)
 		fmt.Fprintf(writer, "event: init\ndata: %s\n\n", initialData)
 		flusher.Flush()
@@ -237,6 +292,9 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 				if !ok {
 					return
 				}
+				if !jobVisibleToPrincipal(p, event.Job.GetOwnerUserID()) {
+					continue
+				}
 				data, _ := json.Marshal(event)
 				fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", event.Type, data)
 				flusher.Flush()
@@ -247,6 +305,9 @@ func GetDownloadEventsHandler(ctx JobEventsContext) func(writer http.ResponseWri
 				if !ok {
 					// Action events channel closed; continue with download-only
 					actionEvents = nil
+					continue
+				}
+				if !jobVisibleToPrincipal(p, event.Job.Owner()) {
 					continue
 				}
 				data, _ := json.Marshal(map[string]any{"job": event.Job})

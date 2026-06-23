@@ -41,6 +41,22 @@ func principalIsRestricted(p *auth.Principal) bool {
 	return p != nil && !p.IsAdmin() && (p.IsScoped() || p.RequiresScope())
 }
 
+// denyScopedPrincipal blocks group-limited (user/guest with a subtree) principals
+// from an endpoint entirely. Used for operations that have no coherent
+// subtree-confined semantics — notably group import, which creates new top-level
+// groups that could not be placed inside the caller's subtree. Unrestricted
+// principals (admin, editor, unscoped user, and the auth-off super-user) pass
+// through unchanged.
+func denyScopedPrincipal(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if principalIsRestricted(auth.PrincipalFromContext(r.Context())) {
+			http.Error(w, "not available for group-limited accounts", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	}
+}
+
 // guardedFileServer wraps a raw file server so that group-limited principals can
 // only fetch files belonging to resources inside their subtree. Unrestricted
 // principals (admin, system/auth-off, unscoped users) pass straight through.

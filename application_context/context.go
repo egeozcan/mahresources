@@ -645,20 +645,39 @@ func pageLimitCustom(maxResults int) func(db *gorm.DB) *gorm.DB {
 func metaKeys(ctx *MahresourcesContext, table string) ([]interfaces.MetaKey, error) {
 	var results []interfaces.MetaKey
 
+	// Group-subtree scoping is applied explicitly here rather than via the GORM
+	// scope callbacks: the SQLite query's FROM clause is a multi-table
+	// expression ("notes, json_each(notes.meta)") that the callback's table
+	// matcher does not recognize, so a scoped principal would otherwise see the
+	// distinct meta-key names of every entity. The Postgres branch's single-table
+	// FROM is callback-eligible, but we filter both branches the same way so the
+	// behaviour does not depend on GORM's statement-table parsing.
+	ids, scoped, deny := ctx.subtreeScopeIDs()
+	scopeCol, _ := scopeColumn(table)
+	applyScope := func(q *gorm.DB) *gorm.DB {
+		if deny {
+			return q.Where("1 = 0")
+		}
+		if scoped {
+			return q.Where(fmt.Sprintf("%v.%v IN ?", table, scopeCol), ids)
+		}
+		return q
+	}
+
 	if ctx.Config.DbType == constants.DbTypePosgres {
-		if err := ctx.db.
+		q := applyScope(ctx.db.
 			Table(table).
 			Select("DISTINCT jsonb_object_keys(Meta) as Key").
-			Where("Meta IS NOT NULL").
-			Scan(&results).Error; err != nil {
+			Where("Meta IS NOT NULL"))
+		if err := q.Scan(&results).Error; err != nil {
 			return nil, err
 		}
 	} else if ctx.Config.DbType == constants.DbTypeSqlite {
-		if err := ctx.db.
+		q := applyScope(ctx.db.
 			Table(fmt.Sprintf("%v, json_each(%v.meta)", table, table)).
 			Select("DISTINCT json_each.key as Key").
-			Where("Meta IS NOT NULL").
-			Scan(&results).Error; err != nil {
+			Where("Meta IS NOT NULL"))
+		if err := q.Scan(&results).Error; err != nil {
 			return nil, err
 		}
 	} else {

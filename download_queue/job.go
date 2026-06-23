@@ -289,6 +289,7 @@ func (j *DownloadJob) Snapshot() *DownloadJob {
 		PhaseCount:      j.PhaseCount,
 		PhaseTotal:      j.PhaseTotal,
 		ResultPath:      j.ResultPath,
+		ownerUserID:     j.ownerUserID,
 	}
 	// Deep-copy the Warnings slice so subscribers can't observe a torn append.
 	if j.Warnings != nil {
