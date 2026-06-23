@@ -271,7 +271,16 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromGroups(query *query_models.Bul
 		return fmt.Errorf("at least one tag ID is required")
 	}
 
+	uniqueGroupIds := deduplicateUints(query.ID)
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		// RBAC: verify all group IDs are visible (scope callback filters this Count).
+		var groupCount int64
+		if err := tx.Model(&models.Group{}).Where("id IN ?", uniqueGroupIds).Count(&groupCount).Error; err != nil {
+			return err
+		}
+		if int(groupCount) != len(uniqueGroupIds) {
+			return fmt.Errorf("one or more groups not found")
+		}
 		return tx.Exec(
 			"DELETE FROM group_tags WHERE group_id IN ? AND tag_id IN ?",
 			query.ID, query.EditedId,

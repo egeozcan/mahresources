@@ -157,7 +157,16 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromResources(query *query_models.
 		return fmt.Errorf("at least one tag ID is required")
 	}
 
+	uniqueResourceIds := deduplicateUints(query.ID)
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		// RBAC: verify target resources are visible (scope callback filters this Count).
+		var resourceCount int64
+		if err := tx.Model(&models.Resource{}).Where("id IN ?", uniqueResourceIds).Count(&resourceCount).Error; err != nil {
+			return err
+		}
+		if int(resourceCount) != len(uniqueResourceIds) {
+			return fmt.Errorf("one or more resources not found")
+		}
 		return tx.Exec(
 			"DELETE FROM resource_tags WHERE resource_id IN ? AND tag_id IN ?",
 			query.ID, query.EditedId,
@@ -180,8 +189,20 @@ func (ctx *MahresourcesContext) BulkReplaceTagsFromResources(query *query_models
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)
+	uniqueResourceIds := deduplicateUints(query.ID)
 
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		// RBAC: verify all resource IDs are visible (scope callback filters this
+		// Count) so a group-limited principal cannot replace tags on out-of-subtree
+		// resources via the raw DELETE/INSERT below.
+		var resourceCount int64
+		if err := tx.Model(&models.Resource{}).Where("id IN ?", uniqueResourceIds).Count(&resourceCount).Error; err != nil {
+			return err
+		}
+		if int(resourceCount) != len(uniqueResourceIds) {
+			return fmt.Errorf("one or more resources not found")
+		}
+
 		// Validate all tags exist
 		if len(uniqueEditedIds) > 0 {
 			var tagCount int64
@@ -382,8 +403,18 @@ func (ctx *MahresourcesContext) BulkAddGroupsToResources(query *query_models.Bul
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)
+	uniqueResourceIds := deduplicateUints(query.ID)
 
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		// RBAC: verify target resources are visible (scope callback filters this Count).
+		var resourceCount int64
+		if err := tx.Model(&models.Resource{}).Where("id IN ?", uniqueResourceIds).Count(&resourceCount).Error; err != nil {
+			return err
+		}
+		if int(resourceCount) != len(uniqueResourceIds) {
+			return fmt.Errorf("one or more resources not found")
+		}
+
 		var groupCount int64
 		if err := tx.Model(&models.Group{}).Where("id IN ?", uniqueEditedIds).Count(&groupCount).Error; err != nil {
 			return err

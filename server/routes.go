@@ -367,9 +367,6 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/account/tokens").HandlerFunc(api_handlers.CreateOwnTokenHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/account/tokens/delete").HandlerFunc(api_handlers.RevokeOwnTokenHandler(appContext))
 
-	basicGroupWriter := application_context.NewEntityWriter[models.Group](appContext)
-	basicNoteWriter := application_context.NewEntityWriter[models.Note](appContext)
-	basicResourceWriter := application_context.NewEntityWriter[models.Resource](appContext)
 	basicTagWriter := application_context.NewEntityWriter[models.Tag](appContext)
 	basicCategoryWriter := application_context.NewEntityWriter[models.Category](appContext)
 	basicQueryWriter := application_context.NewEntityWriter[models.Query](appContext)
@@ -381,11 +378,11 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/notes").HandlerFunc(scopedAPI(appContext, api_handlers.GetNotesHandler))
 	router.Methods(http.MethodGet).Path("/v1/notes/meta/keys").HandlerFunc(scopedAPI(appContext, api_handlers.GetNoteMetaKeysHandler))
 	router.Methods(http.MethodGet).Path("/v1/note").HandlerFunc(scopedAPI(appContext, api_handlers.GetNoteHandler))
-	router.Methods(http.MethodPost).Path("/v1/note").HandlerFunc(api_handlers.GetAddNoteHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/note/delete").HandlerFunc(api_handlers.GetRemoveNoteHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/note/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Note](basicNoteWriter, "note"))
-	router.Methods(http.MethodPost).Path("/v1/note/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Note](basicNoteWriter, "note"))
-	router.Methods(http.MethodPost).Path("/v1/note/editMeta").HandlerFunc(api_handlers.GetEditMetaHandler(basicNoteWriter, "note"))
+	router.Methods(http.MethodPost).Path("/v1/note").HandlerFunc(scopedAPI(appContext, api_handlers.GetAddNoteHandler))
+	router.Methods(http.MethodPost).Path("/v1/note/delete").HandlerFunc(scopedAPI(appContext, api_handlers.GetRemoveNoteHandler))
+	router.Methods(http.MethodPost).Path("/v1/note/editName").HandlerFunc(scopedEditName[models.Note](appContext, "note"))
+	router.Methods(http.MethodPost).Path("/v1/note/editDescription").HandlerFunc(scopedEditDescription[models.Note](appContext, "note"))
+	router.Methods(http.MethodPost).Path("/v1/note/editMeta").HandlerFunc(scopedEditMeta[models.Note](appContext, "note"))
 	router.Methods(http.MethodGet).Path("/v1/note/noteTypes").HandlerFunc(api_handlers.GetNoteTypesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/note/noteType").HandlerFunc(api_handlers.GetAddNoteTypeHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/note/noteType/edit").HandlerFunc(api_handlers.GetAddNoteTypeHandler(appContext))
@@ -394,31 +391,31 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/noteType/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.NoteType](basicNoteTypeWriter, "noteType"))
 
 	// Note sharing routes
-	router.Methods(http.MethodPost).Path("/v1/note/share").HandlerFunc(api_handlers.GetShareNoteHandler(appContext))
-	router.Methods(http.MethodDelete).Path("/v1/note/share").HandlerFunc(api_handlers.GetUnshareNoteHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/note/share").HandlerFunc(scopedAPI(appContext, api_handlers.GetShareNoteHandler))
+	router.Methods(http.MethodDelete).Path("/v1/note/share").HandlerFunc(scopedAPI(appContext, api_handlers.GetUnshareNoteHandler))
 	// BH-035: centralized /admin/shares dashboard bulk-revoke endpoint. Accepts
 	// form-encoded ids=<noteId> repeats; redirects browser-form consumers back
 	// to /admin/shares, answers JSON for Accept: application/json callers.
 	router.Methods(http.MethodPost).Path("/v1/admin/shares/bulk-revoke").HandlerFunc(api_handlers.GetBulkUnshareNotesHandler(appContext))
 
 	// Note bulk operations
-	router.Methods(http.MethodPost).Path("/v1/notes/addTags").HandlerFunc(api_handlers.GetAddTagsToNotesHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/notes/removeTags").HandlerFunc(api_handlers.GetRemoveTagsFromNotesHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/notes/addGroups").HandlerFunc(api_handlers.GetAddGroupsToNotesHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/notes/addMeta").HandlerFunc(api_handlers.GetAddMetaToNotesHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/notes/delete").HandlerFunc(api_handlers.GetBulkDeleteNotesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/notes/addTags").HandlerFunc(scopedAPI(appContext, api_handlers.GetAddTagsToNotesHandler))
+	router.Methods(http.MethodPost).Path("/v1/notes/removeTags").HandlerFunc(scopedAPI(appContext, api_handlers.GetRemoveTagsFromNotesHandler))
+	router.Methods(http.MethodPost).Path("/v1/notes/addGroups").HandlerFunc(scopedAPI(appContext, api_handlers.GetAddGroupsToNotesHandler))
+	router.Methods(http.MethodPost).Path("/v1/notes/addMeta").HandlerFunc(scopedAPI(appContext, api_handlers.GetAddMetaToNotesHandler))
+	router.Methods(http.MethodPost).Path("/v1/notes/delete").HandlerFunc(scopedAPI(appContext, api_handlers.GetBulkDeleteNotesHandler))
 
 	// Block API routes
 	router.Methods(http.MethodGet).Path("/v1/note/blocks").HandlerFunc(scopedAPI(appContext, api_handlers.GetBlocksHandler))
 	router.Methods(http.MethodGet).Path("/v1/note/block").HandlerFunc(scopedAPI(appContext, api_handlers.GetBlockHandler))
 	router.Methods(http.MethodGet).Path("/v1/note/block/types").HandlerFunc(api_handlers.GetBlockTypesHandler())
-	router.Methods(http.MethodPost).Path("/v1/note/block").HandlerFunc(api_handlers.CreateBlockHandler(appContext))
-	router.Methods(http.MethodPut).Path("/v1/note/block").HandlerFunc(api_handlers.UpdateBlockContentHandler(appContext))
-	router.Methods(http.MethodPatch).Path("/v1/note/block/state").HandlerFunc(api_handlers.UpdateBlockStateHandler(appContext))
-	router.Methods(http.MethodDelete).Path("/v1/note/block").HandlerFunc(api_handlers.DeleteBlockHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/note/block/delete").HandlerFunc(api_handlers.DeleteBlockHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/note/blocks/reorder").HandlerFunc(api_handlers.ReorderBlocksHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/note/blocks/rebalance").HandlerFunc(api_handlers.RebalanceBlocksHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/note/block").HandlerFunc(scopedAPI(appContext, api_handlers.CreateBlockHandler))
+	router.Methods(http.MethodPut).Path("/v1/note/block").HandlerFunc(scopedAPI(appContext, api_handlers.UpdateBlockContentHandler))
+	router.Methods(http.MethodPatch).Path("/v1/note/block/state").HandlerFunc(scopedAPI(appContext, api_handlers.UpdateBlockStateHandler))
+	router.Methods(http.MethodDelete).Path("/v1/note/block").HandlerFunc(scopedAPI(appContext, api_handlers.DeleteBlockHandler))
+	router.Methods(http.MethodPost).Path("/v1/note/block/delete").HandlerFunc(scopedAPI(appContext, api_handlers.DeleteBlockHandler))
+	router.Methods(http.MethodPost).Path("/v1/note/blocks/reorder").HandlerFunc(scopedAPI(appContext, api_handlers.ReorderBlocksHandler))
+	router.Methods(http.MethodPost).Path("/v1/note/blocks/rebalance").HandlerFunc(scopedAPI(appContext, api_handlers.RebalanceBlocksHandler))
 	router.Methods(http.MethodGet).Path("/v1/note/block/table/query").HandlerFunc(scopedAPI(appContext, api_handlers.GetTableBlockQueryDataHandler))
 	router.Methods(http.MethodGet).Path("/v1/note/block/calendar/events").HandlerFunc(scopedAPI(appContext, api_handlers.GetCalendarBlockEventsHandler))
 
@@ -427,17 +424,17 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/group").HandlerFunc(scopedAPI(appContext, api_handlers.GetGroupHandler))
 	router.Methods(http.MethodGet).Path("/v1/group/parents").HandlerFunc(scopedAPI(appContext, api_handlers.GetGroupsParentsHandler))
 	router.Methods(http.MethodGet).Path("/v1/group/tree/children").HandlerFunc(scopedAPI(appContext, api_handlers.GetGroupTreeChildrenHandler))
-	router.Methods(http.MethodPost).Path("/v1/group/clone").HandlerFunc(api_handlers.GetDuplicateGroupHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/group").HandlerFunc(api_handlers.GetAddGroupHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/group/delete").HandlerFunc(api_handlers.GetRemoveGroupHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/groups/addTags").HandlerFunc(api_handlers.GetAddTagsToGroupsHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/groups/removeTags").HandlerFunc(api_handlers.GetRemoveTagsFromGroupsHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/groups/addMeta").HandlerFunc(api_handlers.GetAddMetaToGroupsHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/groups/delete").HandlerFunc(api_handlers.GetBulkDeleteGroupsHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/groups/merge").HandlerFunc(api_handlers.GetMergeGroupsHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/group/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Group](basicGroupWriter, "group"))
-	router.Methods(http.MethodPost).Path("/v1/group/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Group](basicGroupWriter, "group"))
-	router.Methods(http.MethodPost).Path("/v1/group/editMeta").HandlerFunc(api_handlers.GetEditMetaHandler(basicGroupWriter, "group"))
+	router.Methods(http.MethodPost).Path("/v1/group/clone").HandlerFunc(scopedAPI(appContext, api_handlers.GetDuplicateGroupHandler))
+	router.Methods(http.MethodPost).Path("/v1/group").HandlerFunc(scopedAPI(appContext, api_handlers.GetAddGroupHandler))
+	router.Methods(http.MethodPost).Path("/v1/group/delete").HandlerFunc(scopedAPI(appContext, api_handlers.GetRemoveGroupHandler))
+	router.Methods(http.MethodPost).Path("/v1/groups/addTags").HandlerFunc(scopedAPI(appContext, api_handlers.GetAddTagsToGroupsHandler))
+	router.Methods(http.MethodPost).Path("/v1/groups/removeTags").HandlerFunc(scopedAPI(appContext, api_handlers.GetRemoveTagsFromGroupsHandler))
+	router.Methods(http.MethodPost).Path("/v1/groups/addMeta").HandlerFunc(scopedAPI(appContext, api_handlers.GetAddMetaToGroupsHandler))
+	router.Methods(http.MethodPost).Path("/v1/groups/delete").HandlerFunc(scopedAPI(appContext, api_handlers.GetBulkDeleteGroupsHandler))
+	router.Methods(http.MethodPost).Path("/v1/groups/merge").HandlerFunc(scopedAPI(appContext, api_handlers.GetMergeGroupsHandler))
+	router.Methods(http.MethodPost).Path("/v1/group/editName").HandlerFunc(scopedEditName[models.Group](appContext, "group"))
+	router.Methods(http.MethodPost).Path("/v1/group/editDescription").HandlerFunc(scopedEditDescription[models.Group](appContext, "group"))
+	router.Methods(http.MethodPost).Path("/v1/group/editMeta").HandlerFunc(scopedEditMeta[models.Group](appContext, "group"))
 
 	router.Methods(http.MethodPost).Path("/v1/relation").HandlerFunc(api_handlers.GetAddRelationHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/relation/delete").HandlerFunc(api_handlers.GetRemoveRelationHandler(appContext))
@@ -453,32 +450,37 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/resource").HandlerFunc(scopedAPI(appContext, api_handlers.GetResourceHandler))
 	router.Methods(http.MethodGet).Path("/v1/resources").HandlerFunc(scopedAPI(appContext, api_handlers.GetResourcesHandler))
 	router.Methods(http.MethodGet).Path("/v1/resources/meta/keys").HandlerFunc(scopedAPI(appContext, api_handlers.GetResourceMetaKeysHandler))
-	router.Methods(http.MethodPost).Path("/v1/resource").HandlerFunc(api_handlers.GetResourceUploadHandler(appContext, func() int64 { return appContext.Settings().MaxUploadSize() }))
-	router.Methods(http.MethodPost).Path("/v1/resource/local").HandlerFunc(api_handlers.GetResourceAddLocalHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resource/remote").HandlerFunc(api_handlers.GetResourceAddRemoteHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resource/delete").HandlerFunc(api_handlers.GetRemoveResourceHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resource/edit").HandlerFunc(api_handlers.GetResourceEditHandler(appContext))
+	uploadSize := func() int64 { return appContext.Settings().MaxUploadSize() }
+	router.Methods(http.MethodPost).Path("/v1/resource").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api_handlers.GetResourceUploadHandler(scopedCtx(appContext, r), uploadSize)(w, r)
+	})
+	router.Methods(http.MethodPost).Path("/v1/resource/local").HandlerFunc(scopedAPI(appContext, api_handlers.GetResourceAddLocalHandler))
+	router.Methods(http.MethodPost).Path("/v1/resource/remote").HandlerFunc(scopedAPI(appContext, api_handlers.GetResourceAddRemoteHandler))
+	router.Methods(http.MethodPost).Path("/v1/resource/delete").HandlerFunc(scopedAPI(appContext, api_handlers.GetRemoveResourceHandler))
+	router.Methods(http.MethodPost).Path("/v1/resource/edit").HandlerFunc(scopedAPI(appContext, api_handlers.GetResourceEditHandler))
 	router.Methods(http.MethodGet).Path("/v1/resource/view").HandlerFunc(scopedAPI(appContext, api_handlers.GetResourceContentHandler))
 	router.Methods(http.MethodGet).Path("/v1/resource/preview").HandlerFunc(scopedAPI(appContext, api_handlers.GetResourceThumbnailHandler))
-	router.Methods(http.MethodPost).Path("/v1/resource/preview").HandlerFunc(api_handlers.PostResourceCustomThumbnailHandler(appContext, func() int64 { return appContext.Settings().MaxUploadSize() }))
-	router.Methods(http.MethodDelete).Path("/v1/resource/preview").HandlerFunc(api_handlers.DeleteResourceCustomThumbnailHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/resource/preview").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api_handlers.PostResourceCustomThumbnailHandler(scopedCtx(appContext, r), uploadSize)(w, r)
+	})
+	router.Methods(http.MethodDelete).Path("/v1/resource/preview").HandlerFunc(scopedAPI(appContext, api_handlers.DeleteResourceCustomThumbnailHandler))
 	// Some browser environments cannot send DELETE from forms; provide a POST alias.
-	router.Methods(http.MethodPost).Path("/v1/resource/preview/clear").HandlerFunc(api_handlers.DeleteResourceCustomThumbnailHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resource/recalculateDimensions").HandlerFunc(api_handlers.GetBulkCalculateDimensionsHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resources/setDimensions").HandlerFunc(api_handlers.GetResourceSetDimensionsHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resources/addTags").HandlerFunc(api_handlers.GetAddTagsToResourcesHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resources/addGroups").HandlerFunc(api_handlers.GetAddGroupsToResourcesHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resources/removeTags").HandlerFunc(api_handlers.GetRemoveTagsFromResourcesHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resources/replaceTags").HandlerFunc(api_handlers.GetReplaceTagsOfResourcesHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resources/addMeta").HandlerFunc(api_handlers.GetAddMetaToResourcesHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resources/delete").HandlerFunc(api_handlers.GetBulkDeleteResourcesHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resources/merge").HandlerFunc(api_handlers.GetMergeResourcesHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resources/rotate").HandlerFunc(api_handlers.GetRotateResourceHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resources/crop").HandlerFunc(api_handlers.GetCropResourceHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resources/trim").HandlerFunc(api_handlers.GetTrimVideoHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/resource/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Resource](basicResourceWriter, "resource"))
-	router.Methods(http.MethodPost).Path("/v1/resource/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Resource](basicResourceWriter, "resource"))
-	router.Methods(http.MethodPost).Path("/v1/resource/editMeta").HandlerFunc(api_handlers.GetEditMetaHandler(basicResourceWriter, "resource"))
+	router.Methods(http.MethodPost).Path("/v1/resource/preview/clear").HandlerFunc(scopedAPI(appContext, api_handlers.DeleteResourceCustomThumbnailHandler))
+	router.Methods(http.MethodPost).Path("/v1/resource/recalculateDimensions").HandlerFunc(scopedAPI(appContext, api_handlers.GetBulkCalculateDimensionsHandler))
+	router.Methods(http.MethodPost).Path("/v1/resources/setDimensions").HandlerFunc(scopedAPI(appContext, api_handlers.GetResourceSetDimensionsHandler))
+	router.Methods(http.MethodPost).Path("/v1/resources/addTags").HandlerFunc(scopedAPI(appContext, api_handlers.GetAddTagsToResourcesHandler))
+	router.Methods(http.MethodPost).Path("/v1/resources/addGroups").HandlerFunc(scopedAPI(appContext, api_handlers.GetAddGroupsToResourcesHandler))
+	router.Methods(http.MethodPost).Path("/v1/resources/removeTags").HandlerFunc(scopedAPI(appContext, api_handlers.GetRemoveTagsFromResourcesHandler))
+	router.Methods(http.MethodPost).Path("/v1/resources/replaceTags").HandlerFunc(scopedAPI(appContext, api_handlers.GetReplaceTagsOfResourcesHandler))
+	router.Methods(http.MethodPost).Path("/v1/resources/addMeta").HandlerFunc(scopedAPI(appContext, api_handlers.GetAddMetaToResourcesHandler))
+	router.Methods(http.MethodPost).Path("/v1/resources/delete").HandlerFunc(scopedAPI(appContext, api_handlers.GetBulkDeleteResourcesHandler))
+	router.Methods(http.MethodPost).Path("/v1/resources/merge").HandlerFunc(scopedAPI(appContext, api_handlers.GetMergeResourcesHandler))
+	router.Methods(http.MethodPost).Path("/v1/resources/rotate").HandlerFunc(scopedAPI(appContext, api_handlers.GetRotateResourceHandler))
+	router.Methods(http.MethodPost).Path("/v1/resources/crop").HandlerFunc(scopedAPI(appContext, api_handlers.GetCropResourceHandler))
+	router.Methods(http.MethodPost).Path("/v1/resources/trim").HandlerFunc(scopedAPI(appContext, api_handlers.GetTrimVideoHandler))
+	router.Methods(http.MethodPost).Path("/v1/resource/editName").HandlerFunc(scopedEditName[models.Resource](appContext, "resource"))
+	router.Methods(http.MethodPost).Path("/v1/resource/editDescription").HandlerFunc(scopedEditDescription[models.Resource](appContext, "resource"))
+	router.Methods(http.MethodPost).Path("/v1/resource/editMeta").HandlerFunc(scopedEditMeta[models.Resource](appContext, "resource"))
 
 	// Version routes
 	router.Methods(http.MethodGet).Path("/v1/resource/versions").
@@ -486,19 +488,21 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/resource/version").
 		HandlerFunc(scopedAPI(appContext, api_handlers.GetVersionHandler))
 	router.Methods(http.MethodPost).Path("/v1/resource/versions").
-		HandlerFunc(api_handlers.GetUploadVersionHandler(appContext, func() int64 { return appContext.Settings().MaxUploadSize() }))
+		HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			api_handlers.GetUploadVersionHandler(scopedCtx(appContext, r), uploadSize)(w, r)
+		})
 	router.Methods(http.MethodPost).Path("/v1/resource/version/restore").
-		HandlerFunc(api_handlers.GetRestoreVersionHandler(appContext))
+		HandlerFunc(scopedAPI(appContext, api_handlers.GetRestoreVersionHandler))
 	router.Methods(http.MethodDelete).Path("/v1/resource/version").
-		HandlerFunc(api_handlers.GetDeleteVersionHandler(appContext))
+		HandlerFunc(scopedAPI(appContext, api_handlers.GetDeleteVersionHandler))
 	router.Methods(http.MethodPost).Path("/v1/resource/version/delete").
-		HandlerFunc(api_handlers.GetDeleteVersionHandler(appContext))
+		HandlerFunc(scopedAPI(appContext, api_handlers.GetDeleteVersionHandler))
 	router.Methods(http.MethodGet).Path("/v1/resource/version/file").
 		HandlerFunc(scopedAPI(appContext, api_handlers.GetVersionFileHandler))
 	router.Methods(http.MethodPost).Path("/v1/resource/versions/cleanup").
-		HandlerFunc(api_handlers.GetCleanupVersionsHandler(appContext))
+		HandlerFunc(scopedAPI(appContext, api_handlers.GetCleanupVersionsHandler))
 	router.Methods(http.MethodPost).Path("/v1/resources/versions/cleanup").
-		HandlerFunc(api_handlers.GetBulkCleanupVersionsHandler(appContext))
+		HandlerFunc(scopedAPI(appContext, api_handlers.GetBulkCleanupVersionsHandler))
 	router.Methods(http.MethodGet).Path("/v1/resource/versions/compare").
 		HandlerFunc(scopedAPI(appContext, api_handlers.GetCompareVersionsHandler))
 
@@ -594,7 +598,10 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 		// its subtree; the background export job inherits the scoped context.
 		api_handlers.GetExportSubmitHandler(scopedCtx(appContext, r), appContext.GetDefaultFs())(w, r)
 	})
-	router.Methods(http.MethodGet).Path("/v1/exports/{jobId}/download").HandlerFunc(api_handlers.GetExportDownloadHandler(appContext, appContext.GetDefaultFs()))
+	router.Methods(http.MethodGet).Path("/v1/exports/{jobId}/download").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Scope the context so the download handler can enforce job ownership.
+		api_handlers.GetExportDownloadHandler(scopedCtx(appContext, r), appContext.GetDefaultFs())(w, r)
+	})
 
 	// Group imports
 	router.Methods(http.MethodPost).Path("/v1/groups/import/parse").HandlerFunc(api_handlers.GetImportParseHandler(appContext, func() int64 { return appContext.Settings().MaxImportSize() }))

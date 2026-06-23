@@ -149,6 +149,10 @@ func (ctx *MahresourcesContext) UpdateBlockContent(blockID uint, content json.Ra
 	if err := ctx.db.First(&block, blockID).Error; err != nil {
 		return nil, err
 	}
+	// RBAC: blocks are only mutable when their owning note is in scope.
+	if !ctx.NoteVisible(block.NoteID) {
+		return nil, gorm.ErrRecordNotFound
+	}
 
 	// Validate content against block type
 	bt := block_types.GetBlockType(block.Type)
@@ -197,6 +201,9 @@ func (ctx *MahresourcesContext) UpdateBlockState(blockID uint, state json.RawMes
 	if err := ctx.db.First(&block, blockID).Error; err != nil {
 		return nil, err
 	}
+	if !ctx.NoteVisible(block.NoteID) {
+		return nil, gorm.ErrRecordNotFound
+	}
 
 	// Validate state against block type
 	bt := block_types.GetBlockType(block.Type)
@@ -216,6 +223,9 @@ func (ctx *MahresourcesContext) DeleteBlock(blockID uint) error {
 	var block models.NoteBlock
 	if err := ctx.db.First(&block, blockID).Error; err != nil {
 		return err
+	}
+	if !ctx.NoteVisible(block.NoteID) {
+		return gorm.ErrRecordNotFound
 	}
 
 	noteID := block.NoteID
@@ -255,6 +265,10 @@ func (ctx *MahresourcesContext) DeleteBlock(blockID uint) error {
 func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]string) error {
 	if len(positions) == 0 {
 		return nil
+	}
+	// RBAC: only reorder blocks of an in-scope note.
+	if !ctx.NoteVisible(noteID) {
+		return gorm.ErrRecordNotFound
 	}
 
 	// Check for duplicate position values
@@ -349,6 +363,9 @@ func syncFirstTextBlockToDescriptionTx(tx *gorm.DB, noteID uint) error {
 // This reassigns positions using evenly distributed values (e.g., "d", "h", "l", "p", "t").
 // Call this periodically or when positions become too long.
 func (ctx *MahresourcesContext) RebalanceBlockPositions(noteID uint) error {
+	if !ctx.NoteVisible(noteID) {
+		return gorm.ErrRecordNotFound
+	}
 	var blocks []models.NoteBlock
 	if err := ctx.db.Where("note_id = ?", noteID).Order("position ASC").Find(&blocks).Error; err != nil {
 		return err

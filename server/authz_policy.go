@@ -122,7 +122,7 @@ func isReadViaPost(path string) bool {
 // plugin management, and user administration (the latter added in a later phase).
 func isSystemPath(path string) bool {
 	switch path {
-	case "/admin/overview", "/admin/settings", "/plugins/manage", "/admin/users":
+	case "/admin/overview", "/admin/settings", "/plugins/manage", "/admin/users", "/logs", "/log":
 		return true
 	case "/v1/plugin/enable", "/v1/plugin/disable", "/v1/plugin/settings", "/v1/plugin/purge-data", "/v1/plugins/manage":
 		return true
@@ -133,6 +133,8 @@ func isSystemPath(path string) bool {
 		strings.HasPrefix(path, "/v1/admin/settings"):
 		return true
 	case strings.HasPrefix(path, "/v1/user"): // /v1/user, /v1/users, /v1/user/delete (admin user management)
+		return true
+	case strings.HasPrefix(path, "/v1/log"): // /v1/logs, /v1/log, /v1/logs/entity — global audit log (admin only)
 		return true
 	}
 	return false

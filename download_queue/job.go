@@ -21,9 +21,9 @@ const (
 )
 
 const (
-	JobSourceDownload        = "download"
-	JobSourcePlugin          = "plugin"
-	JobSourceGroupExport     = "group-export"
+	JobSourceDownload         = "download"
+	JobSourcePlugin           = "plugin"
+	JobSourceGroupExport      = "group-export"
 	JobSourceGroupImportParse = "group-import-parse"
 	JobSourceGroupImportApply = "group-import-apply"
 )
@@ -50,11 +50,12 @@ type DownloadJob struct {
 	Warnings   []string `json:"warnings,omitempty"`
 
 	// Internal fields (not serialized to JSON)
-	creator *query_models.ResourceFromRemoteCreator
-	runFn   func(ctx context.Context, j *DownloadJob, p ProgressSink) error
-	ctx     context.Context
-	cancel  context.CancelFunc
-	mu      sync.RWMutex
+	creator     *query_models.ResourceFromRemoteCreator
+	runFn       func(ctx context.Context, j *DownloadJob, p ProgressSink) error
+	ctx         context.Context
+	cancel      context.CancelFunc
+	mu          sync.RWMutex
+	ownerUserID *uint // RBAC: user that created the job (export download ownership)
 }
 
 // UpdateProgress safely updates the job's progress fields
@@ -243,6 +244,21 @@ func (j *DownloadJob) GetResultPath() string {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 	return j.ResultPath
+}
+
+// SetOwnerUserID records the user that created the job. Used for RBAC ownership
+// checks (e.g. only the creator or an admin may download a group-export tar).
+func (j *DownloadJob) SetOwnerUserID(id uint) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.ownerUserID = &id
+}
+
+// GetOwnerUserID returns the user that created the job, or nil if unset.
+func (j *DownloadJob) GetOwnerUserID() *uint {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.ownerUserID
 }
 
 // Snapshot returns a shallow value-copy of the job's exported fields. The

@@ -61,7 +61,18 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromNotes(query *query_models.Bulk
 		return fmt.Errorf("at least one tag ID is required")
 	}
 
+	uniqueNoteIds := deduplicateUints(query.ID)
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		// RBAC: verify all note IDs are visible (the scope callback filters this
+		// Count) so a group-limited principal cannot strip tags from out-of-subtree
+		// notes via the raw DELETE below.
+		var noteCount int64
+		if err := tx.Model(&models.Note{}).Where("id IN ?", uniqueNoteIds).Count(&noteCount).Error; err != nil {
+			return err
+		}
+		if int(noteCount) != len(uniqueNoteIds) {
+			return fmt.Errorf("one or more notes not found")
+		}
 		return tx.Exec(
 			"DELETE FROM note_tags WHERE note_id IN ? AND tag_id IN ?",
 			query.ID, query.EditedId,
@@ -78,8 +89,18 @@ func (ctx *MahresourcesContext) BulkAddGroupsToNotes(query *query_models.BulkEdi
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)
+	uniqueNoteIds := deduplicateUints(query.ID)
 
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		// RBAC: verify target notes are visible (scope callback filters this Count).
+		var noteCount int64
+		if err := tx.Model(&models.Note{}).Where("id IN ?", uniqueNoteIds).Count(&noteCount).Error; err != nil {
+			return err
+		}
+		if int(noteCount) != len(uniqueNoteIds) {
+			return fmt.Errorf("one or more notes not found")
+		}
+
 		var groupCount int64
 		if err := tx.Model(&models.Group{}).Where("id IN ?", uniqueEditedIds).Count(&groupCount).Error; err != nil {
 			return err

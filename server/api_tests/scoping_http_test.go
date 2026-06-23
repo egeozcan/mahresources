@@ -162,6 +162,96 @@ func TestScopedUser_ExportConfined(t *testing.T) {
 	}
 }
 
+func TestScopedUser_CannotMutateOutsideBlock(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildScopingFixture(t, tc)
+
+	// A block on the out-of-subtree note.
+	block := &models.NoteBlock{NoteID: f.nOutID, Type: "text", Position: "a", Content: []byte(`{"text":"secret"}`), State: []byte("{}")}
+	if err := tc.DB.Create(block).Error; err != nil {
+		t.Fatalf("create block: %v", err)
+	}
+
+	h := map[string]string{"Accept": "application/json", "Authorization": f.bearer, "Content-Type": "application/json"}
+	resp := doReq(tc, http.MethodPut, "/v1/note/block?id="+itoa(int(block.ID)), h, nil,
+		strings.NewReader(`{"content":{"text":"hacked"}}`))
+	if resp.Code >= 200 && resp.Code < 300 {
+		t.Fatalf("scoped user should not edit a block of an out-of-subtree note, got %d", resp.Code)
+	}
+
+	// The block content is unchanged.
+	var after models.NoteBlock
+	tc.DB.First(&after, block.ID)
+	if strings.Contains(string(after.Content), "hacked") {
+		t.Fatalf("out-of-subtree block was modified: %s", after.Content)
+	}
+}
+
+func TestScopedUser_BulkOpRejectsOutsideIDs(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildScopingFixture(t, tc)
+	tag := &models.Tag{Name: "sf-tag"}
+	tc.DB.Create(tag)
+
+	h := map[string]string{"Accept": "application/json", "Authorization": f.bearer, "Content-Type": "application/x-www-form-urlencoded"}
+	resp := doReq(tc, http.MethodPost, "/v1/notes/addTags", h, nil,
+		strings.NewReader("ID="+itoa(int(f.nOutID))+"&EditedId="+itoa(int(tag.ID))))
+	if resp.Code >= 200 && resp.Code < 300 {
+		t.Fatalf("bulk addTags to an out-of-subtree note should fail, got %d", resp.Code)
+	}
+
+	// The out-of-subtree note did not get the tag.
+	var count int64
+	tc.DB.Table("note_tags").Where("note_id = ? AND tag_id = ?", f.nOutID, tag.ID).Count(&count)
+	if count != 0 {
+		t.Fatalf("out-of-subtree note must not have been tagged")
+	}
+}
+
+func TestScopedUser_CannotReadAuditLogs(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildScopingFixture(t, tc)
+	h := map[string]string{"Accept": "application/json", "Authorization": f.bearer}
+
+	for _, path := range []string{"/v1/logs", "/v1/log?id=1", "/v1/logs/entity?type=note&id=1"} {
+		if c := doReq(tc, http.MethodGet, path, h, nil, nil).Code; c != http.StatusForbidden {
+			t.Fatalf("scoped user GET %s should be 403, got %d", path, c)
+		}
+	}
+}
+
+func TestExportDownloadOwnership(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildScopingFixture(t, tc)
+	adminBearer := roleBearer(t, tc, models.RoleAdmin)
+	adminH := map[string]string{"Accept": "application/json", "Authorization": adminBearer, "Content-Type": "application/json"}
+
+	// Admin submits an export job.
+	submit := doReq(tc, http.MethodPost, "/v1/groups/export", adminH, nil,
+		strings.NewReader(`{"rootGroupIds":[`+itoa(int(f.outsideID))+`]}`))
+	if submit.Code != http.StatusAccepted {
+		t.Fatalf("admin export submit should be 202, got %d (%s)", submit.Code, submit.Body.String())
+	}
+	jobID := extractJSONString(submit.Body.String(), "jobId")
+	if jobID == "" {
+		t.Fatalf("no jobId in submit response: %s", submit.Body.String())
+	}
+
+	// A different (scoped) user must not be able to download the admin's archive.
+	other := doReq(tc, http.MethodGet, "/v1/exports/"+jobID+"/download",
+		map[string]string{"Authorization": f.bearer}, nil, nil)
+	if other.Code != http.StatusNotFound {
+		t.Fatalf("non-owner export download should be 404, got %d", other.Code)
+	}
+
+	// The owning admin passes the ownership check (not a 404).
+	owner := doReq(tc, http.MethodGet, "/v1/exports/"+jobID+"/download",
+		map[string]string{"Authorization": adminBearer}, nil, nil)
+	if owner.Code == http.StatusNotFound {
+		t.Fatalf("owner/admin export download should not be 404")
+	}
+}
+
 func TestScopedUser_WriteOutsideSubtreeRejected(t *testing.T) {
 	tc := setupAuthEnv(t)
 	f := buildScopingFixture(t, tc)

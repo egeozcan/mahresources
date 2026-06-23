@@ -13,6 +13,7 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/archive"
+	"mahresources/auth"
 	"mahresources/download_queue"
 	"mahresources/server/api_handlers"
 )
@@ -32,6 +33,8 @@ func (m *mockExporter) StreamExport(_ context.Context, _ *application_context.Ex
 }
 
 func (m *mockExporter) GroupVisible(_ uint) bool { return true }
+
+func (m *mockExporter) Principal() *auth.Principal { return auth.SystemPrincipal() }
 
 func (m *mockExporter) DownloadManager() *download_queue.DownloadManager {
 	return nil
