@@ -1,3 +1,7 @@
+// CSRF token wiring — imported first so window.fetch is wrapped before any
+// other module can capture a reference to it.
+import './csrf.js';
+
 // Import Alpine.js and plugins
 import Alpine from 'alpinejs';
 import morph from '@alpinejs/morph';

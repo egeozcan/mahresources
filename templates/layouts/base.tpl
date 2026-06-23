@@ -29,6 +29,8 @@
     <meta name="theme-color" content="#ffffff">
     {# BH-036: expose the export-retention window (ms) so downloadCockpit can render per-job expiry timestamps. #}
     <meta name="x-export-retention-ms" content="{{ exportRetentionMs|default:0 }}">
+    {# CSRF synchronizer token: read by the JS fetch/form layer. Empty when auth is off. #}
+    <meta name="csrf-token" content="{{ csrfToken|default:'' }}">
     {% block head %}{% endblock %}
     {% plugin_slot "head" %}
 </head>

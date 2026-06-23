@@ -51,6 +51,7 @@ func main() {
 
 	rootCmd.AddCommand(commands.NewAuthCmd(c, opts))
 	rootCmd.AddCommand(commands.NewTokensCmd(c, opts))
+	rootCmd.AddCommand(commands.NewUsersCmd(c, opts))
 	rootCmd.AddCommand(commands.NewTagCmd(c, opts))
 	rootCmd.AddCommand(commands.NewTagsCmd(c, opts, &page))
 	rootCmd.AddCommand(commands.NewCategoryCmd(c, opts))

@@ -25,9 +25,13 @@ func withAuthentication(appCtx *application_context.MahresourcesContext, next ht
 			return
 		}
 
-		principal := resolvePrincipal(appCtx, r)
+		principal, csrfToken := resolvePrincipal(appCtx, r)
 		if principal != nil {
-			r = r.WithContext(auth.WithPrincipal(r.Context(), principal))
+			ctx := auth.WithPrincipal(r.Context(), principal)
+			if csrfToken != "" {
+				ctx = auth.WithCSRFToken(ctx, csrfToken)
+			}
+			r = r.WithContext(ctx)
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -53,24 +57,26 @@ func withAuthentication(appCtx *application_context.MahresourcesContext, next ht
 }
 
 // resolvePrincipal attempts to identify the caller from a Bearer API token first
-// (non-browser clients), then the session cookie. Returns nil when neither
-// yields a valid, enabled account.
-func resolvePrincipal(appCtx *application_context.MahresourcesContext, r *http.Request) *auth.Principal {
+// (non-browser clients), then the session cookie. Returns a nil principal when
+// neither yields a valid, enabled account. The second return value is the
+// session's CSRF token, set only for cookie-authenticated requests ("" for
+// Bearer, which carries no ambient cookie and is exempt from CSRF).
+func resolvePrincipal(appCtx *application_context.MahresourcesContext, r *http.Request) (*auth.Principal, string) {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		raw := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
 		if user, _, err := appCtx.ValidateApiToken(raw); err == nil {
-			return auth.FromUser(user)
+			return auth.FromUser(user), ""
 		}
 		// An explicit but invalid bearer token is a failed auth attempt; do not
 		// fall through to cookie resolution.
-		return nil
+		return nil, ""
 	}
 	if c, err := r.Cookie(appCtx.SessionCookieName()); err == nil {
-		if user, _, err := appCtx.ValidateSession(c.Value); err == nil {
-			return auth.FromUser(user)
+		if user, session, err := appCtx.ValidateSession(c.Value); err == nil {
+			return auth.FromUser(user), session.CsrfToken
 		}
 	}
-	return nil
+	return nil, ""
 }
 
 // isPublicPath lists the paths reachable without authentication so a logged-out

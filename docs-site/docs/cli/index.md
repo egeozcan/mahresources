@@ -208,3 +208,9 @@ sidebar_label: CLI
 | `mr token create` | Mint a new API token | [Details](./token/create.md) |
 | `mr token list` | List your API tokens | [Details](./token/list.md) |
 | `mr token revoke` | Revoke one of your API tokens | [Details](./token/revoke.md) |
+| `mr user` | Administer user accounts (admin only) | [Details](./user/index.md) |
+| `mr user create` | Create a user account | [Details](./user/create.md) |
+| `mr user delete` | Delete a user account | [Details](./user/delete.md) |
+| `mr user get` | Show a single user account | [Details](./user/get.md) |
+| `mr user list` | List user accounts | [Details](./user/list.md) |
+| `mr user update` | Update a user account | [Details](./user/update.md) |

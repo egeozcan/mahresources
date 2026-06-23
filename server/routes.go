@@ -124,6 +124,9 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		if p := auth.PrincipalFromContext(request.Context()); p != nil && !p.SuperUser {
 			ctx["currentUser"] = p
 		}
+		// CSRF synchronizer token for the page (meta tag + form fields). Empty
+		// when auth is off or for Bearer requests, where CSRF is not enforced.
+		ctx["csrfToken"] = auth.CSRFTokenFromContext(request.Context())
 
 		// BH-036: expose the export-retention window to every template context so
 		// the admin-export helper text and the per-job expiry label in the
@@ -346,11 +349,14 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 
 	// Authentication routes. The login page is a standalone template (it must be
 	// reachable when logged out, so it is not wrapped with plugin context).
+	// One shared rate limiter throttles failed logins from both the web form and
+	// the JSON API (no-op when -login-max-attempts is 0).
+	loginLimiter := newLoginRateLimiter(appContext.LoginRateLimit(), appContext.LoginRateWindow())
 	router.Methods(http.MethodGet).Path("/login").HandlerFunc(
 		template_handlers.RenderTemplate("login.tpl", template_context_providers.LoginContextProvider(appContext)))
-	router.Methods(http.MethodPost).Path("/login").HandlerFunc(LoginSubmitHandler(appContext))
+	router.Methods(http.MethodPost).Path("/login").HandlerFunc(LoginSubmitHandler(appContext, loginLimiter))
 	router.Methods(http.MethodGet, http.MethodPost).Path("/logout").HandlerFunc(LogoutHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/auth/login").HandlerFunc(APILoginHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/auth/login").HandlerFunc(APILoginHandler(appContext, loginLimiter))
 	router.Methods(http.MethodPost).Path("/v1/auth/logout").HandlerFunc(APILogoutHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/auth/me").HandlerFunc(APIMeHandler(appContext))
 

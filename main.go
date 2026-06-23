@@ -184,6 +184,8 @@ func main() {
 	sessionCookieSecure := flag.Bool("session-cookie-secure", os.Getenv("SESSION_COOKIE_SECURE") == "1", "Mark the session cookie Secure (HTTPS-only) (env: SESSION_COOKIE_SECURE=1)")
 	createAdminUser := flag.String("create-admin-user", os.Getenv("CREATE_ADMIN_USER"), "Bootstrap: create or reset this admin username at startup (env: CREATE_ADMIN_USER)")
 	createAdminPassword := flag.String("create-admin-password", os.Getenv("CREATE_ADMIN_PASSWORD"), "Bootstrap: password for -create-admin-user (env: CREATE_ADMIN_PASSWORD)")
+	loginMaxAttempts := flag.Int("login-max-attempts", parseIntEnv("LOGIN_MAX_ATTEMPTS", 0), "Max failed login attempts per client IP within -login-attempt-window before throttling with HTTP 429; 0 disables (env: LOGIN_MAX_ATTEMPTS)")
+	loginAttemptWindow := flag.Duration("login-attempt-window", parseDurationEnv("LOGIN_ATTEMPT_WINDOW", 15*time.Minute), "Sliding window for -login-max-attempts and the lockout duration once it is hit (env: LOGIN_ATTEMPT_WINDOW)")
 
 	flag.Parse()
 
@@ -265,6 +267,8 @@ func main() {
 		AuthEnabled:                  *authEnabled,
 		SessionTTL:                   *sessionTTL,
 		SessionCookieSecure:          *sessionCookieSecure,
+		LoginRateLimit:               *loginMaxAttempts,
+		LoginRateWindow:              *loginAttemptWindow,
 		CreateAdminUser:              *createAdminUser,
 		CreateAdminPassword:          *createAdminPassword,
 	}

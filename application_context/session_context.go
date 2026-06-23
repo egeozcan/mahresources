@@ -26,10 +26,15 @@ func (ctx *MahresourcesContext) CreateSession(userID uint, ttl time.Duration, us
 	if err != nil {
 		return "", nil, err
 	}
+	csrf, err := auth.GenerateToken()
+	if err != nil {
+		return "", nil, err
+	}
 	now := time.Now()
 	session := &models.Session{
 		UserId:     userID,
 		TokenHash:  auth.HashToken(raw),
+		CsrfToken:  csrf,
 		ExpiresAt:  now.Add(ttl),
 		LastSeenAt: now,
 		UserAgent:  userAgent,

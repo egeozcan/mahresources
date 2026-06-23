@@ -30,7 +30,7 @@
                        class="w-full border border-stone-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500" />
             </div>
             <button type="submit"
-                    class="w-full bg-amber-600 hover:bg-amber-700 text-white font-mono py-2 rounded focus:outline-none focus:ring-2 focus:ring-amber-500">
+                    class="w-full bg-amber-700 hover:bg-amber-800 text-white font-mono py-2 rounded focus:outline-none focus:ring-2 focus:ring-amber-500">
                 Sign in
             </button>
         </form>

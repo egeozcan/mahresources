@@ -193,16 +193,16 @@ func withAuthorization(appCtx *application_context.MahresourcesContext, next htt
 			next.ServeHTTP(w, r)
 			return
 		}
-		denyAccess(w, r)
+		denyAccess(appCtx, w, r)
 	})
 }
 
-func denyAccess(w http.ResponseWriter, r *http.Request) {
+func denyAccess(appCtx *application_context.MahresourcesContext, w http.ResponseWriter, r *http.Request) {
 	if wantsJSONResponse(r) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "insufficient permissions"})
 		return
 	}
-	http.Error(w, "Forbidden: insufficient permissions for your role", http.StatusForbidden)
+	renderForbiddenPage(appCtx, w, r, "Your role does not have permission to view this page.")
 }

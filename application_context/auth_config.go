@@ -28,3 +28,22 @@ func (ctx *MahresourcesContext) SessionTTL() time.Duration {
 	}
 	return ctx.Config.SessionTTL
 }
+
+// LoginRateLimit returns the max failed login attempts per client IP within
+// LoginRateWindow before throttling. 0 (the default) disables rate-limiting.
+func (ctx *MahresourcesContext) LoginRateLimit() int {
+	if ctx.Config.LoginRateLimit < 0 {
+		return 0
+	}
+	return ctx.Config.LoginRateLimit
+}
+
+// LoginRateWindow returns the sliding window over which failed logins are
+// counted (and the lockout duration once the limit is hit), defaulting to 15
+// minutes when rate-limiting is enabled but no window is configured.
+func (ctx *MahresourcesContext) LoginRateWindow() time.Duration {
+	if ctx.Config.LoginRateWindow <= 0 {
+		return 15 * time.Minute
+	}
+	return ctx.Config.LoginRateWindow
+}

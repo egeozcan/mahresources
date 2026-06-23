@@ -73,7 +73,10 @@ func TestAccountSelfService(t *testing.T) {
 		strings.NewReader(`{"username":"selfuser","password":"origpw"}`))
 	cookie := sessionCookie(t, login)
 	jsonCookie := []*http.Cookie{cookie}
-	h := map[string]string{"Accept": "application/json", "Content-Type": "application/json"}
+	// Cookie-authenticated state-changing requests must carry the CSRF token, as
+	// a real browser does (token published in the page meta tag / echoed by JS).
+	csrf := csrfFor(t, tc, cookie)
+	h := map[string]string{"Accept": "application/json", "Content-Type": "application/json", "X-CSRF-Token": csrf}
 
 	// Mint an API token for self.
 	mint := doReq(tc, http.MethodPost, "/v1/account/tokens", h, jsonCookie, strings.NewReader(`{"name":"cli"}`))

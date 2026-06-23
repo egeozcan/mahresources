@@ -124,6 +124,13 @@ type MahresourcesConfig struct {
 	SessionCookieName string
 	// SessionCookieSecure marks the session cookie Secure (HTTPS-only).
 	SessionCookieSecure bool
+	// LoginRateLimit is the number of failed login attempts permitted from a
+	// single client IP within LoginRateWindow before further attempts are
+	// throttled (HTTP 429). 0 disables login rate-limiting.
+	LoginRateLimit int
+	// LoginRateWindow is the sliding window over which failed login attempts are
+	// counted (and the lockout duration once the limit is hit).
+	LoginRateWindow time.Duration
 }
 
 // MahresourcesInputConfig holds all configuration options that can be passed
@@ -211,6 +218,11 @@ type MahresourcesInputConfig struct {
 	SessionTTL time.Duration
 	// SessionCookieSecure marks the session cookie Secure (HTTPS-only).
 	SessionCookieSecure bool
+	// LoginRateLimit caps failed login attempts per client IP within
+	// LoginRateWindow before throttling (0 disables it).
+	LoginRateLimit int
+	// LoginRateWindow is the sliding window for LoginRateLimit.
+	LoginRateWindow time.Duration
 	// CreateAdminUser/CreateAdminPassword bootstrap an admin account at startup
 	// when set. Idempotent: an existing account with that username is reset to an
 	// enabled admin with the given password.
@@ -905,6 +917,8 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		SessionTTL:                   sessionTTL,
 		SessionCookieName:            "mr_session",
 		SessionCookieSecure:          cfg.SessionCookieSecure,
+		LoginRateLimit:               cfg.LoginRateLimit,
+		LoginRateWindow:              cfg.LoginRateWindow,
 	}), db, mainFs
 }
 

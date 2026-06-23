@@ -29,14 +29,21 @@ func startSession(appCtx *application_context.MahresourcesContext, w http.Respon
 }
 
 // LoginSubmitHandler handles the browser login form POST.
-func LoginSubmitHandler(appCtx *application_context.MahresourcesContext) http.HandlerFunc {
+func LoginSubmitHandler(appCtx *application_context.MahresourcesContext, limiter *loginRateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		next := safeLocalPath(r.FormValue("next"), "/dashboard")
+		ip := clientIP(r)
+		if !limiter.allowed(ip) {
+			http.Redirect(w, r, "/login?error=rate&next="+url.QueryEscape(next), http.StatusFound)
+			return
+		}
 		if _, err := startSession(appCtx, w, r, r.FormValue("username"), r.FormValue("password")); err != nil {
+			limiter.recordFailure(ip)
 			http.Redirect(w, r, "/login?error=1&next="+url.QueryEscape(next), http.StatusFound)
 			return
 		}
+		limiter.reset(ip)
 		http.Redirect(w, r, next, http.StatusFound)
 	}
 }
@@ -54,14 +61,21 @@ func LogoutHandler(appCtx *application_context.MahresourcesContext) http.Handler
 }
 
 // APILoginHandler authenticates via JSON or form body and returns the user.
-func APILoginHandler(appCtx *application_context.MahresourcesContext) http.HandlerFunc {
+func APILoginHandler(appCtx *application_context.MahresourcesContext, limiter *loginRateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ip := clientIP(r)
+		if !limiter.allowed(ip) {
+			writeAuthJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many login attempts; try again later"})
+			return
+		}
 		username, password := readCredentials(r)
 		user, err := startSession(appCtx, w, r, username, password)
 		if err != nil {
+			limiter.recordFailure(ip)
 			writeAuthJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 			return
 		}
+		limiter.reset(ip)
 		writeAuthJSON(w, http.StatusOK, user)
 	}
 }
@@ -95,6 +109,9 @@ func APIMeHandler(appCtx *application_context.MahresourcesContext) http.HandlerF
 			"isAdmin":      p.IsAdmin(),
 			"canWrite":     p.CanWrite(),
 			"superUser":    p.SuperUser,
+			// CSRF token for cookie-authenticated SPA/CLI clients to echo back on
+			// state-changing requests (empty for Bearer auth, which is exempt).
+			"csrfToken": auth.CSRFTokenFromContext(r.Context()),
 		})
 	}
 }

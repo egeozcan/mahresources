@@ -15,7 +15,12 @@ func LoginContextProvider(_ *application_context.MahresourcesContext) func(reque
 		ctx := StaticTemplateCtx(request)
 		ctx["pageTitle"] = "Sign in"
 		ctx["next"] = request.URL.Query().Get("next")
-		if request.URL.Query().Get("error") != "" {
+		switch request.URL.Query().Get("error") {
+		case "":
+			// no error
+		case "rate":
+			ctx["loginError"] = "Too many login attempts. Please wait and try again."
+		default:
 			ctx["loginError"] = "Invalid username or password."
 		}
 		return ctx
