@@ -130,6 +130,8 @@ func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor
 		}
 	}
 
+	ctx.maybeRebalanceBlockPositions(editor.NoteID)
+
 	return &block, nil
 }
 
@@ -381,6 +383,8 @@ func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]st
 		}
 	}
 
+	ctx.maybeRebalanceBlockPositions(noteID)
+
 	return nil
 }
 
@@ -455,6 +459,31 @@ func syncFirstTextBlockToDescriptionTx(tx *gorm.DB, noteID uint) error {
 	}
 
 	return tx.Model(&models.Note{}).Where("id = ?", noteID).Update("description", content.Text).Error
+}
+
+// rebalanceThreshold is the maximum position-string length tolerated before a
+// note's block positions are auto-rebalanced. Kept well under the size:64
+// Position column cap so growth never reaches the hard varchar(64) insert
+// failure on Postgres (SQLite would otherwise silently keep growing).
+const rebalanceThreshold = 8
+
+// maybeRebalanceBlockPositions auto-rebalances a note's block positions when any
+// position string has grown past rebalanceThreshold. Best-effort and called
+// after a create/reorder commits; failures are logged, not propagated.
+func (ctx *MahresourcesContext) maybeRebalanceBlockPositions(noteID uint) {
+	var positions []string
+	if err := ctx.db.Model(&models.NoteBlock{}).
+		Where("note_id = ?", noteID).
+		Pluck("position", &positions).Error; err != nil {
+		log.Printf("Warning: failed to read positions for rebalance check on note %d: %v", noteID, err)
+		return
+	}
+	if !lib.NeedsRebalancing(positions, rebalanceThreshold) {
+		return
+	}
+	if err := ctx.RebalanceBlockPositions(noteID); err != nil {
+		log.Printf("Warning: auto-rebalance failed for note %d: %v", noteID, err)
+	}
 }
 
 // RebalanceBlockPositions normalizes block positions for a note to prevent position string growth.

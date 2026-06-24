@@ -155,6 +155,29 @@ func TestUpdateBlockContent_RejectsNull(t *testing.T) {
 	assert.Error(t, err, "null content must be rejected")
 }
 
+// D3: creating a block whose note has an over-long position string triggers an
+// automatic rebalance, so positions never grow unbounded toward the size:64 cap.
+func TestCreateBlock_AutoRebalancesLongPositions(t *testing.T) {
+	ctx := createBlockTestContext(t)
+	note, err := createTestNote(ctx, "n")
+	require.NoError(t, err)
+
+	// Seed a block with an artificially long position (simulates accumulated
+	// growth from many same-spot insertions). 12 > rebalanceThreshold (8).
+	_, err = ctx.CreateBlock(&query_models.NoteBlockEditor{
+		NoteID: note.ID, Type: "divider", Position: "aaaaaaaaaaaa", Content: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+
+	var positions []string
+	require.NoError(t, ctx.db.Model(&models.NoteBlock{}).
+		Where("note_id = ?", note.ID).Pluck("position", &positions).Error)
+	require.NotEmpty(t, positions)
+	for _, p := range positions {
+		assert.LessOrEqual(t, len(p), 8, "positions should be auto-rebalanced under the threshold")
+	}
+}
+
 // B4: CreateBlock must also reject explicit null content (non-empty "null").
 func TestCreateBlock_RejectsNullContent(t *testing.T) {
 	ctx := createBlockTestContext(t)

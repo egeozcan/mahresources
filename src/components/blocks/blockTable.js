@@ -11,6 +11,19 @@ function getCacheKey(blockId, queryId, params) {
   return `${blockId}:${queryId}:${JSON.stringify(params || {})}`;
 }
 
+// Compare two table cell values for sorting. Null/undefined sort as empty (NOT
+// as 0 — the old `|| ''` mis-bucketed the numeric value 0). When both values
+// parse as finite numbers they compare numerically (so '100' sorts after '20');
+// otherwise they compare as natural-ordered strings.
+function compareCellValues(a, b) {
+  const av = a == null ? '' : a;
+  const bv = b == null ? '' : b;
+  const an = typeof av === 'number' ? av : (av !== '' && isFinite(Number(av)) ? Number(av) : null);
+  const bn = typeof bv === 'number' ? bv : (bv !== '' && isFinite(Number(bv)) ? Number(bv) : null);
+  if (an !== null && bn !== null) return an - bn;
+  return String(av).localeCompare(String(bv), undefined, { numeric: true });
+}
+
 function getCacheEntry(key) {
   return queryCache.get(key);
 }
@@ -116,9 +129,7 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode) {
       if (!col) return rows;
 
       return [...rows].sort((a, b) => {
-        const va = a[this.sortColumn] || '';
-        const vb = b[this.sortColumn] || '';
-        const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+        const cmp = compareCellValues(a[this.sortColumn], b[this.sortColumn]);
         return this.sortDirection === 'asc' ? cmp : -cmp;
       });
     },
@@ -299,8 +310,29 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode) {
       } else {
         this.queryParams[key] = value;
       }
+      this.queryParams = { ...this.queryParams }; // trigger reactivity
       this.saveContent();
       // Refresh data with new params
+      this.fetchQueryData(true);
+    },
+
+    // Rename a query param's key while preserving its value and order. Editing
+    // the key is what makes a freshly-added param usable (its name must match the
+    // placeholder the saved query expects).
+    renameQueryParam(oldKey, newKey) {
+      newKey = (newKey || '').trim();
+      if (newKey === oldKey) return;
+      const value = this.queryParams[oldKey];
+      const next = {};
+      for (const [k, v] of Object.entries(this.queryParams)) {
+        if (k === oldKey) {
+          if (newKey) next[newKey] = value; // drop the entry entirely if cleared
+        } else if (k !== newKey) {
+          next[k] = v;
+        }
+      }
+      this.queryParams = next;
+      this.saveContent();
       this.fetchQueryData(true);
     },
 

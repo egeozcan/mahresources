@@ -107,8 +107,11 @@ func (c CalendarBlockType) ValidateState(state json.RawMessage) error {
 		return err
 	}
 
-	if s.View != "" && s.View != "month" && s.View != "week" && s.View != "agenda" {
-		return errors.New("view must be 'month', 'week', or 'agenda'")
+	// Only the views the UI actually implements are accepted. "week" was
+	// previously allowed but has no renderer, so it produced a blank calendar;
+	// rejecting it keeps the stored contract in sync with what can be displayed.
+	if s.View != "" && s.View != "month" && s.View != "agenda" {
+		return errors.New("view must be 'month' or 'agenda'")
 	}
 
 	// Validate custom events

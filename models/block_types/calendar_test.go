@@ -216,11 +216,13 @@ func TestCalendar_ValidateState_AgendaView(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestCalendar_ValidateState_WeekView(t *testing.T) {
+func TestCalendar_ValidateState_WeekViewRejected(t *testing.T) {
+	// "week" has no renderer (the UI only offers Month/Agenda), so it is no
+	// longer an accepted view value.
 	bt := CalendarBlockType{}
 	state := json.RawMessage(`{"view": "week"}`)
 	err := bt.ValidateState(state)
-	assert.NoError(t, err)
+	assert.Error(t, err)
 }
 
 func TestCalendar_ValidateState_InvalidView(t *testing.T) {
@@ -228,7 +230,7 @@ func TestCalendar_ValidateState_InvalidView(t *testing.T) {
 	state := json.RawMessage(`{"view": "invalid"}`)
 	err := bt.ValidateState(state)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "view must be 'month', 'week', or 'agenda'")
+	assert.Contains(t, err.Error(), "view must be 'month' or 'agenda'")
 }
 
 func TestCalendar_ValidateState_InvalidJSON(t *testing.T) {

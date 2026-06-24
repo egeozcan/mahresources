@@ -233,13 +233,13 @@ func TestRegistry_ValidateContent_Table_BothNotAllowed(t *testing.T) {
 func TestRegistry_ValidateState_Table_ValidSortDir(t *testing.T) {
 	bt := GetBlockType("table")
 
-	// Test asc
-	state := json.RawMessage(`{"sortColumn": "name", "sortDir": "asc"}`)
+	// Test asc (uses the real "sortDirection" key the frontend persists)
+	state := json.RawMessage(`{"sortColumn": "name", "sortDirection": "asc"}`)
 	err := bt.ValidateState(state)
 	assert.NoError(t, err)
 
 	// Test desc
-	state = json.RawMessage(`{"sortColumn": "name", "sortDir": "desc"}`)
+	state = json.RawMessage(`{"sortColumn": "name", "sortDirection": "desc"}`)
 	err = bt.ValidateState(state)
 	assert.NoError(t, err)
 
@@ -251,10 +251,10 @@ func TestRegistry_ValidateState_Table_ValidSortDir(t *testing.T) {
 
 func TestRegistry_ValidateState_Table_InvalidSortDir(t *testing.T) {
 	bt := GetBlockType("table")
-	state := json.RawMessage(`{"sortColumn": "name", "sortDir": "invalid"}`)
+	state := json.RawMessage(`{"sortColumn": "name", "sortDirection": "invalid"}`)
 	err := bt.ValidateState(state)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "sortDir must be 'asc' or 'desc'")
+	assert.Contains(t, err.Error(), "sortDirection must be 'asc' or 'desc'")
 }
 
 func TestUnregisterBlockType(t *testing.T) {

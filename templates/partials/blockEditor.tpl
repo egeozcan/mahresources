@@ -346,7 +346,7 @@
                                                         Refreshing...
                                                     </span>
                                                 </template>
-                                                <span x-show="isStatic" class="px-1.5 py-0.5 bg-stone-100 rounded text-stone-600">Static</span>
+                                                <span x-show="isStatic" class="px-1.5 py-0.5 bg-stone-100 rounded text-stone-600" title="Data is not refreshed in the background; it still reloads when the page loads.">No auto-refresh</span>
                                             </div>
                                             <button @click="manualRefresh()" :disabled="queryLoading" class="px-2 py-1 text-amber-700 hover:text-amber-800 disabled:opacity-50" title="Refresh data">
                                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -458,9 +458,9 @@
                                                 </template>
                                             </div>
                                             <template x-if="isQueryMode">
-                                                <label class="flex items-center gap-1.5 text-sm text-stone-600">
+                                                <label class="flex items-center gap-1.5 text-sm text-stone-600" title="Don't refresh the query result in the background. Data still reloads when the page is opened.">
                                                     <input type="checkbox" x-model="isStatic" @change="saveContent()" class="rounded border-stone-300">
-                                                    <span>Static</span>
+                                                    <span>No auto-refresh</span>
                                                 </label>
                                             </template>
                                         </div>
@@ -473,8 +473,14 @@
                                                     <span class="text-xs text-stone-500 pt-1">Params:</span>
                                                     <template x-for="(value, key) in queryParams" :key="key">
                                                         <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-stone-100 rounded text-xs">
-                                                            <span class="font-mono" x-text="key + '=' + value"></span>
-                                                            <button @click="removeQueryParam(key)" class="text-stone-400 hover:text-red-500">&times;</button>
+                                                            <input type="text" :value="key" @change="renameQueryParam(key, $event.target.value)"
+                                                                   class="font-mono w-20 px-1 bg-white border border-stone-300 rounded" placeholder="name"
+                                                                   aria-label="Parameter name">
+                                                            <span class="text-stone-400">=</span>
+                                                            <input type="text" :value="value" @change="updateQueryParam(key, $event.target.value)"
+                                                                   class="font-mono w-24 px-1 bg-white border border-stone-300 rounded" placeholder="value"
+                                                                   aria-label="Parameter value">
+                                                            <button @click="removeQueryParam(key)" class="text-stone-400 hover:text-red-500" aria-label="Remove parameter">&times;</button>
                                                         </span>
                                                     </template>
                                                     <button @click="addQueryParam()" class="text-xs text-amber-700 hover:underline">+ param</button>

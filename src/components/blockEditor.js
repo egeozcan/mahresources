@@ -499,6 +499,33 @@ export function blockEditor(noteId, initialBlocks = []) {
           nextChar = MAX_CHAR + 1;
         }
 
+        // Past the end of `before` but still inside `after`: we are already
+        // greater than before, so we only need something < after[i:]. Pick a char
+        // in [MIN_CHAR, after[i]) when there is room, else append MIN_CHAR and
+        // descend. Ported from Go lib/position.go to keep JS/Go parity (without
+        // this, e.g. positionBetween("a","aa") returned "aan" > "aa").
+        if (i >= before.length && i < after.length) {
+          const a = after.charCodeAt(i);
+          if (a > MIN_CHAR) {
+            let mid = Math.floor((MIN_CHAR + a) / 2);
+            if (mid >= a) mid = a - 1;
+            if (mid >= MIN_CHAR) {
+              result.push(String.fromCharCode(mid));
+              return result.join('');
+            }
+          }
+          result.push(String.fromCharCode(MIN_CHAR));
+          i++;
+          continue;
+        }
+
+        // Past BOTH strings: the prefix built so far equals `after`; returning it
+        // is the closest we can get for adjacent inputs (Go lib/position.go).
+        if (i >= before.length && i >= after.length) {
+          if (result.length === 0) return String.fromCharCode(MIN_CHAR);
+          return result.join('');
+        }
+
         if (prevChar === nextChar) {
           // Characters are equal, add to result and continue
           result.push(String.fromCharCode(prevChar));

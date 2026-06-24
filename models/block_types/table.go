@@ -19,9 +19,12 @@ type tableContent struct {
 }
 
 // tableState represents the state schema for table blocks.
+// The frontend (blockTable.js) persists the sort direction under the
+// "sortDirection" key; the JSON tag must match it or the validation below is a
+// silent no-op against real writes.
 type tableState struct {
-	SortColumn string `json:"sortColumn"`
-	SortDir    string `json:"sortDir"`
+	SortColumn    string `json:"sortColumn"`
+	SortDirection string `json:"sortDirection"`
 }
 
 // TableBlockType implements BlockType for table content.
@@ -62,8 +65,8 @@ func (t TableBlockType) ValidateState(state json.RawMessage) error {
 	if err := json.Unmarshal(state, &s); err != nil {
 		return err
 	}
-	if s.SortDir != "" && s.SortDir != "asc" && s.SortDir != "desc" {
-		return errors.New("sortDir must be 'asc' or 'desc'")
+	if s.SortDirection != "" && s.SortDirection != "asc" && s.SortDirection != "desc" {
+		return errors.New("sortDirection must be 'asc' or 'desc'")
 	}
 	return nil
 }

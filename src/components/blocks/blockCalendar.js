@@ -53,6 +53,11 @@ function isCacheStale(entry) {
   return entry && (Date.now() - entry.timestamp) >= STALE_THRESHOLD;
 }
 
+// Maximum custom events per calendar block. Must match the server cap
+// (models/block_types/calendar.go MaxCustomEvents) so the client never pushes a
+// 501st event locally and then gets a silent 400, leaving the UI out of sync.
+const MAX_CUSTOM_EVENTS = 500;
+
 // Color palette for auto-assigning calendar colors
 const COLOR_PALETTE = [
   '#3b82f6', // blue
@@ -76,8 +81,9 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
     // Calendar sources from content
     calendars: JSON.parse(JSON.stringify(block?.content?.calendars || [])),
 
-    // View state
-    view: block?.state?.view || 'month',
+    // View state. Normalize any unimplemented/legacy view (e.g. the old "week")
+    // to 'month' so a stored unknown value never renders a blank calendar.
+    view: block?.state?.view === 'agenda' ? 'agenda' : 'month',
     currentDate: block?.state?.currentDate ? new Date(block.state.currentDate) : new Date(),
 
     // Custom events stored in state
@@ -124,7 +130,7 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       return this.currentDate.getFullYear();
     },
 
-    // Date range for current view
+    // Date range for current view (the calendar month, used for display/labels).
     get dateRange() {
       const d = new Date(this.currentDate);
       if (this.view === 'month') {
@@ -139,6 +145,20 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
         end.setFullYear(end.getFullYear() + 1);
         return { start, end };
       }
+    },
+
+    // Range to actually fetch events for. In month view the grid renders leading
+    // and trailing padding days from the adjacent months (see monthDays), so the
+    // fetch must cover the whole visible 6-week grid — otherwise events on those
+    // padding cells (including ones the user just created) never load.
+    get fetchRange() {
+      if (this.view !== 'month') return this.dateRange;
+      const { start: first, end: last } = this.dateRange;
+      const start = new Date(first);
+      start.setDate(first.getDate() - first.getDay()); // back to start-of-week (Sunday)
+      const end = new Date(last);
+      end.setDate(last.getDate() + (6 - last.getDay())); // forward to end-of-week (Saturday)
+      return { start, end };
     },
 
     // Format date for API (using local time, not UTC)
@@ -173,7 +193,7 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
         return;
       }
 
-      const { start, end } = this.dateRange;
+      const { start, end } = this.fetchRange;
       const cacheKey = getCacheKey(this.block.id, this.formatDate(start), this.formatDate(end));
       const cacheEntry = getCacheEntry(cacheKey);
 
@@ -211,7 +231,13 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       try {
         const data = await this.fetchFromServer(start, end);
         setCacheEntry(cacheKey, data);
-        this.applyEventData(data);
+        // Only apply if the user has not navigated to a different range while the
+        // refresh was in flight; otherwise we'd flash the previous month's events.
+        const cur = this.fetchRange;
+        const curKey = getCacheKey(this.block.id, this.formatDate(cur.start), this.formatDate(cur.end));
+        if (curKey === cacheKey) {
+          this.applyEventData(data);
+        }
       } catch (err) {
         console.error('Background refresh failed:', err);
       } finally {
@@ -570,6 +596,13 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
     // Save event (create or update)
     async saveEvent() {
       if (!this.eventForm.title.trim()) return;
+
+      // Enforce the server's cap client-side before mutating local state, so we
+      // never push past the limit and then desync on a silent 400.
+      if (!this.editingEvent && this.customEvents.length >= MAX_CUSTOM_EVENTS) {
+        this.error = `Cannot add more than ${MAX_CUSTOM_EVENTS} events to a calendar.`;
+        return;
+      }
 
       let startDateTime, endDateTime;
       if (this.eventForm.allDay) {
