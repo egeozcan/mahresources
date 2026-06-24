@@ -69,7 +69,11 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode) {
 
     // Query mode configuration
     queryId: block?.content?.queryId || null,
-    queryParams: JSON.parse(JSON.stringify(block?.content?.queryParams || {})),
+    // Query params are edited as an ordered list of {id,key,value} rows so each
+    // row's identity is STABLE across key renames. Keying the editor by the
+    // mutable key (the old approach) destroyed the row mid-edit, losing the
+    // in-progress value. queryParams (the persisted form) is derived via a getter.
+    queryParamRows: Object.entries(block?.content?.queryParams || {}).map(([key, value]) => ({ id: crypto.randomUUID(), key, value })),
     isStatic: block?.content?.isStatic || false,
 
     // Query mode data
@@ -88,6 +92,17 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode) {
     // Computed: whether we're in query mode
     get isQueryMode() {
       return this.queryId != null;
+    },
+
+    // Persisted query params, derived from the editable rows. Rows with an empty
+    // (or whitespace) key are omitted; later rows win on a duplicate key.
+    get queryParams() {
+      const obj = {};
+      for (const r of this.queryParamRows) {
+        const k = (r.key || '').trim();
+        if (k) obj[k] = r.value;
+      }
+      return obj;
     },
 
     // Normalize a column: if it's a plain string, convert to {id, label} object
@@ -304,49 +319,37 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode) {
       this.saveContent();
     },
 
-    updateQueryParam(key, value) {
-      if (value === '' || value === null || value === undefined) {
-        delete this.queryParams[key];
-      } else {
-        this.queryParams[key] = value;
-      }
-      this.queryParams = { ...this.queryParams }; // trigger reactivity
-      this.saveContent();
-      // Refresh data with new params
-      this.fetchQueryData(true);
-    },
-
-    // Rename a query param's key while preserving its value and order. Editing
-    // the key is what makes a freshly-added param usable (its name must match the
-    // placeholder the saved query expects).
-    renameQueryParam(oldKey, newKey) {
-      newKey = (newKey || '').trim();
-      if (newKey === oldKey) return;
-      const value = this.queryParams[oldKey];
-      const next = {};
-      for (const [k, v] of Object.entries(this.queryParams)) {
-        if (k === oldKey) {
-          if (newKey) next[newKey] = value; // drop the entry entirely if cleared
-        } else if (k !== newKey) {
-          next[k] = v;
-        }
-      }
-      this.queryParams = next;
+    // Set a param row's value (by stable row id) and refresh.
+    updateParamValue(id, value) {
+      const row = this.queryParamRows.find(r => r.id === id);
+      if (!row) return;
+      row.value = value;
       this.saveContent();
       this.fetchQueryData(true);
     },
 
-    removeQueryParam(key) {
-      delete this.queryParams[key];
-      this.queryParams = { ...this.queryParams }; // trigger reactivity
+    // Rename a param row's key (by stable row id). The row identity is unchanged,
+    // so the value input the user may be tabbing into is never destroyed.
+    updateParamKey(id, key) {
+      const row = this.queryParamRows.find(r => r.id === id);
+      if (!row) return;
+      row.key = (key || '').trim();
+      this.saveContent();
+      this.fetchQueryData(true);
+    },
+
+    removeQueryParam(id) {
+      this.queryParamRows = this.queryParamRows.filter(r => r.id !== id);
       this.saveContent();
       this.fetchQueryData(true);
     },
 
     addQueryParam() {
-      const key = `param_${Object.keys(this.queryParams).length + 1}`;
-      this.queryParams[key] = '';
-      this.queryParams = { ...this.queryParams }; // trigger reactivity
+      // Generate a key that does not collide with an existing one.
+      const existing = new Set(this.queryParamRows.map(r => r.key));
+      let n = this.queryParamRows.length + 1;
+      while (existing.has(`param_${n}`)) n++;
+      this.queryParamRows.push({ id: crypto.randomUUID(), key: `param_${n}`, value: '' });
     },
 
     // --- Manual Mode Methods ---

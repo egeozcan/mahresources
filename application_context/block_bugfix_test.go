@@ -2,6 +2,8 @@ package application_context
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -212,6 +214,76 @@ func TestCreateBlock_AutoRebalancesLongPositions(t *testing.T) {
 	for _, p := range positions {
 		assert.LessOrEqual(t, len(p), 8, "positions should be auto-rebalanced under the threshold")
 	}
+}
+
+// Review #13: auto-rebalance triggered by a create must PRESERVE block order, not
+// just shorten positions. Uses 3 ordered blocks so order is actually verifiable.
+func TestCreateBlock_AutoRebalancePreservesOrder(t *testing.T) {
+	ctx := createBlockTestContext(t)
+	note, err := createTestNote(ctx, "n")
+	require.NoError(t, err)
+
+	a, err := ctx.CreateBlock(&query_models.NoteBlockEditor{NoteID: note.ID, Type: "divider", Position: "d", Content: json.RawMessage(`{}`)})
+	require.NoError(t, err)
+	b, err := ctx.CreateBlock(&query_models.NoteBlockEditor{NoteID: note.ID, Type: "divider", Position: "h", Content: json.RawMessage(`{}`)})
+	require.NoError(t, err)
+	// "zzzzzzzzzzzz" (12 chars) sorts last and exceeds the rebalance threshold,
+	// so creating it triggers the auto-rebalance over all three blocks.
+	c, err := ctx.CreateBlock(&query_models.NoteBlockEditor{NoteID: note.ID, Type: "divider", Position: "zzzzzzzzzzzz", Content: json.RawMessage(`{}`)})
+	require.NoError(t, err)
+
+	blocks, err := ctx.GetBlocksForNote(note.ID)
+	require.NoError(t, err)
+	require.Len(t, blocks, 3)
+	assert.Equal(t, a.ID, blocks[0].ID, "order A,B,C must be preserved through auto-rebalance")
+	assert.Equal(t, b.ID, blocks[1].ID)
+	assert.Equal(t, c.ID, blocks[2].ID)
+	for _, bl := range blocks {
+		assert.LessOrEqual(t, len(bl.Position), 8, "positions must be rebalanced under the threshold")
+	}
+}
+
+// Review #3: two text blocks at the SAME position must resolve the first text
+// block deterministically (position ASC, id ASC), so the older non-empty block
+// keeps owning the description instead of an empty later block wiping it.
+func TestCreateBlock_TiedPositionKeepsDescriptionDeterministic(t *testing.T) {
+	ctx := createBlockTestContext(t)
+	note, err := createTestNote(ctx, "n")
+	require.NoError(t, err)
+
+	_, err = ctx.CreateBlock(&query_models.NoteBlockEditor{NoteID: note.ID, Type: "text", Position: "d", Content: json.RawMessage(`{"text":"Hello"}`)})
+	require.NoError(t, err)
+	_, err = ctx.CreateBlock(&query_models.NoteBlockEditor{NoteID: note.ID, Type: "text", Position: "d", Content: json.RawMessage(`{"text":""}`)})
+	require.NoError(t, err)
+
+	var n models.Note
+	require.NoError(t, ctx.db.First(&n, note.ID).Error)
+	assert.Equal(t, "Hello", n.Description,
+		"with the id-ASC tiebreak the older 'Hello' block is first, so the description survives")
+}
+
+// Review #6: the ICS scheme allowlist accepts http(s) and rejects everything else.
+func TestICS_AllowedScheme(t *testing.T) {
+	for _, ok := range []string{"http://x/c.ics", "https://x/c.ics", "HTTPS://X/C.ics"} {
+		assert.True(t, allowedICSScheme(ok), "scheme should be allowed: %s", ok)
+	}
+	for _, bad := range []string{"file:///etc/passwd", "gopher://x/", "ftp://x/c.ics", "", "javascript:alert(1)", "not a url"} {
+		assert.False(t, allowedICSScheme(bad), "scheme should be rejected: %s", bad)
+	}
+}
+
+// Review #6: the runtime fetch must re-validate redirect targets, so an http(s)
+// URL that 302-redirects to a non-http(s) scheme is blocked (SSRF defense).
+func TestFetchICS_RejectsRedirectToNonHttpScheme(t *testing.T) {
+	ctx := createBlockTestContext(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "file:///etc/passwd", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	_, _, err := ctx.fetchAndCacheICS(srv.URL, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "redirect to non-http(s) URL blocked")
 }
 
 // B4: CreateBlock must also reject explicit null content (non-empty "null").

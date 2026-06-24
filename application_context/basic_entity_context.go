@@ -67,7 +67,7 @@ func (w *EntityWriter[T]) UpdateDescription(id uint, description string) error {
 			if err := tx.Table("note_blocks").
 				Select("id").
 				Where("note_id = ? AND type = ?", id, "text").
-				Order("position ASC").
+				Order("position ASC, id ASC").
 				Limit(1).
 				Find(&blocks).Error; err != nil {
 				return err

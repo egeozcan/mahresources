@@ -124,6 +124,18 @@ describe('XSS: link scheme sanitization (control-char bypass)', () => {
     expect(renderMarkdown('[x](vbscript:msgbox)')).not.toMatch(/<a\s/);
   });
 
+  it('blocks javascript: split by a zero-width space (U+200B)', () => {
+    expect(renderMarkdown('[x](java​script:foo)')).not.toMatch(/<a\s/);
+  });
+
+  it('blocks javascript: split by a soft hyphen (U+00AD)', () => {
+    expect(renderMarkdown('[x](java­script:foo)')).not.toMatch(/<a\s/);
+  });
+
+  it('blocks javascript: split by a word joiner (U+2060)', () => {
+    expect(renderMarkdown('[x](java⁠script:foo)')).not.toMatch(/<a\s/);
+  });
+
   it('still renders safe http/https/mailto links', () => {
     expect(renderMarkdown('[x](https://example.com)')).toMatch(/<a href="https:\/\/example\.com"/);
     expect(renderMarkdown('[x](http://example.com)')).toMatch(/<a href="http:\/\/example\.com"/);

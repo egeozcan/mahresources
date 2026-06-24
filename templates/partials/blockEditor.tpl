@@ -471,16 +471,16 @@
                                                 {# Query parameters #}
                                                 <div class="flex items-start gap-2 flex-wrap">
                                                     <span class="text-xs text-stone-500 pt-1">Params:</span>
-                                                    <template x-for="(value, key) in queryParams" :key="key">
+                                                    <template x-for="row in queryParamRows" :key="row.id">
                                                         <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-stone-100 rounded text-xs">
-                                                            <input type="text" :value="key" @change="renameQueryParam(key, $event.target.value)"
+                                                            <input type="text" :value="row.key" @change="updateParamKey(row.id, $event.target.value)"
                                                                    class="font-mono w-20 px-1 bg-white border border-stone-300 rounded" placeholder="name"
                                                                    aria-label="Parameter name">
                                                             <span class="text-stone-400">=</span>
-                                                            <input type="text" :value="value" @change="updateQueryParam(key, $event.target.value)"
+                                                            <input type="text" :value="row.value" @change="updateParamValue(row.id, $event.target.value)"
                                                                    class="font-mono w-24 px-1 bg-white border border-stone-300 rounded" placeholder="value"
                                                                    aria-label="Parameter value">
-                                                            <button @click="removeQueryParam(key)" class="text-stone-400 hover:text-red-500" aria-label="Remove parameter">&times;</button>
+                                                            <button @click="removeQueryParam(row.id)" class="text-stone-400 hover:text-red-500" aria-label="Remove parameter">&times;</button>
                                                         </span>
                                                     </template>
                                                     <button @click="addQueryParam()" class="text-xs text-amber-700 hover:underline">+ param</button>

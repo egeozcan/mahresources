@@ -189,7 +189,7 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 	// Sync description to first text block if blocks exist (backward compatibility)
 	if noteQuery.ID != 0 {
 		var blocks []models.NoteBlock
-		if err := tx.Where("note_id = ? AND type = ?", note.ID, "text").Order("position ASC").Limit(1).Find(&blocks).Error; err == nil && len(blocks) > 0 {
+		if err := tx.Where("note_id = ? AND type = ?", note.ID, "text").Order("position ASC, id ASC").Limit(1).Find(&blocks).Error; err == nil && len(blocks) > 0 {
 			content, _ := json.Marshal(map[string]string{"text": noteQuery.Description})
 			tx.Model(&blocks[0]).Update("content", content)
 		}
@@ -227,7 +227,7 @@ func (ctx *MahresourcesContext) GetNote(id uint) (*models.Note, error) {
 
 	return &note, ctx.db.Preload(clause.Associations).
 		Preload("Blocks", func(db *gorm.DB) *gorm.DB {
-			return db.Order("position ASC")
+			return db.Order("position ASC, id ASC")
 		}).
 		First(&note, id).Error
 }
@@ -379,7 +379,7 @@ func (ctx *MahresourcesContext) GetNoteByShareToken(token string) (*models.Note,
 	var note models.Note
 	err := ctx.db.
 		Preload("Blocks", func(db *gorm.DB) *gorm.DB {
-			return db.Order("position ASC")
+			return db.Order("position ASC, id ASC")
 		}).
 		Preload("Resources").
 		Preload("NoteType").

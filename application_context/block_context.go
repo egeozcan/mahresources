@@ -132,7 +132,11 @@ func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor
 		}
 	}
 
-	ctx.maybeRebalanceBlockPositions(editor.NoteID)
+	if ctx.maybeRebalanceBlockPositions(editor.NoteID) {
+		// A rebalance rewrote every position; refresh the returned block so its
+		// Position reflects the persisted value (API/CLI consumers read it).
+		ctx.db.First(&block, block.ID)
+	}
 
 	return &block, nil
 }
@@ -157,7 +161,7 @@ func (ctx *MahresourcesContext) GetBlocksForNote(noteID uint) ([]models.NoteBloc
 		return []models.NoteBlock{}, nil
 	}
 	var blocks []models.NoteBlock
-	err := ctx.db.Where("note_id = ?", noteID).Order("position ASC").Find(&blocks).Error
+	err := ctx.db.Where("note_id = ?", noteID).Order("position ASC, id ASC").Find(&blocks).Error
 	return blocks, err
 }
 
@@ -450,7 +454,7 @@ func seedFirstTextBlockFromDescription(db *gorm.DB, editor *query_models.NoteBlo
 func syncFirstTextBlockToDescriptionTx(tx *gorm.DB, noteID uint) error {
 	var blocks []models.NoteBlock
 	if err := tx.Where("note_id = ? AND type = ?", noteID, "text").
-		Order("position ASC").Limit(1).Find(&blocks).Error; err != nil {
+		Order("position ASC, id ASC").Limit(1).Find(&blocks).Error; err != nil {
 		return err
 	}
 
@@ -476,21 +480,24 @@ const rebalanceThreshold = 8
 
 // maybeRebalanceBlockPositions auto-rebalances a note's block positions when any
 // position string has grown past rebalanceThreshold. Best-effort and called
-// after a create/reorder commits; failures are logged, not propagated.
-func (ctx *MahresourcesContext) maybeRebalanceBlockPositions(noteID uint) {
+// after a create/reorder commits; failures are logged, not propagated. Returns
+// true if a rebalance actually ran (so callers can refresh stale in-memory rows).
+func (ctx *MahresourcesContext) maybeRebalanceBlockPositions(noteID uint) bool {
 	var positions []string
 	if err := ctx.db.Model(&models.NoteBlock{}).
 		Where("note_id = ?", noteID).
 		Pluck("position", &positions).Error; err != nil {
 		log.Printf("Warning: failed to read positions for rebalance check on note %d: %v", noteID, err)
-		return
+		return false
 	}
 	if !lib.NeedsRebalancing(positions, rebalanceThreshold) {
-		return
+		return false
 	}
 	if err := ctx.RebalanceBlockPositions(noteID); err != nil {
 		log.Printf("Warning: auto-rebalance failed for note %d: %v", noteID, err)
+		return false
 	}
+	return true
 }
 
 // RebalanceBlockPositions normalizes block positions for a note to prevent position string growth.
@@ -501,7 +508,7 @@ func (ctx *MahresourcesContext) RebalanceBlockPositions(noteID uint) error {
 		return gorm.ErrRecordNotFound
 	}
 	var blocks []models.NoteBlock
-	if err := ctx.db.Where("note_id = ?", noteID).Order("position ASC").Find(&blocks).Error; err != nil {
+	if err := ctx.db.Where("note_id = ?", noteID).Order("position ASC, id ASC").Find(&blocks).Error; err != nil {
 		return err
 	}
 

@@ -21,8 +21,10 @@ export function sharedCalendar(blockId, initialContent, initialState, shareToken
     // Calendar sources from content
     calendars: initialContent?.calendars || [],
 
-    // View state
-    view: initialState?.view || 'month',
+    // View state. Normalize any unimplemented/legacy view (e.g. the old "week")
+    // to 'month' so a stored unknown value never renders a blank calendar
+    // (mirrors blockCalendar.js).
+    view: initialState?.view === 'agenda' ? 'agenda' : 'month',
     currentDate: initialState?.currentDate ? new Date(initialState.currentDate) : new Date(),
 
     // Custom events stored in state
@@ -60,7 +62,7 @@ export function sharedCalendar(blockId, initialContent, initialState, shareToken
       return this.currentDate.getFullYear();
     },
 
-    // Date range for current view
+    // Date range for current view (the calendar month, used for display/labels).
     get dateRange() {
       const d = new Date(this.currentDate);
       if (this.view === 'month') {
@@ -75,6 +77,20 @@ export function sharedCalendar(blockId, initialContent, initialState, shareToken
         end.setFullYear(end.getFullYear() + 1);
         return { start, end };
       }
+    },
+
+    // Range to actually fetch events for. The month grid renders leading and
+    // trailing padding days from adjacent months, so the fetch must cover the
+    // whole visible 6-week grid — otherwise events on those padding cells never
+    // load (mirrors blockCalendar.js).
+    get fetchRange() {
+      if (this.view !== 'month') return this.dateRange;
+      const { start: first, end: last } = this.dateRange;
+      const start = new Date(first);
+      start.setDate(first.getDate() - first.getDay()); // back to start-of-week (Sunday)
+      const end = new Date(last);
+      end.setDate(last.getDate() + (6 - last.getDay())); // forward to end-of-week (Saturday)
+      return { start, end };
     },
 
     // Format date for API (using local time, not UTC)
@@ -114,7 +130,7 @@ export function sharedCalendar(blockId, initialContent, initialState, shareToken
       this.error = null;
 
       try {
-        const { start, end } = this.dateRange;
+        const { start, end } = this.fetchRange;
         const params = new URLSearchParams({
           start: this.formatDate(start),
           end: this.formatDate(end)

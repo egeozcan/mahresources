@@ -77,9 +77,11 @@ export function blockEditor(noteId, initialBlocks = []) {
           // A denylist on the raw string (.trim().startsWith('javascript:')) is
           // bypassable: browsers strip whitespace/control chars embedded in a URL
           // scheme, so "java\tscript:" resolves to "javascript:". Strip all
-          // whitespace + ASCII control chars first, then ALLOWLIST safe schemes
-          // (or relative URLs) rather than denylisting dangerous ones.
-          const cleaned = href.replace(/[\s\x00-\x1f]+/g, '').toLowerCase();
+          // whitespace, ASCII control chars, AND Unicode format/zero-width chars
+          // (\p{Cf}: U+200B, U+00AD, ... which JS \s does NOT cover) first, then
+          // ALLOWLIST safe schemes (or relative URLs) rather than denylisting.
+          const STRIP = /[\s\x00-\x1f]|\p{Cf}/gu;
+          const cleaned = href.replace(STRIP, '').toLowerCase();
           const hasScheme = /^[a-z][a-z0-9+.\-]*:/.test(cleaned);
           const safe = !hasScheme
               || cleaned.startsWith('http:')
@@ -90,7 +92,9 @@ export function blockEditor(noteId, initialBlocks = []) {
               return text;
           }
           // Defang control chars that survived in the original href so they
-          // cannot reconstitute a dangerous scheme in the attribute. (Quotes are
+          // cannot reconstitute a dangerous scheme in the attribute. Only ASCII
+          // control chars are browser-stripped from schemes; we deliberately keep
+          // regular whitespace here so legitimate URLs aren't mangled. (Quotes are
           // already HTML-escaped above, blocking attribute breakout.)
           const safeHref = href.replace(/[\x00-\x1f]/g, '');
           return `<a href="${safeHref}" class="text-blue-600 hover:underline" target="_blank" rel="noopener">${text}</a>`;
@@ -346,6 +350,9 @@ export function blockEditor(noteId, initialBlocks = []) {
           this.blocks[idx] = { ...this.blocks[idx], content: updated.content, updatedAt: updated.updatedAt };
         }
         delete this._prevContent[blockId];
+        // Clear the pending entry unless a newer edit superseded this save, so
+        // the unload flush doesn't redundantly re-PUT already-persisted content.
+        if (this._pendingUpdates[blockId] === content) delete this._pendingUpdates[blockId];
       } catch (err) {
         // Roll back the optimistic content so the UI reflects server truth and
         // the user is not misled into thinking an unsaved edit persisted.
@@ -398,6 +405,10 @@ export function blockEditor(noteId, initialBlocks = []) {
           throw new Error(errorData.error || `Failed to delete block: ${res.status}`);
         }
         this.blocks = this.blocks.filter(b => b.id !== blockId);
+        // Drop any pending optimistic state so the unload flush can never re-PUT
+        // a now-deleted block (which the server would reject).
+        delete this._pendingUpdates[blockId];
+        delete this._prevContent[blockId];
         this.announce('Block deleted');
         // Move focus to a sensible neighbor (the block now occupying the deleted
         // slot, else the add-block trigger) so keyboard users are not stranded.

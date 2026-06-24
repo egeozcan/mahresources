@@ -1494,7 +1494,7 @@ func (ctx *MahresourcesContext) loadNotePayload(id uint, plan *exportPlan) (*arc
 		Preload("Groups").
 		Preload("NoteType").
 		Preload("Blocks", func(db *gorm.DB) *gorm.DB {
-			return db.Order("position ASC")
+			return db.Order("position ASC, id ASC")
 		}).
 		First(&n, id).Error; err != nil {
 		return nil, err
