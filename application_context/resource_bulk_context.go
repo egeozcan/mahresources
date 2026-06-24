@@ -524,12 +524,11 @@ func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileClea
 	ctx.Logger().Info(models.LogActionDelete, "resource", &resourceId, resource.Name, "Deleted resource", nil)
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 
-	// BH-020: scrub dangling references from note_blocks. The single-item
-	// DeleteResource scrubs in its own transaction; this covers the bulk-delete
-	// and resource-merge paths, which both route through deleteResourceDBOnly.
-	if err := ScrubResourceFromBlocks(ctx.db, resourceId); err != nil {
-		return nil, err
-	}
+	// NOTE: block-reference scrubbing is NOT done here. The single-item
+	// DeleteResource scrubs in its own transaction; the bulk-delete and
+	// resource-merge callers scrub all of their ids in ONE traversal
+	// (ScrubResourcesFromBlocks) so the cost stays O(blocks), not
+	// O(resources × blocks).
 
 	return &FileCleanupAction{
 		SourceFS:           fs,
@@ -552,7 +551,8 @@ func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuer
 				cleanupActions = append(cleanupActions, action)
 			}
 		}
-		return nil
+		// Scrub all deleted ids from gallery/calendar blocks in a single pass.
+		return ScrubResourcesFromBlocks(altCtx.db, query.ID)
 	})
 
 	if err != nil {
@@ -752,6 +752,12 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 			if action != nil {
 				cleanupActions = append(cleanupActions, action)
 			}
+		}
+
+		// Scrub the merged-away (loser) ids from gallery/calendar blocks in a
+		// single pass so the cost stays O(blocks), not O(losers × blocks).
+		if err := ScrubResourcesFromBlocks(tx, loserIds); err != nil {
+			return err
 		}
 
 		// Save backups to winner's meta

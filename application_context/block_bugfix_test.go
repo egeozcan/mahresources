@@ -61,6 +61,42 @@ func TestCreateBlock_SecondEmptyTextBlockKeepsDescription(t *testing.T) {
 		"the first text block remains the description source after a second text block is added")
 }
 
+// B1 (review follow-up): inserting an EMPTY text block *before* the current
+// first text block must not clear the description — the new first block inherits
+// it. Counting only existing text blocks would miss this; we check position.
+func TestCreateBlock_EmptyTextBlockInsertedBeforeFirstPreservesDescription(t *testing.T) {
+	ctx := createBlockTestContext(t)
+	note, err := createTestNote(ctx, "n")
+	require.NoError(t, err)
+
+	// First text block at position "h" becomes the description source.
+	_, err = ctx.CreateBlock(&query_models.NoteBlockEditor{
+		NoteID: note.ID, Type: "text", Position: "h", Content: json.RawMessage(`{"text":"Hello"}`),
+	})
+	require.NoError(t, err)
+	var n1 models.Note
+	require.NoError(t, ctx.db.First(&n1, note.ID).Error)
+	require.Equal(t, "Hello", n1.Description)
+
+	// Insert an EMPTY text block BEFORE it (position "d" < "h").
+	inserted, err := ctx.CreateBlock(&query_models.NoteBlockEditor{
+		NoteID: note.ID, Type: "text", Position: "d", Content: json.RawMessage(`{"text":""}`),
+	})
+	require.NoError(t, err)
+
+	var n2 models.Note
+	require.NoError(t, ctx.db.First(&n2, note.ID).Error)
+	assert.Equal(t, "Hello", n2.Description,
+		"inserting an empty text block before the first must not clear the description")
+
+	var content struct {
+		Text string `json:"text"`
+	}
+	require.NoError(t, json.Unmarshal(inserted.Content, &content))
+	assert.Equal(t, "Hello", content.Text,
+		"the new first text block should be seeded from the description")
+}
+
 // B2: ReorderBlocks must reject empty-string positions (which sort first and can
 // wipe the description via the first-text-block sync).
 func TestReorderBlocks_RejectsEmptyPosition(t *testing.T) {

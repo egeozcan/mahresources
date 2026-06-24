@@ -42,6 +42,21 @@ func TestBulkDeleteResources_ScrubsGalleryBlockReferences(t *testing.T) {
 	assertGalleryDoesNotReference(t, tc, note.ID, res.ID)
 }
 
+// B6 (review follow-up): the batched scrub must remove MULTIPLE deleted ids
+// from a single block in one traversal.
+func TestBulkDeleteResources_ScrubsMultipleIdsInOneBlock(t *testing.T) {
+	tc := SetupTestEnv(t)
+	r1 := tc.CreateDummyResource(t, "bulk-multi-1")
+	r2 := tc.CreateDummyResource(t, "bulk-multi-2")
+	note := tc.CreateDummyNote("bulk-multi-note")
+	tc.createBlock(t, note.ID, "gallery", fmt.Sprintf(`{"resourceIds":[%d,%d]}`, r1.ID, r2.ID))
+
+	require.NoError(t, tc.AppCtx.BulkDeleteResources(&query_models.BulkQuery{ID: []uint{r1.ID, r2.ID}}))
+
+	assertGalleryDoesNotReference(t, tc, note.ID, r1.ID)
+	assertGalleryDoesNotReference(t, tc, note.ID, r2.ID)
+}
+
 // B6: resource merge must scrub dangling gallery references to the loser.
 func TestMergeResources_ScrubsGalleryBlockReferences(t *testing.T) {
 	tc := SetupTestEnv(t)

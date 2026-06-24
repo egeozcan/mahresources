@@ -486,6 +486,16 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 			}
 		}
 
+		// Heading level decodes from JSON as float64, which pongo2 does not treat
+		// as equal to the integer literals the template compares against
+		// (`level == 1`). Coerce to int so the level-to-tag mapping works at all
+		// (without this every heading falls through to the lowest-level branch).
+		if block.Type == "heading" {
+			if lvl, ok := tb.Content["level"].(float64); ok {
+				tb.Content["level"] = int(lvl)
+			}
+		}
+
 		// Collect group IDs from references blocks
 		if block.Type == "references" {
 			if groupIds, ok := tb.Content["groupIds"].([]interface{}); ok {

@@ -43,6 +43,47 @@ func ScrubResourceFromBlocks(db *gorm.DB, resourceID uint) error {
 	return nil
 }
 
+// ScrubResourcesFromBlocks removes every id in resourceIDs from gallery and
+// calendar blocks in a SINGLE table traversal. Use this for bulk delete / merge
+// so the cost is O(blocks) instead of O(resources × blocks).
+func ScrubResourcesFromBlocks(db *gorm.DB, resourceIDs []uint) error {
+	if len(resourceIDs) == 0 {
+		return nil
+	}
+	idSet := make(map[uint]bool, len(resourceIDs))
+	for _, id := range resourceIDs {
+		idSet[id] = true
+	}
+
+	var blocks []struct {
+		ID      uint
+		Content string
+	}
+	if err := db.Raw(
+		`SELECT id, CAST(content AS TEXT) AS content FROM note_blocks
+         WHERE type IN ('gallery','calendar')`,
+	).Scan(&blocks).Error; err != nil {
+		return err
+	}
+
+	for _, b := range blocks {
+		updated, changed, err := scrubResourcesFromBlockContent(b.Content, idSet)
+		if err != nil {
+			return fmt.Errorf("block %d: %w", b.ID, err)
+		}
+		if !changed {
+			continue
+		}
+		if err := db.Exec(
+			`UPDATE note_blocks SET content = ? WHERE id = ?`, updated, b.ID,
+		).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // ScrubGroupFromBlocks removes groupID from references.groupIds[].
 func ScrubGroupFromBlocks(db *gorm.DB, groupID uint) error {
 	var blocks []struct {
@@ -100,10 +141,17 @@ func ScrubQueryFromBlocks(db *gorm.DB, queryID uint) error {
 	return nil
 }
 
-// scrubResourceFromBlockContent removes the resourceID from gallery.resourceIds[]
-// and calendar.calendars[].source.resourceId in the given JSON content string.
-// Returns the updated JSON, whether anything changed, and any error.
+// scrubResourceFromBlockContent removes a single resourceID from a block's
+// content. Thin wrapper over the set-based version.
 func scrubResourceFromBlockContent(content string, resourceID uint) (string, bool, error) {
+	return scrubResourcesFromBlockContent(content, map[uint]bool{resourceID: true})
+}
+
+// scrubResourcesFromBlockContent removes every id in resourceIDs from
+// gallery.resourceIds[] and calendar.calendars[].source.resourceId in the given
+// JSON content string. Returns the updated JSON, whether anything changed, and
+// any error.
+func scrubResourcesFromBlockContent(content string, resourceIDs map[uint]bool) (string, bool, error) {
 	var raw map[string]any
 	if err := json.Unmarshal([]byte(content), &raw); err != nil {
 		return content, false, err
@@ -114,10 +162,10 @@ func scrubResourceFromBlockContent(content string, resourceID uint) (string, boo
 	if ids, ok := raw["resourceIds"].([]any); ok {
 		filtered := make([]any, 0, len(ids))
 		for _, v := range ids {
-			if toUint(v) != resourceID {
-				filtered = append(filtered, v)
-			} else {
+			if resourceIDs[toUint(v)] {
 				changed = true
+			} else {
+				filtered = append(filtered, v)
 			}
 		}
 		if changed {
@@ -137,7 +185,7 @@ func scrubResourceFromBlockContent(content string, resourceID uint) (string, boo
 			if !ok {
 				continue
 			}
-			if rid, ok := source["resourceId"]; ok && toUint(rid) == resourceID {
+			if rid, ok := source["resourceId"]; ok && resourceIDs[toUint(rid)] {
 				delete(source, "resourceId")
 				cmap["source"] = source
 				cals[i] = cmap

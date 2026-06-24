@@ -4,12 +4,17 @@
         {{ block.Content.text|default:""|markdown2|safe }}
     </div>
 {% elif block.Type == "heading" %}
+    {# The note title is the page h1, so block headings shift down one level (level N renders as h(N+1)), capped at h6 for levels 5-6. #}
     {% if block.Content.level == 1 %}
         <h2 class="text-xl font-bold text-stone-900">{{ block.Content.text }}</h2>
     {% elif block.Content.level == 2 %}
         <h3 class="text-lg font-semibold text-stone-900">{{ block.Content.text }}</h3>
-    {% else %}
+    {% elif block.Content.level == 3 %}
         <h4 class="text-base font-medium text-stone-900">{{ block.Content.text }}</h4>
+    {% elif block.Content.level == 4 %}
+        <h5 class="text-sm font-medium text-stone-900">{{ block.Content.text }}</h5>
+    {% else %}
+        <h6 class="text-sm font-medium uppercase tracking-wide text-stone-900">{{ block.Content.text }}</h6>
     {% endif %}
 {% elif block.Type == "divider" %}
     <hr class="border-stone-200">

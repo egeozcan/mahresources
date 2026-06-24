@@ -69,16 +69,6 @@ func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor
 		return nil, err
 	}
 
-	// Seed the first text block from the note's existing description so that
-	// adding an empty first text block migrates the description into the block
-	// instead of wiping it (the description<->first-text-block sync would
-	// otherwise clobber a non-empty description with the block's empty text).
-	if editor.Type == "text" {
-		if err := seedFirstTextBlockFromDescription(ctx.db, editor); err != nil {
-			return nil, err
-		}
-	}
-
 	// Auto-assign position after all existing blocks if none provided
 	if editor.Position == "" {
 		var lastPos string
@@ -91,6 +81,18 @@ func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor
 			editor.Position = "n" // middle of alphabet for first block
 		} else {
 			editor.Position = lib.PositionBetween(lastPos, "")
+		}
+	}
+
+	// Seed the first text block from the note's existing description so that
+	// adding an empty text block which becomes the FIRST text block migrates the
+	// description into the block instead of wiping it. Runs after the position is
+	// finalized, because "first" is decided by position: an empty block inserted
+	// *before* the current first text block would otherwise clear the description
+	// via the description<->first-text-block sync.
+	if editor.Type == "text" {
+		if err := seedFirstTextBlockFromDescription(ctx.db, editor); err != nil {
+			return nil, err
 		}
 	}
 
@@ -395,20 +397,11 @@ func isNullJSON(raw json.RawMessage) bool {
 }
 
 // seedFirstTextBlockFromDescription copies the note's existing Description into
-// editor.Content when editor is the note's FIRST text block and its text is
-// empty. This preserves the description through the bidirectional
-// description<->first-text-block sync instead of overwriting it with empty text.
+// editor.Content when the new block will be the note's FIRST text block (by
+// position) and its text is empty. This preserves the description through the
+// bidirectional description<->first-text-block sync instead of overwriting it
+// with empty text. editor.Position must be finalized before this is called.
 func seedFirstTextBlockFromDescription(db *gorm.DB, editor *query_models.NoteBlockEditor) error {
-	var existingTextBlocks int64
-	if err := db.Model(&models.NoteBlock{}).
-		Where("note_id = ? AND type = ?", editor.NoteID, "text").
-		Count(&existingTextBlocks).Error; err != nil {
-		return err
-	}
-	if existingTextBlocks > 0 {
-		return nil
-	}
-
 	var content struct {
 		Text string `json:"text"`
 	}
@@ -417,6 +410,20 @@ func seedFirstTextBlockFromDescription(db *gorm.DB, editor *query_models.NoteBlo
 		return nil
 	}
 	if content.Text != "" {
+		return nil
+	}
+
+	// The new block becomes the first text block only if no existing text block
+	// sorts at or before its position. Counting positions (not just existence)
+	// is what makes inserting an empty block *before* the current first block
+	// safe — it, too, must inherit the description rather than clear it.
+	var earlierTextBlocks int64
+	if err := db.Model(&models.NoteBlock{}).
+		Where("note_id = ? AND type = ? AND position <= ?", editor.NoteID, "text", editor.Position).
+		Count(&earlierTextBlocks).Error; err != nil {
+		return err
+	}
+	if earlierTextBlocks > 0 {
 		return nil
 	}
 

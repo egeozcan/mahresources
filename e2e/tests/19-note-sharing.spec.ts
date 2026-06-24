@@ -483,8 +483,11 @@ test.describe('Shared Note Block Rendering', () => {
   test('should render heading block', async ({ page, shareBaseUrl }) => {
     await page.goto(`${shareBaseUrl}/s/${shareToken}`);
 
-    // Should render the heading block (could be h2, h3, or h4 depending on level)
-    await expect(page.locator('h2:has-text("Test Heading"), h3:has-text("Test Heading"), h4:has-text("Test Heading")')).toBeVisible();
+    // Block headings shift down one level under the note's h1 title, so a
+    // level-1 heading renders as <h2>. This also guards that the level
+    // comparison works at all (instead of every heading falling through to the
+    // lowest-level branch).
+    await expect(page.locator('h2:has-text("Test Heading")')).toBeVisible();
   });
 
   test('should render gallery with images', async ({ page, shareBaseUrl }) => {
