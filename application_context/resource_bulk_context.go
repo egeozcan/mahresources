@@ -524,6 +524,13 @@ func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileClea
 	ctx.Logger().Info(models.LogActionDelete, "resource", &resourceId, resource.Name, "Deleted resource", nil)
 	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 
+	// BH-020: scrub dangling references from note_blocks. The single-item
+	// DeleteResource scrubs in its own transaction; this covers the bulk-delete
+	// and resource-merge paths, which both route through deleteResourceDBOnly.
+	if err := ScrubResourceFromBlocks(ctx.db, resourceId); err != nil {
+		return nil, err
+	}
+
 	return &FileCleanupAction{
 		SourceFS:           fs,
 		SourcePath:         resource.GetCleanLocation(),

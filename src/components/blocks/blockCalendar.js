@@ -288,9 +288,15 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       const trimmedUrl = this.newUrl.trim();
       if (!trimmedUrl) return;
 
-      // Validate URL format
+      // Validate URL format and restrict to http(s) so the server-side ICS fetch
+      // cannot be pointed at a non-http(s) scheme (defense-in-depth with the
+      // backend scheme check).
       try {
-        new URL(trimmedUrl);
+        const parsed = new URL(trimmedUrl);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          this.error = 'Calendar URL must start with http:// or https://';
+          return;
+        }
       } catch {
         this.error = 'Invalid URL format. Please enter a valid URL starting with http:// or https://';
         return;
@@ -574,9 +580,16 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
         endDateTime = new Date(this.eventForm.endDate + 'T' + this.eventForm.endTime);
       }
 
-      // Auto-adjust end time if needed
-      if (endDateTime <= startDateTime && !this.eventForm.allDay) {
-        endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
+      // Auto-adjust end so it is never before start. For all-day events the
+      // previous guard skipped this, so an inverted all-day event (end day before
+      // start day) was saved and then silently matched no day on render — looking
+      // like data loss. Clamp all-day ends to the start day; bump timed ends by 1h.
+      if (endDateTime <= startDateTime) {
+        if (this.eventForm.allDay) {
+          endDateTime = new Date(this.eventForm.startDate + 'T23:59:59');
+        } else {
+          endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
+        }
       }
 
       const eventData = {

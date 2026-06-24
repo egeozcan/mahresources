@@ -29,8 +29,8 @@
     </div>
 
     {% if sc.Content %}
-    {# Show description only when no blocks exist (syncFirstTextBlockToDescription copies first text block into Description). #}
-    {% if !note.Blocks || note.Blocks|length == 0 %}
+    {# Show the description unless a TEXT block already mirrors it (keeps it visible for notes that have only non-text blocks). #}
+    {% if !note.HasTextBlock %}
         {% include "/partials/description.tpl" with description=note.Description descriptionEntity=note descriptionEditUrl="/v1/note/editDescription" descriptionEditId=note.ID preview=false %}
     {% endif %}
     {% include "/partials/blockEditor.tpl" with noteId=note.ID blocks=note.Blocks %}

@@ -51,7 +51,7 @@
             <thead class="bg-stone-50">
                 <tr>
                     {% for col in block.QueryData.columns %}
-                    <th class="px-3 py-2 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">
+                    <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">
                         {{ col.label }}
                     </th>
                     {% endfor %}
@@ -76,7 +76,7 @@
             <thead class="bg-stone-50">
                 <tr>
                     {% for col in block.Content.columns %}
-                    <th class="px-3 py-2 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">
+                    <th scope="col" class="px-3 py-2 text-left text-xs font-medium text-stone-500 uppercase tracking-wider">
                         {{ col.label }}
                     </th>
                     {% endfor %}
@@ -166,10 +166,7 @@
                         </svg>
                     </span>
                 </template>
-                <button @click="openEventModalForDay(currentDate)"
-                        class="px-3 py-1 text-sm bg-amber-700 text-white rounded hover:bg-amber-800">
-                    + Add Event
-                </button>
+                {# Shared calendars are read-only: anonymous viewers cannot create or edit custom events (the share state endpoint rejects calendar writes), so no Add/Edit affordances are rendered here. #}
                 <div class="flex border border-stone-200 rounded overflow-hidden text-sm">
                     <button @click="setView('month')" class="px-3 py-1" :class="view === 'month' ? 'bg-amber-700 text-white' : 'bg-white hover:bg-stone-50'">Month</button>
                     <button @click="setView('agenda')" class="px-3 py-1" :class="view === 'agenda' ? 'bg-amber-700 text-white' : 'bg-white hover:bg-stone-50'">Agenda</button>
@@ -193,17 +190,14 @@
                         <div class="bg-stone-50 py-2 text-center text-xs font-medium text-stone-500" x-text="day"></div>
                     </template>
                     <template x-for="day in monthDays" :key="day.date.toISOString()">
-                        <div class="bg-white min-h-[80px] p-1 relative cursor-pointer hover:bg-amber-50 transition-colors"
-                             @click="openEventModalForDay(day.date)"
-                             :class="{ 'bg-stone-50 hover:bg-stone-100': !day.isCurrentMonth, 'ring-2 ring-amber-600 ring-inset': isToday(day.date) }">
+                        <div class="bg-white min-h-[80px] p-1 relative"
+                             :class="{ 'bg-stone-50': !day.isCurrentMonth, 'ring-2 ring-amber-600 ring-inset': isToday(day.date) }">
                             <span class="text-xs" :class="day.isCurrentMonth ? 'text-stone-700' : 'text-stone-400'" x-text="day.date.getDate()"></span>
                             <div class="mt-1 space-y-0.5">
                                 <template x-for="event in getEventsForDay(day.date).slice(0, 3)" :key="event.id">
-                                    <div @click.stop="isCustomEvent(event) ? openEventModalForEdit(event) : null"
-                                         class="text-xs px-1 py-0.5 rounded truncate"
-                                         :class="isCustomEvent(event) ? 'cursor-pointer hover:opacity-80' : ''"
+                                    <div class="text-xs px-1 py-0.5 rounded truncate"
                                          :style="'background-color: ' + getCalendarColor(event.calendarId) + '20; color: ' + getCalendarColor(event.calendarId)"
-                                         :title="event.title + (event.location ? ' @ ' + event.location : '') + (isCustomEvent(event) ? ' (click to edit)' : '')"
+                                         :title="event.title + (event.location ? ' @ ' + event.location : '')"
                                          x-text="event.allDay ? event.title : formatEventTime(event) + ' ' + event.title">
                                     </div>
                                 </template>
@@ -228,19 +222,13 @@
                                     </div>
                                     <div class="space-y-1 max-h-48 overflow-y-auto">
                                         <template x-for="event in getEventsForDay(day.date)" :key="event.id">
-                                            <div @click.stop="if (isCustomEvent(event)) { openEventModalForEdit(event); closeExpandedDay(); }"
-                                                 class="text-xs px-2 py-1 rounded"
-                                                 :class="isCustomEvent(event) ? 'cursor-pointer hover:opacity-80' : ''"
+                                            <div class="text-xs px-2 py-1 rounded"
                                                  :style="'background-color: ' + getCalendarColor(event.calendarId) + '20; color: ' + getCalendarColor(event.calendarId)">
                                                 <div class="font-medium" x-text="event.title"></div>
                                                 <div class="opacity-75" x-text="formatEventTime(event)"></div>
                                             </div>
                                         </template>
                                     </div>
-                                    <button @click="openEventModalForDay(day.date); closeExpandedDay()"
-                                            class="w-full mt-2 pt-1 border-t text-xs text-amber-700 hover:text-amber-800">
-                                        + Add event
-                                    </button>
                                 </div>
                             </template>
                         </div>
@@ -260,18 +248,13 @@
                         <div class="text-sm font-medium text-stone-600 mb-2" x-text="formatAgendaDate(group.date)"></div>
                         <div class="space-y-2">
                             <template x-for="event in group.events" :key="event.id">
-                                <div @click="isCustomEvent(event) ? openEventModalForEdit(event) : goToEventMonth(event)"
+                                <div @click="goToEventMonth(event)"
                                      class="flex items-start gap-3 p-2 rounded hover:bg-stone-50 cursor-pointer"
-                                     :title="isCustomEvent(event) ? 'Click to edit' : 'Click to view in month'">
+                                     title="Click to view in month">
                                     <div class="w-1 h-full min-h-[40px] rounded" :style="'background-color: ' + getCalendarColor(event.calendarId)"></div>
                                     <div class="flex-1 min-w-0">
                                         <div class="font-medium text-sm flex items-center gap-1">
                                             <span x-text="event.title"></span>
-                                            <template x-if="isCustomEvent(event)">
-                                                <svg class="w-3 h-3 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
-                                                </svg>
-                                            </template>
                                         </div>
                                         <div class="text-xs text-stone-500">
                                             <span x-text="formatEventTime(event)"></span>
@@ -294,91 +277,7 @@
         {# Empty state #}
         <template x-if="calendars.length === 0 && customEvents.length === 0 && !loading">
             <div class="text-center py-8 text-stone-400">
-                <p>No calendars or events yet.</p>
-                <p class="text-sm mt-1">Click "+ Add Event" to create an event.</p>
-            </div>
-        </template>
-
-        {# Event Modal #}
-        <template x-if="showEventModal">
-            <div class="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="shared-event-modal-heading" @keydown.escape.window="closeEventModal()">
-                <div class="absolute inset-0 bg-black/50" @click="closeEventModal()"></div>
-                <div class="relative bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
-                    <h3 id="shared-event-modal-heading" class="text-lg font-semibold mb-4" x-text="editingEvent ? 'Edit Event' : 'New Event'"></h3>
-
-                    <form @submit.prevent="saveEvent()">
-                        {# Title #}
-                        <div class="mb-4">
-                            <label for="shared-event-title" class="block text-sm font-medium text-stone-700 mb-1">Title</label>
-                            <input id="shared-event-title" type="text" x-model="eventForm.title" required
-                                   class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
-                        </div>
-
-                        {# All Day toggle #}
-                        <label class="flex items-center gap-2 mb-4 cursor-pointer">
-                            <input type="checkbox" x-model="eventForm.allDay" class="rounded border-stone-300 text-amber-700 focus:ring-amber-600">
-                            <span class="text-sm">All day event</span>
-                        </label>
-
-                        {# Start date/time #}
-                        <div class="grid grid-cols-2 gap-3 mb-4">
-                            <div>
-                                <label for="shared-event-start-date" class="block text-sm font-medium text-stone-700 mb-1">Start Date</label>
-                                <input id="shared-event-start-date" type="date" x-model="eventForm.startDate" required
-                                       class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
-                            </div>
-                            <div x-show="!eventForm.allDay">
-                                <label for="shared-event-start-time" class="block text-sm font-medium text-stone-700 mb-1">Start Time</label>
-                                <input id="shared-event-start-time" type="time" x-model="eventForm.startTime"
-                                       class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
-                            </div>
-                        </div>
-
-                        {# End date/time #}
-                        <div class="grid grid-cols-2 gap-3 mb-4">
-                            <div>
-                                <label for="shared-event-end-date" class="block text-sm font-medium text-stone-700 mb-1">End Date</label>
-                                <input id="shared-event-end-date" type="date" x-model="eventForm.endDate" required
-                                       class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
-                            </div>
-                            <div x-show="!eventForm.allDay">
-                                <label for="shared-event-end-time" class="block text-sm font-medium text-stone-700 mb-1">End Time</label>
-                                <input id="shared-event-end-time" type="time" x-model="eventForm.endTime"
-                                       class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
-                            </div>
-                        </div>
-
-                        {# Location #}
-                        <div class="mb-4">
-                            <label for="shared-event-location" class="block text-sm font-medium text-stone-700 mb-1">Location (optional)</label>
-                            <input id="shared-event-location" type="text" x-model="eventForm.location"
-                                   class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
-                        </div>
-
-                        {# Description #}
-                        <div class="mb-4">
-                            <label for="shared-event-description" class="block text-sm font-medium text-stone-700 mb-1">Description (optional)</label>
-                            <textarea id="shared-event-description" x-model="eventForm.description" rows="2"
-                                      class="w-full px-3 py-2 border border-stone-300 rounded resize-none focus:ring-amber-600 focus:border-amber-600"></textarea>
-                        </div>
-
-                        {# Actions #}
-                        <div class="flex justify-between pt-2">
-                            <div>
-                                <button x-show="editingEvent" type="button" @click="deleteEvent()"
-                                        class="px-4 py-2 text-red-700 hover:text-red-800 text-sm">
-                                    Delete
-                                </button>
-                            </div>
-                            <div class="flex gap-2">
-                                <button type="button" @click="closeEventModal()"
-                                        class="px-4 py-2 border border-stone-300 rounded hover:bg-stone-50 text-sm">Cancel</button>
-                                <button type="submit"
-                                        class="px-4 py-2 bg-amber-700 text-white rounded hover:bg-amber-800 text-sm">Save</button>
-                            </div>
-                        </div>
-                    </form>
-                </div>
+                <p>No calendars or events to show.</p>
             </div>
         </template>
     </div>

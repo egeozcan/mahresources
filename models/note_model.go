@@ -62,6 +62,20 @@ func (a Note) GetDescription() string {
 	return a.Description
 }
 
+// HasTextBlock reports whether the note has at least one text block. The first
+// text block mirrors the note's Description, so the description should be
+// rendered directly only when no text block exists. Gating on this (instead of
+// "no blocks at all") keeps the description visible for notes that have only
+// non-text blocks, while still avoiding double-rendering when a text block owns it.
+func (a Note) HasTextBlock() bool {
+	for _, b := range a.Blocks {
+		if b != nil && b.Type == "text" {
+			return true
+		}
+	}
+	return false
+}
+
 func (a Note) Initials() string {
 	res := ""
 

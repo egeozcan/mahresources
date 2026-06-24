@@ -17,7 +17,7 @@
     </div>
 
     {# Error state #}
-    <div x-show="error" x-cloak class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm font-sans">
+    <div x-show="error" x-cloak role="alert" class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm font-sans">
         <div class="flex items-center justify-between">
             <span x-text="error"></span>
             <button @click="error = null" class="text-red-500 hover:text-red-800">&times;</button>
@@ -28,6 +28,7 @@
     <div x-show="!loading" class="space-y-4">
         <template x-for="(block, index) in blocks" :key="block.id">
             <div class="block-card bg-white border border-stone-200 rounded-lg overflow-hidden"
+                 :data-block-id="block.id"
                  :class="{ 'ring-2 ring-amber-200': editMode }">
                 {# Block controls (edit mode only) #}
                 <div x-show="editMode" class="flex items-center justify-between px-3 py-2 bg-stone-50 border-b border-stone-200">
@@ -108,6 +109,9 @@
                                     <h1 x-show="block.content?.level === 1" x-text="block.content?.text || ''" class="text-3xl font-bold"></h1>
                                     <h2 x-show="block.content?.level === 2 || !block.content?.level" x-text="block.content?.text || ''" class="text-2xl font-bold"></h2>
                                     <h3 x-show="block.content?.level === 3" x-text="block.content?.text || ''" class="text-xl font-bold"></h3>
+                                    <h4 x-show="block.content?.level === 4" x-text="block.content?.text || ''" class="text-lg font-bold"></h4>
+                                    <h5 x-show="block.content?.level === 5" x-text="block.content?.text || ''" class="text-base font-bold"></h5>
+                                    <h6 x-show="block.content?.level === 6" x-text="block.content?.text || ''" class="text-sm font-bold uppercase tracking-wide"></h6>
                                 </div>
                             </template>
                             <template x-if="editMode">
@@ -116,6 +120,9 @@
                                         <option value="1">H1</option>
                                         <option value="2">H2</option>
                                         <option value="3">H3</option>
+                                        <option value="4">H4</option>
+                                        <option value="5">H5</option>
+                                        <option value="6">H6</option>
                                     </select>
                                     <input
                                         type="text"
@@ -141,14 +148,17 @@
                             <template x-if="!editMode">
                                 <ul class="space-y-1">
                                     <template x-for="item in items" :key="item.id">
-                                        <li class="flex items-center gap-2">
-                                            <input
-                                                type="checkbox"
-                                                :checked="isChecked(item.id)"
-                                                @change="toggleCheck(item.id)"
-                                                class="h-4 w-4 rounded border-stone-300"
-                                            >
-                                            <span :class="{ 'line-through text-stone-400': isChecked(item.id) }" x-text="item.label"></span>
+                                        <li>
+                                            {# Wrap input + label text in a single <label> so the task text is the checkbox's accessible name (WCAG 4.1.2 / 1.3.1). #}
+                                            <label class="flex items-center gap-2 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    :checked="isChecked(item.id)"
+                                                    @change="toggleCheck(item.id)"
+                                                    class="h-4 w-4 rounded border-stone-300"
+                                                >
+                                                <span :class="{ 'line-through text-stone-400': isChecked(item.id) }" x-text="item.label"></span>
+                                            </label>
                                         </li>
                                     </template>
                                 </ul>
@@ -178,13 +188,27 @@
                             <template x-if="!editMode && resourceIds.length > 0">
                                 <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                                     <template x-for="(resId, idx) in resourceIds" :key="resId">
-                                        <a :href="'/v1/resource/view?id=' + resId"
-                                           @click.prevent="openGalleryLightbox(resId, $event)"
-                                           class="block aspect-square bg-stone-100 rounded overflow-hidden cursor-pointer hover:opacity-90 transition-opacity">
-                                            <img :src="'/v1/resource/preview?id=' + resId"
-                                                 :alt="(resourceMeta[resId]?.name) || ('Resource ' + resId)"
-                                                 class="w-full h-full object-cover" loading="lazy">
-                                        </a>
+                                        <div class="block aspect-square bg-stone-100 rounded overflow-hidden">
+                                            {# Deleted / out-of-scope resources render a placeholder instead of a broken-image tile linking to a 404. #}
+                                            <template x-if="!resourceMeta[resId]?.__unavailable">
+                                                <a :href="'/v1/resource/view?id=' + resId"
+                                                   @click.prevent="openGalleryLightbox(resId, $event)"
+                                                   class="block w-full h-full cursor-pointer hover:opacity-90 transition-opacity">
+                                                    <img :src="'/v1/resource/preview?id=' + resId"
+                                                         :alt="(resourceMeta[resId]?.name) || ('Resource ' + resId)"
+                                                         class="w-full h-full object-cover" loading="lazy">
+                                                </a>
+                                            </template>
+                                            <template x-if="resourceMeta[resId]?.__unavailable">
+                                                <div class="w-full h-full flex flex-col items-center justify-center text-stone-400 text-xs text-center p-2"
+                                                     role="img" :aria-label="'Resource ' + resId + ' unavailable'">
+                                                    <svg class="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14M4 6h16M4 6v12a2 2 0 002 2h12a2 2 0 002-2V6M4 6L20 18"/>
+                                                    </svg>
+                                                    <span>Unavailable</span>
+                                                </div>
+                                            </template>
+                                        </div>
                                     </template>
                                 </div>
                             </template>
@@ -229,13 +253,18 @@
                             <template x-if="!editMode && groupIds.length > 0">
                                 <div class="flex flex-wrap gap-2">
                                     <template x-for="gId in groupIds" :key="gId">
-                                        <a :href="'/group?id=' + gId"
-                                           class="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-sm hover:bg-amber-100 border border-amber-200">
+                                        {# Deleted / out-of-scope groups render as a muted, non-clickable chip instead of a broken link to a 404/permission-denied page. #}
+                                        <a :href="getGroupDisplay(gId).unavailable ? null : ('/group?id=' + gId)"
+                                           @click="if (getGroupDisplay(gId).unavailable) $event.preventDefault()"
+                                           :aria-disabled="getGroupDisplay(gId).unavailable ? 'true' : null"
+                                           :class="getGroupDisplay(gId).unavailable
+                                               ? 'inline-flex items-center gap-1 px-3 py-1.5 bg-stone-100 text-stone-400 rounded-lg text-sm border border-stone-200 line-through cursor-not-allowed'
+                                               : 'inline-flex items-center gap-1 px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-sm hover:bg-amber-100 border border-amber-200'">
                                             <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                                             </svg>
                                             <span class="font-medium" x-text="getGroupDisplay(gId).name"></span>
-                                            <span x-show="getGroupDisplay(gId).breadcrumb" class="text-amber-400 text-xs" x-text="'in ' + getGroupDisplay(gId).breadcrumb"></span>
+                                            <span x-show="!getGroupDisplay(gId).unavailable && getGroupDisplay(gId).breadcrumb" class="text-amber-400 text-xs" x-text="'in ' + getGroupDisplay(gId).breadcrumb"></span>
                                         </a>
                                     </template>
                                 </div>
@@ -335,11 +364,17 @@
                                                     <tr>
                                                         <template x-for="col in displayColumns" :key="col.id">
                                                             <th
+                                                                scope="col"
                                                                 @click="toggleSort(col.id)"
-                                                                class="px-3 py-2 text-left text-xs font-medium text-stone-500 uppercase tracking-wider cursor-pointer hover:bg-stone-100"
+                                                                @keydown.enter.prevent="toggleSort(col.id)"
+                                                                @keydown.space.prevent="toggleSort(col.id)"
+                                                                tabindex="0"
+                                                                :aria-sort="sortColumn === col.id ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'"
+                                                                class="px-3 py-2 text-left text-xs font-medium text-stone-500 uppercase tracking-wider cursor-pointer hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-amber-400"
                                                             >
                                                                 <span x-text="col.label"></span>
                                                                 <span x-show="sortColumn === col.id" x-text="sortDirection === 'asc' ? ' ▲' : ' ▼'"></span>
+                                                                <span x-show="sortColumn === col.id" class="sr-only" x-text="sortDirection === 'asc' ? ', sorted ascending' : ', sorted descending'"></span>
                                                             </th>
                                                         </template>
                                                     </tr>
@@ -680,7 +715,7 @@
 
                                     {# Event Modal #}
                                     <template x-if="showEventModal">
-                                        <div class="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="event-modal-heading" @keydown.escape.window="closeEventModal()">
+                                        <div class="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="event-modal-heading" x-trap.noscroll="showEventModal" @keydown.escape.window="closeEventModal()">
                                             <div class="absolute inset-0 bg-black/50" @click="closeEventModal()"></div>
                                             <div class="relative bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
                                                 <h3 id="event-modal-heading" class="text-lg font-semibold mb-4" x-text="editingEvent ? 'Edit Event' : 'New Event'"></h3>
@@ -718,6 +753,7 @@
                                                         <div>
                                                             <label for="event-end-date" class="block text-sm font-medium font-mono text-stone-700 mb-1">End Date</label>
                                                             <input id="event-end-date" type="date" x-model="eventForm.endDate" required
+                                                                   :min="eventForm.startDate"
                                                                    class="w-full px-3 py-2 border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600">
                                                         </div>
                                                         <div x-show="!eventForm.allDay">
@@ -897,6 +933,8 @@
                             :data-block-type="bt.type"
                             @click="addBlock(bt.type); addBlockPickerOpen = false"
                             @keydown.enter.prevent="addBlock(bt.type); addBlockPickerOpen = false"
+                            @keydown.space.prevent="addBlock(bt.type); addBlockPickerOpen = false"
+                            @keydown.tab.prevent="addBlockPickerOpen = false"
                             @keydown.arrow-down.prevent="focusPickerItem(Math.min(activePickerIndex + 1, blockTypes.length - 1))"
                             @keydown.arrow-up.prevent="focusPickerItem(Math.max(activePickerIndex - 1, 0))"
                             @keydown.home.prevent="focusPickerItem(0)"

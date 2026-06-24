@@ -1,12 +1,14 @@
 package application_context
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	neturl "net/url"
 	"sort"
 	"time"
 
@@ -61,8 +63,20 @@ func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor
 	// Validate content or use default
 	if len(editor.Content) == 0 {
 		editor.Content = bt.DefaultContent()
+	} else if isNullJSON(editor.Content) {
+		return nil, errors.New("block content cannot be null")
 	} else if err := bt.ValidateContent(editor.Content); err != nil {
 		return nil, err
+	}
+
+	// Seed the first text block from the note's existing description so that
+	// adding an empty first text block migrates the description into the block
+	// instead of wiping it (the description<->first-text-block sync would
+	// otherwise clobber a non-empty description with the block's empty text).
+	if editor.Type == "text" {
+		if err := seedFirstTextBlockFromDescription(ctx.db, editor); err != nil {
+			return nil, err
+		}
 	}
 
 	// Auto-assign position after all existing blocks if none provided
@@ -154,6 +168,11 @@ func (ctx *MahresourcesContext) UpdateBlockContent(blockID uint, content json.Ra
 		return nil, gorm.ErrRecordNotFound
 	}
 
+	// Reject empty or literal-null content before it can blank out a block.
+	if len(bytes.TrimSpace(content)) == 0 || isNullJSON(content) {
+		return nil, errors.New("block content cannot be null")
+	}
+
 	// Validate content against block type
 	bt := block_types.GetBlockType(block.Type)
 	if bt == nil {
@@ -203,6 +222,13 @@ func (ctx *MahresourcesContext) UpdateBlockState(blockID uint, state json.RawMes
 	}
 	if !ctx.NoteVisible(block.NoteID) {
 		return nil, gorm.ErrRecordNotFound
+	}
+
+	// Reject empty or literal-null state. This centralizes the guard that the
+	// JSON API handler already applies so the anonymous share-server path (which
+	// also reaches UpdateBlockState) cannot wipe saved state with `null`.
+	if len(bytes.TrimSpace(state)) == 0 || isNullJSON(state) {
+		return nil, errors.New("state field is required")
 	}
 
 	// Validate state against block type
@@ -271,9 +297,14 @@ func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]st
 		return gorm.ErrRecordNotFound
 	}
 
-	// Check for duplicate position values
+	// Check for empty or duplicate position values. An empty position sorts before
+	// every real position and can silently steal "first text block" status,
+	// wiping the note description through the description sync.
 	seen := make(map[string]bool, len(positions))
 	for _, pos := range positions {
+		if pos == "" {
+			return errors.New("position must not be empty")
+		}
 		if seen[pos] {
 			return errors.New("duplicate position values are not allowed")
 		}
@@ -293,6 +324,23 @@ func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]st
 	}
 	if int(count) != len(positions) {
 		return errors.New("one or more block IDs do not belong to the specified note")
+	}
+
+	// Reject positions that collide with blocks of the same note that are NOT part
+	// of this (possibly partial) reorder. There is no unique DB index on
+	// (note_id, position), so without this a partial map can place two blocks at
+	// the same position, producing a non-deterministic order and an ambiguous
+	// first text block.
+	var otherPositions []string
+	if err := ctx.db.Model(&models.NoteBlock{}).
+		Where("note_id = ? AND id NOT IN ?", noteID, blockIDs).
+		Pluck("position", &otherPositions).Error; err != nil {
+		return err
+	}
+	for _, pos := range otherPositions {
+		if seen[pos] {
+			return errors.New("position collides with an existing block not included in the reorder")
+		}
 	}
 
 	hasTextBlock := false
@@ -333,6 +381,56 @@ func (ctx *MahresourcesContext) ReorderBlocks(noteID uint, positions map[uint]st
 		}
 	}
 
+	return nil
+}
+
+// isNullJSON reports whether raw is the literal JSON null token (ignoring
+// surrounding whitespace).
+func isNullJSON(raw json.RawMessage) bool {
+	return string(bytes.TrimSpace(raw)) == "null"
+}
+
+// seedFirstTextBlockFromDescription copies the note's existing Description into
+// editor.Content when editor is the note's FIRST text block and its text is
+// empty. This preserves the description through the bidirectional
+// description<->first-text-block sync instead of overwriting it with empty text.
+func seedFirstTextBlockFromDescription(db *gorm.DB, editor *query_models.NoteBlockEditor) error {
+	var existingTextBlocks int64
+	if err := db.Model(&models.NoteBlock{}).
+		Where("note_id = ? AND type = ?", editor.NoteID, "text").
+		Count(&existingTextBlocks).Error; err != nil {
+		return err
+	}
+	if existingTextBlocks > 0 {
+		return nil
+	}
+
+	var content struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(editor.Content, &content); err != nil {
+		// Content was already validated by the caller; nothing to seed.
+		return nil
+	}
+	if content.Text != "" {
+		return nil
+	}
+
+	var note models.Note
+	if err := db.Select("description").First(&note, editor.NoteID).Error; err != nil {
+		return err
+	}
+	if note.Description == "" {
+		return nil
+	}
+
+	seeded, err := json.Marshal(struct {
+		Text string `json:"text"`
+	}{Text: note.Description})
+	if err != nil {
+		return err
+	}
+	editor.Content = seeded
 	return nil
 }
 
@@ -572,8 +670,25 @@ func (ctx *MahresourcesContext) fetchICSFromURL(url string) ([]byte, time.Time, 
 	return ctx.fetchAndCacheICS(url, nil)
 }
 
+// allowedICSScheme reports whether rawURL uses an http(s) scheme. Restricting
+// the scheme (and re-validating redirect targets) limits the calendar fetch from
+// being used as an SSRF primitive against non-http internal services (e.g.
+// file://, gopher://). Private-IP filtering is intentionally NOT applied so that
+// legitimate internal calendar servers keep working on private-network deployments.
+func allowedICSScheme(rawURL string) bool {
+	u, err := neturl.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "http" || u.Scheme == "https"
+}
+
 // fetchAndCacheICS performs the actual HTTP fetch with optional conditional headers.
 func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSCacheEntry) ([]byte, time.Time, error) {
+	if !allowedICSScheme(url) {
+		return nil, time.Time{}, fmt.Errorf("calendar URL must use http or https")
+	}
+
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("failed to create request: %w", err)
@@ -589,9 +704,19 @@ func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSC
 		}
 	}
 
-	// Use configured timeouts
+	// Use configured timeouts. Re-validate every redirect target so a permitted
+	// initial http(s) URL cannot redirect into a non-http(s) scheme.
 	client := &http.Client{
 		Timeout: ctx.Config.RemoteResourceConnectTimeout,
+		CheckRedirect: func(r *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			if !allowedICSScheme(r.URL.String()) {
+				return fmt.Errorf("redirect to non-http(s) URL blocked")
+			}
+			return nil
+		},
 	}
 	if client.Timeout == 0 {
 		client.Timeout = 30 * time.Second

@@ -26,6 +26,7 @@ export function blockEditor(noteId, initialBlocks = []) {
     loading: false,
     error: null,
     _pendingUpdates: {}, // Track pending updates for optimistic UI
+    _prevContent: {}, // Snapshot of pre-edit content per block for rollback on save failure
     _blockTypesLoaded: false,
 
     // Simple markdown-like rendering: escapes HTML, converts newlines to <br>, and handles basic formatting
@@ -72,12 +73,27 @@ export function blockEditor(noteId, initialBlocks = []) {
       escaped = escaped.replace(/~~([^~\n]+)~~/g, '<s>$1</s>');
 
       // Basic links: [text](url) -> <a href="url">text</a>
-      escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, href) => {
-          const trimmed = href.trim().toLowerCase();
-          if (trimmed.startsWith('javascript:') || trimmed.startsWith('data:') || trimmed.startsWith('vbscript:')) {
+      escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text, href) => {
+          // A denylist on the raw string (.trim().startsWith('javascript:')) is
+          // bypassable: browsers strip whitespace/control chars embedded in a URL
+          // scheme, so "java\tscript:" resolves to "javascript:". Strip all
+          // whitespace + ASCII control chars first, then ALLOWLIST safe schemes
+          // (or relative URLs) rather than denylisting dangerous ones.
+          const cleaned = href.replace(/[\s\x00-\x1f]+/g, '').toLowerCase();
+          const hasScheme = /^[a-z][a-z0-9+.\-]*:/.test(cleaned);
+          const safe = !hasScheme
+              || cleaned.startsWith('http:')
+              || cleaned.startsWith('https:')
+              || cleaned.startsWith('mailto:')
+              || cleaned.startsWith('tel:');
+          if (!safe) {
               return text;
           }
-          return `<a href="${href}" class="text-blue-600 hover:underline" target="_blank" rel="noopener">${text}</a>`;
+          // Defang control chars that survived in the original href so they
+          // cannot reconstitute a dangerous scheme in the attribute. (Quotes are
+          // already HTML-escaped above, blocking attribute breakout.)
+          const safeHref = href.replace(/[\x00-\x1f]/g, '');
+          return `<a href="${safeHref}" class="text-blue-600 hover:underline" target="_blank" rel="noopener">${text}</a>`;
       });
 
       // Restore inline-code slots last so their contents never see earlier passes.
@@ -106,6 +122,13 @@ export function blockEditor(noteId, initialBlocks = []) {
               if (first) first.focus();
             }
           });
+        } else {
+          // Restore focus to the trigger when the picker closes (Esc, click-away,
+          // Tab, or after a selection) so keyboard users are not stranded at <body>.
+          this.$nextTick(() => {
+            const trigger = this.$el.querySelector('[data-testid="add-block-trigger"]');
+            if (trigger && this.editMode) trigger.focus();
+          });
         }
       });
 
@@ -122,6 +145,37 @@ export function blockEditor(noteId, initialBlocks = []) {
           return self.blocks.find(b => b.id === blockId) || null;
         }
       };
+
+      // Flush pending debounced edits before the page is hidden/unloaded so a
+      // fast navigation does not drop the last few seconds of typing. pagehide +
+      // visibilitychange(hidden) cover tab close, back/forward, and bfcache.
+      this._flushPendingUpdates = () => this.flushPendingUpdates();
+      window.addEventListener('pagehide', this._flushPendingUpdates);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') this.flushPendingUpdates();
+      });
+    },
+
+    // Best-effort synchronous flush of pending optimistic edits using fetch
+    // keepalive so an in-flight navigation does not abort the save. No awaiting
+    // and no UI update: this only runs as the page goes away.
+    flushPendingUpdates() {
+      const ids = Object.keys(this._pendingUpdates);
+      for (const id of ids) {
+        const content = this._pendingUpdates[id];
+        delete this._pendingUpdates[id];
+        try {
+          // window.fetch is CSRF-wrapped and preserves keepalive.
+          fetch(`/v1/note/block?id=${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content }),
+            keepalive: true
+          });
+        } catch (e) {
+          // Best effort on unload; nothing useful to do with the error here.
+        }
+      }
     },
 
     // Move roving focus within the add-block picker listbox
@@ -199,6 +253,27 @@ export function blockEditor(noteId, initialBlocks = []) {
       this.editMode = !this.editMode;
     },
 
+    // Announce a status message to screen readers via the polite live region.
+    // Clearing the text first guarantees that identical consecutive messages are
+    // still re-announced (a polite region ignores no-op writes of the same text).
+    announce(msg) {
+      const liveRegion = this.$refs && this.$refs.liveRegion;
+      if (!liveRegion) return;
+      liveRegion.textContent = '';
+      this.$nextTick(() => { liveRegion.textContent = msg; });
+    },
+
+    // Move keyboard focus to the first enabled control of a block after the list
+    // is re-rendered, so keyboard users are not dropped to <body> on reorder/add.
+    focusBlockControls(blockId) {
+      this.$nextTick(() => {
+        const card = this.$el.querySelector(`[data-block-id="${blockId}"]`);
+        if (!card) return;
+        const btn = card.querySelector('[data-block-control]:not([disabled])');
+        if (btn) btn.focus();
+      });
+    },
+
     async addBlock(type, afterPosition = null) {
       this.error = null;
       try {
@@ -219,6 +294,7 @@ export function blockEditor(noteId, initialBlocks = []) {
           throw new Error(errorData.error || `Failed to add block: ${res.status}`);
         }
         await this.loadBlocks();
+        this.announce(this._formatLabel(type) + ' block added');
       } catch (err) {
         this.error = err.message;
         console.error('Error adding block:', err);
@@ -230,6 +306,11 @@ export function blockEditor(noteId, initialBlocks = []) {
       // Optimistic update for immediate UI feedback
       const idx = this.blocks.findIndex(b => b.id === blockId);
       if (idx >= 0) {
+        // Snapshot the pre-edit content once so a failed save can roll the
+        // optimistic UI back to server truth instead of leaving it diverged.
+        if (!Object.prototype.hasOwnProperty.call(this._prevContent, blockId)) {
+          this._prevContent[blockId] = this.blocks[idx].content;
+        }
         this.blocks[idx] = { ...this.blocks[idx], content };
       }
       this._pendingUpdates[blockId] = content;
@@ -259,8 +340,20 @@ export function blockEditor(noteId, initialBlocks = []) {
         }
         const updated = await res.json();
         const idx = this.blocks.findIndex(b => b.id === blockId);
-        if (idx >= 0) this.blocks[idx] = updated;
+        if (idx >= 0) {
+          // Field-scoped merge: take the server's content but preserve any
+          // locally-newer state so a concurrent state PATCH is not clobbered.
+          this.blocks[idx] = { ...this.blocks[idx], content: updated.content, updatedAt: updated.updatedAt };
+        }
+        delete this._prevContent[blockId];
       } catch (err) {
+        // Roll back the optimistic content so the UI reflects server truth and
+        // the user is not misled into thinking an unsaved edit persisted.
+        const idx = this.blocks.findIndex(b => b.id === blockId);
+        if (idx >= 0 && Object.prototype.hasOwnProperty.call(this._prevContent, blockId)) {
+          this.blocks[idx] = { ...this.blocks[idx], content: this._prevContent[blockId] };
+        }
+        delete this._prevContent[blockId];
         this.error = err.message;
         console.error('Error updating block content:', err);
       }
@@ -281,7 +374,11 @@ export function blockEditor(noteId, initialBlocks = []) {
         }
         const updated = await res.json();
         const idx = this.blocks.findIndex(b => b.id === blockId);
-        if (idx >= 0) this.blocks[idx] = updated;
+        if (idx >= 0) {
+          // Field-scoped merge: take the server's state but preserve any
+          // locally-newer content so a concurrent content PUT is not clobbered.
+          this.blocks[idx] = { ...this.blocks[idx], state: updated.state, updatedAt: updated.updatedAt };
+        }
       } catch (err) {
         this.error = err.message;
         console.error('Error updating block state:', err);
@@ -290,6 +387,7 @@ export function blockEditor(noteId, initialBlocks = []) {
 
     async deleteBlock(blockId) {
       this.error = null;
+      const removedIdx = this.blocks.findIndex(b => b.id === blockId);
       try {
         const res = await fetch(`/v1/note/block?id=${blockId}`, {
           method: 'DELETE'
@@ -300,6 +398,17 @@ export function blockEditor(noteId, initialBlocks = []) {
           throw new Error(errorData.error || `Failed to delete block: ${res.status}`);
         }
         this.blocks = this.blocks.filter(b => b.id !== blockId);
+        this.announce('Block deleted');
+        // Move focus to a sensible neighbor (the block now occupying the deleted
+        // slot, else the add-block trigger) so keyboard users are not stranded.
+        this.$nextTick(() => {
+          const cards = this.$el.querySelectorAll('[data-block-id]');
+          const target = cards[Math.min(removedIdx, cards.length - 1)];
+          const btn = target && target.querySelector('[data-block-control]:not([disabled])');
+          if (btn) { btn.focus(); return; }
+          const trigger = this.$el.querySelector('[data-testid="add-block-trigger"]');
+          if (trigger) trigger.focus();
+        });
       } catch (err) {
         this.error = err.message;
         console.error('Error deleting block:', err);
@@ -333,11 +442,10 @@ export function blockEditor(noteId, initialBlocks = []) {
           throw new Error(errorData.error || `Failed to reorder blocks: ${res.status}`);
         }
         await this.loadBlocks();
-        // Announce reorder to screen readers via live region
-        const liveRegion = this.$refs && this.$refs.liveRegion;
-        if (liveRegion) {
-          liveRegion.textContent = `Block ${idx + 1} moved ${direction}`;
-        }
+        // Announce the destination position (not the pre-move slot) and restore
+        // focus to the moved block so repeated reordering stays keyboard-operable.
+        this.announce(`Block moved to position ${newIdx + 1} of ${this.blocks.length}`);
+        this.focusBlockControls(blockId);
       } catch (err) {
         this.error = err.message;
         console.error('Error moving block:', err);

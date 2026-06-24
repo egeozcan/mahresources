@@ -394,6 +394,67 @@ func (s *ShareServer) handleSharedResource(w http.ResponseWriter, r *http.Reques
 }
 
 // renderSharedNote renders a shared note using templates
+// normalizeTableBlockContent rewrites legacy array-format manual table content
+// (string columns and/or array rows) into the object form the shared template
+// expects: {id,label} columns and rows keyed by column id. This mirrors
+// blockTable.js _normalizeColumns/_normalizeRows. Query-mode tables (no
+// "columns" key) are left untouched.
+func normalizeTableBlockContent(content map[string]interface{}) {
+	rawCols, ok := content["columns"].([]interface{})
+	if !ok || len(rawCols) == 0 {
+		return
+	}
+
+	colIDs := make([]string, len(rawCols))
+	normCols := make([]interface{}, len(rawCols))
+	for i, c := range rawCols {
+		switch col := c.(type) {
+		case string:
+			id := fmt.Sprintf("col_%d", i)
+			colIDs[i] = id
+			normCols[i] = map[string]interface{}{"id": id, "label": col}
+		case map[string]interface{}:
+			id, _ := col["id"].(string)
+			if id == "" {
+				id = fmt.Sprintf("col_%d", i)
+				col["id"] = id
+			}
+			if _, has := col["label"]; !has {
+				col["label"] = id
+			}
+			colIDs[i] = id
+			normCols[i] = col
+		default:
+			id := fmt.Sprintf("col_%d", i)
+			colIDs[i] = id
+			normCols[i] = map[string]interface{}{"id": id, "label": fmt.Sprintf("%v", c)}
+		}
+	}
+	content["columns"] = normCols
+
+	rawRows, ok := content["rows"].([]interface{})
+	if !ok {
+		return
+	}
+	normRows := make([]interface{}, len(rawRows))
+	for i, r := range rawRows {
+		if arr, isArr := r.([]interface{}); isArr {
+			obj := make(map[string]interface{}, len(colIDs))
+			for j, id := range colIDs {
+				if j < len(arr) {
+					obj[id] = arr[j]
+				} else {
+					obj[id] = ""
+				}
+			}
+			normRows[i] = obj
+		} else {
+			normRows[i] = r
+		}
+	}
+	content["rows"] = normRows
+}
+
 func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note, shareToken string) {
 	template := pongo2.Must(s.templateSet.FromFile("/shared/displayNote.tpl"))
 
@@ -449,6 +510,11 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 
 		// Fetch query data for table blocks with queryId
 		if block.Type == "table" {
+			// Normalize legacy array-format manual content (string columns /
+			// array rows) into the object form the template expects. Without
+			// this, pongo2 errors on `col.label` against a string and 500s the
+			// whole shared note.
+			normalizeTableBlockContent(tb.Content)
 			if queryIdFloat, ok := tb.Content["queryId"].(float64); ok {
 				queryId := uint(queryIdFloat)
 				// Get query params from content

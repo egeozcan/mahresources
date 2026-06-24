@@ -36,14 +36,18 @@ export function blockTodos(block, saveContentFn, saveStateFn, getEditMode) {
       this.saveContentFn(this.block.id, { items: this.items });
     },
 
-    removeItem(idx) {
+    async removeItem(idx) {
       const removedItem = this.items[idx];
       this.items = this.items.filter((_, i) => i !== idx);
       if (removedItem) {
         this.checked = this.checked.filter(id => id !== removedItem.id);
       }
-      this.saveContentFn(this.block.id, { items: this.items });
-      this.saveStateFn(this.block.id, { checked: this.checked });
+      // Sequence the two writes. The content PUT and the state PATCH hit the
+      // same row, and each server response carries both fields, so firing them
+      // concurrently lets the later response clobber the earlier field
+      // (last-write-wins). Awaiting content before state keeps them ordered.
+      await this.saveContentFn(this.block.id, { items: this.items });
+      await this.saveStateFn(this.block.id, { checked: this.checked });
     }
   };
 }

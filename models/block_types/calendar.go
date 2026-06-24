@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
+	"time"
 )
 
 // hexColorRegex matches valid hex colors in #rgb or #rrggbb format.
@@ -81,8 +83,15 @@ func (c CalendarBlockType) ValidateContent(content json.RawMessage) error {
 		}
 
 		// Validate source fields based on type
-		if source.Source.Type == "url" && source.Source.URL == "" {
-			return fmt.Errorf("calendar '%s': url source requires url field", source.ID)
+		if source.Source.Type == "url" {
+			if source.Source.URL == "" {
+				return fmt.Errorf("calendar '%s': url source requires url field", source.ID)
+			}
+			// Restrict to http(s); the server fetches this URL, so non-http(s)
+			// schemes (file://, gopher://, ...) must be rejected (SSRF hardening).
+			if u, err := url.Parse(source.Source.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+				return fmt.Errorf("calendar '%s': url must use http or https", source.ID)
+			}
 		}
 		if source.Source.Type == "resource" && source.Source.ResourceID == nil {
 			return fmt.Errorf("calendar '%s': resource source requires resourceId field", source.ID)
@@ -132,6 +141,15 @@ func validateCustomEvent(event CustomCalendarEvent, index int) error {
 	}
 	if event.CalendarID != "custom" {
 		return fmt.Errorf("custom event '%s': calendarId must be 'custom'", event.ID)
+	}
+	// Defense-in-depth: when both timestamps are well-formed RFC3339, reject an
+	// event whose end precedes its start. Such events match no day on render and
+	// silently disappear, which reads as data loss. We only enforce ordering when
+	// both values parse, so other valid datetime encodings are not rejected here.
+	if start, err := time.Parse(time.RFC3339, event.Start); err == nil {
+		if end, err := time.Parse(time.RFC3339, event.End); err == nil && end.Before(start) {
+			return fmt.Errorf("custom event '%s': end must not be before start", event.ID)
+		}
 	}
 	return nil
 }

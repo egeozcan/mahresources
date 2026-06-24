@@ -212,7 +212,7 @@ test.describe('Block Backward Compatibility - Edge Cases', () => {
     }
   });
 
-  test('should handle empty text block content', async ({ apiClient }) => {
+  test('adding an empty first text block preserves the existing description', async ({ apiClient }) => {
     const note = await apiClient.createNote({
       name: 'Empty Text Block Note',
       description: 'Initial description',
@@ -220,10 +220,32 @@ test.describe('Block Backward Compatibility - Edge Cases', () => {
     });
 
     try {
-      // Create a text block with empty text
+      // Create the first text block with empty text. The existing description
+      // must be MIGRATED into the block, not clobbered to empty (data-loss fix):
+      // on the first text block, the description column is the source of truth.
       const block = await apiClient.createBlock(note.ID, 'text', 'a', { text: '' });
 
-      // Verify description synced to empty string
+      const fetchedNote = await apiClient.getNote(note.ID);
+      expect(fetchedNote.Description).toBe('Initial description');
+
+      const fetchedBlock = await apiClient.getBlock(block.id);
+      expect(fetchedBlock.content.text).toBe('Initial description');
+
+      await apiClient.deleteBlock(block.id);
+    } finally {
+      await apiClient.deleteNote(note.ID);
+    }
+  });
+
+  test('adding an empty first text block to a note without a description stays empty', async ({ apiClient }) => {
+    const note = await apiClient.createNote({
+      name: 'Empty Text Block No Desc',
+      ownerId: ownerGroupId,
+    });
+
+    try {
+      const block = await apiClient.createBlock(note.ID, 'text', 'a', { text: '' });
+
       const fetchedNote = await apiClient.getNote(note.ID);
       expect(fetchedNote.Description).toBe('');
 

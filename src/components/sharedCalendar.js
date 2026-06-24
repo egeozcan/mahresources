@@ -359,9 +359,15 @@ export function sharedCalendar(blockId, initialContent, initialState, shareToken
         endDateTime = new Date(this.eventForm.endDate + 'T' + this.eventForm.endTime);
       }
 
-      // Auto-adjust end time if needed
-      if (endDateTime <= startDateTime && !this.eventForm.allDay) {
-        endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
+      // Auto-adjust end so it is never before start (all-day included), matching
+      // blockCalendar.js. Without the all-day clamp an inverted all-day event was
+      // saved and then matched no day on render, appearing to vanish.
+      if (endDateTime <= startDateTime) {
+        if (this.eventForm.allDay) {
+          endDateTime = new Date(this.eventForm.startDate + 'T23:59:59');
+        } else {
+          endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
+        }
       }
 
       const eventData = {

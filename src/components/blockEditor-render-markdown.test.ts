@@ -101,3 +101,37 @@ describe('BH-021: renderMarkdown extended tokens', () => {
     expect(renderMarkdown('a\nb')).toBe('a<br>b');
   });
 });
+
+describe('XSS: link scheme sanitization (control-char bypass)', () => {
+  it('blocks a plain javascript: link', () => {
+    expect(renderMarkdown('[x](javascript:alert/**/1)')).not.toMatch(/<a\s/);
+  });
+
+  it('blocks javascript: with an embedded TAB in the scheme', () => {
+    expect(renderMarkdown('[x](java\tscript:foo)')).not.toMatch(/<a\s/);
+  });
+
+  it('blocks javascript: with an embedded carriage return in the scheme', () => {
+    expect(renderMarkdown('[x](java\rscript:foo)')).not.toMatch(/<a\s/);
+  });
+
+  it('blocks javascript: with an embedded form-feed in the scheme', () => {
+    expect(renderMarkdown('[x](java\fscript:foo)')).not.toMatch(/<a\s/);
+  });
+
+  it('blocks data: and vbscript: schemes', () => {
+    expect(renderMarkdown('[x](data:text/html,foo)')).not.toMatch(/<a\s/);
+    expect(renderMarkdown('[x](vbscript:msgbox)')).not.toMatch(/<a\s/);
+  });
+
+  it('still renders safe http/https/mailto links', () => {
+    expect(renderMarkdown('[x](https://example.com)')).toMatch(/<a href="https:\/\/example\.com"/);
+    expect(renderMarkdown('[x](http://example.com)')).toMatch(/<a href="http:\/\/example\.com"/);
+    expect(renderMarkdown('[x](mailto:a@b.com)')).toMatch(/<a href="mailto:a@b\.com"/);
+  });
+
+  it('still renders relative and fragment links', () => {
+    expect(renderMarkdown('[x](/notes/1)')).toMatch(/<a href="\/notes\/1"/);
+    expect(renderMarkdown('[x](#section)')).toMatch(/<a href="#section"/);
+  });
+});
