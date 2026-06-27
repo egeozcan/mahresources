@@ -25,6 +25,33 @@ func TestLintGeneratedQuery(t *testing.T) {
 			wantMsg:   "LIMIT must be between 1 and 500",
 		},
 		{
+			name:      "limit zero rejected",
+			query:     `type = resource LIMIT 0`,
+			wantValid: false,
+			wantMsg:   "LIMIT must be between 1 and 500",
+		},
+		{
+			name:      "limit one allowed",
+			query:     `type = resource LIMIT 1`,
+			wantValid: true,
+		},
+		{
+			name:      "limit maximum allowed",
+			query:     `type = resource LIMIT 500`,
+			wantValid: true,
+		},
+		{
+			name:      "limit above maximum rejected",
+			query:     `type = resource LIMIT 501`,
+			wantValid: false,
+			wantMsg:   "LIMIT must be between 1 and 500",
+		},
+		{
+			name:      "offset maximum allowed",
+			query:     `type = resource LIMIT 50 OFFSET 10000`,
+			wantValid: true,
+		},
+		{
 			name:      "offset too large",
 			query:     `type = resource LIMIT 50 OFFSET 10001`,
 			wantValid: false,
@@ -54,8 +81,26 @@ func TestLintGeneratedQuery(t *testing.T) {
 			wantValid: true,
 		},
 		{
+			name:      "category in string rejected",
+			query:     `type = group AND category IN ("Invoices", 7) LIMIT 50`,
+			wantValid: false,
+			wantMsg:   "category requires a numeric ID in generated MRQL",
+		},
+		{
+			name:      "nested category in string rejected",
+			query:     `type = group AND NOT (category IN ("Archive")) LIMIT 50`,
+			wantValid: false,
+			wantMsg:   "category requires a numeric ID in generated MRQL",
+		},
+		{
 			name:      "string note type rejected",
 			query:     `type = note AND noteType = "Meeting" LIMIT 50`,
+			wantValid: false,
+			wantMsg:   "noteType requires a numeric ID in generated MRQL",
+		},
+		{
+			name:      "note type in string rejected",
+			query:     `type = note AND noteType IN ("Meeting") LIMIT 50`,
 			wantValid: false,
 			wantMsg:   "noteType requires a numeric ID in generated MRQL",
 		},
@@ -65,6 +110,27 @@ func TestLintGeneratedQuery(t *testing.T) {
 			mutate:    renameGeneratedLintField("category", "resourceCategory"),
 			wantValid: false,
 			wantMsg:   "resourceCategory requires a numeric ID in generated MRQL",
+		},
+		{
+			name:      "traversal category string rejected",
+			query:     `type = resource AND owner.category = "Invoices" LIMIT 50`,
+			wantValid: false,
+			wantMsg:   "owner.category requires a numeric ID in generated MRQL",
+		},
+		{
+			name:      "traversal category numeric allowed",
+			query:     `type = resource AND owner.category = 7 LIMIT 50`,
+			wantValid: true,
+		},
+		{
+			name:      "unrelated traversal string allowed",
+			query:     `type = resource AND owner.name = "Invoices" LIMIT 50`,
+			wantValid: true,
+		},
+		{
+			name:      "traversal meta category string allowed",
+			query:     `type = resource AND owner.meta.category = "Invoices" LIMIT 50`,
+			wantValid: true,
 		},
 	}
 

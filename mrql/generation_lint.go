@@ -33,14 +33,14 @@ func LintGeneratedQuery(q *Query) []map[string]any {
 			}
 		case *ComparisonExpr:
 			name := expr.Field.Name()
-			if requiresGeneratedNumericID(name) {
+			if requiresGeneratedNumericIDField(expr.Field) {
 				if _, ok := expr.Value.(*NumberLiteral); !ok {
 					add(expr.Pos(), name+" requires a numeric ID in generated MRQL")
 				}
 			}
 		case *InExpr:
 			name := expr.Field.Name()
-			if requiresGeneratedNumericID(name) {
+			if requiresGeneratedNumericIDField(expr.Field) {
 				for _, v := range expr.Values {
 					if _, ok := v.(*NumberLiteral); !ok {
 						add(expr.Pos(), name+" requires a numeric ID in generated MRQL")
@@ -77,11 +77,37 @@ func containsAlphaNum(s string) bool {
 	return false
 }
 
-func requiresGeneratedNumericID(field string) bool {
-	switch field {
-	case "category", "resourceCategory", "noteType":
-		return true
-	default:
+func requiresGeneratedNumericIDField(field *FieldExpr) bool {
+	if field == nil || len(field.Parts) == 0 {
 		return false
 	}
+
+	if len(field.Parts) == 1 {
+		switch field.Parts[0].Value {
+		case "category", "resourceCategory", "noteType":
+			return true
+		default:
+			return false
+		}
+	}
+
+	if hasGeneratedMetaPath(field) {
+		return false
+	}
+
+	if field.Parts[len(field.Parts)-1].Value != "category" {
+		return false
+	}
+
+	_, ok := traversalRoots[field.Parts[0].Value]
+	return ok
+}
+
+func hasGeneratedMetaPath(field *FieldExpr) bool {
+	for _, part := range field.Parts[:len(field.Parts)-1] {
+		if part.Value == "meta" {
+			return true
+		}
+	}
+	return false
 }
