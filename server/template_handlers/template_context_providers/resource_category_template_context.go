@@ -109,11 +109,19 @@ func ResourceCategoryContextProvider(context *application_context.MahresourcesCo
 			return addErrContext(err, baseContext)
 		}
 
+		// resources is only the current page slice (capped at MaxResultsPerPage),
+		// so derive the real category total from a COUNT query for the meta-strip.
+		resourcesTotal, err := context.GetResourceCount(resourceQuery)
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
 		result := pongo2.Context{
 			"pageTitle":        "Resource Category: " + resourceCategory.Name,
 			"prefix":           "Resource Category",
 			"resourceCategory": resourceCategory,
 			"resources":        resources,
+			"resourcesTotal":   resourcesTotal,
 			"action": template_entities.Entry{
 				Name: "Edit",
 				Url:  "/resourceCategory/edit?id=" + strconv.Itoa(int(query.ID)),

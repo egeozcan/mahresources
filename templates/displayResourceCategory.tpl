@@ -7,7 +7,7 @@
     <div class="meta-strip">
         <div class="meta-strip-item">
             <span class="meta-strip-label">Resources</span>
-            <span class="meta-strip-value">{{ resources|length }}</span>
+            <span class="meta-strip-value">{{ resourcesTotal }}</span>
         </div>
     </div>
     {% endif %}
