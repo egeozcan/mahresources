@@ -89,6 +89,29 @@ func TestMRQLGeneratorDoesNotLeakLocalVocabularyIntoPrompt(t *testing.T) {
 	}
 }
 
+func TestMRQLGeneratorPromptExplainsTagSyntaxAndBansHas(t *testing.T) {
+	provider := &fakeMRQLDraftProvider{
+		query:       `type = resource AND contentType ~ "image/*" AND tags = "keo" LIMIT 50`,
+		explanation: "Finds image resources tagged keo.",
+	}
+	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second})
+
+	_, err := gen.GenerateMRQL(context.Background(), `images with the tag "keo"`)
+	if err != nil {
+		t.Fatalf("GenerateMRQL: %v", err)
+	}
+
+	for _, want := range []string{
+		`Use tags = "tag-name"`,
+		`Use tags IN ("a", "b")`,
+		`Never use HAS`,
+	} {
+		if !strings.Contains(provider.seenPrompt, want) {
+			t.Fatalf("prompt missing %q in:\n%s", want, provider.seenPrompt)
+		}
+	}
+}
+
 func TestMRQLGeneratorProviderErrors(t *testing.T) {
 	gen := NewMRQLGenerator(
 		&fakeMRQLDraftProvider{err: errors.New("provider exploded")},
