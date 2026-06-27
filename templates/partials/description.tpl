@@ -21,6 +21,7 @@
         <div class="contents">
             <textarea
                 @click.away="
+                    if ($el.value === $el.defaultValue) { editing = false; return; }
                     const formData = new FormData();
                     formData.append('description', $el.value);
                     const clickedLink = $event && $event.target && $event.target.closest('a[href]');
@@ -32,6 +33,7 @@
                             } else if (!r.ok) {
                                 console.error('Failed to save description: HTTP', r.status);
                                 // Keep editing=true so the user's unsaved text is retained for retry.
+                                window.mahAnnounce && window.mahAnnounce('Could not save description', { assertive: true });
                                 if (container) {
                                     container.style.transition = 'background-color 0.3s';
                                     container.style.backgroundColor = '#fee2e2';
@@ -42,6 +44,7 @@
                         .catch(e => {
                             console.error('Failed to save description:', e);
                             // Keep editing=true so the user's unsaved text is retained for retry.
+                            window.mahAnnounce && window.mahAnnounce('Could not save description', { assertive: true });
                             if (container) {
                                 container.style.transition = 'background-color 0.3s';
                                 container.style.backgroundColor = '#fee2e2';

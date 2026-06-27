@@ -153,9 +153,11 @@ class InlineEdit extends HTMLElement {
                 if (e.key === 'Escape') {
                     e.preventDefault();
                     this._cancelled = true;
+                    this._keyboardExit = true;
                     this.exitEditMode();
                 } else if (!this.multiline && e.key === 'Enter') {
                     e.preventDefault();
+                    this._keyboardExit = true;
                     this.exitEditMode();
                 }
             });
@@ -179,10 +181,17 @@ class InlineEdit extends HTMLElement {
         if (!this.isEditing) return;
         this.isEditing = false;
 
+        // Return focus to the edit button only when the edit was dismissed via
+        // keyboard (Enter/Escape) — not on blur — so clicking or tabbing away is
+        // not yanked back. WCAG 2.4.3.
+        const keyboardExit = this._keyboardExit;
+        this._keyboardExit = false;
+
         if (this._cancelled) {
             this._cancelled = false;
             this.displayText.textContent = this._originalValue;
             this.shadowRoot.replaceChild(this.displayContainer, this.inputElement);
+            if (keyboardExit) this.editButton.focus();
             return;
         }
 
@@ -190,6 +199,7 @@ class InlineEdit extends HTMLElement {
         this.displayText.textContent = newValue;
         this.textContent = newValue;
         this.shadowRoot.replaceChild(this.displayContainer, this.inputElement);
+        if (keyboardExit) this.editButton.focus();
 
         // Only post if the value actually changed
         if (this.postUrl && newValue !== this._originalValue) {
@@ -223,6 +233,8 @@ class InlineEdit extends HTMLElement {
                 this.displayText.style.transition = 'background-color 0.3s';
                 this.displayText.style.backgroundColor = '#d1fae5';
                 setTimeout(() => { this.displayText.style.backgroundColor = ''; }, 1000);
+                // Announce to assistive tech (the green flash alone is color-only). WCAG 4.1.3.
+                window.mahAnnounce?.(`${this.label} saved`);
             }).catch((error) => {
                 console.error('Error posting data:', error);
                 // Revert on error
@@ -231,6 +243,8 @@ class InlineEdit extends HTMLElement {
                 this.displayText.style.transition = 'background-color 0.3s';
                 this.displayText.style.backgroundColor = '#fee2e2';
                 setTimeout(() => { this.displayText.style.backgroundColor = ''; }, 1000);
+                // Announce the failure assertively (the red flash alone is color-only). WCAG 4.1.3.
+                window.mahAnnounce?.(`Could not save ${this.label}`, { assertive: true });
             });
         }
     }

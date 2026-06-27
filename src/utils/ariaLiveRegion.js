@@ -1,12 +1,13 @@
 /**
  * Create a visually hidden ARIA live region for screen reader announcements.
  * @param {HTMLElement} [parent=document.body] - The parent element to append the region to.
+ * @param {{ assertive?: boolean }} [options] - assertive=true uses role="alert"/aria-live="assertive" (for errors); default is polite.
  * @returns {{ element: HTMLElement, announce: (message: string) => void, destroy: () => void }}
  */
-export function createLiveRegion(parent = document.body) {
+export function createLiveRegion(parent = document.body, { assertive = false } = {}) {
     const element = document.createElement('div');
-    element.setAttribute('role', 'status');
-    element.setAttribute('aria-live', 'polite');
+    element.setAttribute('role', assertive ? 'alert' : 'status');
+    element.setAttribute('aria-live', assertive ? 'assertive' : 'polite');
     element.setAttribute('aria-atomic', 'true');
     Object.assign(element.style, {
         position: 'absolute',

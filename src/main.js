@@ -90,6 +90,7 @@ import { sectionConfigForm } from './components/sectionConfigForm.js';
 
 // Import utility modules
 import { renderMentions } from './utils/renderMentions.js';
+import { createLiveRegion } from './utils/ariaLiveRegion.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -114,6 +115,22 @@ window.getJSONValue = getJSONValue;
 window.getJSONOrObjValue = getJSONOrObjValue;
 // BH-015: expose the factory so E2E tests can unit-check formatProgress clamping.
 window.downloadCockpit = downloadCockpit;
+
+// Global, lazily-created ARIA live regions for one-off status announcements
+// (inline-edit saves, inline description saves, etc.). Exposed on window so
+// both bundled modules and inline template handlers can announce.
+let _politeLiveRegion = null;
+let _assertiveLiveRegion = null;
+window.mahAnnounce = (message, { assertive = false } = {}) => {
+  if (!message) return;
+  if (assertive) {
+    if (!_assertiveLiveRegion) _assertiveLiveRegion = createLiveRegion(document.body, { assertive: true });
+    _assertiveLiveRegion.announce(message);
+  } else {
+    if (!_politeLiveRegion) _politeLiveRegion = createLiveRegion(document.body);
+    _politeLiveRegion.announce(message);
+  }
+};
 
 // Register Alpine plugins (must be done before Alpine.start())
 Alpine.plugin(morph);
