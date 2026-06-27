@@ -41,21 +41,18 @@
                  x-transition:leave="transition ease-in duration-100"
                  x-transition:leave-start="opacity-100 translate-y-0"
                  x-transition:leave-end="opacity-0 -translate-y-1"
-                 class="navbar-dropdown-menu"
-                 role="menu">
+                 class="navbar-dropdown-menu">
                 {% for adminEntry in adminMenu %}
                 <a href="{{ adminEntry.Url }}"
                    class="navbar-dropdown-item {% if adminEntry.Url == path %}navbar-dropdown-item--active{% endif %}"
-                   @click="adminOpen = false"
-                   role="menuitem">
+                   @click="adminOpen = false">
                     {{ adminEntry.Name }}
                 </a>
                 {% endfor %}
                 {% if not authEnabled or currentUser.IsAdmin %}
                 <a href="/admin/users"
                    class="navbar-dropdown-item {% if '/admin/users' == path %}navbar-dropdown-item--active{% endif %}"
-                   @click="adminOpen = false"
-                   role="menuitem">
+                   @click="adminOpen = false">
                     Users
                 </a>
                 {% endif %}
@@ -83,12 +80,10 @@
                  x-transition:leave="transition ease-in duration-100"
                  x-transition:leave-start="opacity-100 translate-y-0"
                  x-transition:leave-end="opacity-0 -translate-y-1"
-                 class="navbar-dropdown-menu"
-                 role="menu">
+                 class="navbar-dropdown-menu">
                 <a href="/plugins/manage"
                    class="navbar-dropdown-item {% if '/plugins/manage' == currentPath %}navbar-dropdown-item--active{% endif %}"
-                   @click="pluginsOpen = false"
-                   role="menuitem">
+                   @click="pluginsOpen = false">
                     Manage Plugins
                 </a>
                 {% if pluginMenuItems %}
@@ -97,8 +92,7 @@
                 {% for pi in pluginMenuItems %}
                 <a href="{{ pi.FullPath }}"
                    class="navbar-dropdown-item {% if pi.FullPath == path %}navbar-dropdown-item--active{% endif %}"
-                   @click="pluginsOpen = false"
-                   role="menuitem">
+                   @click="pluginsOpen = false">
                     {{ pi.Label }}
                 </a>
                 {% endfor %}
