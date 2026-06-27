@@ -398,10 +398,25 @@ func NoteTypeContextProvider(context *application_context.MahresourcesContext) f
 			return addErrContext(err, baseContext)
 		}
 
+		// Fetch a bounded page of notes that use this type (plus a true total)
+		// rather than rendering the unbounded preloaded association.
+		noteQuery := &query_models.NoteQuery{NoteTypeId: noteType.ID}
+		notes, err := context.GetNotes(0, constants.MaxResultsPerPage, noteQuery)
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
+		notesTotal, err := context.GetNoteCount(noteQuery)
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
 		return pongo2.Context{
-			"pageTitle": "Note Type: " + noteType.Name,
-			"prefix":    "Note Type",
-			"noteType":  noteType,
+			"pageTitle":  "Note Type: " + noteType.Name,
+			"prefix":     "Note Type",
+			"noteType":   noteType,
+			"notes":      notes,
+			"notesTotal": notesTotal,
 			"action": template_entities.Entry{
 				Name: "Edit",
 				Url:  "/noteType/edit?id=" + strconv.Itoa(int(query.ID)),
