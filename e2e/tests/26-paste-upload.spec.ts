@@ -363,6 +363,50 @@ test.describe.serial('Paste Upload', () => {
     await expect(modal).not.toBeVisible();
   });
 
+  // 10. Paste on a group detail page that also contains an unrelated file input
+  //     (e.g. one rendered by a category CustomHeader/CustomSidebar or a plugin
+  //     slot). The explicit data-paste-context must win: the modal opens and the
+  //     file input must NOT swallow the paste. Regression test for the
+  //     "file input hijacks paste" bug.
+  test('should open modal on group detail even when a file input is present', async ({
+    page,
+    groupPage,
+  }) => {
+    await groupPage.gotoDisplay(groupId);
+    await page.locator('body').click();
+    await page.waitForTimeout(200);
+
+    // Simulate a category CustomHeader / plugin slot that renders a file input.
+    await page.evaluate(() => {
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.id = 'spec-injected-file-input';
+      document.body.appendChild(inp);
+    });
+
+    await pasteImage(page);
+
+    // The paste-upload modal must open with the group context...
+    const modal = page.locator(MODAL_SELECTOR);
+    await expect(modal).toBeVisible({ timeout: 5000 });
+    await expect(page.locator(MODAL_TITLE)).toContainText(groupName);
+
+    // ...and the unrelated file input must not have received the pasted file.
+    const injectedCount = await page.evaluate(
+      () =>
+        (document.querySelector('#spec-injected-file-input') as HTMLInputElement)
+          ?.files?.length ?? -1,
+    );
+    expect(injectedCount).toBe(0);
+
+    // Clean up: close modal and remove the injected input.
+    await modal.locator('button:has-text("Cancel")').click();
+    await expect(modal).not.toBeVisible();
+    await page.evaluate(() =>
+      document.querySelector('#spec-injected-file-input')?.remove(),
+    );
+  });
+
   test.afterAll(async ({ apiClient }) => {
     // Clean up resources created during tests
     for (const id of createdResourceIds) {

@@ -215,8 +215,15 @@ let _autoCloseTimer = null;
 export function setupPasteListener() {
   window.addEventListener('paste', async (e) => {
     // --- Guard 1: file input on page + clipboard has files → legacy behaviour -
+    // Skipped when the page advertises an explicit paste-upload context (detail
+    // and owner-filtered list pages carry a [data-paste-context]). On those the
+    // paste-upload modal always wins, so an *unrelated* file input — e.g. one
+    // rendered by a category CustomHeader/CustomSidebar or a plugin slot — can't
+    // silently swallow the paste. Pages built around a real upload form (e.g.
+    // createResource) carry no paste-context, so they keep the legacy behaviour.
+    const hasPasteContext = document.querySelector('[data-paste-context]') !== null;
     const fileInput = document.querySelector("input[type='file']");
-    if (fileInput && e.clipboardData?.files && e.clipboardData.files.length > 0) {
+    if (!hasPasteContext && fileInput && e.clipboardData?.files && e.clipboardData.files.length > 0) {
       e.preventDefault();
       const dt = new DataTransfer();
       for (const file of fileInput.files) {
