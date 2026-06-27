@@ -2,7 +2,7 @@
 <div x-data="() => ({ editing: false, descriptionEditUrl: '{{ descriptionEditUrl }}{% if descriptionEditId %}?id={{ descriptionEditId }}{% endif %}' })"
     x-show="$store.savedSetting.localSettings.showDescriptions ?? true"
     class="description flex-1 relative"
-     :class="{ 'lg:prose-xl prose font-sans bg-stone-50 p-4 mb-2': !editing }"
+     :class="{ 'lg:prose-xl prose font-sans bg-white border border-stone-200 rounded p-4 mb-2': !editing }"
 >
     <template x-if="!editing">
         <div class="contents" @dblclick="editing = !!descriptionEditUrl" title="Double-click to edit">
@@ -31,7 +31,7 @@
                                 location.reload();
                             } else if (!r.ok) {
                                 console.error('Failed to save description: HTTP', r.status);
-                                editing = false;
+                                // Keep editing=true so the user's unsaved text is retained for retry.
                                 if (container) {
                                     container.style.transition = 'background-color 0.3s';
                                     container.style.backgroundColor = '#fee2e2';
@@ -41,7 +41,7 @@
                         })
                         .catch(e => {
                             console.error('Failed to save description:', e);
-                            editing = false;
+                            // Keep editing=true so the user's unsaved text is retained for retry.
                             if (container) {
                                 container.style.transition = 'background-color 0.3s';
                                 container.style.backgroundColor = '#fee2e2';

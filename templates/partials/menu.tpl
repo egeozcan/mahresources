@@ -3,7 +3,8 @@
      data-current-path="{{ path }}"
      class="navbar flex items-center gap-1">
     <!-- Mobile hamburger -->
-    <button @click="mobileOpen = !mobileOpen" class="navbar-toggle" aria-label="Toggle menu">
+    <button @click="mobileOpen = !mobileOpen" class="navbar-toggle" aria-label="Toggle menu"
+            :aria-expanded="mobileOpen.toString()" aria-controls="navbar-mobile-panel">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path x-show="!mobileOpen" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 12h16M4 18h16" />
             <path x-show="mobileOpen" x-cloak stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12" />
@@ -108,6 +109,7 @@
 
     <!-- Mobile navigation -->
     <div x-show="mobileOpen"
+         id="navbar-mobile-panel"
          x-cloak
          x-transition:enter="transition ease-out duration-200"
          x-transition:enter-start="opacity-0 -translate-y-2"
