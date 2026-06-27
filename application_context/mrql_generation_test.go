@@ -139,6 +139,7 @@ func TestMRQLGeneratorPromptIncludesCompactSyntaxGuide(t *testing.T) {
 		"Use meta.<key> for metadata only when the user names the key.",
 		"Example mappings use <placeholders>; replace them with user-provided values and never emit the placeholder tokens.",
 		`images with tag <tag> -> type = resource AND contentType ~ "image/*" AND tags = "<tag>" LIMIT 50`,
+		`resources whose owner has tag <tag> -> type = resource AND owner.tags = "<tag>" LIMIT 50`,
 		`notes about <text> -> type = note AND TEXT ~ "<text>" LIMIT 50`,
 		`groups named <name> -> type = group AND name ~ "<name>*" LIMIT 50`,
 	} {

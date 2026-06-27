@@ -11,6 +11,8 @@ import (
 
 const DefaultDeepSeekChatCompletionsURL = "https://api.deepseek.com/chat/completions"
 
+const deepSeekMRQLSystemPrompt = `You generate MRQL. Return JSON only. The response content must be one JSON object with exactly the keys query and explanation, like {"query":"type = resource LIMIT 50","explanation":"Finds resources."}. Do not use markdown or extra keys.`
+
 type deepSeekMRQLDraftProvider struct {
 	url    string
 	apiKey string
@@ -36,11 +38,14 @@ func (p *deepSeekMRQLDraftProvider) GenerateDraft(ctx context.Context, prompt st
 		"model":      p.model,
 		"stream":     false,
 		"max_tokens": 800,
+		"thinking": map[string]string{
+			"type": "disabled",
+		},
 		"response_format": map[string]string{
 			"type": "json_object",
 		},
 		"messages": []map[string]string{
-			{"role": "system", "content": "You generate MRQL. Return JSON only."},
+			{"role": "system", "content": deepSeekMRQLSystemPrompt},
 			{"role": "user", "content": prompt},
 		},
 	}

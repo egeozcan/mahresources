@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +35,26 @@ func TestDeepSeekClientSendsJSONChatRequest(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("request body missing %s: %s", want, body)
 		}
+	}
+	var requestBody map[string]any
+	if err := json.Unmarshal([]byte(body), &requestBody); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	thinking, ok := requestBody["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "disabled" {
+		t.Fatalf("request body should disable thinking mode, got: %s", body)
+	}
+	messages, ok := requestBody["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		t.Fatalf("request body missing messages: %s", body)
+	}
+	system, ok := messages[0].(map[string]any)
+	if !ok {
+		t.Fatalf("first message has unexpected shape: %#v", messages[0])
+	}
+	systemContent, ok := system["content"].(string)
+	if !ok || !strings.Contains(systemContent, `{"query":"type = resource LIMIT 50","explanation":"Finds resources."}`) {
+		t.Fatalf("system prompt should include exact JSON example, got: %q", systemContent)
 	}
 	if got.Query != `type = resource LIMIT 50` || got.Explanation != "Finds resources." {
 		t.Fatalf("unexpected draft: %#v", got)
