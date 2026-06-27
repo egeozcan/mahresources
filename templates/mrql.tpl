@@ -213,6 +213,52 @@
             </div>
         </div>
 
+        <div class="mb-4 border border-stone-200 rounded-md p-3 bg-stone-50" aria-label="Generate MRQL from natural language">
+            <label for="mrql-generation-prompt" class="block text-sm font-medium text-stone-700 mb-1">Describe results</label>
+            <textarea id="mrql-generation-prompt"
+                      x-ref="generationPrompt"
+                      x-model="generationPrompt"
+                      data-testid="mrql-generation-prompt"
+                      rows="2"
+                      :aria-invalid="generationError ? 'true' : 'false'"
+                      aria-describedby="mrql-generation-help mrql-generation-message"
+                      class="w-full border border-stone-300 rounded-md px-3 py-2 text-sm focus:ring-amber-600 focus:border-amber-600"
+                      placeholder="Images from the last 30 days tagged invoice"></textarea>
+            <p id="mrql-generation-help" class="mt-1 text-xs text-stone-500">Sends only this text and MRQL syntax instructions to the configured provider.</p>
+            <div class="mt-2 flex items-center gap-2">
+                <button type="button"
+                        @click="generateFromPrompt()"
+                        data-testid="mrql-generate-button"
+                        :disabled="generating"
+                        :aria-busy="generating.toString()"
+                        class="inline-flex items-center px-3 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                    <span x-text="generating ? 'Generating...' : 'Generate'"></span>
+                </button>
+                <template x-if="generatedQuery && (!generatedValid || getQuery() !== generatedQuery)">
+                    <button type="button"
+                            @click="applyGeneratedQuery()"
+                            data-testid="mrql-use-generated-button"
+                            class="px-3 py-2 text-sm font-mono text-stone-700 bg-white border border-stone-300 rounded-md hover:bg-stone-50 cursor-pointer">
+                        Use generated query
+                    </button>
+                </template>
+            </div>
+            <div id="mrql-generation-message" class="mt-2 space-y-2">
+                <template x-if="generationStatus">
+                    <p data-testid="mrql-generation-status" role="status" aria-live="polite" class="text-sm text-stone-700 font-mono" x-text="generationStatus"></p>
+                </template>
+                <template x-if="generationError">
+                    <p data-testid="mrql-generation-error" role="alert" class="text-sm text-red-700 font-mono" x-text="generationError"></p>
+                </template>
+                <template x-if="generatedExplanation">
+                    <p data-testid="mrql-generation-explanation" class="text-sm text-stone-600" x-text="generatedExplanation"></p>
+                </template>
+                <template x-if="generatedQuery && !generatedValid">
+                    <pre data-testid="mrql-generated-query-preview" class="text-xs bg-white border border-stone-200 rounded p-2 overflow-x-auto"><code x-text="generatedQuery"></code></pre>
+                </template>
+            </div>
+        </div>
+
         {# Editor container — data-testid lets E2E tests target the underlying CodeMirror input. #}
         <div x-ref="editorContainer"
              data-testid="mrql-input"

@@ -9,6 +9,14 @@ export function mrqlEditor() {
     executing: false,
     validationError: '',
     error: '',
+    generationPrompt: '',
+    generating: false,
+    generationError: '',
+    generationStatus: '',
+    generatedQuery: '',
+    generatedExplanation: '',
+    generatedValid: null,
+    generatedErrors: [],
 
     // Results
     result: null,
@@ -36,6 +44,8 @@ export function mrqlEditor() {
 
     // Validation debounce timer
     _validateTimer: null,
+    _generationRequestId: 0,
+    _generationEditorSnapshot: '',
 
     get totalCount() {
       if (!this.result) return 0;
@@ -303,6 +313,79 @@ export function mrqlEditor() {
       } catch (_) {
         // Network error — silently ignore
       }
+    },
+
+    async generateFromPrompt() {
+      const prompt = this.generationPrompt.trim();
+      this.generationError = '';
+      this.generationStatus = '';
+      this.generatedQuery = '';
+      this.generatedExplanation = '';
+      this.generatedValid = null;
+      this.generatedErrors = [];
+
+      if (!prompt) {
+        this.generationError = 'Describe what results you want first.';
+        this.$nextTick(() => this.$refs.generationPrompt?.focus());
+        return;
+      }
+
+      const requestId = ++this._generationRequestId;
+      const editorSnapshot = this.getQuery();
+      this._generationEditorSnapshot = editorSnapshot;
+      this.generating = true;
+      this.generationStatus = 'Generating...';
+
+      try {
+        const resp = await fetch('/v1/mrql/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt }),
+        });
+        const data = await resp.json().catch(() => null);
+        if (requestId !== this._generationRequestId) return;
+        if (!resp.ok) {
+          this.generationError = data?.error || data?.Error || `Generation failed (${resp.status})`;
+          this.generationStatus = '';
+          return;
+        }
+
+        this.generatedQuery = data?.query || '';
+        this.generatedExplanation = data?.explanation || '';
+        this.generatedValid = !!data?.valid;
+        this.generatedErrors = Array.isArray(data?.errors) ? data.errors : [];
+
+        if (!this.generatedValid) {
+          this.generationStatus = 'Generated query needs review.';
+          this.generationError = this.generatedErrors.map((e) => e.message || JSON.stringify(e)).join('; ') || 'Generated query is invalid.';
+          return;
+        }
+
+        if (this.getQuery() !== editorSnapshot) {
+          this.generationStatus = 'Generated query is ready.';
+          return;
+        }
+
+        this.applyGeneratedQuery();
+        this.generationStatus = 'Generated query is ready.';
+      } catch (err) {
+        if (requestId !== this._generationRequestId) return;
+        this.generationError = err.message || 'Network error';
+        this.generationStatus = '';
+      } finally {
+        if (requestId === this._generationRequestId) this.generating = false;
+      }
+    },
+
+    applyGeneratedQuery() {
+      if (!this.generatedQuery) return;
+      this.setQuery(this.generatedQuery);
+      this.clearLoadedSaved();
+      this.result = null;
+      this.error = '';
+      this.defaultLimitApplied = false;
+      this.appliedLimit = 0;
+      this.scheduleValidation();
     },
 
     async execute({ pushState = true } = {}) {

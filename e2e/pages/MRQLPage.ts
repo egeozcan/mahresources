@@ -11,6 +11,12 @@ export class MRQLPage {
   readonly validationError: Locator;
   readonly docsButton: Locator;
   readonly docsPanel: Locator;
+  readonly generationPrompt: Locator;
+  readonly generationButton: Locator;
+  readonly generationStatus: Locator;
+  readonly generationError: Locator;
+  readonly generationExplanation: Locator;
+  readonly useGeneratedButton: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -23,6 +29,12 @@ export class MRQLPage {
     this.validationError = page.locator('section[aria-label="MRQL query editor"] [role="alert"]');
     this.docsButton = page.locator('[aria-controls="mrql-docs-panel"]');
     this.docsPanel = page.locator('#mrql-docs-panel');
+    this.generationPrompt = page.getByTestId('mrql-generation-prompt');
+    this.generationButton = page.getByTestId('mrql-generate-button');
+    this.generationStatus = page.getByTestId('mrql-generation-status');
+    this.generationError = page.getByTestId('mrql-generation-error');
+    this.generationExplanation = page.getByTestId('mrql-generation-explanation');
+    this.useGeneratedButton = page.getByTestId('mrql-use-generated-button');
   }
 
   async navigate() {
@@ -57,6 +69,19 @@ export class MRQLPage {
         changes: { from: 0, to: view.state.doc.length, insert: text },
       });
     }, query);
+  }
+
+  async enterGenerationPrompt(prompt: string) {
+    await this.generationPrompt.fill(prompt);
+  }
+
+  async generateMRQL() {
+    await this.generationButton.click();
+    await expect(this.generationButton).toBeEnabled({ timeout: 15000 });
+  }
+
+  async useGeneratedQuery() {
+    await this.useGeneratedButton.click();
   }
 
   /**
