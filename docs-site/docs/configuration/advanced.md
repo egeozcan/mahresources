@@ -170,6 +170,24 @@ Limits the maximum execution time for MRQL (Mahresources Query Language) queries
 ./mahresources -mrql-query-timeout=30s ...
 ```
 
+## MRQL Natural-Language Generation
+
+MRQL generation is optional and configured with environment variables only. There are no CLI flags for the provider credentials in v1.
+
+| Env Variable | Default | Description |
+|--------------|---------|-------------|
+| `DEEPSEEK_API_KEY` | (disabled) | DeepSeek API key for `/mrql` natural-language generation |
+| `DEEPSEEK_MODEL` | `deepseek-v4-pro` | DeepSeek model used to draft MRQL |
+| `DEEPSEEK_TIMEOUT` | `20s` | Timeout for one DeepSeek MRQL generation call. Invalid duration values fail startup |
+
+```bash
+DEEPSEEK_API_KEY=sk-...
+DEEPSEEK_MODEL=deepseek-v4-pro
+DEEPSEEK_TIMEOUT=20s
+```
+
+The server sends only the prompt text entered in the `/mrql` editor plus syntax-only MRQL instructions. It does not send local tag lists, categories, saved queries, or database contents to the provider.
+
 ## Server Binding
 
 Configure the server address and port:
