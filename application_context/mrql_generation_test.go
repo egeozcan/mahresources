@@ -110,6 +110,42 @@ func TestMRQLGeneratorPromptExplainsTagSyntaxAndBansHas(t *testing.T) {
 			t.Fatalf("prompt missing %q in:\n%s", want, provider.seenPrompt)
 		}
 	}
+	if strings.Contains(provider.seenPrompt, `tags = "keo" LIMIT 50`) {
+		t.Fatalf("prompt should not hard-code request-specific tag values in examples:\n%s", provider.seenPrompt)
+	}
+}
+
+func TestMRQLGeneratorPromptIncludesCompactSyntaxGuide(t *testing.T) {
+	provider := &fakeMRQLDraftProvider{
+		query:       `type = resource AND name ~ "report*" LIMIT 50`,
+		explanation: "Finds resource names matching report.",
+	}
+	gen := NewMRQLGenerator(provider, MRQLGenerationConfig{APIKey: "key", Model: "deepseek-v4-pro", Timeout: time.Second})
+
+	_, err := gen.GenerateMRQL(context.Background(), "resource names like report")
+	if err != nil {
+		t.Fatalf("GenerateMRQL: %v", err)
+	}
+
+	for _, want := range []string{
+		"Prefer the simplest valid query that answers the request.",
+		"Start with type = resource, type = note, or type = group when using entity-specific fields.",
+		"Common fields: id, name, description, created, updated, tags, guid, meta.<key>, TEXT.",
+		"Resource fields: contentType, fileSize, width, height, originalName, hash, category, owner, groups/group.",
+		"Note fields: noteType, owner, groups/group.",
+		"Group fields: category, parent, children.",
+		"Relations use names with =, !=, ~, !~; use IS EMPTY/IS NOT EMPTY for missing/present relations.",
+		`Use tags/groups IN ("a", "b") only for tags, groups, or group; do not use IN for owner, parent, or children.`,
+		"Use meta.<key> for metadata only when the user names the key.",
+		"Example mappings use <placeholders>; replace them with user-provided values and never emit the placeholder tokens.",
+		`images with tag <tag> -> type = resource AND contentType ~ "image/*" AND tags = "<tag>" LIMIT 50`,
+		`notes about <text> -> type = note AND TEXT ~ "<text>" LIMIT 50`,
+		`groups named <name> -> type = group AND name ~ "<name>*" LIMIT 50`,
+	} {
+		if !strings.Contains(provider.seenPrompt, want) {
+			t.Fatalf("prompt missing %q in:\n%s", want, provider.seenPrompt)
+		}
+	}
 }
 
 func TestMRQLGeneratorProviderErrors(t *testing.T) {
