@@ -113,6 +113,13 @@ type MahresourcesConfig struct {
 	// MRQLQueryTimeoutBoot is the boot-time default for the MRQL query timeout.
 	// Runtime overrides live in RuntimeSettings.
 	MRQLQueryTimeoutBoot time.Duration
+	// DeepSeekAPIKey enables MRQL natural-language generation when configured.
+	// It is intentionally env-only and must not be exposed through runtime settings.
+	DeepSeekAPIKey string
+	// DeepSeekModel is the chat model used for MRQL generation.
+	DeepSeekModel string
+	// DeepSeekTimeout bounds a single MRQL generation provider call.
+	DeepSeekTimeout time.Duration
 
 	// AuthEnabled turns on user accounts + RBAC. When false (default) the server
 	// behaves exactly as the historical no-auth deployment: every request runs as
@@ -216,6 +223,13 @@ type MahresourcesInputConfig struct {
 	// MRQLQueryTimeoutBoot is the boot-time default for the MRQL query timeout.
 	// Runtime overrides live in RuntimeSettings.
 	MRQLQueryTimeoutBoot time.Duration
+	// DeepSeekAPIKey enables MRQL natural-language generation when configured.
+	// It is intentionally env-only and must not be exposed through runtime settings.
+	DeepSeekAPIKey string
+	// DeepSeekModel is the chat model used for MRQL generation.
+	DeepSeekModel string
+	// DeepSeekTimeout bounds a single MRQL generation provider call.
+	DeepSeekTimeout time.Duration
 
 	// AuthEnabled turns on user accounts + RBAC (env: AUTH_ENABLED=1).
 	AuthEnabled bool
@@ -293,6 +307,8 @@ type MahresourcesContext struct {
 	// main.go can trigger the sweep after the DownloadManager has been
 	// swapped over to the live RuntimeSettings provider.
 	exportSweepFs afero.Fs
+	// mrqlGenerator converts natural-language prompts into locally validated MRQL drafts.
+	mrqlGenerator MRQLGenerator
 }
 
 // RunStartupExportSweep cleans up orphaned export/import tars left over from a
@@ -486,6 +502,16 @@ func (ctx *MahresourcesContext) Settings() *RuntimeSettings {
 // after AutoMigrate. Must happen before workers that read through Settings start.
 func (ctx *MahresourcesContext) SetSettings(rs *RuntimeSettings) {
 	ctx.settings = rs
+}
+
+// MRQLGenerator returns the configured natural-language MRQL generator.
+func (ctx *MahresourcesContext) MRQLGenerator() MRQLGenerator {
+	return ctx.mrqlGenerator
+}
+
+// SetMRQLGenerator installs the natural-language MRQL generator.
+func (ctx *MahresourcesContext) SetMRQLGenerator(generator MRQLGenerator) {
+	ctx.mrqlGenerator = generator
 }
 
 // GetDefaultFs returns the main filesystem (rooted at FileSavePath via
@@ -928,6 +954,9 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		MaxUploadSize:                cfg.MaxUploadSize,
 		MRQLDefaultLimit:             cfg.MRQLDefaultLimit,
 		MRQLQueryTimeoutBoot:         cfg.MRQLQueryTimeoutBoot,
+		DeepSeekAPIKey:               cfg.DeepSeekAPIKey,
+		DeepSeekModel:                cfg.DeepSeekModel,
+		DeepSeekTimeout:              cfg.DeepSeekTimeout,
 		AuthEnabled:                  cfg.AuthEnabled,
 		SessionTTL:                   sessionTTL,
 		SessionCookieName:            "mr_session",
