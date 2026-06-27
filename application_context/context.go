@@ -309,6 +309,8 @@ type MahresourcesContext struct {
 	exportSweepFs afero.Fs
 	// mrqlGenerator converts natural-language prompts into locally validated MRQL drafts.
 	mrqlGenerator MRQLGenerator
+	// mrqlGenerationLimiter rate-limits provider calls per caller key.
+	mrqlGenerationLimiter *MRQLGenerationRateLimiter
 }
 
 // RunStartupExportSweep cleans up orphaned export/import tars left over from a
@@ -512,6 +514,19 @@ func (ctx *MahresourcesContext) MRQLGenerator() MRQLGenerator {
 // SetMRQLGenerator installs the natural-language MRQL generator.
 func (ctx *MahresourcesContext) SetMRQLGenerator(generator MRQLGenerator) {
 	ctx.mrqlGenerator = generator
+}
+
+// MRQLGenerationRateLimiter returns the configured per-caller generation limiter.
+func (ctx *MahresourcesContext) MRQLGenerationRateLimiter() *MRQLGenerationRateLimiter {
+	if ctx.mrqlGenerationLimiter == nil {
+		ctx.mrqlGenerationLimiter = NewMRQLGenerationRateLimiter(10, time.Minute)
+	}
+	return ctx.mrqlGenerationLimiter
+}
+
+// SetMRQLGenerationRateLimiter installs the per-caller generation limiter.
+func (ctx *MahresourcesContext) SetMRQLGenerationRateLimiter(l *MRQLGenerationRateLimiter) {
+	ctx.mrqlGenerationLimiter = l
 }
 
 // GetDefaultFs returns the main filesystem (rooted at FileSavePath via

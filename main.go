@@ -190,6 +190,14 @@ func main() {
 
 	flag.Parse()
 
+	deepSeekAPIKey := os.Getenv("DEEPSEEK_API_KEY")
+	deepSeekModel := getEnvOrDefault("DEEPSEEK_MODEL", application_context.DefaultDeepSeekMRQLGenerationModel)
+	deepSeekTimeoutRaw := getEnvOrDefault("DEEPSEEK_TIMEOUT", application_context.DefaultDeepSeekMRQLGenerationTimeout.String())
+	deepSeekTimeout, err := time.ParseDuration(deepSeekTimeoutRaw)
+	if err != nil {
+		log.Fatalf("invalid DEEPSEEK_TIMEOUT=%q: %v", deepSeekTimeoutRaw, err)
+	}
+
 	// Build alt file systems map from flags or fall back to env vars
 	altFileSystems := make(map[string]string)
 	if len(altFSFlags) > 0 {
@@ -265,6 +273,9 @@ func main() {
 		MaxUploadSize:                *maxUploadSize,
 		MRQLDefaultLimit:             *mrqlDefaultLimit,
 		MRQLQueryTimeoutBoot:         *mrqlTimeout,
+		DeepSeekAPIKey:               deepSeekAPIKey,
+		DeepSeekModel:                deepSeekModel,
+		DeepSeekTimeout:              deepSeekTimeout,
 		AuthEnabled:                  *authEnabled,
 		SessionTTL:                   *sessionTTL,
 		SessionCookieSecure:          *sessionCookieSecure,
@@ -276,6 +287,19 @@ func main() {
 	}
 
 	context, db, mainFs := application_context.CreateContextWithConfig(cfg)
+	if context.Config.DeepSeekAPIKey != "" {
+		provider := application_context.NewDeepSeekMRQLDraftProvider(
+			application_context.DefaultDeepSeekChatCompletionsURL,
+			context.Config.DeepSeekAPIKey,
+			context.Config.DeepSeekModel,
+			nil,
+		)
+		context.SetMRQLGenerator(application_context.NewMRQLGenerator(provider, application_context.MRQLGenerationConfig{
+			APIKey:  context.Config.DeepSeekAPIKey,
+			Model:   context.Config.DeepSeekModel,
+			Timeout: context.Config.DeepSeekTimeout,
+		}))
+	}
 
 	// Ensure plugin manager is cleaned up on shutdown
 	if context.PluginManager() != nil {

@@ -1619,7 +1619,7 @@ func capitalizeFirst(s string) string {
 }
 
 // registerMRQLRoutes documents the /v1/mrql subsystem. The handlers live in
-// server/api_handlers/mrql_api_handlers.go. BH-022: registered 9 MRQL routes
+// server/api_handlers/mrql_api_handlers.go. BH-022: registered MRQL routes
 // that were previously invisible to the OpenAPI spec.
 func registerMRQLRoutes(r *openapi.Registry) {
 	// Request body shapes are defined inline — the real request types in
@@ -1680,6 +1680,22 @@ Request body fields:
   - cursor (integer)          — byte offset in the query`,
 		Tags:                 mrqlTag,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/mrql/generate",
+		OperationID: "generateMRQL",
+		Summary:     "Generate an MRQL draft from natural language",
+		Description: `Generates, parses, validates, and lints an MRQL draft from a natural-language prompt.
+
+Request body fields:
+  - prompt (string, required) — user request to convert into MRQL
+
+The endpoint does not execute MRQL. The server sends the prompt and syntax-only MRQL instructions to the configured DeepSeek provider.`,
+		Tags:                 mrqlTag,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 

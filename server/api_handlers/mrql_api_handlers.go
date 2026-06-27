@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"mahresources/application_context"
 	"mahresources/constants"
@@ -24,9 +25,9 @@ import (
 type mrqlExecuteRequest struct {
 	Query   string `json:"query" schema:"query"`
 	Limit   int    `json:"limit" schema:"limit"`     // items per bucket (grouped) or total items (non-grouped)
-	Buckets int    `json:"buckets" schema:"buckets"`  // buckets per page (grouped mode only)
-	Page    int    `json:"page" schema:"page"`        // page number (paginates buckets in grouped mode)
-	Offset  int    `json:"offset" schema:"offset"`    // direct offset for cursor-based bucket paging
+	Buckets int    `json:"buckets" schema:"buckets"` // buckets per page (grouped mode only)
+	Page    int    `json:"page" schema:"page"`       // page number (paginates buckets in grouped mode)
+	Offset  int    `json:"offset" schema:"offset"`   // direct offset for cursor-based bucket paging
 }
 
 type mrqlValidateRequest struct {
@@ -36,6 +37,10 @@ type mrqlValidateRequest struct {
 type mrqlCompleteRequest struct {
 	Query  string `json:"query" schema:"query"`
 	Cursor int    `json:"cursor" schema:"cursor"`
+}
+
+type mrqlGenerateRequest struct {
+	Prompt string `json:"prompt" schema:"prompt"`
 }
 
 type mrqlValidateResponse struct {
@@ -402,6 +407,50 @@ func GetCompleteMRQLHandler(ctx *application_context.MahresourcesContext) func(h
 		_ = json.NewEncoder(writer).Encode(mrqlCompleteResponse{
 			Suggestions: suggestions,
 		})
+	}
+}
+
+// GetGenerateMRQLHandler handles POST /v1/mrql/generate — generate an MRQL draft.
+func GetGenerateMRQLHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var req mrqlGenerateRequest
+		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(req.Prompt) == "" {
+			http_utils.HandleError(errors.New("prompt is required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		generator := ctx.MRQLGenerator()
+		if generator == nil {
+			http_utils.HandleError(errors.New("MRQL generation is not configured"), writer, request, http.StatusServiceUnavailable)
+			return
+		}
+		key := application_context.ClientIP(request)
+		if !ctx.MRQLGenerationRateLimiter().Allow(key, time.Now()) {
+			http_utils.HandleError(errors.New("MRQL generation rate limit exceeded"), writer, request, http.StatusTooManyRequests)
+			return
+		}
+
+		result, err := generator.GenerateMRQL(request.Context(), req.Prompt)
+		if err != nil {
+			switch {
+			case errors.Is(err, application_context.ErrMRQLGenerationNotConfigured):
+				http_utils.HandleError(errors.New("MRQL generation is not configured"), writer, request, http.StatusServiceUnavailable)
+			case errors.Is(err, application_context.ErrMRQLGenerationBadRequest):
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			case errors.Is(err, application_context.ErrMRQLGenerationTimeout):
+				http_utils.HandleError(errors.New("MRQL generation timed out"), writer, request, http.StatusGatewayTimeout)
+			default:
+				http_utils.HandleError(errors.New("MRQL generation provider error"), writer, request, http.StatusBadGateway)
+			}
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(result)
 	}
 }
 

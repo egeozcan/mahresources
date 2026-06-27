@@ -3300,6 +3300,24 @@ paths:
             summary: Get MRQL autocomplete suggestions
             tags:
                 - mrql
+    /v1/mrql/generate:
+        post:
+            description: |-
+                Generates, parses, validates, and lints an MRQL draft from a natural-language prompt.
+
+                Request body fields:
+                  - prompt (string, required) — user request to convert into MRQL
+
+                The endpoint does not execute MRQL. The server sends the prompt and syntax-only MRQL instructions to the configured DeepSeek provider.
+            operationId: generateMRQL
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Generate an MRQL draft from natural language
+            tags:
+                - mrql
     /v1/mrql/saved:
         get:
             description: 'Without `id`: paginated list of saved queries (pass `all=1` for the full set). With `id`: returns a single saved query.'
