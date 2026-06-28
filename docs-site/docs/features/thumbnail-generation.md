@@ -113,6 +113,35 @@ The worker operates in two modes:
 
 The worker creates null thumbnails (width=0, height=0) so any size can be derived from the cached frame.
 
+## Custom Thumbnails
+
+In addition to the automatic pipeline, you can upload your own image to use as the thumbnail for any resource. A custom thumbnail overrides the generated one.
+
+From the resource detail page, the **Custom Thumbnail** sidebar controls let you:
+
+- **Upload Image** -- choose an image file; the file picker accepts PNG, JPEG, WebP, and GIF
+- **Paste** -- paste an image from the clipboard anywhere on the page
+- **Regenerate from Source** -- clear the stored thumbnails so the next request regenerates them automatically
+
+### How a custom thumbnail is stored
+
+The uploaded image is decoded, resized so its longest edge is at most 1920px, and re-encoded as JPEG at quality 85. It is stored as a canonical null thumbnail (width=0, height=0), replacing any existing previews for that resource.
+
+Because the custom image is stored as the null thumbnail, every later request at any size is derived from it -- the automatic pipeline (FFmpeg, LibreOffice, or decoding the original image) is bypassed entirely. This is how a custom thumbnail takes precedence for images, videos, and office documents alike.
+
+The upload body is bounded by the per-upload size limit:
+
+| Flag | Env Variable | Default | Description |
+|------|-------------|---------|-------------|
+| `-max-upload-size` | `MAX_UPLOAD_SIZE` | `2 GB` | Maximum per-upload body size in bytes for resource and version uploads |
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/resource/preview?id={resourceId}` | Upload a custom thumbnail (multipart form field `thumbnail`) |
+| `DELETE` | `/v1/resource/preview?id={resourceId}` | Clear stored thumbnails so the next request regenerates from source |
+
+Uploading a custom thumbnail does not create a new resource version -- it only changes the stored preview.
+
 ## Troubleshooting
 
 ### Video thumbnails not generating

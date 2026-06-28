@@ -24,6 +24,16 @@ Files are stored by hash, meaning identical files are only stored once regardles
 - Multiple resources share the same file content
 - A version is deleted but other versions still reference the same file
 
+### Edits That Create Versions
+
+Uploading a new file is not the only way to add a version. The in-place editing operations on the resource detail page also produce a new version, so the result appears in the version history and the previous content is preserved:
+
+- **Rotate** an image
+- **Crop** an image
+- **Trim** a video to a time range
+
+Each of these stores the edited file as a new version, makes it the current version, and clears cached thumbnails. See [Managing Resources](../user-guide/managing-resources.md) for how to run them. (Uploading a custom thumbnail does not create a version -- it only replaces the stored preview.)
+
 ## Version History Panel
 
 ![Resource version history panel](/img/resource-versions.png)
@@ -50,6 +60,10 @@ For each version, you can see:
 ## Comparing Versions
 
 Select two versions to compare by clicking the **Compare** button in the version panel, then checking two versions and clicking **Compare Selected**.
+
+:::tip
+When a resource has exactly two versions, clicking **Compare** automatically selects both of them, so **Compare Selected** is ready immediately -- no checkbox clicks required.
+:::
 
 ![Version comparison page](/img/version-compare.png)
 

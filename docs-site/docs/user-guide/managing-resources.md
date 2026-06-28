@@ -200,6 +200,20 @@ Rotate an image by a specified number of degrees. The UI provides a **Rotate 90 
 
 Rotation creates a new version with the rotated content and clears cached thumbnails.
 
+### Crop
+
+Crop an image to a rectangular region. Cropping is available for raster image files.
+
+1. Navigate to the image resource
+2. In the sidebar, under **Image Operations**, click the **Crop** button to open the crop dialog
+3. Drag on the image to select the crop area, or type exact pixel values for **X**, **Y**, **Width**, and **Height**
+4. Optionally pick an **Aspect ratio** (Free, 1:1, 16:9, 4:3, or Original) and add a **Comment**
+5. Click **Crop** in the dialog to apply
+
+Cropping creates a new version with the cropped content and clears cached thumbnails. JPEG and PNG images keep their format; GIF, WebP, BMP, and TIFF are re-encoded as PNG, and GIF animation is dropped.
+
+The in-browser cropper cannot decode every format. SVG, ICO, AVIF, and HEIC files cannot be cropped directly -- re-upload them as PNG or JPEG first.
+
 ### Recalculate Dimensions
 
 If image dimensions appear incorrect:
@@ -209,6 +223,22 @@ If image dimensions appear incorrect:
 3. Click **Recalculate Dimensions**
 
 This re-reads the image file and updates the stored width/height values.
+
+## Video Operations
+
+Video resources have a trim operation available in the sidebar. Trimming requires FFmpeg.
+
+### Trim Video
+
+Cut a video down to a single time range.
+
+1. Navigate to the video resource
+2. In the sidebar, find **Trim Video**
+3. Drag the range slider handles to set the start and end, or type exact **Start (s)** and **End (s)** values
+4. Optionally add a **Comment**
+5. Click **Trim Video**
+
+Trimming creates a new version containing only the selected range and clears cached thumbnails. The output is always re-encoded as MP4 (H.264 video, AAC audio), regardless of the source format. Time values accept plain seconds, `MM:SS`, or `HH:MM:SS`.
 
 ## Finding Similar Resources
 
@@ -289,6 +319,16 @@ Thumbnails are generated automatically for supported file types:
 | Office documents | Requires LibreOffice |
 
 Thumbnails are generated on demand when first requested and cached in the database. For video files, the background thumbnail worker can pre-generate thumbnails.
+
+### Custom Thumbnails
+
+You can replace the auto-generated thumbnail of any resource with your own image. The **Custom Thumbnail** controls appear in the sidebar next to the preview:
+
+- **Upload Image** -- pick an image file (PNG, JPEG, WebP, or GIF) to use as the thumbnail
+- **Paste** -- copy an image and paste it anywhere on the resource detail page to upload it as the thumbnail
+- **Regenerate from Source** -- clear the custom and cached thumbnails so the next view regenerates from the original file
+
+Uploading a custom thumbnail does not create a new version -- it only changes the stored preview. The image is resized so its longest edge is at most 1920px and stored as JPEG. For the full pipeline details, see [Thumbnail Generation](../features/thumbnail-generation.md).
 
 ## Download Cockpit
 

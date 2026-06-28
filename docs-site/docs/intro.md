@@ -25,6 +25,8 @@ Groups form a **nested hierarchy**. Each Group can contain Resources, Notes, and
 
 **Full-text search** via FTS5 (SQLite) or tsvector (PostgreSQL) covers all content, accessible via Cmd/Ctrl+K. **Saved queries** let you store and re-run raw SQL. For database-level write protection, configure `DB_READONLY_DSN` as a read-only connection.
 
+Optional **user accounts and role-based access control** (admin, editor, user, guest) can be turned on with `-auth` -- off by default, with group-subtree scoping for limited users. See [Authentication & RBAC](./features/authentication.md).
+
 **Perceptual hashing** finds visually similar images automatically across your library. Resources support **versioning** to track changes over time. A **series** groups Resources with shared metadata (e.g., pages of a scanned document).
 
 The **download queue** accepts remote URLs and tracks progress via the Download Cockpit UI. An **activity log** records create, update, delete, and plugin operations across all entities.
@@ -35,11 +37,11 @@ A Lua **plugin system** can intercept create/update/delete operations, add custo
 
 **Paste upload** lets you paste images or text from the clipboard (Cmd/Ctrl+V) to create Resources with a preview-and-tag modal workflow. Every page has a **JSON API** equivalent (`Accept: application/json` or `.json` suffix) for scripting and integration.
 
-:::danger No Authentication
+:::danger Authentication is off by default
 
-There is **no** authentication or authorization. Run it on a private network only.
+Out of the box there is **no** authentication or authorization -- run it on a private network only. Built-in [Authentication & RBAC](./features/authentication.md) is available (opt-in via `-auth`) when you need accounts and roles.
 
-**Do not expose it to the internet.** For remote access, put it behind a reverse proxy with authentication (nginx + basic auth, OAuth2 Proxy, Authelia, etc.).
+**Do not expose it to the internet** without protection. For remote access, put it behind a reverse proxy with authentication (nginx + basic auth, OAuth2 Proxy, Authelia, etc.), and enable `-auth` if you want per-user accounts on top.
 
 :::
 

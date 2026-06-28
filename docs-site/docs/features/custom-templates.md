@@ -16,14 +16,17 @@ Do not allow untrusted users to create or edit Categories, Resource Categories, 
 
 ## Template Locations
 
-Each Category (for Groups), Resource Category (for Resources), and Note Type (for Notes) can define four custom templates:
+Each Category (for Groups), Resource Category (for Resources), and Note Type (for Notes) can define four custom HTML templates plus a raw CSS slot:
 
-| Template | Display Location |
+| Slot | Display Location |
 |----------|-----------------|
 | **CustomHeader** | Top of the entity detail page (body area) |
 | **CustomSidebar** | Sidebar of the entity detail page |
 | **CustomSummary** | Entity cards in list views |
 | **CustomAvatar** | Avatar/icon when linking to the entity |
+| **CustomCSS** | Raw CSS injected as a page-level `<style>` block (see [CustomCSS](#customcss)) |
+
+The four `Custom*` slots above hold HTML markup. `CustomCSS` is different -- it holds raw CSS rather than markup, and exists so the other slots can be styled globally without inlining `<style>` tags in each.
 
 ## How Custom Templates Are Rendered
 
@@ -203,6 +206,37 @@ The CustomAvatar template controls how the entity appears when linked:
   </div>
 </template>
 ```
+
+## CustomCSS
+
+Categories, Resource Categories, and Note Types each have a `CustomCSS` field. Unlike the four `Custom*` template slots, it holds raw CSS, not HTML. The content is injected verbatim into a page-level `<style>` block, so you can style the other slots (header, sidebar, summary, avatar, and Custom MRQL Result cards) from one place instead of inlining `<style>` in each template.
+
+```css
+/* Style the CustomHeader and CustomSummary markup for this category */
+.person-header h2 {
+  font-variant: small-caps;
+}
+.person-card > .badge {
+  background: #1e3a8a;
+  color: white;
+}
+```
+
+### Where It Is Injected
+
+A category's `CustomCSS` is emitted on every page that renders that category's templates:
+
+- the entity detail page,
+- its list pages, and
+- `[mrql]` result cards that use a [Custom MRQL Result](#custom-mrql-result-templates) template.
+
+Each distinct category emits its block at most once per page render, so list and MRQL pages get one `<style>` block per category rather than one per card.
+
+### Raw Injection
+
+`CustomCSS` is injected **unescaped**, on purpose. Mahresources is a trusted, private-network tool, and `CustomCSS` is an intentional extension point, so real CSS -- selectors containing `>`, `content()` with quotes, and the like -- survives verbatim. As with the other custom slots, only allow trusted users to edit it (see the security notice at the top of this page).
+
+Shortcodes (`[meta]`, `[property]`, `[mrql]`) inside `CustomCSS` are processed server-side using a representative entity of the category, so values resolve before the block is written. Alpine.js directives do not apply -- a `<style>` block is static.
 
 ## Creating Categories with Templates
 

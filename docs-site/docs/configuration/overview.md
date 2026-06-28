@@ -7,7 +7,7 @@ sidebar_position: 1
 Configuration uses environment variables or command-line flags. Command-line flags take precedence over environment variables.
 
 :::danger Security Reminder
-Mahresources has **no built-in authentication or authorization**. It is designed for private, trusted networks only. Do not expose it to the public internet without a reverse proxy with proper authentication.
+By default, Mahresources runs with **no authentication** -- it is designed for private, trusted networks. Optional user accounts and role-based access control can be turned on with `-auth`; see [Authentication & RBAC](../features/authentication.md). Either way, do not expose it to the public internet without a reverse proxy that enforces authentication.
 :::
 
 ## Configuration Methods
@@ -79,6 +79,16 @@ Command-line flags take precedence over environment variables, so a flag overrid
 | `-cleanup-logs-days` | `CLEANUP_LOGS_DAYS` | Delete log entries older than N days on startup | `0` (disabled) |
 | `-plugin-path` | `PLUGIN_PATH` | Directory to scan for plugins | `./plugins` |
 | `-plugins-disabled` | `PLUGINS_DISABLED=1` | Disable the plugin system entirely | `false` |
+| `-auth` | `AUTH_ENABLED=1` | Enable user accounts + RBAC | `false` |
+| `-create-admin-user` | `CREATE_ADMIN_USER` | Bootstrap admin username at startup (idempotent; needs the password flag) | - |
+| `-create-admin-password` | `CREATE_ADMIN_PASSWORD` | Password for `-create-admin-user` | - |
+| `-session-cookie-secure` | `SESSION_COOKIE_SECURE=1` | Mark the session cookie `Secure` (set behind TLS) | `false` |
+
+:::note Authentication
+The rows above are the essentials for turning on auth. Session lifetime, login
+rate-limiting, and proxy-header trust have their own flags -- see
+[Authentication & RBAC](../features/authentication.md) for the full reference.
+:::
 
 ## Runtime vs. boot-only settings
 

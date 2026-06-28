@@ -7,7 +7,7 @@ description: Configuring a reverse proxy with authentication for Mahresources
 # Reverse Proxy Configuration
 
 :::danger Required for Remote Access
-There is **no built-in authentication or authorization**. You **must** use a reverse proxy with authentication if accessing from outside your local network. Exposing the server directly to the internet allows anyone to access, modify, and delete all your data.
+By default there is **no authentication or authorization**. You **must** use a reverse proxy with authentication if accessing from outside your local network. Exposing the server directly to the internet allows anyone to access, modify, and delete all your data. Built-in [Authentication & RBAC](../features/authentication.md) (`-auth`) adds per-user accounts and roles, but it complements -- not replaces -- the reverse proxy in front of the server.
 :::
 
 ## Network Restriction
@@ -233,6 +233,17 @@ oauth2-proxy \
 ### Authelia
 
 For self-hosted SSO, [Authelia](https://www.authelia.com/) provides two-factor authentication and user management.
+
+## Built-in Authentication Behind a Proxy
+
+If you enable built-in [Authentication & RBAC](../features/authentication.md) (`-auth`) behind a TLS-terminating proxy like the examples above, set two extra flags:
+
+- **`-session-cookie-secure`** -- marks the session cookie `Secure` so the browser only sends it over HTTPS. Set this whenever users reach Mahresources over TLS.
+- **`-trust-proxy-headers`** -- needed *only* if you use login rate-limiting (`-login-max-attempts`). Behind a proxy, the connection IP is the proxy, so per-IP throttling must read the real client IP from `X-Forwarded-For`. The Nginx, Caddy, and Traefik examples above all set that header.
+
+:::warning Never trust proxy headers on a directly-exposed server
+`-trust-proxy-headers` is off by default for a reason: if the server is reachable directly (not strictly behind a proxy that overwrites the header), a client can forge `X-Forwarded-For` to get a fresh apparent IP on every request and defeat per-IP throttling. Enable it only when a trusted proxy sets the header for you.
+:::
 
 ## Security Checklist
 

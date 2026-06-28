@@ -98,17 +98,49 @@ Reference implementation demonstrating the plugin API: injections, hooks, pages,
 
 ## fal-ai
 
-AI-powered image processing using [fal.ai](https://fal.ai). Requires a FAL.AI API key configured in plugin settings.
+AI-powered image processing using [fal.ai](https://fal.ai). Requires a FAL.AI API key configured in plugin settings. The plugin registers six resource actions (available from the resource detail view, and some from resource cards in list views) plus a **Generate Image** page.
 
-| Action | Description |
-|--------|-------------|
-| `colorize` | Colorize black and white images |
-| `upscale` | Upscale image resolution (multiple model options) |
-| `restore` | Restore and enhance old or damaged photos |
-| `edit` | Edit image using a text prompt |
-| `vectorize` | Convert raster image to SVG |
+Supported input formats: PNG, JPEG, WebP, GIF, TIFF, BMP.
 
-Also provides a **Generate Image** page (`/plugins/fal-ai/generate`) for text-to-image generation.
+### Actions
+
+| Action | Placement | Description |
+|--------|-----------|-------------|
+| `colorize` | detail, card | Colorize black and white images (DDColor) |
+| `upscale` | detail, card | Increase resolution -- choose from several upscaling models |
+| `restore` | detail, card | Restore and enhance old or damaged photos -- several restoration models |
+| `edit` (AI Edit) | detail | Edit an image from a text prompt; supports multiple input images |
+| `vectorize` | detail, card | Convert a raster image to an SVG (always creates a new resource) |
+| `polish` | detail | Sharpening finishing pass (post-processing), typically run after a restore |
+
+### Model options per action
+
+Several actions expose a `model` selector that switches the underlying fal.ai endpoint. Each model has its own parameters, which appear only when that model is selected (see [Conditional parameters](#conditional-parameters) below).
+
+- **`upscale` models:** `clarity` (default), `esrgan`, `creative`, `seedvr`, `bria_creative`, `topaz`, `drct`, `aura_sr`. `drct` and `aura_sr` are degradation-aware and handle JPEG-compressed sources better than pure super-resolution models.
+- **`restore` models:** `photo_restoration` (default -- the only one that removes scratches and fixes color fading in one pass), `codeformer` (face-focused), `swin2sr` (non-portrait scenes), `nafnet_denoise` (compression/ISO artifacts), `nafnet_deblur` (motion blur). The `photo_restoration` model always reshapes output to a fixed aspect-ratio enum; its `aspect_ratio` parameter defaults to `auto`, which picks the enum closest to the source's actual dimensions.
+- **`edit` (AI Edit) models:** `flux2` (default), `flux2pro`, `nanobanana2`, `flux1dev`.
+
+### Conditional parameters
+
+Action parameters use `show_when` conditions, so the form reveals only the inputs relevant to the current selection. For example, choosing the `topaz` upscale model surfaces Topaz-specific controls (model preset, upscale factor, subject detection, face enhancement, output format), while the Clarity controls stay hidden. The `restore` and `polish` actions behave the same way for their model and sharpen-mode selectors.
+
+### Output mode
+
+Every action except `vectorize` includes a **Save Result As** toggle:
+
+- `version` (default) -- adds the result as a new version of the source resource.
+- `clone` -- creates a new resource, copying the source's name (with an action suffix), description, owner, metadata, tags, groups, and notes.
+
+`vectorize` always clones, since its SVG output cannot be a version of a raster source.
+
+### Multiple input images
+
+The `edit` (AI Edit) action accepts more than one input image through an `extra_images` entity-reference parameter (a resource picker, up to nine images). It defaults to the triggering resource, and the user can add or remove images. Only the `flux2`, `flux2pro`, and `nanobanana2` models consume the extra images; `flux1dev` takes a single image.
+
+### Generate Image page
+
+The plugin also adds a **Generate Image** page (`/plugins/fal-ai/generate`, linked from the plugin menu) for text-to-image generation. It runs as an asynchronous job and supports the `nanobanana2` (default), `imagen4`, `imagen4_fast`, and `imagen4_ultra` models, with resolution and aspect-ratio controls. Generated images are saved as new resources.
 
 ## Enabling a Plugin
 

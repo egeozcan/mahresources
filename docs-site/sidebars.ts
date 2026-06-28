@@ -55,6 +55,7 @@ const sidebars: SidebarsConfig = {
       label: 'Advanced Features',
       items: [
         'features/admin-overview',
+        'features/authentication',
         'features/export-import',
         'features/versioning',
         'features/image-similarity',

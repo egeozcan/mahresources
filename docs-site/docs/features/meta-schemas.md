@@ -322,3 +322,21 @@ Groups without a Category (or with a Category that has no schema) display a free
 When a schema defines `additionalProperties`, the form includes a free-form key-value section below the structured fields. This lets users add metadata beyond what the schema specifies.
 
 The free-form editor can also load field suggestions from a remote URL, providing autocomplete for key names based on existing metadata patterns in the database.
+
+## Note Type Detail Page
+
+A Note Type's own detail page (the page for the type itself, not for a note) surfaces both the notes that use the type and the type's configuration.
+
+### Notes Using the Type
+
+The page lists a bounded page of notes whose Note Type is this one, alongside a true total count, with a link to the full filtered note list. This makes it easy to see what a type is actually applied to. The same pattern applies to a Category's and a Resource Category's detail pages for their owned entities.
+
+### Configuration Summary
+
+A summary strip reports the type's own configuration at a glance:
+
+- **Schema** -- whether a `metaSchema` is `Defined` or `None`.
+- **Sections** -- whether section visibility is `Custom` (a `sectionConfig` is set) or `Default`.
+- **Custom templates** -- which template slots are populated, listed by name: Header, Sidebar, Summary, Avatar, MRQL, and CSS (`CustomCSS`). See [Custom Templates](./custom-templates.md) for what each slot does.
+
+The strip only lists the **Custom templates** entry when at least one slot is set.
