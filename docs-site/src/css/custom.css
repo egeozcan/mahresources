@@ -17,6 +17,21 @@
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
 }
 
+/* Keep the security-notice announcement bar link and inline code readable on
+   its red background (white text + underline, never the low-contrast blue link
+   color). The class names are CSS-module-hashed, so target by prefix. */
+div[class^='announcementBar_'] a,
+div[class*=' announcementBar_'] a {
+  color: inherit;
+  text-decoration: underline;
+}
+div[class^='announcementBar_'] code,
+div[class*=' announcementBar_'] code {
+  color: inherit;
+  background-color: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
 /* For readability concerns, you should choose a lighter palette in dark mode. */
 [data-theme='dark'] {
   --ifm-color-primary: #25c2a0;

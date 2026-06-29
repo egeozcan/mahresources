@@ -54,7 +54,7 @@ const config: Config = {
     },
     announcementBar: {
       id: 'security_warning',
-      content: '⚠️ <strong>Security Notice:</strong> Mahresources has no authentication. Only run on trusted private networks.',
+      content: '⚠️ <strong>Security Notice:</strong> Authentication is off by default (opt-in via <code>-auth</code>). Never expose Mahresources to the internet without a reverse proxy. <a href="/mahresources/features/authentication">Learn more</a>.',
       backgroundColor: '#dc2626',
       textColor: '#ffffff',
       isCloseable: false,

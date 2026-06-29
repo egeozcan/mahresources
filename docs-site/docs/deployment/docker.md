@@ -7,7 +7,7 @@ description: Running Mahresources in Docker containers
 # Docker Deployment
 
 :::danger Security Warning
-There is **no built-in authentication**. Never expose Docker containers directly to the internet. Always use a reverse proxy with authentication. See [Reverse Proxy](./reverse-proxy.md) for setup instructions.
+Authentication is **off by default**. Never expose Docker containers directly to the internet -- always use a reverse proxy with authentication. See [Reverse Proxy](./reverse-proxy.md) for setup instructions. Built-in [Authentication & RBAC](../features/authentication.md) (`-auth`) adds per-user accounts on top.
 :::
 
 ## Building the Image

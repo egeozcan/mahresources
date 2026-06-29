@@ -6,9 +6,9 @@ sidebar_position: 1
 
 All features are accessible via a REST API. Most write endpoints accept either JSON or form-encoded requests, and most `/v1` endpoints return JSON.
 
-:::danger No Authentication
+:::danger Authentication is off by default
 
-There is no authentication or authorization. The API is designed for use on private, trusted networks only. **Never expose the server directly to the public internet.**
+Out of the box the API has no authentication or authorization, so it is designed for private, trusted networks only. **Never expose the server directly to the public internet.** Opt-in [Authentication & RBAC](../features/authentication.md) (`-auth`) adds per-user accounts, roles, and API tokens (`Authorization: Bearer <token>`); even then, front the server with a reverse proxy for internet-facing deployments.
 
 :::
 

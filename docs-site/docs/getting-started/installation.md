@@ -6,7 +6,7 @@ sidebar_position: 1
 
 :::danger Security Warning
 
-There is **no built-in authentication**. Never expose the server directly to the public internet. Always run it on a private network or behind a reverse proxy with proper authentication.
+Authentication is **off by default**. Never expose the server directly to the public internet -- run it on a private network or behind a reverse proxy with authentication. Built-in [Authentication & RBAC](../features/authentication.md) is available (opt-in via `-auth`) when you need per-user accounts and roles.
 
 :::
 
