@@ -22,8 +22,9 @@ const (
 	// Granted to admin, editor, and user (not guest).
 	capWrite
 	// capEditor — editor-level writes: relations, relation/note types, series,
-	// saved queries, group import/export, note sharing, plugin-action execution.
-	// Granted to admin and editor (not user).
+	// saved queries, and the admin shares dashboard. Granted to admin and editor
+	// (not user). Note sharing, group import/export, and plugin-action execution
+	// are intentionally user-level (capWrite), not editor — see isEditorPath.
 	capEditor
 	// capTaxonomy — create/edit Categories and Resource Categories. Admin only;
 	// editors are explicitly excluded per the role spec.
