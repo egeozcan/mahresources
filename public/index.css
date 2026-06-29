@@ -31,6 +31,11 @@ html {
     padding: 0 1rem;
     display: grid;
     grid-template-rows: auto auto 1fr auto;
+    /* Constrain the single implicit column to the available width. Without this it
+       defaults to `auto` (max-content), so wide content (e.g. long unbreakable URLs
+       in a resource's series cards) balloons the row past the viewport and pushes
+       the fixed 400px sidebar off-screen, where overflow-x:hidden clips it away. */
+    grid-template-columns: minmax(0, 1fr);
     min-height: 100%;
     grid-gap: 1rem;
     max-width: 100vw;
