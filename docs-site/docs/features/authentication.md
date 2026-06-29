@@ -12,8 +12,8 @@ Mahresources ships with optional user accounts and role-based access control (RB
 
 By default (`-auth` not set), there are no users, no login page, and no permission checks. Every request runs as an implicit administrator with full access. This is the historical Mahresources behavior, and it keeps existing deployments, the `mr` CLI, and the test suite working unchanged.
 
-:::warning A reverse proxy is still recommended
-Even with built-in auth disabled, you should still front Mahresources with a reverse proxy that enforces authentication if it is reachable from outside your trusted network. See [Reverse Proxy Configuration](../deployment/reverse-proxy.md). Built-in auth and a reverse proxy are complementary -- use both for internet-facing deployments.
+:::warning Put a reverse proxy in front if it is exposed
+With auth off, Mahresources has no login and no permission checks: anyone who can reach it has full administrative access. If this instance is reachable from outside your trusted network, front it with a reverse proxy that enforces authentication. See [Reverse Proxy Configuration](../deployment/reverse-proxy.md). Turning `-auth` on later does not remove this need; built-in auth and a reverse proxy are complementary.
 :::
 
 ## Enabling authentication
@@ -43,7 +43,7 @@ You cannot log in until at least one account exists. Create the first administra
   -db-type=SQLITE -db-dsn=./mahresources.db -file-save-path=./files
 ```
 
-This step is idempotent: on each startup it creates the account if it is missing, or resets the named account to an enabled administrator if it already exists. `-create-admin-user` requires `-create-admin-password`, or startup fails.
+This step is idempotent: on each startup it creates the account if it is missing, or resets the named account to an enabled administrator if it already exists -- overwriting its password and clearing any group scope each time. `-create-admin-user` requires `-create-admin-password`, or startup fails.
 
 :::tip Rotate the bootstrap credentials out of your launch command
 Once the admin account exists and you have logged in, remove `-create-admin-password` from your start command (and your shell history / process list) and manage further accounts through the UI or the [`mr user`](../cli/user/index.md) CLI commands.
@@ -57,7 +57,7 @@ Every account has exactly one role. Capabilities are cumulative from guest up to
 |------|--------|-----------|
 | **admin** | Everything: full CRUD, plus system settings, plugin management, Categories and Resource Categories, and user administration (`/admin/users`). | -- |
 | **editor** | Full CRUD on entities (resources, notes, groups, tags, note types, series, relations, saved queries). | Create or edit Categories and Resource Categories; change system settings; manage users or plugins. |
-| **user** | CRUD on resources and notes, plus subgroups, tagging, note sharing, group import/export, and running plugin actions. May optionally be confined to a single Group's subtree. | Edit taxonomy (Categories, Resource Categories, note types, relations, series); system administration. |
+| **user** | CRUD on resources and notes, plus subgroups, tagging, note sharing, group import/export, and running plugin actions. May optionally be confined to a single Group's subtree. | Edit Categories or Resource Categories; edit note types, relations, series, or saved queries; system administration. |
 | **guest** | Read-only access. Always confined to a single Group's subtree. | Any write. Anything outside its scope group. |
 
 ### Group-subtree scoping
@@ -96,7 +96,7 @@ Browser login sessions are governed by two settings:
 The session cookie is set `SameSite=Lax`, which by itself blocks cross-site state-changing requests (POST / PUT / DELETE). On top of that baseline, each session carries a random synchronizer token (defense-in-depth):
 
 - The token is published to the page in a `<meta name="csrf-token">` tag and is also returned by `/v1/auth/me`.
-- State-changing, cookie-authenticated requests must echo it. The built-in JavaScript `fetch` wrapper adds the `X-CSRF-Token` header automatically, so the UI just works; native upload forms send it as a `csrf_token` field.
+- State-changing, cookie-authenticated requests must echo it. The built-in JavaScript `fetch` wrapper adds the `X-CSRF-Token` header automatically, so the UI just works. Native multipart upload forms pass the token as a `csrf_token` query parameter (their body is never parsed here, which preserves the per-upload size limits); other native forms send it as a `csrf_token` form field.
 - The check is a **no-op when auth is disabled**, and it never applies to Bearer (API-token) requests, which carry no ambient cookie and are not CSRF-exposed.
 
 You normally do not need to think about CSRF. It is handled for you. It matters only if you are scripting state-changing requests with a session cookie instead of a Bearer token.
