@@ -1238,9 +1238,11 @@ html {
     margin-bottom: 0;
 }
 
-/* Override description partial's own background when inside a card */
+/* Override description partial's own box (bg/border/padding) when inside a card */
 .card-description .description {
     background: none;
+    border: none;
+    border-radius: 0;
     padding: 0;
     margin: 0;
 }
