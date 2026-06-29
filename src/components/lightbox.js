@@ -4,6 +4,7 @@ import { zoomState, zoomMethods } from './lightbox/zoom.js';
 import { gestureState, gestureMethods } from './lightbox/gestures.js';
 import { editPanelState, editPanelMethods } from './lightbox/editPanel.js';
 import { quickTagPanelState, quickTagPanelMethods } from './lightbox/quickTagPanel.js';
+import { cropPanelState, cropPanelMethods } from './lightbox/cropPanel.js';
 
 /**
  * Register the lightbox Alpine store
@@ -17,6 +18,7 @@ export function registerLightboxStore(Alpine) {
     ...gestureState,
     ...editPanelState,
     ...quickTagPanelState,
+    ...cropPanelState,
 
     // Live region for screen reader announcements
     _liveRegion: null,
@@ -45,6 +47,9 @@ export function registerLightboxStore(Alpine) {
         // Let edit panel handle its own scrolling
         if (event.target.closest('[data-edit-panel]')) return;
         if (event.target.closest('[data-quick-tag-panel]')) return;
+        // The crop overlay sits above the image; wheeling over it must not zoom
+        // the underlying image (it scrolls the crop UI instead).
+        if (event.target.closest('[data-crop-overlay]')) return;
         this.handleWheel(event);
       };
       document.addEventListener('wheel', this._handleWheelEvent, { passive: false });
@@ -98,5 +103,6 @@ export function registerLightboxStore(Alpine) {
     ...gestureMethods,
     ...editPanelMethods,
     ...quickTagPanelMethods,
+    ...cropPanelMethods,
   });
 }

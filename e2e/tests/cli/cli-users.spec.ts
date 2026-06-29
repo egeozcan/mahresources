@@ -13,7 +13,7 @@ test.describe('mr user — lifecycle', () => {
 
     // Create
     const created = cli.runJson<{ ID: number; username: string; role: string }>(
-      'user', 'create', '--username', username, '--password', 's3cret', '--role', 'editor'
+      'user', 'create', '--username', username, '--password', 's3cretpw', '--role', 'editor'
     );
     expect(created.username).toBe(username);
     expect(created.role).toBe('editor');

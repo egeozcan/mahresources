@@ -228,6 +228,21 @@ export const navigationMethods = {
       this.closeQuickTagPanel();
     }
 
+    // Defensive: never leave the crop overlay's focus trap active behind a
+    // hidden viewer. Not reachable through the UI today (the overlay covers the
+    // close affordances), but keeps close() self-healing like the panels above.
+    if (this.cropOpen) {
+      this.closeCrop();
+    }
+
+    // When an in-place edit (crop/rotate) happened with no panel open, the
+    // panel-close paths above never ran, so refresh the underlying gallery here
+    // so its now-stale thumbnail reflects the new version.
+    if (!this.editPanelOpen && !this.quickTagPanelOpen && this.needsRefreshOnClose) {
+      this.needsRefreshOnClose = false;
+      this.refreshPageContent();
+    }
+
     this.isOpen = false;
     this.loading = false;
     this.resetZoom();

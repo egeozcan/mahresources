@@ -1,6 +1,8 @@
 <div
     x-data="{
         canNavigate() {
+            // The crop overlay owns the keyboard while open — block viewer navigation.
+            if (this.$store.lightbox.cropOpen) return false;
             // Allow navigation unless focus is on an input, textarea, or select
             const activeEl = document.activeElement;
             return !activeEl || !['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName);
@@ -9,6 +11,7 @@
             // For Space/Enter, which ACTIVATE the focused control: bail when focus is on a
             // button or video so they don't hijack button activation (BH: M3) or video
             // play/pause (BH: H2), and bail inside a panel (BH: H3).
+            if (this.$store.lightbox.cropOpen) return false;
             const el = document.activeElement;
             if (!el) return true;
             if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'VIDEO'].includes(el.tagName)) return false;
@@ -21,6 +24,7 @@
             // button is focused (so the keyboard tagging workflow works right after open),
             // but bail in a text field or anywhere inside a panel — e.g. the auto-focused
             // 'Add tag?' confirm button — which would otherwise eat the keystroke (BH: H3).
+            if (this.$store.lightbox.cropOpen) return false;
             const el = document.activeElement;
             if (!el) return true;
             if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return false;
@@ -31,16 +35,16 @@
     }"
     x-show="$store.lightbox.isOpen"
     x-cloak
-    x-trap="$store.lightbox.isOpen"
-    @keydown.escape.window="$store.lightbox.isOpen && ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.handleEscape())"
+    x-trap="$store.lightbox.isOpen && !$store.lightbox.cropOpen"
+    @keydown.escape.window="$store.lightbox.isOpen && ($store.lightbox.cropOpen ? $store.lightbox.closeCrop() : ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.handleEscape()))"
     @keydown.arrow-left.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.prev()"
     @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
-    @keydown.page-up.window.prevent="$store.lightbox.isOpen && $store.lightbox.prev()"
-    @keydown.page-down.window.prevent="$store.lightbox.isOpen && $store.lightbox.next()"
+    @keydown.page-up.window="$store.lightbox.isOpen && !$store.lightbox.cropOpen && ($event.preventDefault(), $store.lightbox.prev())"
+    @keydown.page-down.window="$store.lightbox.isOpen && !$store.lightbox.cropOpen && ($event.preventDefault(), $store.lightbox.next())"
     @keydown.space.window="$store.lightbox.isOpen && canShortcut() && ($event.preventDefault(), $store.lightbox.next())"
     @keydown.enter.window="$store.lightbox.isOpen && canShortcut() && $store.lightbox.toggleFullscreen()"
     @keydown.e.window="$store.lightbox.isOpen && !$event.repeat && canPanelShortcut() && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
-    @keydown.f2.window.prevent="$store.lightbox.isOpen && !$event.repeat && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
+    @keydown.f2.window.prevent="$store.lightbox.isOpen && !$store.lightbox.cropOpen && !$event.repeat && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
     @keydown.t.window="$store.lightbox.isOpen && !$event.repeat && canPanelShortcut() && ($store.lightbox.quickTagPanelOpen ? $store.lightbox.closeQuickTagPanel() : $store.lightbox.openQuickTagPanel())"
     @keydown.1.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeydown(0, $event)"
     @keydown.2.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeydown(1, $event)"
@@ -268,6 +272,38 @@
             <svg x-show="$store.lightbox.isFullscreen" x-cloak aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9L4 4m0 0v4m0-4h4m6 0l5-5m0 0v4m0-4h-4M9 15l-5 5m0 0v-4m0 4h4m6 0l5 5m0 0v-4m0 4h-4"></path>
             </svg>
+        </button>
+
+        <!-- Rotate 90° (raster images only) -->
+        <button
+            x-show="$store.lightbox.isImage($store.lightbox.getCurrentItem()?.contentType)"
+            @click.stop="$store.lightbox.rotateCurrent(90)"
+            :disabled="$store.lightbox.rotating"
+            :aria-busy="$store.lightbox.rotating"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            title="Rotate 90° clockwise"
+            aria-label="Rotate 90 degrees clockwise"
+        >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <polyline points="23 4 23 10 17 10" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></polyline>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.49 15a9 9 0 11-2.12-9.36L23 10"></path>
+            </svg>
+            <span>Rotate</span>
+        </button>
+
+        <!-- Crop (raster images only) -->
+        <button
+            x-show="$store.lightbox._isCroppable($store.lightbox.getCurrentItem()?.contentType)"
+            @click.stop="$store.lightbox.openCrop()"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            title="Crop image"
+            aria-label="Crop image"
+        >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.13 1L6 16a2 2 0 002 2h12"></path>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M1 6.13L16 6a2 2 0 012 2v12"></path>
+            </svg>
+            <span>Crop</span>
         </button>
 
         <!-- Owner -->
@@ -917,6 +953,173 @@
             </template>
         </div>
     </div>
+
+    <!-- Crop overlay (above the side panels and toolbar; reuses the imageCropper component) -->
+    <template x-if="$store.lightbox.cropOpen">
+        <div
+            data-crop-overlay
+            class="absolute inset-0 z-40 flex items-center justify-center bg-black/80 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="lightbox-crop-title"
+            aria-describedby="lightbox-crop-help"
+            x-trap.inert="$store.lightbox.cropOpen"
+            @click.stop
+            @touchstart.stop
+            @touchmove.stop
+            @touchend.stop
+            @keydown.escape.stop.prevent="$store.lightbox.closeCrop()"
+        >
+            <div
+                class="bg-stone-900 text-white rounded-lg shadow-xl border border-stone-700 w-full max-w-4xl max-h-[90vh] overflow-auto"
+                x-data="imageCropper({
+                    resourceId: $store.lightbox.getCurrentItem()?.id,
+                    imageUrl: $store.lightbox.getCurrentItem()?.viewUrl,
+                    initialWidth: $store.lightbox.getCurrentItem()?.width || 0,
+                    initialHeight: $store.lightbox.getCurrentItem()?.height || 0,
+                    onSuccess: () => $store.lightbox.onCropSuccess()
+                })"
+            >
+                <header class="px-4 py-3 border-b border-stone-700 flex items-center justify-between sticky top-0 bg-stone-900 z-10">
+                    <h2 id="lightbox-crop-title" class="text-lg font-semibold">Crop image</h2>
+                    <button
+                        type="button"
+                        class="p-1.5 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
+                        aria-label="Close crop dialog"
+                        @click="$store.lightbox.closeCrop()"
+                    >
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </header>
+
+                <div class="px-4 py-3">
+                    <div class="flex flex-col lg:flex-row gap-4">
+                        <div class="flex-1 min-w-0 flex flex-col items-center">
+                            <div
+                                class="relative inline-block bg-stone-800 border border-stone-700 select-none"
+                                x-ref="stage"
+                                @pointerdown.prevent="onPointerDown($event)"
+                                @pointermove="onPointerMove($event)"
+                                @pointerup="onPointerUp($event)"
+                                @pointercancel="onPointerUp($event)"
+                            >
+                                <img
+                                    x-ref="image"
+                                    :src="imageUrl"
+                                    @load="onImageLoad()"
+                                    @error="onImageError()"
+                                    alt="Image being cropped"
+                                    class="block max-w-full max-h-[60vh] pointer-events-none"
+                                    draggable="false"
+                                >
+                                <div
+                                    class="absolute pointer-events-none"
+                                    x-show="hasSelection() && !decodeFailed"
+                                    :style="selectionStyle()"
+                                    aria-hidden="true"
+                                ></div>
+                            </div>
+                            <p id="lightbox-crop-help" class="text-xs text-stone-400 mt-2 text-center" x-show="!decodeFailed">Type exact pixel values below, or drag on the image, to select the crop area.</p>
+                            <div
+                                x-show="decodeFailed"
+                                data-testid="lightbox-crop-decode-failed-banner"
+                                role="status"
+                                aria-live="polite"
+                                class="mt-3 p-3 w-full bg-amber-900/30 border border-amber-700 rounded text-amber-100 text-sm"
+                            >
+                                This image could not be decoded in the browser; cropping is unavailable. Formats like SVG, ICO, AVIF, and HEIC need to be re-uploaded as PNG or JPEG before they can be cropped.
+                            </div>
+                        </div>
+
+                        <div class="w-full lg:w-64 space-y-3">
+                            <div>
+                                <label for="lightbox-crop-aspect" class="block text-xs font-medium text-stone-300 mb-1">Aspect ratio</label>
+                                <select
+                                    id="lightbox-crop-aspect"
+                                    x-model="aspect"
+                                    @change="applyAspect()"
+                                    class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                                >
+                                    <option value="free">Free</option>
+                                    <option value="1:1">1 : 1 (Square)</option>
+                                    <option value="16:9">16 : 9</option>
+                                    <option value="4:3">4 : 3</option>
+                                    <option value="original">Original</option>
+                                </select>
+                            </div>
+
+                            <fieldset class="border border-stone-700 rounded-md px-3 py-2">
+                                <legend class="text-xs font-medium text-stone-300 px-1">Crop rectangle (image pixels)</legend>
+                                <div class="grid grid-cols-2 gap-2 mt-1">
+                                    <div>
+                                        <label for="lightbox-crop-x" class="block text-xs text-stone-400">X</label>
+                                        <input id="lightbox-crop-x" type="number" min="0" step="1"
+                                            x-model.number="rect.x" @input="clampRect()"
+                                            class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                                            aria-describedby="lightbox-crop-x-hint">
+                                        <span id="lightbox-crop-x-hint" class="sr-only">Pixels from the left edge of the image</span>
+                                    </div>
+                                    <div>
+                                        <label for="lightbox-crop-y" class="block text-xs text-stone-400">Y</label>
+                                        <input id="lightbox-crop-y" type="number" min="0" step="1"
+                                            x-model.number="rect.y" @input="clampRect()"
+                                            class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                                            aria-describedby="lightbox-crop-y-hint">
+                                        <span id="lightbox-crop-y-hint" class="sr-only">Pixels from the top edge of the image</span>
+                                    </div>
+                                    <div>
+                                        <label for="lightbox-crop-w" class="block text-xs text-stone-400">Width</label>
+                                        <input id="lightbox-crop-w" type="number" min="1" step="1"
+                                            x-model.number="rect.width" @input="clampRect('w')"
+                                            class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+                                    </div>
+                                    <div>
+                                        <label for="lightbox-crop-h" class="block text-xs text-stone-400">Height</label>
+                                        <input id="lightbox-crop-h" type="number" min="1" step="1"
+                                            x-model.number="rect.height" @input="clampRect('h')"
+                                            class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500">
+                                    </div>
+                                </div>
+                            </fieldset>
+
+                            <div>
+                                <label for="lightbox-crop-comment" class="block text-xs font-medium text-stone-300 mb-1">Comment (optional)</label>
+                                <input id="lightbox-crop-comment" type="text" x-model="comment"
+                                    class="w-full rounded-md bg-stone-800 border-stone-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                                    placeholder="e.g. Headshot crop">
+                            </div>
+
+                            <p class="text-sm text-stone-200" aria-live="polite">
+                                Output: <span x-text="hasSelection() ? (rect.width + ' × ' + rect.height) : '—'"></span>
+                            </p>
+
+                            <div role="alert" aria-live="assertive" class="text-sm text-red-400" x-show="errorMessage" x-text="errorMessage"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <footer class="px-4 py-3 border-t border-stone-700 flex items-center justify-end gap-2 bg-stone-900 sticky bottom-0">
+                    <button
+                        type="button"
+                        @click="$store.lightbox.closeCrop()"
+                        class="inline-flex justify-center py-2 px-4 border border-stone-600 bg-stone-800 text-sm font-medium font-mono rounded-md text-stone-200 hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-stone-900 focus:ring-stone-400"
+                    >Cancel</button>
+                    <button
+                        type="button"
+                        @click="submit()"
+                        :disabled="decodeFailed || !hasSelection() || isSubmitting"
+                        data-testid="lightbox-crop-submit-button"
+                        class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 disabled:bg-stone-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-stone-900 focus:ring-amber-600"
+                    >
+                        <span x-show="!isSubmitting">Crop</span>
+                        <span x-show="isSubmitting">Cropping…</span>
+                    </button>
+                </footer>
+            </div>
+        </div>
+    </template>
 
     <!-- Page loading indicator -->
     <div

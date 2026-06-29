@@ -4,10 +4,14 @@
 // canonical keyboard-accessible path. Sends a form POST to
 // /v1/resources/crop with rect coordinates in the image's natural pixels.
 
-export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHeight = 0 }) {
+export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHeight = 0, onSuccess = null }) {
   return {
     resourceId,
     imageUrl,
+    // Optional success callback. When provided (e.g. the lightbox), it owns the
+    // post-crop refresh; otherwise we fall back to a full page reload (the
+    // server-rendered details-page modal relies on this).
+    onSuccess,
     naturalW: initialWidth || 0,
     naturalH: initialHeight || 0,
     rect: { x: 0, y: 0, width: 0, height: 0 },
@@ -218,6 +222,13 @@ export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHe
           } catch (_) { /* ignore */ }
           this.errorMessage = message;
           this.isSubmitting = false;
+          return;
+        }
+
+        if (typeof this.onSuccess === 'function') {
+          // The callback may tear this component down (the lightbox closes the
+          // overlay), so don't await it — isSubmitting staying true is harmless.
+          this.onSuccess();
           return;
         }
 
