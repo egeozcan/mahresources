@@ -21,7 +21,7 @@ func setupRateLimitedAuthEnv(t *testing.T, limit int) *TestContext {
 	if sqlDB, err := tc.DB.DB(); err == nil {
 		sqlDB.SetMaxOpenConns(1)
 	}
-	if _, err := tc.AppCtx.EnsureAdminUser("admin", "adminpw"); err != nil {
+	if _, err := tc.AppCtx.EnsureAdminUser("admin", "adminpw1"); err != nil {
 		t.Fatalf("bootstrap admin: %v", err)
 	}
 	return tc
@@ -44,7 +44,7 @@ func TestLoginRateLimit_BlocksAfterLimit(t *testing.T) {
 		}
 	}
 	// Limit reached: even the correct password is throttled.
-	if code := apiLogin(tc, "admin", "adminpw"); code != http.StatusTooManyRequests {
+	if code := apiLogin(tc, "admin", "adminpw1"); code != http.StatusTooManyRequests {
 		t.Fatalf("attempt past the limit should be 429, got %d", code)
 	}
 }
@@ -59,7 +59,7 @@ func TestLoginRateLimit_SuccessResets(t *testing.T) {
 	if code := apiLogin(tc, "admin", "wrong"); code != http.StatusUnauthorized {
 		t.Fatalf("second failure should be 401, got %d", code)
 	}
-	if code := apiLogin(tc, "admin", "adminpw"); code != http.StatusOK {
+	if code := apiLogin(tc, "admin", "adminpw1"); code != http.StatusOK {
 		t.Fatalf("correct login (under limit) should be 200, got %d", code)
 	}
 	// Counter reset: three more failures are allowed before throttling.

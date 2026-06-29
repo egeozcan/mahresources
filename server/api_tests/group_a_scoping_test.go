@@ -25,7 +25,7 @@ func uptr(u uint) *uint { return &u }
 func plainUserBearer(t *testing.T, tc *TestContext, username string) (string, uint) {
 	t.Helper()
 	u, err := tc.AppCtx.CreateUser(&application_context.UserInput{
-		Username: username, Password: "pw", Role: models.RoleUser,
+		Username: username, Password: "password1", Role: models.RoleUser,
 	})
 	if err != nil {
 		t.Fatalf("create user %s: %v", username, err)

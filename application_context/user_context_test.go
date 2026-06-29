@@ -69,10 +69,10 @@ func TestCreateUser_Success(t *testing.T) {
 
 func TestCreateUser_DuplicateUsername(t *testing.T) {
 	ctx := newAuthTestContext(t)
-	if _, err := ctx.CreateUser(&UserInput{Username: "dup", Password: "pw", Role: models.RoleEditor}); err != nil {
+	if _, err := ctx.CreateUser(&UserInput{Username: "dup", Password: "password1", Role: models.RoleEditor}); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	_, err := ctx.CreateUser(&UserInput{Username: "dup", Password: "pw", Role: models.RoleUser})
+	_, err := ctx.CreateUser(&UserInput{Username: "dup", Password: "password1", Role: models.RoleUser})
 	if !errors.Is(err, ErrUsernameTaken) {
 		t.Errorf("expected ErrUsernameTaken, got %v", err)
 	}
@@ -81,23 +81,57 @@ func TestCreateUser_DuplicateUsername(t *testing.T) {
 func TestCreateUser_Validation(t *testing.T) {
 	ctx := newAuthTestContext(t)
 
-	if _, err := ctx.CreateUser(&UserInput{Username: "x", Password: "pw", Role: "wizard"}); !errors.Is(err, ErrInvalidRole) {
+	if _, err := ctx.CreateUser(&UserInput{Username: "x", Password: "password1", Role: "wizard"}); !errors.Is(err, ErrInvalidRole) {
 		t.Errorf("invalid role: got %v", err)
 	}
-	if _, err := ctx.CreateUser(&UserInput{Username: "", Password: "pw", Role: models.RoleAdmin}); !errors.Is(err, ErrUsernameRequired) {
+	if _, err := ctx.CreateUser(&UserInput{Username: "", Password: "password1", Role: models.RoleAdmin}); !errors.Is(err, ErrUsernameRequired) {
 		t.Errorf("empty username: got %v", err)
 	}
 	if _, err := ctx.CreateUser(&UserInput{Username: "noPw", Role: models.RoleAdmin}); !errors.Is(err, ErrPasswordRequired) {
 		t.Errorf("missing password: got %v", err)
 	}
 	// Guest with no scope group must be rejected.
-	if _, err := ctx.CreateUser(&UserInput{Username: "g", Password: "pw", Role: models.RoleGuest}); !errors.Is(err, ErrScopeGroupRequired) {
+	if _, err := ctx.CreateUser(&UserInput{Username: "g", Password: "password1", Role: models.RoleGuest}); !errors.Is(err, ErrScopeGroupRequired) {
 		t.Errorf("guest without scope: got %v", err)
 	}
 	// Scope group must exist.
 	bad := uint(9999)
-	if _, err := ctx.CreateUser(&UserInput{Username: "u", Password: "pw", Role: models.RoleUser, ScopeGroupId: &bad}); !errors.Is(err, ErrScopeGroupMissing) {
+	if _, err := ctx.CreateUser(&UserInput{Username: "u", Password: "password1", Role: models.RoleUser, ScopeGroupId: &bad}); !errors.Is(err, ErrScopeGroupMissing) {
 		t.Errorf("nonexistent scope group: got %v", err)
+	}
+}
+
+func TestPasswordMinLength(t *testing.T) {
+	ctx := newAuthTestContext(t)
+
+	// CreateUser rejects a too-short password (but only after the username/role/
+	// scope checks, so those errors still take precedence).
+	if _, err := ctx.CreateUser(&UserInput{Username: "shorty", Password: "1234567", Role: models.RoleUser}); !errors.Is(err, ErrPasswordTooShort) {
+		t.Errorf("7-char password should be rejected, got %v", err)
+	}
+	// Exactly the minimum is accepted.
+	u, err := ctx.CreateUser(&UserInput{Username: "okpw", Password: "12345678", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("8-char password should be accepted: %v", err)
+	}
+
+	// SetUserPassword enforces the same minimum (and does so before the
+	// user-existence check is reached for a valid-length password).
+	if err := ctx.SetUserPassword(u.ID, "short"); !errors.Is(err, ErrPasswordTooShort) {
+		t.Errorf("SetUserPassword short: got %v", err)
+	}
+	if err := ctx.SetUserPassword(u.ID, "longenough1"); err != nil {
+		t.Errorf("SetUserPassword valid: got %v", err)
+	}
+
+	// UpdateUser enforces it when a password is supplied.
+	if _, err := ctx.UpdateUser(u.ID, &UserInput{Username: "okpw", Password: "no", Role: models.RoleUser}); !errors.Is(err, ErrPasswordTooShort) {
+		t.Errorf("UpdateUser short password: got %v", err)
+	}
+
+	// EnsureAdminUser (bootstrap) enforces it too.
+	if _, err := ctx.EnsureAdminUser("bootadmin", "weak"); !errors.Is(err, ErrPasswordTooShort) {
+		t.Errorf("EnsureAdminUser short password: got %v", err)
 	}
 }
 
@@ -106,7 +140,7 @@ func TestCreateUser_ScopeNormalization(t *testing.T) {
 	g := makeTestGroup(t, ctx, "scope")
 
 	// Admin with a scope group: scope is forced nil.
-	admin, err := ctx.CreateUser(&UserInput{Username: "a", Password: "pw", Role: models.RoleAdmin, ScopeGroupId: &g.ID})
+	admin, err := ctx.CreateUser(&UserInput{Username: "a", Password: "password1", Role: models.RoleAdmin, ScopeGroupId: &g.ID})
 	if err != nil {
 		t.Fatalf("create admin: %v", err)
 	}
@@ -115,7 +149,7 @@ func TestCreateUser_ScopeNormalization(t *testing.T) {
 	}
 
 	// Guest with a valid scope group: scope is retained.
-	guest, err := ctx.CreateUser(&UserInput{Username: "g", Password: "pw", Role: models.RoleGuest, ScopeGroupId: &g.ID})
+	guest, err := ctx.CreateUser(&UserInput{Username: "g", Password: "password1", Role: models.RoleGuest, ScopeGroupId: &g.ID})
 	if err != nil {
 		t.Fatalf("create guest: %v", err)
 	}
@@ -126,11 +160,11 @@ func TestCreateUser_ScopeNormalization(t *testing.T) {
 
 func TestAuthenticateUser(t *testing.T) {
 	ctx := newAuthTestContext(t)
-	if _, err := ctx.CreateUser(&UserInput{Username: "bob", Password: "hunter2", Role: models.RoleUser}); err != nil {
+	if _, err := ctx.CreateUser(&UserInput{Username: "bob", Password: "hunter22", Role: models.RoleUser}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
-	if u, err := ctx.AuthenticateUser("bob", "hunter2"); err != nil || u == nil {
+	if u, err := ctx.AuthenticateUser("bob", "hunter22"); err != nil || u == nil {
 		t.Errorf("valid login should succeed, got err=%v", err)
 	}
 	if _, err := ctx.AuthenticateUser("bob", "wrong"); !errors.Is(err, ErrInvalidCredentials) {
@@ -144,14 +178,14 @@ func TestAuthenticateUser(t *testing.T) {
 	u, _ := ctx.GetUserByUsername("bob")
 	u.Disabled = true
 	ctx.db.Save(u)
-	if _, err := ctx.AuthenticateUser("bob", "hunter2"); !errors.Is(err, ErrUserDisabled) {
+	if _, err := ctx.AuthenticateUser("bob", "hunter22"); !errors.Is(err, ErrUserDisabled) {
 		t.Errorf("disabled user: got %v", err)
 	}
 }
 
 func TestUpdateUserAndPassword(t *testing.T) {
 	ctx := newAuthTestContext(t)
-	u, _ := ctx.CreateUser(&UserInput{Username: "carol", Password: "orig", Role: models.RoleUser})
+	u, _ := ctx.CreateUser(&UserInput{Username: "carol", Password: "origpass", Role: models.RoleUser})
 	origHash := u.PasswordHash
 
 	// Update without password keeps the hash but changes other fields.
@@ -167,17 +201,17 @@ func TestUpdateUserAndPassword(t *testing.T) {
 	}
 
 	// SetUserPassword changes the hash and invalidates the old password.
-	if err := ctx.SetUserPassword(u.ID, "newpass"); err != nil {
+	if err := ctx.SetUserPassword(u.ID, "newpass1"); err != nil {
 		t.Fatalf("SetUserPassword: %v", err)
 	}
-	if _, err := ctx.AuthenticateUser("carol", "newpass"); err != nil {
+	if _, err := ctx.AuthenticateUser("carol", "newpass1"); err != nil {
 		t.Errorf("new password should work: %v", err)
 	}
-	if _, err := ctx.AuthenticateUser("carol", "orig"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := ctx.AuthenticateUser("carol", "origpass"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Errorf("old password should fail: %v", err)
 	}
 
-	if err := ctx.SetUserPassword(4242, "x"); !errors.Is(err, ErrUserNotFound) {
+	if err := ctx.SetUserPassword(4242, "validpass1"); !errors.Is(err, ErrUserNotFound) {
 		t.Errorf("set password for missing user: %v", err)
 	}
 }
@@ -188,7 +222,7 @@ func TestCountUsersAndBootstrap(t *testing.T) {
 		t.Errorf("fresh DB should have 0 users, got %d", n)
 	}
 
-	first, err := ctx.EnsureAdminUser("root", "pw1")
+	first, err := ctx.EnsureAdminUser("root", "rootpass1")
 	if err != nil {
 		t.Fatalf("EnsureAdminUser create: %v", err)
 	}
@@ -197,7 +231,7 @@ func TestCountUsersAndBootstrap(t *testing.T) {
 	}
 
 	// Idempotent: second call resets password, keeps a single admin row.
-	second, err := ctx.EnsureAdminUser("root", "pw2")
+	second, err := ctx.EnsureAdminUser("root", "rootpass2")
 	if err != nil {
 		t.Fatalf("EnsureAdminUser reset: %v", err)
 	}
@@ -207,14 +241,14 @@ func TestCountUsersAndBootstrap(t *testing.T) {
 	if n, _ := ctx.CountUsers(); n != 1 {
 		t.Errorf("should still be 1 user, got %d", n)
 	}
-	if _, err := ctx.AuthenticateUser("root", "pw2"); err != nil {
+	if _, err := ctx.AuthenticateUser("root", "rootpass2"); err != nil {
 		t.Errorf("reset password should authenticate: %v", err)
 	}
 }
 
 func TestDeleteUserCleansDependents(t *testing.T) {
 	ctx := newAuthTestContext(t)
-	u, _ := ctx.CreateUser(&UserInput{Username: "del", Password: "pw", Role: models.RoleUser})
+	u, _ := ctx.CreateUser(&UserInput{Username: "del", Password: "password1", Role: models.RoleUser})
 	if _, _, err := ctx.CreateSession(u.ID, 0, "", ""); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

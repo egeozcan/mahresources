@@ -10,7 +10,7 @@ import (
 
 func TestCreateAndValidateApiToken(t *testing.T) {
 	ctx := newAuthTestContext(t)
-	u, _ := ctx.CreateUser(&UserInput{Username: "tok", Password: "pw", Role: models.RoleEditor})
+	u, _ := ctx.CreateUser(&UserInput{Username: "tok", Password: "password1", Role: models.RoleEditor})
 
 	raw, token, err := ctx.CreateApiToken(u.ID, "ci", nil)
 	if err != nil {
@@ -38,7 +38,7 @@ func TestCreateAndValidateApiToken(t *testing.T) {
 
 func TestApiTokenDisabledAndExpired(t *testing.T) {
 	ctx := newAuthTestContext(t)
-	u, _ := ctx.CreateUser(&UserInput{Username: "te", Password: "pw", Role: models.RoleEditor})
+	u, _ := ctx.CreateUser(&UserInput{Username: "te", Password: "password1", Role: models.RoleEditor})
 
 	// Disabled token.
 	rawDisabled, tokDisabled, _ := ctx.CreateApiToken(u.ID, "d", nil)
@@ -65,8 +65,8 @@ func TestApiTokenDisabledAndExpired(t *testing.T) {
 
 func TestRevokeApiTokenScopedToOwner(t *testing.T) {
 	ctx := newAuthTestContext(t)
-	owner, _ := ctx.CreateUser(&UserInput{Username: "owner", Password: "pw", Role: models.RoleEditor})
-	other, _ := ctx.CreateUser(&UserInput{Username: "other", Password: "pw", Role: models.RoleEditor})
+	owner, _ := ctx.CreateUser(&UserInput{Username: "owner", Password: "password1", Role: models.RoleEditor})
+	other, _ := ctx.CreateUser(&UserInput{Username: "other", Password: "password1", Role: models.RoleEditor})
 
 	raw, token, _ := ctx.CreateApiToken(owner.ID, "k", nil)
 
@@ -88,5 +88,45 @@ func TestRevokeApiTokenScopedToOwner(t *testing.T) {
 
 	if tokens, _ := ctx.ListApiTokens(owner.ID); len(tokens) != 0 {
 		t.Errorf("owner should have no tokens left, got %d", len(tokens))
+	}
+}
+
+func TestCreateApiTokenPerUserCap(t *testing.T) {
+	ctx := newAuthTestContext(t)
+	ctx.Config.MaxUserTokens = 2
+	u, _ := ctx.CreateUser(&UserInput{Username: "capped", Password: "password1", Role: models.RoleEditor})
+	other, _ := ctx.CreateUser(&UserInput{Username: "uncapped-peer", Password: "password1", Role: models.RoleEditor})
+
+	if _, _, err := ctx.CreateApiToken(u.ID, "a", nil); err != nil {
+		t.Fatalf("first token: %v", err)
+	}
+	if _, _, err := ctx.CreateApiToken(u.ID, "b", nil); err != nil {
+		t.Fatalf("second token: %v", err)
+	}
+	// Third token exceeds the cap.
+	if _, _, err := ctx.CreateApiToken(u.ID, "c", nil); !errors.Is(err, ErrApiTokenLimitReached) {
+		t.Fatalf("third token should hit the cap, got %v", err)
+	}
+	// The cap is per-user: a different user is unaffected.
+	if _, _, err := ctx.CreateApiToken(other.ID, "a", nil); err != nil {
+		t.Fatalf("peer's token should not be blocked by another user's cap: %v", err)
+	}
+	// Revoking frees a slot.
+	tokens, _ := ctx.ListApiTokens(u.ID)
+	if err := ctx.RevokeApiToken(tokens[0].ID, u.ID); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if _, _, err := ctx.CreateApiToken(u.ID, "c", nil); err != nil {
+		t.Fatalf("token after freeing a slot should succeed: %v", err)
+	}
+}
+
+func TestCreateApiTokenUnlimitedByDefault(t *testing.T) {
+	ctx := newAuthTestContext(t) // MaxUserTokens defaults to 0 = unlimited
+	u, _ := ctx.CreateUser(&UserInput{Username: "many", Password: "password1", Role: models.RoleEditor})
+	for i := 0; i < 25; i++ {
+		if _, _, err := ctx.CreateApiToken(u.ID, "k", nil); err != nil {
+			t.Fatalf("token %d should succeed with no cap: %v", i, err)
+		}
 	}
 }

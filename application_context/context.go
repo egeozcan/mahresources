@@ -105,6 +105,14 @@ type MahresourcesConfig struct {
 	// MaxUploadSize is the upper bound on resource + version upload body size
 	// in bytes. BH-034. 0 = unlimited (legacy behaviour).
 	MaxUploadSize int64
+	// MaxJSONBodySize bounds the size of application/json request bodies (the
+	// shared decode path). 0 = unlimited (the historical default). Multipart
+	// uploads are governed by MaxUploadSize instead and are unaffected.
+	MaxJSONBodySize int64
+	// MaxUserTokens caps how many API tokens a single user may hold. 0 =
+	// unlimited. Zero-value (test/programmatic configs) keeps the historical
+	// uncapped behaviour; main.go sets a non-zero default for real deployments.
+	MaxUserTokens int
 	// MRQLDefaultLimit is the default LIMIT applied to MRQL queries without an
 	// explicit LIMIT clause. When 0, callers should fall back to the historical
 	// DefaultMRQLLimitFallback constant (keeps test fixtures that instantiate
@@ -217,6 +225,10 @@ type MahresourcesInputConfig struct {
 	// MaxUploadSize is the upper bound on resource + version upload body size
 	// in bytes. BH-034. 0 = unlimited.
 	MaxUploadSize int64
+	// MaxJSONBodySize bounds application/json request bodies. 0 = unlimited.
+	MaxJSONBodySize int64
+	// MaxUserTokens caps how many API tokens a single user may hold. 0 = unlimited.
+	MaxUserTokens int
 	// MRQLDefaultLimit is the default LIMIT applied to MRQL queries without an
 	// explicit LIMIT clause (default: 500).
 	MRQLDefaultLimit int
@@ -967,6 +979,8 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		ExportRetention:              cfg.ExportRetention,
 		MaxImportSize:                cfg.MaxImportSize,
 		MaxUploadSize:                cfg.MaxUploadSize,
+		MaxJSONBodySize:              cfg.MaxJSONBodySize,
+		MaxUserTokens:                cfg.MaxUserTokens,
 		MRQLDefaultLimit:             cfg.MRQLDefaultLimit,
 		MRQLQueryTimeoutBoot:         cfg.MRQLQueryTimeoutBoot,
 		DeepSeekAPIKey:               cfg.DeepSeekAPIKey,

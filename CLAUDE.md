@@ -131,6 +131,8 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-export-retention` | `EXPORT_RETENTION` | How long completed group-export tars stay on disk (default: 24h) |
 | `-max-import-size` | `MAX_IMPORT_SIZE` | Maximum import tar upload size in bytes (default: 10 GB) |
 | `-max-upload-size` | `MAX_UPLOAD_SIZE` | Maximum per-upload body size in bytes for resource and version uploads (default: 2 GB) |
+| `-max-json-body` | `MAX_JSON_BODY` | Maximum `application/json` request body size in bytes. `0` (default) disables the limit, preserving the historical unbounded behaviour. Keyed on Content-Type, so multipart uploads (bounded by `-max-upload-size`) are unaffected. Recommended for `-auth` deployments where any authenticated user can POST JSON. |
+| `-max-user-tokens` | `MAX_USER_TOKENS` | Maximum API tokens a single user may hold; `0` disables the cap (default: `100`). Bounds the self-service token table so one account cannot exhaust it. |
 | `-hash-worker-count` | `HASH_WORKER_COUNT` | Concurrent hash calculation workers (default: 4) |
 | `-hash-batch-size` | `HASH_BATCH_SIZE` | Resources to process per batch (default: 500) |
 | `-hash-poll-interval` | `HASH_POLL_INTERVAL` | Time between batch cycles (default: 1m) |
@@ -163,6 +165,10 @@ Auth is **opt-in**. With `-auth` set, requests must authenticate via a browser s
 - **guest** — read-only, always confined to a single Group's subtree.
 
 Group-limited users/guests are confined to their scope group and all of its descendants across lists, single-item reads, search, MRQL, file serving, group export, and writes (fail-closed). Bootstrap the first admin with `-create-admin-user`/`-create-admin-password`. The `mr` CLI authenticates with `mr auth login` (stores an API token) or the `MR_TOKEN` env var.
+
+Group-limited principals are also denied every **plugin-code endpoint** (`/v1/plugins/...`, `/plugins/...` — the JSON API catch-all, block/display render, and plugin pages). Plugin host functions (`mah.db.*`) run against the unscoped DB handle, so allowing a confined user to invoke plugin code would let it read/write outside its subtree. The deny is fail-closed in `withAuthorization`; unscoped roles (admin/editor/unscoped user) are unaffected. Scope-aware (tree-based) plugin access is a planned follow-up.
+
+Passwords have a minimum length (`auth.MinPasswordLength`, currently 8), enforced on user creation, password change, and `-create-admin-password` bootstrap. Existing accounts are not re-validated on login. Bcrypt's 72-byte input limit is enforced rather than silently truncated.
 
 CSRF: the session cookie is `SameSite=Lax`, which blocks cross-site state-changing (POST/PUT/DELETE) requests; API-token (Bearer) requests carry no ambient cookie and are not CSRF-exposed. Layered on top of that baseline is a per-session synchronizer token (defense-in-depth): each session carries a random `Session.CsrfToken`, published to the page in a `<meta name="csrf-token">` tag and on `/v1/auth/me`. State-changing, cookie-authenticated requests must echo it via the `X-CSRF-Token` header (the JS `fetch` wrapper adds it automatically), the `csrf_token` query parameter (native multipart upload forms), or a `csrf_token` urlencoded form field; the `withCSRFProtection` middleware rejects mismatches with 403. The check is a no-op when auth is disabled, and skips safe methods, the login/logout flow, read-via-POST endpoints, and Bearer requests. The CSRF middleware never reads multipart or JSON bodies, so per-upload size limits are preserved.
 

@@ -13,7 +13,7 @@ import (
 func scopedUserBearer(t *testing.T, tc *TestContext, scopeGroupID uint) string {
 	t.Helper()
 	u, err := tc.AppCtx.CreateUser(&application_context.UserInput{
-		Username: "scoped", Password: "pw", Role: models.RoleUser, ScopeGroupId: &scopeGroupID,
+		Username: "scoped", Password: "password1", Role: models.RoleUser, ScopeGroupId: &scopeGroupID,
 	})
 	if err != nil {
 		t.Fatalf("create scoped user: %v", err)

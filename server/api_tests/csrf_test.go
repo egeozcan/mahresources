@@ -36,7 +36,7 @@ func loginCookieAndCSRF(t *testing.T, tc *TestContext) (*http.Cookie, string) {
 	t.Helper()
 	login := doReq(tc, http.MethodPost, "/v1/auth/login",
 		map[string]string{"Content-Type": "application/json"}, nil,
-		strings.NewReader(`{"username":"admin","password":"adminpw"}`))
+		strings.NewReader(`{"username":"admin","password":"adminpw1"}`))
 	if login.Code != http.StatusOK {
 		t.Fatalf("login should be 200, got %d (%s)", login.Code, login.Body.String())
 	}

@@ -92,10 +92,10 @@ function createWorkerDatabase(adminDsn: string): string {
 
 /** Bootstrap admin credentials for auth-enabled test servers. */
 export const AUTH_ADMIN_USERNAME = 'admin';
-export const AUTH_ADMIN_PASSWORD = 'adminpw';
+export const AUTH_ADMIN_PASSWORD = 'adminpw1';
 
 export interface StartServerOptions {
-  /** Enable user accounts + RBAC and bootstrap an admin (admin/adminpw). */
+  /** Enable user accounts + RBAC and bootstrap an admin (admin/adminpw1). */
   auth?: boolean;
 }
 

@@ -76,9 +76,9 @@ async function seedRoles(baseURL: string): Promise<AuthSeed> {
     if (!res.ok()) throw new Error(`auth seed: user ${creds.username} create failed (${res.status()}): ${await res.text()}`);
   };
 
-  const editor: RoleCreds = { username: `editor_${stamp}`, password: 'pw', role: 'editor' };
-  const user: RoleCreds = { username: `user_${stamp}`, password: 'pw', role: 'user' };
-  const guest: RoleCreds = { username: `guest_${stamp}`, password: 'pw', role: 'guest' };
+  const editor: RoleCreds = { username: `editor_${stamp}`, password: 'password1', role: 'editor' };
+  const user: RoleCreds = { username: `user_${stamp}`, password: 'password1', role: 'user' };
+  const guest: RoleCreds = { username: `guest_${stamp}`, password: 'password1', role: 'guest' };
   await mkUser(editor);
   await mkUser(user, scope.id);
   await mkUser(guest, scope.id);

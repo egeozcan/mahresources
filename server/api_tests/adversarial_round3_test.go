@@ -24,10 +24,12 @@ import (
 // Both must be confined to the caller's subtree; admins/unscoped principals are
 // unaffected.
 
-// TestScopedUser_PluginBlockRenderConfined proves the block-render endpoint
-// enforces subtree scope: an out-of-subtree block is not found, an in-subtree
-// block reaches the handler past the visibility gate, and an admin is never
-// scope-limited.
+// TestScopedUser_PluginBlockRenderConfined proves the block-render endpoint is
+// closed to group-confined principals. Plugin code runs against an unscoped DB
+// handle, so confined principals are denied ALL plugin-code endpoints
+// (fail-closed) regardless of whether the target block is inside their subtree;
+// admins/unscoped principals are unaffected. The handler also still re-binds to
+// the scoped context (defense-in-depth) for any future role that may reach it.
 func TestScopedUser_PluginBlockRenderConfined(t *testing.T) {
 	tc := setupAuthEnv(t)
 
@@ -41,10 +43,6 @@ func TestScopedUser_PluginBlockRenderConfined(t *testing.T) {
 	outNote := &models.Note{Name: "pbr-out", OwnerId: &outside.ID}
 	tc.DB.Create(outNote)
 
-	// The block type intentionally does NOT match the URL plugin prefix, so a
-	// VISIBLE block yields a deterministic 400 ("block type does not belong to
-	// this plugin") once it passes the visibility gate, while an INVISIBLE block
-	// must short-circuit to 404 ("block not found").
 	inBlock := tc.CreateDummyBlock(inNote.ID, "other:foo", "{}", "a")
 	outBlock := tc.CreateDummyBlock(outNote.ID, "other:foo", "{}", "a")
 
@@ -53,21 +51,19 @@ func TestScopedUser_PluginBlockRenderConfined(t *testing.T) {
 		return fmt.Sprintf("/v1/plugins/myplugin/block/render?blockId=%d&mode=view", blockID)
 	}
 
-	// Out-of-subtree block → not found (leak closed).
-	if rr := doReq(tc, http.MethodGet, renderPath(outBlock.ID), hdr, nil, nil); rr.Code != http.StatusNotFound {
-		t.Fatalf("out-of-subtree block render must be 404, got %d (%s)", rr.Code, rr.Body.String())
+	// A confined principal is denied the plugin-code endpoint outright, for both
+	// in- and out-of-subtree blocks (no information leak about either).
+	for _, b := range []uint{inBlock.ID, outBlock.ID} {
+		if rr := doReq(tc, http.MethodGet, renderPath(b), hdr, nil, nil); rr.Code != http.StatusForbidden {
+			t.Fatalf("scoped user block render must be 403 (confined), got %d (%s)", rr.Code, rr.Body.String())
+		}
 	}
 
-	// In-subtree block → passes the scope gate (400 for the mismatched type),
-	// proving the fix does not over-block legitimate blocks.
-	if rr := doReq(tc, http.MethodGet, renderPath(inBlock.ID), hdr, nil, nil); rr.Code != http.StatusBadRequest {
-		t.Fatalf("in-subtree block render should pass the scope gate (400 mismatched type), got %d (%s)", rr.Code, rr.Body.String())
-	}
-
-	// Admin is never scope-limited: even the out-of-subtree block is reachable.
+	// Admin is never confined: the out-of-subtree block is reachable (passes the
+	// confinement guard; the mismatched plugin type yields 400, never 403/404).
 	adminHdr := map[string]string{"Authorization": roleBearer(t, tc, models.RoleAdmin)}
-	if rr := doReq(tc, http.MethodGet, renderPath(outBlock.ID), adminHdr, nil, nil); rr.Code == http.StatusNotFound {
-		t.Fatalf("admin must reach any block; got 404 (%s)", rr.Body.String())
+	if rr := doReq(tc, http.MethodGet, renderPath(outBlock.ID), adminHdr, nil, nil); rr.Code == http.StatusNotFound || rr.Code == http.StatusForbidden {
+		t.Fatalf("admin must reach any block; got %d (%s)", rr.Code, rr.Body.String())
 	}
 }
 

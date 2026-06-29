@@ -35,3 +35,22 @@ func TestHashPasswordTooLong(t *testing.T) {
 		t.Errorf("expected ErrPasswordTooLong, got %v", err)
 	}
 }
+
+func TestValidatePassword(t *testing.T) {
+	// Below the minimum is rejected.
+	for _, s := range []string{"", "a", "1234567"} {
+		if err := ValidatePassword(s); err != ErrPasswordTooShort {
+			t.Errorf("ValidatePassword(%q) = %v, want ErrPasswordTooShort", s, err)
+		}
+	}
+	// At or above the minimum is accepted.
+	for _, s := range []string{"12345678", "correct horse battery staple"} {
+		if err := ValidatePassword(s); err != nil {
+			t.Errorf("ValidatePassword(%q) = %v, want nil", s, err)
+		}
+	}
+	// Beyond bcrypt's 72-byte input limit is rejected up front.
+	if err := ValidatePassword(strings.Repeat("a", 73)); err != ErrPasswordTooLong {
+		t.Errorf("ValidatePassword(73 bytes) = %v, want ErrPasswordTooLong", err)
+	}
+}

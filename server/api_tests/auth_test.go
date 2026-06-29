@@ -13,7 +13,7 @@ import (
 )
 
 // setupAuthEnv builds an auth-enabled test server with a bootstrapped admin
-// account (admin / adminpw).
+// account (admin / adminpw1).
 func setupAuthEnv(t *testing.T) *TestContext {
 	tc := setupTestEnvWithConfig(t, func(c *application_context.MahresourcesConfig) {
 		c.AuthEnabled = true
@@ -28,7 +28,7 @@ func setupAuthEnv(t *testing.T) *TestContext {
 	if sqlDB, err := tc.DB.DB(); err == nil {
 		sqlDB.SetMaxOpenConns(1)
 	}
-	if _, err := tc.AppCtx.EnsureAdminUser("admin", "adminpw"); err != nil {
+	if _, err := tc.AppCtx.EnsureAdminUser("admin", "adminpw1"); err != nil {
 		t.Fatalf("bootstrap admin: %v", err)
 	}
 	return tc
@@ -98,7 +98,7 @@ func TestAuthEnabled_ApiLoginThenCookieAccess(t *testing.T) {
 
 	login := doReq(tc, http.MethodPost, "/v1/auth/login",
 		map[string]string{"Content-Type": "application/json"}, nil,
-		strings.NewReader(`{"username":"admin","password":"adminpw"}`))
+		strings.NewReader(`{"username":"admin","password":"adminpw1"}`))
 	if login.Code != http.StatusOK {
 		t.Fatalf("valid API login should be 200, got %d (%s)", login.Code, login.Body.String())
 	}
@@ -124,7 +124,7 @@ func TestAuthEnabled_AuthenticatedHtmlRenders(t *testing.T) {
 	tc := setupAuthEnv(t)
 	login := doReq(tc, http.MethodPost, "/v1/auth/login",
 		map[string]string{"Content-Type": "application/json"}, nil,
-		strings.NewReader(`{"username":"admin","password":"adminpw"}`))
+		strings.NewReader(`{"username":"admin","password":"adminpw1"}`))
 	cookie := sessionCookie(t, login)
 
 	rr := doReq(tc, http.MethodGet, "/dashboard", map[string]string{"Accept": "text/html"}, []*http.Cookie{cookie}, nil)
@@ -149,7 +149,7 @@ func TestAuthEnabled_ApiLoginWrongCredentials(t *testing.T) {
 
 func TestAuthEnabled_BearerToken(t *testing.T) {
 	tc := setupAuthEnv(t)
-	user, err := tc.AppCtx.CreateUser(&application_context.UserInput{Username: "cliuser", Password: "pw", Role: models.RoleEditor})
+	user, err := tc.AppCtx.CreateUser(&application_context.UserInput{Username: "cliuser", Password: "password1", Role: models.RoleEditor})
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestAuthEnabled_LogoutRevokesSession(t *testing.T) {
 	tc := setupAuthEnv(t)
 	login := doReq(tc, http.MethodPost, "/v1/auth/login",
 		map[string]string{"Content-Type": "application/json"}, nil,
-		strings.NewReader(`{"username":"admin","password":"adminpw"}`))
+		strings.NewReader(`{"username":"admin","password":"adminpw1"}`))
 	cookie := sessionCookie(t, login)
 
 	logout := doReq(tc, http.MethodPost, "/v1/auth/logout", nil, []*http.Cookie{cookie}, nil)
@@ -195,7 +195,7 @@ func TestAuthEnabled_WebLoginForm(t *testing.T) {
 
 	form := doReq(tc, http.MethodPost, "/login",
 		map[string]string{"Content-Type": "application/x-www-form-urlencoded"}, nil,
-		strings.NewReader("username=admin&password=adminpw"))
+		strings.NewReader("username=admin&password=adminpw1"))
 	if form.Code != http.StatusFound {
 		t.Fatalf("web login should redirect (302), got %d", form.Code)
 	}

@@ -94,7 +94,7 @@ func CreateOwnTokenHandler(ctx *application_context.MahresourcesContext) func(ht
 		}
 		raw, token, err := ctx.CreateApiToken(p.UserID, body.Name, expiresAt)
 		if err != nil {
-			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
+			http_utils.HandleError(err, w, r, userErrorStatus(err))
 			return
 		}
 		// The raw token is returned only here; the DB stores its hash.

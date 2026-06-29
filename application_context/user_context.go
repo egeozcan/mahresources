@@ -17,6 +17,11 @@ var (
 	ErrUsernameRequired   = errors.New("username is required")
 	ErrUsernameTaken      = errors.New("username already taken")
 	ErrPasswordRequired   = errors.New("password is required")
+	// ErrPasswordTooShort / ErrPasswordTooLong alias the auth-package policy
+	// errors so callers and userErrorStatus can match them via the
+	// application_context namespace.
+	ErrPasswordTooShort = auth.ErrPasswordTooShort
+	ErrPasswordTooLong  = auth.ErrPasswordTooLong
 	ErrInvalidRole        = errors.New("invalid role")
 	ErrScopeGroupRequired = errors.New("this role must be limited to a group")
 	ErrScopeGroupMissing  = errors.New("scope group does not exist")
@@ -83,6 +88,9 @@ func (ctx *MahresourcesContext) CreateUser(input *UserInput) (*models.User, erro
 	if input.Password == "" {
 		return nil, ErrPasswordRequired
 	}
+	if err := auth.ValidatePassword(input.Password); err != nil {
+		return nil, err
+	}
 	hash, err := auth.HashPassword(input.Password)
 	if err != nil {
 		return nil, err
@@ -130,6 +138,9 @@ func (ctx *MahresourcesContext) UpdateUser(id uint, input *UserInput) (*models.U
 	user.Disabled = input.Disabled
 
 	if input.Password != "" {
+		if err := auth.ValidatePassword(input.Password); err != nil {
+			return nil, err
+		}
 		hash, err := auth.HashPassword(input.Password)
 		if err != nil {
 			return nil, err
@@ -150,6 +161,9 @@ func (ctx *MahresourcesContext) UpdateUser(id uint, input *UserInput) (*models.U
 func (ctx *MahresourcesContext) SetUserPassword(id uint, newPassword string) error {
 	if newPassword == "" {
 		return ErrPasswordRequired
+	}
+	if err := auth.ValidatePassword(newPassword); err != nil {
+		return err
 	}
 	hash, err := auth.HashPassword(newPassword)
 	if err != nil {
@@ -265,6 +279,9 @@ func (ctx *MahresourcesContext) EnsureAdminUser(username, password string) (*mod
 	}
 	if password == "" {
 		return nil, ErrPasswordRequired
+	}
+	if err := auth.ValidatePassword(password); err != nil {
+		return nil, err
 	}
 
 	existing, err := ctx.GetUserByUsername(username)

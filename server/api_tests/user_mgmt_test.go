@@ -16,11 +16,11 @@ func TestUserAdminAPI(t *testing.T) {
 
 	// Create a user.
 	create := doReq(tc, http.MethodPost, "/v1/users", adminH, nil,
-		strings.NewReader(`{"username":"newuser","password":"pw","role":"editor"}`))
+		strings.NewReader(`{"username":"newuser","password":"password1","role":"editor"}`))
 	if create.Code != http.StatusOK {
 		t.Fatalf("admin create user should be 200, got %d (%s)", create.Code, create.Body.String())
 	}
-	if strings.Contains(create.Body.String(), "passwordHash") || strings.Contains(create.Body.String(), "\"pw\"") {
+	if strings.Contains(create.Body.String(), "passwordHash") || strings.Contains(create.Body.String(), "\"password1\"") {
 		t.Fatalf("create response must not leak the password/hash: %s", create.Body.String())
 	}
 
@@ -32,7 +32,7 @@ func TestUserAdminAPI(t *testing.T) {
 
 	// Duplicate username conflicts.
 	dup := doReq(tc, http.MethodPost, "/v1/users", adminH, nil,
-		strings.NewReader(`{"username":"newuser","password":"pw","role":"user"}`))
+		strings.NewReader(`{"username":"newuser","password":"password1","role":"user"}`))
 	if dup.Code != http.StatusConflict {
 		t.Fatalf("duplicate username should be 409, got %d", dup.Code)
 	}
@@ -64,13 +64,13 @@ func TestAccountSelfService(t *testing.T) {
 	tc := setupAuthEnv(t)
 	// Create an editor and authenticate as them via a session cookie.
 	if _, err := tc.AppCtx.CreateUser(&application_context.UserInput{
-		Username: "selfuser", Password: "origpw", Role: models.RoleEditor,
+		Username: "selfuser", Password: "origpw12", Role: models.RoleEditor,
 	}); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 	login := doReq(tc, http.MethodPost, "/v1/auth/login",
 		map[string]string{"Content-Type": "application/json"}, nil,
-		strings.NewReader(`{"username":"selfuser","password":"origpw"}`))
+		strings.NewReader(`{"username":"selfuser","password":"origpw12"}`))
 	cookie := sessionCookie(t, login)
 	jsonCookie := []*http.Cookie{cookie}
 	// Cookie-authenticated state-changing requests must carry the CSRF token, as
@@ -97,20 +97,20 @@ func TestAccountSelfService(t *testing.T) {
 
 	// Change own password (wrong current → 401).
 	wrong := doReq(tc, http.MethodPost, "/v1/account/password", h, jsonCookie,
-		strings.NewReader(`{"currentPassword":"nope","newPassword":"newpw"}`))
+		strings.NewReader(`{"currentPassword":"nope","newPassword":"newpw123"}`))
 	if wrong.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong current password should be 401, got %d", wrong.Code)
 	}
 	ok := doReq(tc, http.MethodPost, "/v1/account/password", h, jsonCookie,
-		strings.NewReader(`{"currentPassword":"origpw","newPassword":"newpw"}`))
+		strings.NewReader(`{"currentPassword":"origpw12","newPassword":"newpw123"}`))
 	if ok.Code != http.StatusOK {
 		t.Fatalf("password change should be 200, got %d (%s)", ok.Code, ok.Body.String())
 	}
 	// New password authenticates; old does not.
-	if _, err := tc.AppCtx.AuthenticateUser("selfuser", "newpw"); err != nil {
+	if _, err := tc.AppCtx.AuthenticateUser("selfuser", "newpw123"); err != nil {
 		t.Fatalf("new password should work: %v", err)
 	}
-	if _, err := tc.AppCtx.AuthenticateUser("selfuser", "origpw"); err == nil {
+	if _, err := tc.AppCtx.AuthenticateUser("selfuser", "origpw12"); err == nil {
 		t.Fatalf("old password should no longer work")
 	}
 }
@@ -119,7 +119,7 @@ func TestAdminAndAccountPagesRender(t *testing.T) {
 	tc := setupAuthEnv(t)
 	login := doReq(tc, http.MethodPost, "/v1/auth/login",
 		map[string]string{"Content-Type": "application/json"}, nil,
-		strings.NewReader(`{"username":"admin","password":"adminpw"}`))
+		strings.NewReader(`{"username":"admin","password":"adminpw1"}`))
 	cookie := sessionCookie(t, login)
 	htmlH := map[string]string{"Accept": "text/html"}
 

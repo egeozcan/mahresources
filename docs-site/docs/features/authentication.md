@@ -66,6 +66,8 @@ Accounts with the **user** or **guest** role can be confined to a single Group a
 
 Scoping is enforced consistently and **fail-closed** across the entire surface: list pages, single-item reads, full-text search, [MRQL](./mrql.md) queries, file and thumbnail serving, group export, and all writes. A scoped account can never see or touch an entity that lives outside its scope group's subtree.
 
+Scoped accounts are also denied every **plugin endpoint** (the `/v1/plugins/...` API, block and display rendering, and plugin pages). Plugin code runs with full, unscoped database access, so a confined account is blocked from invoking it rather than allowed to reach data outside its subtree through a plugin. Unscoped roles (admin, editor, and an unscoped user) are unaffected.
+
 ## How to authenticate
 
 There are two ways to present an identity.
@@ -116,6 +118,20 @@ By default Mahresources derives the client IP from the connection itself. If it 
 Do **not** enable it on a directly-exposed server: a client can forge `X-Forwarded-For` to give itself a fresh apparent IP on every request and defeat per-IP throttling entirely. Turn it on only when a trusted proxy sets the header for you.
 :::
 
+## Resource limits
+
+Two limits help contain abuse by an authenticated account.
+
+- **`MAX_USER_TOKENS`** (`-max-user-tokens`) caps how many API tokens a single user may hold. The default is `100`; `0` disables the cap. This bounds the self-service token table so one account cannot exhaust it. Hitting the cap returns HTTP 409; revoke an existing token to free a slot.
+
+:::warning Consider setting a JSON body limit
+The shared JSON request path is **unbounded by default**, which predates authentication and assumed a trusted single user. With `-auth` enabled, any authenticated account (including a read-only guest) can POST an arbitrarily large JSON body. Set **`MAX_JSON_BODY`** (`-max-json-body`) to a byte limit to cap it. It is keyed on the `application/json` content type, so multipart uploads (bounded separately by `-max-upload-size`) are unaffected. The default `0` leaves it unlimited.
+:::
+
+## Password policy
+
+Passwords must be at least **8 characters** (and at most bcrypt's 72-byte input limit). The minimum is enforced when an account is created, when a password is changed, and for the `-create-admin-password` bootstrap. Existing accounts are not re-validated on login, so raising your own bar later does not lock anyone out until their next password change.
+
 ## Managing users and your own account
 
 - **Administrators** manage all accounts from the user administration page at `/admin/users` -- create users, set roles, assign a scope group, enable or disable accounts, and reset passwords. The same operations are available from the [`mr user`](../cli/user/index.md) CLI commands.
@@ -133,6 +149,8 @@ Do **not** enable it on a directly-exposed server: a client can forge `X-Forward
 | `-login-max-attempts` | `LOGIN_MAX_ATTEMPTS` | Failed logins per window before HTTP 429; `0` disables | `0` (disabled) |
 | `-login-attempt-window` | `LOGIN_ATTEMPT_WINDOW` | Sliding window for failed logins, and the lockout duration | `15m` |
 | `-trust-proxy-headers` | `TRUST_PROXY_HEADERS=1` | Trust `X-Forwarded-For` for the client IP in login rate-limiting (only behind a trusted proxy) | `false` |
+| `-max-user-tokens` | `MAX_USER_TOKENS` | Maximum API tokens a single user may hold; `0` disables the cap | `100` |
+| `-max-json-body` | `MAX_JSON_BODY` | Maximum `application/json` request body size in bytes; `0` disables the limit | `0` (unlimited) |
 
 ## Next steps
 

@@ -12,8 +12,9 @@ import (
 
 // API token errors.
 var (
-	ErrApiTokenInvalid  = errors.New("api token invalid or expired")
-	ErrApiTokenNotFound = errors.New("api token not found")
+	ErrApiTokenInvalid      = errors.New("api token invalid or expired")
+	ErrApiTokenNotFound     = errors.New("api token not found")
+	ErrApiTokenLimitReached = errors.New("api token limit reached; revoke an existing token first")
 )
 
 // apiTokenTouchInterval throttles LastUsedAt writes for the same reason sessions
@@ -24,6 +25,19 @@ const apiTokenTouchInterval = time.Minute
 // (shown once) plus the stored record. A nil expiresAt means the token never
 // expires.
 func (ctx *MahresourcesContext) CreateApiToken(userID uint, name string, expiresAt *time.Time) (string, *models.ApiToken, error) {
+	// Per-user token cap (0 = unlimited). Bounds the self-service token table so
+	// a single account cannot exhaust it. Counts all of the user's rows; revoked
+	// tokens are hard-deleted, so the count reflects live tokens.
+	if limit := ctx.Config.MaxUserTokens; limit > 0 {
+		var count int64
+		if err := ctx.db.Model(&models.ApiToken{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+			return "", nil, err
+		}
+		if count >= int64(limit) {
+			return "", nil, ErrApiTokenLimitReached
+		}
+	}
+
 	raw, err := auth.GenerateToken()
 	if err != nil {
 		return "", nil, err

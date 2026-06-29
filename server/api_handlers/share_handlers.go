@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"mahresources/constants"
 	"mahresources/server/http_utils"
@@ -105,17 +106,17 @@ func GetBulkUnshareNotesHandler(ctx interfaces.NoteSharer) func(writer http.Resp
 }
 
 // parseUintStrict parses a base-10 uint with no sign and no leading/trailing
-// whitespace. Kept local to avoid a dependency loop with http_utils for a
-// single call site.
+// whitespace. strconv.ParseUint rejects signs, whitespace, non-digits, the
+// empty string, and — crucially — values past the platform uint range, instead
+// of the previous hand-rolled loop that wrapped silently on overflow (e.g.
+// 2^64+1 parsed to 1, which could target the wrong note ID). bitSize 0 pins the
+// result to the native uint width.
 func parseUintStrict(s string) (uint, error) {
-	var n uint
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0, errors.New("not a uint")
-		}
-		n = n*10 + uint(c-'0')
+	n, err := strconv.ParseUint(s, 10, 0)
+	if err != nil {
+		return 0, err
 	}
-	return n, nil
+	return uint(n), nil
 }
 
 func GetUnshareNoteHandler(ctx interfaces.NoteSharer) func(writer http.ResponseWriter, request *http.Request) {

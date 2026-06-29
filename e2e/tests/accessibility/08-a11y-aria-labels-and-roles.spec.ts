@@ -215,51 +215,56 @@ test.describe('Inline Tag Editor - Missing accessible name', () => {
   });
 });
 
-test.describe('Navigation Dropdown - Missing ARIA menu roles', () => {
-  test('admin dropdown menu should have role="menu"', async ({ page }) => {
+test.describe('Navigation Dropdown - disclosure pattern (no misleading menu roles)', () => {
+  // The nav dropdowns deliberately use a button disclosure pattern
+  // (aria-haspopup + a toggling aria-expanded), NOT a role="menu" widget:
+  // claiming role="menu"/"menuitem" without arrow-key menu navigation is an
+  // a11y anti-pattern. See commit 7d56c005 ("drop misleading role=menu/menuitem
+  // from nav dropdowns"). These tests pin that decision so the roles are not
+  // silently re-added without the keyboard semantics they imply.
+
+  test('admin dropdown trigger uses a valid disclosure pattern', async ({ page }) => {
     await page.goto('/notes');
     await page.waitForLoadState('load');
 
-    // Click the Admin dropdown button to open it
     const adminButton = page.locator('button:has-text("Admin")');
     await expect(adminButton).toBeVisible({ timeout: 5000 });
-    await adminButton.click();
 
-    // The dropdown container should have role="menu"
+    // The trigger declares aria-haspopup and reflects collapsed/expanded state.
+    await expect(adminButton).toHaveAttribute('aria-haspopup', /.+/);
+    await expect(adminButton).toHaveAttribute('aria-expanded', 'false');
+
+    await adminButton.click();
     const dropdownMenu = page.locator('.navbar-dropdown-menu').first();
     await dropdownMenu.waitFor({ state: 'visible', timeout: 5000 });
-
-    const role = await dropdownMenu.getAttribute('role');
-    expect(
-      role,
-      'Admin dropdown container has no role="menu". The trigger button declares ' +
-      'aria-haspopup="true" which implies a menu will appear. WCAG 4.1.2.'
-    ).toBe('menu');
+    await expect(adminButton).toHaveAttribute('aria-expanded', 'true');
   });
 
-  test('admin dropdown items should have role="menuitem"', async ({ page }) => {
+  test('admin dropdown does not claim role="menu"/"menuitem" it does not implement', async ({ page }) => {
     await page.goto('/notes');
     await page.waitForLoadState('load');
 
-    // Open the Admin dropdown
     const adminButton = page.locator('button:has-text("Admin")');
     await adminButton.click();
 
     const dropdownMenu = page.locator('.navbar-dropdown-menu').first();
     await dropdownMenu.waitFor({ state: 'visible', timeout: 5000 });
 
-    // All links inside the dropdown should have role="menuitem"
+    // The container must not falsely advertise menu semantics.
+    expect(
+      await dropdownMenu.getAttribute('role'),
+      'nav dropdown must not claim role="menu" without arrow-key menu navigation (7d56c005)'
+    ).not.toBe('menu');
+
+    // Its items are plain links, not role="menuitem".
     const items = dropdownMenu.locator('a');
     const count = await items.count();
     expect(count).toBeGreaterThan(0);
-
     for (let i = 0; i < count; i++) {
-      const itemRole = await items.nth(i).getAttribute('role');
       expect(
-        itemRole,
-        `Admin dropdown item ${i + 1} (link) should have role="menuitem" ` +
-        'to match the role="menu" container pattern. WCAG 4.1.2.'
-      ).toBe('menuitem');
+        await items.nth(i).getAttribute('role'),
+        `nav dropdown item ${i + 1} must not claim role="menuitem" (7d56c005)`
+      ).not.toBe('menuitem');
     }
   });
 });

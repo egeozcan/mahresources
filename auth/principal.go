@@ -66,9 +66,11 @@ func (p *Principal) CanWrite() bool {
 }
 
 // CanEditorWrite reports whether the principal may perform editor-level writes:
-// managing relations, relation/note types, series, saved queries, group
-// import/export, note sharing, and plugin-action execution. Admins and editors
-// qualify; plain users and guests do not.
+// managing relations, relation/note types, series, saved queries, and the admin
+// shares dashboard. Admins and editors qualify; plain users and guests do not.
+// Note sharing, group import/export, and plugin-action execution are
+// deliberately NOT editor-level — they are user-level (CanWrite); see
+// server/authz_policy.go (isEditorPath).
 func (p *Principal) CanEditorWrite() bool {
 	if p == nil {
 		return false

@@ -10,7 +10,7 @@ import (
 
 func TestCreateAndValidateSession(t *testing.T) {
 	ctx := newAuthTestContext(t)
-	u, _ := ctx.CreateUser(&UserInput{Username: "sess", Password: "pw", Role: models.RoleUser})
+	u, _ := ctx.CreateUser(&UserInput{Username: "sess", Password: "password1", Role: models.RoleUser})
 
 	raw, session, err := ctx.CreateSession(u.ID, time.Hour, "agent", "1.2.3.4")
 	if err != nil {
@@ -38,7 +38,7 @@ func TestCreateAndValidateSession(t *testing.T) {
 
 func TestSessionExpiry(t *testing.T) {
 	ctx := newAuthTestContext(t)
-	u, _ := ctx.CreateUser(&UserInput{Username: "exp", Password: "pw", Role: models.RoleUser})
+	u, _ := ctx.CreateUser(&UserInput{Username: "exp", Password: "password1", Role: models.RoleUser})
 
 	raw, _, _ := ctx.CreateSession(u.ID, -time.Hour, "", "")
 	if _, _, err := ctx.ValidateSession(raw); !errors.Is(err, ErrSessionInvalid) {
@@ -48,7 +48,7 @@ func TestSessionExpiry(t *testing.T) {
 
 func TestRevokeSession(t *testing.T) {
 	ctx := newAuthTestContext(t)
-	u, _ := ctx.CreateUser(&UserInput{Username: "rev", Password: "pw", Role: models.RoleUser})
+	u, _ := ctx.CreateUser(&UserInput{Username: "rev", Password: "password1", Role: models.RoleUser})
 	raw, _, _ := ctx.CreateSession(u.ID, time.Hour, "", "")
 
 	if err := ctx.RevokeSession(raw); err != nil {
@@ -61,7 +61,7 @@ func TestRevokeSession(t *testing.T) {
 
 func TestValidateSession_DisabledUser(t *testing.T) {
 	ctx := newAuthTestContext(t)
-	u, _ := ctx.CreateUser(&UserInput{Username: "dis", Password: "pw", Role: models.RoleUser})
+	u, _ := ctx.CreateUser(&UserInput{Username: "dis", Password: "password1", Role: models.RoleUser})
 	raw, _, _ := ctx.CreateSession(u.ID, time.Hour, "", "")
 
 	u.Disabled = true
@@ -73,7 +73,7 @@ func TestValidateSession_DisabledUser(t *testing.T) {
 
 func TestRevokeUserSessionsAndCleanup(t *testing.T) {
 	ctx := newAuthTestContext(t)
-	u, _ := ctx.CreateUser(&UserInput{Username: "multi", Password: "pw", Role: models.RoleUser})
+	u, _ := ctx.CreateUser(&UserInput{Username: "multi", Password: "password1", Role: models.RoleUser})
 	r1, _, _ := ctx.CreateSession(u.ID, time.Hour, "", "")
 	ctx.CreateSession(u.ID, time.Hour, "", "")
 

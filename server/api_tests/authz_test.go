@@ -22,7 +22,7 @@ func roleBearer(t *testing.T, tc *TestContext, role models.Role) string {
 		scope = &g.ID
 	}
 	u, err := tc.AppCtx.CreateUser(&application_context.UserInput{
-		Username: "rb_" + string(role), Password: "pw", Role: role, ScopeGroupId: scope,
+		Username: "rb_" + string(role), Password: "password1", Role: role, ScopeGroupId: scope,
 	})
 	if err != nil {
 		t.Fatalf("create %s: %v", role, err)

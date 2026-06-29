@@ -39,7 +39,8 @@ func userErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, application_context.ErrUserNotFound), errors.Is(err, application_context.ErrApiTokenNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, application_context.ErrUsernameTaken):
+	case errors.Is(err, application_context.ErrUsernameTaken),
+		errors.Is(err, application_context.ErrApiTokenLimitReached):
 		return http.StatusConflict
 	case errors.Is(err, application_context.ErrInvalidCredentials):
 		return http.StatusUnauthorized
@@ -47,7 +48,9 @@ func userErrorStatus(err error) int {
 		errors.Is(err, application_context.ErrScopeGroupRequired),
 		errors.Is(err, application_context.ErrScopeGroupMissing),
 		errors.Is(err, application_context.ErrUsernameRequired),
-		errors.Is(err, application_context.ErrPasswordRequired):
+		errors.Is(err, application_context.ErrPasswordRequired),
+		errors.Is(err, application_context.ErrPasswordTooShort),
+		errors.Is(err, application_context.ErrPasswordTooLong):
 		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError

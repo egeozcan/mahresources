@@ -175,6 +175,19 @@ func isEditorPath(path string) bool {
 	}
 }
 
+// isPluginCodePath matches endpoints that execute plugin (Lua) code: the plugin
+// JSON API catch-all, the block/display render endpoints, and plugin-served
+// pages. Plugin host functions (mah.db.*) run against the UNSCOPED database
+// handle (see application_context.pluginDBAdapter), so a group-confined
+// principal could read or mutate entities outside its subtree through any plugin
+// endpoint whose handler chooses not to honour the advisory principal it is
+// handed. Until plugin data access is itself scope-aware (tree-based RBAC for
+// plugins is a planned follow-up), confined principals are denied these
+// endpoints outright — fail-closed, consistent with every other scoped surface.
+func isPluginCodePath(path string) bool {
+	return strings.HasPrefix(path, "/v1/plugins/") || strings.HasPrefix(path, "/plugins/")
+}
+
 // withAuthorization enforces role-based access using requiredCapability. It runs
 // after withAuthentication, so the principal (if any) is already on the context.
 // When auth is disabled it is a no-op (the super-user principal satisfies all).
@@ -190,6 +203,13 @@ func withAuthorization(appCtx *application_context.MahresourcesContext, next htt
 			return
 		}
 		p := auth.PrincipalFromContext(r.Context())
+		// Fail-closed: a group-confined principal must never reach plugin code,
+		// which would otherwise run against an unscoped DB handle. SuperUser and
+		// unscoped roles (admin/editor/unscoped user) are unaffected.
+		if isPluginCodePath(r.URL.Path) && (p.IsScoped() || p.RequiresScope()) {
+			denyAccess(appCtx, w, r)
+			return
+		}
 		if principalSatisfies(p, requiredCapability(r.Method, r.URL.Path)) {
 			next.ServeHTTP(w, r)
 			return

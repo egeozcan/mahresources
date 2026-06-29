@@ -75,7 +75,7 @@ func CreateServer(appContext *application_context.MahresourcesContext, fs afero.
 	// token is on the context) and before authz; it is a no-op when auth is off.
 	return &http.Server{
 		Addr:         appContext.Config.BindAddress,
-		Handler:      withPrimarySecurityHeaders(withAuthentication(appContext, withCSRFProtection(appContext, withAuthorization(appContext, router)))),
+		Handler:      withPrimarySecurityHeaders(withAuthentication(appContext, withCSRFProtection(appContext, withAuthorization(appContext, withJSONBodyLimit(appContext, router))))),
 		WriteTimeout: 45 * time.Minute,
 		ReadTimeout:  45 * time.Minute,
 	}
