@@ -12,7 +12,7 @@ Mahresources ships with optional user accounts and role-based access control (RB
 
 By default (`-auth` not set), there are no users, no login page, and no permission checks. Every request runs as an implicit administrator with full access. This is the historical Mahresources behavior, and it keeps existing deployments, the `mr` CLI, and the test suite working unchanged.
 
-:::warning Auth off is not a substitute for a reverse proxy
+:::warning A reverse proxy is still recommended
 Even with built-in auth disabled, you should still front Mahresources with a reverse proxy that enforces authentication if it is reachable from outside your trusted network. See [Reverse Proxy Configuration](../deployment/reverse-proxy.md). Built-in auth and a reverse proxy are complementary -- use both for internet-facing deployments.
 :::
 
