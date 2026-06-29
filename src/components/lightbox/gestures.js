@@ -38,12 +38,6 @@ export const gestureState = {
 
   // Shared navigation debounce — prevents touch→synthesized-mouse double-fire
   _navDebounce: false,
-  // Wheel gesture tracking for momentum vs new-gesture detection
-  _wheelDebounceTimer: null,
-  _wheelNavDirection: 0,
-  _wheelNavTime: 0,
-  _prevWheelAbsDelta: 0,
-  _wheelIncreaseCount: 0,
 };
 
 export const gestureMethods = {
@@ -238,20 +232,21 @@ export const gestureMethods = {
   },
 
   /**
-   * Wheel navigation uses a momentum-aware debounce:
-   * - After navigating, blocks further nav while momentum events arrive.
-   * - Resets the expiry timer on each event (so momentum can't outlast it).
-   * - Detects a NEW gesture via direction reversal (instant) or sustained
-   *   acceleration after 150ms (skips same-swipe ramp-up).
+   * Wheel handling:
+   * - Ctrl/pinch-wheel zooms the image toward the cursor (images only).
+   * - When zoomed, the wheel pans the image.
+   * - Otherwise the wheel navigates between items, one step per wheel event
+   *   with no momentum throttle. This also drives navigation while a video is
+   *   shown, since videos are never zoomable.
    */
   handleWheel(event) {
-    if (this.isVideo(this.getCurrentItem()?.contentType)) return;
-
     // Always prevent default for wheel events in the lightbox to stop
     // browser back/forward swipe gestures on Mac trackpads.
     event.preventDefault();
 
-    if (event.ctrlKey) {
+    const isVideo = this.isVideo(this.getCurrentItem()?.contentType);
+
+    if (event.ctrlKey && !isVideo) {
       this.disableAnimations();
 
       const media = this.getMediaElement();
@@ -286,73 +281,25 @@ export const gestureMethods = {
       return;
     }
 
-    if (!this.isZoomed()) {
-      // Determine dominant axis and navigation delta
-      const absX = Math.abs(event.deltaX);
-      const absY = Math.abs(event.deltaY);
-      const isVertical = absY > absX;
-      const navDelta = isVertical ? event.deltaY : event.deltaX;
-      const absNav = Math.abs(navDelta);
-
-      if (absNav > 10) {
-        if (this._wheelDebounce) {
-          const dirChanged = Math.sign(navDelta) !== this._wheelNavDirection;
-          const timeSinceNav = performance.now() - this._wheelNavTime;
-
-          if (absNav > this._prevWheelAbsDelta) {
-            this._wheelIncreaseCount++;
-          } else {
-            this._wheelIncreaseCount = 0;
-          }
-          this._prevWheelAbsDelta = absNav;
-
-          // Direction reversal = always a new gesture (can't happen mid-swipe).
-          // Acceleration = new gesture only after 150ms (skip same-swipe ramp-up).
-          const newGesture = dirChanged || (timeSinceNav > 150 && this._wheelIncreaseCount >= 3);
-
-          if (newGesture) {
-            clearTimeout(this._wheelDebounceTimer);
-            this._wheelDebounce = false;
-            this._navDebounce = false;
-            // Fall through to navigate below
-          } else {
-            clearTimeout(this._wheelDebounceTimer);
-            this._wheelDebounceTimer = setTimeout(() => {
-              this._wheelDebounce = false;
-              this._navDebounce = false;
-              this._wheelIncreaseCount = 0;
-              this._prevWheelAbsDelta = 0;
-            }, 300);
-            return;
-          }
-        }
-
-        if (this._navDebounce) return;
-
-        this._wheelDebounce = true;
-        this._navDebounce = true;
-        this._wheelNavDirection = Math.sign(navDelta);
-        this._wheelNavTime = performance.now();
-        this._prevWheelAbsDelta = absNav;
-        this._wheelIncreaseCount = 0;
-        this._wheelDebounceTimer = setTimeout(() => {
-          this._wheelDebounce = false;
-          this._navDebounce = false;
-          this._wheelIncreaseCount = 0;
-          this._prevWheelAbsDelta = 0;
-        }, 300);
-
-        if (navDelta > 0) {
-          this.next();
-        } else {
-          this.prev();
-        }
-      }
-    } else {
+    if (!isVideo && this.isZoomed()) {
       this.disableAnimations();
       this.panX -= event.deltaX / this.zoomLevel;
       this.panY -= event.deltaY / this.zoomLevel;
       this.constrainPan();
+      return;
+    }
+
+    // Navigate between items — one step per wheel event, no throttling.
+    const absX = Math.abs(event.deltaX);
+    const absY = Math.abs(event.deltaY);
+    const navDelta = absY > absX ? event.deltaY : event.deltaX;
+
+    if (Math.abs(navDelta) > 10) {
+      if (navDelta > 0) {
+        this.next();
+      } else {
+        this.prev();
+      }
     }
   },
 
