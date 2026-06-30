@@ -260,6 +260,17 @@ func CreateTagHandler(writer interfaces.TagsWriter) http.HandlerFunc {
 			}
 			result, err = writer.UpdateTag(&creator)
 		} else {
+			// An explicit /tag/new browser submission of a name that already exists should get a
+			// friendly "already exists" error with its input preserved (BH-006 Post-Redirect-Get),
+			// rather than silently adopting the existing tag. Programmatic/JSON callers (the
+			// lightbox autocompleter and the mr CLI both send Content-Type: application/json) keep
+			// CreateTag's idempotent behaviour, so this branch only affects HTML form posts.
+			if http_utils.RequestAcceptsHTML(r) {
+				if existing, lookupErr := writer.GetTagByName(creator.Name); lookupErr == nil && existing != nil && existing.ID != 0 {
+					http_utils.HandleFormError(w, r, "/tag/new", fmt.Errorf("a tag named %q already exists", creator.Name), r.PostForm)
+					return
+				}
+			}
 			result, err = writer.CreateTag(&creator)
 		}
 

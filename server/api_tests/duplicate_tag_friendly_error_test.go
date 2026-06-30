@@ -3,20 +3,25 @@ package api_tests
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// Tier 0 / Item 3: creating a tag with a name that already exists is idempotent.
-// Instead of a 4xx "already exists" error it returns the existing tag (200). This
-// lets the tag autocompleter resolve an "Add" of a name that already exists but
-// sits beyond the 50-row suggestion window to the real tag instead of failing
-// with a generic "Could not add" toast. The change is at the CreateTag layer, so
-// the JSON and form paths behave the same. Either way the raw DB constraint
-// message must never leak.
+// Tier 0 / Item 3: creating a tag with a name that already exists is idempotent for
+// programmatic/JSON callers. Instead of a 4xx "already exists" error it returns the existing
+// tag (200). This lets the lightbox tag autocompleter (and the mr CLI — both send
+// Content-Type: application/json) resolve an "Add" of a name that already exists but sits
+// beyond the suggestion window to the real tag instead of failing with a "Could not add" toast.
+//
+// The explicit /tag/new BROWSER form is the exception: an HTML submission (Accept: text/html)
+// of a duplicate name gets a friendly "already exists" error with its input preserved via
+// Post-Redirect-Get (BH-006), rather than silently adopting the existing tag. Either way the
+// raw DB constraint message must never leak.
 
 func TestDuplicateTagCreationIsIdempotent(t *testing.T) {
 	tc := SetupTestEnv(t)
@@ -54,6 +59,8 @@ func TestDuplicateTagCreationIsIdempotent(t *testing.T) {
 	assert.NotContains(t, body, "tags.name", "raw DB table/column name should not leak")
 }
 
+// A JSON-accepting client (the mr CLI posts urlencoded edits but JSON creates; this covers a
+// non-browser urlencoded create) stays idempotent — it does not get the HTML form error.
 func TestDuplicateTagCreationViaFormIsIdempotent(t *testing.T) {
 	tc := SetupTestEnv(t)
 
@@ -61,10 +68,43 @@ func TestDuplicateTagCreationViaFormIsIdempotent(t *testing.T) {
 	resp := tc.MakeFormRequest(http.MethodPost, "/v1/tag", formData)
 	require.Equal(t, http.StatusOK, resp.Code, "first tag creation should succeed")
 
-	// Duplicate via the form path is idempotent too (uniform at the CreateTag layer).
+	// MakeFormRequest sends Accept: application/json, so this is the programmatic path and
+	// stays idempotent.
 	resp = tc.MakeFormRequest(http.MethodPost, "/v1/tag", formData)
-	assert.Equal(t, http.StatusOK, resp.Code, "duplicate form create should be idempotent, got %d", resp.Code)
+	assert.Equal(t, http.StatusOK, resp.Code, "duplicate non-HTML form create should be idempotent, got %d", resp.Code)
 
 	bodyStr := resp.Body.String()
 	assert.NotContains(t, bodyStr, "UNIQUE constraint failed", "raw DB constraint error should not leak")
+}
+
+// The explicit /tag/new browser form (Accept: text/html) surfaces a friendly "already exists"
+// error and preserves the typed name via Post-Redirect-Get (BH-006), instead of silently
+// redirecting to the existing tag.
+func TestDuplicateTagCreationViaBrowserFormShowsFriendlyError(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	postBrowserForm := func(name string) *httptest.ResponseRecorder {
+		body := strings.NewReader(url.Values{"Name": {name}}.Encode())
+		req, _ := http.NewRequest(http.MethodPost, "/v1/tag", body)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "text/html")
+		rr := httptest.NewRecorder()
+		tc.Router.ServeHTTP(rr, req)
+		return rr
+	}
+
+	resp := postBrowserForm("browser-dup-tag")
+	require.Equal(t, http.StatusSeeOther, resp.Code, "first create should redirect to the new tag")
+
+	// Duplicate browser submission is NOT idempotent: it redirects back to the form (PRG)
+	// carrying the error and the preserved name.
+	resp = postBrowserForm("browser-dup-tag")
+	require.Equal(t, http.StatusFound, resp.Code, "duplicate browser create should redirect back to the form")
+
+	location := resp.Header().Get("Location")
+	assert.Contains(t, location, "/tag/new", "should redirect back to the create form")
+	assert.Contains(t, location, "error=", "redirect should carry the error for the banner")
+	assert.Contains(t, strings.ToLower(location), "already+exists", "error should be the friendly duplicate message")
+	assert.Contains(t, location, "Name=browser-dup-tag", "the typed name should be preserved")
+	assert.NotContains(t, location, "UNIQUE+constraint", "raw DB constraint error should not leak")
 }
