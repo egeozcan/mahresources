@@ -376,7 +376,7 @@
                 <div
                     x-data="autocompleter({
                         selectedResults: [...($store.lightbox.resourceDetails?.Tags || [])],
-                        url: '/v1/tags',
+                        url: '/v1/tags/suggest',
                         addUrl: '/v1/tag',
                         standalone: true,
                         sortBy: 'most_used_resource',
@@ -566,7 +566,7 @@
                                 <!-- Autocomplete for adding more tags (seed with existing slot tags to exclude them) -->
                                 <div x-data="autocompleter({
                                          selectedResults: tags.map(t => ({ID: t.id, Name: t.name})),
-                                         url: '/v1/tags',
+                                         url: '/v1/tags/suggest',
                                          standalone: true,
                                          sortBy: 'most_used_resource',
                                          max: 0,

@@ -530,6 +530,10 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	tagReader, tagWriter := appContext.TagCRUD()
 	tagFactory := api_handlers.NewCRUDHandlerFactory("tag", "tags", tagReader, tagWriter)
 	router.Methods(http.MethodGet).Path("/v1/tags").HandlerFunc(tagFactory.ListHandler())
+	// Lean typeahead path: same TagQuery scope as /v1/tags but skips the pagination
+	// COUNT (a second full-table scan per keystroke). Tags are global labels, so this
+	// is intentionally unscoped, like the rest of the tag routes.
+	router.Methods(http.MethodGet).Path("/v1/tags/suggest").HandlerFunc(api_handlers.GetTagsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/tag").HandlerFunc(api_handlers.CreateTagHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/tag/delete").HandlerFunc(tagFactory.DeleteHandler())
 	router.Methods(http.MethodPost).Path("/v1/tag/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.Tag](basicTagWriter, "tag"))
