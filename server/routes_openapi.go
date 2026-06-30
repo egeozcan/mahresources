@@ -7,6 +7,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/models"
 	"mahresources/models/query_models"
+	"mahresources/server/api_handlers"
 	"mahresources/server/openapi"
 )
 
@@ -1048,6 +1049,18 @@ func registerResourceRoutes(r *openapi.Registry) {
 		IDQueryParam:         "id",
 		IDRequired:           true,
 		ResponseType:         resourceType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/resource/suggestedTags",
+		OperationID:          "getSuggestedTags",
+		Summary:              "Get context-aware tag suggestions for a resource",
+		Tags:                 []string{"resources"},
+		IDQueryParam:         "id",
+		IDRequired:           true,
+		ResponseType:         reflect.TypeOf(api_handlers.SuggestedTagsResponse{}),
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 

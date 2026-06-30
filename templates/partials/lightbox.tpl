@@ -74,6 +74,7 @@
     @keydown.u.window="$store.lightbox.isOpen && canPanelShortcut() && !$event.repeat && $store.lightbox.undoLastTagAction()"
     @keydown.meta.z.window="$store.lightbox.isOpen && canPanelShortcut() && !$event.repeat && ($event.preventDefault(), $store.lightbox.undoLastTagAction())"
     @keydown.ctrl.z.window="$store.lightbox.isOpen && canPanelShortcut() && !$event.repeat && ($event.preventDefault(), $store.lightbox.undoLastTagAction())"
+    @keydown.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSuggestedTagKeydown($event)"
     @touchstart="$store.lightbox.handleTouchStart($event)"
     @touchmove="$store.lightbox.handleTouchMove($event)"
     @touchend="$store.lightbox.handleTouchEnd($event)"
@@ -543,6 +544,32 @@
                 <div class="relative">
                     <label class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Tags</label>
                     <div class="text-stone-500 text-sm italic">Loading tags...</div>
+                </div>
+            </template>
+
+            <!-- Suggested tags (Tier 3): one-tap, keyboard-applyable context-aware suggestions -->
+            <template x-if="!$store.lightbox.isExpanded() && $store.lightbox.suggestedTags.length">
+                <div data-suggested-tags-row>
+                    <div class="border-t border-stone-700 mb-3"></div>
+                    <label class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Suggested</label>
+                    <!-- gap-1.5 (not gap-2) keeps this row off the .flex.flex-wrap.gap-2
+                         selector that ~12 specs use to target the tag-pills container. -->
+                    <ul role="list" class="flex flex-wrap gap-1.5" aria-label="Suggested tags">
+                        <template x-for="(tag, sIdx) in $store.lightbox.suggestedTags" :key="tag.ID">
+                            <li>
+                                <button
+                                    type="button"
+                                    data-suggested-tag
+                                    @click="$store.lightbox.applySuggestedTag(tag)"
+                                    class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-stone-800 hover:bg-amber-700 border border-stone-700 hover:border-amber-600 text-stone-200 hover:text-white text-sm rounded-full font-mono transition-colors focus:outline-none focus:ring-2 focus:ring-stone-400"
+                                    :aria-label="'Apply suggested tag ' + tag.Name"
+                                >
+                                    <span x-text="tag.Name"></span>
+                                    <kbd x-show="sIdx < 8" class="text-[10px] opacity-60" x-text="'⇧' + (sIdx + 1)"></kbd>
+                                </button>
+                            </li>
+                        </template>
+                    </ul>
                 </div>
             </template>
 

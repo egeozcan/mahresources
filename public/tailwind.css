@@ -3514,6 +3514,13 @@
       }
     }
   }
+  .hover\:border-amber-600 {
+    &:hover {
+      @media (hover: hover) {
+        border-color: var(--color-amber-600);
+      }
+    }
+  }
   .hover\:border-amber-700 {
     &:hover {
       @media (hover: hover) {
@@ -4121,6 +4128,13 @@
     &:hover {
       @media (hover: hover) {
         color: var(--color-stone-900);
+      }
+    }
+  }
+  .hover\:text-white {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--color-white);
       }
     }
   }

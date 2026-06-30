@@ -87,6 +87,24 @@ type ResourceReader interface {
 	GetResources(offset int, maxResults int, h *query_models.ResourceSearchQuery) ([]models.Resource, error)
 }
 
+// SuggestedTag is a single context-aware tag suggestion for a resource. Score
+// and Sources are advisory (tooltips/telemetry); the frontend applies a chip
+// using only ID and Name. The DTO lives here (not in application_context) so
+// the interface below can reference it without an import cycle.
+type SuggestedTag struct {
+	ID      uint     `json:"ID"`
+	Name    string   `json:"Name"`
+	Score   float64  `json:"score"`
+	Sources []string `json:"sources"`
+}
+
+// ResourceSuggestionReader exposes the context-aware tag suggestion ranking for
+// a single resource. Implementations must fail closed under scoping: an
+// out-of-subtree resource id yields a not-found error.
+type ResourceSuggestionReader interface {
+	GetSuggestedTags(resourceId uint, limit int) ([]SuggestedTag, error)
+}
+
 type ResourceDeleter interface {
 	DeleteResource(resourceId uint) error
 }

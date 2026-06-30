@@ -81,6 +81,42 @@ func GetResourceHandler(ctx interfaces.ResourceReader) func(writer http.Response
 	}
 }
 
+// SuggestedTagsResponse is the envelope returned by GetSuggestedTagsHandler.
+// Exported so the OpenAPI registry can derive its schema.
+type SuggestedTagsResponse struct {
+	Suggestions []interfaces.SuggestedTag `json:"suggestions"`
+}
+
+// GetSuggestedTagsHandler returns context-aware tag suggestions for a single
+// resource. Always 200 with a (possibly empty) array on success; 400 on a
+// missing/zero id; 404 when the resource is not found or not visible under the
+// caller's scope.
+func GetSuggestedTagsHandler(ctx interfaces.ResourceSuggestionReader) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var query query_models.EntityIdQuery
+
+		if err := tryFillStructValuesFromRequest(&query, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		if query.ID == 0 {
+			http_utils.HandleError(errors.New("resource id required"), writer, request, http.StatusBadRequest)
+			return
+		}
+
+		suggestions, err := ctx.GetSuggestedTags(query.ID, 0)
+
+		if err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusNotFound)
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(SuggestedTagsResponse{Suggestions: suggestions})
+	}
+}
+
 func GetResourceContentHandler(ctx interfaces.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.EntityIdQuery

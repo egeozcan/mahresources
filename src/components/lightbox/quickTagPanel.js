@@ -1,5 +1,7 @@
 // src/components/lightbox/quickTagPanel.js
 
+import { abortableFetch } from '../../index.js';
+
 const STORAGE_KEY = 'mahresources_quickTags';
 
 const TAB_LABELS = [
@@ -52,6 +54,16 @@ export const quickTagPanelState = {
   // the user has navigated away from the affected image (Item 6).
   _undoRing: [],
   _undoRingMax: 20,
+
+  // ---- Context-aware suggested tags (Tier 3) ----
+  // One-tap suggestions for the current image, unioned + ranked server-side from
+  // perceptual-hash-similar resources and the owner group's popular tags.
+  suggestedTags: [],
+  suggestedTagsLoading: false,
+  // Per-resource cache so paging back to a resource paints instantly.
+  _suggestedCache: new Map(),
+  // Monotonic token so a late response for a previous resource can't paint.
+  _suggestedReq: 0,
 };
 
 export const quickTagPanelMethods = {
@@ -260,6 +272,9 @@ export const quickTagPanelMethods = {
     // Ensure resource details are loaded (reuses editPanel cache), revalidating against
     // the server so a stale cached entry is refreshed on (re)open (BH: L5).
     this.fetchResourceDetails(undefined, true);
+
+    // Load context-aware suggestions for the current image (Tier 3).
+    this.fetchSuggestedTags(undefined, true);
   },
 
   closeQuickTagPanel() {
@@ -267,6 +282,8 @@ export const quickTagPanelMethods = {
     this.expandedSlotIndex = null;
     this._cancelLongPress();
     this.quickTagPanelOpen = false;
+    // Drop suggestions so a reopen never flashes the previous image's chips.
+    this.suggestedTags = [];
     this._saveQuickTagsToStorage();
     // The media viewport widens again — re-clamp pan to the new bounds (BH: M7).
     requestAnimationFrame(() => this.constrainPan());
@@ -649,6 +666,10 @@ export const quickTagPanelMethods = {
       this._cancelLongPress();
     }
     this.fetchResourceDetails();
+    // Clear immediately so the row never shows the previous image's chips while
+    // the new ones load, then refetch for the resource we navigated to (Tier 3).
+    this.suggestedTags = [];
+    this.fetchSuggestedTags();
   },
 
   async focusTagEditor() {
@@ -676,6 +697,77 @@ export const quickTagPanelMethods = {
       }
     };
     requestAnimationFrame(() => poll(10));
+  },
+
+  // ==================== Suggested Tags (Tier 3) ====================
+
+  // Fetch context-aware suggestions for a resource. Mirrors fetchResourceDetails:
+  // per-resource cache for an instant paint, a monotonic token so a late response
+  // for a previous resource can't paint, and a current-id guard before committing.
+  // Suggestions are advisory, so any failure degrades to an empty row rather than
+  // surfacing an error.
+  async fetchSuggestedTags(id, forceRefresh = false) {
+    const resourceId = id ?? this.getCurrentItem()?.id;
+    if (!resourceId) return;
+
+    const cached = this._suggestedCache.get(resourceId);
+    if (cached) {
+      if (this.getCurrentItem()?.id === resourceId) this.suggestedTags = cached;
+      if (!forceRefresh) return;
+    }
+
+    const reqId = ++this._suggestedReq;
+    this.suggestedTagsLoading = true;
+
+    try {
+      const { ready } = abortableFetch(`/v1/resource/suggestedTags?id=${resourceId}`);
+      const response = await ready;
+      if (!response.ok) throw new Error(`Failed to fetch suggested tags: ${response.status}`);
+
+      const data = await response.json();
+      const list = Array.isArray(data?.suggestions) ? data.suggestions : [];
+
+      // A newer request has superseded this one — drop the stale result.
+      if (reqId !== this._suggestedReq) return;
+
+      this._suggestedCache.set(resourceId, list);
+      if (this.getCurrentItem()?.id === resourceId) {
+        this.suggestedTags = list;
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError' && reqId === this._suggestedReq && this.getCurrentItem()?.id === resourceId) {
+        this.suggestedTags = [];
+      }
+    } finally {
+      if (reqId === this._suggestedReq) this.suggestedTagsLoading = false;
+    }
+  },
+
+  // Apply one suggestion to the current image. Reuses the optimistic batch-add
+  // pipeline (cache write, undo ring, live-region announce), then optimistically
+  // drops the chip and invalidates the resource's suggestion cache so a later
+  // view refetches without the now-applied tag.
+  async applySuggestedTag(tag) {
+    if (!tag) return;
+    const ok = await this._batchToggleTags([{ ID: tag.ID, Name: tag.Name }], 'add');
+    if (!ok) return;
+    this.suggestedTags = this.suggestedTags.filter(s => s.ID !== tag.ID);
+    const currentId = this.getCurrentItem()?.id;
+    if (currentId != null) this._suggestedCache.delete(currentId);
+  },
+
+  // Shift+1..Shift+8 apply suggestion N. Keyed on event.code (Digit/Numpad) since
+  // a shifted digit reports a punctuation event.key. Bare digits 1-9 are reserved
+  // for the numpad slots, so the suggested row uses the Shift layer.
+  handleSuggestedTagKeydown(event) {
+    if (!this.quickTagPanelOpen || event.repeat) return;
+    if (!event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+    const m = /^(?:Digit|Numpad)([1-8])$/.exec(event.code || '');
+    if (!m) return;
+    const tag = this.suggestedTags[parseInt(m[1], 10) - 1];
+    if (!tag) return;
+    event.preventDefault();
+    this.applySuggestedTag(tag);
   },
 
   // ==================== Numpad Layout ====================

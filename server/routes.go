@@ -454,6 +454,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/relationType/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.GroupRelationType](basicRelationTypeWriter, "relationType"))
 
 	router.Methods(http.MethodGet).Path("/v1/resource").HandlerFunc(scopedAPI(appContext, api_handlers.GetResourceHandler))
+	router.Methods(http.MethodGet).Path("/v1/resource/suggestedTags").HandlerFunc(scopedAPI(appContext, api_handlers.GetSuggestedTagsHandler))
 	router.Methods(http.MethodGet).Path("/v1/resources").HandlerFunc(scopedAPI(appContext, api_handlers.GetResourcesHandler))
 	router.Methods(http.MethodGet).Path("/v1/resources/meta/keys").HandlerFunc(scopedAPI(appContext, api_handlers.GetResourceMetaKeysHandler))
 	uploadSize := func() int64 { return appContext.Settings().MaxUploadSize() }
