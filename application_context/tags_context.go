@@ -37,6 +37,14 @@ func (ctx *MahresourcesContext) GetTagByID(id uint) (*models.Tag, error) {
 	return &tag, ctx.db.First(&tag, id).Error
 }
 
+// GetTagByName returns the tag with an exact-match name. Used to resolve an
+// idempotent CreateTag on a unique-name conflict so callers get the existing
+// tag back instead of an error.
+func (ctx *MahresourcesContext) GetTagByName(name string) (*models.Tag, error) {
+	var tag models.Tag
+	return &tag, ctx.db.Where("name = ?", name).First(&tag).Error
+}
+
 func (ctx *MahresourcesContext) GetTagsWithIds(ids *[]uint, limit int) ([]models.Tag, error) {
 	var tags []models.Tag
 
@@ -85,6 +93,15 @@ func (ctx *MahresourcesContext) CreateTag(tagQuery *query_models.TagCreator) (*m
 
 	if err := ctx.db.Create(&tag).Error; err != nil {
 		if isUniqueConstraintError(err) {
+			// Idempotent create: a tag with this name already exists, so return it
+			// rather than erroring. This lets the autocompleter "Add" a name that
+			// exists but sits beyond the suggestion window resolve to the real tag.
+			// Nothing was created, so skip the create hooks, audit log, and search
+			// cache invalidation. Fall back to the friendly error only if the
+			// existing row cannot be read back (so the raw constraint never leaks).
+			if existing, lookupErr := ctx.GetTagByName(tag.Name); lookupErr == nil {
+				return existing, nil
+			}
 			return nil, fmt.Errorf("a tag named %q already exists", tagQuery.Name)
 		}
 		return nil, err

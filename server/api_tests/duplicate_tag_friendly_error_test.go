@@ -10,53 +10,61 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDuplicateTagCreationReturnsFriendlyError(t *testing.T) {
+// Tier 0 / Item 3: creating a tag with a name that already exists is idempotent.
+// Instead of a 4xx "already exists" error it returns the existing tag (200). This
+// lets the tag autocompleter resolve an "Add" of a name that already exists but
+// sits beyond the 50-row suggestion window to the real tag instead of failing
+// with a generic "Could not add" toast. The change is at the CreateTag layer, so
+// the JSON and form paths behave the same. Either way the raw DB constraint
+// message must never leak.
+
+func TestDuplicateTagCreationIsIdempotent(t *testing.T) {
 	tc := SetupTestEnv(t)
 
-	// Create a tag via API (first time should succeed)
 	resp := tc.MakeRequest(http.MethodPost, "/v1/tag", map[string]any{
 		"Name": "unique-test-tag",
 	})
-	assert.Equal(t, http.StatusOK, resp.Code, "first tag creation should succeed")
+	require.Equal(t, http.StatusOK, resp.Code, "first tag creation should succeed")
 
-	// Create the same tag again (should fail with friendly error)
+	var first struct {
+		ID   uint
+		Name string
+	}
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &first), "first response should be the tag object")
+	require.NotZero(t, first.ID, "first create should return a real ID")
+
+	// Creating the same name again returns the existing tag, not an error.
 	resp = tc.MakeRequest(http.MethodPost, "/v1/tag", map[string]any{
 		"Name": "unique-test-tag",
 	})
-	assert.True(t, resp.Code >= 400, "duplicate tag creation should fail, got %d", resp.Code)
+	require.Equal(t, http.StatusOK, resp.Code,
+		"duplicate create should be idempotent, got %d: %s", resp.Code, resp.Body.String())
 
-	var body map[string]any
-	err := json.Unmarshal(resp.Body.Bytes(), &body)
-	require.NoError(t, err, "response should be valid JSON")
+	var second struct {
+		ID   uint
+		Name string
+	}
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &second))
+	assert.Equal(t, first.ID, second.ID, "duplicate create should return the existing tag's ID")
+	assert.Equal(t, "unique-test-tag", second.Name, "returned tag should be the existing one")
 
-	errMsg, ok := body["error"].(string)
-	require.True(t, ok, "error should be a string, got %v", body)
-
-	// Error should NOT contain raw UNIQUE constraint message
-	assert.NotContains(t, errMsg, "UNIQUE constraint failed",
-		"raw DB constraint error should not leak to user")
-	assert.NotContains(t, errMsg, "tags.name",
-		"raw DB table/column name should not leak to user")
-
-	// Error should contain a user-friendly message
-	assert.Contains(t, errMsg, "already exists",
-		"error message should explain that the tag already exists")
+	// The raw DB constraint error must never leak, even on the idempotent path.
+	body := resp.Body.String()
+	assert.NotContains(t, body, "UNIQUE constraint failed", "raw DB constraint error should not leak")
+	assert.NotContains(t, body, "tags.name", "raw DB table/column name should not leak")
 }
 
-func TestDuplicateTagCreationViaFormReturnsFriendlyError(t *testing.T) {
+func TestDuplicateTagCreationViaFormIsIdempotent(t *testing.T) {
 	tc := SetupTestEnv(t)
 
-	// Create first tag via form
 	formData := url.Values{"Name": {"form-dup-tag"}}
 	resp := tc.MakeFormRequest(http.MethodPost, "/v1/tag", formData)
-	assert.Equal(t, http.StatusOK, resp.Code, "first tag creation should succeed")
+	require.Equal(t, http.StatusOK, resp.Code, "first tag creation should succeed")
 
-	// Create duplicate tag via form
+	// Duplicate via the form path is idempotent too (uniform at the CreateTag layer).
 	resp = tc.MakeFormRequest(http.MethodPost, "/v1/tag", formData)
-	assert.True(t, resp.Code >= 400, "duplicate tag creation should fail, got %d", resp.Code)
+	assert.Equal(t, http.StatusOK, resp.Code, "duplicate form create should be idempotent, got %d", resp.Code)
 
-	// Body should NOT contain raw constraint error
 	bodyStr := resp.Body.String()
-	assert.NotContains(t, bodyStr, "UNIQUE constraint failed",
-		"raw DB constraint error should not leak to user")
+	assert.NotContains(t, bodyStr, "UNIQUE constraint failed", "raw DB constraint error should not leak")
 }
