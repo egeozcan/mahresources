@@ -235,6 +235,11 @@ export const editPanelMethods = {
       }
     }
 
+    // Snapshot the just-left image's tags for carry-forward (Item 4) BEFORE the refetch
+    // below replaces resourceDetails. currentIndex has already advanced, but resourceDetails
+    // still holds the previous image here, which is exactly what R should repeat.
+    this._snapshotCarryForward();
+
     // Do NOT blank resourceDetails or evict the incoming resource's cache here.
     // Blanking made every quick-slot color flash neutral on each next/prev
     // (slotMatchState returns 'none' while resourceDetails is null), and evicting

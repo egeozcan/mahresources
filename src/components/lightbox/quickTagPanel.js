@@ -38,6 +38,20 @@ export const quickTagPanelState = {
   _expandedClickOutsideHandler: null,
   recentTags: Array(9).fill(null),
   tabLabels: TAB_LABELS,
+
+  // ---- Batch tagging pipeline (Tier 1) ----
+  // Auto-advance to the next image after a successful quick-slot add (Item 5).
+  flowModeEnabled: false,
+  // One-shot prefix threaded into the next announcePosition() so the flow advance
+  // is announced together with the new position in a single live-region message.
+  _pendingFlowPrefix: '',
+  // Snapshot of the previous image's tags so R can repeat them onto the next (Item 4).
+  _carryForwardTags: [],
+  _carryForwardName: '',
+  // In-memory undo ring of batch tag writes; each entry can be inverted even after
+  // the user has navigated away from the affected image (Item 6).
+  _undoRing: [],
+  _undoRingMax: 20,
 };
 
 export const quickTagPanelMethods = {
@@ -105,6 +119,7 @@ export const quickTagPanelMethods = {
       if (typeof data.activeTab === 'number' && data.activeTab >= 0 && data.activeTab <= 4) {
         this.activeTab = data.activeTab;
       }
+      if (typeof data.flowMode === 'boolean') this.flowModeEnabled = data.flowMode;
       if (incomingRecents) this.recentTags = incomingRecents;
     } catch (e) {
       console.warn('Failed to load quick tags from storage:', e);
@@ -179,6 +194,7 @@ export const quickTagPanelMethods = {
       drawerOpen: this.quickTagPanelOpen,
       activeTab: this.activeTab,
       recentTags: this.recentTags,
+      flowMode: this.flowModeEnabled,
     });
     try {
       localStorage.setItem(STORAGE_KEY, payload);
@@ -403,7 +419,9 @@ export const quickTagPanelMethods = {
       } else {
         const missing = tags.filter(tag => !this.isTagOnResource(tag.ID));
         if (missing.length > 0) {
-          await this._batchToggleTags(missing, 'add');
+          const ok = await this._batchToggleTags(missing, 'add');
+          // Flow mode: only advance on a confirmed add, never on remove or failure.
+          if (ok && this.flowModeEnabled) this._advanceFlow(missing);
         }
       }
     } finally {
@@ -411,18 +429,58 @@ export const quickTagPanelMethods = {
     }
   },
 
-  async _batchToggleTags(tags, action) {
-    const resourceId = this.getCurrentItem()?.id;
-    if (!resourceId) return;
+  // POST a tag add/remove with a bounded retry on transient failures. Returns the final
+  // Response (whose .ok the caller checks). A 4xx is returned immediately (a client error
+  // won't fix itself); only 5xx and network throws are retried, since the operation is
+  // idempotent. Backoff is short and capped so the optimistic UI is not left hanging.
+  async _postTagsWithRetry(endpoint, resourceId, tags, attempts = 3) {
+    let lastErr = null;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      if (attempt > 0) {
+        await new Promise(r => setTimeout(r, 150 * attempt));
+      }
+      const formData = new FormData();
+      formData.append('ID', resourceId);
+      for (const tag of tags) {
+        formData.append('EditedId', tag.ID);
+      }
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          body: formData,
+          headers: { 'Accept': 'application/json' },
+        });
+        // Retry only transient server-side failures; surface client errors immediately.
+        if (response.status >= 500 && attempt < attempts - 1) continue;
+        return response;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < attempts - 1) continue;
+        throw err;
+      }
+    }
+    if (lastErr) throw lastErr;
+  },
+
+  // Toggle a batch of tags on a resource. Defaults to the current image, but accepts an
+  // explicit targetResourceId so undo (Item 6) can invert a change on an image the user
+  // has since navigated away from. Returns true on success, false on failure, so callers
+  // (flow advance, undo) can gate on the result. fromUndo suppresses the undo-ring push so
+  // an undo does not record its own inverse and become a toggle loop.
+  async _batchToggleTags(tags, action, { targetResourceId = null, fromUndo = false } = {}) {
+    const resourceId = targetResourceId ?? this.getCurrentItem()?.id;
+    if (!resourceId) return false;
 
     const endpoint = action === 'add' ? '/v1/resources/addTags' : '/v1/resources/removeTags';
 
-    // Capture the edited details object. After the await the user may have navigated, so
-    // this.resourceDetails could belong to a different resource; writing it back into the
-    // cache under resourceId — or rolling back onto it — would poison that entry (BH: H5).
-    const details = this.resourceDetails;
+    // Only mutate the live resourceDetails optimistically when it actually belongs to the
+    // target. For a non-current target (cross-image undo, or a write that lands after the
+    // user navigated) writing into this.resourceDetails — or rolling back onto it — would
+    // poison the on-screen resource (BH: H5), so we operate server + cache only.
+    const isCurrent = this.getCurrentItem()?.id === resourceId;
+    const details = isCurrent ? this.resourceDetails : null;
 
-    // Optimistic UI update on the captured object
+    // Optimistic UI update on the captured object (current target only)
     if (details) {
       if (!details.Tags) details.Tags = [];
       for (const tag of tags) {
@@ -438,17 +496,11 @@ export const quickTagPanelMethods = {
     }
 
     try {
-      const formData = new FormData();
-      formData.append('ID', resourceId);
-      for (const tag of tags) {
-        formData.append('EditedId', tag.ID);
-      }
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        body: formData,
-        headers: { 'Accept': 'application/json' },
-      });
+      // addTags/removeTags are idempotent set operations, so a transient failure is safe to
+      // retry. Under a high-volume "tag 5000" workload the server can briefly return 5xx
+      // (e.g. SQLite write contention / busy) or drop a connection; retrying with a short
+      // backoff keeps a tag/undo from silently no-op'ing instead of bailing on the first blip.
+      const response = await this._postTagsWithRetry(endpoint, resourceId, tags);
 
       if (!response.ok) {
         throw new Error(`Failed to ${action} tags: ${response.status}`);
@@ -456,8 +508,22 @@ export const quickTagPanelMethods = {
 
       if (details) {
         this.detailsCache.set(resourceId, { ...details });
+      } else {
+        // Non-current target: any cached copy is now stale — drop it so a later view of
+        // that resource refetches the authoritative tag set.
+        this.detailsCache.delete(resourceId);
       }
       this.needsRefreshOnClose = true;
+
+      // Record an undo-ring entry for every non-undo batch write (Item 6).
+      if (!fromUndo) {
+        this._pushUndo({
+          resourceId,
+          tags,
+          action,
+          name: this.items.find(i => i.id === resourceId)?.name || details?.Name || 'image',
+        });
+      }
 
       const names = tags.map(t => t.Name).join(', ');
       this.announce(`${action === 'add' ? 'Added' : 'Removed'} tags: ${names}`);
@@ -468,6 +534,7 @@ export const quickTagPanelMethods = {
           this.recordRecentTag(tag);
         }
       }
+      return true;
     } catch (err) {
       console.error(`Failed to ${action} tags:`, err);
       // Roll back the optimistic update on the captured object (the one we mutated),
@@ -485,6 +552,91 @@ export const quickTagPanelMethods = {
       }
       this.detailsCache.delete(resourceId);
       this.announce(`Failed to ${action} tags`);
+      return false;
+    }
+  },
+
+  // ==================== Batch Pipeline: Carry-forward / Flow / Undo ====================
+
+  // Capture the current resourceDetails' tags so the NEXT image can repeat them. Called at
+  // the top of onResourceChange (before the refetch) while resourceDetails still holds the
+  // just-left image. Only overwrites when the left image actually had tags, so repeat keeps
+  // working across an interleaved untagged image.
+  _snapshotCarryForward() {
+    if (this.resourceDetails?.Tags?.length) {
+      this._carryForwardTags = this.resourceDetails.Tags.map(t => ({ ID: t.ID, Name: t.Name }));
+      this._carryForwardName = this.resourceDetails.Name || this.getCurrentItem()?.name || '';
+    }
+  },
+
+  async repeatPreviousTags() {
+    if (!this._carryForwardTags.length) {
+      this.announce('No previous tags to repeat');
+      return;
+    }
+    // Make sure the current image's tags are loaded before diffing.
+    await this.fetchResourceDetails();
+    const missing = this._carryForwardTags.filter(t => !this.isTagOnResource(t.ID));
+    if (!missing.length) {
+      this.announce('All previous tags already applied');
+      return;
+    }
+    await this._batchToggleTags(missing, 'add');
+    // Runs after _batchToggleTags' own announce; under the 50ms latest-wins live region this
+    // count+source message is the one a screen reader hears.
+    this.announce(`Repeated ${missing.length} tag(s) from ${this._carryForwardName}`);
+  },
+
+  toggleFlowMode() {
+    this.flowModeEnabled = !this.flowModeEnabled;
+    this._saveQuickTagsToStorage();
+    this.announce(`Flow mode ${this.flowModeEnabled ? 'on' : 'off'}`);
+  },
+
+  // Advance to the next image after a flow-mode add. Threads a one-shot prefix into
+  // announcePosition so the applied tag(s) and the new position are announced together
+  // (the shared single-slot live region would otherwise clobber a separate message).
+  _advanceFlow(addedTags) {
+    const names = addedTags.map(t => t.Name).join(', ');
+    if (this.currentIndex < this.items.length - 1 || this.hasNextPage) {
+      this._pendingFlowPrefix = `Added ${names}. `;
+      this.next();
+    } else {
+      this.announce(`Added ${names}. End of list`);
+    }
+  },
+
+  _pushUndo(entry) {
+    this._undoRing.push({
+      resourceId: entry.resourceId,
+      tags: entry.tags.map(t => ({ ID: t.ID, Name: t.Name })),
+      action: entry.action,
+      name: entry.name,
+    });
+    if (this._undoRing.length > this._undoRingMax) {
+      this._undoRing.splice(0, this._undoRing.length - this._undoRingMax);
+    }
+  },
+
+  async undoLastTagAction() {
+    const entry = this._undoRing.pop();
+    if (!entry) {
+      this.announce('Nothing to undo');
+      return;
+    }
+    const inverse = entry.action === 'add' ? 'remove' : 'add';
+    const ok = await this._batchToggleTags(entry.tags, inverse, {
+      targetResourceId: entry.resourceId,
+      fromUndo: true,
+    });
+    if (ok) {
+      const verb = inverse === 'remove' ? 'Removed' : 'Added';
+      const prep = entry.action === 'add' ? 'from' : 'to';
+      this.announce(`${verb} ${entry.tags.map(t => t.Name).join(', ')} ${prep} ${entry.name}`);
+    } else {
+      // Restore the entry so a transient failure can be retried.
+      this._undoRing.push(entry);
+      this.announce('Undo failed');
     }
   },
 

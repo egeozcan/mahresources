@@ -65,11 +65,15 @@
     @keyup.8.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeyup(7)"
     @keyup.9.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && $store.lightbox.handleSlotKeyup(8)"
     @keyup.0.window="$store.lightbox.isOpen && canPanelShortcut() && ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.focusTagEditor())"
-    @keydown.z.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && !$event.repeat && $store.lightbox.switchTab(0)"
+    @keydown.z.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && !$event.repeat && !$event.metaKey && !$event.ctrlKey && $store.lightbox.switchTab(0)"
     @keydown.x.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && !$event.repeat && $store.lightbox.switchTab(1)"
     @keydown.c.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && !$event.repeat && $store.lightbox.switchTab(2)"
     @keydown.v.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && !$event.repeat && $store.lightbox.switchTab(3)"
     @keydown.b.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && !$event.repeat && $store.lightbox.switchTab(4)"
+    @keydown.r.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canPanelShortcut() && !$event.repeat && $store.lightbox.repeatPreviousTags()"
+    @keydown.u.window="$store.lightbox.isOpen && canPanelShortcut() && !$event.repeat && $store.lightbox.undoLastTagAction()"
+    @keydown.meta.z.window="$store.lightbox.isOpen && canPanelShortcut() && !$event.repeat && ($event.preventDefault(), $store.lightbox.undoLastTagAction())"
+    @keydown.ctrl.z.window="$store.lightbox.isOpen && canPanelShortcut() && !$event.repeat && ($event.preventDefault(), $store.lightbox.undoLastTagAction())"
     @touchstart="$store.lightbox.handleTouchStart($event)"
     @touchmove="$store.lightbox.handleTouchMove($event)"
     @touchend="$store.lightbox.handleTouchEnd($event)"
@@ -356,17 +360,52 @@
         @focusout="$store.lightbox.isExpanded() && $nextTick(() => { if (!$el.contains(document.activeElement)) $store.lightbox.collapseExpanded(); })"
     >
         <!-- Panel header -->
-        <div class="sticky top-0 bg-stone-900 md:bg-stone-900/95 border-b border-stone-700 p-4 flex items-center justify-between z-10">
-            <h2 class="text-lg font-semibold">Edit Tags</h2>
-            <button
-                @click="$store.lightbox.closeQuickTagPanel()"
-                class="p-1.5 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
-                aria-label="Close edit tags panel"
-            >
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                </svg>
-            </button>
+        <div class="sticky top-0 bg-stone-900 md:bg-stone-900/95 border-b border-stone-700 z-10">
+            <div class="p-4 flex items-center justify-between">
+                <h2 class="text-lg font-semibold">Edit Tags</h2>
+                <button
+                    @click="$store.lightbox.closeQuickTagPanel()"
+                    class="p-1.5 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
+                    aria-label="Close edit tags panel"
+                >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <!-- Batch tagging controls (Tier 1): repeat, undo, flow-mode toggle -->
+            <div class="px-4 pb-3 flex items-center gap-2 text-xs">
+                <button
+                    @click="$store.lightbox.repeatPreviousTags()"
+                    class="flex items-center gap-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                    aria-label="Repeat previous image's tags"
+                    title="Apply the previous image's tags to this one"
+                >
+                    <span>Repeat</span>
+                    <kbd class="text-[10px] opacity-60">R</kbd>
+                </button>
+                <button
+                    @click="$store.lightbox.undoLastTagAction()"
+                    class="flex items-center gap-1 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                    aria-label="Undo last tag change"
+                    title="Undo the last tag change"
+                >
+                    <span>Undo</span>
+                    <kbd class="text-[10px] opacity-60">U</kbd>
+                </button>
+                <button
+                    @click="$store.lightbox.toggleFlowMode()"
+                    type="button"
+                    :aria-pressed="$store.lightbox.flowModeEnabled ? 'true' : 'false'"
+                    aria-label="Auto-advance after tagging (flow mode)"
+                    title="Auto-advance to the next image after tagging"
+                    class="ml-auto flex items-center gap-1.5 px-2 py-1 rounded focus:outline-none focus:ring-2 focus:ring-stone-400 transition-colors"
+                    :class="$store.lightbox.flowModeEnabled ? 'bg-green-800 text-green-100' : 'bg-stone-800 text-stone-300 hover:bg-stone-700'"
+                >
+                    <span>Flow</span>
+                    <span class="font-semibold" x-text="$store.lightbox.flowModeEnabled ? 'On' : 'Off'"></span>
+                </button>
+            </div>
         </div>
 
         <!-- Panel content -->

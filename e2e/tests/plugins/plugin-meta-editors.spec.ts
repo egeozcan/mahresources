@@ -110,20 +110,23 @@ test.describe('Meta-editors plugin shortcodes', () => {
     await page.goto(`/group?id=${groupId}`);
     await page.waitForLoadState('load');
 
-    // Should have Low, Medium, High buttons
-    await expect(page.locator('button', { hasText: 'Low' })).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('button', { hasText: 'Medium' })).toBeVisible();
-    await expect(page.locator('button', { hasText: 'High' })).toBeVisible();
+    // Should have Low, Medium, High buttons. Match by exact accessible name so this is not
+    // tripped by other globally-present buttons whose text merely contains these substrings
+    // (e.g. the lightbox "Flow" toggle, present hidden on every page, contains "low").
+    await expect(page.getByRole('button', { name: 'Low', exact: true })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('button', { name: 'Medium', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'High', exact: true })).toBeVisible();
   });
 
   test('button-group saves on click', async ({ page, apiClient }) => {
     await page.goto(`/group?id=${groupId}`);
     await page.waitForLoadState('load');
 
-    // Click "High" and wait for the network request to complete
+    // Click "High" and wait for the network request to complete. Exact accessible name keeps
+    // this from matching other globally-present buttons that contain the substring.
     const [response] = await Promise.all([
       page.waitForResponse(resp => resp.url().includes('/editMeta') && resp.status() === 200, { timeout: 5000 }),
-      page.locator('button', { hasText: 'High' }).click(),
+      page.getByRole('button', { name: 'High', exact: true }).click(),
     ]);
 
     const group = await apiClient.getGroup(groupId);

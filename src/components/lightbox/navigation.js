@@ -374,7 +374,11 @@ export const navigationMethods = {
 
   announcePosition(prefix = '') {
     const item = this.getCurrentItem();
-    this.announce(`${prefix}${item?.name || 'Media'}, ${this.currentIndex + 1} of ${this.items.length}`);
+    // Consume any pending flow-mode prefix once so the applied tag(s) and the new
+    // position are announced together in a single live-region message (Item 5).
+    const flow = this._pendingFlowPrefix || '';
+    this._pendingFlowPrefix = '';
+    this.announce(`${flow}${prefix}${item?.name || 'Media'}, ${this.currentIndex + 1} of ${this.items.length}`);
   },
 
   async loadNextPage() {
