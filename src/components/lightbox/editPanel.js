@@ -387,6 +387,11 @@ export const editPanelMethods = {
       this.needsRefreshOnClose = true;
       this.announce(`Added tag: ${tag.Name}`);
 
+      // Mirror applySuggestedTag(): drop the now-applied tag from the Suggested row (if
+      // showing) and invalidate its cache entry so a later view refetches without it.
+      this.suggestedTags = this.suggestedTags.filter(s => s.ID !== tag.ID);
+      this._suggestedCache.delete(resourceId);
+
       // Record as recent tag (skips if in a quick-add slot)
       this.recordRecentTag(tag);
     } catch (err) {

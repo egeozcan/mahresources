@@ -62,6 +62,16 @@ export function autocompleter({
         pendingIds: new Set(),
         failedIds: new Set(),
 
+        // Set by resetSelectedResults() right before an external (non-user) wholesale
+        // replacement of selectedResults — e.g. the lightbox swapping to a different
+        // resource's tags. Consumed once by the selectedResults $watch below so that swap
+        // is not mistaken for a user add/remove and announced as one.
+        _suppressNextAnnounce: false,
+        // Sequencer for createAndSelectNow() so back-to-back new-tag commits queue instead
+        // of racing the single `loading` guard in _createAndSelect.
+        _createQueue: [],
+        _processingCreateQueue: false,
+
         // The trimmed buffer to offer as a brand-new tag: only when an addUrl exists, the
         // buffer is non-empty, and it is not already an exact result or an applied chip.
         get createCandidate() {
@@ -92,8 +102,12 @@ export function autocompleter({
                     this.$dispatch('multiple-input', { value: this.selectedResults, name: elName });
                 }
 
-                // Announce selection changes
-                if (values.length > oldValues.length) {
+                // Announce selection changes — but not when this change is an external
+                // wholesale swap (e.g. the lightbox displaying a different resource's tags)
+                // rather than a real user add/remove on the current selection.
+                if (this._suppressNextAnnounce) {
+                    this._suppressNextAnnounce = false;
+                } else if (values.length > oldValues.length) {
                     this._liveRegion.announce(`Added ${values[values.length-1].Name}`);
                 } else if (values.length < oldValues.length) {
                     this._liveRegion.announce(`Removed item, ${values.length} items remaining`);
@@ -211,12 +225,25 @@ export function autocompleter({
 
         // One-step create used by comma-commit and the "Create X" dropdown row: create the
         // tag and clear the input without flashing the "Add X?" confirm UI (which would steal
-        // focus mid-typing).
+        // focus mid-typing). Queued so committing several brand-new tags back-to-back (e.g.
+        // typing "a,b,") doesn't silently drop a token whose create POST starts while an
+        // earlier one is still in flight — _createAndSelect's single `loading` guard would
+        // otherwise no-op it.
         async createAndSelectNow(name) {
             // Clear the buffer up front (optimistic, and while the input ref is still valid —
             // it can go stale across the create await as the dropdown/templates re-render).
             this._clearInput();
-            await this._createAndSelect(name);
+            this._createQueue.push(name);
+            if (this._processingCreateQueue) return;
+            this._processingCreateQueue = true;
+            while (this._createQueue.length) {
+                const next = this._createQueue.shift();
+                // An earlier queued create (or a fast exact-match select) may have already
+                // applied this exact name while we waited — skip a redundant duplicate create.
+                if (this.selectedResults.some(x => x.Name === next)) continue;
+                await this._createAndSelect(next);
+            }
+            this._processingCreateQueue = false;
         },
 
         // Shared network add. POSTs to addUrl, applies the returned tag, and tracks the
@@ -381,6 +408,14 @@ export function autocompleter({
                 inputEl.value = '';
                 inputEl.dispatchEvent(new Event('input'));
             }
+        },
+
+        // Wholesale-replace selectedResults from an external source (the lightbox swapping
+        // to a different resource's tags) without the selectedResults $watch announcing it
+        // as a user add/remove.
+        resetSelectedResults(tags) {
+            this._suppressNextAnnounce = true;
+            this.selectedResults = [...tags];
         },
 
         ensureMaxItems() {

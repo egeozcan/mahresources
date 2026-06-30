@@ -21,15 +21,17 @@
         },
         canPanelShortcut() {
             // For the global letter/digit quick-tag shortcuts: still fire when a toolbar
-            // button is focused (so the keyboard tagging workflow works right after open),
-            // but bail in a text field or anywhere inside a panel — e.g. the auto-focused
-            // 'Add tag?' confirm button — which would otherwise eat the keystroke (BH: H3).
+            // or quick-tag-panel button is focused (so the keyboard tagging workflow works
+            // right after a click, e.g. Cmd/Ctrl+Z right after clicking a quick-slot button),
+            // but bail in a text field, the edit panel, or the auto-focused 'Add tag?' confirm
+            // UI — which would otherwise eat the keystroke (BH: H3).
             if (this.$store.lightbox.cropOpen) return false;
             const el = document.activeElement;
             if (!el) return true;
             if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return false;
             if (el.isContentEditable) return false;
-            if (el.closest && el.closest('[data-quick-tag-panel], [data-edit-panel]')) return false;
+            if (el.closest && el.closest('[data-edit-panel]')) return false;
+            if (el.closest && el.closest('[data-tag-confirm-ui]')) return false;
             return true;
         }
     }"
@@ -424,7 +426,7 @@
                         onRemove: (tag) => $store.lightbox.saveTagRemoval(tag)
                     })"
                     :key="$store.lightbox.resourceDetails?.ID"
-                    x-effect="selectedResults = [...($store.lightbox.resourceDetails?.Tags || [])]"
+                    x-effect="resetSelectedResults($store.lightbox.resourceDetails?.Tags || [])"
                     class="relative"
                 >
                 <label class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Tags</label>
@@ -495,7 +497,7 @@
 
                 <!-- Add new tag confirmation -->
                 <template x-if="addModeForTag">
-                    <div class="flex gap-2 items-stretch justify-between mb-3">
+                    <div data-tag-confirm-ui class="flex gap-2 items-stretch justify-between mb-3">
                         <button
                             type="button"
                             class="flex-1 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 py-2 px-3"

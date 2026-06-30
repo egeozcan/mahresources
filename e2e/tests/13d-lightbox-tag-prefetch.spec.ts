@@ -148,4 +148,68 @@ test.describe('Lightbox tag-detail prefetch + no-blank', () => {
     await expect(panel).toHaveAttribute('aria-busy', 'true');
     await expect(panel).toHaveAttribute('aria-busy', 'false');
   });
+
+  test('D: navigating between images does not spuriously announce in the chip-input live region', async ({
+    page,
+    apiClient,
+  }) => {
+    const tag = await apiClient.createTag(`PrefetchLiveRegion-${testRunId}`);
+    await apiClient.addTagsToResources([createdResourceIds[1]], [tag.ID]);
+
+    await openLightboxWithPanel(page);
+
+    // Read the chip-input's OWN role="status" live region (one per autocompleter
+    // instance, created via createLiveRegion(this.$el)) -- not the lightbox's top-level
+    // status line -- since the bug is specifically the chip-input's generic
+    // $watch('selectedResults', ...) misfiring when the lightbox swaps resourceDetails.
+    const chipInputLiveText = () =>
+      page.evaluate(() => {
+        const input = document.querySelector('[data-tag-editor-input]');
+        const root = input?.closest('[x-effect]');
+        return root?.querySelector('[role="status"]')?.textContent || '';
+      });
+
+    // Let the mount-time announce debounce (50ms) settle before taking a baseline.
+    await page.waitForTimeout(150);
+
+    // The gallery lists newest-first, so the opened item is not necessarily
+    // createdResourceIds[0] -- capture the actual starting id instead of assuming it.
+    const startId: number = await page.evaluate(
+      () => (window as any).Alpine.store('lightbox').resourceDetails?.ID
+    );
+
+    // Navigate to the tagged second image -- a real tag-state change in DISPLAY, but not
+    // a user-initiated add on the current image.
+    await page.evaluate(() => (window as any).Alpine.store('lightbox').next());
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (id) => (window as any).Alpine.store('lightbox').resourceDetails?.ID === id,
+          createdResourceIds[1]
+        )
+      )
+      .toBe(true);
+    await page.waitForTimeout(150);
+
+    const textAfterForwardNav = await chipInputLiveText();
+    expect(textAfterForwardNav).not.toMatch(/^Added /i);
+    expect(textAfterForwardNav).not.toMatch(/^Removed item/i);
+
+    // And the reverse direction (back to the starting image) must not announce
+    // "Removed item" either.
+    await page.evaluate(() => (window as any).Alpine.store('lightbox').prev());
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (id) => (window as any).Alpine.store('lightbox').resourceDetails?.ID === id,
+          startId
+        )
+      )
+      .toBe(true);
+    await page.waitForTimeout(150);
+
+    const textAfterBackNav = await chipInputLiveText();
+    expect(textAfterBackNav).not.toMatch(/^Added /i);
+    expect(textAfterBackNav).not.toMatch(/^Removed item/i);
+  });
 });

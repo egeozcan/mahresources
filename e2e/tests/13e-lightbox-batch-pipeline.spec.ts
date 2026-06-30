@@ -326,4 +326,30 @@ test.describe('Lightbox batch tagging pipeline', () => {
       .poll(() => page.evaluate(() => (window as any).Alpine.store('lightbox').activeTab))
       .toBe(1);
   });
+
+  test('Item 6: Ctrl+Z undoes a tag applied by clicking a quick-slot button, with focus left on that button', async ({
+    page,
+    apiClient,
+  }) => {
+    const tagA = await apiClient.createTag(`UndoClickFocus-${testRunId}`);
+
+    const { panel, ids } = await seedAndOpen(page, {
+      quickSlots: [[[{ id: tagA.ID, name: tagA.Name }]]],
+    });
+    const image1 = ids[0];
+
+    // Apply the tag with a REAL mouse click on the slot button (not the blurAndPress
+    // helper), so focus naturally lands on that button afterward -- the exact state most
+    // users are in immediately after tagging with the mouse.
+    const slotButton = panel.getByRole('button', { name: `Add ${tagA.Name}` });
+    await slotButton.click();
+    await expect.poll(() => resourceHasTag(apiClient, image1, tagA.Name)).toBe(true);
+    await expect(panel.getByRole('button', { name: `Remove ${tagA.Name}` })).toBeFocused();
+
+    // Ctrl+Z must still undo even though focus never left the quick-tag panel.
+    await page.keyboard.press('Control+z');
+
+    await expect.poll(() => resourceHasTag(apiClient, image1, tagA.Name)).toBe(false);
+    await expect.poll(async () => /removed/i.test(await liveText(page))).toBe(true);
+  });
 });

@@ -65,7 +65,7 @@ test.describe('Lightbox suggested tags', () => {
     await apiClient.addTagsToResources([extra.ID], [alpha.ID]);
 
     // Tag-less targets, one per test that mutates state.
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 5; i++) {
       const r = await apiClient.createResource({
         filePath: asset(fileIdx++),
         name: `SugTarget ${i + 1} - ${runId}`,
@@ -166,6 +166,36 @@ test.describe('Lightbox suggested tags', () => {
         ),
       )
       .toBe(true);
+  });
+
+  test('applying a suggestion via the main search box also drops it from the suggested row', async ({
+    page,
+    apiClient,
+  }) => {
+    const lightbox = await openPanel(page, targetIds[4]);
+    const alphaChip = lightbox.locator(CHIP).filter({ hasText: tagNames.alpha });
+    await expect(alphaChip).toBeVisible({ timeout: 10000 });
+
+    // Apply "alpha" via the main "Search or add tags" autocompleter, NOT the suggested-row
+    // chip itself -- this exercises saveTagAddition(), a separate code path from
+    // applySuggestedTag() that historically didn't prune the suggested row.
+    const input = lightbox.locator('[data-tag-editor-input]');
+    await input.click();
+    await input.fill(tagNames.alpha);
+    await expect(lightbox.locator('[role="option"]').filter({ hasText: tagNames.alpha })).toBeVisible({
+      timeout: 5000,
+    });
+    await input.press(',');
+
+    await expect
+      .poll(async () => {
+        const res = (await apiClient.getResource(targetIds[4])) as any;
+        return (res.Tags || []).some((t: any) => t.Name === tagNames.alpha);
+      })
+      .toBe(true);
+
+    // The now-applied tag must disappear from the Suggested row too.
+    await expect(alphaChip).toHaveCount(0, { timeout: 5000 });
   });
 
   test('navigating to another resource refetches the suggested row', async ({ page }) => {

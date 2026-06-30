@@ -33,6 +33,7 @@ test.describe('Lightbox chip-input', () => {
       path.join(__dirname, '../test-assets/sample-image-3.png'),
       path.join(__dirname, '../test-assets/sample-image-4.png'),
       path.join(__dirname, '../test-assets/sample-image-5.png'),
+      path.join(__dirname, '../test-assets/sample-image-6.png'),
     ];
     for (let i = 0; i < files.length; i++) {
       const r = await apiClient.createResource({
@@ -142,6 +143,32 @@ test.describe('Lightbox chip-input', () => {
     // Pending while in flight, then cleared on success.
     await expect(pill).toHaveAttribute('data-tag-pending', 'true');
     await expect(pill).toHaveAttribute('data-tag-pending', 'false', { timeout: 5000 });
+  });
+
+  test('comma-commits two brand-new tags back-to-back without dropping the second', async ({ page }) => {
+    const nameA = `LbRaceA${runId}`;
+    const nameB = `LbRaceB${runId}`;
+
+    const { lightbox, input } = await openPanel(page, resourceIds[5]);
+
+    // Delay tag creation so the second comma-commit's create call starts while the
+    // first's POST /v1/tag is still in flight -- the exact race the bug depends on (a
+    // single component-wide `loading` flag silently drops any create that starts mid-flight).
+    await page.route('**/v1/tag', async (route) => {
+      if (route.request().method() === 'POST') {
+        await new Promise((r) => setTimeout(r, 600));
+      }
+      await route.continue();
+    });
+
+    await input.click();
+    await input.fill(nameA);
+    await input.press(',');
+    await input.fill(nameB);
+    await input.press(',');
+
+    await expect(lightbox.locator(PILL).filter({ hasText: nameA })).toBeVisible({ timeout: 5000 });
+    await expect(lightbox.locator(PILL).filter({ hasText: nameB })).toBeVisible({ timeout: 5000 });
   });
 
   test('a failed add rolls the optimistic chip back', async ({ page, apiClient }) => {
