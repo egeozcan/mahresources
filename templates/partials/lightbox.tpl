@@ -465,6 +465,19 @@
                                     <span x-text="tag.Name"></span>
                                 </div>
                             </template>
+                            <!-- "Create X" row for the no-match case -->
+                            <template x-if="createCandidate">
+                                <div
+                                    @mousedown.prevent="selectedIndex = results.length; pushVal($event)"
+                                    :id="'lightbox-tag-result-' + results.length"
+                                    role="option"
+                                    :aria-selected="selectedIndex === results.length"
+                                    class="px-3 py-2 cursor-pointer text-sm border-t border-stone-700"
+                                    :class="selectedIndex === results.length ? 'bg-amber-700 text-white' : 'text-stone-300 hover:bg-stone-700'"
+                                >
+                                    <span x-text="'Create &quot;' + createCandidate + '&quot;'"></span>
+                                </div>
+                            </template>
                         </div>
 
                         <!-- Loading indicator -->
@@ -503,7 +516,11 @@
                 <!-- Current tags as pills -->
                 <div class="flex flex-wrap gap-2">
                     <template x-for="tag in selectedResults" :key="tag.ID">
-                        <span class="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-700 text-white text-sm rounded-full font-mono">
+                        <span
+                            class="tag-pop inline-flex items-center gap-1 px-2.5 py-1 bg-amber-700 text-white text-sm rounded-full font-mono"
+                            :class="{ 'opacity-60 tag-pending': pendingIds.has(tag.ID), 'tag-shake': failedIds.has(tag.ID) }"
+                            :data-tag-pending="pendingIds.has(tag.ID) ? 'true' : 'false'"
+                        >
                             <span x-text="tag.Name"></span>
                             <button
                                 @click="removeItem(tag)"

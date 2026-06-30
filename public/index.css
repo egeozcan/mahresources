@@ -2472,3 +2472,30 @@ html {
   from { width: 100%; }
   to { width: 0; }
 }
+
+/* Chip-input micro-interactions (Tier 2). Motion is gated behind prefers-reduced-motion;
+   the pending dashed outline is a static style change, safe regardless. */
+.tag-pending {
+  outline: 1.5px dashed #fcd34d; /* amber-300 */
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tag-pop {
+    animation: tagpop 180ms ease-out;
+  }
+  .tag-shake {
+    animation: shake 300ms ease-in-out;
+  }
+}
+
+@keyframes tagpop {
+  from { transform: scale(0.82); }
+  to { transform: scale(1); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
+}

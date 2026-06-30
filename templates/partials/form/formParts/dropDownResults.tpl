@@ -31,6 +31,20 @@
                         ></span>
                     </div>
             </template>
+            <!-- "Create X" row for the no-match case (only when an addUrl is configured) -->
+            <template x-if="createCandidate">
+                    <div
+                        role="option"
+                        :id="'{{ id }}-result-' + results.length"
+                        :aria-selected="selectedIndex === results.length"
+                        class="cursor-pointer p-2 flex block w-full rounded text-stone-900 border-t border-stone-200"
+                        :class="{'bg-amber-700 !text-white': selectedIndex === results.length}"
+                        @mousedown="selectedIndex = results.length; {{ action }}($event)"
+                        tabindex="-1"
+                    >
+                        <span x-text="'Create &quot;' + createCandidate + '&quot;'" class="overflow-ellipsis overflow-hidden"></span>
+                    </div>
+            </template>
         </div>
     </div>
 </div>
