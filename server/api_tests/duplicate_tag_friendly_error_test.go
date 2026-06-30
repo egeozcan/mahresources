@@ -2,9 +2,12 @@ package api_tests
 
 import (
 	"encoding/json"
+	"mahresources/application_context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -107,4 +110,63 @@ func TestDuplicateTagCreationViaBrowserFormShowsFriendlyError(t *testing.T) {
 	assert.Contains(t, strings.ToLower(location), "already+exists", "error should be the friendly duplicate message")
 	assert.Contains(t, location, "Name=browser-dup-tag", "the typed name should be preserved")
 	assert.NotContains(t, location, "UNIQUE+constraint", "raw DB constraint error should not leak")
+}
+
+// A before_tag_create plugin hook can normalize the submitted name (e.g. lowercase +
+// hyphenate) before it is persisted. The browser-form duplicate check must detect a
+// collision caused by that normalization, not just a literal match on the raw input --
+// otherwise CreateTag's idempotent resolve silently redirects to the existing tag
+// instead of showing the friendly preserved-input error.
+func TestDuplicateTagCreationViaBrowserFormDetectsHookNormalizedDuplicate(t *testing.T) {
+	pluginDir := t.TempDir()
+	pluginName := "tag-normalizer"
+	pluginSubDir := filepath.Join(pluginDir, pluginName)
+	require.NoError(t, os.MkdirAll(pluginSubDir, 0755))
+	lua := `
+plugin = { name = "tag-normalizer", version = "1.0", description = "normalizes tag names" }
+
+function before_create(data)
+    data.name = string.lower(data.name)
+    data.name = string.gsub(data.name, " ", "-")
+    return data
+end
+
+function init()
+    mah.on("before_tag_create", before_create)
+end
+`
+	require.NoError(t, os.WriteFile(filepath.Join(pluginSubDir, "plugin.lua"), []byte(lua), 0644))
+
+	tc := setupTestEnvWithConfig(t, func(cfg *application_context.MahresourcesConfig) {
+		cfg.PluginPath = pluginDir
+	})
+	require.NotNil(t, tc.AppCtx.PluginManager(), "plugin manager should be initialized")
+	require.NoError(t, tc.AppCtx.PluginManager().EnablePlugin(pluginName))
+
+	// Pre-create the tag that the hook will normalize "New Camera" into.
+	existing := tc.MakeRequest(http.MethodPost, "/v1/tag", map[string]any{"Name": "new-camera"})
+	require.Equal(t, http.StatusOK, existing.Code)
+
+	postBrowserForm := func(name string) *httptest.ResponseRecorder {
+		body := strings.NewReader(url.Values{"Name": {name}}.Encode())
+		req, _ := http.NewRequest(http.MethodPost, "/v1/tag", body)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "text/html")
+		rr := httptest.NewRecorder()
+		tc.Router.ServeHTTP(rr, req)
+		return rr
+	}
+
+	// "New Camera" doesn't literally match "new-camera", but the before_tag_create hook
+	// normalizes it to the same name. The friendly duplicate error must still fire instead
+	// of CreateTag's idempotent silent-resolve.
+	resp := postBrowserForm("New Camera")
+	require.Equal(t, http.StatusFound, resp.Code,
+		"hook-induced duplicate should redirect back to the form, not silently to the existing tag, got %d", resp.Code)
+
+	location := resp.Header().Get("Location")
+	assert.Contains(t, location, "/tag/new", "should redirect back to the create form")
+	assert.Contains(t, location, "error=", "redirect should carry the error for the banner")
+	assert.Contains(t, strings.ToLower(location), "already+exists", "error should be the friendly duplicate message")
+	assert.Contains(t, location, "Name=New+Camera", "the originally typed name should be preserved, not the hook-normalized one")
 }

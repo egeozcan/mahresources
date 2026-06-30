@@ -265,10 +265,18 @@ func CreateTagHandler(writer interfaces.TagsWriter) http.HandlerFunc {
 			// rather than silently adopting the existing tag. Programmatic/JSON callers (the
 			// lightbox autocompleter and the mr CLI both send Content-Type: application/json) keep
 			// CreateTag's idempotent behaviour, so this branch only affects HTML form posts.
+			//
+			// The duplicate check runs against the name CreateTag will actually attempt to
+			// persist (after validation and the before_tag_create hook), not the raw submission:
+			// a normalizing hook can turn a non-colliding name into a colliding one, which would
+			// otherwise let CreateTag's idempotent resolve silently redirect to the existing tag
+			// here instead of showing this error.
 			if http_utils.RequestAcceptsHTML(r) {
-				if existing, lookupErr := writer.GetTagByName(creator.Name); lookupErr == nil && existing != nil && existing.ID != 0 {
-					http_utils.HandleFormError(w, r, "/tag/new", fmt.Errorf("a tag named %q already exists", creator.Name), r.PostForm)
-					return
+				if resolvedName, previewErr := writer.PreviewTagCreateName(creator.Name, creator.Description); previewErr == nil {
+					if existing, lookupErr := writer.GetTagByName(resolvedName); lookupErr == nil && existing != nil && existing.ID != 0 {
+						http_utils.HandleFormError(w, r, "/tag/new", fmt.Errorf("a tag named %q already exists", creator.Name), r.PostForm)
+						return
+					}
 				}
 			}
 			result, err = writer.CreateTag(&creator)

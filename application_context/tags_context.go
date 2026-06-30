@@ -61,30 +61,55 @@ func (ctx *MahresourcesContext) GetTagsWithIds(ids *[]uint, limit int) ([]models
 	return tags, query.Find(&tags, *ids).Error
 }
 
-func (ctx *MahresourcesContext) CreateTag(tagQuery *query_models.TagCreator) (*models.Tag, error) {
-	if strings.TrimSpace(tagQuery.Name) == "" {
-		return nil, errors.New("tag name must be non-empty")
+// resolveTagCreateInput validates a prospective tag name/description and runs the
+// before_tag_create hook, returning the values an actual CreateTag call would use.
+// Factored out so PreviewTagCreateName can determine the post-hook name (e.g. for an
+// HTML duplicate check) without duplicating the hook-invocation logic.
+func (ctx *MahresourcesContext) resolveTagCreateInput(name, description string) (string, string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", "", errors.New("tag name must be non-empty")
 	}
 
-	if err := ValidateEntityName(tagQuery.Name, "tag"); err != nil {
-		return nil, err
+	if err := ValidateEntityName(name, "tag"); err != nil {
+		return "", "", err
 	}
 
 	hookData := map[string]any{
 		"id":          float64(0),
-		"name":        tagQuery.Name,
-		"description": tagQuery.Description,
+		"name":        name,
+		"description": description,
 	}
 	hookData, hookErr := ctx.RunBeforePluginHooks("before_tag_create", hookData)
 	if hookErr != nil {
-		return nil, hookErr
+		return "", "", hookErr
 	}
-	if name, ok := hookData["name"].(string); ok {
-		tagQuery.Name = name
+	if v, ok := hookData["name"].(string); ok {
+		name = v
 	}
-	if desc, ok := hookData["description"].(string); ok {
-		tagQuery.Description = desc
+	if v, ok := hookData["description"].(string); ok {
+		description = v
 	}
+	return name, description, nil
+}
+
+// PreviewTagCreateName resolves the name a CreateTag call would actually attempt to
+// persist, after validation and the before_tag_create hook (which may normalize it).
+// Callers that need to detect a duplicate before committing -- e.g. the HTML /tag/new
+// form, which shows a friendly preserved-input error instead of CreateTag's idempotent
+// silent-resolve -- must check against this resolved name, not the raw user input,
+// since a normalizing hook can turn a non-colliding name into a colliding one.
+func (ctx *MahresourcesContext) PreviewTagCreateName(name, description string) (string, error) {
+	resolvedName, _, err := ctx.resolveTagCreateInput(name, description)
+	return resolvedName, err
+}
+
+func (ctx *MahresourcesContext) CreateTag(tagQuery *query_models.TagCreator) (*models.Tag, error) {
+	name, description, err := ctx.resolveTagCreateInput(tagQuery.Name, tagQuery.Description)
+	if err != nil {
+		return nil, err
+	}
+	tagQuery.Name = name
+	tagQuery.Description = description
 
 	tag := models.Tag{
 		Name:        tagQuery.Name,

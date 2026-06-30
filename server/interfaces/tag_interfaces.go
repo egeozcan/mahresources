@@ -10,6 +10,11 @@ type TagsWriter interface {
 	CreateTag(t *query_models.TagCreator) (*models.Tag, error)
 	GetTagByID(id uint) (*models.Tag, error)
 	GetTagByName(name string) (*models.Tag, error)
+	// PreviewTagCreateName resolves the name a CreateTag call would actually attempt
+	// to persist, after validation and the before_tag_create hook. See
+	// MahresourcesContext.PreviewTagCreateName for why this exists separately from
+	// CreateTag itself.
+	PreviewTagCreateName(name, description string) (string, error)
 }
 
 type TagsReader interface {

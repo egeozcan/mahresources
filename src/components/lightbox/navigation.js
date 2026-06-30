@@ -177,6 +177,7 @@ export const navigationMethods = {
     // Restore quick tag panel from localStorage if it was previously open
     if (this.quickTagPanelOpen) {
       this.fetchResourceDetails();
+      this.fetchSuggestedTags();
     }
   },
 

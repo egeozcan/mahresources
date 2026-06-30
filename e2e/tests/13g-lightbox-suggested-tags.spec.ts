@@ -65,7 +65,7 @@ test.describe('Lightbox suggested tags', () => {
     await apiClient.addTagsToResources([extra.ID], [alpha.ID]);
 
     // Tag-less targets, one per test that mutates state.
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       const r = await apiClient.createResource({
         filePath: asset(fileIdx++),
         name: `SugTarget ${i + 1} - ${runId}`,
@@ -196,6 +196,41 @@ test.describe('Lightbox suggested tags', () => {
 
     // The now-applied tag must disappear from the Suggested row too.
     await expect(alphaChip).toHaveCount(0, { timeout: 5000 });
+  });
+
+  test('a panel restored open from localStorage loads suggested tags on initial open, no navigation needed', async ({
+    page,
+  }) => {
+    // Seed the quick-tag panel as already-open (mirrors how a real session/reload
+    // restore works), then reload so the store re-reads it at init.
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+    await page.evaluate(() => {
+      localStorage.setItem(
+        'mahresources_quickTags',
+        JSON.stringify({
+          version: 3,
+          quickSlots: [Array(9).fill(null), Array(9).fill(null), Array(9).fill(null), Array(9).fill(null)],
+          recentTags: Array(9).fill(null),
+          drawerOpen: true,
+          activeTab: 0,
+        }),
+      );
+    });
+    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Click the thumbnail directly -- no 't' keypress / manual openQuickTagPanel() call,
+    // since the panel should already be open from the restored localStorage state.
+    await page.locator(`[data-lightbox-item][data-resource-id="${targetIds[5]}"]`).first().click();
+    const lightbox = page.locator(LIGHTBOX);
+    await expect(lightbox).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).Alpine.store('lightbox').quickTagPanelOpen))
+      .toBe(true);
+    await expect(lightbox.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+
+    await expect(lightbox.locator(CHIP).filter({ hasText: tagNames.alpha })).toBeVisible({ timeout: 10000 });
   });
 
   test('navigating to another resource refetches the suggested row', async ({ page }) => {
