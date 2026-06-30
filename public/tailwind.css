@@ -104,6 +104,7 @@
     --container-2xl: 42rem;
     --container-3xl: 48rem;
     --container-4xl: 56rem;
+    --container-5xl: 64rem;
     --container-6xl: 72rem;
     --container-7xl: 80rem;
     --text-xs: 0.75rem;
@@ -136,6 +137,7 @@
     --radius-md: 0.375rem;
     --radius-lg: 0.5rem;
     --radius-xl: 0.75rem;
+    --radius-2xl: 1rem;
     --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
     --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
     --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
@@ -1423,6 +1425,9 @@
   .aspect-square {
     aspect-ratio: 1 / 1;
   }
+  .h-1 {
+    height: var(--spacing);
+  }
   .h-2 {
     height: calc(var(--spacing) * 2);
   }
@@ -1503,6 +1508,9 @@
   }
   .max-h-80 {
     max-height: calc(var(--spacing) * 80);
+  }
+  .max-h-\[45vh\] {
+    max-height: 45vh;
   }
   .max-h-\[60vh\] {
     max-height: 60vh;
@@ -1644,6 +1652,9 @@
   }
   .max-w-4xl {
     max-width: var(--container-4xl);
+  }
+  .max-w-5xl {
+    max-width: var(--container-5xl);
   }
   .max-w-6xl {
     max-width: var(--container-6xl);
@@ -1875,6 +1886,9 @@
   .flex-col {
     flex-direction: column;
   }
+  .flex-nowrap {
+    flex-wrap: nowrap;
+  }
   .flex-wrap {
     flex-wrap: wrap;
   }
@@ -2103,6 +2117,10 @@
     border-top-left-radius: 0.25rem;
     border-top-right-radius: 0.25rem;
   }
+  .rounded-t-2xl {
+    border-top-left-radius: var(--radius-2xl);
+    border-top-right-radius: var(--radius-2xl);
+  }
   .rounded-t-lg {
     border-top-left-radius: var(--radius-lg);
     border-top-right-radius: var(--radius-lg);
@@ -2295,6 +2313,12 @@
     border-color: color-mix(in srgb, oklch(37.4% 0.01 67.558) 30%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
       border-color: color-mix(in oklab, var(--color-stone-700) 30%, transparent);
+    }
+  }
+  .border-stone-700\/80 {
+    border-color: color-mix(in srgb, oklch(37.4% 0.01 67.558) 80%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-stone-700) 80%, transparent);
     }
   }
   .border-teal-600 {
@@ -2531,6 +2555,9 @@
   .bg-stone-500 {
     background-color: var(--color-stone-500);
   }
+  .bg-stone-600 {
+    background-color: var(--color-stone-600);
+  }
   .bg-stone-700 {
     background-color: var(--color-stone-700);
   }
@@ -2544,6 +2571,12 @@
     background-color: color-mix(in srgb, oklch(21.6% 0.006 56.043) 50%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
       background-color: color-mix(in oklab, var(--color-stone-900) 50%, transparent);
+    }
+  }
+  .bg-stone-900\/90 {
+    background-color: color-mix(in srgb, oklch(21.6% 0.006 56.043) 90%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-stone-900) 90%, transparent);
     }
   }
   .bg-teal-700 {
@@ -3206,6 +3239,9 @@
   }
   .ring-amber-200 {
     --tw-ring-color: var(--color-amber-200);
+  }
+  .ring-amber-400 {
+    --tw-ring-color: var(--color-amber-400);
   }
   .ring-amber-500 {
     --tw-ring-color: var(--color-amber-500);
@@ -4679,9 +4715,19 @@
       flex-direction: row;
     }
   }
+  .md\:flex-nowrap {
+    @media (width >= 48rem) {
+      flex-wrap: nowrap;
+    }
+  }
   .md\:items-center {
     @media (width >= 48rem) {
       align-items: center;
+    }
+  }
+  .md\:overflow-x-auto {
+    @media (width >= 48rem) {
+      overflow-x: auto;
     }
   }
   .md\:bg-gray-900\/95 {

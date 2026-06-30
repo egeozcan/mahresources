@@ -348,6 +348,7 @@
         x-transition:leave-start="opacity-100 translate-x-0"
         x-transition:leave-end="opacity-0 -translate-x-full"
         data-quick-tag-panel
+        :aria-busy="$store.lightbox.detailsLoading ? 'true' : 'false'"
         class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:left-0 md:bottom-0 bg-stone-900 md:bg-stone-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
         :class="$store.lightbox.editPanelOpen ? 'md:w-[320px]' : 'md:w-[400px]'"
         @click.stop
@@ -728,6 +729,7 @@
         x-transition:leave-start="opacity-100 translate-x-0"
         x-transition:leave-end="opacity-0 translate-x-full"
         data-edit-panel
+        :aria-busy="$store.lightbox.detailsLoading ? 'true' : 'false'"
         class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:right-0 md:bottom-0 bg-stone-900 md:bg-stone-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
         :class="$store.lightbox.quickTagPanelOpen ? 'md:w-[320px]' : 'md:w-[400px]'"
         @click.stop

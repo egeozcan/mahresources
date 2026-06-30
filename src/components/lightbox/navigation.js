@@ -206,6 +206,43 @@ export const navigationMethods = {
         this._preloadedUrls.delete(img._viewUrl);
       }
     }
+
+    // Warm tag details for the same upcoming window so navigating to a neighbour
+    // paints quick-slot colors instantly instead of round-tripping per image.
+    this._preloadDetailsUpcoming();
+  },
+
+  _preloadDetailsUpcoming() {
+    // Only warm details that the tagging UI will actually display. When no panel is
+    // open these fetches would be pure waste (mirrors open()'s panel-gated fetch).
+    if (!this.quickTagPanelOpen && !this.editPanelOpen) return;
+
+    const ahead = this._preloadAheadCount || 5;
+    const end = Math.min(this.items.length, this.currentIndex + 1 + ahead);
+    for (let i = this.currentIndex + 1; i < end; i++) {
+      const item = this.items[i];
+      if (!item || !item.id) continue;
+      // Tags apply to images and videos alike, so unlike bitmap preload this does
+      // not filter by content type.
+      if (this.detailsCache.has(item.id)) continue;
+      if (this._detailsInFlight.has(item.id)) continue;
+
+      this._detailsInFlight.add(item.id);
+      const { ready } = abortableFetch(`/resource.json?id=${item.id}`);
+      ready
+        .then(response => (response.ok ? response.json() : null))
+        .then(data => {
+          if (!data) return;
+          const details = data.resource || data;
+          // Respect the same cache cap fetchResourceDetails enforces.
+          if (this.detailsCache.size > 100) {
+            this.detailsCache.delete(this.detailsCache.keys().next().value);
+          }
+          this.detailsCache.set(item.id, details);
+        })
+        .catch(() => { /* background prefetch: a real navigation will refetch on demand */ })
+        .finally(() => this._detailsInFlight.delete(item.id));
+    }
   },
 
   close() {

@@ -10,6 +10,9 @@ export const editPanelState = {
   resourceDetails: null,
   detailsLoading: false,
   detailsCache: new Map(),
+  // Ids whose tag details are being prefetched in the background, so fast paging
+  // does not stampede duplicate /resource.json requests for the same resource.
+  _detailsInFlight: new Set(),
   detailsAborter: null,
   // Monotonic token so a stale/aborted fetch cannot flip detailsLoading off while a
   // newer fetch is still in flight (BH: M2).
@@ -232,11 +235,15 @@ export const editPanelMethods = {
       }
     }
 
-    this.resourceDetails = null;
-    const resourceId = this.getCurrentItem()?.id;
-    if (resourceId) {
-      this.detailsCache.delete(resourceId);
-    }
+    // Do NOT blank resourceDetails or evict the incoming resource's cache here.
+    // Blanking made every quick-slot color flash neutral on each next/prev
+    // (slotMatchState returns 'none' while resourceDetails is null), and evicting
+    // the entry we are about to need forced a network round-trip per image.
+    // fetchResourceDetails paints instantly on a cache hit (the hit path is fully
+    // synchronous) and, on a miss, holds the prior details visible under aria-busy
+    // until the fetch resolves. Optimistic tag writes keep the cache correct, and
+    // openEditPanel still force-revalidates on explicit (re)open. The post-await id
+    // guard in fetchResourceDetails (BH: H5) prevents cross-resource cache poisoning.
     await this.fetchResourceDetails();
 
     if (focusSelector) {
