@@ -6507,6 +6507,54 @@ paths:
             summary: Merge tags
             tags:
                 - tags
+    /v1/tags/suggest:
+        get:
+            operationId: suggestTags
+            parameters:
+                - in: query
+                  name: Name
+                  schema:
+                    type: string
+                - in: query
+                  name: Description
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: CreatedAfter
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedBefore
+                  schema:
+                    type: string
+                - in: query
+                  name: UpdatedAfter
+                  schema:
+                    type: string
+                - explode: true
+                  in: query
+                  name: SortBy
+                  schema:
+                    items:
+                        type: string
+                    type: array
+                  style: form
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/TagPartial'
+                                type: array
+                    description: Successful response
+            summary: Tag typeahead (lean list without the total-count header)
+            tags:
+                - tags
     /v1/tags/timeline:
         get:
             description: Returns bucketed counts of created and updated tags over time, with optional filters.

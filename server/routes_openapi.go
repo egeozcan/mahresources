@@ -1336,6 +1336,17 @@ func registerTagRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/tags/suggest",
+		OperationID:          "suggestTags",
+		Summary:              "Tag typeahead (lean list without the total-count header)",
+		Tags:                 []string{"tags"},
+		QueryType:            tagQueryType,
+		ResponseType:         reflect.SliceOf(tagType),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
 		Method:               http.MethodPost,
 		Path:                 "/v1/tag",
 		OperationID:          "createOrUpdateTag",
