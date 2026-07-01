@@ -53,3 +53,24 @@ dead cleanup). CLI uploads out of scope (deterministic on their serial per-worke
 - [x] Fixed the 1 flaky: read-once document.activeElement → expect.poll (verified 10/10)
 
 ## DONE — all confirmed flakes fixed; residuals documented in project_known_flaky_e2e memory
+
+## Follow-up: commit + fix residuals (2026-07-01)
+Committed flakiness fixes to master, then addressed the documented residuals.
+
+- [x] Commit flakiness fixes (`4d4dc7d6`) + gitignore SQLite `-shm/-wal` sidecars (`aa95633f`)
+- [x] Root-cause the `100-global-search` PG "flake": it was NOT PG-FTS visibility lag (search_vector is
+      a synchronous GENERATED STORED column). Real cause probed on real PG: PG's English parser reads a
+      hyphen+digit run (`2024-3q` → signed-int `-3` + orphaned `q`) so the split `:*` query misses its
+      own row — 273/1000 for the old random `Date.now()-base36` token. Deterministic-per-term.
+- [x] Test fix: `100` uses a letters-only token (`9eada1df`) — probe 0/1000, PG spec 16/16.
+- [x] Product fix (documented residual): `globalSearch.js` caches non-empty results only (`2150dfbf`).
+- [x] Backend fix (user-approved): `fts/postgres.go` builds the prefix/exact tsquery from the raw
+      term's own `to_tsvector` lexemes (`to_tsquery('simple', …)`), `ParsedQuery.RawTerm` added
+      (`165814fd`). 0/1000, GIN index preserved, no regression. Regression test
+      `fts_hyphenated_number_pg_test.go` + parser unit tests.
+- [x] 26-paste-upload / 43-resource-from-url: verified retry-safe by dedup semantics (attach-and-return
+      existing with original name) — no patch needed.
+- [x] Verify: fts unit; full SQLite Go suite; full PG api_tests; search+a11y E2E on SQLite AND PG (44/44 each).
+- [x] Memory updated: corrected 100 diagnosis + new `reference_pg_fts_hyphen_tokenization`.
+
+## DONE — residuals fixed and verified on both backends
