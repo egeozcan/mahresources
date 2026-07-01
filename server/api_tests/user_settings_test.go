@@ -207,6 +207,39 @@ func TestUserSettings_KeyCapAtomicUnderConcurrency(t *testing.T) {
 	}
 }
 
+// A brand-new user has no settings rows, so the serialization lock must target the
+// owning users row (which exists), not the settings rows. This exercises that path:
+// concurrent first-time writes for a fresh user must all land exactly once, with no
+// error/deadlock, proving the lock works from an empty settings state.
+func TestUserSettings_ConcurrentFirstWritesFromEmpty(t *testing.T) {
+	tc := setupAuthEnv(t)
+	uID, _ := userWithBearer(t, tc, "freshconc", models.RoleUser)
+	ctx := tc.AppCtx.WithPrincipal(&auth.Principal{UserID: uID})
+
+	const N = 16
+	var wg sync.WaitGroup
+	errs := make([]error, N)
+	wg.Add(N)
+	for i := 0; i < N; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = ctx.SetUserSetting("f"+strconv.Itoa(idx), json.RawMessage(`1`))
+		}(i)
+	}
+	wg.Wait()
+
+	for i, e := range errs {
+		if e != nil {
+			t.Fatalf("first write %d failed: %v", i, e)
+		}
+	}
+	var total int64
+	tc.DB.Model(&models.UserSetting{}).Where("user_id = ?", uID).Count(&total)
+	if total != int64(N) {
+		t.Fatalf("total keys = %d, want %d (each first write should land exactly once)", total, N)
+	}
+}
+
 func TestUserSettings_DeleteMissingIsNoop(t *testing.T) {
 	tc := setupAuthEnv(t)
 	_, bearer := userWithBearer(t, tc, "del", models.RoleUser)

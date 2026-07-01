@@ -13,6 +13,13 @@ function safeParse(raw) {
 // reactive Alpine store. They are re-painted once the server-backed settings hydrate.
 const registeredLocalEls = [];
 
+// Persistence is gated until the server copy hydrates. A local edit made before the
+// initial GET resolves would otherwise flush a partial uiSettings object (only the changed
+// field) and drop the user's other server-saved fields. Instead, pre-load edits are held
+// and merged with the server copy on load, then persisted once as a full object.
+let hydrated = false;
+let pendingLocalEdit = false;
+
 function applyToEl(el, defVal, settings) {
     const value = settings[el.name] ?? defVal;
     if (typeof el.checked !== "undefined") {
@@ -44,9 +51,13 @@ export function registerSavedSettingStore(Alpine) {
                 const value = el.checked ?? el.value;
                 if (isLocal) {
                     this.localSettings[el.name] = value;
-                    // Fire-and-forget: persists to the server (debounced). Before the
-                    // initial load succeeds this only caches, never clobbering the server.
-                    userSettings.set('uiSettings', { ...this.localSettings });
+                    if (hydrated) {
+                        // Persist the full field set so no other saved field is dropped.
+                        userSettings.set('uiSettings', { ...this.localSettings });
+                    } else {
+                        // Held: merged with the server copy and persisted once on load.
+                        pendingLocalEdit = true;
+                    }
                 } else {
                     this.sessionSettings[el.name] = value;
                     sessionStorage.setItem("settings", JSON.stringify(this.sessionSettings));
@@ -55,16 +66,23 @@ export function registerSavedSettingStore(Alpine) {
         }
     });
 
-    // Hydrate localSettings from the server once, then re-paint any inputs that were
-    // registered before the load resolved. Runs regardless of Alpine's store-init timing.
+    // Hydrate localSettings from the server once, re-paint inputs registered before the
+    // load resolved, and persist any pre-load edit as a full merged object.
     const store = Alpine.store('savedSetting');
     userSettings.whenLoaded().then(() => {
         const stored = userSettings.get('uiSettings');
         if (stored && typeof stored === 'object') {
-            store.localSettings = stored;
-            for (const { el, defVal } of registeredLocalEls) {
-                applyToEl(el, defVal, store.localSettings);
-            }
+            // Server fields first; local edits made during the load window override
+            // field-by-field, so neither the user's in-flight change nor other
+            // server-saved fields are lost.
+            store.localSettings = { ...stored, ...store.localSettings };
+        }
+        hydrated = true;
+        for (const { el, defVal } of registeredLocalEls) {
+            applyToEl(el, defVal, store.localSettings);
+        }
+        if (pendingLocalEdit) {
+            userSettings.set('uiSettings', { ...store.localSettings });
         }
     });
 }

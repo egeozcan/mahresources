@@ -79,16 +79,18 @@ func (ctx *MahresourcesContext) SetUserSetting(key string, value json.RawMessage
 	// total < cap and both succeed, bypassing the cap this code exists to enforce.
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
 		// Serialize concurrent writes for this user so the cap check is atomic. Postgres:
-		// lock the user's existing rows FOR UPDATE (a no-op branch on SQLite, which
-		// serializes writers within the transaction's write lock and where the
-		// conditional INSERT below is a single write statement). Mirrors lockEnabledAdmins.
+		// lock the OWNING users row FOR UPDATE — not the user's settings rows, since a
+		// brand-new user has none to lock, which would let concurrent first inserts all
+		// pass the cap check. The users row always exists for a resolved actor (userID
+		// != 0). No-op branch on SQLite, which serializes writers within the transaction's
+		// write lock (the conditional INSERT below is a single write). Mirrors lockEnabledAdmins.
 		if ctx.Config.DbType == constants.DbTypePosgres {
-			var ids []uint
-			if err := tx.Model(&models.UserSetting{}).
+			var lockedIDs []uint
+			if err := tx.Model(&models.User{}).
 				Clauses(clause.Locking{Strength: "UPDATE"}).
-				Where("user_id = ?", userID).
+				Where("id = ?", userID).
 				Order("id").
-				Pluck("id", &ids).Error; err != nil {
+				Pluck("id", &lockedIDs).Error; err != nil {
 				return err
 			}
 		}
