@@ -168,8 +168,14 @@ export function globalSearch() {
                         if (this.query.trim() === searchTerm) {
                             this.results = data.results || [];
                             this.selectedIndex = 0;
-                            // Cache the results
-                            setCachedResults(searchTerm, this.results);
+                            // Cache non-empty results only. Caching an empty
+                            // response would poison this term for the full TTL,
+                            // leaving the user stuck on "No results found" even
+                            // after the data exists (e.g. a just-created item or
+                            // a transient backend hiccup).
+                            if (this.results.length > 0) {
+                                setCachedResults(searchTerm, this.results);
+                            }
                             // Announce results for screen readers
                             if (this.results.length > 0) {
                                 this.announce(`${this.results.length} result${this.results.length === 1 ? '' : 's'} found. Use arrow keys to navigate.`);
