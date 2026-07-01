@@ -294,7 +294,10 @@ func TestTimeoutReader_SlowButActiveRead(t *testing.T) {
 		readLen: 2,
 	}
 
-	tr := newTimeoutReader(slow, 100*time.Millisecond)
+	// A generous idle timeout (100x the 20ms per-read pacing) so a scheduler stall under
+	// -race / saturated CI can't spuriously trip the watcher; the test only asserts that
+	// consistently-active-but-slow reads do not time out.
+	tr := newTimeoutReader(slow, 2*time.Second)
 	defer tr.Close()
 
 	result, err := io.ReadAll(tr)

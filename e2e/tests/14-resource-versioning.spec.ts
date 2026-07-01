@@ -1,6 +1,7 @@
 import { test, expect } from '../fixtures/base.fixture';
 import { Page } from '@playwright/test';
 import path from 'path';
+import { uniqueAssetFile } from '../helpers/unique-upload';
 
 /**
  * Ensures the version panel is expanded. Handles the case where the panel
@@ -43,14 +44,14 @@ test.describe.serial('Resource Versioning', () => {
   });
 
   test('should create a resource with initial version', async ({ resourcePage, page }) => {
-    // Use sample-image-10.png to avoid hash deduplication with lightbox tests
     const testFilePath = path.join(__dirname, '../test-assets/sample-image-10.png');
 
     await resourcePage.gotoNew();
 
-    // Set file input
+    // Set file input. Append unique bytes so this create can't hash-collide with the many
+    // other specs that upload sample-image-10.png on the same worker (see unique-upload.ts).
     const fileInput = page.locator('input[type="file"]');
-    await fileInput.setInputFiles(testFilePath);
+    await fileInput.setInputFiles(uniqueAssetFile(testFilePath));
 
     // Fill name
     await page.locator('input[name="Name"]').fill(`Versioned Resource ${testRunId}`);

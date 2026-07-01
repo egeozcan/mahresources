@@ -1,5 +1,6 @@
 import { Page, expect } from '@playwright/test';
 import { BasePage } from './BasePage';
+import { uniqueAssetFile } from '../helpers/unique-upload';
 
 export class ResourcePage extends BasePage {
   readonly listUrl = '/resources';
@@ -45,9 +46,10 @@ export class ResourcePage extends BasePage {
   }): Promise<number> {
     await this.gotoNew();
 
-    // Set file input
+    // Set file input. Append unique bytes so the server's global content-hash dedup can't
+    // resolve this upload to another spec's identical sample image (see unique-upload.ts).
     const fileInput = this.page.locator('input[type="file"]');
-    await fileInput.setInputFiles(data.filePath);
+    await fileInput.setInputFiles(uniqueAssetFile(data.filePath));
 
     if (data.name) {
       await this.fillName(data.name);

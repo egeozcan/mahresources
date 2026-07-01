@@ -101,12 +101,12 @@ export class QueryPage extends BasePage {
 
   async verifyQueryInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).toBeVisible();
+    await expect(this.page.locator(`a:has-text("${name}")`).first()).toBeVisible();
   }
 
   async verifyQueryNotInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).not.toBeVisible();
+    await expect(this.page.locator(`a:has-text("${name}")`)).toHaveCount(0);
   }
 
   async runQuery(id: number): Promise<void> {

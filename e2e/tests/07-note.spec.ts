@@ -70,6 +70,14 @@ test.describe('Note CRUD Operations', () => {
   });
 
   test.afterAll(async ({ apiClient }) => {
+    // Clean up the created note (in case the delete test was skipped due to earlier failures)
+    if (createdNoteId) {
+      try {
+        await apiClient.deleteNote(createdNoteId);
+      } catch {
+        // Ignore - note may have been deleted by the delete test
+      }
+    }
     // Clean up in reverse dependency order
     if (ownerGroupId) {
       await apiClient.deleteGroup(ownerGroupId);

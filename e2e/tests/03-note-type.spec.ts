@@ -35,6 +35,17 @@ test.describe('NoteType CRUD Operations', () => {
     await noteTypePage.delete(createdNoteTypeId);
     await noteTypePage.verifyNoteTypeNotInList('Updated Meeting Notes');
   });
+
+  test.afterAll(async ({ apiClient }) => {
+    // Clean up the created note type (in case the delete test was skipped due to earlier failures)
+    if (createdNoteTypeId) {
+      try {
+        await apiClient.deleteNoteType(createdNoteTypeId);
+      } catch {
+        // Ignore - note type may have been deleted by the delete test
+      }
+    }
+  });
 });
 
 test.describe('NoteType with Custom Fields', () => {

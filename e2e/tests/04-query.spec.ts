@@ -36,6 +36,17 @@ test.describe('Query CRUD Operations', () => {
     await queryPage.delete(createdQueryId);
     await queryPage.verifyQueryNotInList('Updated E2E Query');
   });
+
+  test.afterAll(async ({ apiClient }) => {
+    // Clean up the created query (in case the delete test was skipped due to earlier failures)
+    if (createdQueryId) {
+      try {
+        await apiClient.deleteQuery(createdQueryId);
+      } catch {
+        // Ignore - query may have been deleted by the delete test
+      }
+    }
+  });
 });
 
 test.describe('Query with Template', () => {

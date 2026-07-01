@@ -75,8 +75,8 @@ test.describe('Timeline View - UI Controls', () => {
     const rangeLabelBefore = await page.locator('.timeline-range-label').textContent();
     await prevBtn.click();
 
-    // Wait for the data to load
-    await page.waitForTimeout(500);
+    // Wait for the range label to change after navigation
+    await expect(page.locator('.timeline-range-label')).not.toHaveText(rangeLabelBefore ?? '');
 
     const rangeLabelAfter = await page.locator('.timeline-range-label').textContent();
     // Range label should change after navigation
@@ -194,8 +194,10 @@ test.describe('Timeline View - With seeded data', () => {
       await page.goto('/tags/timeline');
       await page.waitForLoadState('load');
 
-      // Wait for chart to render (it loads data asynchronously)
-      await page.waitForTimeout(1000);
+      // Wait for chart to render its bars (it loads data asynchronously)
+      await expect(
+        page.locator('.timeline-chart').locator('svg, rect, [class*="bar"]').first()
+      ).toBeVisible();
 
       // The chart container should have content (SVG bars or similar)
       const chart = page.locator('.timeline-chart');

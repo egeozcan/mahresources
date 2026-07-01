@@ -279,34 +279,57 @@ func TestRunWithLockTimeout_TimeoutButAcquired(t *testing.T) {
 func TestRunWithLockTimeout_Concurrent(t *testing.T) {
 	lock := NewIDLock[int](0, nil)
 	id := 1
-	const numRoutines = 5
-	var wg sync.WaitGroup
+	const numContenders = 5
 	var successCount int32
-	var mu sync.Mutex
 
-	for i := 0; i < numRoutines; i++ {
+	// A single winner deterministically holds the lock for the entire contention window.
+	// RunWithLockTimeout releases the lock only when fn returns (it waits on errChan even
+	// after the run context times out), so blocking fn on `release` keeps the lock provably
+	// held while the contenders try — and must fail — to acquire it. This removes the old
+	// wall-clock dependency (a 200ms fn-sleep vs 100ms lockTimeout margin) that could let a
+	// scheduler-delayed contender acquire the lock too under -race / saturated CI.
+	acquired := make(chan struct{})
+	release := make(chan struct{})
+	winnerDone := make(chan struct{})
+
+	go func() {
+		defer close(winnerDone)
+		success, err := lock.RunWithLockTimeout(id, 100*time.Millisecond, 30*time.Second, func() error {
+			atomic.AddInt32(&successCount, 1)
+			close(acquired) // lock is now held; fn will not return until released
+			<-release
+			return nil
+		})
+		if !success || err != nil {
+			t.Errorf("winner: expected success with nil error, got success=%v err=%v", success, err)
+		}
+	}()
+
+	<-acquired // the winner now holds the lock
+
+	// Every contender must fail to acquire while the winner holds the lock.
+	var wg sync.WaitGroup
+	for i := 0; i < numContenders; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			success, err := lock.RunWithLockTimeout(id, 100*time.Millisecond, 1*time.Second, func() error {
-				mu.Lock()
-				successCount++
-				mu.Unlock()
-				time.Sleep(200 * time.Millisecond)
+			success, _ := lock.RunWithLockTimeout(id, 50*time.Millisecond, 1*time.Second, func() error {
+				atomic.AddInt32(&successCount, 1) // must never run
 				return nil
 			})
-			if success && err == nil {
-				t.Log("Goroutine successfully acquired lock and ran")
-			} else {
-				t.Log("Goroutine failed to acquire lock within timeout")
+			if success {
+				t.Error("contender unexpectedly acquired the lock")
 			}
 		}()
 	}
 	wg.Wait()
 
-	if successCount != 1 {
-		t.Errorf("Expected exactly 1 success, got %d", successCount)
+	if got := atomic.LoadInt32(&successCount); got != 1 {
+		t.Errorf("Expected exactly 1 success, got %d", got)
 	}
+
+	close(release) // let the winner finish and release the lock
+	<-winnerDone
 }
 
 func TestRunWithLockTimeout_GlobalTokenTimeout(t *testing.T) {

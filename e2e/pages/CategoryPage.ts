@@ -85,11 +85,11 @@ export class CategoryPage extends BasePage {
 
   async verifyCategoryInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).toBeVisible();
+    await expect(this.page.locator(`a:has-text("${name}")`).first()).toBeVisible();
   }
 
   async verifyCategoryNotInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).not.toBeVisible();
+    await expect(this.page.locator(`a:has-text("${name}")`)).toHaveCount(0);
   }
 }

@@ -67,6 +67,14 @@ test.describe.serial('Group CRUD Operations', () => {
   });
 
   test.afterAll(async ({ apiClient }) => {
+    // Clean up the created group (in case the delete test was skipped due to earlier failures)
+    if (createdGroupId) {
+      try {
+        await apiClient.deleteGroup(createdGroupId);
+      } catch {
+        // Ignore - group may have been deleted by the delete test
+      }
+    }
     // Clean up in reverse dependency order
     if (ownerGroupId) {
       await apiClient.deleteGroup(ownerGroupId);

@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures/base.fixture';
 import path from 'path';
+import { uniqueAssetFile } from '../helpers/unique-upload';
 
 test.describe.serial('Resource CRUD Operations', () => {
   let categoryId: number;
@@ -16,19 +17,9 @@ test.describe.serial('Resource CRUD Operations', () => {
     // Use timestamp + random to avoid collisions with parallel workers
     testRunId = Date.now() + Math.floor(Math.random() * 100000);
 
-    // Clean up any resource with the test image hash to avoid deduplication conflicts
-    // sample-image-9.png hash: b2570251f5100085491bb6da331760031d3fc171
-    const testImageHash = 'b2570251f5100085491bb6da331760031d3fc171';
-    try {
-      const resources = await apiClient.getResources();
-      for (const resource of resources) {
-        if (resource.Hash === testImageHash) {
-          await apiClient.deleteResource(resource.ID);
-        }
-      }
-    } catch {
-      // Ignore errors - resources might not exist
-    }
+    // Uploads below append unique bytes to the sample image (see unique-upload.ts), so the
+    // server's content-hash dedup can no longer collide with another spec's copy — the old
+    // hardcoded-SHA1 pre-cleanup this block used to do is obsolete.
 
     // Create prerequisite data with unique names to avoid conflicts
     const category = await apiClient.createCategory(`Resource Test Category ${testRunId}`, 'Category for resource tests');
@@ -46,15 +37,15 @@ test.describe.serial('Resource CRUD Operations', () => {
   });
 
   test('should upload a file resource', async ({ resourcePage, page }) => {
-    // Use a unique image not used by other tests to avoid hash deduplication conflicts
     const testFilePath = path.join(__dirname, '../test-assets/sample-image-9.png');
 
     // Navigate to new resource page
     await resourcePage.gotoNew();
 
-    // Set file input
+    // Set file input. Unique bytes appended so the global content-hash dedup can't resolve
+    // this to another spec's sample-image-9.png (see unique-upload.ts).
     const fileInput = page.locator('input[type="file"]');
-    await fileInput.setInputFiles(testFilePath);
+    await fileInput.setInputFiles(uniqueAssetFile(testFilePath));
 
     // Fill name
     await page.locator('input[name="Name"]').fill(`E2E Test Image ${testRunId}`);
@@ -82,7 +73,9 @@ test.describe.serial('Resource CRUD Operations', () => {
     await page.waitForLoadState('load');
 
     // Wait a moment for any redirects
-    await page.waitForTimeout(1000);
+    // Wait for the post-submit redirect to land instead of a fixed sleep. If no redirect
+    // happens (unexpected), fall through to the existing id-resolution/guard below.
+    await page.waitForURL(/\/resource(\?id=|s)/, { timeout: 10000 }).catch(() => {});
 
     // Check where we ended up
     const url = page.url();

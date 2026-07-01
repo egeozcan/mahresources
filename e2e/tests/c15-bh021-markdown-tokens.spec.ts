@@ -53,9 +53,14 @@ test.describe('BH-021: block-editor text block — expanded markdown tokens', ()
     const md = 'hello _world_ and `code` and ~~strike~~ also **bold**';
     await textarea.fill(md);
 
-    // Blur to trigger save
+    // Blur to trigger save, then wait for the block content to persist
     await page.locator('h1').first().click();
-    await page.waitForTimeout(1500);
+    await expect
+      .poll(async () => {
+        const b = await apiClient.getBlocks(noteId);
+        return b.find((block) => block.type === 'text')?.content.text;
+      })
+      .toBe(md);
 
     // Verify persistence via API
     const blocks = await apiClient.getBlocks(noteId);

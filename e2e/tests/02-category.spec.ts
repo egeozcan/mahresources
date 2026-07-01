@@ -35,6 +35,17 @@ test.describe.serial('Category CRUD Operations', () => {
     await categoryPage.delete(createdCategoryId);
     await categoryPage.verifyCategoryNotInList('Updated E2E Category');
   });
+
+  test.afterAll(async ({ apiClient }) => {
+    // Clean up the created category (in case the delete test was skipped due to earlier failures)
+    if (createdCategoryId) {
+      try {
+        await apiClient.deleteCategory(createdCategoryId);
+      } catch {
+        // Ignore - category may have been deleted by the delete test
+      }
+    }
+  });
 });
 
 test.describe('Category with Custom Fields', () => {

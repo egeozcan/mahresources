@@ -109,8 +109,8 @@ test.describe('MRQL Page', () => {
     // Enter a syntactically invalid query
     await mrql.enterQuery('INVALID $$$ SYNTAX !!!');
 
-    // Wait for validation to trigger (debounced at 500ms)
-    await page.waitForTimeout(800);
+    // Wait for validation to trigger (debounced at 500ms) and the error to render
+    await expect(mrql.validationError).toBeVisible();
 
     // Validation error should appear
     const validationErr = await mrql.getValidationError();

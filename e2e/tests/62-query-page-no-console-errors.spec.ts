@@ -42,7 +42,8 @@ test.describe('Query page should load without console errors', () => {
     // Wait for the code editor to initialize (it lazy-loads CodeMirror)
     // The CodeMirror editor container is created by the codeEditor Alpine
     // component, which uses dynamic imports for @codemirror/* packages.
-    await page.waitForTimeout(3000);
+    // Both editors (Query + Template) must finish loading before we assert.
+    await expect(page.locator('.cm-editor')).toHaveCount(2, { timeout: 10000 });
 
     // Verify the code editors actually loaded (there should be 2: Query + Template)
     const editorCount = await page.locator('.cm-editor').count();

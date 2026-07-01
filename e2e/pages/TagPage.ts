@@ -64,12 +64,12 @@ export class TagPage extends BasePage {
 
   async verifyTagInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).toBeVisible();
+    await expect(this.page.locator(`a:has-text("${name}")`).first()).toBeVisible();
   }
 
   async verifyTagNotInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).not.toBeVisible();
+    await expect(this.page.locator(`a:has-text("${name}")`)).toHaveCount(0);
   }
 
   async submitEmptyForm(): Promise<void> {

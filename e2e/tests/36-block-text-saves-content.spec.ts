@@ -57,8 +57,13 @@ test.describe('Text block content saves via UI', () => {
     // Blur the textarea to trigger save
     await page.locator('h1').first().click();
 
-    // Give time for the save API call to complete
-    await page.waitForTimeout(1500);
+    // Wait for the save API call to persist the block content
+    await expect
+      .poll(async () => {
+        const b = await apiClient.getBlocks(noteId);
+        return b.find((block) => block.type === 'text')?.content.text;
+      })
+      .toBe('This content should be saved');
 
     // Verify content persisted via API
     const blocks = await apiClient.getBlocks(noteId);

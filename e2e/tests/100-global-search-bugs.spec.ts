@@ -2,17 +2,15 @@ import { test, expect } from '../fixtures/base.fixture';
 
 test.describe('Global Search – resourceCategory label and icon', () => {
   let resourceCategoryId: number;
-  let categoryId: number;
   let testRunId: string;
 
   test.beforeAll(async ({ apiClient }) => {
     testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
-    // Need a group category to satisfy group creation if needed
-    const category = await apiClient.createCategory(`GS100Cat ${testRunId}`, 'helper category');
-    categoryId = category.ID;
-
-    // Create a resource category to search for
+    // Create a resource category to search for. Nothing else is created: a previous helper
+    // "group category" sharing this testRunId token used to also match the search and made
+    // the .first() result ambiguous (the SQLite flake), so the ONLY entity carrying this
+    // token is the resource category — .first() is now unambiguously it on both DBs.
     const rc = await apiClient.createResourceCategory(
       `GS100ResCat ${testRunId}`,
       'Searchable resource category'
@@ -28,9 +26,11 @@ test.describe('Global Search – resourceCategory label and icon', () => {
     await searchInput.waitFor({ state: 'visible' });
     await searchInput.fill(`GS100ResCat ${testRunId}`);
 
-    // Wait for a search result to appear
+    // Only the resource category carries this unique token, so the first result is it. (A
+    // previous helper "group category" shared the token and made .first() ambiguous — the
+    // SQLite wrong-type flake this spec was known for.)
     const resultItem = page.locator('li[role="option"]').first();
-    await expect(resultItem).toBeVisible({ timeout: 10000 });
+    await expect(resultItem).toBeVisible({ timeout: 15000 });
 
     // The type badge should say "Resource Category", not "resourceCategory"
     const typeBadge = resultItem.locator('span.font-mono');
@@ -40,9 +40,6 @@ test.describe('Global Search – resourceCategory label and icon', () => {
   test.afterAll(async ({ apiClient }) => {
     if (resourceCategoryId) {
       await apiClient.deleteResourceCategory(resourceCategoryId);
-    }
-    if (categoryId) {
-      await apiClient.deleteCategory(categoryId);
     }
   });
 });

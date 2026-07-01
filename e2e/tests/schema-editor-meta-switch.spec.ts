@@ -131,8 +131,8 @@ test.describe('Meta edit preservation across editor switches', () => {
     await expect(colorInput).toBeVisible({ timeout: 3000 });
     await colorInput.fill('red');
 
-    // Wait for the schema-form-mode to dispatch value-change
-    await page.waitForTimeout(300);
+    // Wait for the schema-form-mode to dispatch value-change into the hidden input
+    await expect(formMode.locator('input[type="hidden"]')).toHaveValue(/"color":"red"/);
 
     // Verify current value is stored
     const hiddenInput = formMode.locator('input[type="hidden"]');
@@ -166,7 +166,7 @@ test.describe('Meta edit preservation across editor switches', () => {
     // Verify the hidden input contains the preserved meta data
     const freeFieldsHiddenInput = freeFieldsContainer.locator('input[type="hidden"][name="Meta"]');
     // Wait for the freeFields component to initialize and compute jsonText
-    await page.waitForTimeout(300);
+    await expect(freeFieldsHiddenInput).toHaveValue(/"color":"red"/);
     const freeFieldsValue = await freeFieldsHiddenInput.inputValue();
     const freeFieldsMeta = JSON.parse(freeFieldsValue);
     expect(freeFieldsMeta.color).toBe('red');
@@ -220,7 +220,7 @@ test.describe('Meta edit preservation across editor switches', () => {
     const colorInput = formMode.locator('input[type="text"]').first();
     await expect(colorInput).toBeVisible({ timeout: 3000 });
     await colorInput.fill('blue');
-    await page.waitForTimeout(300);
+    await expect(formMode.locator('input[type="hidden"]')).toHaveValue(/"color":"blue"/);
 
     // Verify both custom and color are in the hidden input
     const hiddenInput = formMode.locator('input[type="hidden"]');
@@ -248,7 +248,7 @@ test.describe('Meta edit preservation across editor switches', () => {
     await expect(freeFieldsContainer2).toBeVisible({ timeout: 5000 });
 
     const freeFieldsHiddenInput = freeFieldsContainer2.locator('input[type="hidden"][name="Meta"]');
-    await page.waitForTimeout(300);
+    await expect(freeFieldsHiddenInput).toHaveValue(/"custom":"data"/);
     const freeFieldsValue = await freeFieldsHiddenInput.inputValue();
     const freeFieldsMeta = JSON.parse(freeFieldsValue);
     expect(freeFieldsMeta.custom).toBe('data');

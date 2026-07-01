@@ -45,9 +45,16 @@ func TestTimelineAPI_WithEntities_CorrectBucketing(t *testing.T) {
 		t.Fatalf("failed to create tag: %v", err)
 	}
 
-	// Use the tag's creation time as the anchor
-	now := time.Now().UTC()
-	anchor := now.Format("2006-01-02")
+	// Pin created_at to a fixed mid-month UTC instant and anchor the timeline to the same
+	// instant. GORM stamps created_at in the machine's LOCAL timezone but the timeline
+	// buckets are built in UTC, so a run near a month boundary on a non-UTC machine could
+	// place the entity in the previous month's bucket. A fixed mid-month UTC value keeps the
+	// entity and the current-month bucket in the same frame, far from any boundary.
+	anchorTime := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
+	if err := tc.DB.Model(tag).UpdateColumn("created_at", anchorTime).Error; err != nil {
+		t.Fatalf("failed to pin created_at: %v", err)
+	}
+	anchor := anchorTime.Format("2006-01-02")
 
 	rr := tc.MakeRequest(http.MethodGet, "/v1/tags/timeline?granularity=monthly&columns=3&anchor="+anchor, nil)
 	if rr.Code != http.StatusOK {

@@ -1,88 +1,55 @@
-# Root Admin Invariant + Creator Attribution — Implementation Todo
+# Fix test flakiness (Go + E2E) — active task
 
-Tracking implementation of `tasks/root-admin-invariant.md`. TDD (red→green) where sensible.
+Root causes from read-only discovery workflow (8 agents). Root-cause fixes, adversarially
+verified, proven under forced worst-case (`workers:1` repeated / Go `-count -race`).
 
-## Phase 1 — Models + migration
-- [x] Add `CreatedByUserId *uint` (scalar, indexed, no association) to 14 models
-- [x] (red) test: `resources.created_by_user_id` exists after migrate; plain Create leaves NULL
+## Tier 1 — content-hash collision (biggest class; fixes documented flakes 23, auto-detect, a11y/17)
+`resource_upload_context.go:647` dedupes on GLOBAL SHA1; two specs on one worker uploading the
+same `sample-image-N.png` either 409 or silently resolve to the *other* spec's resource. Worker
+server+DB survive retries → can become deterministic-red on retry. Fix = every upload gets a
+unique appended **ASCII marker** (decoder-safe for PNG/JPEG/GIF/SVG/TXT/MP4; TAR unsafe but never
+hits this path). Per-process counter → retry-safe. Exemptions: none real (08's hardcoded SHA1 is
+dead cleanup). CLI uploads out of scope (deterministic on their serial per-worker server).
 
-## Phase 2 — Actor plumbing + stamp callback (scoping.go)
-- [x] `actingUserCtxKey` + `actingUserFromContext`
-- [x] `mahresources:stamp_created_by` Before(gorm:create) callback (method value over ctx)
-- [x] Restructure `applyPrincipalScope` to always attach actor ctx (parent=Background); guard p==nil
-- [x] Change `registerScopeCallbacks(db)` → `registerScopeCallbacks(ctx)`, call after ctx built
-- [x] (red) tests: stamp on create, batch, overwrite/non-spoofable, auth-on NULL, no-auth root
-- [x] (red) test: query_models create structs have no CreatedByUserId
+- [x] `e2e/helpers/unique-upload.ts`: uniqueMarker/uniquifyBuffer/uniqueAssetFile
+- [ ] `api-client.ts createResource`: uniquify by default (+ `exactBytes` opt-out)
+- [ ] `pages/ResourcePage.ts createFromFile`: uniquify setInputFiles
+- [ ] `08-resource` L57 uniquify + remove dead hardcoded-SHA1 cleanup
+- [ ] `14-resource-versioning` L53 uniquify (create-form only)
+- [ ] `auto-detect-category` L67 uniquify (browser upload test)
+- [ ] PROVE: build; run 23, auto-detect, a11y/17, 13-family under workers:1 ×N
 
-## Phase 3 — Root-admin cache + user queries
-- [x] `rootAdmin *rootAdminCache` (atomic.Pointer[snapshot]) on ctx
-- [x] `RootAdminPrincipal()`, `defaultActorID()`, `actingUserID()`, `actingUserIDPtr()`, `refreshRootAdmin()`
-- [x] `CountEnabledAdmins()`, `RootAdmin()`
-- [x] Synchronous re-warm on every user mutation
-- [x] (red) tests: counts, ordering, error on none, cold-cache regression
+## Tier 1 — other deterministic/ordering flakes
+- [ ] `100-global-search`: scope `.first()` to `hasText: GS100ResCat <id>`
+- [ ] Serial-CRUD retry poisoning 01–07: idempotent afterAll + `.first()`/exact verify locators
+- [ ] Lightbox position≠id: `13-lightbox` L859, `13d` L185 → select by `data-resource-id`
+- [ ] Go `lib/id_lock_test.go:295`: deterministic winner via channels
+- [ ] Go `runtime_settings_test.go:314`: `ORDER BY created_at asc, id asc`
+- [ ] Go `timeline_test.go:49`: pin created_at + anchor to fixed UTC
+- [ ] Go `resource_context_test.go:288`: widen TimeoutReader idle margin
 
-## Phase 2b — Request-scope singleton create paths
-- [x] Tag / Category / ResourceCategory handlers → withRequestContext
-- [x] SavedMRQLQuery handler → withRequestContext
-- [x] Series create route → scopedCtx(...).SeriesCRUD() bespoke handler
-- [x] Import apply job → bind importer's principal (principalBinder type-assertion; no interface churn)
-- [x] (red) table-driven API test across create handlers (auth-on) + resource-upload + import
+## Tier 2 — surgical waitForTimeout RACE (high/med conf)
+- [ ] 13-lightbox L949, 36 L61, 38 L61, 62 L45, 67 L53, c15-bh021 L58, mrql L113,
+      schema-editor-meta-switch L135/169/223/251, timeline L79/L198, a11y/08-seven-fixes L121/210,
+      08 L85, auto-detect L80
 
-## Phase 2c — Raw-SQL stamp paths
-- [x] Series find-or-create (series_context.go) — created_by_user_id bind (*uint → NULL)
-- [x] Group-merge relations (group_bulk_context.go) — actor bind as 2nd placeholder
-- [x] (red) tests: no-auth→root, auth-on→acting user
+## Tier 3 — evaluate (only if quick + safe)
+- [ ] paste-upload / remote-download retry uniqueness — assess
+- [ ] SKIP: CLI (not flaky), schema-search-fields (low conf), search_context.go (no active flake)
 
-## Phase 4 — Last-admin guard + handler mapping
-- [x] `ErrLastAdmin` + conditional-mutation guard (`lockEnabledAdmins` FOR UPDATE on PG)
-- [x] DeleteUser + UpdateUser/guardedDemoteOrDisable guarded (conditional RowsAffected)
-- [x] userErrorStatus → 409
-- [x] (red) tests incl. SQLite + Postgres concurrency
+## Verify
+- [x] Go `-race -count=20` id_lock; `-count=10` timeout-reader/audit/timeline — all green
+- [x] `go test --tags 'json1 fts5' ./...` — 0 failures
+- [x] Collision fix PROVEN: 22/23/14/auto-detect/16 together, workers:1 retries:0 x3 → 93/93
+- [x] My E2E fixes: 13/13d/100/08/auto-detect, workers:1 retries:0 x2 → 106 pass
+- [x] Agent fixes: 01–07 + waitFor batch, workers:1 retries:0 x2 → 304 pass
+- [x] Postgres: timeline test -count=3 → green
+- [x] Full E2E browser + CLI + auth (run #2): 1588 passed, 0 flaky, 0 failed
+- [x] a11y regression (my marker exposed compare.tpl orange-600 contrast) → text-amber-700, c17 8/8
+- [x] Postgres: collision+ordering specs 101/102 (only pre-existing 100 PG-FTS residual)
+- [x] 100 SQLite wrong-type flake fixed (removed competing category); PG residual pre-existing (documented)
+- [x] Update project_known_flaky_e2e memory
+- [x] Final full-suite re-run: 1587 passed, 0 failed, 1 flaky (13-lightbox focus-restore)
+- [x] Fixed the 1 flaky: read-once document.activeElement → expect.poll (verified 10/10)
 
-## Phase 5 — DeleteUser referential cleanup
-- [x] `nullCreatorReferences` nulls creator on 14 tables in same txn before delete
-- [x] (red) test: resource survives creator deletion with NULL
-
-## Phase 6 — Startup auto-create + lockout guard
-- [x] `PasswordAutoGenerated` marker on User; cleared on real-password paths
-- [x] `EnsureRootAdmin()`, `CountEnabledAdminsWithRealPassword()`
-- [x] main.go: replace warning block; warm cache; every-boot lockout warning
-- [x] (red) tests
-
-## Phase 7 — No-auth principal identity
-- [x] auth_middleware.go: build no-auth principal from RootAdminPrincipal() (loud fallback on error)
-- [x] (red) test: /v1/auth/me reports root under no-auth (server API test)
-
-## Phase 8 — Docs + OpenAPI
-- [x] CLAUDE.md (root-admin invariant subsection), CLI docs (409 note), regen + validate spec
-
-## Phase 9 — Test matrix
-- [x] go unit (27 pkgs), API (auth-on + no-auth), E2E browser+CLI (1583✓/5 flaky-retried), Postgres (Go + E2E)
-
-## Review
-
-Implemented all 9 phases. Build order followed the advisor's correction (1 → 3 → 2 → 2b → 2c → 4 → 5 → 6 → 7)
-so the stamp callback's `defaultActorID()`/`rootAdmin` dependency existed before it was registered.
-
-**Verified:**
-- Go unit: all 27 packages green (`--tags 'json1 fts5'`), incl. new stamp/raw-SQL/root-cache/last-admin/
-  bootstrap unit tests and `TestCountUsersAndBootstrap` (still 0 users on a fresh ctx — auto-create is
-  main.go-only).
-- Go API: auth-on table-driven create test stamps the acting bearer across handlers (Tag/Category/
-  ResourceCategory/SavedMRQL/Series/Note/Group/NoteType/Query) + resource-upload + implicit-series;
-  no-auth `/v1/auth/me` reports root; last-admin delete/demote → 409, normal delete → 200.
-- Postgres Go: mrql + api_tests pass, incl. a true multi-connection last-admin **concurrency** test
-  proving `FOR UPDATE` serializes two concurrent admin deletions (exactly one succeeds).
-- E2E browser+CLI (SQLite and Postgres): 1583 passed, 5 flaky (all retried green, all pre-existing known
-  flakes — lightbox/plugin timing + the sample-image content-hash collision in 23-group-delete), 0 hard
-  failures. Rebuilt `./mahresources` + `./mr` first (E2E reuses them).
-- OpenAPI regenerated (adds `createdByUserId` to affected schemas) + validates. CLI `mr docs lint` passes.
-
-**Deferred (per spec):** plugin `mah.db.*` writes stamp NULL under auth-on (process-global writer, no
-per-execution principal) — documented in CLAUDE.md and the Accepted NULLs section. Startup seeds remain
-NULL in both modes.
-
-**Notable design choice vs the plan:** the import principal binding uses a `principalBinder` type
-assertion at the submit site instead of adding `WithPrincipal` to the `GroupImporter` interface — this
-avoids forcing test mocks to return a concrete `*MahresourcesContext` while achieving the same per-user
-attribution.
+## DONE — all confirmed flakes fixed; residuals documented in project_known_flaky_e2e memory

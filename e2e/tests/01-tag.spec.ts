@@ -33,6 +33,17 @@ test.describe.serial('Tag CRUD Operations', () => {
     await tagPage.delete(createdTagId);
     await tagPage.verifyTagNotInList('Updated E2E Tag');
   });
+
+  test.afterAll(async ({ apiClient }) => {
+    // Clean up the created tag (in case the delete test was skipped due to earlier failures)
+    if (createdTagId) {
+      try {
+        await apiClient.deleteTag(createdTagId);
+      } catch {
+        // Ignore - tag may have been deleted by the delete test
+      }
+    }
+  });
 });
 
 test.describe('Tag Validation', () => {

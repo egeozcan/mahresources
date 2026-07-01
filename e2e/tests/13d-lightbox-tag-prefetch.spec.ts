@@ -63,7 +63,10 @@ test.describe('Lightbox tag-detail prefetch + no-blank', () => {
 
   // Scope the list to this test's owner group so only our 3 images load.
   async function openLightboxWithPanel(page: Page) {
-    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
+    // Sort by ID desc so gallery order is deterministic (newest first). The default
+    // created_at sort has no id tiebreaker, so tied insert timestamps could reorder these
+    // resources and break the position-based navigation assertions below.
+    await page.goto(`/resources?OwnerId=${ownerGroupId}&sort=ID&order=desc`);
     await page.waitForLoadState('load');
     await page.locator('[data-lightbox-item]').first().click();
     const lightbox = page.locator(LIGHTBOX);

@@ -852,7 +852,10 @@ test.describe('Lightbox Info Panel', () => {
       await apiClient.addTagsToResources([createdResourceIds[createdResourceIds.length - 1]], [testTagId]);
     }
 
-    await page.goto(`/resources?OwnerId=${ownerGroupId}`);
+    // Sort by ID desc so gallery position 0 is deterministically the newest resource (the
+    // one we tagged above). The default created_at sort has no id tiebreaker, so tied
+    // insert timestamps could otherwise leave an untagged resource first (BASE flake).
+    await page.goto(`/resources?OwnerId=${ownerGroupId}&sort=ID&order=desc`);
     await page.waitForLoadState('load');
 
     // Open lightbox on first resource (which has the tag)
@@ -946,10 +949,9 @@ test.describe('Lightbox Info Panel', () => {
     await expect(lightbox).toBeVisible();
     await editButton.click();
     await expect(editPanel).toBeVisible();
-    await page.waitForTimeout(500);
 
-    const newDescription = await descriptionInput.inputValue();
-    expect(newDescription).toBe('Updated description via lightbox');
+    // Auto-retry until the persisted description is populated, instead of a fixed sleep.
+    await expect(descriptionInput).toHaveValue('Updated description via lightbox');
   });
 
   test('should show correct tags when navigating between resources with edit tags panel open', async ({ page }) => {
@@ -1028,9 +1030,9 @@ test.describe('Lightbox Info Panel', () => {
       return input && input.value.length > 0;
     }, { timeout: 30000 });
 
-    // Verify name input is still focused
-    const focusedAfter = await page.evaluate(() => document.activeElement?.id);
-    expect(focusedAfter).toBe('lightbox-edit-name');
+    // Verify name input is still focused. Poll: focus restoration after the panel re-renders
+    // for the new resource is async, so a read-once can catch a pre-restore tick (flaky).
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('lightbox-edit-name');
 
     // Now test with description textarea
     const descInput = editPanel.locator('textarea#lightbox-edit-description');
@@ -1045,9 +1047,8 @@ test.describe('Lightbox Info Panel', () => {
       return input && input.value.length > 0;
     }, { timeout: 30000 });
 
-    // Verify description textarea is still focused
-    const focusedAfterDesc = await page.evaluate(() => document.activeElement?.id);
-    expect(focusedAfterDesc).toBe('lightbox-edit-description');
+    // Verify description textarea is still focused (poll for the same async-restore reason).
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('lightbox-edit-description');
   });
 
   test('should focus tag editor input when pressing 0', async ({ page }) => {

@@ -57,8 +57,10 @@ test.describe('Note description inline edit on list page', () => {
     // Click away to trigger save
     await page.locator('h1').first().click();
 
-    // Wait for the save request to complete
-    await page.waitForTimeout(1000);
+    // Wait for the save request to persist the new description
+    await expect
+      .poll(async () => (await apiClient.getNote(noteId)).Description)
+      .toBe('Updated description via inline edit');
 
     // Verify via API that the description was actually saved
     const note = await apiClient.getNote(noteId);

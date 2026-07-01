@@ -53,6 +53,14 @@ test.describe('RelationType CRUD Operations', () => {
   });
 
   test.afterAll(async ({ apiClient }) => {
+    // Clean up the created relation type (in case the delete test was skipped due to earlier failures)
+    if (createdRelationTypeId) {
+      try {
+        await apiClient.deleteRelationType(createdRelationTypeId);
+      } catch {
+        // Ignore - relation type may have been deleted by the delete test
+      }
+    }
     // Clean up categories
     if (personCategoryId) {
       await apiClient.deleteCategory(personCategoryId);

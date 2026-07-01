@@ -49,8 +49,9 @@ test.describe('Inline-edit updates light DOM text after save', () => {
     await input.fill('LightDomRenamed');
     await input.press('Enter');
 
-    // Wait for the fetch to complete and the display to settle
-    await page.waitForTimeout(500);
+    // Wait for the fetch to complete and the light DOM to settle to the new name
+    await expect(inlineEdit).toContainText('LightDomRenamed');
+    await expect(inlineEdit).not.toContainText('LightDomOriginal');
 
     // The light DOM textContent of <inline-edit> should now be the NEW name.
     // BUG: it still contains the old name "LightDomOriginal" because the

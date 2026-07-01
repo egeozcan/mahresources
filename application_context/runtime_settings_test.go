@@ -311,7 +311,10 @@ func TestAudit_ResetWritesLogEntry(t *testing.T) {
 		t.Fatalf("reset: %v", err)
 	}
 	var rows []models.LogEntry
-	db.Where("entity_type = ? AND entity_name = ?", "runtime_setting", KeyMaxUploadSize).Order("created_at asc").Find(&rows)
+	// Secondary sort on the monotonic id: two sequential inserts can share a created_at
+	// under coarse clock resolution (or on Postgres), and without a tiebreaker rows[1]
+	// could be the Set entry instead of the Reset entry.
+	db.Where("entity_type = ? AND entity_name = ?", "runtime_setting", KeyMaxUploadSize).Order("created_at asc, id asc").Find(&rows)
 	if len(rows) != 2 {
 		t.Fatalf("want 2 log entries, got %d", len(rows))
 	}

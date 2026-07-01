@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures/base.fixture';
 import path from 'path';
+import { uniqueAssetFile } from '../helpers/unique-upload';
 
 test.describe('Auto-detect resource category', () => {
   let categoryId: number;
@@ -61,10 +62,12 @@ test.describe('Auto-detect resource category', () => {
     await page.goto('/resource/new');
     await page.waitForLoadState('load');
 
-    // Attach a PNG file (unique image not used by other tests)
+    // Attach a PNG file. Append unique bytes so the content-hash dedup can't resolve it to
+    // another spec's sample-image-39.png (auto-detect still sees image/png — the marker is
+    // ASCII appended after IEND). See unique-upload.ts.
     const testFilePath = path.join(__dirname, '../test-assets/sample-image-39.png');
     const fileInput = page.locator('input[type="file"]');
-    await fileInput.setInputFiles(testFilePath);
+    await fileInput.setInputFiles(uniqueAssetFile(testFilePath));
 
     // Fill in a resource name
     const resourceName = `auto-detect-browser-${testRunId}`;
@@ -76,8 +79,9 @@ test.describe('Auto-detect resource category', () => {
     await page.locator('button[type="submit"]:has-text("Save")').click();
     await page.waitForLoadState('load');
 
-    // Wait for any redirects to settle
-    await page.waitForTimeout(1000);
+    // Wait for the post-submit redirect to land instead of a fixed sleep; fall through to
+    // the existing id-resolution below if no navigation occurs.
+    await page.waitForURL(/\/resource(\?id=|s)/, { timeout: 10000 }).catch(() => {});
 
     // Extract the resource ID from the redirect URL
     const url = page.url();

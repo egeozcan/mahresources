@@ -127,12 +127,12 @@ export class NotePage extends BasePage {
 
   async verifyNoteInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).toBeVisible();
+    await expect(this.page.locator(`a:has-text("${name}")`).first()).toBeVisible();
   }
 
   async verifyNoteNotInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).not.toBeVisible();
+    await expect(this.page.locator(`a:has-text("${name}")`)).toHaveCount(0);
   }
 
   async selectNoteCheckbox(noteId: number) {

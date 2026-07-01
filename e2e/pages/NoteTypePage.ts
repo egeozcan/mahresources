@@ -77,11 +77,11 @@ export class NoteTypePage extends BasePage {
 
   async verifyNoteTypeInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).toBeVisible();
+    await expect(this.page.locator(`a:has-text("${name}")`).first()).toBeVisible();
   }
 
   async verifyNoteTypeNotInList(name: string) {
     await this.gotoList();
-    await expect(this.page.locator(`a:has-text("${name}")`)).not.toBeVisible();
+    await expect(this.page.locator(`a:has-text("${name}")`)).toHaveCount(0);
   }
 }

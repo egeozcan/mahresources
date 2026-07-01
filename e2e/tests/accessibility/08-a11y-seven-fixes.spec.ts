@@ -118,7 +118,7 @@ test.describe('Bug 2 - Group tree button accessible names', () => {
     await page.waitForLoadState('load');
 
     // Wait for tree to render (it's JS-rendered)
-    await page.waitForTimeout(500);
+    await expect(page.locator('.tree-node-box').first()).toBeVisible();
 
     const expandButtons = page.locator('.tree-node-expand');
     const btnCount = await expandButtons.count();
@@ -207,7 +207,8 @@ test.describe('Bug 4 - Group tree color contrast', () => {
 
     await page.goto(`/group/tree?root=${a11yTestData.groupId}`);
     await page.waitForLoadState('load');
-    await page.waitForTimeout(500);
+    // Wait for tree to render (category spans render in the same node pass)
+    await expect(page.locator('.tree-node-box').first()).toBeVisible();
 
     const categorySpans = page.locator('.tree-node-category');
     const count = await categorySpans.count();

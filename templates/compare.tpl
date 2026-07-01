@@ -148,7 +148,7 @@
                         {{ comparison.Version1.FileSize|humanReadableSize }}
                     {% else %}
                         {{ comparison.Version1.FileSize|humanReadableSize }} <span class="text-stone-400" aria-hidden="true">&rarr;</span> {{ comparison.Version2.FileSize|humanReadableSize }}
-                        <span class="text-xs {% if comparison.SizeDelta > 0 %}text-amber-700{% else %}text-orange-600{% endif %}">
+                        <span class="text-xs text-amber-700">
                             ({% if comparison.SizeDelta > 0 %}+{% endif %}{{ comparison.SizeDelta|humanReadableSize }})
                         </span>
                     {% endif %}
