@@ -365,7 +365,12 @@ func GetResourceAddRemoteHandler(ctx interfaces.ResourceCreator) func(writer htt
 
 		if background {
 			if queueCtx, ok := effectiveCtx.(DownloadQueueReader); ok {
-				jobs, err := queueCtx.DownloadManager().SubmitMultiple(&creator)
+				// Tag each job with the submitter (nil for the auth-off super-user)
+				// so the worker attributes the created resource to them and the queue
+				// surfaces it only to that user (and admins). Set at enqueue, before
+				// processing starts, so there is no attribution race.
+				owner := principalOwnerID(principalFor(request))
+				jobs, err := queueCtx.DownloadManager().SubmitMultiple(&creator, owner)
 				if err != nil {
 					http_utils.HandleError(err, writer, request, http.StatusServiceUnavailable)
 					return

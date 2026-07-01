@@ -88,7 +88,13 @@ func GetDownloadSubmitHandler(ctx DownloadSubmitter) func(writer http.ResponseWr
 			}
 		}
 
-		jobs, err := ctx.DownloadManager().SubmitMultiple(&creator)
+		// Tag each job with its creator (nil for the auth-off super-user) so the
+		// queue/SSE only surface it to that user (and admins), and so the worker
+		// attributes the created resource to the submitter. Owner is set at enqueue
+		// (before processing starts), so there is no owner-visibility/attribution
+		// race.
+		owner := principalOwnerID(auth.PrincipalFromContext(request.Context()))
+		jobs, err := ctx.DownloadManager().SubmitMultiple(&creator, owner)
 		if err != nil {
 			// "no valid URLs provided" is a client validation error (400),
 			// while "download queue is full" is a capacity issue (503).
@@ -98,14 +104,6 @@ func GetDownloadSubmitHandler(ctx DownloadSubmitter) func(writer http.ResponseWr
 			}
 			http_utils.HandleError(err, writer, request, status)
 			return
-		}
-
-		// Tag each job with its creator so the queue/SSE only surface it to that
-		// user (and admins).
-		if owner := principalOwnerID(auth.PrincipalFromContext(request.Context())); owner != nil {
-			for _, job := range jobs {
-				job.SetOwnerUserID(*owner)
-			}
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)

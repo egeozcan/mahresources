@@ -586,6 +586,22 @@ func (ctx *MahresourcesContext) WithRequest(r *http.Request) any {
 	return &ctxCopy
 }
 
+// WithActorUserID returns a ResourceCreator that stamps CreatedByUserId with the
+// given user id (a background download's submitter) while running UNSCOPED. The
+// download submit handlers validate scope targets at enqueue time, so the worker
+// intentionally creates on the unscoped context; this only restores the creator
+// attribution the singleton context would otherwise drop under auth-on. A
+// principal carrying just the UserID applies no scope filter (it is neither
+// scoped nor a scope-requiring role), so behaviour is unchanged apart from the
+// stamp. Returns the receiver for id 0. Consumed via the download_queue
+// actorResourceCreator capability.
+func (ctx *MahresourcesContext) WithActorUserID(userID uint) download_queue.ResourceCreator {
+	if userID == 0 {
+		return ctx
+	}
+	return ctx.WithPrincipal(&auth.Principal{UserID: userID})
+}
+
 // SetHashQueue sets the channel for queueing resources for hash processing.
 func (ctx *MahresourcesContext) SetHashQueue(queue chan<- uint) {
 	ctx.hashQueue = queue

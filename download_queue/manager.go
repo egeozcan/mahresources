@@ -39,6 +39,15 @@ type ResourceCreator interface {
 	AddResource(file interfaces.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error)
 }
 
+// actorResourceCreator is the optional capability (implemented by
+// *application_context.MahresourcesContext, not by test doubles) that binds a
+// download's submitter as the create actor, so CreatedByUserId is stamped on the
+// resource and its initial version. Reached via a type assertion in the worker,
+// so plain ResourceCreator mocks are unaffected.
+type actorResourceCreator interface {
+	WithActorUserID(userID uint) ResourceCreator
+}
+
 // TimeoutConfig holds timeout settings for remote downloads
 type TimeoutConfig struct {
 	ConnectTimeout time.Duration
@@ -248,7 +257,12 @@ func (dm *DownloadManager) evictJob(id string, job *DownloadJob) {
 }
 
 // Submit adds a new download job to the queue
-func (dm *DownloadManager) Submit(creator *query_models.ResourceFromRemoteCreator) (*DownloadJob, error) {
+// Submit enqueues a background download. ownerUserID is the submitting user (nil
+// for the auth-off super-user / unowned jobs); it is set on the job at
+// construction — before the processing goroutine starts — so the worker can
+// attribute the created resource (CreatedByUserId) to the submitter without a
+// race, and so queue-visibility RBAC is applied before processing.
+func (dm *DownloadManager) Submit(creator *query_models.ResourceFromRemoteCreator, ownerUserID *uint) (*DownloadJob, error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -270,12 +284,14 @@ func (dm *DownloadManager) Submit(creator *query_models.ResourceFromRemoteCreato
 		creator:         creator,
 		ctx:             ctx,
 		cancel:          cancel,
+		ownerUserID:     ownerUserID,
 	}
 
 	dm.jobs[job.ID] = job
 	dm.jobOrder = append(dm.jobOrder, job.ID)
 
-	// Start download in background
+	// Start download in background. The go statement happens-before the
+	// goroutine's execution, so ownerUserID (set above) is visible to the worker.
 	go dm.processJob(job)
 
 	dm.notifySubscribers(JobEvent{Type: "added", Job: job})
@@ -283,8 +299,9 @@ func (dm *DownloadManager) Submit(creator *query_models.ResourceFromRemoteCreato
 	return job, nil
 }
 
-// SubmitMultiple submits multiple URLs (newline-separated) as individual jobs
-func (dm *DownloadManager) SubmitMultiple(creator *query_models.ResourceFromRemoteCreator) ([]*DownloadJob, error) {
+// SubmitMultiple submits multiple URLs (newline-separated) as individual jobs,
+// each owned by ownerUserID (see Submit).
+func (dm *DownloadManager) SubmitMultiple(creator *query_models.ResourceFromRemoteCreator, ownerUserID *uint) ([]*DownloadJob, error) {
 	urls := strings.Split(creator.URL, "\n")
 	var jobs []*DownloadJob
 
@@ -298,7 +315,7 @@ func (dm *DownloadManager) SubmitMultiple(creator *query_models.ResourceFromRemo
 		singleCreator := *creator
 		singleCreator.URL = url
 
-		job, err := dm.Submit(&singleCreator)
+		job, err := dm.Submit(&singleCreator, ownerUserID)
 		if err != nil {
 			// If queue is full, return what we have so far
 			if len(jobs) > 0 {
@@ -452,7 +469,21 @@ func (dm *DownloadManager) downloadWithProgress(job *DownloadJob) (*models.Resou
 		originalLocation = job.URL
 	}
 
-	return dm.resourceCtx.AddResource(progressBody, name, &query_models.ResourceCreator{
+	// Attribute the created resource (and its initial version) to the submitting
+	// user. Background jobs run on the unscoped singleton context, which would
+	// otherwise stamp CreatedByUserId NULL under auth-on. The submit handlers
+	// already validate scope targets at enqueue time, so binding only the actor
+	// (not a scope filter) preserves the worker's intentional unscoped creation.
+	// Under no-auth ownerUserID is nil and the stamp callback's default actor
+	// (root) applies instead.
+	creator := dm.resourceCtx
+	if oid := job.GetOwnerUserID(); oid != nil && *oid != 0 {
+		if binder, ok := dm.resourceCtx.(actorResourceCreator); ok {
+			creator = binder.WithActorUserID(*oid)
+		}
+	}
+
+	return creator.AddResource(progressBody, name, &query_models.ResourceCreator{
 		ResourceQueryBase: query_models.ResourceQueryBase{
 			Name:               name,
 			Description:        job.creator.Description,
