@@ -1,11 +1,26 @@
 import { test, expect } from '../fixtures/base.fixture';
 
+// FTS-friendly unique token: letters only, no hyphen and no trailing number.
+// Postgres' English text-search parser reads a hyphenated number+alnum compound
+// like "1719849600000-7qej7t" as a signed-int lexeme ("-7") plus the orphaned
+// remainder ("qej7t"), while the search sanitizes the hyphen to a space and
+// queries "...7qej7t:*" — so a row could not be found by its own name ~27% of
+// the time (measured against real Postgres), which was the root of this spec's
+// Postgres "flakiness". A letters-only token tokenizes identically to its query
+// on both SQLite and Postgres.
+function ftsFriendlyToken(): string {
+  const alpha = 'abcdefghijklmnopqrstuvwxyz';
+  let s = '';
+  for (let i = 0; i < 14; i++) s += alpha[Math.floor(Math.random() * alpha.length)];
+  return s;
+}
+
 test.describe('Global Search – resourceCategory label and icon', () => {
   let resourceCategoryId: number;
   let testRunId: string;
 
   test.beforeAll(async ({ apiClient }) => {
-    testRunId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    testRunId = ftsFriendlyToken();
 
     // Create a resource category to search for. Nothing else is created: a previous helper
     // "group category" sharing this testRunId token used to also match the search and made
