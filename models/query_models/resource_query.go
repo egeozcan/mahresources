@@ -76,6 +76,9 @@ type ResourceSearchQuery struct {
 	// usually BH-018 solid-colour images that pollute similarity matches.
 	// The admin-overview drill-down links here.
 	ShowDhashZero bool
+	// Untagged restricts results to resources with zero rows in resource_tags.
+	// Powers the lightbox "Tag untagged" launcher.
+	Untagged bool
 }
 
 type ResourceThumbnailQuery struct {

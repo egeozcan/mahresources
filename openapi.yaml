@@ -1423,6 +1423,8 @@ components:
                     items:
                         type: integer
                     type: array
+                Untagged:
+                    type: boolean
                 UpdatedAfter:
                     type: string
                 UpdatedBefore:
@@ -5776,6 +5778,10 @@ paths:
                   name: ShowDhashZero
                   schema:
                     type: boolean
+                - in: query
+                  name: Untagged
+                  schema:
+                    type: boolean
                 - description: Page number for pagination
                   in: query
                   name: page
@@ -6124,6 +6130,10 @@ paths:
                     type: integer
                 - in: query
                   name: ShowDhashZero
+                  schema:
+                    type: boolean
+                - in: query
+                  name: Untagged
                   schema:
                     type: boolean
                 - description: 'Time granularity: yearly, monthly, or weekly (default: monthly)'

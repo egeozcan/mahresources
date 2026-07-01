@@ -37,6 +37,7 @@
         {% include "/partials/form/textInput.tpl" with name='MinHeight' label='Min Height' value=queryValues.MinHeight.0 %}
         {% include "/partials/form/textInput.tpl" with name='MaxHeight' label='Max Height' value=queryValues.MaxHeight.0 %}
         {% include "/partials/form/checkboxInput.tpl" with name='ShowWithSimilar' label='Show Only With Existing Similar Images' value=queryValues.ShowWithSimilar.0 id=getNextId("ShowWithSimilar") %}
+        {% include "/partials/form/checkboxInput.tpl" with name='Untagged' label='Only Untagged' value=queryValues.Untagged.0 id=getNextId("Untagged") %}
         {% include "/partials/form/searchButton.tpl" %}
     </div>
 </form>

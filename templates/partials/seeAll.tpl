@@ -1,4 +1,4 @@
-{# with entities= formAction= formID= formParamName= templateName= addAction= addFormParamName= addFormSecondParamName= addFormSecondParamValue= #}
+{# with entities= formAction= formID= formParamName= templateName= addAction= addFormParamName= addFormSecondParamName= addFormSecondParamValue= showUntaggedLink= #}
     <div class="detail-panel">
         <div class="detail-panel-header">
             <h2 class="detail-panel-title">{{ subtitle }}</h2>
@@ -8,6 +8,9 @@
                         <input type="hidden" name="{{ formParamName }}" value="{{ formID }}">
                         {% include "partials/form/searchButton.tpl" with small=true text="See All" %}
                     </form>
+                {% endif %}
+                {% if showUntaggedLink && formParamName %}
+                    <a href="/resources/details?{{ formParamName }}={{ formID }}&Untagged=1" class="inline-flex justify-center py-1 px-2 border border-stone-300 text-xs font-mono font-semibold tracking-wide rounded text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 transition-colors duration-100">Tag untagged</a>
                 {% endif %}
                 {% if addAction %}
                     <form action="{{ addAction }}">

@@ -93,6 +93,14 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			dbQuery = dbQuery.Where("EXISTS (?)", dhashZeroSubquery)
 		}
 
+		if query.Untagged {
+			untaggedSubquery := originalDb.
+				Table("resource_tags rt").
+				Where("rt.resource_id = resources.id").
+				Select("1")
+			dbQuery = dbQuery.Where("NOT EXISTS (?)", untaggedSubquery)
+		}
+
 		if query.Name != "" {
 			p, esc := LikePattern(query.Name)
 			dbQuery = dbQuery.Where("resources.name "+likeOperator+" ?"+esc, p)
