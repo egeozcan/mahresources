@@ -220,6 +220,8 @@ func (f *CRUDHandlerFactory[T, Q, C]) CreateHandler() http.HandlerFunc {
 // so that partial JSON updates don't clear fields, while still allowing explicit clearing.
 func CreateTagHandler(writer interfaces.TagsWriter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Request-scope so CreatedByUserId is stamped with the acting user.
+		writer := withRequestContext(writer, r).(interfaces.TagsWriter)
 		var creator query_models.TagCreator
 		var sentFields map[string]bool
 
@@ -309,6 +311,8 @@ func CreateTagHandler(writer interfaces.TagsWriter) http.HandlerFunc {
 // were not included in the request body, while still allowing explicit clearing.
 func CreateCategoryHandler(ctx interfaces.CategoryCRUDReader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Request-scope so CreatedByUserId is stamped with the acting user.
+		ctx := withRequestContext(ctx, r).(interfaces.CategoryCRUDReader)
 		var editor query_models.CategoryEditor
 		var sentFields map[string]bool
 
@@ -419,6 +423,8 @@ func CreateCategoryHandler(ctx interfaces.CategoryCRUDReader) http.HandlerFunc {
 // partial updates (both JSON and form-encoded) don't clear unsent fields.
 func CreateResourceCategoryHandler(writer interfaces.ResourceCategoryWriter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Request-scope so CreatedByUserId is stamped with the acting user.
+		writer := withRequestContext(writer, r).(interfaces.ResourceCategoryWriter)
 		var editor query_models.ResourceCategoryEditor
 		var sentFields map[string]bool
 

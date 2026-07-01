@@ -73,6 +73,9 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
                 guid:
                     nullable: true
                     type: string
@@ -328,6 +331,9 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
                 guid:
                     nullable: true
                     type: string
@@ -465,6 +471,9 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
             type: object
         GroupRelationPartial:
             properties:
@@ -505,6 +514,9 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
                 guid:
                     nullable: true
                     type: string
@@ -686,6 +698,9 @@ components:
                     items:
                         $ref: '#/components/schemas/NoteBlockPartial'
                     type: array
+                createdByUserId:
+                    nullable: true
+                    type: integer
                 guid:
                     nullable: true
                     type: string
@@ -711,6 +726,9 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
                 id:
                     readOnly: true
                     type: integer
@@ -887,6 +905,9 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
                 guid:
                     nullable: true
                     type: string
@@ -956,6 +977,9 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
             type: object
         QueryEditor:
             properties:
@@ -1093,6 +1117,9 @@ components:
                     type: string
                 Width:
                     type: integer
+                createdByUserId:
+                    nullable: true
+                    type: integer
                 currentVersion:
                     $ref: '#/components/schemas/ResourceVersion'
                 currentVersionId:
@@ -1160,6 +1187,9 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
                 guid:
                     nullable: true
                     type: string
@@ -1440,6 +1470,9 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
                 fileSize:
                     type: integer
                 hash:
@@ -1481,6 +1514,9 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
                 description:
                     type: string
                 id:
@@ -1534,6 +1570,9 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
             type: object
         SeriesCreator:
             properties:
@@ -1656,6 +1695,9 @@ components:
                     format: date-time
                     readOnly: true
                     type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
                 guid:
                     nullable: true
                     type: string

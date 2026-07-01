@@ -194,7 +194,7 @@ func newUserUpdateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update <id>",
 		Short: "Update a user account",
-		Long:  "Update an existing user account. Only the flags you pass are changed; the rest are preserved by reading the current account first. Use --disabled to lock an account (revoking its sessions and tokens) and --enable to unlock it.",
+		Long:  "Update an existing user account. Only the flags you pass are changed; the rest are preserved by reading the current account first. Use --disabled to lock an account (revoking its sessions and tokens) and --enable to unlock it. Demoting or disabling the last enabled administrator is refused with HTTP 409 Conflict, so an instance can never be left without an admin.",
 		Example: strings.Join([]string{
 			"  # Promote user 4 to editor",
 			"  mr user update 4 --role editor",
@@ -277,7 +277,7 @@ func newUserDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	return &cobra.Command{
 		Use:   "delete <id>",
 		Short: "Delete a user account",
-		Long:  "Permanently delete a user account by its numeric id, removing its sessions and API tokens. This cannot be undone.",
+		Long:  "Permanently delete a user account by its numeric id, removing its sessions and API tokens, and nulling the creator on any content they stamped (the content is kept). This cannot be undone. Deleting the last enabled administrator is refused with HTTP 409 Conflict.",
 		Example: strings.Join([]string{
 			"  # Delete user 4",
 			"  mr user delete 4",

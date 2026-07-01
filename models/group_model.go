@@ -9,10 +9,11 @@ import (
 )
 
 type Group struct {
-	ID        uint      `gorm:"primarykey"`
-	CreatedAt time.Time `gorm:"index"`
-	UpdatedAt time.Time `gorm:"index"`
-	GUID      *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
+	ID              uint      `gorm:"primarykey"`
+	CreatedAt       time.Time `gorm:"index"`
+	UpdatedAt       time.Time `gorm:"index"`
+	CreatedByUserId *uint     `gorm:"index" json:"createdByUserId,omitempty"`
+	GUID            *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
 
 	Name        string `gorm:"index"`
 	Description string

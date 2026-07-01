@@ -111,19 +111,24 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		// Batch SQL transfers — group_relations (both directions)
 		// group_relations is a full entity with relation_type_id, name, description — transfer all columns.
 		// Far endpoint: out-direction → to_group_id, in-direction → from_group_id.
+		// Rows created by the merge are attributed to the operator running it
+		// (created_by_user_id). The actor bind sits in the SELECT projection, so it
+		// is the 2nd placeholder — before the WHERE binds. Nullable *uint → SQL NULL
+		// when there is no actor; root under no-auth.
+		mergeActor := altCtx.actingUserIDPtr()
 		outFilter, inFilter := "", ""
-		outArgs := []any{winnerId, loserIds, winnerId}
-		inArgs := []any{winnerId, loserIds, winnerId}
+		outArgs := []any{winnerId, mergeActor, loserIds, winnerId}
+		inArgs := []any{winnerId, mergeActor, loserIds, winnerId}
 		if scopedMerge {
 			outFilter = " AND to_group_id IN ?"
 			outArgs = append(outArgs, subtreeIDs)
 			inFilter = " AND from_group_id IN ?"
 			inArgs = append(inArgs, subtreeIDs)
 		}
-		if err := altCtx.db.Exec("INSERT INTO group_relations (from_group_id, to_group_id, relation_type_id, name, description, created_at, updated_at) SELECT ?, to_group_id, relation_type_id, name, description, created_at, updated_at FROM group_relations WHERE from_group_id IN ? AND to_group_id != ?"+outFilter+" ON CONFLICT DO NOTHING", outArgs...).Error; err != nil {
+		if err := altCtx.db.Exec("INSERT INTO group_relations (from_group_id, created_by_user_id, to_group_id, relation_type_id, name, description, created_at, updated_at) SELECT ?, ?, to_group_id, relation_type_id, name, description, created_at, updated_at FROM group_relations WHERE from_group_id IN ? AND to_group_id != ?"+outFilter+" ON CONFLICT DO NOTHING", outArgs...).Error; err != nil {
 			return err
 		}
-		if err := altCtx.db.Exec("INSERT INTO group_relations (from_group_id, to_group_id, relation_type_id, name, description, created_at, updated_at) SELECT from_group_id, ?, relation_type_id, name, description, created_at, updated_at FROM group_relations WHERE to_group_id IN ? AND from_group_id != ?"+inFilter+" ON CONFLICT DO NOTHING", inArgs...).Error; err != nil {
+		if err := altCtx.db.Exec("INSERT INTO group_relations (from_group_id, to_group_id, created_by_user_id, relation_type_id, name, description, created_at, updated_at) SELECT from_group_id, ?, ?, relation_type_id, name, description, created_at, updated_at FROM group_relations WHERE to_group_id IN ? AND from_group_id != ?"+inFilter+" ON CONFLICT DO NOTHING", inArgs...).Error; err != nil {
 			return err
 		}
 

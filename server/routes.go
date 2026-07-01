@@ -517,7 +517,15 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	seriesReader, seriesWriter := appContext.SeriesCRUD()
 	seriesFactory := api_handlers.NewCRUDHandlerFactory("series", "series", seriesReader, seriesWriter)
 	router.Methods(http.MethodGet).Path("/v1/seriesList").HandlerFunc(seriesFactory.ListHandler())
-	router.Methods(http.MethodPost).Path("/v1/series/create").HandlerFunc(seriesFactory.CreateHandler())
+	// Series is the only entity whose CREATE routes through the generic
+	// CRUDHandlerFactory (whose writer captured ctx.db at startup, so a create
+	// would stamp CreatedByUserId NULL). Build a request-scoped writer per request
+	// so the create runs on a db carrying the acting-user context. List/Get/Delete
+	// keep using the startup factory.
+	router.Methods(http.MethodPost).Path("/v1/series/create").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		scopedReader, scopedWriter := scopedCtx(appContext, r).SeriesCRUD()
+		api_handlers.NewCRUDHandlerFactory("series", "series", scopedReader, scopedWriter).CreateHandler()(w, r)
+	})
 	// Scoped: the series detail preloads its Resources, which must be confined to
 	// the caller's subtree (a group-limited principal must not read another
 	// tenant's resources through a shared series).

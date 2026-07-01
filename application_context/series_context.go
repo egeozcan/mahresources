@@ -178,13 +178,17 @@ func (ctx *MahresourcesContext) RemoveResourceFromSeries(resourceID uint) error 
 // during resource creation. Returns the series and whether this resource is
 // the series creator (should donate all meta to series).
 func (ctx *MahresourcesContext) GetOrCreateSeriesForResource(tx *gorm.DB, slug string) (*models.Series, bool, error) {
-	// Step 1: Insert or ignore (concurrent-safe)
+	// Step 1: Insert or ignore (concurrent-safe). Stamp created_by_user_id with the
+	// acting user (nullable-*uint bind → SQL NULL when there is no actor; root
+	// under no-auth). ON CONFLICT DO NOTHING / OR IGNORE means a losing concurrent
+	// insert does not overwrite the winner's creator.
+	actor := ctx.actingUserIDPtr()
 	var insertResult *gorm.DB
 	switch ctx.Config.DbType {
 	case constants.DbTypePosgres:
-		insertResult = tx.Exec("INSERT INTO series (name, slug, meta, created_at, updated_at) VALUES (?, ?, '{}', NOW(), NOW()) ON CONFLICT (slug) DO NOTHING", slug, slug)
+		insertResult = tx.Exec("INSERT INTO series (name, slug, meta, created_by_user_id, created_at, updated_at) VALUES (?, ?, '{}', ?, NOW(), NOW()) ON CONFLICT (slug) DO NOTHING", slug, slug, actor)
 	default: // SQLite
-		insertResult = tx.Exec("INSERT OR IGNORE INTO series (name, slug, meta, created_at, updated_at) VALUES (?, ?, '{}', datetime('now'), datetime('now'))", slug, slug)
+		insertResult = tx.Exec("INSERT OR IGNORE INTO series (name, slug, meta, created_by_user_id, created_at, updated_at) VALUES (?, ?, '{}', ?, datetime('now'), datetime('now'))", slug, slug, actor)
 	}
 	if insertResult.Error != nil {
 		return nil, false, fmt.Errorf("failed to insert series: %w", insertResult.Error)

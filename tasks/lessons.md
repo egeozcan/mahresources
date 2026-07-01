@@ -2,6 +2,35 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## `gofmt -w <dir>/*.go` reformats unrelated files — scope the format to files you actually edited
+Phase 1 of the root-admin change added a field to 14 model structs, then ran `gofmt -w models/*.go` to
+realign. That silently reformatted 3 files I never touched (`image_hash_model.go`, `log_entry_model.go`,
+`plugin_kv_model.go`) because the repo has many pre-existing non-gofmt-clean files. They showed up as
+modified in `git diff`, inflating the change's blast radius against the "minimal impact" rule. Fix: only
+`gofmt -w` the specific files you edited (or `git checkout` the incidental ones afterward). Run
+`git diff --name-only` before declaring done and revert any file whose only change is incidental
+whitespace.
+
+## Adding a method to a handler-package interface can force test mocks to return a concrete type — prefer an optional-capability type assertion
+To attribute imports to the request principal I first added `WithPrincipal(p) *MahresourcesContext` to
+the `GroupImporter` interface. That compiled the production path but broke `server/api_tests` /
+`api_handlers` test builds: the `mockImportContext` double now had to return a real
+`*application_context.MahresourcesContext` (Go interface methods are invariant — you can't return the
+interface type from a method whose concrete impl returns the concrete pointer). Fix: leave the interface
+alone and do the binding at the call site via an *optional* capability assertion
+(`if b, ok := ctx.(principalBinder); ok { ctx = b.WithPrincipal(p) }`). Production (`*MahresourcesContext`)
+implements it; mocks don't and fall through unchanged. When threading a new capability through an
+interface that has test doubles, reach for an optional type assertion before widening the interface.
+
+## A new GORM model column serialized with `json:"...,omitempty"` appears in create-response JSON — check strict-equality assertions and API tests
+Adding `CreatedByUserId *uint \`json:"createdByUserId,omitempty"\`` to 14 models made the field show up
+in every create handler's response body (the handlers `Encode` the model). That's a feature (the API
+stamping tests parse `createdByUserId` straight from the response), but any test doing a strict deep-equal
+on an entity's JSON, or a golden-file comparison, would break on the new key. It also means the
+no-auth server now returns a non-null `createdByUserId` (the root id) on every create. Before adding a
+serialized model field, grep tests for strict JSON equality on that entity and regenerate any OpenAPI
+golden.
+
 ## Background verification jobs: `cmd | tail -N` masks `cmd`'s real exit code — and the harness's "completed (exit code 0)" reflects the *pipeline's* last command, not `cmd`
 Twice in one session: piped a `go test ...` (or `npm run ...`) into `tail -N` for a background
 job, got a task-notification saying "completed (exit code 0)", and took that as a pass. In both

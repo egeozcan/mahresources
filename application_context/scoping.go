@@ -48,6 +48,21 @@ func scopeFromContext(ctx context.Context) *scopeFilter {
 	return sf
 }
 
+// actingUserCtxKey carries the acting user's id on a request-scoped db context,
+// so the create-stamp callback can attribute rows to the request principal.
+type actingUserCtxKey struct{}
+
+// actingUserFromContext returns the acting user id set on a db context, or
+// (0, false) when none is present (singleton/background creates, which fall back
+// to the no-auth default actor).
+func actingUserFromContext(ctx context.Context) (uint, bool) {
+	if ctx == nil {
+		return 0, false
+	}
+	id, ok := ctx.Value(actingUserCtxKey{}).(uint)
+	return id, ok
+}
+
 // scopeColumn maps a table name to the column used for subtree containment.
 // Groups are matched on their own id; owner-bearing entities on owner_id. Tables
 // not listed here are global (tags, categories, ...) and are never scoped.
@@ -101,30 +116,50 @@ func (ctx *MahresourcesContext) WithPrincipal(p *auth.Principal) *MahresourcesCo
 	return &cp
 }
 
-// applyPrincipalScope mutates dst.db so that, when p is a group-limited
-// principal, all ORM operations are confined to p's subtree. base is the
-// unscoped source context used to resolve the subtree.
+// applyPrincipalScope mutates dst.db so that ORM operations carry the request
+// actor (for CreatedByUserId stamping) and, when p is a group-limited principal,
+// are also confined to p's subtree. base is the unscoped source context used to
+// resolve the subtree.
+//
+// The actor context is attached for ALL principals (not just scoped ones): under
+// auth-on the common actors (admin/editor/unscoped user) would otherwise execute
+// on the singleton db and stamp NULL. The scope filter is added only for
+// group-limited principals (preserving fail-closed empty-allowlist semantics).
+// The context parent is context.Background() — NOT the request context — so
+// admin/all writes are not tied to request cancellation (mirrors the historical
+// detached-write behaviour).
 func applyPrincipalScope(dst *MahresourcesContext, base *MahresourcesContext, p *auth.Principal) {
-	if p == nil || p.IsAdmin() {
-		return // unrestricted: system, admin, or super-user
-	}
-	if !p.IsScoped() && !p.RequiresScope() {
-		return // e.g. an editor, or a user with no scope group: no data filter
+	// resolveActingUserID: just p.UserID (0 when p == nil). No root lookup here —
+	// under no-auth the principal already carries the root id (Phase 7), so this
+	// stays an allocation-free, DB-free read on the hot create path.
+	var actorID uint
+	if p != nil {
+		actorID = p.UserID
 	}
 
-	var allowed []uint
-	if p.IsScoped() {
-		if ids, err := base.collectSubtreeGroupIDs(*p.ScopeGroupID); err == nil {
-			allowed = ids
+	// Determine whether a group-subtree filter is required.
+	mustScope := p != nil && !p.IsAdmin() && (p.IsScoped() || p.RequiresScope())
+
+	if actorID == 0 && !mustScope {
+		return // no actor to stamp and no scope to enforce: leave dst.db = base.db
+	}
+
+	ctx := context.Background()
+	if actorID != 0 {
+		ctx = context.WithValue(ctx, actingUserCtxKey{}, actorID)
+	}
+	if mustScope {
+		var allowed []uint
+		if p.IsScoped() {
+			if ids, err := base.collectSubtreeGroupIDs(*p.ScopeGroupID); err == nil {
+				allowed = ids
+			}
+			// On error, allowed stays empty → deny-all (fail closed). A role that
+			// must be scoped but has no resolved subtree also lands here empty.
 		}
-		// On error, allowed stays empty → deny-all (fail closed).
+		ctx = context.WithValue(ctx, scopeCtxKey{}, &scopeFilter{allowed: allowed})
 	}
-	// A role that must be scoped but has no resolved subtree (misconfiguration)
-	// also lands here with an empty allow-list → deny-all.
-
-	sf := &scopeFilter{allowed: allowed}
-	scopedCtx := context.WithValue(context.Background(), scopeCtxKey{}, sf)
-	dst.db = base.db.WithContext(scopedCtx)
+	dst.db = base.db.WithContext(ctx)
 }
 
 // subtreeScopeIDs resolves the set of group IDs a scoped principal may touch.
@@ -210,9 +245,12 @@ func (ctx *MahresourcesContext) FilePathInScope(relPath string) bool {
 }
 
 // registerScopeCallbacks installs the GORM callbacks that enforce subtree
-// scoping. Called once per *gorm.DB at context construction. Queries on a db
-// whose context carries no scopeFilter are unaffected.
-func registerScopeCallbacks(db *gorm.DB) {
+// scoping and stamp CreatedByUserId. Called once (on ctx.db) after the
+// MahresourcesContext — including its rootAdmin cache — is fully initialized, so
+// the stamp callback's closure over ctx can safely call defaultActorID().
+// Queries on a db whose context carries no scopeFilter/actor are unaffected.
+func registerScopeCallbacks(ctx *MahresourcesContext) {
+	db := ctx.db
 	q := db.Callback().Query()
 	_ = q.Before("gorm:query").Register("mahresources:scope_query", scopeReadCallback)
 
@@ -224,6 +262,49 @@ func registerScopeCallbacks(db *gorm.DB) {
 
 	c := db.Callback().Create()
 	_ = c.Before("gorm:create").Register("mahresources:scope_create", scopeCreateCallback)
+	_ = c.Before("gorm:create").Register("mahresources:stamp_created_by", ctx.stampCreatedByCallback)
+}
+
+// stampCreatedByCallback sets CreatedByUserId on every row of a create with the
+// acting user. The actor is (1) the id carried on the statement context
+// (request-scoped creates), else (2) the no-auth default actor (root when auth
+// is disabled, 0 otherwise). It is a no-op when the resolved actor is 0, the
+// statement has no schema, or the model has no CreatedByUserId field. The stamp
+// is unconditional (overwrite): the actor is authoritative and non-spoofable, so
+// even a future DTO leak could not spoof the creator.
+func (ctx *MahresourcesContext) stampCreatedByCallback(db *gorm.DB) {
+	// Never stamp a row the scope-create callback already rejected.
+	if db.Error != nil || db.Statement == nil || db.Statement.Schema == nil {
+		return
+	}
+	actorID, ok := actingUserFromContext(db.Statement.Context)
+	if !ok || actorID == 0 {
+		actorID = ctx.defaultActorID()
+	}
+	if actorID == 0 {
+		return
+	}
+	field := db.Statement.Schema.LookUpField("CreatedByUserId")
+	if field == nil {
+		return
+	}
+	// Iterate the reflect value (struct + slice/array) and set every row — a
+	// single field.Set on Statement.ReflectValue would stamp only row 0 for a
+	// batch. field.Set allocates the *uint and coerces the uint (mirrors GORM's
+	// own field-setting in callbacks/create.go).
+	rv := reflect.Indirect(db.Statement.ReflectValue)
+	switch rv.Kind() {
+	case reflect.Struct:
+		_ = field.Set(db.Statement.Context, rv, actorID)
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < rv.Len(); i++ {
+			erv := reflect.Indirect(rv.Index(i))
+			if !erv.IsValid() {
+				continue
+			}
+			_ = field.Set(db.Statement.Context, erv, actorID)
+		}
+	}
 }
 
 // scopeReadCallback adds an owner-subtree WHERE clause to query/update/delete

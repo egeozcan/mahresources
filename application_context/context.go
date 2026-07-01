@@ -323,6 +323,12 @@ type MahresourcesContext struct {
 	mrqlGenerator MRQLGenerator
 	// mrqlGenerationLimiter rate-limits provider calls per caller key.
 	mrqlGenerationLimiter *MRQLGenerationRateLimiter
+	// rootAdmin caches a snapshot of the oldest enabled admin (the "root" user).
+	// It is a pointer so the shallow copies made by WithRequest/WithPrincipal/
+	// WithTransaction all share the same live cache. Read on the hot create path
+	// via defaultActorID() (a pure atomic load); refreshed synchronously after
+	// every user mutation. See root_admin.go.
+	rootAdmin *rootAdminCache
 }
 
 // RunStartupExportSweep cleans up orphaned export/import tars left over from a
@@ -348,10 +354,6 @@ func (ctx *MahresourcesContext) RunStartupExportSweep() {
 }
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
-	// Install RBAC group-subtree scoping callbacks. They are no-ops unless a
-	// query runs on a db whose context carries a scope filter (see scoping.go).
-	registerScopeCallbacks(db)
-
 	altFileSystems := make(map[string]afero.Fs, len(config.AltFileSystems))
 
 	for key, path := range config.AltFileSystems {
@@ -399,7 +401,15 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		searchCache:               searchCache,
 		icsCache:                  icsCache,
 		DefaultResourceCategoryID: 1,
+		rootAdmin:                 newRootAdminCache(),
 	}
+
+	// Install RBAC group-subtree scoping + CreatedByUserId stamping callbacks.
+	// Registered here (after the ctx struct — including its rootAdmin cache — is
+	// built) so the stamp callback's closure over ctx can call defaultActorID().
+	// The scope callbacks are no-ops unless a query runs on a db whose context
+	// carries a scope filter/actor (see scoping.go).
+	registerScopeCallbacks(ctx)
 
 	// Initialize download manager. A static settings provider seeded from the
 	// boot config is used here; main.go swaps it for the live RuntimeSettings

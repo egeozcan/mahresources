@@ -9,29 +9,30 @@ import (
 )
 
 type Note struct {
-	ID          uint      `gorm:"primarykey"`
-	CreatedAt   time.Time `gorm:"index"`
-	UpdatedAt   time.Time `gorm:"index"`
-	GUID        *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
-	Name        string    `gorm:"index"`
-	Description string
-	Meta        types.JSON
-	Tags        []*Tag      `gorm:"many2many:note_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
-	Resources   []*Resource `gorm:"many2many:resource_notes;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
-	Groups      []*Group    `gorm:"many2many:groups_related_notes;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
-	Owner       *Group      `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
-	OwnerId     *uint
-	StartDate   *time.Time
-	EndDate     *time.Time
-	NoteType    *NoteType `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
-	NoteTypeId  *uint
-	ShareToken  *string      `gorm:"uniqueIndex;size:32" json:"shareToken,omitempty"`
+	ID              uint      `gorm:"primarykey"`
+	CreatedAt       time.Time `gorm:"index"`
+	UpdatedAt       time.Time `gorm:"index"`
+	CreatedByUserId *uint     `gorm:"index" json:"createdByUserId,omitempty"`
+	GUID            *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
+	Name            string    `gorm:"index"`
+	Description     string
+	Meta            types.JSON
+	Tags            []*Tag      `gorm:"many2many:note_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Resources       []*Resource `gorm:"many2many:resource_notes;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Groups          []*Group    `gorm:"many2many:groups_related_notes;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	Owner           *Group      `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+	OwnerId         *uint
+	StartDate       *time.Time
+	EndDate         *time.Time
+	NoteType        *NoteType `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+	NoteTypeId      *uint
+	ShareToken      *string `gorm:"uniqueIndex;size:32" json:"shareToken,omitempty"`
 	// ShareCreatedAt records when the current ShareToken was minted. Nullable:
 	// existing rows (minted before BH-035) remain NULL; the /admin/shares UI
 	// renders "(unknown)" for them rather than back-filling with an inaccurate
 	// NOW() during migration. Set in ShareNote, cleared in UnshareNote.
 	ShareCreatedAt *time.Time   `gorm:"index" json:"shareCreatedAt,omitempty"`
-	Blocks      []*NoteBlock `gorm:"foreignKey:NoteID" json:"blocks,omitempty"`
+	Blocks         []*NoteBlock `gorm:"foreignKey:NoteID" json:"blocks,omitempty"`
 
 	// RenderedHTML is a transient field populated by the API when render=1 is set.
 	RenderedHTML string `gorm:"-" json:"renderedHTML,omitempty"`

@@ -62,6 +62,9 @@ func SetupPostgresTestEnv(t *testing.T) *TestContext {
 		&models.GroupRelation{},
 		&models.ImageHash{},
 		&models.ResourceSimilarity{},
+		&models.User{},
+		&models.Session{},
+		&models.ApiToken{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)

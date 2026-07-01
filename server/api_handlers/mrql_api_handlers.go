@@ -494,13 +494,15 @@ func GetSavedMRQLQueriesHandler(ctx *application_context.MahresourcesContext) fu
 // GetCreateSavedMRQLQueryHandler handles POST /v1/mrql/saved — create a saved MRQL query.
 func GetCreateSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		// Request-scope so CreatedByUserId is stamped with the acting user.
+		effectiveCtx := withRequestContext(ctx, request).(*application_context.MahresourcesContext)
 		var req mrqlSavedQueryRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 
-		saved, err := ctx.CreateSavedMRQLQuery(req.Name, req.Query, req.Description)
+		saved, err := effectiveCtx.CreateSavedMRQLQuery(req.Name, req.Query, req.Description)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return

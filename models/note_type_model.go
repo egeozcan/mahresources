@@ -8,13 +8,14 @@ import (
 )
 
 type NoteType struct {
-	ID          uint      `gorm:"primarykey"`
-	CreatedAt   time.Time `gorm:"index"`
-	UpdatedAt   time.Time `gorm:"index"`
-	GUID        *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
-	Name        string    `gorm:"index"`
-	Description string
-	Notes       []*Note `gorm:"foreignKey:NoteTypeId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+	ID              uint      `gorm:"primarykey"`
+	CreatedAt       time.Time `gorm:"index"`
+	UpdatedAt       time.Time `gorm:"index"`
+	CreatedByUserId *uint     `gorm:"index" json:"createdByUserId,omitempty"`
+	GUID            *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
+	Name            string    `gorm:"index"`
+	Description     string
+	Notes           []*Note `gorm:"foreignKey:NoteTypeId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 	// CustomHeader is rendered at the top of the note detail page body, above the description.
 	// Shortcodes are processed server-side; an Alpine entity variable is available.
 	CustomHeader string `gorm:"type:text"`

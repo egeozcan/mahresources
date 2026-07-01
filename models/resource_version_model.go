@@ -7,6 +7,7 @@ import (
 type ResourceVersion struct {
 	ID              uint      `gorm:"primarykey" json:"id"`
 	CreatedAt       time.Time `gorm:"index" json:"createdAt"`
+	CreatedByUserId *uint     `gorm:"index" json:"createdByUserId,omitempty"`
 	ResourceID      uint      `gorm:"index;not null" json:"resourceId"`
 	VersionNumber   int       `gorm:"not null" json:"versionNumber"`
 	Hash            string    `gorm:"index;not null" json:"hash"`

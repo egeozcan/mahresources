@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -20,7 +21,20 @@ import (
 func withAuthentication(appCtx *application_context.MahresourcesContext, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !appCtx.AuthEnabled() {
-			r = r.WithContext(auth.WithPrincipal(r.Context(), auth.SystemPrincipal()))
+			// Build the no-auth principal from the root admin so /v1/auth/me and
+			// plugin DescribeContext report the real root identity (they read
+			// p.Username/p.Role, not just p.UserID). SuperUser stays true, so all
+			// no-auth authorization is preserved. Auto-create guarantees a root
+			// admin at startup, so this normally always resolves; on error, log
+			// loudly and fall back to the system principal (creates then stamp NULL,
+			// but the failure is observable rather than silent).
+			principal, err := appCtx.RootAdminPrincipal()
+			if err != nil {
+				log.Printf("WARNING: no-auth request could not resolve root admin principal: %v; "+
+					"falling back to anonymous system principal", err)
+				principal = auth.SystemPrincipal()
+			}
+			r = r.WithContext(auth.WithPrincipal(r.Context(), principal))
 			next.ServeHTTP(w, r)
 			return
 		}

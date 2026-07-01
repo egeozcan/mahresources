@@ -33,6 +33,16 @@ type GroupImporter interface {
 	GetDefaultFs() afero.Fs
 }
 
+// principalBinder is the optional capability (implemented by
+// *application_context.MahresourcesContext, not by test mocks) to bind a request
+// principal so imported rows are stamped with the operator running the import
+// (auth-on) / root (no-auth). The apply job runs on a background goroutine with a
+// context.Background() job ctx, so the principal is captured at submit and the
+// importer is re-bound here.
+type principalBinder interface {
+	WithPrincipal(p *auth.Principal) *application_context.MahresourcesContext
+}
+
 // importJobDenied reports whether the import job identified by jobID exists but
 // is not visible to the caller (a different user's job). Parse/apply jobs are
 // owner-tagged at submit; the lifecycle handlers (plan/apply/result/delete)
@@ -298,8 +308,15 @@ func GetImportApplyHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Re
 			return
 		}
 
-		// 6. Enqueue the apply job.
-		runFn := buildImportApplyRunFn(ctx, parseJobID, consumedPath, &decisions)
+		// 6. Enqueue the apply job. Bind the request principal now (the job runs on
+		// a background goroutine, so r.Context() is gone by then) so imported rows
+		// are attributed to the importer. Test mocks don't implement principalBinder
+		// and fall through unchanged.
+		importCtx := ctx
+		if binder, ok := ctx.(principalBinder); ok {
+			importCtx = binder.WithPrincipal(auth.PrincipalFromContext(r.Context()))
+		}
+		runFn := buildImportApplyRunFn(importCtx, parseJobID, consumedPath, &decisions)
 		job, err := ctx.DownloadManager().SubmitJob(download_queue.JobSourceGroupImportApply, "queued", runFn)
 		if err != nil {
 			// Restore the plan file on enqueue failure.
@@ -348,6 +365,9 @@ func shouldRestorePlan(result *application_context.ImportApplyResult) bool {
 
 func buildImportApplyRunFn(ctx GroupImporter, parseJobID, consumedPlanPath string, decisions *application_context.ImportDecisions) download_queue.JobRunFn {
 	return func(jobCtx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
+		// ctx is already principal-bound (see GetImportApplyHandler), so every
+		// s.ctx.db.Create in ApplyImport inherits the acting-user context and
+		// stamps CreatedByUserId. One binding covers every entity the import creates.
 		result, err := ctx.ApplyImport(jobCtx, parseJobID, decisions, sink)
 
 		// Persist the result even on failure (partial-failure results list

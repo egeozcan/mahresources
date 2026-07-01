@@ -26,8 +26,23 @@ func newAuthTestContext(t *testing.T) *MahresourcesContext {
 		t.Fatalf("open db: %v", err)
 	}
 	if err := db.AutoMigrate(
+		// Stamped content models (so DeleteUser's creator-cleanup finds every
+		// table, matching production where all tables exist).
+		&models.Query{},
+		&models.Series{},
+		&models.Tag{},
 		&models.Category{},
+		&models.ResourceCategory{},
+		&models.NoteType{},
+		&models.SavedMRQLQuery{},
 		&models.Group{},
+		&models.GroupRelationType{},
+		&models.Resource{},
+		&models.Note{},
+		&models.ResourceVersion{},
+		&models.NoteBlock{},
+		&models.GroupRelation{},
+		// Auth models.
 		&models.User{},
 		&models.Session{},
 		&models.ApiToken{},

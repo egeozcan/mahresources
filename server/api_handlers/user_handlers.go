@@ -40,7 +40,8 @@ func userErrorStatus(err error) int {
 	case errors.Is(err, application_context.ErrUserNotFound), errors.Is(err, application_context.ErrApiTokenNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, application_context.ErrUsernameTaken),
-		errors.Is(err, application_context.ErrApiTokenLimitReached):
+		errors.Is(err, application_context.ErrApiTokenLimitReached),
+		errors.Is(err, application_context.ErrLastAdmin):
 		return http.StatusConflict
 	case errors.Is(err, application_context.ErrInvalidCredentials):
 		return http.StatusUnauthorized
