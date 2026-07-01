@@ -9,6 +9,9 @@
 /files/
 /node_modules/
 /*.db
+/*.db-shm
+/*.db-wal
+/*.db-journal
 /*.wdb
 /.idea
 /public/*.json
