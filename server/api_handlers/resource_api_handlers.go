@@ -364,7 +364,33 @@ func GetResourceAddRemoteHandler(ctx interfaces.ResourceCreator) func(writer htt
 		background := bgVal == "true" || bgVal == "1" || bgVal == "True" || bgVal == "TRUE"
 
 		if background {
-			if queueCtx, ok := effectiveCtx.(DownloadQueueReader); ok {
+			if queueCtx, ok := effectiveCtx.(DownloadSubmitter); ok {
+				// The background download worker creates resources on the unscoped
+				// system context (the attribution path binds only the actor id, not a
+				// scope filter), so a group-limited principal could otherwise plant
+				// data outside its subtree by naming an out-of-scope owner/group (or a
+				// new top-level group via GroupName). Validate the target here, before
+				// enqueuing, fail-closed — mirroring /v1/download/submit. GroupVisible
+				// is always true for unscoped/admin/auth-off callers, so this is a
+				// no-op for them. (The synchronous path below runs on the scoped ctx,
+				// where the scope create callback already rejects out-of-subtree owners.)
+				if actionScopeRestricted(principalFor(request)) {
+					if creator.GroupName != "" {
+						http_utils.HandleError(fmt.Errorf("group-limited accounts cannot create a group via download; target an existing group in your scope"), writer, request, http.StatusForbidden)
+						return
+					}
+					if creator.OwnerId == 0 || !queueCtx.GroupVisible(creator.OwnerId) {
+						http_utils.HandleError(fmt.Errorf("download target group is outside your permitted scope"), writer, request, http.StatusForbidden)
+						return
+					}
+					for _, g := range creator.Groups {
+						if !queueCtx.GroupVisible(g) {
+							http_utils.HandleError(fmt.Errorf("download target group is outside your permitted scope"), writer, request, http.StatusForbidden)
+							return
+						}
+					}
+				}
+
 				// Tag each job with the submitter (nil for the auth-off super-user)
 				// so the worker attributes the created resource to them and the queue
 				// surfaces it only to that user (and admins). Set at enqueue, before
