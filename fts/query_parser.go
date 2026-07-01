@@ -26,8 +26,9 @@ func ParseSearchQuery(input string) ParsedQuery {
 	if len(input) >= 2 && strings.HasPrefix(input, "\"") && strings.HasSuffix(input, "\"") {
 		term := input[1 : len(input)-1]
 		return ParsedQuery{
-			Term: sanitizeSearchTerm(term),
-			Mode: ModeExact,
+			Term:    sanitizeSearchTerm(term),
+			RawTerm: sanitizeSearchTermKeepHyphen(term),
+			Mode:    ModeExact,
 		}
 	}
 
@@ -35,8 +36,9 @@ func ParseSearchQuery(input string) ParsedQuery {
 	if strings.HasPrefix(input, "=") {
 		term := strings.TrimPrefix(input, "=")
 		return ParsedQuery{
-			Term: sanitizeSearchTerm(term),
-			Mode: ModeExact,
+			Term:    sanitizeSearchTerm(term),
+			RawTerm: sanitizeSearchTermKeepHyphen(term),
+			Mode:    ModeExact,
 		}
 	}
 
@@ -44,8 +46,9 @@ func ParseSearchQuery(input string) ParsedQuery {
 	if strings.HasSuffix(input, "*") {
 		term := strings.TrimSuffix(input, "*")
 		return ParsedQuery{
-			Term: sanitizeSearchTerm(term),
-			Mode: ModePrefix,
+			Term:    sanitizeSearchTerm(term),
+			RawTerm: sanitizeSearchTermKeepHyphen(term),
+			Mode:    ModePrefix,
 		}
 	}
 
@@ -68,25 +71,29 @@ func ParseSearchQuery(input string) ParsedQuery {
 
 		return ParsedQuery{
 			Term:      sanitizeSearchTerm(rest),
+			RawTerm:   sanitizeSearchTermKeepHyphen(rest),
 			Mode:      ModeFuzzy,
 			FuzzyDist: dist,
 		}
 	}
 
 	term := sanitizeSearchTerm(input)
+	rawTerm := sanitizeSearchTermKeepHyphen(input)
 
 	// Short terms default to exact match to avoid performance issues and noise
 	if utf8.RuneCountInString(term) < 3 {
 		return ParsedQuery{
-			Term: term,
-			Mode: ModeExact,
+			Term:    term,
+			RawTerm: rawTerm,
+			Mode:    ModeExact,
 		}
 	}
 
 	// Default: prefix match (partial match)
 	return ParsedQuery{
-		Term: term,
-		Mode: ModePrefix,
+		Term:    term,
+		RawTerm: rawTerm,
+		Mode:    ModePrefix,
 	}
 }
 
@@ -103,6 +110,28 @@ func sanitizeSearchTerm(term string) string {
 			// Replace hyphens with spaces — FTS5 interprets bare hyphens as
 			// the NOT operator (column-scope syntax), causing query errors.
 			result.WriteRune(' ')
+		}
+	}
+
+	return strings.TrimSpace(result.String())
+}
+
+// sanitizeSearchTermKeepHyphen is like sanitizeSearchTerm but PRESERVES hyphens.
+// The Postgres provider needs the original hyphenation so a query term tokenizes
+// identically to the stored tsvector (generated from the raw column value);
+// collapsing hyphens to spaces there splits a compound like "2024-q3" into terms
+// that Postgres' parser does not produce for the stored value, making the row
+// unfindable by its own name. SQLite FTS5 continues to use the hyphen-stripped
+// Term because a bare hyphen is FTS5 column-scope/NOT syntax. The kept character
+// set is otherwise identical to sanitizeSearchTerm, so the value remains safe to
+// pass as a bind parameter to to_tsvector().
+func sanitizeSearchTermKeepHyphen(term string) string {
+	var result strings.Builder
+	result.Grow(len(term))
+
+	for _, r := range term {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' || r == '_' || r == '.' || r == '-' {
+			result.WriteRune(r)
 		}
 	}
 

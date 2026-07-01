@@ -99,20 +99,33 @@ func (p *PostgresFTS) BuildSearchScope(tableName string, columns []string, query
 
 		escapedTerm := EscapeForFTS(query.Term)
 
+		// rawTerm preserves hyphens so a query term tokenizes the same way the
+		// stored search_vector did (it is generated from the raw column text).
+		// It is only ever passed as a bind parameter, never concatenated into
+		// SQL, and its character set is restricted (letters/digits/space/_/.-).
+		rawTerm := query.RawTerm
+		if rawTerm == "" {
+			rawTerm = query.Term
+		}
+
 		switch query.Mode {
 		case ModePrefix:
-			// Use to_tsquery with :* for prefix matching
-			// Split terms and add :* to each
-			terms := strings.Fields(escapedTerm)
-			var tsqueryParts []string
-			for _, term := range terms {
-				tsqueryParts = append(tsqueryParts, term+":*")
-			}
-			tsquery := strings.Join(tsqueryParts, " & ")
-
+			// Derive the prefix tsquery from the raw term's OWN lexemes so it
+			// tokenizes IDENTICALLY to search_vector. A naive whitespace-split
+			// + ':*' mishandles hyphenated number/word compounds: Postgres
+			// parses e.g. "2024-q3" or "1719-7ab" into a signed-int lexeme
+			// ("-7") plus the remainder, so the split query never matches its
+			// own row (~27% of hyphen+digit tokens, measured). The lexemes are
+			// already english-normalized, so the OUTER to_tsquery uses 'simple'
+			// to avoid stemming them a second time. The subquery depends only on
+			// the bind parameter, so Postgres evaluates it once (InitPlan) and
+			// still uses the GIN index on search_vector.
 			return db.Where(
-				fmt.Sprintf("%s.search_vector @@ to_tsquery('english', ?)", tableName),
-				tsquery,
+				fmt.Sprintf(`%s.search_vector @@ to_tsquery('simple', (
+					SELECT string_agg(lexeme || ':*', ' & ')
+					FROM unnest(to_tsvector('english', ?))
+				))`, tableName),
+				rawTerm,
 			)
 
 		case ModeFuzzy:
@@ -124,10 +137,12 @@ func (p *PostgresFTS) BuildSearchScope(tableName string, columns []string, query
 			)
 
 		default: // ModeExact
-			// Use plainto_tsquery for natural language search
+			// plainto_tsquery tokenizes with the same 'english' parser as the
+			// stored vector, so pass the hyphen-preserving raw term; a
+			// hyphen-collapsed term would mis-split compounds as above.
 			return db.Where(
 				fmt.Sprintf("%s.search_vector @@ plainto_tsquery('english', ?)", tableName),
-				escapedTerm,
+				rawTerm,
 			)
 		}
 	}

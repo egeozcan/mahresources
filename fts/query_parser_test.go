@@ -154,6 +154,85 @@ func TestParseSearchQuery(t *testing.T) {
 	}
 }
 
+// TestParseSearchQueryRawTerm locks in that RawTerm preserves hyphens (used by
+// the Postgres provider so a query tokenizes like the stored tsvector) while
+// Term still collapses them (SQLite FTS5). See fts/postgres.go BuildSearchScope.
+func TestParseSearchQueryRawTerm(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantTerm    string
+		wantRawTerm string
+		wantMode    SearchMode
+	}{
+		{
+			name:        "hyphenated term: Term collapses, RawTerm preserves",
+			input:       "invoice 2024-3q",
+			wantTerm:    "invoice 2024 3q",
+			wantRawTerm: "invoice 2024-3q",
+			wantMode:    ModePrefix,
+		},
+		{
+			name:        "no hyphen: Term and RawTerm identical",
+			input:       "hello world",
+			wantTerm:    "hello world",
+			wantRawTerm: "hello world",
+			wantMode:    ModePrefix,
+		},
+		{
+			name:        "explicit exact keeps hyphen in RawTerm",
+			input:       "=well-known",
+			wantTerm:    "well known",
+			wantRawTerm: "well-known",
+			wantMode:    ModeExact,
+		},
+		{
+			name:        "prefix suffix keeps hyphen in RawTerm",
+			input:       "2024-q*",
+			wantTerm:    "2024 q",
+			wantRawTerm: "2024-q",
+			wantMode:    ModePrefix,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseSearchQuery(tt.input)
+			if got.Term != tt.wantTerm {
+				t.Errorf("ParseSearchQuery(%q).Term = %q, want %q", tt.input, got.Term, tt.wantTerm)
+			}
+			if got.RawTerm != tt.wantRawTerm {
+				t.Errorf("ParseSearchQuery(%q).RawTerm = %q, want %q", tt.input, got.RawTerm, tt.wantRawTerm)
+			}
+			if got.Mode != tt.wantMode {
+				t.Errorf("ParseSearchQuery(%q).Mode = %v, want %v", tt.input, got.Mode, tt.wantMode)
+			}
+		})
+	}
+}
+
+func TestSanitizeSearchTermKeepHyphen(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "preserves hyphen", input: "well-known", want: "well-known"},
+		{name: "preserves multiple hyphens", input: "a-b-c", want: "a-b-c"},
+		{name: "keeps digits and letters", input: "2024-3q", want: "2024-3q"},
+		{name: "drops dangerous chars but keeps hyphen", input: "a'b<c>-d", want: "abc-d"},
+		{name: "keeps underscore and dot", input: "a_b.c-d", want: "a_b.c-d"},
+		{name: "trims surrounding space", input: "  x-y  ", want: "x-y"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sanitizeSearchTermKeepHyphen(tt.input); got != tt.want {
+				t.Errorf("sanitizeSearchTermKeepHyphen(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSanitizeSearchTerm(t *testing.T) {
 	tests := []struct {
 		name  string

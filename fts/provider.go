@@ -15,7 +15,14 @@ const (
 
 // ParsedQuery represents a parsed search term
 type ParsedQuery struct {
-	Term      string
+	// Term is sanitized with hyphens collapsed to spaces (SQLite FTS5 treats a
+	// bare hyphen as column-scope/NOT syntax). Used by the SQLite provider.
+	Term string
+	// RawTerm is sanitized but PRESERVES hyphens, so the Postgres provider can
+	// tokenize it identically to the stored search_vector (which is generated
+	// from the raw, hyphenated column text). Without this, a hyphenated
+	// number/word compound in a name is unfindable by the name itself.
+	RawTerm   string
 	Mode      SearchMode
 	FuzzyDist int // For fuzzy: max edit distance (default 1)
 }
