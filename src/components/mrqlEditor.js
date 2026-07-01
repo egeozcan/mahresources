@@ -1,3 +1,5 @@
+import * as userSettings from '../userSettings.js';
+
 export function mrqlEditor() {
   return {
     view: null,
@@ -39,8 +41,11 @@ export function mrqlEditor() {
     // Saved queries (initialized from server-rendered JSON, or fetched)
     savedQueries: [],
 
-    // Query history (localStorage)
+    // Query history (server-backed user setting "mrqlHistory")
     history: [],
+    // Gate persistence until the server history has hydrated, so queries run before the
+    // load resolves are merged with — not overwritten onto — the saved history.
+    _historyLoaded: false,
 
     // Validation debounce timer
     _validateTimer: null,
@@ -67,11 +72,20 @@ export function mrqlEditor() {
     },
 
     async init() {
-      // Load history from localStorage
-      try {
-        const stored = localStorage.getItem('mrql_history');
-        if (stored) this.history = JSON.parse(stored);
-      } catch (_) { /* ignore */ }
+      // Load MRQL history from the server-backed user-settings store (non-blocking so the
+      // editor renders immediately; history fills in reactively when it resolves).
+      userSettings.whenLoaded().then(() => {
+        const stored = userSettings.get('mrqlHistory');
+        if (Array.isArray(stored) && stored.length) {
+          // Merge any queries run before load with the stored history (current first).
+          this.history = [...this.history, ...stored]
+            .filter((q, i, a) => a.indexOf(q) === i)
+            .slice(0, 20);
+        }
+        this._historyLoaded = true;
+        // Persist the merge if the user already ran a query before load resolved.
+        if (this.history.length) userSettings.set('mrqlHistory', this.history);
+      });
 
       // Fetch saved queries
       this.fetchSavedQueries();
@@ -437,9 +451,9 @@ export function mrqlEditor() {
     addToHistory(query) {
       // Remove duplicate if exists, prepend
       this.history = [query, ...this.history.filter((h) => h !== query)].slice(0, 20);
-      try {
-        localStorage.setItem('mrql_history', JSON.stringify(this.history));
-      } catch (_) { /* quota exceeded — ignore */ }
+      // Persist only after the server history has loaded, so an early query cannot
+      // overwrite saved history (it is merged in on load instead).
+      if (this._historyLoaded) userSettings.set('mrqlHistory', this.history);
     },
 
     loadFromHistory(query) {

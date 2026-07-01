@@ -39,6 +39,7 @@ func newStampTestContext(t *testing.T, authEnabled bool) *MahresourcesContext {
 		&models.GroupRelationType{},
 		&models.Resource{},
 		&models.User{},
+		&models.UserSetting{},
 		&models.Note{},
 		&models.ResourceVersion{},
 		&models.NoteBlock{},

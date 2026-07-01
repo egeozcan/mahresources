@@ -1802,6 +1802,65 @@ paths:
             summary: Change the authenticated user's password
             tags:
                 - account
+    /v1/account/settings:
+        get:
+            description: Returns all per-user UI preferences (e.g. lightbox quick tags) as a key → JSON value object.
+            operationId: listOwnSettings
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: List the authenticated user's UI settings
+            tags:
+                - account
+    /v1/account/settings/{key}:
+        delete:
+            description: Removes a single per-user setting. Deleting a missing key is a no-op.
+            operationId: deleteOwnSetting
+            parameters:
+                - description: Setting key (max 128 chars).
+                  in: path
+                  name: key
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Delete one of the authenticated user's UI settings
+            tags:
+                - account
+        put:
+            description: 'Upserts a single per-user setting. The body is {"value": <json>}.'
+            operationId: setOwnSetting
+            parameters:
+                - description: Setting key (max 128 chars).
+                  in: path
+                  name: key
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            properties:
+                                value:
+                                    format: binary
+                                    type: string
+                            type: object
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Set one of the authenticated user's UI settings
+            tags:
+                - account
     /v1/account/tokens:
         get:
             operationId: listOwnTokens

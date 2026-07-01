@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures/base.fixture';
 import type { Page } from '@playwright/test';
+import { seedQuickTags } from '../helpers/quick-tags';
 import path from 'path';
 
 /**
@@ -63,6 +64,11 @@ test.describe('Lightbox batch tagging pipeline', () => {
     if (categoryId) await apiClient.deleteCategory(categoryId);
   });
 
+  test.beforeEach(async ({ page }) => {
+    // Quick-tag state is server-side now (shared across tests). Reset for isolation.
+    await page.request.delete('/v1/account/settings/quickTags');
+  });
+
   type Seed = {
     quickSlots: (Array<{ id: number; name: string }> | null)[][];
     flowMode?: boolean;
@@ -96,10 +102,7 @@ test.describe('Lightbox batch tagging pipeline', () => {
   async function seedAndOpen(page: Page, seed: Seed) {
     await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
-    await page.evaluate(
-      (payload) => localStorage.setItem('mahresources_quickTags', JSON.stringify(payload)),
-      buildSeed(seed)
-    );
+    await seedQuickTags(page, buildSeed(seed));
     await page.goto(`/resources?OwnerId=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
@@ -107,6 +110,8 @@ test.describe('Lightbox batch tagging pipeline', () => {
     const lightbox = page.locator(LIGHTBOX);
     await expect(lightbox).toBeVisible();
 
+    // Panel-open state is transient now (not restored across reload), so open it explicitly.
+    await page.keyboard.press('t');
     const panel = lightbox.locator('[data-quick-tag-panel]');
     await expect(panel).toBeVisible();
     await expect(panel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });

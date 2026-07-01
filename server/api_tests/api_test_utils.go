@@ -72,6 +72,7 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 		&models.SavedMRQLQuery{},
 		&models.RuntimeSetting{},
 		&models.User{},
+		&models.UserSetting{},
 		&models.Session{},
 		&models.ApiToken{},
 	)

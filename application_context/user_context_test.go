@@ -44,6 +44,7 @@ func newAuthTestContext(t *testing.T) *MahresourcesContext {
 		&models.GroupRelation{},
 		// Auth models.
 		&models.User{},
+		&models.UserSetting{},
 		&models.Session{},
 		&models.ApiToken{},
 	); err != nil {

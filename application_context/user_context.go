@@ -345,6 +345,11 @@ func (ctx *MahresourcesContext) DeleteUser(id uint) error {
 		if tErr := tx.Where("user_id = ?", id).Delete(&models.ApiToken{}).Error; tErr != nil {
 			return tErr
 		}
+		// Per-user settings are owner-keyed (not creator-attributed), so drop them
+		// outright rather than nulling — a settings row with no owner is meaningless.
+		if uErr := tx.Where("user_id = ?", id).Delete(&models.UserSetting{}).Error; uErr != nil {
+			return uErr
+		}
 
 		// Conditional delete: allowed unless the target is an enabled admin with no
 		// other enabled admin remaining.

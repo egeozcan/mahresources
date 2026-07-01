@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"reflect"
 
@@ -136,6 +137,11 @@ var userRequestType = reflect.TypeOf(struct {
 	Disabled     bool   `json:"disabled"`
 }{})
 
+// userSettingRequestType is the PUT body for a per-user setting: an opaque JSON value.
+var userSettingRequestType = reflect.TypeOf(struct {
+	Value json.RawMessage `json:"value"`
+}{})
+
 func registerUserAccountRoutes(r *openapi.Registry) {
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/users", OperationID: "listUsers",
@@ -190,6 +196,36 @@ func registerUserAccountRoutes(r *openapi.Registry) {
 		Method: http.MethodPost, Path: "/v1/account/tokens/delete", OperationID: "revokeOwnToken",
 		Summary: "Revoke one of the authenticated user's API tokens", Tags: []string{"account"},
 		IDQueryParam: "id", IDRequired: true,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodGet, Path: "/v1/account/settings", OperationID: "listOwnSettings",
+		Summary:     "List the authenticated user's UI settings",
+		Description: "Returns all per-user UI preferences (e.g. lightbox quick tags) as a key → JSON value object.",
+		Tags:        []string{"account"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodPut, Path: "/v1/account/settings/{key}", OperationID: "setOwnSetting",
+		Summary:     "Set one of the authenticated user's UI settings",
+		Description: "Upserts a single per-user setting. The body is {\"value\": <json>}.",
+		Tags:        []string{"account"},
+		PathParams: []openapi.PathParam{
+			{Name: "key", Type: "string", Description: "Setting key (max 128 chars)."},
+		},
+		RequestType:          userSettingRequestType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+	r.Register(openapi.RouteInfo{
+		Method: http.MethodDelete, Path: "/v1/account/settings/{key}", OperationID: "deleteOwnSetting",
+		Summary:     "Delete one of the authenticated user's UI settings",
+		Description: "Removes a single per-user setting. Deleting a missing key is a no-op.",
+		Tags:        []string{"account"},
+		PathParams: []openapi.PathParam{
+			{Name: "key", Type: "string", Description: "Setting key (max 128 chars)."},
+		},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 }

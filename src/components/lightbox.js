@@ -27,8 +27,8 @@ export function registerLightboxStore(Alpine) {
     init() {
       // Guard against multiple initializations (prevents memory leak)
       if (this._liveRegion) return;
+      // Async: hydrates from the server-backed user-settings store when it resolves.
       this._loadQuickTagsFromStorage();
-      this._initStorageSync();
 
       this._liveRegion = createLiveRegion();
       this.liveRegion = this._liveRegion.element;

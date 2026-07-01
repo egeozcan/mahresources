@@ -1,4 +1,5 @@
 import { test, expect } from '../fixtures/base.fixture';
+import { clearQuickTags } from '../helpers/quick-tags';
 import path from 'path';
 
 test.describe('Lightbox Functionality', () => {
@@ -1343,6 +1344,12 @@ test.describe('Lightbox on Group Detail Page', () => {
     if (categoryId) await apiClient.deleteCategory(categoryId).catch(() => {});
   });
 
+  test.beforeEach(async ({ page }) => {
+    // Quick-tag state now lives server-side (shared across tests, unlike the old
+    // per-context localStorage). Reset it before each test for clean isolation.
+    await page.request.delete('/v1/account/settings/quickTags');
+  });
+
   test('should open lightbox when clicking resource thumbnail on group detail page', async ({ page }) => {
     await page.goto(`/group?id=${ownerGroupId}`);
     await page.waitForLoadState('load');
@@ -1400,8 +1407,8 @@ test.describe('Lightbox on Group Detail Page', () => {
     await page.goto(`/group?id=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
-    // Clear localStorage to start fresh (must be after navigation for same-origin access)
-    await page.evaluate(() => localStorage.removeItem('mahresources_quickTags'));
+    // Clear server-side quick-tag settings to start fresh (shared across tests).
+    await clearQuickTags(page);
 
     // Open lightbox
     const firstImage = page.locator('[data-lightbox-item]').first();
@@ -1449,19 +1456,22 @@ test.describe('Lightbox on Group Detail Page', () => {
     await page.goto(`/group?id=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
-    // Seed localStorage with a recent tag in the new schema format
-    await page.evaluate((tag) => {
-      const data = JSON.parse(localStorage.getItem('mahresources_quickTags') || '{}');
-      data.recentTags = [
-        { id: tag.id, name: tag.name, ts: Date.now() },
-        null, null, null, null, null, null, null, null,
-      ];
-      data.version = 3;
-      data.activeTab = 4; // RECENT tab
-      if (!data.quickSlots) {
-        data.quickSlots = [Array(9).fill(null), Array(9).fill(null), Array(9).fill(null), Array(9).fill(null)];
-      }
-      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+    // Seed the server-side quick-tag settings with a recent tag (new schema format).
+    await page.evaluate(async (tag) => {
+      const data = {
+        recentTags: [
+          { id: tag.id, name: tag.name, ts: Date.now() },
+          null, null, null, null, null, null, null, null,
+        ],
+        version: 3,
+        activeTab: 4, // RECENT tab
+        quickSlots: [Array(9).fill(null), Array(9).fill(null), Array(9).fill(null), Array(9).fill(null)],
+      };
+      await fetch('/v1/account/settings/quickTags', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: data }),
+      });
     }, { id: shortcutTag.ID, name: shortcutTag.Name });
 
     // Reload so Alpine picks up the seeded localStorage
@@ -1481,7 +1491,10 @@ test.describe('Lightbox on Group Detail Page', () => {
     await expect(quickTagPanel).toBeVisible();
     await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
 
-    // Verify RECENT tab is active (seeded as activeTab=4)
+    // Switch to the RECENT tab (activeTab is transient UI now, not restored across reload).
+    // Blur first so 'b' is treated as a shortcut, not typed into the tag input.
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+    await page.keyboard.press('b');
     const recentTab = quickTagPanel.locator('button[role="tab"][aria-selected="true"]:has-text("RECENT")');
     await expect(recentTab).toBeVisible();
 
@@ -1507,18 +1520,23 @@ test.describe('Lightbox on Group Detail Page', () => {
     await page.goto(`/group?id=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
-    // Seed localStorage with a recent tag in the new schema format
-    await page.evaluate((tag) => {
-      const data = JSON.parse(localStorage.getItem('mahresources_quickTags') || '{}');
-      data.recentTags = [
-        { id: tag.id, name: tag.name, ts: Date.now() },
-        null, null, null, null, null, null, null, null,
-      ];
-      // Ensure all quick-add slots are empty, start on QUICK 1 tab
-      data.version = 3;
-      data.quickSlots = [Array(9).fill(null), Array(9).fill(null), Array(9).fill(null), Array(9).fill(null)];
-      data.activeTab = 0;
-      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+    // Seed the server-side quick-tag settings with a recent tag (new schema format).
+    await page.evaluate(async (tag) => {
+      const data = {
+        recentTags: [
+          { id: tag.id, name: tag.name, ts: Date.now() },
+          null, null, null, null, null, null, null, null,
+        ],
+        // Ensure all quick-add slots are empty, start on QUICK 1 tab
+        version: 3,
+        quickSlots: [Array(9).fill(null), Array(9).fill(null), Array(9).fill(null), Array(9).fill(null)],
+        activeTab: 0,
+      };
+      await fetch('/v1/account/settings/quickTags', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: data }),
+      });
     }, { id: promotedTag.ID, name: promotedTag.Name });
 
     // Reload so Alpine picks up the seeded localStorage
@@ -1574,7 +1592,7 @@ test.describe('Lightbox on Group Detail Page', () => {
     await page.waitForLoadState('load');
 
     // Seed localStorage with a multi-tag slot in slot 0 (key 1)
-    await page.evaluate((tags) => {
+    await page.evaluate(async (tags) => {
       const data = {
         version: 3,
         quickSlots: [
@@ -1590,7 +1608,11 @@ test.describe('Lightbox on Group Detail Page', () => {
         activeTab: 0,
         drawerOpen: false,
       };
-      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+      await fetch('/v1/account/settings/quickTags', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: data }),
+      });
     }, [
       { id: tag1.ID, name: tag1.Name },
       { id: tag2.ID, name: tag2.Name },
@@ -1657,7 +1679,7 @@ test.describe('Lightbox on Group Detail Page', () => {
     await page.goto(`/group?id=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
-    await page.evaluate((tags) => {
+    await page.evaluate(async (tags) => {
       const data = {
         version: 3,
         quickSlots: [
@@ -1673,7 +1695,11 @@ test.describe('Lightbox on Group Detail Page', () => {
         activeTab: 0,
         drawerOpen: false,
       };
-      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+      await fetch('/v1/account/settings/quickTags', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: data }),
+      });
     }, [
       { id: tag1.ID, name: tag1.Name },
       { id: tag2.ID, name: tag2.Name },
@@ -1716,7 +1742,7 @@ test.describe('Lightbox on Group Detail Page', () => {
     await page.goto(`/group?id=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
-    await page.evaluate((tags) => {
+    await page.evaluate(async (tags) => {
       const data = {
         version: 3,
         quickSlots: [
@@ -1732,7 +1758,11 @@ test.describe('Lightbox on Group Detail Page', () => {
         activeTab: 0,
         drawerOpen: false,
       };
-      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+      await fetch('/v1/account/settings/quickTags', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: data }),
+      });
     }, [
       { id: tag1.ID, name: tag1.Name },
       { id: tag2.ID, name: tag2.Name },
@@ -1783,7 +1813,7 @@ test.describe('Lightbox on Group Detail Page', () => {
     await page.goto(`/group?id=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
-    await page.evaluate((tags) => {
+    await page.evaluate(async (tags) => {
       const data = {
         version: 3,
         quickSlots: [
@@ -1799,7 +1829,11 @@ test.describe('Lightbox on Group Detail Page', () => {
         activeTab: 0,
         drawerOpen: false,
       };
-      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+      await fetch('/v1/account/settings/quickTags', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: data }),
+      });
     }, [
       { id: tag1.ID, name: tag1.Name },
       { id: tag2.ID, name: tag2.Name },
@@ -1858,7 +1892,7 @@ test.describe('Lightbox on Group Detail Page', () => {
     await page.goto(`/group?id=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
-    await page.evaluate((tags) => {
+    await page.evaluate(async (tags) => {
       const data = {
         version: 3,
         quickSlots: [
@@ -1874,7 +1908,11 @@ test.describe('Lightbox on Group Detail Page', () => {
         activeTab: 0,
         drawerOpen: false,
       };
-      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+      await fetch('/v1/account/settings/quickTags', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: data }),
+      });
     }, [
       { id: tag1.ID, name: tag1.Name },
       { id: tag2.ID, name: tag2.Name },
@@ -1915,7 +1953,7 @@ test.describe('Lightbox on Group Detail Page', () => {
     await page.goto(`/group?id=${ownerGroupId}`);
     await page.waitForLoadState('load');
 
-    await page.evaluate((tags) => {
+    await page.evaluate(async (tags) => {
       const data = {
         version: 3,
         quickSlots: [
@@ -1931,7 +1969,11 @@ test.describe('Lightbox on Group Detail Page', () => {
         activeTab: 0,
         drawerOpen: false,
       };
-      localStorage.setItem('mahresources_quickTags', JSON.stringify(data));
+      await fetch('/v1/account/settings/quickTags', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: data }),
+      });
     }, [
       { id: tag1.ID, name: tag1.Name },
       { id: tag2.ID, name: tag2.Name },

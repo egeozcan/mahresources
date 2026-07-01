@@ -1,8 +1,7 @@
 // src/components/lightbox/quickTagPanel.js
 
 import { abortableFetch } from '../../index.js';
-
-const STORAGE_KEY = 'mahresources_quickTags';
+import * as userSettings from '../../userSettings.js';
 
 const TAB_LABELS = [
   { name: 'QUICK 1', key: 'Z' },
@@ -40,6 +39,9 @@ export const quickTagPanelState = {
   _expandedClickOutsideHandler: null,
   recentTags: Array(9).fill(null),
   tabLabels: TAB_LABELS,
+  // Gate persistence until the server-backed settings have hydrated the store, so a
+  // fresh page's default (empty) state never overwrites the user's saved slots.
+  _quickTagsReady: false,
 
   // ---- Batch tagging pipeline (Tier 1) ----
   // Auto-advance to the next image after a successful quick-slot add (Item 5).
@@ -69,166 +71,75 @@ export const quickTagPanelState = {
 export const quickTagPanelMethods = {
   // ==================== Persistence ====================
 
-  _loadQuickTagsFromStorage(fromStorageEvent = false) {
+  // Load quick/recent tags from the server-backed user-settings store. Async: waits for
+  // the initial settings fetch, then hydrates the store. The v1→v3 schema migrations are
+  // preserved for blobs imported from the old localStorage key. Persistence is enabled
+  // only after this settles (_quickTagsReady) so a fresh page's default state can never
+  // overwrite the user's saved slots before they load.
+  async _loadQuickTagsFromStorage() {
     try {
-      // On a cross-tab storage event read the primary key directly; on initial load also
-      // consult any recovery snapshot (BH: L3).
-      const raw = fromStorageEvent ? localStorage.getItem(STORAGE_KEY) : this._readStorageRaw();
-      if (!raw) return;
-      const data = JSON.parse(raw);
+      await userSettings.whenLoaded();
+      const data = userSettings.get('quickTags');
+      if (data && typeof data === 'object') this._applyQuickTagsData(data);
+    } catch (e) {
+      console.warn('Failed to load quick tags:', e);
+    } finally {
+      this._quickTagsReady = true;
+    }
+  },
 
-      // Migration v1 → v2: flat `slots` array to nested quickSlots
-      if (Array.isArray(data.slots) && !Array.isArray(data.quickSlots)) {
-        data.quickSlots = [
-          padArray(data.slots, 9),
-          Array(9).fill(null),
-          Array(9).fill(null),
-        ];
-        data.activeTab = 0;
-        data.version = 2;
-      }
+  _applyQuickTagsData(data) {
+    // Migration v1 → v2: flat `slots` array to nested quickSlots
+    if (Array.isArray(data.slots) && !Array.isArray(data.quickSlots)) {
+      data.quickSlots = [
+        padArray(data.slots, 9),
+        Array(9).fill(null),
+        Array(9).fill(null),
+      ];
+      data.version = 2;
+    }
 
-      // Migration v2 → v3: single-tag slots to multi-tag arrays, 3→4 tabs, remap activeTab
-      if (!data.version || data.version < 3) {
-        if (Array.isArray(data.quickSlots)) {
-          // Wrap each non-null single-tag {id, name} in [{ id, name }]
-          data.quickSlots = data.quickSlots.map(tab =>
-            (tab || []).map(slot => slot && !Array.isArray(slot) ? [slot] : slot)
-          );
-          // Extend from 3 to 4 inner arrays
-          while (data.quickSlots.length < 4) {
-            data.quickSlots.push(Array(9).fill(null));
-          }
+    // Migration v2 → v3: single-tag slots to multi-tag arrays, 3→4 tabs
+    if (!data.version || data.version < 3) {
+      if (Array.isArray(data.quickSlots)) {
+        // Wrap each non-null single-tag {id, name} in [{ id, name }]
+        data.quickSlots = data.quickSlots.map(tab =>
+          (tab || []).map(slot => slot && !Array.isArray(slot) ? [slot] : slot)
+        );
+        // Extend from 3 to 4 inner arrays
+        while (data.quickSlots.length < 4) {
+          data.quickSlots.push(Array(9).fill(null));
         }
-        // Remap activeTab: v2 3(RECENT)→4, v2 4(LAST)→0
-        if (data.activeTab === 3) data.activeTab = 4;
-        else if (data.activeTab === 4) data.activeTab = 0;
-        data.version = 3;
       }
+      data.version = 3;
+    }
 
-      const incomingSlots = Array.isArray(data.quickSlots) ? [
+    if (Array.isArray(data.quickSlots)) {
+      this.quickSlots = [
         padArray(data.quickSlots[0], 9),
         padArray(data.quickSlots[1], 9),
         padArray(data.quickSlots[2], 9),
         padArray(data.quickSlots[3], 9),
-      ] : null;
-      const incomingRecents = Array.isArray(data.recentTags) ? padArray(data.recentTags, 9) : null;
-
-      if (fromStorageEvent) {
-        // Cross-tab sync: merge per-slot so a concurrent edit in THIS tab is not clobbered
-        // by another tab's snapshot, and never sync transient UI state (panel open / active
-        // tab) across tabs (BH: L4).
-        if (incomingSlots) this.quickSlots = this._mergeQuickSlots(this.quickSlots, incomingSlots);
-        if (incomingRecents) this.recentTags = this._mergeRecentTags(this.recentTags, incomingRecents);
-        return;
-      }
-
-      // Initial load: adopt the persisted state wholesale.
-      if (incomingSlots) this.quickSlots = incomingSlots;
-      if (typeof data.drawerOpen === 'boolean') {
-        this.quickTagPanelOpen = data.drawerOpen;
-      }
-      if (typeof data.activeTab === 'number' && data.activeTab >= 0 && data.activeTab <= 4) {
-        this.activeTab = data.activeTab;
-      }
-      if (typeof data.flowMode === 'boolean') this.flowModeEnabled = data.flowMode;
-      if (incomingRecents) this.recentTags = incomingRecents;
-    } catch (e) {
-      console.warn('Failed to load quick tags from storage:', e);
+      ];
     }
+    if (typeof data.flowMode === 'boolean') this.flowModeEnabled = data.flowMode;
+    if (Array.isArray(data.recentTags)) this.recentTags = padArray(data.recentTags, 9);
+    // drawerOpen / activeTab are deliberately NOT restored: the load is async, so applying
+    // them after the user has opened the panel or switched tabs would clobber that action
+    // (e.g. close a panel the user just opened). They stay transient, per-session UI state.
   },
 
-  // Read the persisted payload, falling back to the most recent recovery snapshot written
-  // when an earlier save hit a quota error, then promoting it back to the primary key so the
-  // recovery copy is actually consumed rather than orphaned (BH: L3).
-  _readStorageRaw() {
-    const primary = localStorage.getItem(STORAGE_KEY);
-    if (primary) return primary;
-
-    const prefix = `${STORAGE_KEY}_recover_`;
-    let bestKey = null;
-    let bestSuffix = '';
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith(prefix)) {
-        const suffix = key.slice(prefix.length);
-        if (suffix > bestSuffix) { bestSuffix = suffix; bestKey = key; }
-      }
-    }
-    if (!bestKey) return null;
-
-    const recovered = localStorage.getItem(bestKey);
-    try {
-      if (recovered) localStorage.setItem(STORAGE_KEY, recovered);
-      // Iterate downward so removals do not shift indices we have yet to visit.
-      for (let i = localStorage.length - 1; i >= 0; i--) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith(prefix)) localStorage.removeItem(key);
-      }
-    } catch { /* still full — leave the recovery copy for next time */ }
-    return recovered;
-  },
-
-  _mergeQuickSlots(current, incoming) {
-    const merged = [];
-    for (let tab = 0; tab < 4; tab++) {
-      const cur = current[tab] || Array(9).fill(null);
-      const inc = incoming[tab] || Array(9).fill(null);
-      const row = [];
-      for (let i = 0; i < 9; i++) {
-        // Keep this tab's slot when it is set; otherwise adopt the other tab's slot. This
-        // preserves concurrent edits to *different* slots without losing either side.
-        row.push(cur[i] != null ? cur[i] : (inc[i] ?? null));
-      }
-      merged.push(row);
-    }
-    return merged;
-  },
-
-  _mergeRecentTags(current, incoming) {
-    const merged = [];
-    for (let i = 0; i < 9; i++) {
-      const a = current[i];
-      const b = incoming[i];
-      if (a && b) {
-        merged.push((b.ts || 0) > (a.ts || 0) ? b : a);
-      } else {
-        merged.push(a || b || null);
-      }
-    }
-    return merged;
-  },
-
+  // Persist durable quick-tag state (fire-and-forget). Transient UI (panel open, active
+  // tab) is excluded — it must not be written on every open/tab switch, and restoring it
+  // across the async load would race with user interaction. No-ops until the initial load
+  // has hydrated the store, so a fresh page's default state cannot overwrite saved slots.
   _saveQuickTagsToStorage() {
-    const payload = JSON.stringify({
+    if (!this._quickTagsReady) return;
+    userSettings.set('quickTags', {
       version: 3,
       quickSlots: this.quickSlots,
-      drawerOpen: this.quickTagPanelOpen,
-      activeTab: this.activeTab,
       recentTags: this.recentTags,
       flowMode: this.flowModeEnabled,
-    });
-    try {
-      localStorage.setItem(STORAGE_KEY, payload);
-    } catch (e) {
-      console.warn('Failed to save quick tags to localStorage:', e);
-      try {
-        const date = new Date().toISOString().slice(0, 10);
-        localStorage.setItem(`${STORAGE_KEY}_recover_${date}`, payload);
-        // Surface the failure instead of swallowing it (BH: L3).
-        this.announce?.('Could not save quick tag settings — storage is full. A recovery copy was kept.');
-      } catch {
-        this.announce?.('Could not save quick tag settings — browser storage is full.');
-      }
-    }
-  },
-
-  _initStorageSync() {
-    window.addEventListener('storage', (event) => {
-      if (event.key === STORAGE_KEY) {
-        // Merge rather than clobber so a concurrent edit in this tab survives (BH: L4).
-        this._loadQuickTagsFromStorage(true);
-      }
     });
   },
 
