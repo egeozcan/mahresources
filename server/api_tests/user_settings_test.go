@@ -2,10 +2,12 @@ package api_tests
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"mahresources/application_context"
@@ -154,6 +156,54 @@ func TestUserSettings_KeyCountCap(t *testing.T) {
 	// Updating an existing key at the cap still works.
 	if err := ctx.SetUserSetting("k0", json.RawMessage(`2`)); err != nil {
 		t.Fatalf("update at cap should succeed, got %v", err)
+	}
+}
+
+// The cap is enforced atomically: with one slot left, many concurrent new-key writes
+// must yield exactly one success (not one-per-racing-request). Most meaningful under
+// Postgres (true concurrency); under the single-connection SQLite harness the writes
+// serialize, which also satisfies the invariant.
+func TestUserSettings_KeyCapAtomicUnderConcurrency(t *testing.T) {
+	tc := setupAuthEnv(t)
+	uID, _ := userWithBearer(t, tc, "capconc", models.RoleUser)
+	ctx := tc.AppCtx.WithPrincipal(&auth.Principal{UserID: uID})
+
+	// Fill to exactly one below the cap.
+	for i := 0; i < application_context.MaxUserSettingKeysPerUser-1; i++ {
+		if err := ctx.SetUserSetting("k"+strconv.Itoa(i), json.RawMessage(`1`)); err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+
+	const N = 8
+	var wg sync.WaitGroup
+	errs := make([]error, N)
+	wg.Add(N)
+	for i := 0; i < N; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = ctx.SetUserSetting("c"+strconv.Itoa(idx), json.RawMessage(`1`))
+		}(i)
+	}
+	wg.Wait()
+
+	successes := 0
+	for _, e := range errs {
+		switch {
+		case e == nil:
+			successes++
+		case errors.Is(e, application_context.ErrTooManySettings):
+		default:
+			t.Fatalf("unexpected error: %v", e)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("want exactly 1 success at the cap boundary, got %d", successes)
+	}
+	var total int64
+	tc.DB.Model(&models.UserSetting{}).Where("user_id = ?", uID).Count(&total)
+	if total != int64(application_context.MaxUserSettingKeysPerUser) {
+		t.Fatalf("total keys = %d, want %d (cap must not be exceeded)", total, application_context.MaxUserSettingKeysPerUser)
 	}
 }
 

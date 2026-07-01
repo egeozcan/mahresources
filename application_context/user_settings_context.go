@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
+	"mahresources/constants"
 	"mahresources/models"
 
 	"gorm.io/gorm"
@@ -12,10 +14,10 @@ import (
 )
 
 const (
-	// maxUserSettingValueSize bounds a single setting's JSON blob. The lightbox
+	// MaxUserSettingValueSize bounds a single setting's JSON blob. The lightbox
 	// quick-tag payload (4×9 slots + 9 recents) is a few KB; 256KB leaves generous
 	// headroom while stopping a buggy/hostile client from storing megabytes per key.
-	maxUserSettingValueSize = 256 * 1024
+	MaxUserSettingValueSize = 256 * 1024
 	// maxUserSettingKeyLength matches the column size:128.
 	maxUserSettingKeyLength = 128
 	// MaxUserSettingKeysPerUser bounds the table so one account cannot exhaust it.
@@ -65,36 +67,55 @@ func (ctx *MahresourcesContext) SetUserSetting(key string, value json.RawMessage
 	if len(value) == 0 {
 		return fmt.Errorf("%w: empty value", ErrUserSettingValue)
 	}
-	if len(value) > maxUserSettingValueSize {
-		return fmt.Errorf("%w: value size %d exceeds maximum of %d bytes", ErrUserSettingValue, len(value), maxUserSettingValueSize)
+	if len(value) > MaxUserSettingValueSize {
+		return fmt.Errorf("%w: value size %d exceeds maximum of %d bytes", ErrUserSettingValue, len(value), MaxUserSettingValueSize)
 	}
 	if !json.Valid(value) {
 		return fmt.Errorf("%w: not valid JSON", ErrUserSettingValue)
 	}
 
-	// Enforce the per-user key cap, but only for a genuinely new key — updating an
-	// existing key must always be allowed even at the cap.
-	var existing int64
-	if err := ctx.db.Model(&models.UserSetting{}).
-		Where("user_id = ? AND key = ?", userID, key).Count(&existing).Error; err != nil {
-		return err
-	}
-	if existing == 0 {
-		var total int64
-		if err := ctx.db.Model(&models.UserSetting{}).
-			Where("user_id = ?", userID).Count(&total).Error; err != nil {
-			return err
+	// Upsert with an atomic per-user key cap. The cap must be enforced inside the write
+	// itself: a check-then-insert lets two concurrent new-key requests both observe
+	// total < cap and both succeed, bypassing the cap this code exists to enforce.
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		// Serialize concurrent writes for this user so the cap check is atomic. Postgres:
+		// lock the user's existing rows FOR UPDATE (a no-op branch on SQLite, which
+		// serializes writers within the transaction's write lock and where the
+		// conditional INSERT below is a single write statement). Mirrors lockEnabledAdmins.
+		if ctx.Config.DbType == constants.DbTypePosgres {
+			var ids []uint
+			if err := tx.Model(&models.UserSetting{}).
+				Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("user_id = ?", userID).
+				Order("id").
+				Pluck("id", &ids).Error; err != nil {
+				return err
+			}
 		}
-		if total >= MaxUserSettingKeysPerUser {
+
+		// Insert only when the key already exists (EXISTS → always an update) or the user
+		// is under the cap. The COUNT is evaluated inside the single INSERT statement, so
+		// with the serialization above it is atomic. SQLite requires a WHERE in the SELECT
+		// when combined with ON CONFLICT, which we have. RowsAffected == 0 means a genuinely
+		// new key was rejected by the cap (an existing key always matches the EXISTS branch).
+		now := time.Now()
+		res := tx.Exec(
+			`INSERT INTO user_settings (user_id, key, value, created_at, updated_at)
+			 SELECT ?, ?, ?, ?, ?
+			 WHERE EXISTS (SELECT 1 FROM user_settings WHERE user_id = ? AND key = ?)
+			    OR (SELECT COUNT(*) FROM user_settings WHERE user_id = ?) < ?
+			 ON CONFLICT (user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+			userID, key, string(value), now, now,
+			userID, key, userID, MaxUserSettingKeysPerUser,
+		)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
 			return fmt.Errorf("%w: limit is %d", ErrTooManySettings, MaxUserSettingKeysPerUser)
 		}
-	}
-
-	row := models.UserSetting{UserId: userID, Key: key, Value: string(value)}
-	return ctx.db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "user_id"}, {Name: "key"}},
-		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
-	}).Create(&row).Error
+		return nil
+	})
 }
 
 // DeleteUserSetting removes a single setting for the acting user. Deleting a missing

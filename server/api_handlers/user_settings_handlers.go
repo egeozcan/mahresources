@@ -18,6 +18,12 @@ type setUserSettingRequest struct {
 	Value json.RawMessage `json:"value"`
 }
 
+// maxUserSettingBodyBytes bounds the PUT body so a large payload is rejected before it
+// is fully read/allocated, rather than after SetUserSetting's value-size check. It is
+// the value cap plus slack for the {"value": ...} JSON envelope. This matters because
+// the global JSON body limit (-max-json-body) defaults to unlimited.
+const maxUserSettingBodyBytes = int64(application_context.MaxUserSettingValueSize) + 1024
+
 // GetUserSettingsHandler returns all settings for the authenticated user as a JSON
 // object (key → raw JSON value). The owner is resolved from the request principal
 // inside the context layer, so this works identically under auth-on and auth-off.
@@ -38,6 +44,9 @@ func GetUserSettingsHandler(ctx *application_context.MahresourcesContext) http.H
 func SetUserSettingHandler(ctx *application_context.MahresourcesContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := mux.Vars(r)["key"]
+		// Bound the body before decoding so an oversize payload is rejected up front
+		// (the global -max-json-body limit defaults to unlimited).
+		r.Body = http.MaxBytesReader(w, r.Body, maxUserSettingBodyBytes)
 		var req setUserSettingRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http_utils.HandleError(err, w, r, http.StatusBadRequest)
