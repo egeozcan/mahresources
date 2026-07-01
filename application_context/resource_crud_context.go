@@ -26,6 +26,17 @@ func (ctx *MahresourcesContext) GetResourceByID(id uint) (*models.Resource, erro
 }
 
 func (ctx *MahresourcesContext) GetSimilarResources(id uint) ([]*models.Resource, error) {
+	return ctx.getSimilarResourcesLimited(id, 0)
+}
+
+// getSimilarResourcesLimited is GetSimilarResources with an optional cap on how many
+// similar resources are actually loaded. A limit <= 0 means no cap (the public
+// GetSimilarResources behaviour). The cap is applied to the Hamming-sorted similarity
+// id list BEFORE the resource+tag preload, so a resource in a large near-duplicate
+// cluster does not force loading — and tag-preloading — every similar row. Callers that
+// only aggregate a bounded window of the nearest matches (suggested tags) pass a limit
+// so the cap bounds the database work, not just the downstream in-memory scoring.
+func (ctx *MahresourcesContext) getSimilarResourcesLimited(id uint, limit int) ([]*models.Resource, error) {
 	var resources []*models.Resource
 
 	// Find all resource IDs similar to this one from pre-computed similarities
@@ -33,12 +44,21 @@ func (ctx *MahresourcesContext) GetSimilarResources(id uint) ([]*models.Resource
 
 	// Query both directions using UNION ALL for better index utilization.
 	// We store with ResourceID1 < ResourceID2, so we need to check both columns.
-	rows, err := ctx.db.Raw(`
+	// When bounded, push LIMIT into the query so the similarity scan itself is capped
+	// (not just the resource+tag preload below) — this matters for a resource in a very
+	// large near-duplicate cluster. ORDER BY + LIMIT apply to the whole compound query in
+	// both SQLite and Postgres.
+	query := `
 		SELECT resource_id2 as similar_id, hamming_distance FROM resource_similarities WHERE resource_id1 = ?
 		UNION ALL
 		SELECT resource_id1 as similar_id, hamming_distance FROM resource_similarities WHERE resource_id2 = ?
-		ORDER BY hamming_distance ASC
-	`, id, id).Rows()
+		ORDER BY hamming_distance ASC`
+	queryArgs := []interface{}{id, id}
+	if limit > 0 {
+		query += "\n\t\tLIMIT ?"
+		queryArgs = append(queryArgs, limit)
+	}
+	rows, err := ctx.db.Raw(query, queryArgs...).Rows()
 
 	if err != nil {
 		return nil, err
@@ -57,6 +77,12 @@ func (ctx *MahresourcesContext) GetSimilarResources(id uint) ([]*models.Resource
 		return nil, err
 	}
 
+	// The query already applies LIMIT when bounded; this is a defensive secondary cap so the
+	// resource + tag preload below can never exceed `limit` regardless of driver quirks.
+	if limit > 0 && len(similarIDs) > limit {
+		similarIDs = similarIDs[:limit]
+	}
+
 	if len(similarIDs) == 0 {
 		// Fall back to exact hash match for resources not yet processed by worker
 		hashQuery := ctx.db.Table("image_hashes rootHash").
@@ -69,12 +95,16 @@ func (ctx *MahresourcesContext) GetSimilarResources(id uint) ([]*models.Resource
 			Group("resource_id").
 			Where("d_hash = (?)", hashQuery)
 
-		return resources, ctx.db.
+		fallback := ctx.db.
 			Preload("Tags").
 			Joins("Owner").
 			Where("resources.id IN (?)", sameHashIdsQuery).
-			Where("resources.id <> ?", id).
-			Find(&resources).Error
+			Where("resources.id <> ?", id)
+		if limit > 0 {
+			fallback = fallback.Limit(limit)
+		}
+
+		return resources, fallback.Find(&resources).Error
 	}
 
 	// Fetch resources

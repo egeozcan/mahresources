@@ -221,6 +221,17 @@ export const editPanelMethods = {
     }
   },
 
+  // Return the live resourceDetails object ONLY when it authoritatively describes
+  // resourceId. During a cache-miss navigation load window resourceDetails still holds
+  // the PREVIOUS image (onResourceChange deliberately does not blank it to avoid a color
+  // flash) while getCurrentItem() already points at the new one. Optimistically mutating
+  // that stale object — or caching it under the new id — would poison the cache with the
+  // previous image's data (the BH: H5 class of bug). Callers that get null must fall back
+  // to a server + cache-invalidation path instead of an optimistic in-place update.
+  _currentDetails(resourceId) {
+    return this.resourceDetails?.ID === resourceId ? this.resourceDetails : null;
+  },
+
   async onResourceChange() {
     if (!this.editPanelOpen && !this.quickTagPanelOpen) return;
 
@@ -263,12 +274,14 @@ export const editPanelMethods = {
 
   async updateName(newName) {
     const resourceId = this.getCurrentItem()?.id;
-    if (!resourceId || !this.resourceDetails) return;
+    // Only edit the live details when they authoritatively describe the current resource.
+    // During a cache-miss navigation load window resourceDetails still holds the previous
+    // image, so writing this edit through would poison its cache entry (BH: H5). After the
+    // await the user may also navigate away, which _currentDetails' captured reference plus
+    // the resourceId-keyed cache write below likewise guard against.
+    const details = this._currentDetails(resourceId);
+    if (!resourceId || !details) return;
 
-    // Capture the details object and item being edited. After the await the user may have
-    // navigated, making this.resourceDetails belong to a different resource; writing that
-    // live object back into the cache under resourceId would poison it (BH: H5).
-    const details = this.resourceDetails;
     const item = this.items[this.currentIndex];
 
     const oldName = details.Name;
@@ -310,11 +323,10 @@ export const editPanelMethods = {
 
   async updateDescription(newDescription) {
     const resourceId = this.getCurrentItem()?.id;
-    if (!resourceId || !this.resourceDetails) return;
-
-    // Capture the edited object so a post-await navigation cannot misdirect the cache
-    // write or rollback (BH: H5).
-    const details = this.resourceDetails;
+    // Only edit the live details when they belong to the current resource; a cache-miss
+    // load window would otherwise misdirect this write onto the previous image (BH: H5).
+    const details = this._currentDetails(resourceId);
+    if (!resourceId || !details) return;
 
     const oldDescription = details.Description;
     if (newDescription === oldDescription) return;
@@ -354,9 +366,11 @@ export const editPanelMethods = {
 
     this._savingTagIds.add(tag.ID);
 
-    // Capture the edited details object so a post-await navigation cannot misdirect the
-    // cache write or rollback onto a different resource (BH: H5).
-    const details = this.resourceDetails;
+    // Only mutate/cache the live details when they belong to the current resource. During a
+    // cache-miss load window resourceDetails still describes the previous image, so caching
+    // it under this id would poison the entry; a post-await navigation is likewise guarded by
+    // the captured reference and the resourceId-keyed cache write below (BH: H5).
+    const details = this._currentDetails(resourceId);
     if (details) {
       if (!details.Tags) {
         details.Tags = [];
@@ -383,6 +397,11 @@ export const editPanelMethods = {
 
       if (details) {
         this.detailsCache.set(resourceId, { ...details });
+      } else {
+        // Written during a cache-miss load window (details still described the previous
+        // image): an in-flight details fetch for this id may cache a pre-write snapshot, so
+        // drop any entry and force a later refetch — mirrors _batchToggleTags' non-current path.
+        this.detailsCache.delete(resourceId);
       }
       this.needsRefreshOnClose = true;
       this.announce(`Added tag: ${tag.Name}`);
@@ -414,8 +433,9 @@ export const editPanelMethods = {
     const resourceId = this.getCurrentItem()?.id;
     if (!resourceId) return;
 
-    // Capture the edited details object (BH: H5).
-    const details = this.resourceDetails;
+    // Only mutate/cache the live details when they belong to the current resource — a
+    // cache-miss load window otherwise misdirects this onto the previous image (BH: H5).
+    const details = this._currentDetails(resourceId);
     if (details?.Tags) {
       const idx = details.Tags.findIndex(t => t.ID === tag.ID);
       if (idx !== -1) {
@@ -440,6 +460,10 @@ export const editPanelMethods = {
 
       if (details) {
         this.detailsCache.set(resourceId, { ...details });
+      } else {
+        // Written during a cache-miss load window: drop any stale entry so a later view
+        // refetches the authoritative tag set (mirrors _batchToggleTags' non-current path).
+        this.detailsCache.delete(resourceId);
       }
       this.needsRefreshOnClose = true;
       this.announce(`Removed tag: ${tag.Name}`);

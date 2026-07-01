@@ -240,6 +240,57 @@ func TestSuggestedTags_EmptyDegradesGracefully(t *testing.T) {
 	}
 }
 
+// TestSimilarResources_LimitBoundsFetch: the limited variant caps how many
+// similar resources are actually loaded (not just scored in memory), returning
+// the N nearest by Hamming distance, while the unlimited public method returns
+// every match. This is the contract GetSuggestedTags relies on to keep a
+// resource in a large near-duplicate cluster from loading (and tag-preloading)
+// every similar row.
+func TestSimilarResources_LimitBoundsFetch(t *testing.T) {
+	ctx := newSuggestTestContext(t)
+	target := suggestMakeResource(t, ctx, "target", nil)
+
+	// One more similar resource than the cap, each at a distinct, increasing
+	// Hamming distance so the nearest set is deterministic (no ties).
+	total := suggestedTagsMaxSimilar + 5
+	sims := make([]*models.Resource, total)
+	for i := 0; i < total; i++ {
+		sims[i] = suggestMakeResource(t, ctx, fmt.Sprintf("sim%d", i), nil)
+		suggestLinkSimilar(t, ctx, target.ID, sims[i].ID, uint8(i))
+	}
+
+	// Unlimited: every similar resource is returned.
+	all, err := ctx.GetSimilarResources(target.ID)
+	if err != nil {
+		t.Fatalf("GetSimilarResources: %v", err)
+	}
+	if len(all) != total {
+		t.Fatalf("unlimited should return all %d similar resources, got %d", total, len(all))
+	}
+
+	// Limited: exactly the cap, and it is the NEAREST cap-many (the 5 farthest
+	// are excluded, the nearest is included).
+	limited, err := ctx.getSimilarResourcesLimited(target.ID, suggestedTagsMaxSimilar)
+	if err != nil {
+		t.Fatalf("getSimilarResourcesLimited: %v", err)
+	}
+	if len(limited) != suggestedTagsMaxSimilar {
+		t.Fatalf("limited fetch should return exactly %d, got %d", suggestedTagsMaxSimilar, len(limited))
+	}
+	got := make(map[uint]struct{}, len(limited))
+	for _, r := range limited {
+		got[r.ID] = struct{}{}
+	}
+	if _, ok := got[sims[0].ID]; !ok {
+		t.Fatalf("nearest similar resource (distance 0) must be within the limited fetch")
+	}
+	for i := suggestedTagsMaxSimilar; i < total; i++ {
+		if _, ok := got[sims[i].ID]; ok {
+			t.Fatalf("farthest similar resource sim%d (distance %d) must be excluded by the cap", i, i)
+		}
+	}
+}
+
 // TestSuggestedTags_ScopedPrincipalConfined: a group-limited principal is 404'd
 // on an out-of-subtree resource and never receives tags sourced from
 // out-of-subtree similar resources.

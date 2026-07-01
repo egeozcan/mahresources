@@ -414,6 +414,29 @@ export const quickTagPanelMethods = {
     return 'none';
   },
 
+  // Wait until resourceDetails authoritatively describes the CURRENT image before an
+  // add/remove decision is read from it via slotMatchState()/isTagOnResource(). During a
+  // cache-miss navigation load window resourceDetails still holds the PREVIOUS image, so a
+  // decision made then can pick the wrong action — e.g. a no-op remove instead of the add the
+  // user intended (finding #1, decision path). We passively poll the reactive condition rather
+  // than firing our own fetchResourceDetails(): the navigation already has one in flight, and a
+  // competing fetch would be aborted by onQuickTagResourceChange's follow-up call (shared
+  // detailsAborter) — which is exactly what made an eager await unreliable. Display keeps using
+  // the stale details (no color flash); only the decision waits. Returns true once details
+  // match, false if the user navigated on or details never arrive within the budget.
+  async _ensureCurrentDetailsForDecision(maxWaitMs = 3000) {
+    const targetId = this.getCurrentItem()?.id;
+    if (!targetId) return false;
+    if (this.resourceDetails?.ID === targetId) return true;
+    const step = 30;
+    for (let waited = 0; waited < maxWaitMs; waited += step) {
+      await new Promise(r => setTimeout(r, step));
+      if (this.getCurrentItem()?.id !== targetId) return false; // navigated on — abandon
+      if (this.resourceDetails?.ID === targetId) return true;
+    }
+    return this.resourceDetails?.ID === targetId;
+  },
+
   async toggleTabTag(index) {
     const slots = this.getActiveTabSlots();
     const slot = slots[index];
@@ -423,6 +446,16 @@ export const quickTagPanelMethods = {
     this._quickTagTogglingSlot = index;
 
     try {
+      // Decide add-vs-remove only against the current image's authoritative tags — never a
+      // stale load-window snapshot of the previous image (finding #1, decision path).
+      if (this.resourceDetails?.ID !== this.getCurrentItem()?.id) {
+        const ready = await this._ensureCurrentDetailsForDecision();
+        if (!ready) {
+          this.announce('Image still loading — tag not changed');
+          return;
+        }
+      }
+
       // Normalize: RECENT entries are {id, name, ts}, QUICK entries are [{id, name}, ...]
       const tags = (Array.isArray(slot) ? slot : [slot]).map(t => ({
         ID: t.id ?? t.ID,
@@ -490,12 +523,12 @@ export const quickTagPanelMethods = {
 
     const endpoint = action === 'add' ? '/v1/resources/addTags' : '/v1/resources/removeTags';
 
-    // Only mutate the live resourceDetails optimistically when it actually belongs to the
-    // target. For a non-current target (cross-image undo, or a write that lands after the
-    // user navigated) writing into this.resourceDetails — or rolling back onto it — would
-    // poison the on-screen resource (BH: H5), so we operate server + cache only.
-    const isCurrent = this.getCurrentItem()?.id === resourceId;
-    const details = isCurrent ? this.resourceDetails : null;
+    // Only mutate the live resourceDetails optimistically when it actually describes the
+    // target resource. A non-current target (cross-image undo), a write that lands after the
+    // user navigated, OR the cache-miss load window where resourceDetails still holds the
+    // PREVIOUS image all yield null here — we then operate server + cache only, so the
+    // on-screen resource's cache entry is never poisoned with another image's data (BH: H5).
+    const details = this._currentDetails(resourceId);
 
     // Optimistic UI update on the captured object (current target only)
     if (details) {
@@ -591,17 +624,27 @@ export const quickTagPanelMethods = {
       this.announce('No previous tags to repeat');
       return;
     }
-    // Make sure the current image's tags are loaded before diffing.
-    await this.fetchResourceDetails();
+    // Diff against the CURRENT image's authoritative tags. Wait for the navigation's own
+    // details fetch to land rather than firing a competing one (which the shared detailsAborter
+    // would let onQuickTagResourceChange abort, leaving isTagOnResource reading the previous
+    // image — finding #1, decision path). Skip rather than repeat against stale tags.
+    if (!(await this._ensureCurrentDetailsForDecision())) {
+      this.announce('Image still loading — tags not repeated');
+      return;
+    }
     const missing = this._carryForwardTags.filter(t => !this.isTagOnResource(t.ID));
     if (!missing.length) {
       this.announce('All previous tags already applied');
       return;
     }
-    await this._batchToggleTags(missing, 'add');
-    // Runs after _batchToggleTags' own announce; under the 50ms latest-wins live region this
-    // count+source message is the one a screen reader hears.
-    this.announce(`Repeated ${missing.length} tag(s) from ${this._carryForwardName}`);
+    const ok = await this._batchToggleTags(missing, 'add');
+    // Only override _batchToggleTags' own announce with this count+source message on success;
+    // under the 50ms latest-wins live region it is the one a screen reader hears. On failure
+    // its "Failed to add tags" must remain the final message rather than being masked by a
+    // false "Repeated…" success.
+    if (ok) {
+      this.announce(`Repeated ${missing.length} tag(s) from ${this._carryForwardName}`);
+    }
   },
 
   toggleFlowMode() {
@@ -849,6 +892,15 @@ export const quickTagPanelMethods = {
     if (index >= tags.length) return;
     const tag = tags[index];
     const tagObj = { ID: tag.id ?? tag.ID, Name: tag.name ?? tag.Name };
+    // Decide add-vs-remove against the current image's authoritative tags, not a stale
+    // load-window snapshot of the previous image (finding #1, decision path).
+    if (this.resourceDetails?.ID !== this.getCurrentItem()?.id) {
+      const ready = await this._ensureCurrentDetailsForDecision();
+      if (!ready) {
+        this.announce('Image still loading — tag not changed');
+        return;
+      }
+    }
     const isOn = this.isTagOnResource(tagObj.ID);
     await this._batchToggleTags([tagObj], isOn ? 'remove' : 'add');
   },

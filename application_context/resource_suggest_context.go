@@ -72,11 +72,10 @@ func (ctx *MahresourcesContext) GetSuggestedTags(resourceId uint, limit int) ([]
 
 	// Source A: tags on perceptual-hash-similar resources. Degrade gracefully —
 	// a missing similarity table or unprocessed resource simply yields nothing.
+	// The cap is pushed into the fetch so only the nearest suggestedTagsMaxSimilar
+	// resources (and their tags) are loaded, rather than the whole cluster.
 	var maxSimFreq float64
-	if sims, simErr := ctx.GetSimilarResources(resourceId); simErr == nil {
-		if len(sims) > suggestedTagsMaxSimilar {
-			sims = sims[:suggestedTagsMaxSimilar]
-		}
+	if sims, simErr := ctx.getSimilarResourcesLimited(resourceId, suggestedTagsMaxSimilar); simErr == nil {
 		for _, sr := range sims {
 			if sr == nil {
 				continue
