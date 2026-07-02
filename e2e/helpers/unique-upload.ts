@@ -19,20 +19,26 @@ import path from 'path';
 // A process-lifetime counter guarantees every upload (including on retry) gets a distinct SHA1.
 let _seq = 0;
 
+const TRAILING_BYTE_TOLERANT_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif']);
+
 /** A short ASCII token unique for every call within this worker process. */
 export function uniqueMarker(): string {
   _seq += 1;
   return `e2e-uniq-${process.pid}-${Date.now()}-${_seq}`;
 }
 
+export function shouldUniquifyUpload(filePath: string, exactBytes = false): boolean {
+  if (exactBytes) return false;
+  return TRAILING_BYTE_TOLERANT_IMAGE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+}
+
 /**
  * Returns `buffer` with a unique ASCII marker appended. The SHA1 changes (defeating dedup)
- * but the file still decodes: PNG/JPEG/GIF ignore trailing bytes after their end marker, and
- * text/SVG stay text because the tail is ASCII — a random *binary* tail would flip the
- * server's mimetype sniffing to application/octet-stream. Pixels are untouched, so perceptual
- * hashes are unaffected.
+ * while trailing-byte-tolerant image formats still decode: PNG/JPEG/GIF ignore trailing bytes
+ * after their end marker. Pixels are untouched, so perceptual hashes are unaffected.
  *
- * NOT safe for strict container formats (e.g. tar) — do not use for import archives.
+ * NOT safe for strict container formats (e.g. SVG, video, tar) — gate call sites with
+ * shouldUniquifyUpload().
  */
 export function uniquifyBuffer(buffer: Buffer): Buffer {
   return Buffer.concat([buffer, Buffer.from(`\n${uniqueMarker()}\n`, 'ascii')]);
@@ -47,6 +53,7 @@ export function uniqueAssetFile(srcPath: string): string {
   const ext = path.extname(srcPath);
   const stem = path.basename(srcPath, ext);
   const tmpPath = path.join(os.tmpdir(), `mahres-e2e-${stem}-${uniqueMarker()}${ext}`);
-  fs.writeFileSync(tmpPath, uniquifyBuffer(fs.readFileSync(srcPath)));
+  const rawBuffer = fs.readFileSync(srcPath);
+  fs.writeFileSync(tmpPath, shouldUniquifyUpload(srcPath) ? uniquifyBuffer(rawBuffer) : rawBuffer);
   return tmpPath;
 }

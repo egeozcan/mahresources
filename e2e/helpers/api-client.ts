@@ -1,5 +1,5 @@
 import { APIRequestContext, APIResponse } from '@playwright/test';
-import { uniquifyBuffer } from './unique-upload';
+import { shouldUniquifyUpload, uniquifyBuffer } from './unique-upload';
 
 export interface Entity {
   ID: number;
@@ -652,10 +652,10 @@ export class ApiClient {
     meta?: string;
     contentType?: string;
     /**
-     * By default the uploaded bytes get a unique ASCII marker appended so the server's
-     * global content-hash dedup can't resolve this upload to another spec's identical file
-     * (see helpers/unique-upload.ts). Set true only for a test that deliberately depends on
-     * byte-identical content (currently none do).
+     * By default, known trailing-byte-tolerant image fixtures get a unique ASCII marker
+     * appended so the server's global content-hash dedup can't resolve this upload to
+     * another spec's identical file (see helpers/unique-upload.ts). Strict formats like SVG
+     * and video stay exact unless a test deliberately mutates them itself.
      */
     exactBytes?: boolean;
   }): Promise<{ ID: number; Name: string; ContentType: string }> {
@@ -663,7 +663,9 @@ export class ApiClient {
     const pathModule = await import('path');
 
     const rawBuffer = fs.readFileSync(data.filePath);
-    const fileBuffer = data.exactBytes ? rawBuffer : uniquifyBuffer(rawBuffer);
+    const fileBuffer = shouldUniquifyUpload(data.filePath, data.exactBytes)
+      ? uniquifyBuffer(rawBuffer)
+      : rawBuffer;
     const fileName = pathModule.basename(data.filePath);
 
     // Build multipart object - the field name must be "resource" to match server

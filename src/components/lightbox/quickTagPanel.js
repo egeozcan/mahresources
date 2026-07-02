@@ -17,6 +17,62 @@ function padArray(arr, len) {
   return result;
 }
 
+function cloneSlotValue(slot) {
+  if (Array.isArray(slot)) return slot.map(tag => tag && typeof tag === 'object' ? { ...tag } : tag);
+  return slot && typeof slot === 'object' ? { ...slot } : slot;
+}
+
+function cloneQuickSlots(quickSlots) {
+  return [
+    padArray(quickSlots?.[0], 9).map(cloneSlotValue),
+    padArray(quickSlots?.[1], 9).map(cloneSlotValue),
+    padArray(quickSlots?.[2], 9).map(cloneSlotValue),
+    padArray(quickSlots?.[3], 9).map(cloneSlotValue),
+  ];
+}
+
+function cloneRecentTags(recentTags) {
+  return padArray(recentTags, 9).map(cloneSlotValue);
+}
+
+function tagKey(tag) {
+  return tag?.id ?? tag?.ID;
+}
+
+function slotTags(slot) {
+  if (!slot) return [];
+  return (Array.isArray(slot) ? slot : [slot])
+    .filter(Boolean)
+    .map(cloneSlotValue);
+}
+
+function mergeQuickSlotValues(serverSlot, localSlot) {
+  const merged = slotTags(serverSlot);
+  const seen = new Set(merged.map(tagKey));
+  for (const tag of slotTags(localSlot)) {
+    const key = tagKey(tag);
+    if (seen.has(key)) continue;
+    merged.push(tag);
+    seen.add(key);
+  }
+  return merged.length ? merged : null;
+}
+
+function mergeRecentTags(serverRecentTags, localRecentTags) {
+  const merged = [];
+  const seen = new Set();
+  const add = tag => {
+    if (!tag) return;
+    const key = tagKey(tag);
+    if (seen.has(key)) return;
+    merged.push(cloneSlotValue(tag));
+    seen.add(key);
+  };
+  cloneRecentTags(localRecentTags).forEach(add);
+  cloneRecentTags(serverRecentTags).forEach(add);
+  return padArray(merged, 9);
+}
+
 /**
  * Quick tag panel state/methods for the lightbox store.
  * All methods use `this` which is bound to the Alpine store.
@@ -42,6 +98,10 @@ export const quickTagPanelState = {
   // Gate persistence until the server-backed settings have hydrated the store, so a
   // fresh page's default (empty) state never overwrites the user's saved slots.
   _quickTagsReady: false,
+  _quickTagsPendingSave: false,
+  _quickTagsDirtySlots: [],
+  _quickTagsDirtyRecents: false,
+  _quickTagsDirtyFlowMode: false,
 
   // ---- Batch tagging pipeline (Tier 1) ----
   // Auto-advance to the next image after a successful quick-slot add (Item 5).
@@ -77,14 +137,24 @@ export const quickTagPanelMethods = {
   // only after this settles (_quickTagsReady) so a fresh page's default state can never
   // overwrite the user's saved slots before they load.
   async _loadQuickTagsFromStorage() {
+    let pendingEdits = null;
     try {
       await userSettings.whenLoaded();
       const data = userSettings.get('quickTags');
+      if (this._quickTagsPendingSave) pendingEdits = this._capturePendingQuickTagEdits();
       if (data && typeof data === 'object') this._applyQuickTagsData(data);
+      if (pendingEdits) this._applyPendingQuickTagEdits(pendingEdits);
     } catch (e) {
       console.warn('Failed to load quick tags:', e);
     } finally {
+      if (this._quickTagsPendingSave && !pendingEdits) {
+        pendingEdits = this._capturePendingQuickTagEdits();
+      }
       this._quickTagsReady = true;
+      if (pendingEdits) {
+        this._resetPendingQuickTagEdits();
+        this._saveQuickTagsToStorage();
+      }
     }
   },
 
@@ -133,14 +203,64 @@ export const quickTagPanelMethods = {
   // tab) is excluded — it must not be written on every open/tab switch, and restoring it
   // across the async load would race with user interaction. No-ops until the initial load
   // has hydrated the store, so a fresh page's default state cannot overwrite saved slots.
-  _saveQuickTagsToStorage() {
-    if (!this._quickTagsReady) return;
+  _saveQuickTagsToStorage(change = {}) {
+    if (!this._quickTagsReady) {
+      this._markPendingQuickTagEdit(change);
+      return;
+    }
     userSettings.set('quickTags', {
       version: 3,
       quickSlots: this.quickSlots,
       recentTags: this.recentTags,
       flowMode: this.flowModeEnabled,
     });
+  },
+
+  _markPendingQuickTagEdit({ slot = null, recents = false, flowMode = false } = {}) {
+    this._quickTagsPendingSave = true;
+    if (slot) {
+      const [tabIdx, slotIdx] = slot;
+      const key = `${tabIdx}:${slotIdx}`;
+      const dirtySlots = Array.isArray(this._quickTagsDirtySlots) ? this._quickTagsDirtySlots : [];
+      if (!dirtySlots.includes(key)) this._quickTagsDirtySlots = [...dirtySlots, key];
+    }
+    if (recents) this._quickTagsDirtyRecents = true;
+    if (flowMode) this._quickTagsDirtyFlowMode = true;
+  },
+
+  _capturePendingQuickTagEdits() {
+    return {
+      quickSlots: cloneQuickSlots(this.quickSlots),
+      recentTags: cloneRecentTags(this.recentTags),
+      flowModeEnabled: this.flowModeEnabled,
+      dirtySlots: Array.isArray(this._quickTagsDirtySlots) ? [...this._quickTagsDirtySlots] : [],
+      dirtyRecents: this._quickTagsDirtyRecents,
+      dirtyFlowMode: this._quickTagsDirtyFlowMode,
+    };
+  },
+
+  _applyPendingQuickTagEdits(pendingEdits) {
+    for (const key of pendingEdits.dirtySlots) {
+      const [tabIdx, slotIdx] = key.split(':').map(Number);
+      if (!Number.isInteger(tabIdx) || !Number.isInteger(slotIdx)) continue;
+      if (tabIdx < 0 || tabIdx >= 4 || slotIdx < 0 || slotIdx >= 9) continue;
+      this.quickSlots[tabIdx][slotIdx] = mergeQuickSlotValues(
+        this.quickSlots[tabIdx][slotIdx],
+        pendingEdits.quickSlots[tabIdx][slotIdx],
+      );
+    }
+    if (pendingEdits.dirtySlots.length) this.quickSlots = [...this.quickSlots];
+    if (pendingEdits.dirtyRecents) {
+      this.recentTags = mergeRecentTags(this.recentTags, pendingEdits.recentTags);
+    }
+    if (pendingEdits.dirtyFlowMode) this.flowModeEnabled = pendingEdits.flowModeEnabled;
+  },
+
+  _resetPendingQuickTagEdits() {
+    this._quickTagsPendingSave = false;
+    this._quickTagsDirtySlots = [];
+    this._quickTagsDirtyRecents = false;
+    this._quickTagsDirtyFlowMode = false;
   },
 
   // ==================== Tab Management ====================
@@ -153,7 +273,6 @@ export const quickTagPanelMethods = {
     }
     this.activeTab = tabIndex;
     this.editingSlotIndex = null;
-    this._saveQuickTagsToStorage();
     this.announce(`Switched to ${TAB_LABELS[tabIndex].name} tab`);
   },
 
@@ -174,7 +293,6 @@ export const quickTagPanelMethods = {
       this.closeEditPanel();
     }
     this.quickTagPanelOpen = true;
-    this._saveQuickTagsToStorage();
     this.announce('Edit tags panel opened');
     // The panel narrows the media viewport — re-clamp pan so a zoomed image stays on
     // screen (BH: M7). rAF lets the new width class apply first.
@@ -195,7 +313,6 @@ export const quickTagPanelMethods = {
     this.quickTagPanelOpen = false;
     // Drop suggestions so a reopen never flashes the previous image's chips.
     this.suggestedTags = [];
-    this._saveQuickTagsToStorage();
     // The media viewport widens again — re-clamp pan to the new bounds (BH: M7).
     requestAnimationFrame(() => this.constrainPan());
 
@@ -241,7 +358,7 @@ export const quickTagPanelMethods = {
       this.recentTags[recentIdx] = null;
       this.recentTags = [...this.recentTags];
     }
-    this._saveQuickTagsToStorage();
+    this._saveQuickTagsToStorage({ slot: [tabIdx, index], recents: recentIdx !== -1 });
 
     // Dismiss any open popovers in the quick-tag panel
     document.querySelectorAll('[data-quick-tag-panel] [popover]').forEach(p => {
@@ -257,7 +374,7 @@ export const quickTagPanelMethods = {
     const filtered = current.filter(t => t.id !== tagId);
     this.quickSlots[tabIdx][index] = filtered.length > 0 ? filtered : null;
     this.quickSlots = [...this.quickSlots];
-    this._saveQuickTagsToStorage();
+    this._saveQuickTagsToStorage({ slot: [tabIdx, index] });
   },
 
   clearQuickTagSlot(index) {
@@ -265,7 +382,7 @@ export const quickTagPanelMethods = {
     const tabIdx = this.activeTab;
     this.quickSlots[tabIdx][index] = null;
     this.quickSlots = [...this.quickSlots];
-    this._saveQuickTagsToStorage();
+    this._saveQuickTagsToStorage({ slot: [tabIdx, index] });
   },
 
   // ==================== Recent Tags ====================
@@ -282,7 +399,7 @@ export const quickTagPanelMethods = {
     if (existingIdx !== -1) {
       this.recentTags[existingIdx] = { id: tag.ID, name: tag.Name, ts: now };
       this.recentTags = [...this.recentTags];
-      this._saveQuickTagsToStorage();
+      this._saveQuickTagsToStorage({ recents: true });
       return;
     }
 
@@ -300,7 +417,7 @@ export const quickTagPanelMethods = {
 
     this.recentTags[targetIdx] = { id: tag.ID, name: tag.Name, ts: now };
     this.recentTags = [...this.recentTags];
-    this._saveQuickTagsToStorage();
+    this._saveQuickTagsToStorage({ recents: true });
   },
 
   // ==================== Tag Toggle ====================
@@ -560,7 +677,7 @@ export const quickTagPanelMethods = {
 
   toggleFlowMode() {
     this.flowModeEnabled = !this.flowModeEnabled;
-    this._saveQuickTagsToStorage();
+    this._saveQuickTagsToStorage({ flowMode: true });
     this.announce(`Flow mode ${this.flowModeEnabled ? 'on' : 'off'}`);
   },
 
