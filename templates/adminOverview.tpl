@@ -217,7 +217,7 @@
                                             <td class="py-2 pr-4 min-w-48">
                                                 <div class="flex items-center gap-2">
                                                     <span class="text-stone-900 font-semibold" data-testid="storage-location-label" x-text="location.label"></span>
-                                                    <span class="rounded bg-stone-100 px-1.5 py-0.5 text-[0.65rem] uppercase tracking-wider text-stone-500" x-text="location.kind"></span>
+                                                    <span class="rounded bg-stone-100 px-1.5 py-0.5 text-[0.65rem] uppercase tracking-wider text-stone-600" x-text="location.kind"></span>
                                                 </div>
                                                 <p class="mt-1 max-w-md break-all text-xs text-stone-500" x-text="location.path || 'Memory / not configured'"></p>
                                             </td>
