@@ -573,6 +573,7 @@ func main() {
 		AHashThresholdFn:      context.Settings().HashAHashThreshold,
 		Disabled:              *hashWorkerDisabled,
 		CacheSize:             *hashCacheSize,
+		BackfillPausedFn:      context.Settings().HashBackfillPaused,
 	}
 
 	// Build alt filesystems map for hash worker

@@ -21,6 +21,10 @@ type Config struct {
 	Disabled bool
 	// CacheSize is the maximum number of entries in the hash LRU cache.
 	CacheSize int
+	// BackfillPausedFn reports whether the incremental v2 hash backfill of
+	// existing rows should be skipped this cycle. Called once per batch so the
+	// runtime setting takes effect without restart. Nil means never paused.
+	BackfillPausedFn func() bool
 }
 
 // DefaultConfig returns a Config with sensible defaults.

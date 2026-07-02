@@ -159,6 +159,7 @@ const (
 	KeySharePublicURL          = "share_public_url"
 	KeyHashSimilarityThreshold = "hash_similarity_threshold"
 	KeyHashAHashThreshold      = "hash_ahash_threshold"
+	KeyHashBackfillPaused      = "hash_backfill_paused"
 )
 
 // buildSpecs returns the registry of runtime-editable settings.
@@ -221,15 +222,21 @@ func buildSpecs() map[string]SettingSpec {
 		},
 		KeyHashSimilarityThreshold: {
 			Key: KeyHashSimilarityThreshold, Label: "Hash similarity threshold",
-			Description: "Maximum DHash Hamming distance to consider two resources similar.",
+			Description: "Maximum perceptual distance to consider two resources similar. Applied at read time as a filter over COALESCE(p_distance, hamming_distance), so changes take effect instantly with no recompute. v2 pairs are stored up to distance 11, so values above 11 have no additional effect for v2.",
 			Group:       GroupDeduplication, Type: SettingTypeInt,
-			MinNumeric: 0, MaxNumeric: 64,
+			MinNumeric: 0, MaxNumeric: 11,
 		},
 		KeyHashAHashThreshold: {
 			Key: KeyHashAHashThreshold, Label: "Hash aHash threshold",
 			Description: "Max AHash Hamming distance for the secondary similarity check. 0 disables.",
 			Group:       GroupDeduplication, Type: SettingTypeUint64,
 			MinNumeric: 0, MaxNumeric: 64, AllowZero: true,
+		},
+		KeyHashBackfillPaused: {
+			Key: KeyHashBackfillPaused, Label: "Pause v2 hash backfill",
+			Description: "Set to 1 to pause the incremental v2 perceptual-hash backfill of existing images without disabling the whole hash worker. 0 = running.",
+			Group:       GroupDeduplication, Type: SettingTypeInt,
+			MinNumeric: 0, MaxNumeric: 1, AllowZero: true,
 		},
 	}
 }
@@ -269,6 +276,8 @@ func BuildDefaultsFromConfig(cfg *MahresourcesConfig) map[string]any {
 		KeySharePublicURL:          cfg.SharePublicURL,
 		KeyHashSimilarityThreshold: cfg.HashSimilarityThreshold,
 		KeyHashAHashThreshold:      cfg.HashAHashThreshold,
+		// Runtime-only operational toggle; defaults to running (not paused).
+		KeyHashBackfillPaused: 0,
 	}
 }
 

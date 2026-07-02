@@ -105,8 +105,20 @@ func (s *RuntimeSettings) Load() error {
 			continue
 		}
 		if err := validateBounds(spec, v); err != nil {
-			s.log.Error("runtime_settings: persisted %q fails bounds (%v); falling back to boot default", r.Key, err)
-			continue
+			// A persisted numeric value can fall out of bounds when a later
+			// release tightens a spec (e.g. hash_similarity_threshold's max
+			// dropped 64 → 11 with image similarity v2). Clamp to the nearest
+			// bound to preserve the operator's intent; the DB row keeps the
+			// original value so it comes back if bounds widen again. Only
+			// non-clampable values (wrong type, string validators) fall back
+			// to the boot default.
+			clamped, ok := clampToBounds(spec, v)
+			if !ok {
+				s.log.Error("runtime_settings: persisted %q fails bounds (%v); falling back to boot default", r.Key, err)
+				continue
+			}
+			s.log.Warn("runtime_settings: persisted %q out of bounds (%v); clamped to %v", r.Key, err, clamped)
+			v = clamped
 		}
 		s.overrides[r.Key] = persistedEntry{value: v, updatedAt: r.UpdatedAt, reason: r.Reason}
 		if bootDefault, ok := s.defaults[r.Key]; ok && bootDefault != v {
@@ -322,6 +334,51 @@ func parseIntWithByteSuffix(raw string) (int64, error) {
 	return n * mult, nil
 }
 
+// clampToBounds returns v clamped into the spec's numeric bounds and true when
+// the spec type is clampable. Strings (and type mismatches) return false. Used
+// only by Load; Set keeps rejecting out-of-bounds values outright.
+func clampToBounds(spec SettingSpec, v any) (any, bool) {
+	clamp := func(n int64) int64 {
+		if n < spec.MinNumeric {
+			return spec.MinNumeric
+		}
+		if n > spec.MaxNumeric {
+			return spec.MaxNumeric
+		}
+		return n
+	}
+	switch spec.Type {
+	case SettingTypeInt64:
+		n, ok := v.(int64)
+		if !ok {
+			return nil, false
+		}
+		return clamp(n), true
+	case SettingTypeInt:
+		n, ok := v.(int)
+		if !ok {
+			return nil, false
+		}
+		return int(clamp(int64(n))), true
+	case SettingTypeUint64:
+		n, ok := v.(uint64)
+		if !ok {
+			return nil, false
+		}
+		if int64(n) < 0 { // above MaxInt64: certainly over any spec max
+			return uint64(spec.MaxNumeric), true
+		}
+		return uint64(clamp(int64(n))), true
+	case SettingTypeDuration:
+		d, ok := v.(time.Duration)
+		if !ok {
+			return nil, false
+		}
+		return time.Duration(clamp(int64(d))), true
+	}
+	return nil, false
+}
+
 func validateBounds(spec SettingSpec, v any) error {
 	switch spec.Type {
 	case SettingTypeInt64:
@@ -460,6 +517,13 @@ func (s *RuntimeSettings) HashSimilarityThreshold() int {
 func (s *RuntimeSettings) HashAHashThreshold() uint64 {
 	v, _ := s.getRaw(KeyHashAHashThreshold)
 	return v.(uint64)
+}
+
+// HashBackfillPaused reports whether the v2 hash backfill is paused (setting == 1).
+func (s *RuntimeSettings) HashBackfillPaused() bool {
+	v, _ := s.getRaw(KeyHashBackfillPaused)
+	n, _ := v.(int)
+	return n != 0
 }
 
 // NewContextAuditor returns an Auditor that writes log_entries rows directly

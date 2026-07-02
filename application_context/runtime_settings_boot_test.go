@@ -41,7 +41,7 @@ func TestBoot_NoDivergenceWhenValuesMatch(t *testing.T) {
 	}
 }
 
-func TestBoot_OutOfBoundsDroppedFromCache(t *testing.T) {
+func TestBoot_OutOfBoundsClampedAtLoad(t *testing.T) {
 	db := newTestDB(t)
 	enc, _ := encodeSettingValue("int64", int64(-1)) // below bounds
 	db.Create(&models.RuntimeSetting{
@@ -50,10 +50,12 @@ func TestBoot_OutOfBoundsDroppedFromCache(t *testing.T) {
 	log := &stubLogger{}
 	rs := NewRuntimeSettings(db, log, buildSpecs(), defaults())
 	_ = rs.Load()
-	if rs.MaxImportSize() != int64(10<<30) {
-		t.Fatalf("want fallback to default, got %v", rs.MaxImportSize())
+	// Out-of-bounds numeric values are clamped to the nearest bound at Load
+	// (preserving operator intent across spec-bounds tightenings), not dropped.
+	if rs.MaxImportSize() != int64(1<<20) {
+		t.Fatalf("want clamp to spec min 1MiB, got %v", rs.MaxImportSize())
 	}
-	if !log.contains("fails bounds") {
-		t.Fatalf("want bounds-fail ERROR, got %#v", log.entries)
+	if !log.contains("clamp") {
+		t.Fatalf("want clamp WARN, got %#v", log.entries)
 	}
 }

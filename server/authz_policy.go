@@ -131,7 +131,8 @@ func isSystemPath(path string) bool {
 	switch {
 	case strings.HasPrefix(path, "/v1/admin/server-stats"),
 		strings.HasPrefix(path, "/v1/admin/data-stats"),
-		strings.HasPrefix(path, "/v1/admin/settings"):
+		strings.HasPrefix(path, "/v1/admin/settings"),
+		strings.HasPrefix(path, "/v1/admin/similarity"):
 		return true
 	case strings.HasPrefix(path, "/v1/user"): // /v1/user, /v1/users, /v1/user/delete (admin user management)
 		return true

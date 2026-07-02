@@ -41,6 +41,14 @@ func (ctx *MahresourcesContext) getSimilarResourcesLimited(id uint, limit int) (
 
 	// Find all resource IDs similar to this one from pre-computed similarities
 	var similarIDs []uint
+	distanceByID := make(map[uint]int)
+
+	// Read-time thresholds (image similarity v2): the write path stores v2 pairs up
+	// to MaxStoredPDistance (11) unconditionally, so filtering happens here and a
+	// threshold change applies instantly with no recompute. The effective distance
+	// is COALESCE(p_distance, hamming_distance): the v2 pHash distance when present,
+	// else the legacy dHash distance for old pairs.
+	pThreshold, aThreshold := ctx.similarityThresholds()
 
 	// Query both directions using UNION ALL for better index utilization.
 	// We store with ResourceID1 < ResourceID2, so we need to check both columns.
@@ -48,11 +56,19 @@ func (ctx *MahresourcesContext) getSimilarResourcesLimited(id uint, limit int) (
 	// (not just the resource+tag preload below) — this matters for a resource in a very
 	// large near-duplicate cluster. ORDER BY + LIMIT apply to the whole compound query in
 	// both SQLite and Postgres.
-	query := `
-		SELECT resource_id2 as similar_id, hamming_distance FROM resource_similarities WHERE resource_id1 = ?
+	//
+	// The aHash secondary filter only applies when its threshold is nonzero, and it
+	// never excludes legacy pairs (a_distance IS NULL passes) so v1 matches survive.
+	aClause := ""
+	if aThreshold > 0 {
+		aClause = fmt.Sprintf(" AND (a_distance IS NULL OR a_distance <= %d)", aThreshold)
+	}
+	filter := fmt.Sprintf("COALESCE(p_distance, hamming_distance) <= %d%s", pThreshold, aClause)
+	query := fmt.Sprintf(`
+		SELECT resource_id2 as similar_id, COALESCE(p_distance, hamming_distance) as dist FROM resource_similarities WHERE resource_id1 = ? AND %s
 		UNION ALL
-		SELECT resource_id1 as similar_id, hamming_distance FROM resource_similarities WHERE resource_id2 = ?
-		ORDER BY hamming_distance ASC`
+		SELECT resource_id1 as similar_id, COALESCE(p_distance, hamming_distance) as dist FROM resource_similarities WHERE resource_id2 = ? AND %s
+		ORDER BY dist ASC`, filter, filter)
 	queryArgs := []interface{}{id, id}
 	if limit > 0 {
 		query += "\n\t\tLIMIT ?"
@@ -67,11 +83,14 @@ func (ctx *MahresourcesContext) getSimilarResourcesLimited(id uint, limit int) (
 
 	for rows.Next() {
 		var similarID uint
-		var hammingDistance int
-		if err := rows.Scan(&similarID, &hammingDistance); err != nil {
+		var distance int
+		if err := rows.Scan(&similarID, &distance); err != nil {
 			return nil, err
 		}
 		similarIDs = append(similarIDs, similarID)
+		if _, seen := distanceByID[similarID]; !seen {
+			distanceByID[similarID] = distance
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -116,7 +135,8 @@ func (ctx *MahresourcesContext) getSimilarResourcesLimited(id uint, limit int) (
 		return nil, err
 	}
 
-	// Preserve order from similarity query (sorted by hamming_distance ASC)
+	// Preserve order from similarity query (sorted by distance ASC) and attach the
+	// perceptual distance so the UI can surface a confidence tier.
 	idToIndex := make(map[uint]int, len(similarIDs))
 	for i, id := range similarIDs {
 		idToIndex[id] = i
@@ -124,7 +144,12 @@ func (ctx *MahresourcesContext) getSimilarResourcesLimited(id uint, limit int) (
 
 	sortedResources := make([]*models.Resource, len(similarIDs))
 	for i := range resources {
-		sortedResources[idToIndex[resources[i].ID]] = resources[i]
+		r := resources[i]
+		if d, ok := distanceByID[r.ID]; ok {
+			dist := d
+			r.SimilarityDistance = &dist
+		}
+		sortedResources[idToIndex[r.ID]] = r
 	}
 
 	// Filter out any nil entries (in case of missing resources)
@@ -136,6 +161,17 @@ func (ctx *MahresourcesContext) getSimilarResourcesLimited(id uint, limit int) (
 	}
 
 	return result, nil
+}
+
+// similarityThresholds returns the read-time perceptual-similarity thresholds:
+// the max effective distance (COALESCE p_distance/hamming_distance) and the max
+// aHash distance (0 disables the aHash filter). Falls back to sane defaults when
+// runtime settings are not wired (e.g. in isolated unit tests).
+func (ctx *MahresourcesContext) similarityThresholds() (int, uint64) {
+	if ctx.settings != nil {
+		return ctx.settings.HashSimilarityThreshold(), ctx.settings.HashAHashThreshold()
+	}
+	return 10, 0
 }
 
 func (ctx *MahresourcesContext) GetResourceCount(query *query_models.ResourceSearchQuery) (int64, error) {

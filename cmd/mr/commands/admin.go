@@ -187,8 +187,86 @@ func NewAdminCmd(c *client.Client, opts *output.Options) *cobra.Command {
 
 	cmd.AddCommand(statsCmd)
 	cmd.AddCommand(NewAdminSettingsCmd(c, opts))
+	cmd.AddCommand(NewAdminSimilarityCmd(c, opts))
 
 	return cmd
+}
+
+// NewAdminSimilarityCmd groups image-similarity maintenance actions.
+func NewAdminSimilarityCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(adminHelpFS, "admin_help/admin_similarity.md")
+	cmd := &cobra.Command{
+		Use:         "similarity",
+		Short:       "Image similarity maintenance jobs",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+	}
+	cmd.AddCommand(NewAdminSimilarityRecomputeCmd(c, opts))
+	cmd.AddCommand(NewAdminSimilarityRetryFailedCmd(c, opts))
+	return cmd
+}
+
+// NewAdminSimilarityRecomputeCmd triggers a background pair-recompute job.
+func NewAdminSimilarityRecomputeCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(adminHelpFS, "admin_help/admin_similarity_recompute.md")
+	return &cobra.Command{
+		Use:         "recompute",
+		Short:       "Rebuild all v2 similarity pairs from stored hashes",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var raw json.RawMessage
+			if err := c.Post("/v1/admin/similarity/recompute", nil, struct{}{}, &raw); err != nil {
+				return err
+			}
+			if opts.JSON {
+				output.PrintRawJSON(raw)
+				return nil
+			}
+			var resp struct {
+				JobID string `json:"jobId"`
+			}
+			if err := json.Unmarshal(raw, &resp); err != nil {
+				return fmt.Errorf("parsing response: %w", err)
+			}
+			fmt.Printf("Recompute job started: %s\n", resp.JobID)
+			return nil
+		},
+	}
+}
+
+// NewAdminSimilarityRetryFailedCmd resets failed hashes for retry.
+func NewAdminSimilarityRetryFailedCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(adminHelpFS, "admin_help/admin_similarity_retry_failed.md")
+	return &cobra.Command{
+		Use:         "retry-failed",
+		Short:       "Reset failed hashes so the backfill worker retries them",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var raw json.RawMessage
+			if err := c.Post("/v1/admin/similarity/retry-failed", nil, struct{}{}, &raw); err != nil {
+				return err
+			}
+			if opts.JSON {
+				output.PrintRawJSON(raw)
+				return nil
+			}
+			var resp struct {
+				Reset int64 `json:"reset"`
+			}
+			if err := json.Unmarshal(raw, &resp); err != nil {
+				return fmt.Errorf("parsing response: %w", err)
+			}
+			fmt.Printf("Reset %d failed hash(es) for retry.\n", resp.Reset)
+			return nil
+		},
+	}
 }
 
 // NewAdminStatsCmd returns the "admin stats" subcommand (the former NewAdminCmd body).

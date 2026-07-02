@@ -101,6 +101,45 @@ func TestRuntimeSettings_LoadSeeded(t *testing.T) {
 	}
 }
 
+// TestRuntimeSettings_LoadClampsOutOfBounds: a persisted value that predates a
+// bounds tightening (hash_similarity_threshold's max dropped 64 → 11 with image
+// similarity v2) is clamped to the nearest bound at Load, preserving as much of
+// the operator's intent as possible instead of silently reverting to the boot
+// default. Set still rejects out-of-bounds values; only Load clamps.
+func TestRuntimeSettings_LoadClampsOutOfBounds(t *testing.T) {
+	db := newTestDB(t)
+	encInt, _ := encodeSettingValue(string(SettingTypeInt), int(15))
+	db.Create(&models.RuntimeSetting{Key: KeyHashSimilarityThreshold, ValueJSON: string(encInt), Reason: "pre-v2", UpdatedAt: time.Now()})
+	encU64, _ := encodeSettingValue(string(SettingTypeUint64), uint64(100))
+	db.Create(&models.RuntimeSetting{Key: KeyHashAHashThreshold, ValueJSON: string(encU64), Reason: "pre-v2", UpdatedAt: time.Now()})
+
+	logger := &stubLogger{}
+	rs := NewRuntimeSettings(db, logger, buildSpecs(), defaults())
+	if err := rs.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if got := rs.HashSimilarityThreshold(); got != 11 {
+		t.Errorf("hash_similarity_threshold: want clamped 11, got %d", got)
+	}
+	if got := rs.HashAHashThreshold(); got != 64 {
+		t.Errorf("hash_ahash_threshold: want clamped 64, got %d", got)
+	}
+	if !logger.contains("clamp") {
+		t.Errorf("expected a clamp warning in the log, got %v", logger.entries)
+	}
+	// The DB rows keep the original values: if bounds widen again, the
+	// operator's setting comes back.
+	var row models.RuntimeSetting
+	if err := db.First(&row, "key = ?", KeyHashSimilarityThreshold).Error; err != nil {
+		t.Fatalf("db row: %v", err)
+	}
+	v, err := decodeSettingValue(string(SettingTypeInt), []byte(row.ValueJSON))
+	if err != nil || v.(int) != 15 {
+		t.Errorf("db row should keep original 15, got %v (err %v)", v, err)
+	}
+}
+
 func TestRuntimeSettings_SetGetRoundTrip(t *testing.T) {
 	db := newTestDB(t)
 	rs := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), defaults())

@@ -7,6 +7,7 @@ require (
 	github.com/anthonynsimon/bild v0.15.0
 	github.com/arran4/golang-ical v0.3.5
 	github.com/c2h5oh/datasize v0.0.0-20231215233829-aa82cc1e6500
+	github.com/corona10/goimagehash v1.1.0
 	github.com/disintegration/imaging v1.6.2
 	github.com/flosch/pongo2-addons v0.0.0-20210526150811-f969446c5b72
 	github.com/flosch/pongo2/v4 v4.0.2
@@ -21,6 +22,7 @@ require (
 	github.com/lib/pq v1.12.3
 	github.com/matoous/go-nanoid/v2 v2.1.0
 	github.com/mattn/go-sqlite3 v1.14.47
+	github.com/rwcarlsen/goexif v0.0.0-20190401172101-9e8deecbddbd
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/shirou/gopsutil/v4 v4.26.5
 	github.com/spf13/afero v1.15.0

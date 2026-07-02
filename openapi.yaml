@@ -562,14 +562,34 @@ components:
                 DHashInt:
                     nullable: true
                     type: integer
+                HashVersion:
+                    nullable: true
+                    type: integer
                 ID:
                     readOnly: true
+                    type: integer
+                PChunk0:
+                    nullable: true
+                    type: integer
+                PChunk1:
+                    nullable: true
+                    type: integer
+                PChunk2:
+                    nullable: true
+                    type: integer
+                PChunk3:
+                    nullable: true
+                    type: integer
+                PHashInt:
+                    nullable: true
                     type: integer
                 Resource:
                     $ref: '#/components/schemas/Resource'
                 ResourceId:
                     nullable: true
                     type: integer
+                Status:
+                    type: string
             type: object
         LogEntry:
             properties:
@@ -1143,6 +1163,9 @@ components:
                 series:
                     $ref: '#/components/schemas/Series'
                 seriesId:
+                    nullable: true
+                    type: integer
+                similarityDistance:
                     nullable: true
                     type: integer
                 versions:
@@ -2002,6 +2025,30 @@ paths:
             summary: Revoke share tokens for a list of note IDs
             tags:
                 - notes
+                - admin
+    /v1/admin/similarity/recompute:
+        post:
+            description: Submits a background job that deletes all v2-v2 similarity pairs and rebuilds them from stored perceptual hashes (no image decoding). Returns the job ID. 409 if a recompute is already running.
+            operationId: recomputeSimilarities
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Recompute image similarity pairs
+            tags:
+                - admin
+    /v1/admin/similarity/retry-failed:
+        post:
+            description: Resets image_hashes rows marked failed so the background backfill worker re-attempts them. Returns the number of rows reset.
+            operationId: retryFailedHashes
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Retry failed image hashes
+            tags:
                 - admin
     /v1/auth/login:
         post:

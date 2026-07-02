@@ -2,7 +2,7 @@ package hash_worker
 
 import (
 	"fmt"
-	"image"
+	"io"
 	"log"
 	"sync"
 	"time"
@@ -203,8 +203,13 @@ func (w *HashWorker) processBatch() {
 	// Priority 1: Migrate existing string hashes to uint64
 	w.migrateStringHashes()
 
-	// Priority 2: Hash new resources
+	// Priority 2: Hash new resources — fresh uploads take precedence over the
+	// backfill so their similarity results appear promptly even while a
+	// multi-day v2 backfill is in flight.
 	w.hashNewResources()
+
+	// Priority 3: Backfill existing rows to v2 (incremental, resumable, pausable)
+	w.backfillV2Hashes()
 }
 
 func (w *HashWorker) migrateStringHashes() {
@@ -369,53 +374,76 @@ func (w *HashWorker) warmCache() {
 	log.Printf("Hash worker: cache warmed with %d entries (max %d)", w.hashCache.Len(), w.config.CacheSize)
 }
 
-func (w *HashWorker) hashAndStoreSimilarities(resource models.Resource) {
-	// Get filesystem for this resource
+// readResourceBytes reads a resource's full file contents from its (possibly
+// alternate) filesystem so callers can both decode the image and read EXIF.
+func (w *HashWorker) readResourceBytes(resource models.Resource) ([]byte, error) {
 	fs := w.fs
 	if resource.StorageLocation != nil && *resource.StorageLocation != "" {
 		if altFs, ok := w.altFS[*resource.StorageLocation]; ok {
 			fs = altFs
 		}
 	}
-
-	// Open and decode image
 	file, err := fs.Open(resource.GetCleanLocation())
 	if err != nil {
-		log.Printf("Hash worker: error opening resource %d: %v", resource.ID, err)
-		w.markResourceFailed(resource.ID)
-		return
+		return nil, err
 	}
 	defer file.Close()
+	return io.ReadAll(file)
+}
 
-	img, _, err := image.Decode(file)
+func (w *HashWorker) hashAndStoreSimilarities(resource models.Resource) {
+	data, err := w.readResourceBytes(resource)
 	if err != nil {
-		log.Printf("Hash worker: error decoding resource %d: %v", resource.ID, err)
+		log.Printf("Hash worker: error reading resource %d: %v", resource.ID, err)
 		w.markResourceFailed(resource.ID)
 		return
 	}
 
-	// Calculate hashes
-	aHash := imgsim.AverageHash(img)
-	dHash := imgsim.DifferenceHash(img)
-
-	aHashInt := uint64(aHash)
-	dHashInt := uint64(dHash)
-
-	// Convert to int64 for PostgreSQL storage (bit-reinterpretation, not value conversion)
-	// This preserves the hash bits while avoiding PostgreSQL bigint overflow
-	aHashIntSigned := int64(aHashInt)
-	dHashIntSigned := int64(dHashInt)
-
-	// Save hash
-	imgHash := models.ImageHash{
-		AHash:      aHash.String(),
-		DHash:      dHash.String(),
-		AHashInt:   &aHashIntSigned,
-		DHashInt:   &dHashIntSigned,
-		ResourceId: &resource.ID,
+	v2, err := ComputeV2Hashes(data)
+	if err != nil {
+		log.Printf("Hash worker: error hashing resource %d: %v", resource.ID, err)
+		w.markResourceFailed(resource.ID)
+		return
 	}
 
-	if err := w.db.Create(&imgHash).Error; err != nil {
+	// Build the imgsim string representations for the legacy columns from the
+	// v2-normalized image so the legacy read/match path keeps working.
+	legacyDHash := imgsim.Hash(v2.LegacyDHash)
+	legacyAHash := imgsim.Hash(v2.LegacyAHash)
+
+	dHashSigned := int64(v2.LegacyDHash)
+	aHashSigned := int64(v2.LegacyAHash)
+	pHashSigned := int64(v2.PHash)
+	chunks := SplitChunks(v2.PHash)
+	c0, c1, c2, c3 := int32(chunks[0]), int32(chunks[1]), int32(chunks[2]), int32(chunks[3])
+	ver := HashVersionV2
+
+	// Save hash (dual-write: legacy columns + v2 columns). Upsert on the unique
+	// resource_id so a pre-existing row (e.g. a failed placeholder whose file was
+	// since restored) is updated in place — the persisted row must match the
+	// hashes cached and matched below.
+	imgHash := models.ImageHash{
+		AHash:       legacyAHash.String(),
+		DHash:       legacyDHash.String(),
+		AHashInt:    &aHashSigned,
+		DHashInt:    &dHashSigned,
+		HashVersion: &ver,
+		PHashInt:    &pHashSigned,
+		PChunk0:     &c0,
+		PChunk1:     &c1,
+		PChunk2:     &c2,
+		PChunk3:     &c3,
+		Status:      v2.Status,
+		ResourceId:  &resource.ID,
+	}
+
+	if err := w.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "resource_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"a_hash", "d_hash", "a_hash_int", "d_hash_int",
+			"hash_version", "p_hash_int", "p_chunk0", "p_chunk1", "p_chunk2", "p_chunk3", "status",
+		}),
+	}).Create(&imgHash).Error; err != nil {
 		log.Printf("Hash worker: error saving hash for resource %d: %v", resource.ID, err)
 		return
 	}
@@ -423,10 +451,18 @@ func (w *HashWorker) hashAndStoreSimilarities(resource models.Resource) {
 	// Update cache BEFORE finding similarities to avoid race condition
 	// where concurrent goroutines miss detecting similarities between
 	// resources being processed simultaneously
-	w.hashCache.Add(resource.ID, hashEntry{DHash: dHashInt, AHash: aHashInt})
+	w.hashCache.Add(resource.ID, hashEntry{DHash: v2.LegacyDHash, AHash: v2.LegacyAHash})
 
-	// Find and store similarities
-	w.findAndStoreSimilarities(resource.ID, dHashInt, aHashInt)
+	// Legacy matching path (LRU cache + dHash threshold) is unchanged, so new
+	// v2 uploads still match old v1 images via the cache.
+	w.findAndStoreSimilarities(resource.ID, v2.LegacyDHash, v2.LegacyAHash)
+
+	// v2 chunk-index matching against other v2 rows. Skip flat/failed probes,
+	// which are excluded from matching entirely. Dedup with the legacy path is
+	// handled by the pair upsert in findSimilaritiesV2.
+	if v2.Status == models.HashStatusOK {
+		w.findSimilaritiesV2(resource.ID, v2.PHash, v2.LegacyDHash, v2.LegacyAHash)
+	}
 }
 
 // AreSimilar returns true when two images should be recorded as perceptually similar.
@@ -509,8 +545,11 @@ func (w *HashWorker) findAndStoreSimilarities(resourceID uint, dHash, aHash uint
 // but unhashable (corrupt file, unsupported format, etc). This prevents the worker
 // from retrying the same failed resources every cycle.
 func (w *HashWorker) markResourceFailed(resourceID uint) {
+	ver := HashVersionV2
 	imgHash := models.ImageHash{
-		ResourceId: &resourceID,
+		ResourceId:  &resourceID,
+		HashVersion: &ver,
+		Status:      models.HashStatusFailed,
 		// Leave hash fields empty/nil to indicate failure
 	}
 

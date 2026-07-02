@@ -234,6 +234,11 @@
                     {% for entity in similarResources %}
                         <div>
                             {% include partial("resource") %}
+                            {% if entity.SimilarityTier == "duplicate" %}
+                                <p class="mt-1 text-xs font-sans font-medium text-rose-800 bg-rose-100 rounded px-1 py-0.5 text-center" title="Perceptual distance {{ entity.SimilarityDistanceValue }} of 64">Near-certain duplicate · distance {{ entity.SimilarityDistanceValue }}</p>
+                            {% elif entity.SimilarityTier == "similar" %}
+                                <p class="mt-1 text-xs font-sans text-stone-700 bg-stone-100 rounded px-1 py-0.5 text-center" title="Perceptual distance {{ entity.SimilarityDistanceValue }} of 64">Similar · distance {{ entity.SimilarityDistanceValue }}</p>
+                            {% endif %}
                             <a href="/resource/compare?r1={{ resource.ID }}&r2={{ entity.ID }}" class="btn btn-sm btn-outline mt-1 block text-center">Compare</a>
                         </div>
                     {% endfor %}

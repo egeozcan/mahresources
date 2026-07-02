@@ -117,3 +117,22 @@ test.describe('Admin Overview with data', () => {
     }
   });
 });
+
+test.describe('Admin Overview similarity maintenance', () => {
+  // The recompute button is deliberately not exercised here: its process-wide
+  // guard makes a browser test racy against the shared test server, and the
+  // endpoint is covered by Go api_tests and the CLI E2E spec.
+  test('retry failed hashes button posts and reports the result via aria-live', async ({ page, baseURL }) => {
+    await page.goto(`${baseURL}/admin/overview`);
+
+    // The similarity card renders once the expensive stats have loaded.
+    const btn = page.getByTestId('admin-retry-failed-hashes');
+    await expect(btn).toBeVisible({ timeout: 15000 });
+    await btn.click();
+
+    // Fresh ephemeral server → 0 failed hashes, but the message always renders.
+    await expect(
+      page.locator('p[aria-live="polite"]').filter({ hasText: 'queued for retry' })
+    ).toBeVisible({ timeout: 10000 });
+  });
+});

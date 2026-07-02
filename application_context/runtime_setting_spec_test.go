@@ -55,15 +55,15 @@ func TestEnvelopeDurationEncodedAsNanos(t *testing.T) {
 	}
 }
 
-func TestBuildSpecs_ElevenKeys(t *testing.T) {
+func TestBuildSpecs_AllKeys(t *testing.T) {
 	specs := buildSpecs()
-	if len(specs) != 11 {
-		t.Fatalf("want 11 specs, got %d", len(specs))
+	if len(specs) != 12 {
+		t.Fatalf("want 12 specs, got %d", len(specs))
 	}
 	expected := []string{
 		KeyMaxUploadSize, KeyMaxImportSize, KeyMRQLDefaultLimit, KeyMRQLQueryTimeout,
 		KeyExportRetention, KeyRemoteConnectTimeout, KeyRemoteIdleTimeout, KeyRemoteOverallTimeout,
-		KeySharePublicURL, KeyHashSimilarityThreshold, KeyHashAHashThreshold,
+		KeySharePublicURL, KeyHashSimilarityThreshold, KeyHashAHashThreshold, KeyHashBackfillPaused,
 	}
 	for _, k := range expected {
 		if _, ok := specs[k]; !ok {

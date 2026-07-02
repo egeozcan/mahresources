@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/shirou/gopsutil/v4/disk"
 	"mahresources/constants"
+	"mahresources/download_queue"
+	"mahresources/hash_worker"
 	"mahresources/models"
 	"mahresources/models/query_models"
 )
@@ -599,6 +602,12 @@ type SimilarityInfo struct {
 	// uniform/solid-colour false positives. The admin overview links to a
 	// drill-down at /resources?ShowDhashZero=1.
 	DhashZeroCount int64 `json:"dhashZeroCount"`
+	// Image similarity v2 backfill progress.
+	V1Count      int64 `json:"v1Count"`      // hash_version IS NULL (legacy, not yet backfilled)
+	V2Count      int64 `json:"v2Count"`      // hash_version = 2 (backfilled or new v2)
+	FlatCount    int64 `json:"flatCount"`    // status = flat (excluded from matching)
+	FailedCount  int64 `json:"failedCount"`  // status = failed (undecodable)
+	V2PairsFound int64 `json:"v2PairsFound"` // pairs carrying a v2 p_distance
 }
 
 // LogStatsInfo holds log entry counts by level and recent error count.
@@ -755,10 +764,38 @@ func (ctx *MahresourcesContext) GetExpensiveStats() (*ExpensiveStats, error) {
 			setErr(err)
 			return
 		}
+		// v2 backfill progress: counts by hash_version and status.
+		var v1Count, v2Count, flatCount, failedCount, v2Pairs int64
+		if err := ctx.db.Model(&models.ImageHash{}).Where("hash_version IS NULL").Count(&v1Count).Error; err != nil {
+			setErr(err)
+			return
+		}
+		if err := ctx.db.Model(&models.ImageHash{}).Where("hash_version = ?", 2).Count(&v2Count).Error; err != nil {
+			setErr(err)
+			return
+		}
+		if err := ctx.db.Model(&models.ImageHash{}).Where("status = ?", models.HashStatusFlat).Count(&flatCount).Error; err != nil {
+			setErr(err)
+			return
+		}
+		if err := ctx.db.Model(&models.ImageHash{}).Where("status = ?", models.HashStatusFailed).Count(&failedCount).Error; err != nil {
+			setErr(err)
+			return
+		}
+		if err := ctx.db.Model(&models.ResourceSimilarity{}).Where("p_distance IS NOT NULL").Count(&v2Pairs).Error; err != nil {
+			setErr(err)
+			return
+		}
+
 		mu.Lock()
 		stats.Similarity.TotalHashes = hashed
 		stats.Similarity.SimilarPairsFound = pairs
 		stats.Similarity.DhashZeroCount = dhashZero
+		stats.Similarity.V1Count = v1Count
+		stats.Similarity.V2Count = v2Count
+		stats.Similarity.FlatCount = flatCount
+		stats.Similarity.FailedCount = failedCount
+		stats.Similarity.V2PairsFound = v2Pairs
 		mu.Unlock()
 	}()
 
@@ -816,4 +853,35 @@ func (ctx *MahresourcesContext) GetExpensiveStats() (*ExpensiveStats, error) {
 	}
 
 	return stats, nil
+}
+
+// RetryFailedHashes clears the failed marker from undecodable image_hashes rows so
+// the background backfill worker retries them. Returns the number reset.
+func (ctx *MahresourcesContext) RetryFailedHashes() (int64, error) {
+	return hash_worker.RetryFailedHashes(ctx.db)
+}
+
+// RecomputeSimilarities submits a background job that deletes all v2-v2 similarity
+// pairs and rebuilds them from the stored v2 hashes (no image decoding). Returns
+// the job ID, or ErrRecomputeInProgress when a recompute is already running (the
+// handler maps it to HTTP 409). The pre-check makes the conflict synchronous;
+// the CompareAndSwap inside RecomputeV2Pairs stays authoritative for races.
+func (ctx *MahresourcesContext) RecomputeSimilarities() (string, error) {
+	if hash_worker.RecomputeInProgress() {
+		return "", hash_worker.ErrRecomputeInProgress
+	}
+	batchSize := ctx.Config.HashBatchSize
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+	job, err := ctx.downloadManager.SubmitJob("recompute-similarities", "recomputing", func(c context.Context, _ *download_queue.DownloadJob, p download_queue.ProgressSink) error {
+		return hash_worker.RecomputeV2Pairs(ctx.db, batchSize,
+			func() bool { return c.Err() != nil },
+			func(done, total int64) { p.UpdateProgress(done, total) },
+		)
+	})
+	if err != nil {
+		return "", err
+	}
+	return job.ID, nil
 }

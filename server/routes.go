@@ -658,6 +658,10 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/admin/data-stats").HandlerFunc(api_handlers.GetDataStatsHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/admin/data-stats/expensive").HandlerFunc(api_handlers.GetExpensiveStatsHandler(appContext))
 
+	// Admin similarity maintenance jobs (image similarity v2)
+	router.Methods(http.MethodPost).Path("/v1/admin/similarity/recompute").HandlerFunc(api_handlers.GetRecomputeSimilaritiesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/admin/similarity/retry-failed").HandlerFunc(api_handlers.GetRetryFailedHashesHandler(appContext))
+
 	// Admin runtime settings routes
 	router.Methods(http.MethodGet).Path("/v1/admin/settings").HandlerFunc(api_handlers.GetListSettingsHandler(appContext))
 	router.Methods(http.MethodPut).Path("/v1/admin/settings/{key}").HandlerFunc(api_handlers.GetSetSettingHandler(appContext))

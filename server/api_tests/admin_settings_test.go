@@ -25,8 +25,8 @@ func TestListSettings_EmptyDB(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &views); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(views) != 11 {
-		t.Fatalf("want 11, got %d", len(views))
+	if len(views) != 12 {
+		t.Fatalf("want 12, got %d", len(views))
 	}
 	for _, v := range views {
 		if v.Overridden {
@@ -117,7 +117,7 @@ func TestListSettings_ViaRouter(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &views); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(views) != 11 {
-		t.Fatalf("want 11 settings via router, got %d", len(views))
+	if len(views) != 12 {
+		t.Fatalf("want 12 settings via router, got %d", len(views))
 	}
 }

@@ -453,6 +453,33 @@
                                 <dt class="text-stone-500">Similar pairs found</dt>
                                 <dd class="text-stone-900" x-text="formatNumber(expensiveStats.similarity.similarPairsFound)"></dd>
                             </div>
+                            {# Image similarity v2 backfill progress. #}
+                            <div class="flex items-center justify-between border-t border-stone-100 pt-2 mt-1">
+                                <dt class="text-stone-500">v2 backfilled</dt>
+                                <dd class="text-stone-900" x-text="formatNumber(expensiveStats.similarity.v2Count)"></dd>
+                            </div>
+                            <template x-if="expensiveStats.similarity.v1Count > 0">
+                                <div class="flex items-center justify-between">
+                                    <dt class="text-stone-500">v1 remaining (backfill)</dt>
+                                    <dd class="text-amber-700 font-semibold" x-text="formatNumber(expensiveStats.similarity.v1Count)"></dd>
+                                </div>
+                            </template>
+                            <div class="flex items-center justify-between">
+                                <dt class="text-stone-500">v2 pairs</dt>
+                                <dd class="text-stone-900" x-text="formatNumber(expensiveStats.similarity.v2PairsFound)"></dd>
+                            </div>
+                            <template x-if="expensiveStats.similarity.flatCount > 0">
+                                <div class="flex items-center justify-between">
+                                    <dt class="text-stone-500">Flat (excluded)</dt>
+                                    <dd class="text-stone-900" x-text="formatNumber(expensiveStats.similarity.flatCount)"></dd>
+                                </div>
+                            </template>
+                            <template x-if="expensiveStats.similarity.failedCount > 0">
+                                <div class="flex items-center justify-between">
+                                    <dt class="text-stone-500">Failed (undecodable)</dt>
+                                    <dd class="text-stone-900" x-text="formatNumber(expensiveStats.similarity.failedCount)"></dd>
+                                </div>
+                            </template>
                             {# BH-037: drill-down for DHash=0 (solid-colour) resources. #}
                             <template x-if="expensiveStats.similarity.dhashZeroCount > 0">
                                 <div class="flex items-center justify-between border-t border-stone-100 pt-2 mt-1">
@@ -467,6 +494,34 @@
                             </template>
                         </dl>
                     </template>
+                    {# Image similarity v2 maintenance actions. #}
+                    <div class="mt-3 pt-3 border-t border-stone-100 flex flex-col gap-2" x-data="{ msg: '', busy: false,
+                        async post(url, label) {
+                            this.busy = true; this.msg = '';
+                            try {
+                                const res = await fetch(url, { method: 'POST', headers: { 'Accept': 'application/json' } });
+                                const data = await res.json().catch(() => ({}));
+                                if (!res.ok) { this.msg = (data.error || label + ' failed') + ' (' + res.status + ')'; }
+                                else if (typeof data.reset !== 'undefined') { this.msg = data.reset + ' failed hash(es) queued for retry.'; }
+                                else if (data.jobId) { this.msg = 'Recompute started (job ' + data.jobId + ').'; }
+                                else { this.msg = label + ' done.'; }
+                            } catch (e) { this.msg = label + ' error: ' + e; }
+                            finally { this.busy = false; }
+                        } }">
+                        <div class="flex flex-wrap gap-2">
+                            <button type="button" :disabled="busy" data-testid="admin-recompute-similarities"
+                                @click="post('/v1/admin/similarity/recompute', 'Recompute')"
+                                class="inline-flex items-center px-3 py-1.5 text-xs font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50">
+                                Recompute similarities
+                            </button>
+                            <button type="button" :disabled="busy" data-testid="admin-retry-failed-hashes"
+                                @click="post('/v1/admin/similarity/retry-failed', 'Retry failed')"
+                                class="inline-flex items-center px-3 py-1.5 text-xs font-mono font-medium rounded-md text-stone-700 bg-stone-100 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-400 disabled:opacity-50">
+                                Retry failed hashes
+                            </button>
+                        </div>
+                        <p class="text-xs font-sans text-stone-600" aria-live="polite" x-text="msg"></p>
+                    </div>
                 </div>
 
                 {# Log Statistics #}

@@ -250,16 +250,23 @@ func TestSimilarResources_LimitBoundsFetch(t *testing.T) {
 	ctx := newSuggestTestContext(t)
 	target := suggestMakeResource(t, ctx, "target", nil)
 
-	// One more similar resource than the cap, each at a distinct, increasing
-	// Hamming distance so the nearest set is deterministic (no ties).
+	// Read-time filtering (image similarity v2) only surfaces pairs within the
+	// default threshold (10), so every seeded distance must be within 0..10.
+	// Distances cycle 0..10 (11 buckets of 5), giving suggestedTagsMaxSimilar+5
+	// resources. ORDER BY dist ASC + LIMIT cap therefore drops exactly the five
+	// distance-10 rows, which keeps the exclusion deterministic at the distance
+	// level despite ties.
+	const buckets = 11 // distances 0..10, all within the read threshold
 	total := suggestedTagsMaxSimilar + 5
 	sims := make([]*models.Resource, total)
+	dist := make([]uint8, total)
 	for i := 0; i < total; i++ {
+		dist[i] = uint8(i % buckets)
 		sims[i] = suggestMakeResource(t, ctx, fmt.Sprintf("sim%d", i), nil)
-		suggestLinkSimilar(t, ctx, target.ID, sims[i].ID, uint8(i))
+		suggestLinkSimilar(t, ctx, target.ID, sims[i].ID, dist[i])
 	}
 
-	// Unlimited: every similar resource is returned.
+	// Unlimited: every similar resource is returned (all within threshold).
 	all, err := ctx.GetSimilarResources(target.ID)
 	if err != nil {
 		t.Fatalf("GetSimilarResources: %v", err)
@@ -268,8 +275,9 @@ func TestSimilarResources_LimitBoundsFetch(t *testing.T) {
 		t.Fatalf("unlimited should return all %d similar resources, got %d", total, len(all))
 	}
 
-	// Limited: exactly the cap, and it is the NEAREST cap-many (the 5 farthest
-	// are excluded, the nearest is included).
+	// Limited: exactly the cap, dropping the highest-distance rows. With
+	// total-cap == 5 and exactly 5 rows at distance 10, the dropped set is the
+	// distance-10 group; every distance 0..9 row is retained.
 	limited, err := ctx.getSimilarResourcesLimited(target.ID, suggestedTagsMaxSimilar)
 	if err != nil {
 		t.Fatalf("getSimilarResourcesLimited: %v", err)
@@ -280,13 +288,18 @@ func TestSimilarResources_LimitBoundsFetch(t *testing.T) {
 	got := make(map[uint]struct{}, len(limited))
 	for _, r := range limited {
 		got[r.ID] = struct{}{}
+		// Every returned resource carries its perceptual distance.
+		if r.SimilarityDistance == nil {
+			t.Errorf("similar resource %d missing SimilarityDistance", r.ID)
+		}
 	}
-	if _, ok := got[sims[0].ID]; !ok {
-		t.Fatalf("nearest similar resource (distance 0) must be within the limited fetch")
-	}
-	for i := suggestedTagsMaxSimilar; i < total; i++ {
-		if _, ok := got[sims[i].ID]; ok {
-			t.Fatalf("farthest similar resource sim%d (distance %d) must be excluded by the cap", i, i)
+	for i := 0; i < total; i++ {
+		_, present := got[sims[i].ID]
+		if dist[i] < 10 && !present {
+			t.Fatalf("resource sim%d (distance %d) should be within the limited fetch", i, dist[i])
+		}
+		if dist[i] == 10 && present {
+			t.Fatalf("resource sim%d (distance 10) should be excluded by the cap", i)
 		}
 	}
 }

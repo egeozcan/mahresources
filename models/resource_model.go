@@ -53,6 +53,35 @@ type Resource struct {
 
 	// RenderedHTML is a transient field populated by the API when render=1 is set.
 	RenderedHTML string `gorm:"-" json:"renderedHTML,omitempty"`
+
+	// SimilarityDistance is a transient field populated by GetSimilarResources with
+	// the perceptual distance (COALESCE(p_distance, hamming_distance)) between this
+	// resource and the one the list was queried for. Nil when not part of a
+	// similarity result. Drives the confidence-tier badge on the detail page.
+	SimilarityDistance *int `gorm:"-" json:"similarityDistance,omitempty"`
+}
+
+// SimilarityTier returns a coarse confidence label for a similarity distance:
+// 0-2 = near-certain duplicate, 3+ = similar. Returns "" when distance is nil,
+// which templates use as the guard (avoids pointer-truthiness pitfalls, so the
+// badge still renders for an exact duplicate at distance 0).
+func (r *Resource) SimilarityTier() string {
+	if r.SimilarityDistance == nil {
+		return ""
+	}
+	if *r.SimilarityDistance <= 2 {
+		return "duplicate"
+	}
+	return "similar"
+}
+
+// SimilarityDistanceValue returns the similarity distance for display, or -1 when
+// unset. Templates render this rather than the pointer directly.
+func (r *Resource) SimilarityDistanceValue() int {
+	if r.SimilarityDistance == nil {
+		return -1
+	}
+	return *r.SimilarityDistance
 }
 
 func (r *Resource) BeforeCreate(tx *gorm.DB) error {

@@ -2312,6 +2312,26 @@ func registerAdminRoutes(r *openapi.Registry) {
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/admin/similarity/recompute",
+		OperationID:          "recomputeSimilarities",
+		Summary:              "Recompute image similarity pairs",
+		Description:          "Submits a background job that deletes all v2-v2 similarity pairs and rebuilds them from stored perceptual hashes (no image decoding). Returns the job ID. 409 if a recompute is already running.",
+		Tags:                 []string{"admin"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/admin/similarity/retry-failed",
+		OperationID:          "retryFailedHashes",
+		Summary:              "Retry failed image hashes",
+		Description:          "Resets image_hashes rows marked failed so the background backfill worker re-attempts them. Returns the number of rows reset.",
+		Tags:                 []string{"admin"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
 	settingViewType := reflect.TypeOf(application_context.SettingView{})
 	settingViewListType := reflect.TypeOf([]application_context.SettingView{})
 
