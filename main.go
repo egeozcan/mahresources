@@ -386,6 +386,15 @@ func main() {
 		log.Fatalf("failed to migrate: %v", err)
 	}
 
+	// Refresh planner statistics for the tables that just gained the v2 hash
+	// columns. On Postgres, columns added by AutoMigrate have no statistics
+	// until autoanalyze (~10% row churn), and without them the chunk-index
+	// candidate queries fall back to full sequential scans. Non-fatal: worst
+	// case is the old slow-plan behaviour until autoanalyze catches up.
+	if err := models.AnalyzePerceptualHashTables(db); err != nil {
+		log.Printf("Warning: post-migrate ANALYZE failed: %v", err)
+	}
+
 	if context.Config.DbType == constants.DbTypeSqlite {
 		db.Exec("PRAGMA foreign_keys = ON")
 
