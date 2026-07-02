@@ -89,6 +89,7 @@ export const zoomMethods = {
       return;
     }
 
+    const metrics = this.nativeZoomMetrics();
     const presets = this.zoomPresets();
     if (!presets.length) return;
 
@@ -101,14 +102,69 @@ export const zoomMethods = {
       borderRadius: '0.375rem',
       padding: '0.25rem 0',
       margin: '0',
-      minWidth: '7rem',
+      minWidth: '13rem',
       textAlign: 'center',
       color: 'white',
       fontSize: '0.875rem',
     });
 
+    if (metrics) {
+      const sliderWrap = document.createElement('div');
+      sliderWrap.style.cssText = 'display:flex;align-items:center;gap:0.625rem;padding:0.5rem 0.75rem 0.375rem;';
+      sliderWrap.addEventListener('click', (e) => e.stopPropagation());
+      sliderWrap.addEventListener('pointerdown', (e) => e.stopPropagation());
+      sliderWrap.addEventListener('mousedown', (e) => e.stopPropagation());
+
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = String(metrics.fitNativePct);
+      slider.max = String(metrics.maxNativePct);
+      slider.step = '1';
+      slider.value = String(metrics.currentNativePct);
+      slider.setAttribute('aria-label', 'Zoom level');
+      slider.setAttribute('aria-valuetext', metrics.currentNativePct + '%');
+      slider.style.cssText = 'width:8.5rem;cursor:pointer;accent-color:white;';
+
+      const readout = document.createElement('span');
+      readout.style.cssText = 'min-width:3rem;text-align:right;font-variant-numeric:tabular-nums;color:white;';
+
+      const updateReadout = () => {
+        const rounded = Math.round(Number(slider.value));
+        readout.textContent = rounded + '%';
+        slider.setAttribute('aria-valuetext', rounded + '%');
+      };
+      updateReadout();
+
+      slider.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+      });
+      slider.addEventListener('input', (e) => {
+        e.stopPropagation();
+        self.setNativeZoom(Number(slider.value), {
+          closePopover: false,
+          announce: false,
+          resetPan: false,
+        });
+        updateReadout();
+      });
+      slider.addEventListener('change', (e) => {
+        e.stopPropagation();
+        self.setNativeZoom(Number(slider.value), {
+          closePopover: false,
+          announce: true,
+          resetPan: false,
+        });
+        updateReadout();
+      });
+
+      sliderWrap.appendChild(slider);
+      sliderWrap.appendChild(readout);
+      p.appendChild(sliderWrap);
+    }
+
     for (const preset of presets) {
       const item = document.createElement('button');
+      item.type = 'button';
       item.textContent = preset.label;
       item.style.cssText = 'display:block;width:100%;padding:0.375rem 0.75rem;transition:background 150ms;font-variant-numeric:tabular-nums;background:none;border:none;color:inherit;cursor:pointer;font-size:inherit;';
       item.addEventListener('mouseenter', () => item.style.background = 'rgba(255,255,255,0.2)');
@@ -142,34 +198,49 @@ export const zoomMethods = {
   nativeZoomPercent() {
     // Read reactive properties so Alpine re-evaluates when they change
     const loading = this.loading;
-    const zoom = this.zoomLevel;
 
     const item = this.getCurrentItem();
     if (!item || this.isVideo(item.contentType) || loading) return null;
 
+    const metrics = this.nativeZoomMetrics();
+    if (!metrics) return null;
+
+    return metrics.currentNativePct + '%';
+  },
+
+  nativeZoomMetrics() {
     const media = this.getMediaElement();
     if (!media) return null;
 
     const el = media.element;
     const naturalW = el.naturalWidth;
     const displayedW = el.clientWidth;
-    if (!naturalW || !displayedW) return null;
+    const displayedH = el.clientHeight;
+    if (!naturalW || !displayedW || !displayedH) return null;
 
-    const pct = (zoom * displayedW / naturalW) * 100;
-    return Math.round(pct) + '%';
+    const fitNativePct = Math.max(1, Math.round((displayedW / naturalW) * 100));
+    const maxNativePct = Math.max(
+      fitNativePct,
+      Math.round((this.maxZoom * displayedW / naturalW) * 100)
+    );
+    const rawCurrentNativePct = Math.round((this.zoomLevel * displayedW / naturalW) * 100);
+    const currentNativePct = Math.max(fitNativePct, Math.min(maxNativePct, rawCurrentNativePct));
+
+    return {
+      displayedW,
+      displayedH,
+      naturalW,
+      fitNativePct,
+      maxNativePct,
+      currentNativePct,
+    };
   },
 
   zoomPresets() {
-    const media = this.getMediaElement();
-    if (!media) return [];
+    const metrics = this.nativeZoomMetrics();
+    if (!metrics) return [];
 
-    const el = media.element;
-    const naturalW = el.naturalWidth;
-    const displayedW = el.clientWidth;
-    const displayedH = el.clientHeight;
-    if (!naturalW || !displayedW) return [];
-
-    const fitNativePct = Math.round((displayedW / naturalW) * 100);
+    const { displayedW, displayedH, naturalW, fitNativePct } = metrics;
     const candidates = [25, 50, 100, 200, 300, 500];
 
     const presets = [{label: 'Fit (' + fitNativePct + '%)', nativePct: null}];
@@ -195,39 +266,43 @@ export const zoomMethods = {
     return presets;
   },
 
-  setNativeZoom(nativePct) {
-    this.hideZoomPresets();
+  setNativeZoom(nativePct, options = {}) {
+    const {
+      closePopover = true,
+      announce = true,
+      resetPan = true,
+    } = options;
+
+    if (closePopover) this.hideZoomPresets();
 
     if (nativePct === null) {
       this.setZoomLevel(1);
-      this.announceZoom();
+      if (announce) this.announceZoom();
       return;
     }
 
-    const media = this.getMediaElement();
-    if (!media) return;
-
-    const el = media.element;
-    const displayedW = el.clientWidth;
-    const displayedH = el.clientHeight;
-    if (!displayedW || !displayedH) return;
+    const metrics = this.nativeZoomMetrics();
+    if (!metrics) return;
 
     let targetZoom;
     if (nativePct === 'stretch') {
       const availW = window.innerWidth * 0.9;
       const availH = window.innerHeight * 0.9;
-      targetZoom = Math.min(availW / displayedW, availH / displayedH);
+      targetZoom = Math.min(availW / metrics.displayedW, availH / metrics.displayedH);
     } else {
-      const naturalW = el.naturalWidth;
-      if (!naturalW) return;
-      targetZoom = (nativePct / 100) * (naturalW / displayedW);
+      const numericPct = Number(nativePct);
+      if (!Number.isFinite(numericPct)) return;
+      const clampedPct = Math.max(metrics.fitNativePct, Math.min(metrics.maxNativePct, numericPct));
+      targetZoom = (clampedPct / 100) * (metrics.naturalW / metrics.displayedW);
     }
 
-    this.panX = 0;
-    this.panY = 0;
+    if (resetPan) {
+      this.panX = 0;
+      this.panY = 0;
+    }
     this.setZoomLevel(targetZoom);
     this.constrainPan();
-    this.announceZoom();
+    if (announce) this.announceZoom();
   },
 
   getMediaElement() {
