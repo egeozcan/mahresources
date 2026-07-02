@@ -149,5 +149,36 @@ export function adminOverview() {
             }
             return n.toLocaleString();
         },
+
+        boundedPercent(value) {
+            if (value === null || value === undefined || Number.isNaN(Number(value))) return 0;
+            return Math.max(0, Math.min(100, Number(value)));
+        },
+
+        formatPercent(value) {
+            if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
+            return `${Number(value).toFixed(1).replace(/\.0$/, '')}%`;
+        },
+
+        storageFreePercent(location) {
+            if (!location?.usageAvailable || !location.diskTotalBytes) return null;
+            return (location.diskFreeBytes / location.diskTotalBytes) * 100;
+        },
+
+        storageFreeClass(location) {
+            const freePercent = this.storageFreePercent(location);
+            if (freePercent === null) return 'text-stone-500';
+            if (freePercent < 10) return 'text-red-700 font-semibold';
+            if (freePercent < 20) return 'text-amber-700 font-semibold';
+            return 'text-green-700 font-semibold';
+        },
+
+        storageUsageBarClass(location) {
+            const freePercent = this.storageFreePercent(location);
+            if (freePercent === null) return 'bg-stone-300';
+            if (freePercent < 10) return 'bg-red-600';
+            if (freePercent < 20) return 'bg-amber-500';
+            return 'bg-green-600';
+        },
     };
 }

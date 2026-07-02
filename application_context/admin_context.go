@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/shirou/gopsutil/v4/disk"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -73,20 +75,20 @@ func maskDSN(dsn string) string {
 // ServerStats holds runtime information about the server.
 type ServerStats struct {
 	// Uptime
-	Uptime          string    `json:"uptime"`
-	UptimeSeconds   float64   `json:"uptimeSeconds"`
-	StartedAt       time.Time `json:"startedAt"`
+	Uptime        string    `json:"uptime"`
+	UptimeSeconds float64   `json:"uptimeSeconds"`
+	StartedAt     time.Time `json:"startedAt"`
 	// Memory
-	HeapAlloc       uint64 `json:"heapAlloc"`
-	HeapInUse       uint64 `json:"heapInUse"`
-	Sys             uint64 `json:"sys"`
-	NumGC           uint32 `json:"numGC"`
-	HeapAllocFmt    string `json:"heapAllocFmt"`
-	HeapInUseFmt    string `json:"heapInUseFmt"`
-	SysFmt          string `json:"sysFmt"`
+	HeapAlloc    uint64 `json:"heapAlloc"`
+	HeapInUse    uint64 `json:"heapInUse"`
+	Sys          uint64 `json:"sys"`
+	NumGC        uint32 `json:"numGC"`
+	HeapAllocFmt string `json:"heapAllocFmt"`
+	HeapInUseFmt string `json:"heapInUseFmt"`
+	SysFmt       string `json:"sysFmt"`
 	// Runtime
-	Goroutines      int    `json:"goroutines"`
-	GoVersion       string `json:"goVersion"`
+	Goroutines int    `json:"goroutines"`
+	GoVersion  string `json:"goVersion"`
 	// Database
 	DBType          string `json:"dbType"`
 	DBOpenConns     int    `json:"dbOpenConns"`
@@ -95,9 +97,9 @@ type ServerStats struct {
 	DBFileSizeBytes int64  `json:"dbFileSizeBytes"`
 	DBFileSizeFmt   string `json:"dbFileSizeFmt"`
 	// Workers
-	HashWorkerEnabled    bool `json:"hashWorkerEnabled"`
-	HashWorkerCount      int  `json:"hashWorkerCount"`
-	DownloadQueueLength  int  `json:"downloadQueueLength"`
+	HashWorkerEnabled   bool `json:"hashWorkerEnabled"`
+	HashWorkerCount     int  `json:"hashWorkerCount"`
+	DownloadQueueLength int  `json:"downloadQueueLength"`
 }
 
 // GetServerStats returns runtime information about the server.
@@ -193,41 +195,180 @@ type GrowthStats struct {
 	Last90Days GrowthPeriods `json:"last90Days"`
 }
 
+// StorageLocationStats holds application and disk usage for one storage root.
+type StorageLocationStats struct {
+	Key                 string  `json:"key"`
+	Label               string  `json:"label"`
+	Path                string  `json:"path"`
+	Kind                string  `json:"kind"`
+	AppResourceBytes    int64   `json:"appResourceBytes"`
+	AppResourceBytesFmt string  `json:"appResourceBytesFmt"`
+	AppVersionBytes     int64   `json:"appVersionBytes"`
+	AppVersionBytesFmt  string  `json:"appVersionBytesFmt"`
+	AppTotalBytes       int64   `json:"appTotalBytes"`
+	AppTotalBytesFmt    string  `json:"appTotalBytesFmt"`
+	ResourceCount       int64   `json:"resourceCount"`
+	VersionCount        int64   `json:"versionCount"`
+	DiskTotalBytes      int64   `json:"diskTotalBytes"`
+	DiskTotalBytesFmt   string  `json:"diskTotalBytesFmt"`
+	DiskFreeBytes       int64   `json:"diskFreeBytes"`
+	DiskFreeBytesFmt    string  `json:"diskFreeBytesFmt"`
+	DiskUsedBytes       int64   `json:"diskUsedBytes"`
+	DiskUsedBytesFmt    string  `json:"diskUsedBytesFmt"`
+	DiskUsedPercent     float64 `json:"diskUsedPercent"`
+	UsageAvailable      bool    `json:"usageAvailable"`
+	UsageError          string  `json:"usageError,omitempty"`
+}
+
 // ConfigSummary holds a subset of server configuration values.
 type ConfigSummary struct {
-	DbType                   string   `json:"dbType"`
-	EphemeralMode            bool     `json:"ephemeralMode"`
-	MemoryDB                 bool     `json:"memoryDb"`
-	MemoryFS                 bool     `json:"memoryFs"`
-	FTSEnabled               bool     `json:"ftsEnabled"`
-	HashWorkerEnabled        bool     `json:"hashWorkerEnabled"`
-	BindAddress              string   `json:"bindAddress"`
-	FileSavePath             string   `json:"fileSavePath"`
-	DbDsnMasked              string   `json:"dbDsn"`
-	HasReadOnlyDB            bool     `json:"hasReadOnlyDB"`
-	FfmpegAvailable          bool     `json:"ffmpegAvailable"`
-	LibreOfficeAvailable     bool     `json:"libreOfficeAvailable"`
-	HashWorkerCount          int      `json:"hashWorkerCount"`
-	HashBatchSize            int      `json:"hashBatchSize"`
-	HashPollInterval         string   `json:"hashPollInterval"`
-	HashSimilarityThreshold  int      `json:"hashSimilarityThreshold"`
-	HashCacheSize            int      `json:"hashCacheSize"`
-	AltFileSystems           []string `json:"altFileSystems"`
-	MaxDBConnections         int      `json:"maxDBConnections"`
-	RemoteConnectTimeout     string   `json:"remoteConnectTimeout"`
-	RemoteIdleTimeout        string   `json:"remoteIdleTimeout"`
-	RemoteOverallTimeout     string   `json:"remoteOverallTimeout"`
+	DbType                  string   `json:"dbType"`
+	EphemeralMode           bool     `json:"ephemeralMode"`
+	MemoryDB                bool     `json:"memoryDb"`
+	MemoryFS                bool     `json:"memoryFs"`
+	FTSEnabled              bool     `json:"ftsEnabled"`
+	HashWorkerEnabled       bool     `json:"hashWorkerEnabled"`
+	BindAddress             string   `json:"bindAddress"`
+	FileSavePath            string   `json:"fileSavePath"`
+	DbDsnMasked             string   `json:"dbDsn"`
+	HasReadOnlyDB           bool     `json:"hasReadOnlyDB"`
+	FfmpegAvailable         bool     `json:"ffmpegAvailable"`
+	LibreOfficeAvailable    bool     `json:"libreOfficeAvailable"`
+	HashWorkerCount         int      `json:"hashWorkerCount"`
+	HashBatchSize           int      `json:"hashBatchSize"`
+	HashPollInterval        string   `json:"hashPollInterval"`
+	HashSimilarityThreshold int      `json:"hashSimilarityThreshold"`
+	HashCacheSize           int      `json:"hashCacheSize"`
+	AltFileSystems          []string `json:"altFileSystems"`
+	MaxDBConnections        int      `json:"maxDBConnections"`
+	RemoteConnectTimeout    string   `json:"remoteConnectTimeout"`
+	RemoteIdleTimeout       string   `json:"remoteIdleTimeout"`
+	RemoteOverallTimeout    string   `json:"remoteOverallTimeout"`
 }
 
 // DataStats holds entity counts, storage totals, growth stats, and config summary.
 type DataStats struct {
-	Entities                     EntityCounts  `json:"entities"`
-	StorageTotalBytes            int64         `json:"storageTotalBytes"`
-	StorageTotalFmt              string        `json:"storageTotalFmt"`
-	TotalVersionStorageBytes     int64         `json:"totalVersionStorageBytes"`
-	TotalVersionStorageFormatted string        `json:"totalVersionStorageFormatted"`
-	Growth                       GrowthStats   `json:"growth"`
-	Config                       ConfigSummary `json:"config"`
+	Entities                     EntityCounts           `json:"entities"`
+	StorageTotalBytes            int64                  `json:"storageTotalBytes"`
+	StorageTotalFmt              string                 `json:"storageTotalFmt"`
+	TotalVersionStorageBytes     int64                  `json:"totalVersionStorageBytes"`
+	TotalVersionStorageFormatted string                 `json:"totalVersionStorageFormatted"`
+	StorageLocations             []StorageLocationStats `json:"storageLocations"`
+	Growth                       GrowthStats            `json:"growth"`
+	Config                       ConfigSummary          `json:"config"`
+}
+
+type storageLocationUsageRow struct {
+	Key        string `gorm:"column:storage_key"`
+	TotalBytes int64  `gorm:"column:total_bytes"`
+	Count      int64  `gorm:"column:count"`
+}
+
+type storageLocationUsage struct {
+	bytes int64
+	count int64
+}
+
+func (ctx *MahresourcesContext) loadStorageLocationUsage(model any) (map[string]storageLocationUsage, error) {
+	var rows []storageLocationUsageRow
+	err := ctx.db.Model(model).
+		Select("COALESCE(NULLIF(storage_location, ''), '') AS storage_key, COALESCE(SUM(file_size), 0) AS total_bytes, COUNT(*) AS count").
+		Group("COALESCE(NULLIF(storage_location, ''), '')").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	usage := make(map[string]storageLocationUsage, len(rows))
+	for _, row := range rows {
+		usage[row.Key] = storageLocationUsage{bytes: row.TotalBytes, count: row.Count}
+	}
+	return usage, nil
+}
+
+func storageLocationDiskUsage(path string) (totalBytes, freeBytes, usedBytes int64, usedPercent float64, err error) {
+	if strings.TrimSpace(path) == "" {
+		return 0, 0, 0, 0, fmt.Errorf("storage path is not configured")
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		return 0, 0, 0, 0, statErr
+	}
+
+	usage, err := disk.Usage(path)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	return int64(usage.Total), int64(usage.Free), int64(usage.Used), usage.UsedPercent, nil
+}
+
+func (ctx *MahresourcesContext) getStorageLocationStats() ([]StorageLocationStats, error) {
+	resourceUsage, err := ctx.loadStorageLocationUsage(&models.Resource{})
+	if err != nil {
+		return nil, err
+	}
+	versionUsage, err := ctx.loadStorageLocationUsage(&models.ResourceVersion{})
+	if err != nil {
+		return nil, err
+	}
+
+	locations := []StorageLocationStats{
+		{
+			Key:   "",
+			Label: "Default",
+			Path:  ctx.Config.FileSavePath,
+			Kind:  "default",
+		},
+	}
+
+	altKeys := make([]string, 0, len(ctx.Config.AltFileSystems))
+	for key := range ctx.Config.AltFileSystems {
+		altKeys = append(altKeys, key)
+	}
+	sort.Strings(altKeys)
+	for _, key := range altKeys {
+		locations = append(locations, StorageLocationStats{
+			Key:   key,
+			Label: key,
+			Path:  ctx.Config.AltFileSystems[key],
+			Kind:  "alt",
+		})
+	}
+
+	for i := range locations {
+		location := &locations[i]
+		resources := resourceUsage[location.Key]
+		versions := versionUsage[location.Key]
+
+		location.AppResourceBytes = resources.bytes
+		location.AppResourceBytesFmt = formatBytes(resources.bytes)
+		location.AppVersionBytes = versions.bytes
+		location.AppVersionBytesFmt = formatBytes(versions.bytes)
+		location.AppTotalBytes = resources.bytes + versions.bytes
+		location.AppTotalBytesFmt = formatBytes(location.AppTotalBytes)
+		location.ResourceCount = resources.count
+		location.VersionCount = versions.count
+
+		if location.Kind == "default" && ctx.Config.MemoryFS {
+			location.UsageError = "storage is memory-backed"
+			continue
+		}
+
+		total, free, used, usedPercent, usageErr := storageLocationDiskUsage(location.Path)
+		if usageErr != nil {
+			location.UsageError = usageErr.Error()
+			continue
+		}
+		location.DiskTotalBytes = total
+		location.DiskTotalBytesFmt = formatBytes(total)
+		location.DiskFreeBytes = free
+		location.DiskFreeBytesFmt = formatBytes(free)
+		location.DiskUsedBytes = used
+		location.DiskUsedBytesFmt = formatBytes(used)
+		location.DiskUsedPercent = usedPercent
+		location.UsageAvailable = true
+	}
+
+	return locations, nil
 }
 
 // GetResourceVersionsCount returns the total count of resource versions.
@@ -380,10 +521,17 @@ func (ctx *MahresourcesContext) GetDataStats() (*DataStats, error) {
 		return nil, firstErr
 	}
 
+	storageLocations, err := ctx.getStorageLocationStats()
+	if err != nil {
+		return nil, err
+	}
+	stats.StorageLocations = storageLocations
+
 	altFSKeys := make([]string, 0, len(ctx.Config.AltFileSystems))
 	for k := range ctx.Config.AltFileSystems {
 		altFSKeys = append(altFSKeys, k)
 	}
+	sort.Strings(altFSKeys)
 
 	stats.Config = ConfigSummary{
 		DbType:                  ctx.Config.DbType,

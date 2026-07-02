@@ -1710,6 +1710,12 @@
   .min-w-0 {
     min-width: 0;
   }
+  .min-w-40 {
+    min-width: calc(var(--spacing) * 40);
+  }
+  .min-w-48 {
+    min-width: calc(var(--spacing) * 48);
+  }
   .min-w-\[7rem\] {
     min-width: 7rem;
   }
@@ -2465,6 +2471,9 @@
   .bg-green-500 {
     background-color: var(--color-green-500);
   }
+  .bg-green-600 {
+    background-color: var(--color-green-600);
+  }
   .bg-green-700 {
     background-color: var(--color-green-700);
   }
@@ -2852,6 +2861,9 @@
     font-size: var(--text-xs);
     line-height: var(--tw-leading, var(--text-xs--line-height));
   }
+  .text-\[0\.65rem\] {
+    font-size: 0.65rem;
+  }
   .text-\[8px\] {
     font-size: 8px;
   }
@@ -2917,6 +2929,9 @@
   }
   .overflow-ellipsis {
     text-overflow: ellipsis;
+  }
+  .whitespace-normal {
+    white-space: normal;
   }
   .whitespace-nowrap {
     white-space: nowrap;

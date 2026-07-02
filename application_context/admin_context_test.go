@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -288,6 +289,158 @@ func TestGetDataStats_StorageSum(t *testing.T) {
 	if stats.StorageTotalFmt == "" {
 		t.Error("StorageTotalFmt should not be empty")
 	}
+}
+
+func TestGetDataStats_StorageLocationsAggregatesDefaultAndAltStorage(t *testing.T) {
+	ctx := createAdminTestContext(t, "admin_data_stats_storage_locations_test")
+	ctx.Config.FileSavePath = t.TempDir()
+	ctx.Config.AltFileSystems = map[string]string{
+		"archive": t.TempDir(),
+	}
+
+	archive := "archive"
+	emptyStorage := ""
+	resDefault := &models.Resource{Name: "default.txt", FileSize: 1000}
+	resEmptyDefault := &models.Resource{Name: "empty-default.txt", FileSize: 500, StorageLocation: &emptyStorage}
+	resArchive := &models.Resource{Name: "archive.txt", FileSize: 2000, StorageLocation: &archive}
+	for _, r := range []*models.Resource{resDefault, resEmptyDefault, resArchive} {
+		if err := ctx.db.Create(r).Error; err != nil {
+			t.Fatalf("create resource %q: %v", r.Name, err)
+		}
+	}
+
+	versions := []*models.ResourceVersion{
+		{ResourceID: resDefault.ID, VersionNumber: 1, Hash: "default", FileSize: 300, Location: "default-v1"},
+		{ResourceID: resEmptyDefault.ID, VersionNumber: 1, Hash: "empty-default", FileSize: 200, Location: "empty-v1", StorageLocation: &emptyStorage},
+		{ResourceID: resArchive.ID, VersionNumber: 1, Hash: "archive", FileSize: 400, Location: "archive-v1", StorageLocation: &archive},
+	}
+	for _, v := range versions {
+		if err := ctx.db.Create(v).Error; err != nil {
+			t.Fatalf("create version %q: %v", v.Hash, err)
+		}
+	}
+
+	stats, err := ctx.GetDataStats()
+	if err != nil {
+		t.Fatalf("GetDataStats() error = %v", err)
+	}
+
+	defaultStats := findStorageLocationStats(t, stats.StorageLocations, "")
+	if defaultStats.Label != "Default" {
+		t.Errorf("default label = %q, want Default", defaultStats.Label)
+	}
+	if defaultStats.Kind != "default" {
+		t.Errorf("default kind = %q, want default", defaultStats.Kind)
+	}
+	if defaultStats.ResourceCount != 2 {
+		t.Errorf("default resource count = %d, want 2", defaultStats.ResourceCount)
+	}
+	if defaultStats.VersionCount != 2 {
+		t.Errorf("default version count = %d, want 2", defaultStats.VersionCount)
+	}
+	if defaultStats.AppResourceBytes != 1500 {
+		t.Errorf("default app resource bytes = %d, want 1500", defaultStats.AppResourceBytes)
+	}
+	if defaultStats.AppVersionBytes != 500 {
+		t.Errorf("default app version bytes = %d, want 500", defaultStats.AppVersionBytes)
+	}
+	if defaultStats.AppTotalBytes != 2000 {
+		t.Errorf("default app total bytes = %d, want 2000", defaultStats.AppTotalBytes)
+	}
+	if !defaultStats.UsageAvailable {
+		t.Fatalf("default usage should be available, got error %q", defaultStats.UsageError)
+	}
+	if defaultStats.DiskTotalBytes == 0 || defaultStats.DiskFreeBytes == 0 {
+		t.Errorf("default disk totals should be non-zero, got total=%d free=%d", defaultStats.DiskTotalBytes, defaultStats.DiskFreeBytes)
+	}
+
+	archiveStats := findStorageLocationStats(t, stats.StorageLocations, "archive")
+	if archiveStats.Label != "archive" {
+		t.Errorf("archive label = %q, want archive", archiveStats.Label)
+	}
+	if archiveStats.Kind != "alt" {
+		t.Errorf("archive kind = %q, want alt", archiveStats.Kind)
+	}
+	if archiveStats.ResourceCount != 1 {
+		t.Errorf("archive resource count = %d, want 1", archiveStats.ResourceCount)
+	}
+	if archiveStats.VersionCount != 1 {
+		t.Errorf("archive version count = %d, want 1", archiveStats.VersionCount)
+	}
+	if archiveStats.AppTotalBytes != 2400 {
+		t.Errorf("archive app total bytes = %d, want 2400", archiveStats.AppTotalBytes)
+	}
+	if !archiveStats.UsageAvailable {
+		t.Fatalf("archive usage should be available, got error %q", archiveStats.UsageError)
+	}
+}
+
+func TestGetDataStats_StorageLocationsIncludesZeroFileConfiguredAlt(t *testing.T) {
+	ctx := createAdminTestContext(t, "admin_data_stats_empty_alt_storage_test")
+	ctx.Config.FileSavePath = t.TempDir()
+	ctx.Config.AltFileSystems = map[string]string{
+		"cold": t.TempDir(),
+	}
+
+	stats, err := ctx.GetDataStats()
+	if err != nil {
+		t.Fatalf("GetDataStats() error = %v", err)
+	}
+
+	coldStats := findStorageLocationStats(t, stats.StorageLocations, "cold")
+	if coldStats.AppTotalBytes != 0 {
+		t.Errorf("cold app total bytes = %d, want 0", coldStats.AppTotalBytes)
+	}
+	if coldStats.ResourceCount != 0 {
+		t.Errorf("cold resource count = %d, want 0", coldStats.ResourceCount)
+	}
+	if coldStats.VersionCount != 0 {
+		t.Errorf("cold version count = %d, want 0", coldStats.VersionCount)
+	}
+	if !coldStats.UsageAvailable {
+		t.Fatalf("cold usage should be available, got error %q", coldStats.UsageError)
+	}
+}
+
+func TestGetDataStats_StorageLocationsUnavailableUsageDoesNotFail(t *testing.T) {
+	ctx := createAdminTestContext(t, "admin_data_stats_unavailable_storage_test")
+	ctx.Config.MemoryFS = true
+	ctx.Config.AltFileSystems = map[string]string{
+		"missing": filepath.Join(t.TempDir(), "does-not-exist"),
+	}
+
+	stats, err := ctx.GetDataStats()
+	if err != nil {
+		t.Fatalf("GetDataStats() error = %v", err)
+	}
+
+	defaultStats := findStorageLocationStats(t, stats.StorageLocations, "")
+	if defaultStats.UsageAvailable {
+		t.Error("default memory storage usage should be unavailable")
+	}
+	if defaultStats.UsageError == "" {
+		t.Error("default unavailable usage should include an error message")
+	}
+
+	missingStats := findStorageLocationStats(t, stats.StorageLocations, "missing")
+	if missingStats.UsageAvailable {
+		t.Error("missing storage usage should be unavailable")
+	}
+	if missingStats.UsageError == "" {
+		t.Error("missing storage usage should include an error message")
+	}
+}
+
+func findStorageLocationStats(t *testing.T, locations []StorageLocationStats, key string) StorageLocationStats {
+	t.Helper()
+
+	for _, location := range locations {
+		if location.Key == key {
+			return location
+		}
+	}
+	t.Fatalf("storage location %q not found in %#v", key, locations)
+	return StorageLocationStats{}
 }
 
 func TestGetDataStats_GrowthStats(t *testing.T) {

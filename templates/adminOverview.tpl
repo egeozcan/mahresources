@@ -195,6 +195,79 @@
                     </div>
                 </div>
 
+                {# Storage location breakdown #}
+                <template x-if="dataStats.storageLocations && dataStats.storageLocations.length > 0">
+                    <div class="space-y-3" data-testid="admin-storage-locations">
+                        <h3 class="text-sm font-semibold font-mono text-stone-700">Storage Locations</h3>
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full text-sm font-mono">
+                                <thead>
+                                    <tr class="border-b border-stone-200">
+                                        <th class="py-2 pr-4 text-left text-xs text-stone-500 uppercase tracking-wider font-medium" scope="col">Location</th>
+                                        <th class="py-2 pr-4 text-left text-xs text-stone-500 uppercase tracking-wider font-medium" scope="col">App Data</th>
+                                        <th class="py-2 pr-4 text-right text-xs text-stone-500 uppercase tracking-wider font-medium" scope="col">Resources</th>
+                                        <th class="py-2 pr-4 text-right text-xs text-stone-500 uppercase tracking-wider font-medium" scope="col">Versions</th>
+                                        <th class="py-2 pr-4 text-left text-xs text-stone-500 uppercase tracking-wider font-medium" scope="col">Available</th>
+                                        <th class="py-2 text-left text-xs text-stone-500 uppercase tracking-wider font-medium" scope="col">Disk Used</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="location in dataStats.storageLocations" :key="location.key || '__default__'">
+                                        <tr class="border-b border-stone-100 align-top">
+                                            <td class="py-2 pr-4 min-w-48">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="text-stone-900 font-semibold" data-testid="storage-location-label" x-text="location.label"></span>
+                                                    <span class="rounded bg-stone-100 px-1.5 py-0.5 text-[0.65rem] uppercase tracking-wider text-stone-500" x-text="location.kind"></span>
+                                                </div>
+                                                <p class="mt-1 max-w-md break-all text-xs text-stone-500" x-text="location.path || 'Memory / not configured'"></p>
+                                            </td>
+                                            <td class="py-2 pr-4 whitespace-nowrap">
+                                                <p class="text-stone-900 font-semibold" x-text="location.appTotalBytesFmt"></p>
+                                                <p class="mt-1 text-xs text-stone-500">
+                                                    <span x-text="location.appResourceBytesFmt"></span> current /
+                                                    <span x-text="location.appVersionBytesFmt"></span> versions
+                                                </p>
+                                            </td>
+                                            <td class="py-2 pr-4 text-right text-stone-900 whitespace-nowrap" x-text="formatNumber(location.resourceCount)"></td>
+                                            <td class="py-2 pr-4 text-right text-stone-900 whitespace-nowrap" x-text="formatNumber(location.versionCount)"></td>
+                                            <td class="py-2 pr-4 whitespace-nowrap" data-testid="storage-location-available">
+                                                <template x-if="location.usageAvailable">
+                                                    <div>
+                                                        <p :class="storageFreeClass(location)" x-text="location.diskFreeBytesFmt + ' free'"></p>
+                                                        <p class="mt-1 text-xs text-stone-500">
+                                                            <span x-text="formatPercent(storageFreePercent(location))"></span> of
+                                                            <span x-text="location.diskTotalBytesFmt"></span>
+                                                        </p>
+                                                    </div>
+                                                </template>
+                                                <template x-if="!location.usageAvailable">
+                                                    <div>
+                                                        <p class="text-stone-500">Unavailable</p>
+                                                        <p class="mt-1 max-w-xs whitespace-normal break-words text-xs text-stone-500" x-text="location.usageError || 'Usage not available'"></p>
+                                                    </div>
+                                                </template>
+                                            </td>
+                                            <td class="py-2 min-w-40">
+                                                <template x-if="location.usageAvailable">
+                                                    <div class="space-y-1">
+                                                        <div class="h-2 w-36 overflow-hidden rounded-full bg-stone-200" :aria-label="'Disk used ' + formatPercent(location.diskUsedPercent)">
+                                                            <div class="h-full rounded-full" :class="storageUsageBarClass(location)" :style="'width: ' + boundedPercent(location.diskUsedPercent) + '%'"></div>
+                                                        </div>
+                                                        <p class="text-xs text-stone-500" x-text="formatPercent(location.diskUsedPercent) + ' used'"></p>
+                                                    </div>
+                                                </template>
+                                                <template x-if="!location.usageAvailable">
+                                                    <span class="text-xs text-stone-500">—</span>
+                                                </template>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </template>
+
                 {# Entity count cards #}
                 <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3" aria-label="Entity counts">
                     <a href="/resources" class="rounded-md bg-stone-50 border border-stone-200 p-3 hover:bg-amber-50 hover:border-amber-300 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500">

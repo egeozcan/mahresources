@@ -55,6 +55,18 @@ test.describe('Admin Overview page', () => {
     await expect(dataSection.locator('p:has-text("Tags")')).toBeVisible({ timeout: 10000 });
   });
 
+  test('storage location stats load with availability details', async ({ page, baseURL }) => {
+    await page.goto(`${baseURL}/admin/overview`);
+
+    const dataSection = page.locator('section[aria-label="Data overview"]');
+    const storageLocations = dataSection.locator('[data-testid="admin-storage-locations"]');
+
+    await expect(storageLocations.locator('h3:has-text("Storage Locations")')).toBeVisible({ timeout: 10000 });
+    await expect(storageLocations.locator('[data-testid="storage-location-label"]').first()).toContainText('Default');
+    await expect(storageLocations.locator('th:has-text("Available")')).toBeVisible();
+    await expect(storageLocations.locator('[data-testid="storage-location-available"]').first()).toBeVisible();
+  });
+
   test('expensive stats load async (Storage by Content Type, Top Tags appear)', async ({ page, baseURL }) => {
     await page.goto(`${baseURL}/admin/overview`);
 
