@@ -1163,6 +1163,7 @@ func newResourcesListCmd(c *client.Client, opts *output.Options, page *int) *cob
 		ownerID, resourceCategoryID    uint
 		minWidth, minHeight            uint
 		maxWidth, maxHeight            uint
+		includeSubgroups               bool
 	)
 
 	cmd := &cobra.Command{
@@ -1185,6 +1186,9 @@ func newResourcesListCmd(c *client.Client, opts *output.Options, page *int) *cob
 			}
 			if cmd.Flags().Changed("owner-id") {
 				q.Set("ownerId", strconv.FormatUint(uint64(ownerID), 10))
+			}
+			if includeSubgroups {
+				q.Set("includeSubgroups", "1")
 			}
 			if tagsStr != "" {
 				tags, err := parseUintList(tagsStr)
@@ -1283,6 +1287,7 @@ func newResourcesListCmd(c *client.Client, opts *output.Options, page *int) *cob
 	cmd.Flags().StringVar(&description, "description", "", "Filter by description")
 	cmd.Flags().StringVar(&contentType, "content-type", "", "Filter by content type")
 	cmd.Flags().UintVar(&ownerID, "owner-id", 0, "Filter by owner group ID")
+	cmd.Flags().BoolVar(&includeSubgroups, "include-subgroups", false, "With --owner-id: also match resources owned by descendant subgroups")
 	cmd.Flags().StringVar(&tagsStr, "tags", "", "Comma-separated tag IDs to filter by")
 	cmd.Flags().StringVar(&groupsStr, "groups", "", "Comma-separated group IDs to filter by")
 	cmd.Flags().StringVar(&notesStr, "notes", "", "Comma-separated note IDs to filter by")
@@ -1755,6 +1760,7 @@ func newResourcesTimelineCmd(c *client.Client, opts *output.Options) *cobra.Comm
 		hash, originalName                       string
 		ownerID, resourceCategoryID              uint
 		minWidth, minHeight, maxWidth, maxHeight uint
+		includeSubgroups                         bool
 	)
 
 	cmd := &cobra.Command{
@@ -1776,6 +1782,9 @@ func newResourcesTimelineCmd(c *client.Client, opts *output.Options) *cobra.Comm
 			}
 			if cmd.Flags().Changed("owner-id") {
 				q.Set("ownerId", strconv.FormatUint(uint64(ownerID), 10))
+			}
+			if includeSubgroups {
+				q.Set("includeSubgroups", "1")
 			}
 			if tagsStr != "" {
 				tags, err := parseUintList(tagsStr)
@@ -1841,6 +1850,7 @@ func newResourcesTimelineCmd(c *client.Client, opts *output.Options) *cobra.Comm
 	cmd.Flags().StringVar(&description, "description", "", "Filter by description")
 	cmd.Flags().StringVar(&contentType, "content-type", "", "Filter by content type")
 	cmd.Flags().UintVar(&ownerID, "owner-id", 0, "Filter by owner group ID")
+	cmd.Flags().BoolVar(&includeSubgroups, "include-subgroups", false, "With --owner-id: also match resources owned by descendant subgroups")
 	cmd.Flags().StringVar(&tagsStr, "tags", "", "Comma-separated tag IDs to filter by")
 	cmd.Flags().StringVar(&groupsStr, "groups", "", "Comma-separated group IDs to filter by")
 	cmd.Flags().StringVar(&notesStr, "notes", "", "Comma-separated note IDs to filter by")

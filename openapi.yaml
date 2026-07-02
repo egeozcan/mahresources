@@ -1411,6 +1411,8 @@ components:
                     items:
                         type: integer
                     type: array
+                IncludeSubgroups:
+                    type: boolean
                 MaxHeight:
                     type: integer
                 MaxResults:
@@ -5883,6 +5885,10 @@ paths:
                   name: Untagged
                   schema:
                     type: boolean
+                - in: query
+                  name: IncludeSubgroups
+                  schema:
+                    type: boolean
                 - description: Page number for pagination
                   in: query
                   name: page
@@ -6235,6 +6241,10 @@ paths:
                     type: boolean
                 - in: query
                   name: Untagged
+                  schema:
+                    type: boolean
+                - in: query
+                  name: IncludeSubgroups
                   schema:
                     type: boolean
                 - description: 'Time granularity: yearly, monthly, or weekly (default: monthly)'

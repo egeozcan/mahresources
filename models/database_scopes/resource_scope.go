@@ -131,7 +131,11 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 		}
 
 		if query.OwnerId != 0 {
-			dbQuery = dbQuery.Where("resources.owner_id = ?", query.OwnerId)
+			if query.IncludeSubgroups {
+				dbQuery = dbQuery.Where("resources.owner_id IN ("+groupSubtreeCTE+")", query.OwnerId)
+			} else {
+				dbQuery = dbQuery.Where("resources.owner_id = ?", query.OwnerId)
+			}
 		}
 
 		if query.ResourceCategoryId != 0 {

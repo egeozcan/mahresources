@@ -13,6 +13,10 @@ Comma-separated ID lists on `--tags`, `--groups`, `--notes` use the
 `--sort-by=field1,-field2` (prefix with `-` for descending). Pagination
 via the global `--page` flag (default page size 50).
 
+`--include-subgroups` widens `--owner-id` to the whole group subtree:
+resources owned by the given group or by any of its descendant
+subgroups, recursively. It has no effect without `--owner-id`.
+
 # Example
 
   # List all resources (paged)
@@ -31,3 +35,13 @@ via the global `--page` flag (default page size 50).
   ID2=$(mr resource upload ./testdata/sample.png --owner-id=$GRP --name "list-b-$$" --json | jq -r '.[0].ID')
   mr resources add-tags --ids $ID1,$ID2 --tags $TAG
   mr resources list --tags $TAG --json | jq -e 'length >= 2'
+
+  # mr-doctest: --include-subgroups matches a resource owned by a child group
+  PARENT=$(mr group create --name "doctest-subtree-p-$$-$RANDOM" --json | jq -r '.ID')
+  CHILD=$(mr group create --name "doctest-subtree-c-$$-$RANDOM" --owner-id=$PARENT --json | jq -r '.ID')
+  TMP=$(mktemp -t subtree-XXXXXX).jpg
+  cp ./testdata/sample.jpg "$TMP" && printf '%s' "$$-$RANDOM" >> "$TMP"  # unique bytes defeat content-hash dedup
+  RID=$(mr resource upload "$TMP" --owner-id=$CHILD --name "subtree-$$" --json | jq -r '.[0].ID')
+  rm -f "$TMP"
+  mr resources list --owner-id $PARENT --json | jq -e 'length == 0'
+  mr resources list --owner-id $PARENT --include-subgroups --json | jq -e --argjson id "$RID" 'map(.ID) | index($id) != null'

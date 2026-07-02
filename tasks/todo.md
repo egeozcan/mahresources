@@ -74,3 +74,35 @@ Committed flakiness fixes to master, then addressed the documented residuals.
 - [x] Memory updated: corrected 100 diagnosis + new `reference_pg_fts_hyphen_tokenization`.
 
 ## DONE — residuals fixed and verified on both backends
+
+# Resource search: "Include subgroups" owner filter (2026-07-02)
+
+Add an option to the resource search to widen the OwnerId filter to the whole group
+subtree (owner + all descendant subgroups, recursively). Plan approved via plan mode.
+
+- [x] TDD red: 5 API tests in `server/api_tests/resource_owner_subtree_filter_test.go`
+      (subtree match + count, exact-match regression, flag-alone no-op, HTTP binding, RBAC intersection)
+- [x] `IncludeSubgroups bool` on `ResourceSearchQuery` (binds via gorilla/schema, no handler changes)
+- [x] `groupSubtreeCTE` const in `database_scopes/db_utils.go` (recursive CTE, UNION-dedup = cycle-safe)
+- [x] Owner filter branch in `resource_scope.go` (`owner_id IN (<subtree>)` when flag set);
+      timeline + popular-tags inherit via shared scope
+- [x] "Include subgroups" checkbox in `searchFormResource.tpl` under the Owner autocompleter
+- [x] CLI: `--include-subgroups` on `mr resources list` and `mr resources timeline`,
+      help docs + doctest (doctest needed unique upload bytes to defeat content-hash dedup)
+- [x] OpenAPI spec regenerated + validated
+- [x] E2E browser spec `103-owner-subtree-filter.spec.ts` (a[title=...] locators avoid
+      strict-mode clash with the hidden lightbox header link)
+
+## Review
+
+Verified: new API tests red then green; full SQLite Go suite; full browser+CLI E2E
+(1593 passed); CLI E2E rerun with fresh mr binary (314 passed); PG Go tests
+(mrql + api_tests); full PG E2E (1594 passed); `mr docs lint` OK; doctests pass
+(5 remaining failures are pre-existing missing-plugin-fixture ones).
+
+Drive-by fix: `/admin/overview` a11y color-contrast failure from the storage-stats
+feature (e1cf3759) — badge `text-stone-500` on `bg-stone-100` is ~4.2:1, below AA;
+bumped to `text-stone-600` in `adminOverview.tpl`, a11y test green.
+
+Follow-up candidate (not done): same option for the note search (`note_scope.go`
+has the identical exact-match OwnerId pattern; `groupSubtreeCTE` is ready to reuse).

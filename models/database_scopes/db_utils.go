@@ -39,6 +39,15 @@ var SortColumnMatcher = regexp.MustCompile(`^(meta->>?'[a-z_]+'|[a-z_]+)(\s(desc
 // metaSortMatcher extracts the key from meta sort expressions like meta->>'key_name'
 var metaSortMatcher = regexp.MustCompile(`^meta->>?'([a-z_]+)'(\s+(desc|asc))?$`)
 
+// groupSubtreeCTE selects all group IDs in the subtree rooted at the single
+// placeholder ID (including the root itself). UNION (not UNION ALL)
+// deduplicates, so ownership cycles terminate. Works on SQLite and Postgres.
+const groupSubtreeCTE = `WITH RECURSIVE group_subtree(id) AS (
+	SELECT id FROM groups WHERE id = ?
+	UNION
+	SELECT g.id FROM groups g INNER JOIN group_subtree gs ON g.owner_id = gs.id
+) SELECT id FROM group_subtree`
+
 // GetLikeOperator returns "ILIKE" for Postgres (case-insensitive), "LIKE" for others.
 func GetLikeOperator(db *gorm.DB) string {
 	if db.Config.Dialector.Name() == "postgres" {

@@ -27,6 +27,7 @@
         {% include "/partials/form/autocompleter.tpl" with url='/v1/notes' elName='notes' title='Notes' selectedItems=notes id=getNextId("autocompleter") %}
         {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=groups id=getNextId("autocompleter") extraInfo="Category" %}
         {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' max=1 elName='ownerId' title='Owner' selectedItems=owner id=getNextId("autocompleter") extraInfo="Category" %}
+        {% include "/partials/form/checkboxInput.tpl" with name='IncludeSubgroups' label='Include subgroups' value=queryValues.IncludeSubgroups.0 id=getNextId("IncludeSubgroups") %}
         {% include "/partials/form/autocompleter.tpl" with url='/v1/resourceCategories' max=1 elName='ResourceCategoryId' title='Resource Category' selectedItems=selectedResourceCategory id=getNextId("autocompleter") %}
         {% include "/partials/form/schemaSearchFields.tpl" with elName='ResourceCategoryId' existingMetaQuery=parsedQuery.MetaQuery initialCategories=selectedResourceCategory id=getNextId("schemaSearch") %}
         {% include "/partials/form/freeFields.tpl" with name="MetaQuery" url='/v1/resources/meta/keys' fields=parsedQuery.MetaQuery id=getNextId("freeField") %}

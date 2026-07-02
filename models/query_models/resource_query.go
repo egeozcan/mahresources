@@ -79,6 +79,9 @@ type ResourceSearchQuery struct {
 	// Untagged restricts results to resources with zero rows in resource_tags.
 	// Powers the lightbox "Tag untagged" launcher.
 	Untagged bool
+	// IncludeSubgroups widens the OwnerId filter to the whole group subtree
+	// (owner and all descendant subgroups, recursively). No-op when OwnerId is 0.
+	IncludeSubgroups bool
 }
 
 type ResourceThumbnailQuery struct {
