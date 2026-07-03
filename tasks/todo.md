@@ -28,9 +28,28 @@ WITHIN>11 = validation error, ORDER BY distance included in v1).
        case + test.
 - [x] 9. Docs: skill mrql.md, docs-site mrql.md + mrql-reference.md.
 - [x] 10. E2E: `e2e/tests/mrql-similarity.spec.ts` (syntax + validation-error UX).
-- [ ] 11. Full verification: Go unit, build, browser+CLI e2e, PG Go, PG e2e.
-- [ ] 12. Self-review the diff (same bar as package 2), fix findings.
+- [x] 11. Full verification: Go unit, build, browser+CLI e2e, PG Go, PG e2e.
+- [x] 12. Self-review the diff (same bar as package 2), fix findings.
 
 ## Review
 
-(to be filled at the end)
+Shipped on `feat/mrql-package3-similarity` (design 6b5af872, implementation
+fcec7bb0). All verification green: full Go unit suite, Postgres Go (incl.
+TestPG_SimilarTo), browser+CLI e2e (1608), Postgres e2e (1610).
+
+Notable implementation points:
+- SIMILAR TO merges in the lexer only when followed by TO; WITHIN and
+  distance are contextual identifiers — no new reserved words.
+- Predicate reads precomputed resource_similarities via UNION ALL +
+  COALESCE(p_distance, hamming_distance); dialect-neutral, no PG/SQLite
+  branches. Thresholds plumbed via TranslateOptions from
+  similarityThresholds() at all six construction sites (helper
+  ctx.mrqlTranslateOptions()); shared newTranslateContext() feeds the
+  GROUP BY entry points too.
+- ORDER BY distance = correlated MIN subquery + COALESCE(..., 255)
+  sentinel (neutralizes SQLite NULLS FIRST vs PG NULLS LAST).
+- Cross-entity clones translate SIMILAR TO to 1 = 0 (the package-2 review
+  lesson); explicit non-resource queries fail validation.
+- Self-review finding checked and cleared: negative WITHIN/target IDs lex
+  as rel-date tokens, so they already fail parsing; regression test added.
+
