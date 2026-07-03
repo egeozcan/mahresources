@@ -684,6 +684,93 @@ type = resource GROUP BY contentType LIMIT 5
 type = resource GROUP BY meta.camera_model LIMIT 10
 ```
 
+## Parameterized Queries (Reports)
+
+A query may contain `$name` placeholders in **value positions** — anywhere a
+literal value is accepted (comparison right-hand side, `IN (...)` list items, and
+`HAVING` comparison right-hand side). A placeholder name is `[a-zA-Z_][a-zA-Z0-9_]*`.
+Placeholders are **not** allowed in field names, `LIMIT`/`OFFSET`, `SCOPE`,
+`WITHIN`, or `GROUP BY` keys. A `$name` inside a quoted string stays literal text.
+
+```
+type = resource AND tags = $tag AND created > $since
+type = note AND name ~ $needle LIMIT 50
+type = resource GROUP BY contentType COUNT() HAVING COUNT() > $min
+tags IN ($a, $b)
+```
+
+Parameters make a saved query reusable as a **report**: save it once with
+placeholders, then supply values at run time.
+
+- **Binding is at the value level, never string interpolation** — bound values
+  translate to database bind placeholders exactly like typed literals, so they are
+  injection-safe by construction. `tag = $t` with `t = 'x" OR 1=1'` is just an
+  unusual tag string that matches nothing.
+- **Value coercion mirrors the lexer.** A supplied string behaves as if typed at
+  that position: a bare number (`42`, `10mb`), a relative date (`-7d`), or a date
+  function (`NOW()`) is parsed as that literal; anything else becomes a plain
+  string. Force a string by wrapping in quotes (CLI: `--param n='"42"'`).
+- **Every placeholder must be supplied.** A missing value is a 400 error listing
+  the missing name; an unknown/extra parameter is also rejected (typo protection).
+  Names are case-sensitive.
+- **Saving is allowed with unbound placeholders** — validation accepts a
+  placeholder against any field type and re-checks compatibility once bound.
+
+On the `/mrql` page, one labeled input appears per placeholder above the Run
+button; loading a saved report focuses the first empty input instead of running.
+
+From the CLI, bind with repeatable `--param`:
+
+```bash
+mr mrql 'type = resource AND created > $since' --param since=-7d
+mr mrql run monthly-report --param month=2026-07
+```
+
+Via the API, `POST /v1/mrql` accepts a `params` object; `POST /v1/mrql/saved/run`
+also accepts `param.<name>=<value>` query parameters. In `[mrql]` shortcodes and
+plugin `mah.db.mrql`, supply `param-<name>` attributes / a `params` table.
+
+## EXPLAIN
+
+`POST /v1/mrql/explain` (and `mr mrql explain`) returns the SQL statement(s) a
+query would run **without executing it**. The reported SQL reflects what would
+actually run: the default `LIMIT` is applied, `SCOPE` is resolved, and RBAC forced
+scoping is included. A flat single-entity query yields one statement; a
+cross-entity query yields one per entity table; aggregated `GROUP BY` yields one;
+bucketed `GROUP BY` shows the key-discovery query and notes the per-bucket fan-out.
+
+```bash
+mr mrql explain 'type = resource AND fileSize > 1mb'
+mr mrql explain --saved my-report --param since=-7d --json
+```
+
+On the `/mrql` page, the **Explain** button (or `Mod-Shift-Enter`) opens a panel
+above the results showing the interpolated SQL per statement, with a toggle for the
+raw parameterized SQL and its bind variables.
+
+## Export
+
+`GET|POST /v1/mrql/export` (and `mr mrql export`) streams query results as a
+download. `format=csv` (default) or `format=json`. The same inputs as execution
+apply (`query` or `id`/`name`, `params`, `limit`, `page`, `buckets`, `offset`).
+
+- **CSV — aggregated**: the `GROUP BY` keys then the aggregate aliases, in query order.
+- **CSV — flat**: a fixed scalar column set per entity (`meta` as a JSON string).
+  CSV requires a single entity type — use `format=json` for cross-entity results.
+- **CSV — bucketed**: the bucket-key columns prepended to the flat item columns.
+- **JSON**: the exact `/v1/mrql` response body as a download.
+
+When no explicit `LIMIT` is present the default is applied and reported via the
+`X-MRQL-Default-Limit-Applied` response header.
+
+```bash
+mr mrql export 'type = resource' --format csv -o resources.csv
+mr mrql export --saved my-report --format json --param since=-7d
+```
+
+The `/mrql` results header has **Export CSV** / **Export JSON** buttons that
+re-submit the current query and parameters.
+
 ## See Also
 
 - [MRQL Reference](./mrql-reference.md) — compact syntax cheatsheet for quick lookup

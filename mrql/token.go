@@ -55,6 +55,7 @@ const (
 	// Special
 	TokenRelDate // -7d, -30d, -3m, -1y
 	TokenFunc    // NOW(), START_OF_DAY(), etc.
+	TokenParam   // $name — a parameter placeholder (value position only)
 
 	TokenEOF
 	TokenIllegal

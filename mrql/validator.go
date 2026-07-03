@@ -320,6 +320,10 @@ func validateNode(node Node, entityType EntityType) error {
 			default:
 				return countOperatorError(n.Field)
 			}
+			// Unbound parameter: defer the non-negative-integer check to bind time.
+			if _, isParam := n.Value.(*ParamRef); isParam {
+				return nil
+			}
 			nl, ok := n.Value.(*NumberLiteral)
 			if !ok || nl.Unit != "" || nl.Value < 0 || nl.Value != float64(int64(nl.Value)) {
 				return &ValidationError{
@@ -606,6 +610,12 @@ func validateSortable(f *FieldExpr, entityType EntityType) error {
 // meta fields and string fields accept anything (meta is dynamically typed).
 func validateValueType(field *FieldExpr, value Node, entityType EntityType) error {
 	fieldName := field.Parts[0].Value
+
+	// Unbound parameter placeholder: accepted against any field type here; the
+	// concrete value's type is re-checked after BindParams substitutes a literal.
+	if _, ok := value.(*ParamRef); ok {
+		return nil
+	}
 
 	// Meta fields are dynamically typed — any value is fine
 	if len(field.Parts) >= 2 && field.Parts[0].Value == "meta" {
@@ -1104,6 +1114,11 @@ func validateHavingNode(node Node, entityType EntityType) error {
 // (string, relative date, function) additionally allowed for MIN/MAX on
 // datetime fields, and any value for MIN/MAX on dynamically-typed meta fields.
 func validateHavingValue(hc *HavingComparison, entityType EntityType) error {
+	// Unbound parameter: defer the numeric-value check to bind time.
+	if _, ok := hc.Value.(*ParamRef); ok {
+		return nil
+	}
+
 	isMinMax := hc.Agg.Name == "MIN" || hc.Agg.Name == "MAX"
 	allowDateValue := false
 	if isMinMax && hc.Agg.Field != nil {

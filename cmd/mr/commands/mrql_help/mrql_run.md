@@ -19,6 +19,10 @@ an inline `mrql` invocation. Pass `--render` to request server-side
 template rendering via the `CustomMRQLResult` template. A missing ID or
 name returns HTTP 404.
 
+If the saved query contains `$name` parameter placeholders, bind them
+with repeatable `--param name=value` flags. Every placeholder must be
+supplied or the run returns HTTP 400.
+
 This is distinct from `query run`, which executes SQL-backed Query
 records rather than MRQL DSL expressions.
 

@@ -22,9 +22,17 @@ The top-level `mrql` command executes a one-off query supplied as a
 positional argument, via `-f <file>`, or on stdin with `-`. Use the
 subcommands to manage saved queries: `save` to register a named query,
 `list` to discover them, `run` to execute a saved query by name or ID,
+`explain` to preview the SQL, `export` to download results as CSV/JSON,
 and `delete` to remove one. Saved MRQL queries differ from SQL-based
 `query` records (see `query run`): MRQL is the high-level DSL, whereas
 `query` executes raw read-only SQL.
+
+Queries may contain `$name` parameter placeholders in value positions
+(for example `type = resource AND tags = $tag AND created > $since`).
+Bind them with repeatable `--param name=value` flags. Values are coerced
+the same way a typed literal would be (`--param since=-7d` is a relative
+date; wrap in quotes like `--param n='"42"'` to force a string). Every
+placeholder must be supplied; unknown `--param` names are rejected.
 
 ## Usage
 
@@ -46,6 +54,7 @@ Positional arguments:
 | `--buckets` | int | `0` | Groups per page for bucketed GROUP BY queries |
 | `--offset` | int | `0` | Bucket offset for cursor-based GROUP BY pagination |
 | `--render` | bool | `false` | Request server-side template rendering via CustomMRQLResult |
+| `--param` | stringArray | `[]` | Bind a query parameter placeholder, repeatable: --param name=value |
 ### Inherited global flags
 
 | Flag | Type | Default | Description |

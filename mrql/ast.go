@@ -137,6 +137,17 @@ type FuncCall struct {
 func (f *FuncCall) nodeType() string { return "FuncCall" }
 func (f *FuncCall) Pos() int         { return f.Token.Pos }
 
+// ParamRef is a parameter placeholder ($name) appearing in a value position.
+// It carries no typed value of its own; BindParams replaces each ParamRef with
+// a concrete literal node before validation and translation.
+type ParamRef struct {
+	Token Token
+	Name  string // placeholder name without the leading '$'
+}
+
+func (p *ParamRef) nodeType() string { return "ParamRef" }
+func (p *ParamRef) Pos() int         { return p.Token.Pos }
+
 // AggregateFunc represents an aggregate function call: COUNT(), SUM(field), etc.
 type AggregateFunc struct {
 	Token Token      // the aggregate keyword token (COUNT, SUM, etc.)

@@ -1730,6 +1730,70 @@ Response: {"valid": bool, "errors": [...]}`,
 
 	r.Register(openapi.RouteInfo{
 		Method:      http.MethodPost,
+		Path:        "/v1/mrql/explain",
+		OperationID: "explainMRQL",
+		Summary:     "Explain the SQL an MRQL query would run",
+		Description: `Parses, binds parameters, validates, and translates an MRQL query, then
+returns the SQL statement(s) that would run — without executing the query.
+
+Request body fields (provide one of query / id / name):
+  - query  (string) — inline MRQL source
+  - id     (integer) — saved query id
+  - name   (string) — saved query name
+  - params (object) — $name placeholder bindings
+
+Query parameters:
+  - param.<name>=<value> — alternative to the params object (always strings)
+
+Response: {"entityType", "statements": [{"label","sql","vars","interpolated"}], "warnings", "default_limit_applied", "applied_limit"}.
+Reported SQL reflects the default LIMIT, resolved SCOPE, and any RBAC forced scope.`,
+		Tags:                 mrqlTag,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/mrql/export",
+		OperationID:          "exportMRQLGet",
+		Summary:              "Export MRQL query results as CSV or JSON (GET)",
+		Description:          "GET form of /v1/mrql/export: all inputs (query, id/name, format, param.<name>, pagination) are supplied as query parameters. See the POST form for the CSV/JSON shape details.",
+		Tags:                 mrqlTag,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "query", Type: "string", Description: "Inline MRQL source (or use id/name)"},
+			{Name: "id", Type: "integer", Description: "Saved query id"},
+			{Name: "name", Type: "string", Description: "Saved query name"},
+			{Name: "format", Type: "string", Description: "Export format: csv (default) or json"},
+		},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/mrql/export",
+		OperationID: "exportMRQL",
+		Summary:     "Export MRQL query results as CSV or JSON",
+		Description: `Executes a query (inline or saved) and streams the result as a file download.
+
+Accepts the same inputs as /v1/mrql (query or id/name, params / param.<name>, limit,
+page, buckets, offset) plus:
+  - format (csv|json) — default csv
+
+CSV shapes: aggregated → GROUP BY keys + aggregate aliases; flat → fixed scalar
+columns per entity (meta as a JSON string); bucketed → bucket-key columns then the
+flat item columns. CSV requires a single entity type; use format=json for
+cross-entity results. When no explicit LIMIT is present the default is applied and
+reported via the X-MRQL-Default-Limit-Applied response header.`,
+		Tags:                 mrqlTag,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "format", Type: "string", Description: "Export format: csv (default) or json"},
+		},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
 		Path:        "/v1/mrql/complete",
 		OperationID: "completeMRQL",
 		Summary:     "Get MRQL autocomplete suggestions",

@@ -21,6 +21,16 @@ func (a *pluginMRQLAdapter) ExecuteMRQL(reqCtx context.Context, query string, op
 	if err != nil {
 		return nil, err
 	}
+	// Bind $name placeholders supplied via opts.Params before validation.
+	// Always called so an unbound placeholder surfaces a clear missing-param
+	// error instead of reaching the translator.
+	bindParams := make(map[string]any, len(opts.Params))
+	for k, v := range opts.Params {
+		bindParams[k] = v
+	}
+	if err := mrql.BindParams(parsed, bindParams); err != nil {
+		return nil, err
+	}
 	if err := mrql.Validate(parsed); err != nil {
 		return nil, err
 	}

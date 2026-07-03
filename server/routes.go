@@ -587,6 +587,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 
 	// MRQL routes
 	router.Methods(http.MethodPost).Path("/v1/mrql").HandlerFunc(scopedAPI(appContext, api_handlers.GetExecuteMRQLHandler))
+	router.Methods(http.MethodPost).Path("/v1/mrql/explain").HandlerFunc(scopedAPI(appContext, api_handlers.GetExplainMRQLHandler))
+	router.Methods(http.MethodGet, http.MethodPost).Path("/v1/mrql/export").HandlerFunc(scopedAPI(appContext, api_handlers.GetExportMRQLHandler))
 	router.Methods(http.MethodPost).Path("/v1/mrql/validate").HandlerFunc(api_handlers.GetValidateMRQLHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/mrql/complete").HandlerFunc(api_handlers.GetCompleteMRQLHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/mrql/generate").HandlerFunc(api_handlers.GetGenerateMRQLHandler(appContext))

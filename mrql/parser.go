@@ -545,6 +545,10 @@ func (p *parser) parseValue() (Node, error) {
 		p.lexer.Next()
 		return &FuncCall{Token: tok, Name: tok.Value}, nil
 
+	case TokenParam:
+		p.lexer.Next()
+		return &ParamRef{Token: tok, Name: tok.Value}, nil
+
 	case TokenIdentifier, TokenHaving:
 		// Bare identifier: treat as string value. TokenHaving keeps the word
 		// "having" usable as a bare value (e.g. name = having).

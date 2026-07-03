@@ -15,14 +15,14 @@ import (
 // context to execute MRQL queries. It preloads categories on result entities to
 // extract CustomMRQLResult templates.
 func BuildQueryExecutor(appCtx *application_context.MahresourcesContext) shortcodes.QueryExecutor {
-	return func(reqCtx context.Context, query string, savedName string, limit int, buckets int, scopeGroupID uint) (*shortcodes.QueryResult, error) {
-		return executeMRQLForShortcode(reqCtx, appCtx, query, savedName, limit, buckets, scopeGroupID)
+	return func(reqCtx context.Context, query string, savedName string, params map[string]string, limit int, buckets int, scopeGroupID uint) (*shortcodes.QueryResult, error) {
+		return executeMRQLForShortcode(reqCtx, appCtx, query, savedName, params, limit, buckets, scopeGroupID)
 	}
 }
 
 // executeMRQLForShortcode runs an MRQL query and converts the result into shortcode types.
 // It detects GROUP BY queries and routes them through ExecuteMRQLGrouped.
-func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context.MahresourcesContext, query string, savedName string, limit int, buckets int, scopeGroupID uint) (*shortcodes.QueryResult, error) {
+func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context.MahresourcesContext, query string, savedName string, params map[string]string, limit int, buckets int, scopeGroupID uint) (*shortcodes.QueryResult, error) {
 	// Resolve saved query name to query string
 	actualQuery := query
 	if savedName != "" && query == "" {
@@ -36,6 +36,10 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context
 	// Parse to detect GROUP BY
 	parsed, err := mrql.Parse(actualQuery)
 	if err != nil {
+		return nil, err
+	}
+	// Bind $name placeholders (from param-<name> shortcode attrs) before validation.
+	if err := mrql.BindParams(parsed, shortcodeParamsToAny(params)); err != nil {
 		return nil, err
 	}
 	if err := mrql.Validate(parsed); err != nil {
@@ -88,6 +92,19 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context
 	qr.Items = convertResultItems(result, appCtx)
 
 	return qr, nil
+}
+
+// shortcodeParamsToAny converts a string-valued shortcode params map into the
+// map[string]any that mrql.BindParams expects (values are lenient-coerced).
+func shortcodeParamsToAny(params map[string]string) map[string]any {
+	if len(params) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(params))
+	for k, v := range params {
+		out[k] = v
+	}
+	return out
 }
 
 // convertResultItems converts MRQLResult entities into QueryResultItems with

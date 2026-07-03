@@ -14,7 +14,7 @@ func TestMRQLCacheHitAndMiss(t *testing.T) {
 	cache := MRQLCacheFromContext(ctx)
 	assert.NotNil(t, cache)
 
-	key := MRQLCacheKey("type=resource", 0, 10, 5)
+	key := MRQLCacheKey("type=resource", 0, 10, 5, nil)
 
 	result, ok := cache.Get(key)
 	assert.False(t, ok)

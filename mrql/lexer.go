@@ -68,6 +68,12 @@ func (l *Lexer) next() Token {
 		return l.readRelDate(start)
 	}
 
+	// Parameter placeholders: $name where name is [a-zA-Z_][a-zA-Z0-9_]*.
+	// `$name` inside a quoted string stays literal text (strings are read above).
+	if ch == '$' {
+		return l.readParam(start)
+	}
+
 	// Identifiers, keywords, and functions
 	if isLetter(ch) || ch == '_' {
 		return l.readWord(start)
@@ -216,6 +222,23 @@ func (l *Lexer) readRelDate(start int) Token {
 	// Not a valid rel date — emit what we have as illegal
 	val := l.input[start:l.pos]
 	return Token{Type: TokenIllegal, Value: val, Pos: start, Length: l.pos - start}
+}
+
+// readParam reads a parameter placeholder: '$' followed by an identifier
+// ([a-zA-Z_][a-zA-Z0-9_]*). The token Value holds the name without the leading
+// '$'; Length covers the full "$name" span. A lone '$' or '$' followed by a
+// non-identifier character is a lexer error (TokenIllegal).
+func (l *Lexer) readParam(start int) Token {
+	l.pos++ // consume '$'
+	nameStart := l.pos
+	if l.pos >= len(l.input) || !(isLetter(l.input[l.pos]) || l.input[l.pos] == '_') {
+		// '$' not followed by a valid identifier start.
+		return Token{Type: TokenIllegal, Value: l.input[start:l.pos], Pos: start, Length: l.pos - start}
+	}
+	for l.pos < len(l.input) && isWordChar(l.input[l.pos]) {
+		l.pos++
+	}
+	return Token{Type: TokenParam, Value: l.input[nameStart:l.pos], Pos: start, Length: l.pos - start}
 }
 
 // readWord reads an identifier, keyword, or function call.

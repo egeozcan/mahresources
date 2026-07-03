@@ -527,3 +527,101 @@ test.describe('MRQL counting and aggregation (package 1)', () => {
     expect(combined).toContain('single reference');
   });
 });
+
+test.describe('MRQL parameters, explain, and export (Package 4)', () => {
+  test('--param binds a placeholder on inline query', async ({ cli }) => {
+    const result = cli.run('mrql', 'type = "resource" AND name ~ $needle', '--param', 'needle=nonexistent-xyz', '--json');
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.entityType).toBe('resource');
+  });
+
+  test('missing --param produces an error', async ({ cli }) => {
+    const result = cli.run('mrql', 'type = "resource" AND name ~ $needle');
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain('missing parameter $needle');
+  });
+
+  test('invalid --param syntax is rejected', async ({ cli }) => {
+    const result = cli.run('mrql', 'type = "resource"', '--param', 'noequals');
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain('name=value');
+  });
+
+  test('explain prints the statement SQL', async ({ cli }) => {
+    const result = cli.run('mrql', 'explain', 'type = "resource"');
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('-- resource --');
+    expect(result.stdout.toLowerCase()).toContain('select');
+    expect(result.stdout.toLowerCase()).toContain('resources');
+  });
+
+  test('explain --json returns statements', async ({ cli }) => {
+    const result = cli.run('mrql', 'explain', 'type = "resource"', '--json');
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(Array.isArray(parsed.statements)).toBe(true);
+    expect(parsed.statements.length).toBeGreaterThanOrEqual(1);
+    expect(parsed.statements[0].sql.toLowerCase()).toContain('select');
+  });
+
+  test('explain binds a --param', async ({ cli }) => {
+    const result = cli.run('mrql', 'explain', 'type = "resource" AND name ~ $n', '--param', 'n=demo', '--json');
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.statements[0].interpolated).toContain('demo');
+  });
+
+  test('export csv emits the resource header row', async ({ cli }) => {
+    const result = cli.run('mrql', 'export', 'type = "resource"', '--format', 'csv');
+    expect(result.exitCode).toBe(0);
+    const firstLine = result.stdout.split('\n')[0];
+    expect(firstLine).toContain('id,name,description,content_type');
+  });
+
+  test('export json carries the entityType', async ({ cli }) => {
+    const result = cli.run('mrql', 'export', 'type = "resource"', '--format', 'json');
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.entityType).toBe('resource');
+  });
+
+  test('export cross-entity csv is rejected', async ({ cli }) => {
+    const result = cli.run('mrql', 'export', 'name ~ "x"', '--format', 'csv');
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain('single entity type');
+  });
+
+  test('explain --saved resolves a saved query by name', async ({ cli }) => {
+    const name = `pkg4-explain-saved-${Date.now()}`;
+    cli.runOrFail('mrql', 'save', name, 'type = "resource" AND name ~ $needle');
+
+    const result = cli.run('mrql', 'explain', '--saved', name, '--param', 'needle=demo', '--json');
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.statements.length).toBeGreaterThanOrEqual(1);
+    expect(parsed.statements[0].interpolated).toContain('demo');
+  });
+
+  test('explain --saved resolves a saved query by numeric id', async ({ cli }) => {
+    const name = `pkg4-explain-saved-id-${Date.now()}`;
+    const saved = cli.runOrFail('mrql', 'save', name, 'type = "note"', '--json');
+    const id = JSON.parse(saved.stdout).ID ?? JSON.parse(saved.stdout).id;
+    expect(id).toBeGreaterThan(0);
+
+    const result = cli.run('mrql', 'explain', '--saved', String(id), '--json');
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.statements[0].sql.toLowerCase()).toContain('notes');
+  });
+
+  test('export --saved resolves a saved query by name', async ({ cli }) => {
+    const name = `pkg4-export-saved-${Date.now()}`;
+    cli.runOrFail('mrql', 'save', name, 'type = "resource" AND name ~ $needle');
+
+    const result = cli.run('mrql', 'export', '--saved', name, '--param', 'needle=nonexistent-xyz', '--format', 'csv');
+    expect(result.exitCode).toBe(0);
+    const firstLine = result.stdout.split('\n')[0];
+    expect(firstLine).toContain('id,name,description,content_type');
+  });
+});

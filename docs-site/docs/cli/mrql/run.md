@@ -19,6 +19,10 @@ an inline `mrql` invocation. Pass `--render` to request server-side
 template rendering via the `CustomMRQLResult` template. A missing ID or
 name returns HTTP 404.
 
+If the saved query contains `$name` parameter placeholders, bind them
+with repeatable `--param name=value` flags. Every placeholder must be
+supplied or the run returns HTTP 400.
+
 This is distinct from `query run`, which executes SQL-backed Query
 records rather than MRQL DSL expressions.
 
@@ -62,6 +66,7 @@ mr mrql run "recent-photos" --json | jq -r '.resources[].ID'
 | `--buckets` | int | `0` | Groups per page for bucketed GROUP BY queries |
 | `--offset` | int | `0` | Bucket offset for cursor-based GROUP BY pagination |
 | `--render` | bool | `false` | Request server-side template rendering via CustomMRQLResult |
+| `--param` | stringArray | `[]` | Bind a query parameter placeholder, repeatable: --param name=value |
 ### Inherited global flags
 
 | Flag | Type | Default | Description |

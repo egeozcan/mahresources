@@ -3,6 +3,8 @@ package plugin_system
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -30,9 +32,27 @@ func MRQLCacheFromContext(ctx context.Context) *MRQLCache {
 	return v.(*MRQLCache)
 }
 
-// MRQLCacheKey builds a deterministic cache key from query parameters.
-func MRQLCacheKey(query string, scopeID uint, limit, buckets int) string {
-	return fmt.Sprintf("%s|%d|%d|%d", query, scopeID, limit, buckets)
+// MRQLCacheKey builds a deterministic cache key from query parameters. params
+// bindings are folded in (sorted) so two calls that differ only by parameter
+// value do not collide.
+func MRQLCacheKey(query string, scopeID uint, limit, buckets int, params map[string]string) string {
+	base := fmt.Sprintf("%s|%d|%d|%d", query, scopeID, limit, buckets)
+	if len(params) == 0 {
+		return base
+	}
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString(base)
+	for _, k := range keys {
+		// %q-quote so separator characters in names/values cannot collide with
+		// the key structure (e.g. {"a": "1|b=2"} vs {"a": "1", "b": "2"}).
+		fmt.Fprintf(&b, "|%q=%q", k, params[k])
+	}
+	return b.String()
 }
 
 // Get returns a cached result and true, or nil and false.

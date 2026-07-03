@@ -2,6 +2,7 @@ package plugin_system
 
 import (
 	"context"
+	"fmt"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -164,9 +165,10 @@ type MRQLExecutor interface {
 
 // MRQLExecOptions carries execution parameters including scope.
 type MRQLExecOptions struct {
-	Limit   int  // max items (default 20)
-	Buckets int  // max GROUP BY buckets (default 5)
-	ScopeID uint // resolved owner_id for scoping (0 = no scope filter)
+	Limit   int               // max items (default 20)
+	Buckets int               // max GROUP BY buckets (default 5)
+	ScopeID uint              // resolved owner_id for scoping (0 = no scope filter)
+	Params  map[string]string // $name placeholder bindings (nil/empty when none)
 }
 
 // MRQLResult holds query results in a plugin_system-safe form (no model imports).
@@ -828,10 +830,21 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			}
 		}
 
+		// Parameter placeholder bindings (opts.params table). Values are
+		// stringified; the executor lenient-coerces them like typed literals.
+		var params map[string]string
+		if pv, ok := optsMap["params"].(map[string]any); ok && len(pv) > 0 {
+			params = make(map[string]string, len(pv))
+			for k, v := range pv {
+				params[k] = fmt.Sprint(v)
+			}
+		}
+
 		execOpts := MRQLExecOptions{
 			Limit:   limit,
 			Buckets: buckets,
 			ScopeID: scopeID,
+			Params:  params,
 		}
 
 		// Check cache
@@ -839,7 +852,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		if reqCtx == nil {
 			reqCtx = context.Background()
 		}
-		cacheKey := MRQLCacheKey(query, scopeID, limit, buckets)
+		cacheKey := MRQLCacheKey(query, scopeID, limit, buckets, params)
 		if cache := MRQLCacheFromContext(reqCtx); cache != nil {
 			if cached, ok := cache.Get(cacheKey); ok {
 				L.Push(mrqlResultToLua(L, cached))

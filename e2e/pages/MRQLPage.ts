@@ -17,11 +17,21 @@ export class MRQLPage {
   readonly generationError: Locator;
   readonly generationExplanation: Locator;
   readonly useGeneratedButton: Locator;
+  readonly explainButton: Locator;
+  readonly explainPanel: Locator;
+  readonly paramsFieldset: Locator;
+  readonly exportCsvButton: Locator;
+  readonly exportJsonButton: Locator;
 
   constructor(page: Page) {
     this.page = page;
     this.editorContainer = page.locator('[x-ref="editorContainer"]');
     this.runButton = page.locator('button:has-text("Run")');
+    this.explainButton = page.getByTestId('mrql-explain-button');
+    this.explainPanel = page.getByTestId('mrql-explain-panel');
+    this.paramsFieldset = page.getByTestId('mrql-params');
+    this.exportCsvButton = page.getByTestId('mrql-export-csv');
+    this.exportJsonButton = page.getByTestId('mrql-export-json');
     this.saveButton = page.locator('button:has-text("Save")').first();
     this.resultsSection = page.locator('section[aria-label="Query results"]');
     this.savedQueriesSection = page.locator('section[aria-label="Saved queries"]');
@@ -107,6 +117,21 @@ export class MRQLPage {
     // Wait for execution to complete (button text changes from "Running..." back to "Run")
     await expect(this.runButton).toContainText('Run', { timeout: 15000 });
     await this.page.waitForTimeout(300);
+  }
+
+  /**
+   * Fill a parameter input by placeholder name.
+   */
+  async fillParam(name: string, value: string) {
+    await this.paramsFieldset.locator(`input[data-param="${name}"]`).fill(value);
+  }
+
+  /**
+   * Click Explain and wait for the panel to appear.
+   */
+  async clickExplain() {
+    await this.explainButton.click();
+    await this.explainPanel.waitFor({ state: 'visible', timeout: 15000 });
   }
 
   /**

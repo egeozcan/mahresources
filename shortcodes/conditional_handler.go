@@ -38,7 +38,8 @@ func resolveConditionalValue(reqCtx context.Context, sc Shortcode, ctx MetaShort
 		scope := resolveScopeKeyword(sc.Attrs["scope"], ctx)
 		limit := parseIntAttr(sc.Attrs["limit"], defaultMRQLShortcodeLimit)
 		buckets := parseIntAttr(sc.Attrs["buckets"], defaultMRQLShortcodeBuckets)
-		result, err := executor(reqCtx, query, "", limit, buckets, scope)
+		params := collectShortcodeParams(sc.Attrs)
+		result, err := executor(reqCtx, query, "", params, limit, buckets, scope)
 		if err != nil {
 			return nil, err
 		}
