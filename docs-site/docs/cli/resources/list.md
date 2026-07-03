@@ -17,6 +17,13 @@ via the global `--page` flag (default page size 50).
 resources owned by the given group or by any of its descendant
 subgroups, recursively. It has no effect without `--owner-id`.
 
+`--mrql` applies an MRQL filter expression, with `type = "resource"`
+implied (the same expression the list-page filter bar accepts). It uses
+the WHERE-clause grammar only — no `ORDER BY`, `LIMIT`, `GROUP BY`,
+`SCOPE`, or `$name` parameters — and composes with the other filter
+flags via AND. An invalid expression returns an error. Example:
+`--mrql 'tags = "vacation" AND created > -30d'`.
+
 ## Usage
 
 ```bash
@@ -43,6 +50,12 @@ mr resources list --content-type image/jpeg
 mr resources list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].Name'
 ```
 
+**Filter with an MRQL expression (type = "resource" implied)**
+
+```bash
+mr resources list --mrql 'tags = "vacation" AND created > -30d'
+```
+
 
 ## Flags
 
@@ -65,6 +78,7 @@ mr resources list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].Name'
 | `--max-height` | uint | `0` | Maximum height |
 | `--hash` | string | `` | Filter by hash |
 | `--original-name` | string | `` | Filter by original name |
+| `--mrql` | string | `` | MRQL filter expression (type = "resource" implied), e.g. 'tags = "vacation" AND created &gt; -30d' |
 | `--sort-by` | string | `` | Comma-separated sort fields |
 ### Inherited global flags
 

@@ -1160,6 +1160,7 @@ func newResourcesListCmd(c *client.Client, opts *output.Options, page *int) *cob
 		createdBefore, createdAfter    string
 		hash, originalName             string
 		sortByStr                      string
+		mrqlFilter                     string
 		ownerID, resourceCategoryID    uint
 		minWidth, minHeight            uint
 		maxWidth, maxHeight            uint
@@ -1244,6 +1245,9 @@ func newResourcesListCmd(c *client.Client, opts *output.Options, page *int) *cob
 			if originalName != "" {
 				q.Set("originalName", originalName)
 			}
+			if mrqlFilter != "" {
+				q.Set("mrql", mrqlFilter)
+			}
 			if sortByStr != "" {
 				parts := strings.Split(sortByStr, ",")
 				for _, s := range parts {
@@ -1300,6 +1304,7 @@ func newResourcesListCmd(c *client.Client, opts *output.Options, page *int) *cob
 	cmd.Flags().UintVar(&maxHeight, "max-height", 0, "Maximum height")
 	cmd.Flags().StringVar(&hash, "hash", "", "Filter by hash")
 	cmd.Flags().StringVar(&originalName, "original-name", "", "Filter by original name")
+	cmd.Flags().StringVar(&mrqlFilter, "mrql", "", "MRQL filter expression (type = \"resource\" implied), e.g. 'tags = \"vacation\" AND created > -30d'")
 	cmd.Flags().StringVar(&sortByStr, "sort-by", "", "Comma-separated sort fields")
 
 	return cmd

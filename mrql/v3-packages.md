@@ -86,6 +86,8 @@ that GROUP BY produces tabular aggregate data.
 
 ## Package 5: Adoption Surfaces
 
+Design: `v3-package-5-adoption-design.md`
+
 ### 5a. Query bar on the list pages, MRQL in Cmd+K
 
 The biggest adoption lever is not language features: MRQL currently lives on its

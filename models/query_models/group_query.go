@@ -40,4 +40,7 @@ type GroupQuery struct {
 	SortBy                []string
 	URL                   string
 	Ids                   []uint
+	// MRQL is an optional MRQL filter expression (package 5 list-page bar),
+	// parsed with mrql.ParseFilter (type = "group" implied). Empty = no filter.
+	MRQL string
 }

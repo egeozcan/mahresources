@@ -5,6 +5,7 @@
 {% endblock %}
 
 {% block body %}
+    {% include "/partials/mrqlBar.tpl" with entity="resource" %}
     {% include "/partials/timeline.tpl" with entityApiUrl="/v1/resources" entityType="resources" entityDefaultView="/resources" %}
 {% endblock %}
 

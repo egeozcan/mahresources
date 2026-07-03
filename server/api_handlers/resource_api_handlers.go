@@ -42,6 +42,10 @@ func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.Respons
 		resources, err := ctx.GetResources(int(offset), constants.MaxResultsPerPage, &query)
 
 		if err != nil {
+			if isMRQLFilterError(err) {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
 			if http_utils.IsColumnError(err) {
 				http_utils.HandleError(http_utils.ErrInvalidSortColumn, writer, request, http.StatusBadRequest)
 				return

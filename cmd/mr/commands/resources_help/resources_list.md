@@ -17,6 +17,13 @@ via the global `--page` flag (default page size 50).
 resources owned by the given group or by any of its descendant
 subgroups, recursively. It has no effect without `--owner-id`.
 
+`--mrql` applies an MRQL filter expression, with `type = "resource"`
+implied (the same expression the list-page filter bar accepts). It uses
+the WHERE-clause grammar only — no `ORDER BY`, `LIMIT`, `GROUP BY`,
+`SCOPE`, or `$name` parameters — and composes with the other filter
+flags via AND. An invalid expression returns an error. Example:
+`--mrql 'tags = "vacation" AND created > -30d'`.
+
 # Example
 
   # List all resources (paged)
@@ -27,6 +34,9 @@ subgroups, recursively. It has no effect without `--owner-id`.
 
   # Filter by tag + date, JSON + jq
   mr resources list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].Name'
+
+  # Filter with an MRQL expression (type = "resource" implied)
+  mr resources list --mrql 'tags = "vacation" AND created > -30d'
 
   # mr-doctest: upload two fixtures with a known tag, list by tag, assert count >= 2
   TAG=$(mr tag create --name "list-test-$$-$RANDOM" --json | jq -r '.ID')
@@ -45,3 +55,14 @@ subgroups, recursively. It has no effect without `--owner-id`.
   rm -f "$TMP"
   mr resources list --owner-id $PARENT --json | jq -e 'length == 0'
   mr resources list --owner-id $PARENT --include-subgroups --json | jq -e --argjson id "$RID" 'map(.ID) | index($id) != null'
+
+  # mr-doctest: --mrql narrows the list to resources matching a filter expression
+  MTAG="mrql-$$-$RANDOM"
+  MTID=$(mr tag create --name "$MTAG" --json | jq -r '.ID')
+  MGRP=$(mr group create --name "doctest-mrql-$$-$RANDOM" --json | jq -r '.ID')
+  TMPM=$(mktemp -t mrql-XXXXXX).jpg
+  cp ./testdata/sample.jpg "$TMPM" && printf '%s' "$$-$RANDOM" >> "$TMPM"  # unique bytes defeat content-hash dedup
+  MID=$(mr resource upload "$TMPM" --owner-id=$MGRP --name "mrql-a-$$" --json | jq -r '.[0].ID')
+  rm -f "$TMPM"
+  mr resources add-tags --ids $MID --tags $MTID
+  mr resources list --mrql "tags = \"$MTAG\"" --json | jq -e --argjson id "$MID" 'map(.ID) | index($id) != null'

@@ -22,6 +22,7 @@ const (
 	EntityTypeRelationType     = "relationType"
 	EntityTypeNoteType         = "noteType"
 	EntityTypeResourceCategory = "resourceCategory"
+	EntityTypeMRQLQuery        = "mrqlQuery"
 )
 
 // InvalidateSearchCacheByType removes cached search results that contain the specified entity type.
@@ -44,6 +45,7 @@ var allEntityTypes = []string{
 	EntityTypeResource, EntityTypeNote, EntityTypeGroup,
 	EntityTypeTag, EntityTypeCategory, EntityTypeQuery,
 	EntityTypeRelationType, EntityTypeNoteType, EntityTypeResourceCategory,
+	EntityTypeMRQLQuery,
 }
 
 // InitFTS initializes the FTS provider based on the database type
@@ -212,7 +214,7 @@ func getTypesToSearch(requestedTypes []string) []string {
 type searchable interface {
 	models.Group | models.Note | models.Resource | models.Tag |
 		models.Category | models.Query | models.GroupRelationType |
-		models.NoteType | models.ResourceCategory
+		models.NoteType | models.ResourceCategory | models.SavedMRQLQuery
 }
 
 // searchEntityInfo holds the metadata needed to search a specific entity type.
@@ -233,6 +235,7 @@ var entitySearchInfo = map[string]searchEntityInfo{
 	EntityTypeRelationType:     {entityType: EntityTypeRelationType, urlFormat: "/relationType?id=%d"},
 	EntityTypeNoteType:         {entityType: EntityTypeNoteType, urlFormat: "/noteType?id=%d"},
 	EntityTypeResourceCategory: {entityType: EntityTypeResourceCategory, urlFormat: "/resourceCategory?id=%d"},
+	EntityTypeMRQLQuery:        {entityType: EntityTypeMRQLQuery, urlFormat: "/mrql?saved=%d"},
 }
 
 func (ctx *MahresourcesContext) searchEntityType(entityType, searchTerm string, limit int) []query_models.SearchResultItem {
@@ -255,6 +258,8 @@ func (ctx *MahresourcesContext) searchEntityType(entityType, searchTerm string, 
 		return searchEntitiesLike[models.NoteType](ctx, entityType, searchTerm, limit)
 	case EntityTypeResourceCategory:
 		return searchEntitiesLike[models.ResourceCategory](ctx, entityType, searchTerm, limit)
+	case EntityTypeMRQLQuery:
+		return searchEntitiesLike[models.SavedMRQLQuery](ctx, entityType, searchTerm, limit)
 	}
 	return nil
 }
@@ -279,6 +284,16 @@ func (ctx *MahresourcesContext) searchEntityTypeFTS(entityType string, query fts
 		return searchEntitiesFTS[models.NoteType](ctx, entityType, query, limit)
 	case EntityTypeResourceCategory:
 		return searchEntitiesFTS[models.ResourceCategory](ctx, entityType, query, limit)
+	case EntityTypeMRQLQuery:
+		// Saved MRQL queries are not FTS-indexed; LIKE is fine at their
+		// cardinality. Use RawTerm (hyphens preserved) so a hyphenated name
+		// still substring-matches — query.Term collapses hyphens to spaces for
+		// FTS and would not LIKE-match the stored value.
+		term := query.RawTerm
+		if term == "" {
+			term = query.Term
+		}
+		return searchEntitiesLike[models.SavedMRQLQuery](ctx, entityType, term, limit)
 	}
 	return nil
 }
@@ -349,6 +364,8 @@ func entityFields(v any) (id uint, name, description string) {
 	case models.NoteType:
 		return e.ID, e.Name, e.Description
 	case models.ResourceCategory:
+		return e.ID, e.Name, e.Description
+	case models.SavedMRQLQuery:
 		return e.ID, e.Name, e.Description
 	}
 	return 0, "", ""

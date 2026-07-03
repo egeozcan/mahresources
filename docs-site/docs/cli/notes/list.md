@@ -13,6 +13,12 @@ given IDs. Date flags (`--created-before`, `--created-after`) expect
 Use `--owner-id` and `--note-type-id` to scope by owner group or note
 type. Pagination is via the global `--page` flag (default page size 50).
 
+`--mrql` applies an MRQL filter expression, with `type = "note"`
+implied (the same expression the list-page filter bar accepts). It uses
+the WHERE-clause grammar only — no `ORDER BY`, `LIMIT`, `GROUP BY`,
+`SCOPE`, or `$name` parameters — and composes with the other filter
+flags via AND. Example: `--mrql 'tags = "todo" AND created > -7d'`.
+
 ## Usage
 
 ```bash
@@ -39,6 +45,12 @@ mr notes list --name meeting --owner-id 42
 mr notes list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].Name'
 ```
 
+**Filter with an MRQL expression (type = "note" implied)**
+
+```bash
+mr notes list --mrql 'tags = "todo" AND created > -7d'
+```
+
 
 ## Flags
 
@@ -52,6 +64,7 @@ mr notes list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].Name'
 | `--note-type-id` | uint | `0` | Filter by note type ID |
 | `--created-before` | string | `` | Filter by creation date (before) |
 | `--created-after` | string | `` | Filter by creation date (after) |
+| `--mrql` | string | `` | MRQL filter expression (type = "note" implied), e.g. 'tags = "todo" AND created &gt; -7d' |
 ### Inherited global flags
 
 | Flag | Type | Default | Description |

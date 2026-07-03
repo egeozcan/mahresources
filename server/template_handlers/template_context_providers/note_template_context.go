@@ -7,6 +7,7 @@ import (
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
+	"mahresources/mrql"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/template_entities"
 	"net/http"
@@ -28,32 +29,47 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 			return addErrContext(err, baseContext)
 		}
 
-		notes, err := context.GetNotes(int(offset), resultsPerPage, &query)
-
-		if err != nil {
-			return addErrContext(err, baseContext)
+		// Package 5 filter bar: fail closed on a bad MRQL expression.
+		mrqlError := ""
+		if fe := context.CheckMRQLFilter(mrql.EntityNote, query.MRQL); fe != nil {
+			mrqlError = fe.Error()
 		}
 
-		// BH-038: strip ShareToken (and Blocks, which the list card never needs)
-		// from the list payload before it reaches the template. partials/note.tpl
-		// serializes `entity|json` into every card's Alpine x-data attribute;
-		// leaving ShareToken in place leaked plaintext tokens into the rendered
-		// HTML of /notes, and via the same provider /notes.json. A shallow copy
-		// is taken per note so the upstream GORM session isn't mutated.
-		cards := make([]models.Note, 0, len(notes))
-		for _, n := range notes {
-			copy := n
-			hasShare := copy.ShareToken != nil && *copy.ShareToken != ""
-			copy.ShareToken = nil
-			copy.Blocks = nil
-			copy.HasShare = hasShare
-			cards = append(cards, copy)
-		}
+		cards := make([]models.Note, 0)
+		var noteCount int64
+		var popularTags []application_context.PopularTag
+		if mrqlError == "" {
+			notes, err := context.GetNotes(int(offset), resultsPerPage, &query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
 
-		noteCount, err := context.GetNoteCount(&query)
+			// BH-038: strip ShareToken (and Blocks, which the list card never needs)
+			// from the list payload before it reaches the template. partials/note.tpl
+			// serializes `entity|json` into every card's Alpine x-data attribute;
+			// leaving ShareToken in place leaked plaintext tokens into the rendered
+			// HTML of /notes, and via the same provider /notes.json. A shallow copy
+			// is taken per note so the upstream GORM session isn't mutated.
+			for _, n := range notes {
+				copy := n
+				hasShare := copy.ShareToken != nil && *copy.ShareToken != ""
+				copy.ShareToken = nil
+				copy.Blocks = nil
+				copy.HasShare = hasShare
+				cards = append(cards, copy)
+			}
 
-		if err != nil {
-			return addErrContext(err, baseContext)
+			noteCount, err = context.GetNoteCount(&query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
+
+			popularTags, err = context.GetPopularNoteTags(&query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
+		} else {
+			popularTags = []application_context.PopularTag{}
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), noteCount, resultsPerPage, int(page))
@@ -86,18 +102,13 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 			return addErrContext(err, baseContext)
 		}
 
-		popularTags, err := context.GetPopularNoteTags(&query)
-
-		if err != nil {
-			return addErrContext(err, baseContext)
-		}
-
 		return pongo2.Context{
 			"pageTitle":   "Notes",
 			"notes":       cards,
 			"groups":      groups,
 			"owners":      owners,
 			"pagination":  pagination,
+			"mrqlError":   mrqlError,
 			"tags":        tags,
 			"popularTags": popularTags,
 			"noteTypes":   noteTypes,
@@ -154,16 +165,26 @@ func NoteTimelineContextProvider(context *application_context.MahresourcesContex
 			return addErrContext(err, baseContext)
 		}
 
-		popularTags, err := context.GetPopularNoteTags(&query)
+		mrqlError := ""
+		if fe := context.CheckMRQLFilter(mrql.EntityNote, query.MRQL); fe != nil {
+			mrqlError = fe.Error()
+		}
 
-		if err != nil {
-			return addErrContext(err, baseContext)
+		var popularTags []application_context.PopularTag
+		if mrqlError == "" {
+			popularTags, err = context.GetPopularNoteTags(&query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
+		} else {
+			popularTags = []application_context.PopularTag{}
 		}
 
 		return pongo2.Context{
 			"pageTitle":   "Notes - Timeline",
 			"groups":      groups,
 			"owners":      owners,
+			"mrqlError":   mrqlError,
 			"tags":        tags,
 			"popularTags": popularTags,
 			"noteTypes":   noteTypes,

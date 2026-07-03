@@ -71,6 +71,16 @@ func computeHasMore(boundaries []application_context.BucketBoundary) models.Time
 	return hasMore
 }
 
+// timelineErrorStatus maps a timeline-count error to an HTTP status: a bad
+// list-page MRQL filter (the `mrql=` parameter) is caller error (400, matching
+// the list endpoints); everything else is a server error.
+func timelineErrorStatus(err error) int {
+	if isMRQLFilterError(err) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
 // GetResourceTimelineHandler returns an HTTP handler that produces timeline
 // bucket counts for resources, filtered by the standard resource query params.
 func GetResourceTimelineHandler(ctx *application_context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
@@ -90,7 +100,7 @@ func GetResourceTimelineHandler(ctx *application_context.MahresourcesContext) fu
 		buckets, err := ctx.GetResourceTimelineCounts(&query, boundaries)
 		if err != nil {
 			writer.Header().Set("Content-Type", constants.JSON)
-			writer.WriteHeader(http.StatusInternalServerError)
+			writer.WriteHeader(timelineErrorStatus(err))
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
 		}
@@ -122,7 +132,7 @@ func GetNoteTimelineHandler(ctx *application_context.MahresourcesContext) func(w
 		buckets, err := ctx.GetNoteTimelineCounts(&query, boundaries)
 		if err != nil {
 			writer.Header().Set("Content-Type", constants.JSON)
-			writer.WriteHeader(http.StatusInternalServerError)
+			writer.WriteHeader(timelineErrorStatus(err))
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
 		}
@@ -154,7 +164,7 @@ func GetGroupTimelineHandler(ctx *application_context.MahresourcesContext) func(
 		buckets, err := ctx.GetGroupTimelineCounts(&query, boundaries)
 		if err != nil {
 			writer.Header().Set("Content-Type", constants.JSON)
-			writer.WriteHeader(http.StatusInternalServerError)
+			writer.WriteHeader(timelineErrorStatus(err))
 			_ = json.NewEncoder(writer).Encode(map[string]string{"error": err.Error()})
 			return
 		}

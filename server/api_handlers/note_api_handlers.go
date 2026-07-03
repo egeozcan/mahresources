@@ -26,6 +26,10 @@ func GetNotesHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter,
 		}
 
 		if notes, err := ctx.GetNotes(int(offset), constants.MaxResultsPerPage, &query); err != nil {
+			if isMRQLFilterError(err) {
+				http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+				return
+			}
 			if http_utils.IsColumnError(err) {
 				http_utils.HandleError(http_utils.ErrInvalidSortColumn, writer, request, http.StatusBadRequest)
 				return

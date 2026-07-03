@@ -1,9 +1,20 @@
 package api_handlers
 
 import (
+	"errors"
 	"net/http"
 	"strings"
+
+	"mahresources/application_context"
 )
+
+// isMRQLFilterError reports whether err originates from a bad list-page MRQL
+// filter expression (the package 5 `mrql=` parameter). Such errors are caused by
+// the caller's input and must map to HTTP 400 rather than 404/500.
+func isMRQLFilterError(err error) bool {
+	var mfe *application_context.MRQLFilterError
+	return errors.As(err, &mfe)
+}
 
 // statusCodeForError inspects an error message and returns an appropriate HTTP
 // status code. This centralises the mapping so that handlers return consistent

@@ -8,6 +8,7 @@
 {% endblock %}
 
 {% block body %}
+    {% include "/partials/mrqlBar.tpl" with entity="group" %}
     <div class="flex flex-col gap-4 items-container">
         {% for entity in groups %}
             {% include "/partials/group.tpl" with selectable=true fullText=true %}
@@ -18,6 +19,7 @@
 
 {% block sidebar %}
     <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter groups">
+        {% if parsedQuery.MRQL %}<input type="hidden" name="mrql" value="{{ parsedQuery.MRQL }}">{% endif %}
         {% include "/partials/sideTitle.tpl" with title="Sort" %}
         {% include "/partials/form/multiSortInput.tpl" with name='SortBy' values=sortValues %}
         {% include "/partials/sideTitle.tpl" with title="Filter" %}

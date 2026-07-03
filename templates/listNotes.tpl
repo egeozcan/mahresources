@@ -8,6 +8,7 @@
 {% endblock %}
 
 {% block body %}
+    {% include "/partials/mrqlBar.tpl" with entity="note" %}
     {% plugin_slot "note_list_before" %}
     <section class="list-container"{% if owners && owners|length == 1 %} data-paste-context='{"type":"group","id":{{ owners.0.ID }},"name":"{{ owners.0.Name|escapejs }}"}'{% endif %}>
     {% for entity in notes %}
@@ -19,6 +20,7 @@
 
 {% block sidebar %}
     <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter notes">
+        {% if parsedQuery.MRQL %}<input type="hidden" name="mrql" value="{{ parsedQuery.MRQL }}">{% endif %}
         {% if popularTags %}
         <div class="sidebar-group">
             {% include "/partials/sideTitle.tpl" with title="Tags" %}

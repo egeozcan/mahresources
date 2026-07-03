@@ -141,6 +141,73 @@ func (p *parser) parseQuery() (*Query, error) {
 	return q, nil
 }
 
+// ParseFilter parses a bare boolean filter expression (the WHERE-clause grammar
+// only) and returns a Query with the given entity type set. It powers the
+// list-page filter bar, where sort and pagination belong to the page, the entity
+// type is implied by the page, and queries must be self-contained.
+//
+// Compared to Parse it rejects, each with a position that matches the input 1:1:
+//   - clause keywords (ORDER BY, LIMIT, OFFSET, GROUP BY, HAVING, SCOPE);
+//   - the `type` pseudo-field (implied by the page);
+//   - `$name` parameter placeholders (there are no param inputs on list pages).
+//
+// Everything else in the expression grammar is allowed, including
+// SIMILAR TO resource(N) (whose resource-only requirement is enforced by
+// Validate once EntityType is set).
+func ParseFilter(entity EntityType, input string) (*Query, error) {
+	p := &parser{lexer: NewLexer(input)}
+
+	// An empty expression has nothing to filter on — surface a clear error
+	// rather than a bare "unexpected EOF".
+	if p.lexer.Peek().Type == TokenEOF {
+		return nil, &ParseError{Message: "empty filter expression", Pos: 0, Length: 0}
+	}
+
+	expr, err := p.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	// Anything left after a complete expression is a clause keyword (ORDER BY,
+	// LIMIT, OFFSET, GROUP BY, HAVING, SCOPE) or stray input — none allowed here.
+	if tok := p.lexer.Peek(); tok.Type != TokenEOF {
+		return nil, filterTrailingTokenError(tok)
+	}
+
+	// Reject `type` fields and $name placeholders anywhere in the expression.
+	if err := rejectFilterConstructs(expr); err != nil {
+		return nil, err
+	}
+
+	return &Query{
+		Where:       expr,
+		Limit:       -1,
+		Offset:      -1,
+		BucketLimit: -1,
+		EntityType:  entity,
+	}, nil
+}
+
+// filterTrailingTokenError maps a token left over after a filter expression to a
+// positioned ParseError. Clause keywords get a targeted message; anything else
+// falls back to the generic "unexpected token" phrasing.
+func filterTrailingTokenError(tok Token) *ParseError {
+	switch tok.Type {
+	case TokenOrderBy, TokenLimit, TokenOffset, TokenGroupBy, TokenHaving, TokenScope:
+		return &ParseError{
+			Message: fmt.Sprintf("%s is not allowed in a filter expression; the list page controls sort and pagination", strings.ToUpper(tok.Value)),
+			Pos:     tok.Pos,
+			Length:  tok.Length,
+		}
+	default:
+		return &ParseError{
+			Message: fmt.Sprintf("unexpected token %q after filter expression", tok.Value),
+			Pos:     tok.Pos,
+			Length:  tok.Length,
+		}
+	}
+}
+
 // parseExpression = orExpr
 func (p *parser) parseExpression() (Node, error) {
 	return p.parseOrExpr()

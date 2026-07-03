@@ -267,6 +267,32 @@ mr mrql --render 'type = resource AND tags = "photo"'
 
 Entities without a `CustomMRQLResult` template omit `renderedHTML`.
 
+## List-Page Filter Bar
+
+The `/resources`, `/notes`, and `/groups` pages (and their JSON list endpoints) accept a bare filter expression that ANDs with the page's sidebar filters, sort, and pagination. The entity type is implied.
+
+```
+tags = "vacation" AND created > -30d
+notes IS EMPTY AND fileSize > 10mb
+descendants.category = "Archive"
+```
+
+- Filter grammar only. No `ORDER BY`, `LIMIT`, `OFFSET`, `GROUP BY`, `SCOPE`, `$name` params, or `type`. `SIMILAR TO resource(N)` is allowed.
+- Web: type in the bar above the list; submitting sets `?mrql=<expr>`. An invalid expression fails closed (error banner, zero results). The **Edit in MRQL editor** link opens `/mrql?q=type = <entity> AND (<expr>)`.
+- API: `mrql=<expr>` on `GET /v1/resources`, `/v1/notes`, `/v1/groups`. Invalid returns HTTP 400 with a positioned error.
+- CLI: `--mrql "<expr>"` on `mr resources list`, `mr notes list`, `mr groups list`.
+
+```bash
+mr resources list --mrql 'tags = "vacation" AND created > -30d'
+```
+
+## MRQL in Global Search
+
+`Ctrl/Cmd+K` recognizes MRQL:
+
+- A valid MRQL query pins a **Run MRQL query** row above the results; selecting it opens `/mrql?q=<query>` and runs it. Shown only when the query validates.
+- Saved MRQL queries are findable by name or description; selecting one opens `/mrql?saved=<id>` in the editor (a parameterized query focuses its first empty parameter input instead of running).
+
 ## See Also
 
 - [MRQL Query Language](./mrql.md) — conceptual overview with worked examples

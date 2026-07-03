@@ -13,6 +13,7 @@ import (
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"mahresources/mrql"
 	"mahresources/server/interfaces"
 )
 
@@ -236,7 +237,13 @@ func (ctx *MahresourcesContext) GetNotes(offset, maxResults int, query *query_mo
 	var notes []models.Note
 	noteScope := database_scopes.NoteQuery(query, false, ctx.db)
 
-	return notes, ctx.db.Scopes(noteScope).Limit(maxResults).Offset(offset).Preload("Tags").Preload("NoteType").Find(&notes).Error
+	db := ctx.db.Scopes(noteScope)
+	db, err := ctx.applyMRQLFilter(db, mrql.EntityNote, query.MRQL)
+	if err != nil {
+		return nil, err
+	}
+
+	return notes, db.Limit(maxResults).Offset(offset).Preload("Tags").Preload("NoteType").Find(&notes).Error
 }
 
 func (ctx *MahresourcesContext) GetNotesWithIds(ids *[]uint) ([]*models.Note, error) {
@@ -253,7 +260,13 @@ func (ctx *MahresourcesContext) GetNoteCount(query *query_models.NoteQuery) (int
 	var note models.Note
 	var count int64
 
-	return count, ctx.db.Scopes(database_scopes.NoteQuery(query, true, ctx.db)).Model(&note).Count(&count).Error
+	db := ctx.db.Scopes(database_scopes.NoteQuery(query, true, ctx.db)).Model(&note)
+	db, err := ctx.applyMRQLFilter(db, mrql.EntityNote, query.MRQL)
+	if err != nil {
+		return 0, err
+	}
+
+	return count, db.Count(&count).Error
 }
 
 func (ctx *MahresourcesContext) GetPopularNoteTags(query *query_models.NoteQuery) ([]PopularTag, error) {
@@ -267,6 +280,11 @@ func (ctx *MahresourcesContext) GetPopularNoteTags(query *query_models.NoteQuery
 		Group("t.id, t.name").
 		Order("count DESC").
 		Limit(20)
+
+	db, err := ctx.applyMRQLFilter(db, mrql.EntityNote, query.MRQL)
+	if err != nil {
+		return nil, err
+	}
 
 	return res, db.Scan(&res).Error
 }

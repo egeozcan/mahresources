@@ -35,6 +35,41 @@ When `DEEPSEEK_API_KEY` is configured, the `/mrql` editor can draft MRQL from a 
 
 Generated MRQL is parsed, validated, and linted locally, then shown with an explanation. It is not executed until you press Run. Generation is CSRF-protected and requires write access when authentication is enabled.
 
+## Filtering List Pages
+
+The `/resources`, `/notes`, and `/groups` list pages carry a single-line MRQL filter bar above the list. Type a bare filter expression. The entity type is implied by the page, so you write only the conditions:
+
+```
+tags = "vacation" AND created > -30d
+notes IS EMPTY AND fileSize > 10mb
+descendants.category = "Archive"
+```
+
+Submitting sets `?mrql=<expr>` on the same list URL and ANDs the filter with every sidebar filter, the current sort, and pagination. The bar accepts the filter (WHERE-clause) grammar only. `ORDER BY`, `LIMIT`, `OFFSET`, `GROUP BY`, `SCOPE`, and `$name` parameters are rejected, and you do not write `type` (the page sets it). The `SIMILAR TO resource(N)` predicate is allowed.
+
+An invalid expression fails closed: the page renders an error banner and zero results, never the unfiltered list, so a broken filter cannot widen a following bulk action.
+
+Each bar has an **Edit in MRQL editor** link that opens `/mrql?q=type = <entity> AND (<expr>)`, graduating the current filter to the full editor where ordering, limits, grouping, and saving become available.
+
+### JSON API
+
+The list endpoints accept the same filter grammar as an `mrql` query parameter: `GET /v1/resources`, `GET /v1/notes`, and `GET /v1/groups` take `mrql=<expr>`. An invalid expression returns HTTP 400 with a positioned error.
+
+### CLI
+
+`mr resources list`, `mr notes list`, and `mr groups list` accept `--mrql "<expr>"`, applying the same filter grammar (type implied) alongside the other list flags:
+
+```bash
+mr resources list --mrql 'tags = "vacation" AND created > -30d'
+```
+
+## MRQL in Global Search
+
+Global search (`Ctrl/Cmd+K`) recognizes MRQL:
+
+- **Run a query.** Typing a valid MRQL query surfaces a pinned **Run MRQL query** row above the search results. Selecting it opens `/mrql?q=<query>`, which runs the query automatically. The row appears only when the query passes validation, so ordinary search terms are unaffected.
+- **Open a saved query.** A saved MRQL query is findable by its name or description. Selecting it opens `/mrql?saved=<id>`, loading it into the editor. A parameterized query focuses its first empty parameter input instead of running immediately.
+
 ## Syntax Reference
 
 ### Basic Structure

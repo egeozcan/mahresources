@@ -9,10 +9,136 @@ import (
 	"sync"
 	"time"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"mahresources/models"
 	"mahresources/mrql"
 )
+
+// MRQLFilterError wraps an error produced while parsing, validating, or
+// translating a list-page MRQL filter expression (the package 5 filter bar). It
+// lets callers distinguish a bad user-supplied filter — which must render the
+// list fail-closed (zero results + banner) or return HTTP 400 — from an
+// infrastructural database error. Pos/Length carry the offending token's
+// position in the filter input so the bar can underline it 1:1.
+type MRQLFilterError struct {
+	Message string
+	Pos     int
+	Length  int
+	err     error
+}
+
+func (e *MRQLFilterError) Error() string { return e.Message }
+func (e *MRQLFilterError) Unwrap() error { return e.err }
+
+// newMRQLFilterError wraps a parse/validation/translate error, lifting its
+// position information when available.
+func newMRQLFilterError(err error) *MRQLFilterError {
+	fe := &MRQLFilterError{Message: err.Error(), err: err}
+	var pe *mrql.ParseError
+	var ve *mrql.ValidationError
+	var te *mrql.TranslateError
+	switch {
+	case errors.As(err, &pe):
+		fe.Message, fe.Pos, fe.Length = pe.Message, pe.Pos, pe.Length
+	case errors.As(err, &ve):
+		fe.Message, fe.Pos, fe.Length = ve.Message, ve.Pos, ve.Length
+	case errors.As(err, &te):
+		fe.Message, fe.Pos = te.Message, te.Pos
+	}
+	return fe
+}
+
+// mrqlEntityIDColumn returns the qualified id column for a list entity, used to
+// compose the filter subquery as `<table>.id IN (?)`.
+func mrqlEntityIDColumn(entity mrql.EntityType) string {
+	switch entity {
+	case mrql.EntityResource:
+		return "resources.id"
+	case mrql.EntityNote:
+		return "notes.id"
+	case mrql.EntityGroup:
+		return "groups.id"
+	}
+	return ""
+}
+
+// CheckMRQLFilter parses, validates, and translates a list-page MRQL filter
+// expression without composing it onto a query, returning a *MRQLFilterError
+// (with the offending token's position) when it is invalid, or nil when it is
+// valid or empty. Template context providers call it to render fail-closed (a
+// banner + zero results) instead of the unfiltered list, so a broken filter
+// cannot silently widen a subsequent bulk action's target set.
+func (ctx *MahresourcesContext) CheckMRQLFilter(entity mrql.EntityType, expr string) *MRQLFilterError {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return nil
+	}
+	parsed, err := mrql.ParseFilter(entity, expr)
+	if err != nil {
+		return newMRQLFilterError(err)
+	}
+	if err := mrql.Validate(parsed); err != nil {
+		return newMRQLFilterError(err)
+	}
+	if _, err := mrql.TranslateWithOptions(parsed, ctx.db, ctx.mrqlTranslateOptions()); err != nil {
+		return newMRQLFilterError(err)
+	}
+	return nil
+}
+
+// applyMRQLFilter composes an optional MRQL filter expression onto a list query
+// as an id-membership predicate. The expression is parsed with mrql.ParseFilter
+// (WHERE-clause grammar only, entity type implied by the page), validated, and
+// translated to a `SELECT <table>.id FROM <table> WHERE ...` subquery carrying no
+// LIMIT (a predicate must match every row; the list's own pagination bounds the
+// output). It ANDs with all existing filters, sort, and pagination by
+// construction, and — because the outer list query already carries a scoped
+// principal's forced subtree filter — intersecting with it can only narrow, so a
+// confined user cannot widen scope through the bar.
+//
+// An empty expression returns db unchanged. A bad expression returns a
+// *MRQLFilterError so callers can render fail-closed / respond 400.
+func (ctx *MahresourcesContext) applyMRQLFilter(db *gorm.DB, entity mrql.EntityType, expr string) (*gorm.DB, error) {
+	sub, idCol, err := ctx.mrqlFilterSubquery(entity, expr)
+	if err != nil {
+		return nil, err
+	}
+	if sub == nil {
+		return db, nil
+	}
+	return db.Where(idCol+" IN (?)", sub), nil
+}
+
+// mrqlFilterSubquery parses, validates, and translates a filter expression into
+// a `SELECT <table>.id FROM <table> WHERE ...` subquery (no LIMIT) plus the
+// qualified id column, for composition as `<idCol> IN (?)`. It returns
+// (nil, "", nil) for an empty expression and a *MRQLFilterError for a bad one.
+// Callers that apply the same predicate to many outer queries (e.g. timeline
+// bucket counts) build it once and reuse it — the subquery is never executed on
+// its own, only embedded.
+func (ctx *MahresourcesContext) mrqlFilterSubquery(entity mrql.EntityType, expr string) (*gorm.DB, string, error) {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return nil, "", nil
+	}
+
+	parsed, err := mrql.ParseFilter(entity, expr)
+	if err != nil {
+		return nil, "", newMRQLFilterError(err)
+	}
+	if err := mrql.Validate(parsed); err != nil {
+		return nil, "", newMRQLFilterError(err)
+	}
+
+	sub, err := mrql.TranslateWithOptions(parsed, ctx.db, ctx.mrqlTranslateOptions())
+	if err != nil {
+		return nil, "", newMRQLFilterError(err)
+	}
+
+	idCol := mrqlEntityIDColumn(entity)
+	return sub.Select(idCol), idCol, nil
+}
 
 // MRQLResult holds the results of executing an MRQL query, organized by entity type.
 type MRQLResult struct {
@@ -784,27 +910,11 @@ func (ctx *MahresourcesContext) ValidateMRQL(queryStr string) (bool, []map[strin
 
 	parsed, err := mrql.Parse(queryStr)
 	if err != nil {
-		var parseErr *mrql.ParseError
-		if errors.As(err, &parseErr) {
-			return false, []map[string]any{
-				{"message": parseErr.Message, "pos": parseErr.Pos, "length": parseErr.Length},
-			}
-		}
-		return false, []map[string]any{
-			{"message": err.Error(), "pos": 0, "length": 0},
-		}
+		return false, mrqlErrorPayload(err)
 	}
 
 	if err := mrql.Validate(parsed); err != nil {
-		var validationErr *mrql.ValidationError
-		if errors.As(err, &validationErr) {
-			return false, []map[string]any{
-				{"message": validationErr.Message, "pos": validationErr.Pos, "length": validationErr.Length},
-			}
-		}
-		return false, []map[string]any{
-			{"message": err.Error(), "pos": 0, "length": 0},
-		}
+		return false, mrqlErrorPayload(err)
 	}
 
 	return true, nil
@@ -820,10 +930,81 @@ func (ctx *MahresourcesContext) MRQLParams(queryStr string) []string {
 	return mrql.ListParams(parsed)
 }
 
+// ValidateMRQLFilter parses and validates a bare MRQL filter expression (the
+// package 5 list-page bar) for the given entity type, using mrql.ParseFilter so
+// error positions match the bar input 1:1. Returns whether it is valid and any
+// errors with position information. Filter expressions carry no $name params, so
+// no params are reported.
+func (ctx *MahresourcesContext) ValidateMRQLFilter(entity mrql.EntityType, queryStr string) (bool, []map[string]any) {
+	queryStr = strings.TrimSpace(queryStr)
+	if queryStr == "" {
+		return false, []map[string]any{
+			{"message": "query string must not be empty", "pos": 0, "length": 0},
+		}
+	}
+
+	parsed, err := mrql.ParseFilter(entity, queryStr)
+	if err != nil {
+		return false, mrqlErrorPayload(err)
+	}
+	if err := mrql.Validate(parsed); err != nil {
+		return false, mrqlErrorPayload(err)
+	}
+	return true, nil
+}
+
+// mrqlErrorPayload converts an mrql parse/validation error into the positioned
+// error payload the validate endpoints return.
+func mrqlErrorPayload(err error) []map[string]any {
+	var parseErr *mrql.ParseError
+	if errors.As(err, &parseErr) {
+		return []map[string]any{{"message": parseErr.Message, "pos": parseErr.Pos, "length": parseErr.Length}}
+	}
+	var validationErr *mrql.ValidationError
+	if errors.As(err, &validationErr) {
+		return []map[string]any{{"message": validationErr.Message, "pos": validationErr.Pos, "length": validationErr.Length}}
+	}
+	return []map[string]any{{"message": err.Error(), "pos": 0, "length": 0}}
+}
+
 // CompleteMRQL returns autocompletion suggestions for the given MRQL query
 // string at the specified cursor position.
 func (ctx *MahresourcesContext) CompleteMRQL(queryStr string, cursor int) []mrql.Suggestion {
 	return mrql.Complete(queryStr, cursor)
+}
+
+// filterSuppressedSuggestions are suggestion values the filter bar must never
+// offer: clause keywords (the list page owns sort/pagination) and the `type`
+// pseudo-field (implied by the page). All are rejected by ParseFilter anyway.
+var filterSuppressedSuggestions = map[string]bool{
+	"ORDER BY": true,
+	"LIMIT":    true,
+	"OFFSET":   true,
+	"GROUP BY": true,
+	"HAVING":   true,
+	"SCOPE":    true,
+	"type":     true,
+}
+
+// CompleteMRQLFilter returns autocompletion suggestions for a bare filter
+// expression on the given entity type. It reuses the full-grammar completer by
+// prepending an internal `type = <entity> AND ` guard (so field lists narrow to
+// the page's entity) and shifting the cursor accordingly; suggestions carry no
+// positions (the client computes the replacement range itself), so no reverse
+// offset math is needed. Clause-keyword and `type` suggestions are dropped since
+// the filter bar rejects them.
+func (ctx *MahresourcesContext) CompleteMRQLFilter(entity mrql.EntityType, queryStr string, cursor int) []mrql.Suggestion {
+	prefix := "type = " + entity.String() + " AND "
+	suggestions := mrql.Complete(prefix+queryStr, cursor+len(prefix))
+
+	filtered := make([]mrql.Suggestion, 0, len(suggestions))
+	for _, s := range suggestions {
+		if filterSuppressedSuggestions[s.Value] {
+			continue
+		}
+		filtered = append(filtered, s)
+	}
+	return filtered
 }
 
 // -- Saved MRQL query CRUD --
@@ -864,6 +1045,7 @@ func (ctx *MahresourcesContext) CreateSavedMRQLQuery(name, query, description st
 	}
 
 	ctx.Logger().Info(models.LogActionCreate, "mrql_query", &saved.ID, saved.Name, "Created saved MRQL query", nil)
+	ctx.InvalidateSearchCacheByType(EntityTypeMRQLQuery)
 
 	return &saved, nil
 }
@@ -941,6 +1123,7 @@ func (ctx *MahresourcesContext) UpdateSavedMRQLQuery(id uint, name, query, descr
 	}
 
 	ctx.Logger().Info(models.LogActionUpdate, "mrql_query", &saved.ID, saved.Name, "Updated saved MRQL query", nil)
+	ctx.InvalidateSearchCacheByType(EntityTypeMRQLQuery)
 
 	return &saved, nil
 }
@@ -956,6 +1139,7 @@ func (ctx *MahresourcesContext) DeleteSavedMRQLQuery(id uint) error {
 	err := ctx.db.Select(clause.Associations).Delete(&saved).Error
 	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "mrql_query", &id, savedName, "Deleted saved MRQL query", nil)
+		ctx.InvalidateSearchCacheByType(EntityTypeMRQLQuery)
 	}
 	return err
 }

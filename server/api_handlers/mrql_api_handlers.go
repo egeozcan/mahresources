@@ -33,6 +33,22 @@ type mrqlExecuteRequest struct {
 
 type mrqlValidateRequest struct {
 	Query string `json:"query" schema:"query"`
+	// EntityType + Filter drive filter mode (package 5 list-page bar): when
+	// Filter is true and EntityType is a valid entity, the query is a bare filter
+	// expression validated with ParseFilter so error positions match the bar 1:1.
+	EntityType string `json:"entityType" schema:"entityType"`
+	Filter     bool   `json:"filter" schema:"filter"`
+}
+
+// filterEntityType resolves the request's entityType field to an mrql.EntityType
+// when filter mode is requested. ok is false when filter mode is off or the
+// entity string is invalid (the handler then falls back to full-query mode).
+func filterEntityType(entityType string, filter bool) (mrql.EntityType, bool) {
+	if !filter {
+		return mrql.EntityUnspecified, false
+	}
+	et, valid := mrql.ValidEntityTypes[strings.ToLower(strings.TrimSpace(entityType))]
+	return et, valid
 }
 
 type mrqlExplainRequest struct {
@@ -105,8 +121,10 @@ func collectMRQLParams(request *http.Request, jsonParams map[string]any) map[str
 }
 
 type mrqlCompleteRequest struct {
-	Query  string `json:"query" schema:"query"`
-	Cursor int    `json:"cursor" schema:"cursor"`
+	Query      string `json:"query" schema:"query"`
+	Cursor     int    `json:"cursor" schema:"cursor"`
+	EntityType string `json:"entityType" schema:"entityType"`
+	Filter     bool   `json:"filter" schema:"filter"`
 }
 
 type mrqlGenerateRequest struct {
@@ -419,6 +437,13 @@ func GetValidateMRQLHandler(ctx *application_context.MahresourcesContext) func(h
 			return
 		}
 
+		if et, ok := filterEntityType(req.EntityType, req.Filter); ok {
+			valid, errs := ctx.ValidateMRQLFilter(et, req.Query)
+			writer.Header().Set("Content-Type", constants.JSON)
+			_ = json.NewEncoder(writer).Encode(mrqlValidateResponse{Valid: valid, Errors: errs})
+			return
+		}
+
 		valid, errs := ctx.ValidateMRQL(req.Query)
 
 		writer.Header().Set("Content-Type", constants.JSON)
@@ -501,7 +526,12 @@ func GetCompleteMRQLHandler(ctx *application_context.MahresourcesContext) func(h
 			return
 		}
 
-		suggestions := ctx.CompleteMRQL(req.Query, req.Cursor)
+		var suggestions []mrql.Suggestion
+		if et, ok := filterEntityType(req.EntityType, req.Filter); ok {
+			suggestions = ctx.CompleteMRQLFilter(et, req.Query, req.Cursor)
+		} else {
+			suggestions = ctx.CompleteMRQL(req.Query, req.Cursor)
+		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(mrqlCompleteResponse{

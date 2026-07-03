@@ -38,6 +38,9 @@ type NoteQuery struct {
 	NoteTypeId      uint
 	NoteTypeIds     []uint
 	Shared          *bool
+	// MRQL is an optional MRQL filter expression (package 5 list-page bar),
+	// parsed with mrql.ParseFilter (type = "note" implied). Empty = no filter.
+	MRQL string
 }
 
 type NoteTypeEditor struct {
