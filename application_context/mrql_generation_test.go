@@ -147,6 +147,7 @@ func TestMRQLGeneratorPromptIncludesCompactSyntaxGuide(t *testing.T) {
 		"GROUP BY supports date buckets created.day, created.week, created.month, created.year (same for updated). Date buckets are valid only in GROUP BY and its ORDER BY, never in the filter expression.",
 		"duplicate resources by hash -> type = resource GROUP BY hash COUNT() HAVING COUNT() > 1 ORDER BY count DESC LIMIT 50",
 		"notes per month -> type = note GROUP BY created.month COUNT() ORDER BY created.month ASC LIMIT 50",
+		"untagged resources -> type = resource AND tags.count = 0 LIMIT 50",
 	} {
 		if !strings.Contains(provider.seenPrompt, want) {
 			t.Fatalf("prompt missing %q in:\n%s", want, provider.seenPrompt)

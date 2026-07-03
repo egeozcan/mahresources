@@ -157,6 +157,7 @@ func buildMRQLGenerationPrompt(userPrompt string) string {
 		"notes per month -> type = note GROUP BY created.month COUNT() ORDER BY created.month ASC LIMIT 50",
 		"resources without notes -> type = resource AND notes IS EMPTY LIMIT 50",
 		"groups with at least <n> resources -> type = group AND resources.count >= <n> ORDER BY resources.count DESC LIMIT 50",
+		"untagged resources -> type = resource AND tags.count = 0 LIMIT 50",
 		"User request: " + userPrompt,
 	}, "\n")
 }
