@@ -127,6 +127,21 @@ Control database query logging with `-db-log-file`:
 ./mahresources -db-type=SQLITE -db-dsn=./test.db -db-log-file=/var/log/mahresources-db.log
 ```
 
+### Slow Query Logging
+
+Set `-db-slow-query-threshold` to record only queries that exceed a duration, so they can be reviewed and optimized later:
+
+```bash
+./mahresources -db-type=SQLITE -db-dsn=./test.db -db-slow-query-threshold=200ms
+```
+
+Slow queries are written to two places:
+
+- **The DB log.** With `-db-log-file` unset, slow queries (and query errors) go to STDOUT on their own. With `-db-log-file` set, the full query log is kept and slow queries are additionally tagged with a `SLOW SQL >=` prefix.
+- **The application log.** Each slow query is stored as a warning log entry with entity type `sql`, browsable at `/logs` (filter by level `warning`) and via `GET /v1/logs`. The entry's details contain the SQL text, duration in milliseconds, row count, and the code location that issued the query. Entries are subject to the usual `-cleanup-logs-days` retention.
+
+Application-log writes are asynchronous and never block queries; under sustained load, excess entries are dropped rather than queued. Statements against the log table itself are never recorded.
+
 ## Startup Optimizations
 
 On large databases with millions of resources, certain startup operations can be slow.
@@ -155,6 +170,7 @@ Skips the resource version migration that runs at startup. Safe to use after the
 | `-db-dsn` | `DB_DSN` | Database connection string |
 | `-db-readonly-dsn` | `DB_READONLY_DSN` | Read-only connection (PostgreSQL) |
 | `-db-log-file` | `DB_LOG_FILE` | Query log destination |
+| `-db-slow-query-threshold` | `DB_SLOW_QUERY_THRESHOLD` | Log queries slower than this duration (e.g. `200ms`) to the DB log and the application log; `0` disables |
 | `-memory-db` | `MEMORY_DB=1` | Use in-memory SQLite |
 | `-seed-db` | `SEED_DB` | SQLite file to seed memory-db |
 | `-max-db-connections` | `MAX_DB_CONNECTIONS` | Connection pool size limit |

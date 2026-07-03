@@ -156,16 +156,19 @@ type MahresourcesConfig struct {
 // MahresourcesInputConfig holds all configuration options that can be passed
 // via command-line flags or environment variables
 type MahresourcesInputConfig struct {
-	FileSavePath     string
-	DbType           string
-	DbDsn            string
-	DbReadOnlyDsn    string
-	DbLogFile        string
-	BindAddress      string
-	FfmpegPath       string
-	LibreOfficePath  string
-	SharePort        string
-	ShareBindAddress string
+	FileSavePath  string
+	DbType        string
+	DbDsn         string
+	DbReadOnlyDsn string
+	DbLogFile     string
+	// DbSlowQueryThreshold logs SQL queries slower than this duration to the
+	// DB log and the application log; 0 disables (default)
+	DbSlowQueryThreshold time.Duration
+	BindAddress          string
+	FfmpegPath           string
+	LibreOfficePath      string
+	SharePort            string
+	ShareBindAddress     string
 	// SharePublicURL is the externally-routable base URL for shared notes.
 	// Empty by default; see MahresourcesConfig.SharePublicURL. BH-033.
 	SharePublicURL string
@@ -909,10 +912,12 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 
 	fmt.Printf("DB_TYPE %v FILE_SAVE_PATH %v\n", dbType, cfg.FileSavePath)
 
-	if connectedDB, err := models.CreateDatabaseConnection(dbType, dbDsn, cfg.DbLogFile); err != nil {
+	var slowQueryLogger *models.SlowQueryLogger
+	if connectedDB, slowLogger, err := models.CreateDatabaseConnection(dbType, dbDsn, cfg.DbLogFile, cfg.DbSlowQueryThreshold); err != nil {
 		log.Fatal(err)
 	} else {
 		db = connectedDB
+		slowQueryLogger = slowLogger
 	}
 
 	// Apply connection pool limits if configured (useful for SQLite under test load)
@@ -969,7 +974,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		sessionTTL = 30 * 24 * time.Hour
 	}
 
-	return NewMahresourcesContext(mainFs, db, readOnlyDb, &MahresourcesConfig{
+	mahContext := NewMahresourcesContext(mainFs, db, readOnlyDb, &MahresourcesConfig{
 		DbType:                       dbType,
 		DbDsn:                        dbDsn,
 		DbReadOnlyDsn:                readOnlyDsn,
@@ -1019,7 +1024,15 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		LoginRateLimit:               cfg.LoginRateLimit,
 		LoginRateWindow:              cfg.LoginRateWindow,
 		TrustProxyHeaders:            cfg.TrustProxyHeaders,
-	}), db, mainFs
+	})
+
+	// The slow-query logger exists before the context does, so its
+	// application-log sink can only be attached now.
+	if slowQueryLogger != nil {
+		mahContext.StartSlowQueryLogSink(slowQueryLogger)
+	}
+
+	return mahContext, db, mainFs
 }
 
 // CreateContext creates a context using environment variables.
@@ -1036,14 +1049,19 @@ func CreateContext() (*MahresourcesContext, *gorm.DB, afero.Fs) {
 		altFSystems[os.Getenv(fmt.Sprintf("FILE_ALT_NAME_%v", i+1))] = os.Getenv(fmt.Sprintf("FILE_ALT_PATH_%v", i+1))
 	}
 
+	// time.ParseDuration errors on an empty/invalid value and returns 0,
+	// which matches the disabled default.
+	slowQueryThreshold, _ := time.ParseDuration(os.Getenv("DB_SLOW_QUERY_THRESHOLD"))
+
 	return CreateContextWithConfig(&MahresourcesInputConfig{
-		FileSavePath:   os.Getenv("FILE_SAVE_PATH"),
-		DbType:         os.Getenv("DB_TYPE"),
-		DbDsn:          os.Getenv("DB_DSN"),
-		DbReadOnlyDsn:  os.Getenv("DB_READONLY_DSN"),
-		DbLogFile:      os.Getenv("DB_LOG_FILE"),
-		BindAddress:    os.Getenv("BIND_ADDRESS"),
-		FfmpegPath:     os.Getenv("FFMPEG_PATH"),
-		AltFileSystems: altFSystems,
+		FileSavePath:         os.Getenv("FILE_SAVE_PATH"),
+		DbType:               os.Getenv("DB_TYPE"),
+		DbDsn:                os.Getenv("DB_DSN"),
+		DbReadOnlyDsn:        os.Getenv("DB_READONLY_DSN"),
+		DbLogFile:            os.Getenv("DB_LOG_FILE"),
+		DbSlowQueryThreshold: slowQueryThreshold,
+		BindAddress:          os.Getenv("BIND_ADDRESS"),
+		FfmpegPath:           os.Getenv("FFMPEG_PATH"),
+		AltFileSystems:       altFSystems,
 	})
 }

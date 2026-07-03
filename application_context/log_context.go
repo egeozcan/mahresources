@@ -12,6 +12,9 @@ import (
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 // Logger provides a convenient interface for logging operations.
@@ -82,6 +85,61 @@ func (l *Logger) log(level, action, entityType string, entityID *uint, entityNam
 	if err := l.ctx.db.Create(&entry).Error; err != nil {
 		fmt.Printf("Logger: failed to write log entry: %v\n", err)
 	}
+}
+
+// slowQueryLogBufferSize is the queue size between the database's slow-query
+// logger and the goroutine that persists entries to the application log. When
+// the buffer is full, entries are dropped: a slow database is exactly when
+// slow queries fire most, and logging must never block or amplify that load.
+const slowQueryLogBufferSize = 64
+
+// slowQuerySQLDetailLimit caps the SQL text stored in LogEntry.Details.
+const slowQuerySQLDetailLimit = 4000
+
+// StartSlowQueryLogSink connects the database's slow-query logger to the
+// application log: queries slower than the configured threshold are stored as
+// warning LogEntry rows (entity type "sql"), reviewable at /logs. Inserts run
+// asynchronously on a silenced session so they are never traced themselves.
+func (ctx *MahresourcesContext) StartSlowQueryLogSink(slowLogger *models.SlowQueryLogger) {
+	entries := make(chan models.SlowQueryEntry, slowQueryLogBufferSize)
+
+	go func() {
+		silentDb := ctx.db.Session(&gorm.Session{Logger: gormlogger.Discard, NewDB: true})
+		for e := range entries {
+			rows := fmt.Sprintf("%d", e.Rows)
+			if e.Rows < 0 {
+				rows = "?"
+			}
+			entry := models.LogEntry{
+				CreatedAt:  time.Now(),
+				Level:      models.LogLevelWarning,
+				Action:     models.LogActionSystem,
+				EntityType: "sql",
+				Message:    truncateString(fmt.Sprintf("SLOW SQL (took %v, %s rows): %s", e.Elapsed.Round(time.Millisecond), rows, e.SQL), 1000),
+			}
+			details := map[string]interface{}{
+				"sql":        truncateString(e.SQL, slowQuerySQLDetailLimit),
+				"durationMs": e.Elapsed.Milliseconds(),
+				"rows":       e.Rows,
+			}
+			if e.Source != "" {
+				details["source"] = e.Source
+			}
+			if jsonBytes, err := json.Marshal(details); err == nil {
+				entry.Details = types.JSON(jsonBytes)
+			}
+			if err := silentDb.Create(&entry).Error; err != nil {
+				fmt.Printf("Logger: failed to write slow-query log entry: %v\n", err)
+			}
+		}
+	}()
+
+	slowLogger.SetSink(func(e models.SlowQueryEntry) {
+		select {
+		case entries <- e:
+		default: // buffer full: drop rather than block the query path
+		}
+	})
 }
 
 // GetLogEntries retrieves log entries with filtering and pagination.

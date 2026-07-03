@@ -114,6 +114,7 @@ func main() {
 	dbDsn := flag.String("db-dsn", os.Getenv("DB_DSN"), "Database connection string (env: DB_DSN)")
 	dbReadOnlyDsn := flag.String("db-readonly-dsn", os.Getenv("DB_READONLY_DSN"), "Read-only database connection string (env: DB_READONLY_DSN)")
 	dbLogFile := flag.String("db-log-file", os.Getenv("DB_LOG_FILE"), "DB log destination: STDOUT, empty, or file path (env: DB_LOG_FILE)")
+	dbSlowQueryThreshold := flag.Duration("db-slow-query-threshold", parseDurationEnv("DB_SLOW_QUERY_THRESHOLD", 0), "Log SQL queries slower than this duration (e.g. 200ms) to the DB log and the application log; 0 disables (env: DB_SLOW_QUERY_THRESHOLD)")
 	bindAddress := flag.String("bind-address", os.Getenv("BIND_ADDRESS"), "Server bind address:port (env: BIND_ADDRESS)")
 	ffmpegPath := flag.String("ffmpeg-path", os.Getenv("FFMPEG_PATH"), "Path to ffmpeg binary for video thumbnails (env: FFMPEG_PATH)")
 	libreOfficePath := flag.String("libreoffice-path", os.Getenv("LIBREOFFICE_PATH"), "Path to LibreOffice binary for office document thumbnails (env: LIBREOFFICE_PATH)")
@@ -240,6 +241,7 @@ func main() {
 		DbDsn:                        *dbDsn,
 		DbReadOnlyDsn:                *dbReadOnlyDsn,
 		DbLogFile:                    *dbLogFile,
+		DbSlowQueryThreshold:         *dbSlowQueryThreshold,
 		BindAddress:                  *bindAddress,
 		SharePort:                    *sharePort,
 		ShareBindAddress:             *shareBindAddress,

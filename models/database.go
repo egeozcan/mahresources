@@ -10,12 +10,12 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"io"
-	"io/fs"
 	"log"
 	"mahresources/constants"
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 var registerOnce sync.Once
@@ -49,15 +49,31 @@ func registerSQLiteDriver() {
 	})
 }
 
-func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
+// dbLoggerConfig returns the GORM logger config for the given log destination
+// and slow-query threshold. With no destination and no threshold, logging is
+// disabled entirely (zero-value config, discard writer).
+func dbLoggerConfig(logType string, slowThreshold time.Duration) logger.Config {
+	if logType == "" {
+		if slowThreshold <= 0 {
+			return logger.Config{}
+		}
+		// Slow-query-only mode: no full SQL log was requested, so only
+		// warn-level output (slow queries and errors) goes to stdout.
+		return logger.Config{SlowThreshold: slowThreshold, LogLevel: logger.Warn, Colorful: true}
+	}
+	// An explicit log destination gets full Info logging; with a threshold
+	// set, GORM additionally tags matching queries with "SLOW SQL >=".
+	return logger.Config{SlowThreshold: slowThreshold, LogLevel: logger.Info, Colorful: true}
+}
+
+// CreateDatabaseConnection opens the main GORM connection. When slowThreshold
+// is positive, the returned *SlowQueryLogger exposes SetSink so slow queries
+// can additionally be forwarded to the application log; it is nil otherwise.
+func CreateDatabaseConnection(dbType, dsn, logType string, slowThreshold time.Duration) (*gorm.DB, *SlowQueryLogger, error) {
 	var dbLogger logger.Interface
 	var db *gorm.DB
 
-	config := logger.Config{
-		SlowThreshold: 0,
-		LogLevel:      logger.Info,
-		Colorful:      true,
-	}
+	config := dbLoggerConfig(logType, slowThreshold)
 
 	switch logType {
 	case "STDOUT":
@@ -68,21 +84,33 @@ func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
 			config,
 		)
 	case "":
-		dbLogger = logger.New(
-			log.New(io.Discard, "", 0),
-			logger.Config{},
-		)
+		if slowThreshold > 0 {
+			logWriter := log.New(os.Stdout, "\r\n", log.LstdFlags)
+			logWriter.Printf("Logging slow queries (>= %v) to STDOUT", slowThreshold)
+			dbLogger = logger.New(logWriter, config)
+		} else {
+			dbLogger = logger.New(
+				log.New(io.Discard, "", 0),
+				config,
+			)
+		}
 	default:
-		open, err := os.OpenFile(logType, os.O_WRONLY, fs.ModeAppend)
+		open, err := os.OpenFile(logType, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		dbLogger = logger.New(
 			log.New(open, "\r\n", log.LstdFlags), // io writer
 			config,
 		)
+	}
+
+	var slowLogger *SlowQueryLogger
+	if slowThreshold > 0 {
+		slowLogger = newSlowQueryLogger(dbLogger, slowThreshold)
+		dbLogger = slowLogger
 	}
 
 	switch dbType {
@@ -95,7 +123,7 @@ func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
 			Logger:                                   dbLogger,
 			DisableForeignKeyConstraintWhenMigrating: true,
 		}); err != nil {
-			return nil, err
+			return nil, nil, err
 		} else {
 			db = pgDb
 		}
@@ -108,15 +136,15 @@ func CreateDatabaseConnection(dbType, dsn, logType string) (*gorm.DB, error) {
 		}, &gorm.Config{
 			Logger: dbLogger,
 		}); err != nil {
-			return nil, err
+			return nil, nil, err
 		} else {
 			db = sqliteDb
 		}
 	default:
-		return nil, errors.New("please set the DB_TYPE env var to SQLITE or POSTGRES")
+		return nil, nil, errors.New("please set the DB_TYPE env var to SQLITE or POSTGRES")
 	}
 
-	return db, nil
+	return db, slowLogger, nil
 }
 
 func CreateReadOnlyDatabaseConnection(dbType, dsn string) (*sqlx.DB, error) {
