@@ -131,10 +131,23 @@ type AggregateFunc struct {
 	Field *FieldExpr // nil for COUNT(), required for SUM/AVG/MIN/MAX
 }
 
+// HavingComparison is a HAVING leaf condition: aggregate op value.
+// A dedicated node (rather than ComparisonExpr) because the left side is an
+// aggregate function call, not a field.
+type HavingComparison struct {
+	Agg      AggregateFunc
+	Operator Token
+	Value    Node // NumberLiteral, or date value for MIN/MAX on datetime fields
+}
+
+func (h *HavingComparison) nodeType() string { return "HavingComparison" }
+func (h *HavingComparison) Pos() int         { return h.Agg.Token.Pos }
+
 // GroupByClause holds GROUP BY fields and optional aggregate functions.
 type GroupByClause struct {
 	Fields        []*FieldExpr    // the fields to group by (deduplicated by validator)
 	Aggregates    []AggregateFunc // aggregate functions (empty = bucketed mode)
+	Having        Node            // HAVING expression (nil when absent); HavingComparison leaves combined with BinaryExpr/NotExpr
 	AllFieldNames map[string]bool // all original field names including dropped aliases (set by validator)
 }
 

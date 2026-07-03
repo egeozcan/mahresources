@@ -562,6 +562,19 @@ func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *Compariso
 		return db, nil
 	}
 
+	// Handle <relation>.count pseudo-fields before traversal routing —
+	// children.count would otherwise be misrouted as a traversal chain.
+	if len(expr.Field.Parts) == 2 && expr.Field.Parts[1].Value == "count" {
+		if countExpr, ok := tc.relationCountExpr(expr.Field.Parts[0].Value); ok {
+			val, err := tc.resolveValue(expr.Value, FieldDef{Name: fieldName, Type: FieldNumber})
+			if err != nil {
+				return nil, err
+			}
+			db = db.Where(countExpr+" "+tc.sqlOperator(expr.Operator)+" ?", val)
+			return db, nil
+		}
+	}
+
 	// Handle traversal chains: owner.X, parent.X, children.X, owner.parent.X, etc.
 	if len(expr.Field.Parts) >= 2 {
 		root := expr.Field.Parts[0].Value
@@ -619,14 +632,47 @@ func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *Compariso
 	return db, nil
 }
 
+// junctionRelation describes a many-to-many relation backed by a junction table.
+type junctionRelation struct {
+	junctionTable string // e.g. "resource_notes"
+	entityCol     string // FK to the queried entity, e.g. "resource_id"
+	relatedTable  string // e.g. "notes"
+	relatedCol    string // FK to the related entity, e.g. "note_id"
+	relatedAlias  string // SQL alias for the related table in subqueries
+}
+
+// junctionRelations maps (entity type, relation column) to its junction descriptor.
+var junctionRelations = map[EntityType]map[string]junctionRelation{
+	EntityResource: {
+		"tags":   {junctionTable: "resource_tags", entityCol: "resource_id", relatedTable: "tags", relatedCol: "tag_id", relatedAlias: "t"},
+		"groups": {junctionTable: "groups_related_resources", entityCol: "resource_id", relatedTable: "groups", relatedCol: "group_id", relatedAlias: "g"},
+		"notes":  {junctionTable: "resource_notes", entityCol: "resource_id", relatedTable: "notes", relatedCol: "note_id", relatedAlias: "n"},
+	},
+	EntityNote: {
+		"tags":      {junctionTable: "note_tags", entityCol: "note_id", relatedTable: "tags", relatedCol: "tag_id", relatedAlias: "t"},
+		"groups":    {junctionTable: "groups_related_notes", entityCol: "note_id", relatedTable: "groups", relatedCol: "group_id", relatedAlias: "g"},
+		"resources": {junctionTable: "resource_notes", entityCol: "note_id", relatedTable: "resources", relatedCol: "resource_id", relatedAlias: "r"},
+	},
+	EntityGroup: {
+		"tags":      {junctionTable: "group_tags", entityCol: "group_id", relatedTable: "tags", relatedCol: "tag_id", relatedAlias: "t"},
+		"resources": {junctionTable: "groups_related_resources", entityCol: "group_id", relatedTable: "resources", relatedCol: "resource_id", relatedAlias: "r"},
+		"notes":     {junctionTable: "groups_related_notes", entityCol: "group_id", relatedTable: "notes", relatedCol: "note_id", relatedAlias: "n"},
+	},
+}
+
+// lookupJunction returns the junction descriptor for a relation column on an entity.
+func lookupJunction(entityType EntityType, column string) (junctionRelation, bool) {
+	rel, ok := junctionRelations[entityType][column]
+	return rel, ok
+}
+
 // translateRelationComparison handles tags = "name" and groups = "name" etc.
 func (tc *translateContext) translateRelationComparison(db *gorm.DB, fd FieldDef, op Token, val interface{}) (*gorm.DB, error) {
+	if rel, ok := lookupJunction(tc.entityType, fd.Column); ok {
+		return tc.translateJunctionComparison(db, rel, op, val)
+	}
 	nameFd := FieldDef{Name: "name", Type: FieldString, Column: "name"}
 	switch fd.Column {
-	case "tags":
-		return tc.translateTagComparison(db, op, val)
-	case "groups":
-		return tc.translateGroupComparison(db, op, val)
 	case "owner_id":
 		// owner = "name" → find entities whose owner group has the given name
 		steps := tc.buildTraversalChain([]Token{{Value: "owner"}, {Value: "name"}})
@@ -647,98 +693,38 @@ func (tc *translateContext) translateRelationComparison(db *gorm.DB, fd FieldDef
 	}
 }
 
-// translateTagComparison generates a subquery on the tag junction table.
-func (tc *translateContext) translateTagComparison(db *gorm.DB, op Token, val interface{}) (*gorm.DB, error) {
-	var junctionTable, entityCol string
-	switch tc.entityType {
-	case EntityResource:
-		junctionTable = "resource_tags"
-		entityCol = "resource_id"
-	case EntityNote:
-		junctionTable = "note_tags"
-		entityCol = "note_id"
-	case EntityGroup:
-		junctionTable = "group_tags"
-		entityCol = "group_id"
-	default:
-		return nil, &TranslateError{Message: "tags not supported for this entity type"}
-	}
-
+// translateJunctionComparison generates a subquery on a junction table, matching
+// related entities by name (case-insensitive). Covers tags, groups, notes, resources.
+func (tc *translateContext) translateJunctionComparison(db *gorm.DB, rel junctionRelation, op Token, val interface{}) (*gorm.DB, error) {
 	isLike := op.Type == TokenLike || op.Type == TokenNotLike
 	isNegated := op.Type == TokenNeq || op.Type == TokenNotLike
 
-	var tagMatchClause string
-	var tagMatchVal interface{}
+	a := rel.relatedAlias
+
+	var matchClause string
+	var matchVal interface{}
 
 	if isLike {
 		likePattern := convertMRQLWildcards(fmt.Sprint(val))
 		likeOp := tc.likeOperator()
-		tagMatchClause = "LOWER(t.name) " + likeOp + " LOWER(?) ESCAPE '\\'"
-		tagMatchVal = likePattern
+		matchClause = "LOWER(" + a + ".name) " + likeOp + " LOWER(?) ESCAPE '\\'"
+		matchVal = likePattern
 	} else {
-		tagMatchClause = "LOWER(t.name) = LOWER(?)"
-		tagMatchVal = val
+		matchClause = "LOWER(" + a + ".name) = LOWER(?)"
+		matchVal = val
+	}
+
+	inOrNotIn := "IN"
+	if isNegated {
+		inOrNotIn = "NOT IN"
 	}
 
 	subquery := fmt.Sprintf(
-		"%s.id IN (SELECT jt.%s FROM %s jt JOIN tags t ON t.id = jt.tag_id WHERE %s)",
-		tc.tableName, entityCol, junctionTable, tagMatchClause,
+		"%s.id %s (SELECT jt.%s FROM %s jt JOIN %s %s ON %s.id = jt.%s WHERE %s)",
+		tc.tableName, inOrNotIn, rel.entityCol, rel.junctionTable, rel.relatedTable, a, a, rel.relatedCol, matchClause,
 	)
 
-	if isNegated {
-		subquery = fmt.Sprintf(
-			"%s.id NOT IN (SELECT jt.%s FROM %s jt JOIN tags t ON t.id = jt.tag_id WHERE %s)",
-			tc.tableName, entityCol, junctionTable, tagMatchClause,
-		)
-	}
-
-	db = db.Where(subquery, tagMatchVal)
-	return db, nil
-}
-
-// translateGroupComparison generates a subquery on the group junction table.
-func (tc *translateContext) translateGroupComparison(db *gorm.DB, op Token, val interface{}) (*gorm.DB, error) {
-	var junctionTable, entityCol string
-	switch tc.entityType {
-	case EntityResource:
-		junctionTable = "groups_related_resources"
-		entityCol = "resource_id"
-	case EntityNote:
-		junctionTable = "groups_related_notes"
-		entityCol = "note_id"
-	default:
-		return nil, &TranslateError{Message: "group filtering not supported for this entity type"}
-	}
-
-	isLike := op.Type == TokenLike || op.Type == TokenNotLike
-	isNegated := op.Type == TokenNeq || op.Type == TokenNotLike
-
-	var groupMatchClause string
-	var groupMatchVal interface{}
-
-	if isLike {
-		likePattern := convertMRQLWildcards(fmt.Sprint(val))
-		likeOp := tc.likeOperator()
-		groupMatchClause = "LOWER(g.name) " + likeOp + " LOWER(?) ESCAPE '\\'"
-		groupMatchVal = likePattern
-	} else {
-		groupMatchClause = "LOWER(g.name) = LOWER(?)"
-		groupMatchVal = val
-	}
-
-	subquery := fmt.Sprintf(
-		"%s.id IN (SELECT jt.%s FROM %s jt JOIN groups g ON g.id = jt.group_id WHERE %s)",
-		tc.tableName, entityCol, junctionTable, groupMatchClause,
-	)
-
-	if isNegated {
-		subquery = fmt.Sprintf(
-			"%s.id NOT IN (SELECT jt.%s FROM %s jt JOIN groups g ON g.id = jt.group_id WHERE %s)",
-			tc.tableName, entityCol, junctionTable, groupMatchClause,
-		)
-	}
-
-	db = db.Where(subquery, groupMatchVal)
+	db = db.Where(subquery, matchVal)
 	return db, nil
 }
 
@@ -1055,55 +1041,20 @@ func (tc *translateContext) translateRelationIn(db *gorm.DB, fd FieldDef, negate
 		inOrNotIn = "NOT IN"
 	}
 
-	switch fd.Column {
-	case "tags":
-		var junctionTable, entityCol string
-		switch tc.entityType {
-		case EntityResource:
-			junctionTable = "resource_tags"
-			entityCol = "resource_id"
-		case EntityNote:
-			junctionTable = "note_tags"
-			entityCol = "note_id"
-		case EntityGroup:
-			junctionTable = "group_tags"
-			entityCol = "group_id"
-		default:
-			return nil, &TranslateError{Message: "tags IN not supported for this entity type"}
-		}
-
-		subquery := fmt.Sprintf(
-			"%s.id %s (SELECT jt.%s FROM %s jt JOIN tags t ON t.id = jt.tag_id WHERE LOWER(t.name) IN (?))",
-			tc.tableName, inOrNotIn, entityCol, junctionTable,
-		)
-		db = db.Where(subquery, lowerValues)
-		return db, nil
-
-	case "groups":
-		var junctionTable, entityCol string
-		switch tc.entityType {
-		case EntityResource:
-			junctionTable = "groups_related_resources"
-			entityCol = "resource_id"
-		case EntityNote:
-			junctionTable = "groups_related_notes"
-			entityCol = "note_id"
-		default:
-			return nil, &TranslateError{Message: "groups IN not supported for this entity type"}
-		}
-
-		subquery := fmt.Sprintf(
-			"%s.id %s (SELECT jt.%s FROM %s jt JOIN groups g ON g.id = jt.group_id WHERE LOWER(g.name) IN (?))",
-			tc.tableName, inOrNotIn, entityCol, junctionTable,
-		)
-		db = db.Where(subquery, lowerValues)
-		return db, nil
-
-	default:
+	rel, ok := lookupJunction(tc.entityType, fd.Column)
+	if !ok {
 		return nil, &TranslateError{
 			Message: fmt.Sprintf("IN not supported for relation field %q", fd.Name),
 		}
 	}
+
+	a := rel.relatedAlias
+	subquery := fmt.Sprintf(
+		"%s.id %s (SELECT jt.%s FROM %s jt JOIN %s %s ON %s.id = jt.%s WHERE LOWER(%s.name) IN (?))",
+		tc.tableName, inOrNotIn, rel.entityCol, rel.junctionTable, rel.relatedTable, a, a, rel.relatedCol, a,
+	)
+	db = db.Where(subquery, lowerValues)
+	return db, nil
 }
 
 // translateIsExpr handles IS EMPTY, IS NOT EMPTY, IS NULL, IS NOT NULL.
@@ -1182,42 +1133,16 @@ func (tc *translateContext) translateRelationIsEmpty(db *gorm.DB, fd FieldDef, n
 		existsOp = "EXISTS"
 	}
 
+	if rel, ok := lookupJunction(tc.entityType, fd.Column); ok {
+		subquery := fmt.Sprintf(
+			"%s (SELECT 1 FROM %s jt WHERE jt.%s = %s.id)",
+			existsOp, rel.junctionTable, rel.entityCol, tc.tableName,
+		)
+		db = db.Where(subquery)
+		return db, nil
+	}
+
 	switch fd.Column {
-	case "tags":
-		var junctionTable, entityCol string
-		switch tc.entityType {
-		case EntityResource:
-			junctionTable = "resource_tags"
-			entityCol = "resource_id"
-		case EntityNote:
-			junctionTable = "note_tags"
-			entityCol = "note_id"
-		case EntityGroup:
-			junctionTable = "group_tags"
-			entityCol = "group_id"
-		}
-		subquery := fmt.Sprintf(
-			"%s (SELECT 1 FROM %s jt WHERE jt.%s = %s.id)",
-			existsOp, junctionTable, entityCol, tc.tableName,
-		)
-		db = db.Where(subquery)
-
-	case "groups":
-		var junctionTable, entityCol string
-		switch tc.entityType {
-		case EntityResource:
-			junctionTable = "groups_related_resources"
-			entityCol = "resource_id"
-		case EntityNote:
-			junctionTable = "groups_related_notes"
-			entityCol = "note_id"
-		}
-		subquery := fmt.Sprintf(
-			"%s (SELECT 1 FROM %s jt WHERE jt.%s = %s.id)",
-			existsOp, junctionTable, entityCol, tc.tableName,
-		)
-		db = db.Where(subquery)
-
 	case "owner_id", "parent_id":
 		// owner/parent IS EMPTY → owner_id IS NULL
 		if negated {
@@ -1410,9 +1335,41 @@ func (tc *translateContext) qualifiedColumn(column string) string {
 	return tc.tableName + "." + column
 }
 
+// relationCountExpr returns the correlated COUNT(*) subquery for a countable
+// relation field (junction-backed relations, or children on group).
+func (tc *translateContext) relationCountExpr(fieldName string) (string, bool) {
+	fd, ok := LookupField(tc.entityType, fieldName)
+	if !ok || fd.Type != FieldRelation {
+		return "", false
+	}
+	if rel, isJunction := lookupJunction(tc.entityType, fd.Column); isJunction {
+		return fmt.Sprintf("(SELECT COUNT(*) FROM %s jt WHERE jt.%s = %s.id)", rel.junctionTable, rel.entityCol, tc.tableName), true
+	}
+	if fd.Column == "children" {
+		return fmt.Sprintf("(SELECT COUNT(*) FROM groups c WHERE c.owner_id = %s.id)", tc.tableName), true
+	}
+	return "", false
+}
+
 // resolveOrderByColumn converts a FieldExpr to a qualified column name for ORDER BY.
 func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) string {
 	fieldName := f.Name()
+
+	// <relation>.count → correlated COUNT(*) subquery (valid in ORDER BY on
+	// both SQLite and PostgreSQL).
+	if len(f.Parts) == 2 && f.Parts[1].Value == "count" {
+		if expr, ok := tc.relationCountExpr(f.Parts[0].Value); ok {
+			return expr
+		}
+	}
+
+	// Date bucket keys in bucketed GROUP BY mode (validated to appear in the
+	// GROUP BY clause) order by the bucket expression.
+	if len(f.Parts) == 2 {
+		if expr, ok := tc.dateBucketFieldExpr(fieldName); ok {
+			return expr
+		}
+	}
 
 	// Handle meta.key → JSON extraction per dialect.
 	// ORDER BY cannot know the runtime type of meta values, so we use
@@ -1579,6 +1536,17 @@ func (tc *translateContext) translateAggregatedGroupBy(db *gorm.DB, q *Query) (*
 		db = db.Group(gc)
 	}
 
+	// Apply HAVING — the aggregate expression is repeated rather than
+	// referencing the SELECT alias (PostgreSQL does not permit SELECT aliases
+	// in HAVING).
+	if q.GroupBy.Having != nil {
+		havingSQL, havingVals, err := tc.buildHavingClause(q.GroupBy.Having)
+		if err != nil {
+			return nil, err
+		}
+		db = db.Having(havingSQL, havingVals...)
+	}
+
 	// Build alias resolution map: any original field name → surviving SELECT alias.
 	// After deduplication, "group" and "groups" both resolve to whichever survived
 	// (e.g., "groups"). ORDER BY must use the surviving alias, not the original name.
@@ -1669,6 +1637,11 @@ func (tc *translateContext) groupByFieldExprs(fieldName string) (string, string)
 		return expr, expr
 	}
 
+	// Date bucket pseudo-fields: created.month, updated.week, etc.
+	if expr, ok := tc.dateBucketFieldExpr(fieldName); ok {
+		return expr, expr
+	}
+
 	fd, ok := LookupField(tc.entityType, fieldName)
 	if !ok {
 		return tc.tableName + "." + fieldName, tc.tableName + "." + fieldName
@@ -1676,6 +1649,52 @@ func (tc *translateContext) groupByFieldExprs(fieldName string) (string, string)
 
 	col := tc.qualifiedColumn(fd.Column)
 	return col, col
+}
+
+// dateBucketFieldExpr returns the bucket expression for a dotted field name
+// like "created.month" if it is a valid date bucket pseudo-field.
+func (tc *translateContext) dateBucketFieldExpr(fieldName string) (string, bool) {
+	base, suffix, found := strings.Cut(fieldName, ".")
+	if !found || !dateBucketSuffixes[suffix] {
+		return "", false
+	}
+	fd, ok := LookupField(tc.entityType, base)
+	if !ok || fd.Type != FieldDateTime {
+		return "", false
+	}
+	return tc.dateBucketExpr(fd.Column, suffix), true
+}
+
+// dateBucketExpr builds the per-dialect date bucket expression. Labels are
+// strings whose lexicographic order equals chronological order. Week buckets
+// resolve to the Monday on or before the timestamp on both dialects.
+func (tc *translateContext) dateBucketExpr(column string, suffix string) string {
+	col := tc.qualifiedColumn(column)
+	if tc.isPostgres() {
+		switch suffix {
+		case "day":
+			return "to_char(" + col + ", 'YYYY-MM-DD')"
+		case "week":
+			return "to_char(date_trunc('week', " + col + "), 'YYYY-MM-DD')"
+		case "month":
+			return "to_char(" + col + ", 'YYYY-MM')"
+		case "year":
+			return "to_char(" + col + ", 'YYYY')"
+		}
+	}
+	switch suffix {
+	case "day":
+		return "strftime('%Y-%m-%d', " + col + ")"
+	case "week":
+		// Back up six days, then advance to the next Monday — resolves to the
+		// Monday on or before col, matching Postgres date_trunc('week', ...).
+		return "date(" + col + ", '-6 days', 'weekday 1')"
+	case "month":
+		return "strftime('%Y-%m', " + col + ")"
+	case "year":
+		return "strftime('%Y', " + col + ")"
+	}
+	return col
 }
 
 // groupByRelExpr holds separate SELECT and GROUP BY expressions for a relation field.
@@ -1713,19 +1732,8 @@ func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExp
 
 		switch fd.Column {
 		case "tags":
-			var junctionTable, entityCol string
-			switch tc.entityType {
-			case EntityResource:
-				junctionTable = "resource_tags"
-				entityCol = "resource_id"
-			case EntityNote:
-				junctionTable = "note_tags"
-				entityCol = "note_id"
-			case EntityGroup:
-				junctionTable = "group_tags"
-				entityCol = "group_id"
-			}
-			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_jt ON _gb_jt.%s = %s.id", junctionTable, entityCol, tc.tableName))
+			rel, _ := lookupJunction(tc.entityType, "tags")
+			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_jt ON _gb_jt.%s = %s.id", rel.junctionTable, rel.entityCol, tc.tableName))
 			db = db.Joins("LEFT JOIN tags _gb_t ON _gb_t.id = _gb_jt.tag_id")
 			// Tags have unique names, so grouping by name is safe and produces
 			// better output than opaque IDs.
@@ -1738,19 +1746,23 @@ func (tc *translateContext) groupByRelationJoins(db *gorm.DB, fields []*FieldExp
 			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_owner.name", groupExpr: tc.tableName + ".owner_id"}
 
 		case "groups":
-			var junctionTable, entityCol string
-			switch tc.entityType {
-			case EntityResource:
-				junctionTable = "groups_related_resources"
-				entityCol = "resource_id"
-			case EntityNote:
-				junctionTable = "groups_related_notes"
-				entityCol = "note_id"
-			}
-			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_grp_jt ON _gb_grp_jt.%s = %s.id", junctionTable, entityCol, tc.tableName))
+			rel, _ := lookupJunction(tc.entityType, "groups")
+			db = db.Joins(fmt.Sprintf("LEFT JOIN %s _gb_grp_jt ON _gb_grp_jt.%s = %s.id", rel.junctionTable, rel.entityCol, tc.tableName))
 			db = db.Joins("LEFT JOIN groups _gb_g ON _gb_g.id = _gb_grp_jt.group_id")
 			// Group by junction group_id (unique per association) and display name.
 			exprMap[fieldName] = groupByRelExpr{selectExpr: "_gb_g.name", groupExpr: "_gb_grp_jt.group_id"}
+
+		case "notes", "resources":
+			rel, ok := lookupJunction(tc.entityType, fd.Column)
+			if !ok {
+				continue
+			}
+			jtAlias := "_gb_" + fd.Column + "_jt"
+			relAlias := "_gb_" + fd.Column
+			db = db.Joins(fmt.Sprintf("LEFT JOIN %s %s ON %s.%s = %s.id", rel.junctionTable, jtAlias, jtAlias, rel.entityCol, tc.tableName))
+			db = db.Joins(fmt.Sprintf("LEFT JOIN %s %s ON %s.id = %s.%s", rel.relatedTable, relAlias, relAlias, jtAlias, rel.relatedCol))
+			// Names are not unique — group by the junction FK (identity) and display name.
+			exprMap[fieldName] = groupByRelExpr{selectExpr: relAlias + ".name", groupExpr: jtAlias + "." + rel.relatedCol}
 
 		case "parent_id":
 			// parent on groups — logical Column is "parent_id", actual DB column is owner_id
@@ -1830,6 +1842,68 @@ func (tc *translateContext) groupByBuildChainJoins(db **gorm.DB, steps []Token, 
 	}
 
 	return lastAlias
+}
+
+// buildHavingClause renders a HAVING expression tree into one SQL string plus
+// its bound values. Leaves render via aggregateExpr (dropping the alias).
+func (tc *translateContext) buildHavingClause(node Node) (string, []interface{}, error) {
+	switch n := node.(type) {
+	case *BinaryExpr:
+		leftSQL, leftVals, err := tc.buildHavingClause(n.Left)
+		if err != nil {
+			return "", nil, err
+		}
+		rightSQL, rightVals, err := tc.buildHavingClause(n.Right)
+		if err != nil {
+			return "", nil, err
+		}
+		// Parenthesize nested boolean expressions to preserve the parsed structure.
+		if _, ok := n.Left.(*BinaryExpr); ok {
+			leftSQL = "(" + leftSQL + ")"
+		}
+		if _, ok := n.Right.(*BinaryExpr); ok {
+			rightSQL = "(" + rightSQL + ")"
+		}
+		op := "AND"
+		if n.Operator.Type == TokenOr {
+			op = "OR"
+		}
+		return leftSQL + " " + op + " " + rightSQL, append(leftVals, rightVals...), nil
+
+	case *NotExpr:
+		innerSQL, innerVals, err := tc.buildHavingClause(n.Expr)
+		if err != nil {
+			return "", nil, err
+		}
+		return "NOT (" + innerSQL + ")", innerVals, nil
+
+	case *HavingComparison:
+		expr, _ := tc.aggregateExpr(n.Agg)
+		val, err := tc.resolveHavingValue(n)
+		if err != nil {
+			return "", nil, err
+		}
+		return expr + " " + tc.sqlOperator(n.Operator) + " ?", []interface{}{val}, nil
+
+	default:
+		return "", nil, &TranslateError{
+			Message: fmt.Sprintf("unsupported HAVING node type %T", node),
+			Pos:     node.Pos(),
+		}
+	}
+}
+
+// resolveHavingValue resolves a HAVING comparison value using the aggregate
+// field's definition, so size units convert to bytes for fileSize and date
+// values resolve through the relative-date/function resolvers.
+func (tc *translateContext) resolveHavingValue(hc *HavingComparison) (interface{}, error) {
+	fd := FieldDef{Type: FieldNumber}
+	if hc.Agg.Field != nil {
+		if f, ok := LookupField(tc.entityType, hc.Agg.Field.Name()); ok {
+			fd = f
+		}
+	}
+	return tc.resolveValue(hc.Value, fd)
 }
 
 // aggregateExpr returns the SQL aggregate expression and the output alias.

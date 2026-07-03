@@ -47,6 +47,7 @@ func setupPostgresTestDB(t *testing.T) *gorm.DB {
 		`CREATE TABLE IF NOT EXISTS group_tags (group_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (group_id, tag_id))`,
 		`CREATE TABLE IF NOT EXISTS groups_related_resources (resource_id INTEGER NOT NULL, group_id INTEGER NOT NULL, PRIMARY KEY (resource_id, group_id))`,
 		`CREATE TABLE IF NOT EXISTS groups_related_notes (note_id INTEGER NOT NULL, group_id INTEGER NOT NULL, PRIMARY KEY (note_id, group_id))`,
+		`CREATE TABLE IF NOT EXISTS resource_notes (resource_id INTEGER NOT NULL, note_id INTEGER NOT NULL, PRIMARY KEY (resource_id, note_id))`,
 	} {
 		if err := db.Exec(ddl).Error; err != nil {
 			t.Fatalf("create junction table failed: %v", err)
@@ -108,6 +109,8 @@ func seedPostgresTestData(db *gorm.DB, t *testing.T) {
 	db.Exec("INSERT INTO groups_related_notes (note_id, group_id) VALUES (2, 2)")
 	db.Exec("INSERT INTO group_tags (group_id, tag_id) VALUES (1, 1)")
 	db.Exec("INSERT INTO group_tags (group_id, tag_id) VALUES (2, 3)")
+	db.Exec("INSERT INTO resource_notes (resource_id, note_id) VALUES (1, 1)")
+	db.Exec("INSERT INTO resource_notes (resource_id, note_id) VALUES (3, 2)")
 	db.Model(&testResource{}).Where("id = ?", 1).Update("owner_id", 1)
 	db.Model(&testResource{}).Where("id = ?", 3).Update("owner_id", 2)
 	db.Model(&testNote{}).Where("id = ?", 1).Update("owner_id", 1)

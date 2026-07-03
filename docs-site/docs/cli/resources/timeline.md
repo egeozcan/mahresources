@@ -55,6 +55,7 @@ mr resources timeline --granularity yearly --tags 5 --json
 | `--description` | string | `` | Filter by description |
 | `--content-type` | string | `` | Filter by content type |
 | `--owner-id` | uint | `0` | Filter by owner group ID |
+| `--include-subgroups` | bool | `false` | With --owner-id: also match resources owned by descendant subgroups |
 | `--tags` | string | `` | Comma-separated tag IDs to filter by |
 | `--groups` | string | `` | Comma-separated group IDs to filter by |
 | `--notes` | string | `` | Comma-separated note IDs to filter by |

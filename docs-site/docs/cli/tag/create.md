@@ -6,10 +6,11 @@ sidebar_label: create
 
 # mr tag create
 
-Create a new tag. `--name` is required and must be unique; `--description`
-is optional free-form text. On success prints a confirmation line with
-the new ID; pass the global `--json` flag to emit the full record for
-scripting (e.g., piping the new ID into follow-up commands).
+Create a new tag. `--name` is required; `--description` is optional
+free-form text. Creating with a name that already exists is idempotent:
+it returns the existing tag rather than failing. On success prints a
+confirmation line with the ID; pass the global `--json` flag to emit the
+full record for scripting (e.g., piping the ID into follow-up commands).
 
 ## Usage
 

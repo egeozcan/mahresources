@@ -460,3 +460,70 @@ test.describe('MRQL SCOPE via CLI', () => {
     expect(combined.toLowerCase()).toContain('scope group not found');
   });
 });
+
+test.describe('MRQL counting and aggregation (package 1)', () => {
+  const SAMPLE_DOC = path.resolve(__dirname, '../../test-assets/sample-document.txt');
+  let resourceId: number;
+
+  test.beforeAll(() => {
+    // Ensure at least one resource exists so aggregated buckets are non-empty.
+    const cli = createCliRunner();
+    const r = cli.runJson<any>('resource', 'upload', SAMPLE_DOC, '--name', `pkg1-cli-res-${Date.now()}`);
+    const res = Array.isArray(r) ? r[0] : r;
+    resourceId = res.ID;
+  });
+
+  test.afterAll(() => {
+    const cli = createCliRunner();
+    if (resourceId) cli.run('resource', 'delete', String(resourceId));
+  });
+
+  test('HAVING query returns filtered aggregated rows', async ({ cli }) => {
+    const result = cli.run(
+      'mrql',
+      'type = "resource" GROUP BY contentType COUNT() HAVING COUNT() >= 1 ORDER BY count DESC',
+      '--json'
+    );
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.mode).toBe('aggregated');
+    expect(Array.isArray(parsed.rows)).toBe(true);
+    expect(parsed.rows.length).toBeGreaterThan(0);
+    for (const row of parsed.rows) {
+      expect(Number(row.count)).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  test('created.month aggregation returns month labels', async ({ cli }) => {
+    const result = cli.run(
+      'mrql',
+      'type = "resource" GROUP BY created.month COUNT() ORDER BY created.month ASC',
+      '--json'
+    );
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.mode).toBe('aggregated');
+    expect(parsed.rows.length).toBeGreaterThan(0);
+    for (const row of parsed.rows) {
+      expect(String(row['created.month'])).toMatch(/^\d{4}-\d{2}$/);
+    }
+  });
+
+  test('relation count filter executes', async ({ cli }) => {
+    const result = cli.run('mrql', 'type = "resource" AND tags.count >= 0 LIMIT 5', '--json');
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.entityType).toBe('resource');
+  });
+
+  test('owner.count is rejected with a targeted error', async ({ cli }) => {
+    const result = cli.run('mrql', 'type = "resource" AND owner.count > 1');
+    expect(result.exitCode).not.toBe(0);
+
+    const combined = result.stdout + result.stderr;
+    expect(combined).toContain('single reference');
+  });
+});

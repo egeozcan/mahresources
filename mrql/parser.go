@@ -124,6 +124,13 @@ func (p *parser) parseQuery() (*Query, error) {
 				Length:  final.Length,
 			}
 		}
+		if final.Type == TokenHaving {
+			return nil, &ParseError{
+				Message: "HAVING requires a preceding GROUP BY clause",
+				Pos:     final.Pos,
+				Length:  final.Length,
+			}
+		}
 		return nil, &ParseError{
 			Message: fmt.Sprintf("unexpected token %q at end of query", final.Value),
 			Pos:     final.Pos,
@@ -597,7 +604,118 @@ func (p *parser) parseGroupBy() (*GroupByClause, error) {
 		clause.Aggregates = append(clause.Aggregates, agg)
 	}
 
+	// Parse optional HAVING expression
+	if p.lexer.Peek().Type == TokenHaving {
+		p.lexer.Next() // consume HAVING
+		having, err := p.parseHavingOr()
+		if err != nil {
+			return nil, err
+		}
+		clause.Having = having
+	}
+
 	return clause, nil
+}
+
+// parseHavingOr = havingAnd ("OR" havingAnd)*
+func (p *parser) parseHavingOr() (Node, error) {
+	left, err := p.parseHavingAnd()
+	if err != nil {
+		return nil, err
+	}
+	for p.lexer.Peek().Type == TokenOr {
+		opTok := p.lexer.Next()
+		right, err := p.parseHavingAnd()
+		if err != nil {
+			return nil, err
+		}
+		left = &BinaryExpr{Left: left, Operator: opTok, Right: right}
+	}
+	return left, nil
+}
+
+// parseHavingAnd = havingUnary ("AND" havingUnary)*
+func (p *parser) parseHavingAnd() (Node, error) {
+	left, err := p.parseHavingUnary()
+	if err != nil {
+		return nil, err
+	}
+	for p.lexer.Peek().Type == TokenAnd {
+		opTok := p.lexer.Next()
+		right, err := p.parseHavingUnary()
+		if err != nil {
+			return nil, err
+		}
+		left = &BinaryExpr{Left: left, Operator: opTok, Right: right}
+	}
+	return left, nil
+}
+
+// parseHavingUnary = ["NOT"] havingPrimary
+func (p *parser) parseHavingUnary() (Node, error) {
+	if p.lexer.Peek().Type == TokenNot {
+		notTok := p.lexer.Next()
+		expr, err := p.parseHavingUnary()
+		if err != nil {
+			return nil, err
+		}
+		return &NotExpr{Token: notTok, Expr: expr}, nil
+	}
+	return p.parseHavingPrimary()
+}
+
+// parseHavingPrimary = "(" havingOr ")" | aggregateFunc op value
+func (p *parser) parseHavingPrimary() (Node, error) {
+	tok := p.lexer.Peek()
+
+	if tok.Type == TokenLParen {
+		p.lexer.Next() // consume '('
+		expr, err := p.parseHavingOr()
+		if err != nil {
+			return nil, err
+		}
+		rp := p.lexer.Next()
+		if rp.Type != TokenRParen {
+			return nil, &ParseError{
+				Message: fmt.Sprintf("expected ')' to close '(' in HAVING, got %q", rp.Value),
+				Pos:     rp.Pos,
+				Length:  rp.Length,
+			}
+		}
+		return expr, nil
+	}
+
+	if !isAggregateToken(tok.Type) {
+		return nil, &ParseError{
+			Message: "HAVING conditions must use aggregate functions; filter plain fields in the WHERE clause instead",
+			Pos:     tok.Pos,
+			Length:  tok.Length,
+		}
+	}
+
+	agg, err := p.parseAggregateFunc()
+	if err != nil {
+		return nil, err
+	}
+
+	opTok := p.lexer.Next()
+	switch opTok.Type {
+	case TokenEq, TokenNeq, TokenGt, TokenGte, TokenLt, TokenLte:
+		// supported
+	default:
+		return nil, &ParseError{
+			Message: fmt.Sprintf("expected comparison operator (=, !=, >, >=, <, <=) after %s in HAVING, got %q", agg.Name, opTok.Value),
+			Pos:     opTok.Pos,
+			Length:  opTok.Length,
+		}
+	}
+
+	val, err := p.parseValue()
+	if err != nil {
+		return nil, err
+	}
+
+	return &HavingComparison{Agg: agg, Operator: opTok, Value: val}, nil
 }
 
 // parseAggregateFunc = ("COUNT" "(" ")" | ("SUM"|"AVG"|"MIN"|"MAX") "(" field ")")

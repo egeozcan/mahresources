@@ -51,8 +51,43 @@ var postAggregateKeywords = []Suggestion{
 	{Value: "AVG(field)", Type: "function", Label: "average of numeric field"},
 	{Value: "MIN(field)", Type: "function", Label: "minimum value"},
 	{Value: "MAX(field)", Type: "function", Label: "maximum value"},
+	{Value: "HAVING", Type: "keyword", Label: "filter aggregated buckets"},
 	{Value: "ORDER BY", Type: "keyword"},
 	{Value: "LIMIT", Type: "keyword"},
+}
+
+// dateBucketSuffixSuggestions are suggested after "created." / "updated." in GROUP BY.
+var dateBucketSuffixSuggestions = []Suggestion{
+	{Value: "day", Type: "field", Label: "bucket by day"},
+	{Value: "week", Type: "field", Label: "bucket by week (Monday)"},
+	{Value: "month", Type: "field", Label: "bucket by month"},
+	{Value: "year", Type: "field", Label: "bucket by year"},
+}
+
+// countFieldSuggestions returns <relation>.count entries for the countable
+// relations of the entity type.
+func countFieldSuggestions(entityType EntityType) []Suggestion {
+	var suggs []Suggestion
+	appendCountable := func(fields []FieldDef) {
+		for _, fd := range fields {
+			if fd.Type != FieldRelation {
+				continue
+			}
+			if _, ok := countableRelation(entityType, fd.Name); ok {
+				suggs = append(suggs, Suggestion{Value: fd.Name + ".count", Type: "field", Label: "relation count"})
+			}
+		}
+	}
+	appendCountable(commonFields)
+	switch entityType {
+	case EntityResource:
+		appendCountable(resourceFields)
+	case EntityNote:
+		appendCountable(noteFields)
+	case EntityGroup:
+		appendCountable(groupFields)
+	}
+	return suggs
 }
 
 // entityTypeSuggestions are suggested after "type = ".
@@ -214,6 +249,9 @@ func fieldSuggestions(entityType EntityType) []Suggestion {
 		}
 	}
 
+	// Relation count pseudo-fields (tags.count, notes.count, children.count, ...)
+	suggs = append(suggs, countFieldSuggestions(entityType)...)
+
 	// Always add TEXT keyword as a special entry.
 	suggs = append(suggs, Suggestion{Value: "TEXT", Type: "keyword", Label: "full-text search"})
 
@@ -253,6 +291,13 @@ func groupByFieldSuggestions(entityType EntityType) []Suggestion {
 
 	// meta.* hint
 	suggs = append(suggs, Suggestion{Value: "meta.<key>", Type: "field", Label: "any meta key"})
+
+	// Date bucket pseudo-fields
+	for _, dateField := range []string{"created", "updated"} {
+		for _, suffix := range []string{"day", "week", "month", "year"} {
+			suggs = append(suggs, Suggestion{Value: dateField + "." + suffix, Type: "field", Label: "bucket by " + suffix})
+		}
+	}
 
 	// Traversal hints
 	if entityType == EntityResource || entityType == EntityNote {
@@ -472,10 +517,24 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 	// After a dot — context depends on what's before the dot.
 	if last.Type == TokenDot && len(tokens) >= 2 {
 		prev := tokens[len(tokens)-2]
+
+		// Date field dot in GROUP BY context → bucket suffixes.
+		if isInGroupByClause(tokens) && dateFieldNames[strings.ToLower(prev.Value)] {
+			return dateBucketSuffixSuggestions
+		}
+
 		switch prev.Value {
 		case "parent", "children", "owner":
-			return traversalSubFieldSuggestions(entityType)
+			suggs := traversalSubFieldSuggestions(entityType)
+			if _, ok := countableRelation(entityType, prev.Value); ok {
+				suggs = append(suggs, Suggestion{Value: "count", Type: "field", Label: "relation count"})
+			}
+			return suggs
 		default:
+			// Countable relation dot → count pseudo-field.
+			if _, ok := countableRelation(entityType, prev.Value); ok {
+				return []Suggestion{{Value: "count", Type: "field", Label: "relation count"}}
+			}
 			return metaSubFieldSuggestions
 		}
 	}
@@ -499,6 +558,10 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 			}
 			// Still typing the field name — suggest groupable fields only.
 			return groupByFieldSuggestions(entityType)
+		}
+		// After HAVING — suggest aggregate functions again.
+		if last.Type == TokenHaving {
+			return aggregateSuggestions
 		}
 		// After closing paren in GROUP BY clause — suggest more aggregates or ORDER BY/LIMIT.
 		if last.Type == TokenRParen {

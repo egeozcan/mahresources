@@ -25,6 +25,7 @@ const (
 	TokenLimit   // LIMIT
 	TokenOffset  // OFFSET
 	TokenGroupBy // GROUP BY (two words, merged by lexer)
+	TokenHaving  // HAVING
 	TokenCount   // COUNT (followed by '(')
 	TokenSum     // SUM (followed by '(')
 	TokenAvg     // AVG (followed by '(')

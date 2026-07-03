@@ -6,7 +6,7 @@ sidebar_label: update
 
 # mr user update
 
-Update an existing user account. Only the flags you pass are changed; the rest are preserved by reading the current account first. Use --disabled to lock an account (revoking its sessions and tokens) and --enable to unlock it.
+Update an existing user account. Only the flags you pass are changed; the rest are preserved by reading the current account first. Use --disabled to lock an account (revoking its sessions and tokens) and --enable to unlock it. Demoting or disabling the last enabled administrator is refused with HTTP 409 Conflict, so an instance can never be left without an admin.
 
 ## Usage
 

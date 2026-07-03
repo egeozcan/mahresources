@@ -13,6 +13,10 @@ Comma-separated ID lists on `--tags`, `--groups`, `--notes` use the
 `--sort-by=field1,-field2` (prefix with `-` for descending). Pagination
 via the global `--page` flag (default page size 50).
 
+`--include-subgroups` widens `--owner-id` to the whole group subtree:
+resources owned by the given group or by any of its descendant
+subgroups, recursively. It has no effect without `--owner-id`.
+
 ## Usage
 
 ```bash
@@ -48,6 +52,7 @@ mr resources list --tags 5 --created-after 2026-01-01 --json | jq -r '.[].Name'
 | `--description` | string | `` | Filter by description |
 | `--content-type` | string | `` | Filter by content type |
 | `--owner-id` | uint | `0` | Filter by owner group ID |
+| `--include-subgroups` | bool | `false` | With --owner-id: also match resources owned by descendant subgroups |
 | `--tags` | string | `` | Comma-separated tag IDs to filter by |
 | `--groups` | string | `` | Comma-separated group IDs to filter by |
 | `--notes` | string | `` | Comma-separated note IDs to filter by |

@@ -132,6 +132,26 @@ func TestLintGeneratedQuery(t *testing.T) {
 			query:     `type = resource AND owner.meta.category = "Invoices" LIMIT 50`,
 			wantValid: true,
 		},
+		{
+			name:      "having query allowed",
+			query:     `type = resource GROUP BY hash COUNT() HAVING COUNT() > 1 ORDER BY count DESC LIMIT 50`,
+			wantValid: true,
+		},
+		{
+			name:      "relation count allowed",
+			query:     `type = group AND resources.count >= 100 ORDER BY resources.count DESC LIMIT 50`,
+			wantValid: true,
+		},
+		{
+			name:      "new relation fields allowed",
+			query:     `type = resource AND notes IS EMPTY AND created > -30d LIMIT 50`,
+			wantValid: true,
+		},
+		{
+			name:      "date bucket group by allowed",
+			query:     `type = note GROUP BY created.month COUNT() ORDER BY created.month ASC LIMIT 50`,
+			wantValid: true,
+		},
 	}
 
 	for _, tc := range tests {

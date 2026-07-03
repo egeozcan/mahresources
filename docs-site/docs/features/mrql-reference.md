@@ -13,7 +13,7 @@ A compact syntax reference for the Mahresources Query Language (MRQL). For the f
 ```
 [type = "resource|note|group" AND] <conditions>
   [SCOPE <group-id-or-name>]
-  [GROUP BY <field>[, <field>...] [<aggregates>]]
+  [GROUP BY <field>[, <field>...] [<aggregates>] [HAVING <aggregate-conditions>]]
   [ORDER BY <field> [ASC|DESC]]
   [LIMIT <n>] [OFFSET <n>]
 ```
@@ -36,11 +36,25 @@ A compact syntax reference for the Mahresources Query Language (MRQL). For the f
 
 **Common to all types:** `id`, `name`, `description`, `created`, `updated`, `tags`, `meta.<key>`, `TEXT` (full-text search).
 
-**Resources only:** `groups` (alias `group`), `owner`, `category`, `contentType`, `fileSize`, `width`, `height`, `originalName`, `hash`.
+**Resources only:** `groups` (alias `group`), `owner`, `category`, `contentType`, `fileSize`, `width`, `height`, `originalName`, `hash`, `notes`.
 
-**Notes only:** `groups` (alias `group`), `owner`, `noteType`.
+**Notes only:** `groups` (alias `group`), `owner`, `noteType`, `resources`.
 
-**Groups only:** `category`, `parent`, `children`.
+**Groups only:** `category`, `parent`, `children`, `resources`, `notes`.
+
+Relation fields (`tags`, `groups`/`group`, `notes`, `resources`, `children`) match related entities by name with `=`, `!=`, `~`, `!~`, support `IN` / `NOT IN`, and `IS [NOT] EMPTY`.
+
+## Relation Counts
+
+Compare how many related entities exist with `<relation>.count` and a comparison operator (`=`, `!=`, `>`, `>=`, `<`, `<=`) against a non-negative integer. Valid on `tags`, `groups`/`group`, `notes`, `resources`, and `children` (groups); also valid as an `ORDER BY` key.
+
+```
+type = resource AND tags.count = 0
+type = group AND resources.count >= 100 ORDER BY resources.count DESC
+type = resource AND notes.count >= 1 ORDER BY tags.count DESC
+```
+
+`owner` and `parent` are single references and cannot be counted — use `owner IS NULL` / `parent IS NULL` instead. `IN`, `IS EMPTY`, and `~` are not supported on `.count`.
 
 ## Relative Dates
 
@@ -102,6 +116,31 @@ type = resource AND fileSize > 10mb GROUP BY contentType MIN(fileSize) MAX(fileS
 ```
 
 Output keys: `count`, `sum_{field}`, `avg_{field}`, `min_{field}`, `max_{field}`.
+
+### HAVING — Filter Aggregated Buckets
+
+`HAVING` keeps only buckets whose aggregates match the condition. It requires at least one aggregate function in the `GROUP BY` clause (aggregated mode only) and accepts aggregate comparisons combined with `AND` / `OR` / `NOT` and parentheses. The aggregate in `HAVING` does not need to appear in the aggregate list.
+
+```
+type = resource GROUP BY hash COUNT() HAVING COUNT() > 1 ORDER BY count DESC
+type = resource GROUP BY tags COUNT() SUM(fileSize) HAVING SUM(fileSize) > 1gb AND COUNT() >= 10
+type = note GROUP BY noteType COUNT() HAVING NOT (COUNT() < 5)
+type = resource GROUP BY tags COUNT() HAVING MAX(created) < -1y
+```
+
+Plain fields are not allowed on the left side of `HAVING` conditions — filter them in the expression before `GROUP BY`.
+
+Note: when `GROUP BY` includes a junction relation (e.g. `tags`), `COUNT()` counts join rows. Grouping by a single relation yields correct per-bucket entity counts; grouping by two relations simultaneously multiplies rows.
+
+### Date Buckets
+
+Group datetime fields (`created`, `updated`) by calendar period with a dotted suffix: `.day` (`YYYY-MM-DD`), `.week` (`YYYY-MM-DD`, Monday of the week), `.month` (`YYYY-MM`), `.year` (`YYYY`). Bucket labels sort chronologically. Valid only in `GROUP BY` (both modes) and as its `ORDER BY` key — use date ranges in the filter expression instead.
+
+```
+type = note GROUP BY created.month COUNT() ORDER BY created.month ASC
+type = resource GROUP BY updated.week COUNT()
+type = resource GROUP BY created.year
+```
 
 ## GROUP BY — Bucketed Mode
 

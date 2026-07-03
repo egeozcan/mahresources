@@ -6,7 +6,7 @@ sidebar_label: delete
 
 # mr user delete
 
-Permanently delete a user account by its numeric id, removing its sessions and API tokens. This cannot be undone.
+Permanently delete a user account by its numeric id, removing its sessions and API tokens, and nulling the creator on any content they stamped (the content is kept). This cannot be undone. Deleting the last enabled administrator is refused with HTTP 409 Conflict.
 
 ## Usage
 

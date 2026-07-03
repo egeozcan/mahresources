@@ -308,6 +308,7 @@ var keywordMap = map[string]TokenType{
 	"DESC":   TokenDesc,
 	"LIMIT":  TokenLimit,
 	"OFFSET": TokenOffset,
+	"HAVING": TokenHaving,
 	"TEXT":   TokenText,
 	"TYPE":   TokenKwType,
 	"SCOPE":  TokenScope,

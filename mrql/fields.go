@@ -42,6 +42,7 @@ var resourceFields = []FieldDef{
 	{Name: "height", Type: FieldNumber, Column: "height"},
 	{Name: "originalName", Type: FieldString, Column: "original_name"},
 	{Name: "hash", Type: FieldString, Column: "hash"},
+	{Name: "notes", Type: FieldRelation, Column: "notes"},
 }
 
 // noteFields are fields only available on the Note entity.
@@ -50,6 +51,7 @@ var noteFields = []FieldDef{
 	{Name: "group", Type: FieldRelation, Column: "groups"}, // alias
 	{Name: "owner", Type: FieldRelation, Column: "owner_id"},
 	{Name: "noteType", Type: FieldNumber, Column: "note_type_id"},
+	{Name: "resources", Type: FieldRelation, Column: "resources"},
 }
 
 // groupFields are fields only available on the Group entity.
@@ -57,6 +59,8 @@ var groupFields = []FieldDef{
 	{Name: "category", Type: FieldNumber, Column: "category_id"},
 	{Name: "parent", Type: FieldRelation, Column: "parent_id"}, // logical name; actual DB column is owner_id (intercepted by translator)
 	{Name: "children", Type: FieldRelation, Column: "children"},
+	{Name: "resources", Type: FieldRelation, Column: "resources"},
+	{Name: "notes", Type: FieldRelation, Column: "notes"},
 }
 
 // ValidEntityTypes maps valid entity type string values to their EntityType constant.

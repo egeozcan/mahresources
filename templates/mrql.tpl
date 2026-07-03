@@ -59,7 +59,8 @@
                     <code class="bg-stone-200 px-1 rounded">width</code>,
                     <code class="bg-stone-200 px-1 rounded">height</code>,
                     <code class="bg-stone-200 px-1 rounded">originalName</code>,
-                    <code class="bg-stone-200 px-1 rounded">hash</code>
+                    <code class="bg-stone-200 px-1 rounded">hash</code>,
+                    <code class="bg-stone-200 px-1 rounded">notes</code>
                 </p>
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND contentType ~ "image/*" AND fileSize > 5mb</pre>
             </div>
@@ -68,7 +69,8 @@
                 <p class="text-xs">
                     <code class="bg-stone-200 px-1 rounded">groups</code> / <code class="bg-stone-200 px-1 rounded">group</code>,
                     <code class="bg-stone-200 px-1 rounded">owner</code>,
-                    <code class="bg-stone-200 px-1 rounded">noteType</code>
+                    <code class="bg-stone-200 px-1 rounded">noteType</code>,
+                    <code class="bg-stone-200 px-1 rounded">resources</code>
                 </p>
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = note AND owner = "Project Alpha" AND noteType = "2"</pre>
             </div>
@@ -77,7 +79,9 @@
                 <p class="text-xs">
                     <code class="bg-stone-200 px-1 rounded">category</code>,
                     <code class="bg-stone-200 px-1 rounded">parent</code>,
-                    <code class="bg-stone-200 px-1 rounded">children</code>
+                    <code class="bg-stone-200 px-1 rounded">children</code>,
+                    <code class="bg-stone-200 px-1 rounded">resources</code>,
+                    <code class="bg-stone-200 px-1 rounded">notes</code>
                 </p>
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = group AND parent IS EMPTY</pre>
             </div>
@@ -174,6 +178,12 @@
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND owner.parent.name = "Acme Corp"</pre>
             </div>
             <div>
+                <h3 class="font-semibold text-stone-700">Relation Counts</h3>
+                <p class="text-xs">Compare the number of related entities with <code class="bg-stone-200 px-1 rounded">&lt;relation&gt;.count</code> and <code class="bg-stone-200 px-1 rounded">=</code>, <code class="bg-stone-200 px-1 rounded">!=</code>, <code class="bg-stone-200 px-1 rounded">&gt;</code>, <code class="bg-stone-200 px-1 rounded">&gt;=</code>, <code class="bg-stone-200 px-1 rounded">&lt;</code>, <code class="bg-stone-200 px-1 rounded">&lt;=</code> against a non-negative integer. Works on <code class="bg-stone-200 px-1 rounded">tags</code>, <code class="bg-stone-200 px-1 rounded">groups</code>, <code class="bg-stone-200 px-1 rounded">notes</code>, <code class="bg-stone-200 px-1 rounded">resources</code>, and <code class="bg-stone-200 px-1 rounded">children</code>; also valid in ORDER BY. <code class="bg-stone-200 px-1 rounded">owner</code> and <code class="bg-stone-200 px-1 rounded">parent</code> are single references &mdash; use <code class="bg-stone-200 px-1 rounded">IS NULL</code> instead.</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND tags.count = 0</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = group AND resources.count >= 100 ORDER BY resources.count DESC</pre>
+            </div>
+            <div>
                 <h3 class="font-semibold text-stone-700">Cross-Entity Queries</h3>
                 <p class="text-xs">Omit <code class="bg-stone-200 px-1 rounded">type</code> to search resources, notes, and groups simultaneously. Only common fields (<code class="bg-stone-200 px-1 rounded">id</code>, <code class="bg-stone-200 px-1 rounded">name</code>, <code class="bg-stone-200 px-1 rounded">description</code>, <code class="bg-stone-200 px-1 rounded">created</code>, <code class="bg-stone-200 px-1 rounded">updated</code>, <code class="bg-stone-200 px-1 rounded">tags</code>) are valid &mdash; entity-specific fields will be rejected. GROUP BY requires an explicit <code class="bg-stone-200 px-1 rounded">type</code>. ORDER BY is limited to <code class="bg-stone-200 px-1 rounded">name</code>, <code class="bg-stone-200 px-1 rounded">created</code>, <code class="bg-stone-200 px-1 rounded">updated</code>.</p>
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">name ~ "budget*" LIMIT 30</pre>
@@ -199,6 +209,11 @@
                 <p class="text-xs mt-1"><strong>Bucketed</strong> (no functions) &mdash; returns entities organized into groups. LIMIT applies per bucket.</p>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource GROUP BY contentType LIMIT 5</pre>
                 <p class="text-xs mt-1">Group by any scalar field, <code class="bg-stone-200 px-1 rounded">meta.*</code>, <code class="bg-stone-200 px-1 rounded">tags</code>, <code class="bg-stone-200 px-1 rounded">owner</code>, <code class="bg-stone-200 px-1 rounded">parent</code>, or traversal paths like <code class="bg-stone-200 px-1 rounded">owner.name</code>, <code class="bg-stone-200 px-1 rounded">owner.meta.key</code>.</p>
+                <p class="text-xs mt-1"><strong>HAVING</strong> filters aggregated buckets by aggregate conditions (aggregated mode only; plain fields belong in the filter expression before GROUP BY). Combine conditions with <code class="bg-stone-200 px-1 rounded">AND</code> / <code class="bg-stone-200 px-1 rounded">OR</code> / <code class="bg-stone-200 px-1 rounded">NOT</code>.</p>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource GROUP BY hash COUNT() HAVING COUNT() > 1 ORDER BY count DESC</pre>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource GROUP BY tags COUNT() HAVING SUM(fileSize) > 1gb AND COUNT() >= 10</pre>
+                <p class="text-xs mt-1"><strong>Date buckets</strong> group datetime fields by period: <code class="bg-stone-200 px-1 rounded">created.day</code>, <code class="bg-stone-200 px-1 rounded">created.week</code> (Monday start), <code class="bg-stone-200 px-1 rounded">created.month</code>, <code class="bg-stone-200 px-1 rounded">created.year</code> (same for <code class="bg-stone-200 px-1 rounded">updated</code>). Only valid in GROUP BY and its ORDER BY &mdash; use date ranges in the filter expression. When grouping by a relation, COUNT() counts join rows; grouping by two relations at once multiplies counts.</p>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = note GROUP BY created.month COUNT() ORDER BY created.month ASC</pre>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Examples</h3>
@@ -209,6 +224,10 @@
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource AND contentType IN ("image/png", "image/jpeg") AND width >= 1920</pre>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource GROUP BY contentType COUNT() ORDER BY count DESC</pre>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource GROUP BY meta.source COUNT() SUM(fileSize)</pre>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource GROUP BY hash COUNT() HAVING COUNT() > 1 ORDER BY count DESC</pre>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource AND notes IS EMPTY AND created > -30d</pre>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = group AND resources.count >= 100 ORDER BY resources.count DESC</pre>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = note GROUP BY created.month COUNT() ORDER BY created.month ASC</pre>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">TEXT ~ "quarterly review" LIMIT 30</pre>
             </div>
         </div>

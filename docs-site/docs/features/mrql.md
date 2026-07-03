@@ -40,7 +40,7 @@ Generated MRQL is parsed, validated, and linted locally, then shown with an expl
 ### Basic Structure
 
 ```
-[type = "resource|note|group" AND] <conditions> [GROUP BY <field> [<aggregates>]] [ORDER BY <field> [ASC|DESC]] [LIMIT <n>] [OFFSET <n>]
+[type = "resource|note|group" AND] <conditions> [GROUP BY <field> [<aggregates>] [HAVING <aggregate-conditions>]] [ORDER BY <field> [ASC|DESC]] [LIMIT <n>] [OFFSET <n>]
 ```
 
 Conditions are field-value comparisons joined with `AND`, `OR`, and `NOT`.
@@ -86,6 +86,7 @@ Omit the `type` selector entirely to search all entity types at once (cross-enti
 | `height` | number | Image/video height in pixels |
 | `originalName` | string | Original filename at upload |
 | `hash` | string | Content hash |
+| `notes` | relation | Linked notes (match by name) |
 
 **Note-only fields:**
 
@@ -94,6 +95,7 @@ Omit the `type` selector entirely to search all entity types at once (cross-enti
 | `groups` / `group` | relation | Associated groups (match by name) |
 | `owner` | relation | Owner group (match by name, supports traversal) |
 | `noteType` | string | Note type ID |
+| `resources` | relation | Linked resources (match by name) |
 
 **Group-only fields:**
 
@@ -102,6 +104,10 @@ Omit the `type` selector entirely to search all entity types at once (cross-enti
 | `category` | string | Group category ID |
 | `parent` | relation | Parent group (match by name) |
 | `children` | relation | Child groups (match by name) |
+| `resources` | relation | Related resources (match by name) |
+| `notes` | relation | Related notes (match by name) |
+
+Relation fields also support `.count` comparisons against a non-negative integer — `tags.count = 0`, `resources.count >= 100` — with `=`, `!=`, `>`, `>=`, `<`, `<=`, in filters and `ORDER BY`. `owner` and `parent` are single references and cannot be counted (use `IS NULL`).
 
 ### Comparison Operators
 
@@ -366,6 +372,19 @@ type = resource AND fileSize > 10mb GROUP BY contentType MIN(fileSize) MAX(fileS
 ```
 
 Each result row includes the grouped field values plus one key per aggregate function (e.g., `count`, `sum_fileSize`, `avg_fileSize`).
+
+Add `HAVING` after the aggregate list to keep only buckets whose aggregates match; conditions use aggregate functions (never plain fields) and combine with `AND` / `OR` / `NOT`:
+
+```
+type = resource GROUP BY hash COUNT() HAVING COUNT() > 1 ORDER BY count DESC
+type = resource GROUP BY tags COUNT() HAVING SUM(fileSize) > 1gb AND COUNT() >= 10
+```
+
+Datetime fields can be bucketed by calendar period with `.day`, `.week` (Monday start), `.month`, or `.year` — valid in GROUP BY (both modes) and its ORDER BY only:
+
+```
+type = note GROUP BY created.month COUNT() ORDER BY created.month ASC
+```
 
 ### Bucketed Mode
 

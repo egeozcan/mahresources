@@ -14,6 +14,9 @@ sidebar_label: CLI
 | `mr admin settings list` | List all runtime settings | [Details](./admin/settings/list.md) |
 | `mr admin settings reset` | Remove a runtime override and revert to boot default | [Details](./admin/settings/reset.md) |
 | `mr admin settings set` | Override a runtime setting | [Details](./admin/settings/set.md) |
+| `mr admin similarity` | Image similarity maintenance jobs | [Details](./admin/similarity/index.md) |
+| `mr admin similarity recompute` | Rebuild all v2 similarity pairs from stored hashes | [Details](./admin/similarity/recompute.md) |
+| `mr admin similarity retry-failed` | Reset failed hashes so the backfill worker retries them | [Details](./admin/similarity/retry-failed.md) |
 | `mr admin stats` | Show server and data statistics | [Details](./admin/stats.md) |
 | `mr auth` | Log in, log out, and inspect the current identity | [Details](./auth/index.md) |
 | `mr auth login` | Authenticate and store an API token | [Details](./auth/login.md) |

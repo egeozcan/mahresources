@@ -202,6 +202,7 @@ test.describe('MRQL Docs Panel', () => {
     'File Size Units',
     'String Escaping',
     'Traversal',
+    'Relation Counts',
     'Cross-Entity Queries',
     'ORDER BY / LIMIT / OFFSET',
     'GROUP BY',

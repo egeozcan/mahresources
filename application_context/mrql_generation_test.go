@@ -131,9 +131,9 @@ func TestMRQLGeneratorPromptIncludesCompactSyntaxGuide(t *testing.T) {
 		"Prefer the simplest valid query that answers the request.",
 		"Start with type = resource, type = note, or type = group when using entity-specific fields.",
 		"Common fields: id, name, description, created, updated, tags, guid, meta.<key>, TEXT.",
-		"Resource fields: contentType, fileSize, width, height, originalName, hash, category, owner, groups/group.",
-		"Note fields: noteType, owner, groups/group.",
-		"Group fields: category, parent, children.",
+		"Resource fields: contentType, fileSize, width, height, originalName, hash, category, owner, groups/group, notes.",
+		"Note fields: noteType, owner, groups/group, resources.",
+		"Group fields: category, parent, children, resources, notes.",
 		"Relations use names with =, !=, ~, !~; use IS EMPTY/IS NOT EMPTY for missing/present relations.",
 		`Use tags/groups IN ("a", "b") only for tags, groups, or group; do not use IN for owner, parent, or children.`,
 		"Use meta.<key> for metadata only when the user names the key.",
@@ -142,6 +142,11 @@ func TestMRQLGeneratorPromptIncludesCompactSyntaxGuide(t *testing.T) {
 		`resources whose owner has tag <tag> -> type = resource AND owner.tags = "<tag>" LIMIT 50`,
 		`notes about <text> -> type = note AND TEXT ~ "<text>" LIMIT 50`,
 		`groups named <name> -> type = group AND name ~ "<name>*" LIMIT 50`,
+		"Use <relation>.count with =, !=, >, >=, <, <= to compare relation sizes (e.g. tags.count = 0, resources.count >= 100); also valid in ORDER BY. Never count owner or parent.",
+		"After GROUP BY aggregates, use HAVING with aggregate functions to filter buckets (e.g. GROUP BY hash COUNT() HAVING COUNT() > 1). HAVING never uses plain fields.",
+		"GROUP BY supports date buckets created.day, created.week, created.month, created.year (same for updated). Date buckets are valid only in GROUP BY and its ORDER BY, never in the filter expression.",
+		"duplicate resources by hash -> type = resource GROUP BY hash COUNT() HAVING COUNT() > 1 ORDER BY count DESC LIMIT 50",
+		"notes per month -> type = note GROUP BY created.month COUNT() ORDER BY created.month ASC LIMIT 50",
 	} {
 		if !strings.Contains(provider.seenPrompt, want) {
 			t.Fatalf("prompt missing %q in:\n%s", want, provider.seenPrompt)

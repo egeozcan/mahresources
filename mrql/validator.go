@@ -33,6 +33,68 @@ var traversalIntermediates = map[string]bool{
 	"children": true,
 }
 
+// countableRelation returns the FieldDef for fieldName if it is a relation on
+// entityType that supports the .count pseudo-field: junction-backed relations
+// (tags, groups/group, notes, resources) plus children on group.
+func countableRelation(entityType EntityType, fieldName string) (FieldDef, bool) {
+	fd, ok := LookupField(entityType, fieldName)
+	if !ok || fd.Type != FieldRelation {
+		return FieldDef{}, false
+	}
+	if _, isJunction := lookupJunction(entityType, fd.Column); isJunction {
+		return fd, true
+	}
+	if fd.Column == "children" {
+		return fd, true
+	}
+	return FieldDef{}, false
+}
+
+// isCountField returns true if f is a valid <relation>.count pseudo-field for
+// the given entity type.
+func isCountField(f *FieldExpr, entityType EntityType) bool {
+	if len(f.Parts) != 2 || f.Parts[1].Value != "count" {
+		return false
+	}
+	_, ok := countableRelation(entityType, f.Parts[0].Value)
+	return ok
+}
+
+// dateBucketSuffixes are the valid GROUP BY bucket suffixes on datetime fields.
+var dateBucketSuffixes = map[string]bool{
+	"day": true, "week": true, "month": true, "year": true,
+}
+
+// isDateBucketField returns true if f is a <datetime>.<bucket> pseudo-field
+// (e.g. created.month) for the given entity type.
+func isDateBucketField(f *FieldExpr, entityType EntityType) bool {
+	if len(f.Parts) != 2 || !dateBucketSuffixes[f.Parts[1].Value] {
+		return false
+	}
+	fd, ok := LookupField(entityType, f.Parts[0].Value)
+	return ok && fd.Type == FieldDateTime
+}
+
+// dateBucketWhereError is the error for date bucket pseudo-fields used outside
+// GROUP BY.
+func dateBucketWhereError(f *FieldExpr) *ValidationError {
+	return &ValidationError{
+		Message: `date bucket fields are only valid in GROUP BY; use a date range in WHERE (created >= "2026-07-01" AND created < "2026-08-01")`,
+		Pos:     f.Pos(),
+		Length:  len(f.Name()),
+	}
+}
+
+// countOperatorError builds the standard error for unsupported operations on
+// a count pseudo-field.
+func countOperatorError(f *FieldExpr) *ValidationError {
+	return &ValidationError{
+		Message: fmt.Sprintf("%s only supports comparison operators (=, !=, >, >=, <, <=)", f.Name()),
+		Pos:     f.Pos(),
+		Length:  len(f.Name()),
+	}
+}
+
 // isTraversalRoot returns true if fieldName is a valid traversal root for the
 // given entity type.
 func isTraversalRoot(fieldName string, entityType EntityType) bool {
@@ -76,6 +138,12 @@ func Validate(q *Query) error {
 	isAggregatedGroupBy := q.GroupBy != nil && len(q.GroupBy.Aggregates) > 0
 	for _, ob := range q.OrderBy {
 		if !isAggregatedGroupBy {
+			// In bucketed GROUP BY mode, a date bucket key that is also a
+			// GROUP BY field is a valid sort key (constant within each bucket,
+			// used to order the bucket keys).
+			if q.GroupBy != nil && isDateBucketField(ob.Field, entityType) && groupByHasField(q.GroupBy, ob.Field.Name()) {
+				continue
+			}
 			if err := validateFieldExpr(ob.Field, entityType); err != nil {
 				return err
 			}
@@ -201,6 +269,24 @@ func validateNode(node Node, entityType EntityType) error {
 		if err := validateFieldExpr(n.Field, entityType); err != nil {
 			return err
 		}
+		// Count pseudo-fields: only comparison operators against a non-negative integer.
+		if isCountField(n.Field, entityType) {
+			switch n.Operator.Type {
+			case TokenEq, TokenNeq, TokenGt, TokenGte, TokenLt, TokenLte:
+				// supported
+			default:
+				return countOperatorError(n.Field)
+			}
+			nl, ok := n.Value.(*NumberLiteral)
+			if !ok || nl.Unit != "" || nl.Value < 0 || nl.Value != float64(int64(nl.Value)) {
+				return &ValidationError{
+					Message: fmt.Sprintf("%s must be compared to a non-negative integer", n.Field.Name()),
+					Pos:     n.Value.Pos(),
+					Length:  0,
+				}
+			}
+			return nil
+		}
 		// Validate type pseudo-field: only = and != with valid entity names allowed
 		if isTypeField(n.Field) {
 			if n.Operator.Type != TokenEq && n.Operator.Type != TokenNeq {
@@ -256,6 +342,10 @@ func validateNode(node Node, entityType EntityType) error {
 				Length:  len(n.Field.Name()),
 			}
 		}
+		// Count pseudo-fields do not support IN.
+		if isCountField(n.Field, entityType) {
+			return countOperatorError(n.Field)
+		}
 		// Reject traversal IN (multi-part chains like parent.name, owner.tags, etc.)
 		if len(n.Field.Parts) >= 2 {
 			prefix := n.Field.Parts[0].Value
@@ -288,6 +378,10 @@ func validateNode(node Node, entityType EntityType) error {
 		return validateFieldExpr(n.Field, entityType)
 
 	case *IsExpr:
+		// Count pseudo-fields do not support IS EMPTY / IS NULL.
+		if isCountField(n.Field, entityType) {
+			return countOperatorError(n.Field)
+		}
 		// Reject traversal IS EMPTY (not translatable as a subfield check),
 		// but allow traversal IS NULL / IS NOT NULL (translatable via subquery).
 		if len(n.Field.Parts) >= 2 {
@@ -367,6 +461,10 @@ func validateSortable(f *FieldExpr, entityType EntityType) error {
 		prefix := f.Parts[0].Value
 		if prefix == "meta" {
 			// meta.X is sortable
+			return nil
+		}
+		// <relation>.count is sortable (correlated scalar subquery)
+		if isCountField(f, entityType) {
 			return nil
 		}
 		// Any traversal field (parent.X, children.X, owner.X, etc.) is not sortable
@@ -486,13 +584,46 @@ func validateFieldExpr(f *FieldExpr, entityType EntityType) error {
 		return nil
 	}
 
-	// Multi-part fields: meta.key, or traversal chains
+	// Multi-part fields: meta.key, count/bucket pseudo-fields, or traversal chains
 	if len(f.Parts) >= 2 {
 		prefix := firstName
 
 		// meta.* is always valid (2-part only)
 		if prefix == "meta" {
 			return nil
+		}
+
+		// Date bucket pseudo-fields are only valid in GROUP BY (handled by
+		// validateGroupBy before it calls this function) and as aggregated-mode
+		// ORDER BY keys (validated against the key allowlist instead).
+		if isDateBucketField(f, entityType) {
+			return dateBucketWhereError(f)
+		}
+
+		// <relation>.count pseudo-field
+		if len(f.Parts) == 2 && f.Parts[1].Value == "count" {
+			if _, ok := countableRelation(entityType, prefix); ok {
+				return nil
+			}
+			if fd, ok := LookupField(entityType, prefix); ok && fd.Type == FieldRelation {
+				// Single-reference relations (owner, parent) get a targeted error.
+				if fd.Column == "owner_id" || fd.Column == "parent_id" {
+					return &ValidationError{
+						Message: fmt.Sprintf("%s is a single reference and cannot be counted; use %s IS NULL / IS NOT NULL", prefix, prefix),
+						Pos:     f.Pos(),
+						Length:  len(f.Name()),
+					}
+				}
+				// Countable relations need a concrete entity to resolve the
+				// junction table — cross-entity queries cannot use .count.
+				if entityType == EntityUnspecified {
+					return &ValidationError{
+						Message: fmt.Sprintf("%s requires an explicit entity type (e.g. type = \"resource\")", f.Name()),
+						Pos:     f.Pos(),
+						Length:  len(f.Name()),
+					}
+				}
+			}
 		}
 
 		// Traversal chain: root.intermediate...leaf
@@ -650,9 +781,13 @@ func validateGroupBy(gb *GroupByClause, entityType EntityType, orderBy []OrderBy
 			}
 		}
 
-		// Validate field exists for entity type (handles traversals, meta, scalars)
-		if err := validateFieldExpr(f, entityType); err != nil {
-			return err
+		// Date bucket pseudo-fields (created.month etc.) are valid GROUP BY keys;
+		// validateFieldExpr would reject them as WHERE-only.
+		if !isDateBucketField(f, entityType) {
+			// Validate field exists for entity type (handles traversals, meta, scalars)
+			if err := validateFieldExpr(f, entityType); err != nil {
+				return err
+			}
 		}
 
 		allFieldNames[f.Name()] = true
@@ -675,45 +810,22 @@ func validateGroupBy(gb *GroupByClause, entityType EntityType, orderBy []OrderBy
 
 	// Validate aggregate functions
 	for _, agg := range gb.Aggregates {
-		if agg.Field != nil {
-			// Validate the field exists
-			if err := validateFieldExpr(agg.Field, entityType); err != nil {
-				return err
-			}
+		if err := validateAggregateFunc(agg, entityType); err != nil {
+			return err
+		}
+	}
 
-			fieldName := agg.Field.Name()
-			fd, ok := LookupField(entityType, fieldName)
-			if !ok {
-				// Meta fields are always ok
-				if !strings.HasPrefix(fieldName, "meta.") {
-					return &ValidationError{
-						Message: fmt.Sprintf("unknown field %q for aggregate %s", fieldName, agg.Name),
-						Pos:     agg.Field.Pos(),
-						Length:  len(fieldName),
-					}
-				}
-			} else {
-				// SUM/AVG require numeric fields
-				if agg.Name == "SUM" || agg.Name == "AVG" {
-					if fd.Type != FieldNumber && fd.Type != FieldMeta {
-						return &ValidationError{
-							Message: fmt.Sprintf("%s requires a numeric field, but %q is %s", agg.Name, fieldName, fieldTypeName(fd.Type)),
-							Pos:     agg.Field.Pos(),
-							Length:  len(fieldName),
-						}
-					}
-				}
-				// MIN/MAX allow numeric and datetime
-				if agg.Name == "MIN" || agg.Name == "MAX" {
-					if fd.Type != FieldNumber && fd.Type != FieldDateTime && fd.Type != FieldMeta {
-						return &ValidationError{
-							Message: fmt.Sprintf("%s requires a numeric or datetime field, but %q is %s", agg.Name, fieldName, fieldTypeName(fd.Type)),
-							Pos:     agg.Field.Pos(),
-							Length:  len(fieldName),
-						}
-					}
-				}
+	// Validate HAVING expression
+	if gb.Having != nil {
+		if len(gb.Aggregates) == 0 {
+			return &ValidationError{
+				Message: "HAVING requires at least one aggregate function in GROUP BY (e.g. GROUP BY hash COUNT() HAVING COUNT() > 1)",
+				Pos:     gb.Having.Pos(),
+				Length:  0,
 			}
+		}
+		if err := validateHavingNode(gb.Having, entityType); err != nil {
+			return err
 		}
 	}
 
@@ -733,6 +845,115 @@ func validateGroupBy(gb *GroupByClause, entityType EntityType, orderBy []OrderBy
 	}
 
 	return nil
+}
+
+// validateAggregateFunc checks one aggregate function's field against the
+// entity type. Shared between the GROUP BY aggregate list and HAVING leaves.
+func validateAggregateFunc(agg AggregateFunc, entityType EntityType) error {
+	if agg.Field == nil {
+		return nil // COUNT() takes no field
+	}
+
+	// Validate the field exists
+	if err := validateFieldExpr(agg.Field, entityType); err != nil {
+		return err
+	}
+
+	fieldName := agg.Field.Name()
+	fd, ok := LookupField(entityType, fieldName)
+	if !ok {
+		// Meta fields are always ok
+		if !strings.HasPrefix(fieldName, "meta.") {
+			return &ValidationError{
+				Message: fmt.Sprintf("unknown field %q for aggregate %s", fieldName, agg.Name),
+				Pos:     agg.Field.Pos(),
+				Length:  len(fieldName),
+			}
+		}
+		return nil
+	}
+
+	// SUM/AVG require numeric fields
+	if agg.Name == "SUM" || agg.Name == "AVG" {
+		if fd.Type != FieldNumber && fd.Type != FieldMeta {
+			return &ValidationError{
+				Message: fmt.Sprintf("%s requires a numeric field, but %q is %s", agg.Name, fieldName, fieldTypeName(fd.Type)),
+				Pos:     agg.Field.Pos(),
+				Length:  len(fieldName),
+			}
+		}
+	}
+	// MIN/MAX allow numeric and datetime
+	if agg.Name == "MIN" || agg.Name == "MAX" {
+		if fd.Type != FieldNumber && fd.Type != FieldDateTime && fd.Type != FieldMeta {
+			return &ValidationError{
+				Message: fmt.Sprintf("%s requires a numeric or datetime field, but %q is %s", agg.Name, fieldName, fieldTypeName(fd.Type)),
+				Pos:     agg.Field.Pos(),
+				Length:  len(fieldName),
+			}
+		}
+	}
+	return nil
+}
+
+// validateHavingNode recursively validates a HAVING expression tree.
+func validateHavingNode(node Node, entityType EntityType) error {
+	switch n := node.(type) {
+	case *BinaryExpr:
+		if err := validateHavingNode(n.Left, entityType); err != nil {
+			return err
+		}
+		return validateHavingNode(n.Right, entityType)
+	case *NotExpr:
+		return validateHavingNode(n.Expr, entityType)
+	case *HavingComparison:
+		if err := validateAggregateFunc(n.Agg, entityType); err != nil {
+			return err
+		}
+		return validateHavingValue(n, entityType)
+	default:
+		return &ValidationError{
+			Message: fmt.Sprintf("unsupported expression %T in HAVING", node),
+			Pos:     node.Pos(),
+			Length:  0,
+		}
+	}
+}
+
+// validateHavingValue checks that the comparison value matches the aggregate:
+// numeric for COUNT/SUM/AVG and MIN/MAX on numeric fields; date values
+// (string, relative date, function) additionally allowed for MIN/MAX on
+// datetime fields, and any value for MIN/MAX on dynamically-typed meta fields.
+func validateHavingValue(hc *HavingComparison, entityType EntityType) error {
+	isMinMax := hc.Agg.Name == "MIN" || hc.Agg.Name == "MAX"
+	allowDateValue := false
+	if isMinMax && hc.Agg.Field != nil {
+		fieldName := hc.Agg.Field.Name()
+		if strings.HasPrefix(fieldName, "meta.") {
+			allowDateValue = true
+		} else if fd, ok := LookupField(entityType, fieldName); ok && fd.Type == FieldDateTime {
+			allowDateValue = true
+		}
+	}
+
+	switch hc.Value.(type) {
+	case *NumberLiteral:
+		return nil
+	case *StringLiteral, *RelDateLiteral, *FuncCall:
+		if allowDateValue {
+			return nil
+		}
+	}
+
+	aggLabel := hc.Agg.Name + "()"
+	if hc.Agg.Field != nil {
+		aggLabel = hc.Agg.Name + "(" + hc.Agg.Field.Name() + ")"
+	}
+	return &ValidationError{
+		Message: fmt.Sprintf("HAVING %s requires a numeric value", aggLabel),
+		Pos:     hc.Value.Pos(),
+		Length:  0,
+	}
 }
 
 // buildAggregateOrderKeys returns the set of valid ORDER BY keys for an
@@ -755,6 +976,16 @@ func buildAggregateOrderKeys(gb *GroupByClause) map[string]bool {
 		}
 	}
 	return keys
+}
+
+// groupByHasField returns true if the GROUP BY clause contains the field name.
+func groupByHasField(gb *GroupByClause, name string) bool {
+	for _, f := range gb.Fields {
+		if f.Name() == name {
+			return true
+		}
+	}
+	return false
 }
 
 // fieldTypeName returns a human-readable name for a FieldType.
