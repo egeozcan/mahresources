@@ -142,6 +142,27 @@ func traversalSubFieldSuggestions(entityType EntityType) []Suggestion {
 	return suggestions
 }
 
+// recursiveSubFieldSuggestions returns leaf-field suggestions for
+// ancestors. / descendants. context. Recursive roots resolve to a single group
+// field (scalar, tags, or meta) and do not chain further.
+func recursiveSubFieldSuggestions() []Suggestion {
+	var suggestions []Suggestion
+	for name := range commonIndex {
+		if name == "tags" {
+			suggestions = append(suggestions, Suggestion{Value: name, Type: "field", Label: "group tag"})
+		} else {
+			suggestions = append(suggestions, Suggestion{Value: name, Type: "field"})
+		}
+	}
+	for name, fd := range groupIndex {
+		if fd.Type != FieldRelation {
+			suggestions = append(suggestions, Suggestion{Value: name, Type: "field"})
+		}
+	}
+	suggestions = append(suggestions, Suggestion{Value: "meta.", Type: "field", Label: "group meta field"})
+	return suggestions
+}
+
 // dateFieldNames is the set of field names that hold date/time values.
 var dateFieldNames = map[string]bool{
 	"created": true,
@@ -251,6 +272,10 @@ func fieldSuggestions(entityType EntityType) []Suggestion {
 
 	// Relation count pseudo-fields (tags.count, notes.count, children.count, ...)
 	suggs = append(suggs, countFieldSuggestions(entityType)...)
+
+	// Recursive hierarchy traversal roots (valid on every entity type).
+	suggs = append(suggs, Suggestion{Value: "ancestors.name", Type: "field", Label: "any ancestor group"})
+	suggs = append(suggs, Suggestion{Value: "descendants.name", Type: "field", Label: "any descendant group"})
 
 	// Always add TEXT keyword as a special entry.
 	suggs = append(suggs, Suggestion{Value: "TEXT", Type: "keyword", Label: "full-text search"})
@@ -532,6 +557,8 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 				suggs = append(suggs, Suggestion{Value: "count", Type: "field", Label: "relation count"})
 			}
 			return suggs
+		case "ancestors", "descendants":
+			return recursiveSubFieldSuggestions()
 		default:
 			// Countable relation dot → count pseudo-field.
 			if _, ok := countableRelation(entityType, prev.Value); ok {

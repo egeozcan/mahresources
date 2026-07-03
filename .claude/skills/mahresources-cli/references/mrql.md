@@ -269,6 +269,30 @@ type = group AND children.parent.tags = "archived"
 
 All leaf fields support the same operators as direct access.
 
+## Recursive Hierarchy Traversal
+
+`parent.parent.name` requires knowing the depth. `ancestors.` / `descendants.`
+walk the group hierarchy transitively at any depth. Valid on **all** entity
+types (resource, note, group).
+
+```
+type = group AND ancestors.name = "Archive"        # groups anywhere under "Archive"
+type = group AND descendants.tags = "wip"           # groups with a WIP-tagged descendant
+type = resource AND ancestors.meta.region = "eu"    # resources whose owner is under an EU group
+type = resource AND descendants.category = 3        # (owner-based; see below)
+```
+
+- **Base group:** for a group, itself; for a resource/note, its `owner` group.
+- **Strict:** `ancestors`/`descendants` exclude the base group itself. A resource
+  directly in "Archive" does **not** match `ancestors.name = "Archive"`. To match
+  "in Archive or anywhere below it", combine with `owner`:
+  `owner.name = "Archive" OR ancestors.name = "Archive"`.
+- **Leaf:** exactly one group field — a scalar (`name`, `category`, `id`, …),
+  `tags`, or `meta.<key>`. No further chaining (`ancestors.parent.name` is invalid).
+- **Negation is existential:** `ancestors.category != 3` means *no ancestor has
+  category 3* (owner-less rows match). Not valid: `IN`, `IS EMPTY`/`IS NULL`,
+  `ORDER BY`, `GROUP BY`.
+
 ## Cross-Entity Queries
 
 Omit `type =` to fan query across all entity types (resources, notes, groups simultaneously).

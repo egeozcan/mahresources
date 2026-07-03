@@ -450,6 +450,21 @@ At the end of a traversal chain, you can access any group field:
 
 Traversal fields follow the same operators as regular fields. Traversal deeper than 8 parts is not supported.
 
+### Recursive Traversal: `ancestors.` / `descendants.`
+
+Multi-level traversal (`parent.parent.name`) requires you to know the depth. When you want to match at *any* depth, use the `ancestors.` and `descendants.` roots, which walk the group hierarchy transitively. They are valid on every entity type.
+
+```
+type = group AND ancestors.name = "Archive"        # groups anywhere below "Archive"
+type = group AND descendants.tags = "wip"           # groups with a WIP-tagged descendant, at any depth
+type = resource AND ancestors.meta.region = "eu"    # resources whose owner sits under an EU group
+```
+
+- **Base group.** For a group, itself; for a resource or note, its `owner` group.
+- **Strict.** `ancestors`/`descendants` exclude the base group. A resource stored directly in "Archive" does *not* match `ancestors.name = "Archive"` -- write `owner.name = "Archive" OR ancestors.name = "Archive"` for "in Archive or anywhere below it".
+- **One leaf field.** The predicate takes exactly one group field: a scalar (`name`, `category`, `id`, ...), `tags`, or `meta.<key>`. Chaining further (`ancestors.parent.name`) is not supported.
+- **Existential negation.** `ancestors.category != 3` means *no ancestor has category 3* (and owner-less rows, which have no ancestors, match). `IN`, `IS EMPTY`/`IS NULL`, `ORDER BY`, and `GROUP BY` are not supported on these roots.
+
 ## Cross-Entity Queries
 
 Omitting `type` causes MRQL to fan out the query across resources, notes, and groups simultaneously. Only common fields (`id`, `name`, `description`, `created`, `updated`, `tags`) are valid in cross-entity mode.

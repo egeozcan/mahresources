@@ -349,6 +349,13 @@ func validateNode(node Node, entityType EntityType) error {
 		// Reject traversal IN (multi-part chains like parent.name, owner.tags, etc.)
 		if len(n.Field.Parts) >= 2 {
 			prefix := n.Field.Parts[0].Value
+			if recursiveRoots[prefix] {
+				return &ValidationError{
+					Message: fmt.Sprintf("%s does not support IN operator; use = or != instead", n.Field.Name()),
+					Pos:     n.Field.Pos(),
+					Length:  len(n.Field.Name()),
+				}
+			}
 			if _, isRoot := traversalRoots[prefix]; isRoot {
 				return &ValidationError{
 					Message: fmt.Sprintf("%s does not support IN operator; use = or != instead", n.Field.Name()),
@@ -381,6 +388,15 @@ func validateNode(node Node, entityType EntityType) error {
 		// Count pseudo-fields do not support IS EMPTY / IS NULL.
 		if isCountField(n.Field, entityType) {
 			return countOperatorError(n.Field)
+		}
+		// Recursive roots (ancestors/descendants) support neither IS EMPTY nor
+		// IS NULL — they are existential predicates over a group set.
+		if len(n.Field.Parts) >= 2 && recursiveRoots[n.Field.Parts[0].Value] {
+			return &ValidationError{
+				Message: fmt.Sprintf("%s does not support IS EMPTY/IS NULL; compare a group field instead (e.g. %s = \"...\")", n.Field.Name(), n.Field.Name()),
+				Pos:     n.Field.Pos(),
+				Length:  len(n.Field.Name()),
+			}
 		}
 		// Reject traversal IS EMPTY (not translatable as a subfield check),
 		// but allow traversal IS NULL / IS NOT NULL (translatable via subquery).
@@ -467,7 +483,14 @@ func validateSortable(f *FieldExpr, entityType EntityType) error {
 		if isCountField(f, entityType) {
 			return nil
 		}
-		// Any traversal field (parent.X, children.X, owner.X, etc.) is not sortable
+		// Any traversal field (parent.X, children.X, owner.X, ancestors.X, etc.) is not sortable
+		if recursiveRoots[prefix] {
+			return &ValidationError{
+				Message: fmt.Sprintf("cannot ORDER BY %s: traversal fields are not sortable", f.Name()),
+				Pos:     f.Pos(),
+				Length:  len(f.Name()),
+			}
+		}
 		if _, isRoot := traversalRoots[prefix]; isRoot {
 			return &ValidationError{
 				Message: fmt.Sprintf("cannot ORDER BY %s: traversal fields are not sortable", f.Name()),
@@ -521,6 +544,9 @@ func validateValueType(field *FieldExpr, value Node, entityType EntityType) erro
 	// Traversal subfields — validated by the translator
 	if len(field.Parts) >= 2 {
 		prefix := field.Parts[0].Value
+		if recursiveRoots[prefix] {
+			return nil
+		}
 		if _, isRoot := traversalRoots[prefix]; isRoot {
 			return nil
 		}
@@ -624,6 +650,11 @@ func validateFieldExpr(f *FieldExpr, entityType EntityType) error {
 					}
 				}
 			}
+		}
+
+		// Recursive hierarchy traversal: ancestors.X / descendants.X.
+		if recursiveRoots[prefix] {
+			return validateRecursiveChain(f, entityType)
 		}
 
 		// Traversal chain: root.intermediate...leaf
@@ -745,6 +776,76 @@ func validateTraversalChain(f *FieldExpr, entityType EntityType) error {
 		}
 	}
 
+	return nil
+}
+
+// validateRecursiveChain validates an ancestors.X / descendants.X field
+// expression. Recursive roots are valid on all entity types and take exactly one
+// group-field leaf: a scalar field, tags, or a meta subpath. Further chaining
+// (ancestors.parent.name) is not supported.
+func validateRecursiveChain(f *FieldExpr, entityType EntityType) error {
+	root := f.Parts[0].Value
+
+	// Recursive roots resolve against the group hierarchy and need a concrete
+	// entity table (groups.id vs <table>.owner_id). Cross-entity mode, which
+	// only permits common fields, cannot express them.
+	if entityType == EntityUnspecified {
+		return &ValidationError{
+			Message: fmt.Sprintf("%s requires an explicit entity type (e.g. type = \"group\")", f.Name()),
+			Pos:     f.Pos(),
+			Length:  len(f.Name()),
+		}
+	}
+
+	if len(f.Parts) < 2 {
+		return &ValidationError{
+			Message: fmt.Sprintf("%s requires a group field (e.g. %s.category, %s.tags, %s.meta.key)", root, root, root, root),
+			Pos:     f.Pos(),
+			Length:  len(f.Name()),
+		}
+	}
+
+	// Meta subpath leaf: root.meta.key[.key...]
+	if f.Parts[1].Value == "meta" {
+		if len(f.Parts) < 3 {
+			return &ValidationError{
+				Message: fmt.Sprintf("%s.meta requires a key (e.g. %s.meta.mykey)", root, root),
+				Pos:     f.Pos(),
+				Length:  len(f.Name()),
+			}
+		}
+		return nil // meta segments validated by the translator
+	}
+
+	// Otherwise exactly root.leaf — no intermediate chaining.
+	if len(f.Parts) != 2 {
+		return &ValidationError{
+			Message: fmt.Sprintf("%s does not support multi-level chains; use %s.<group field> or %s.meta.<key>", root, root, root),
+			Pos:     f.Pos(),
+			Length:  len(f.Name()),
+		}
+	}
+
+	leaf := f.Parts[1].Value
+	subFd, ok := LookupField(EntityGroup, leaf)
+	if !ok && !IsCommonField(leaf) {
+		return &ValidationError{
+			Message: fmt.Sprintf("unknown field %q for %s; valid fields: name, description, tags, category, id, created, updated, meta.<key>", leaf, root),
+			Pos:     f.Parts[1].Pos,
+			Length:  len(leaf),
+		}
+	}
+	if !ok {
+		subFd, _ = LookupField(EntityGroup, leaf)
+	}
+	// Only tags is supported as a relation leaf; parent/children/resources/notes are not.
+	if subFd.Type == FieldRelation && leaf != "tags" {
+		return &ValidationError{
+			Message: fmt.Sprintf("%s is not supported; only scalar fields, tags, and meta are valid as %s leaf fields", f.Name(), root),
+			Pos:     f.Pos(),
+			Length:  len(f.Name()),
+		}
+	}
 	return nil
 }
 

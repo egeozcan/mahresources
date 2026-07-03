@@ -147,6 +147,7 @@ func buildMRQLGenerationPrompt(userPrompt string) string {
 		"GROUP BY requires explicit type. Use COUNT() for aggregate counts.",
 		"After GROUP BY aggregates, use HAVING with aggregate functions to filter buckets (e.g. GROUP BY hash COUNT() HAVING COUNT() > 1). HAVING never uses plain fields.",
 		"GROUP BY supports date buckets created.day, created.week, created.month, created.year (same for updated). Date buckets are valid only in GROUP BY and its ORDER BY, never in the filter expression.",
+		"Use ancestors.<group field> or descendants.<group field> for recursive hierarchy checks at any depth (e.g. ancestors.name = \"Archive\", descendants.tags = \"wip\", ancestors.meta.region = \"eu\"). ancestors/descendants are strict (they exclude the item's own group); combine with owner./parent. to include it. They take exactly one group leaf field, never IN, IS EMPTY, ORDER BY, or GROUP BY.",
 		"Add LIMIT 50 for broad queries unless the user asks for another small limit.",
 		"Example mappings use <placeholders>; replace them with user-provided values and never emit the placeholder tokens.",
 		"images with tag <tag> -> type = resource AND contentType ~ \"image/*\" AND tags = \"<tag>\" LIMIT 50",
@@ -158,6 +159,8 @@ func buildMRQLGenerationPrompt(userPrompt string) string {
 		"resources without notes -> type = resource AND notes IS EMPTY LIMIT 50",
 		"groups with at least <n> resources -> type = group AND resources.count >= <n> ORDER BY resources.count DESC LIMIT 50",
 		"untagged resources -> type = resource AND tags.count = 0 LIMIT 50",
+		"resources anywhere under a group named <name> -> type = resource AND ancestors.name = \"<name>\" LIMIT 50",
+		"groups containing a descendant tagged <tag> -> type = group AND descendants.tags = \"<tag>\" LIMIT 50",
 		"User request: " + userPrompt,
 	}, "\n")
 }

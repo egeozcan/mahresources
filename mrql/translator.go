@@ -429,6 +429,153 @@ func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *Co
 	return db, nil
 }
 
+// recursiveRoots are traversal roots that walk the group hierarchy transitively
+// (as opposed to the fixed-depth FK steps in traversalFieldNames).
+var recursiveRoots = map[string]bool{
+	"ancestors": true, "descendants": true,
+}
+
+// recursiveDepthGuard bounds the recursive CTE against cyclic owner_id data,
+// mirroring scope.go's scopeCTE limit.
+const recursiveDepthGuard = 50
+
+// translateRecursiveComparison handles ancestors.X / descendants.X predicates.
+//
+// It builds the set of matching groups M from the leaf comparison (always the
+// positive form; negation is applied at the outer IN/NOT IN), expands M
+// transitively through the group hierarchy via a recursive CTE, and tests the
+// entity's base-group column against the expanded set:
+//
+//   - ancestors.X   → matched groups = strict descendants of M (seed: children
+//     of M, walk down).
+//   - descendants.X → matched groups = strict ancestors of M (seed: parents of
+//     M, walk up).
+//
+// The base-group column is groups.id for a group entity, else <table>.owner_id.
+func (tc *translateContext) translateRecursiveComparison(db *gorm.DB, expr *ComparisonExpr) (*gorm.DB, error) {
+	parts := expr.Field.Parts
+	root := parts[0].Value // "ancestors" or "descendants"
+	isNegated := expr.Operator.Type == TokenNeq || expr.Operator.Type == TokenNotLike
+
+	mSub, mVal, err := tc.buildRecursiveMatchSubquery(expr)
+	if err != nil {
+		return nil, err
+	}
+
+	var setSub string
+	if root == "ancestors" {
+		// strict descendants of M
+		setSub = fmt.Sprintf(
+			"WITH RECURSIVE _mrql_anc(id, depth) AS ("+
+				"SELECT g.id, 0 FROM groups g WHERE g.owner_id IN (%s) "+
+				"UNION ALL "+
+				"SELECT c.id, a.depth + 1 FROM groups c JOIN _mrql_anc a ON c.owner_id = a.id WHERE a.depth < %d"+
+				") SELECT id FROM _mrql_anc",
+			mSub, recursiveDepthGuard)
+	} else {
+		// descendants: strict ancestors of M
+		setSub = fmt.Sprintf(
+			"WITH RECURSIVE _mrql_desc(id, depth) AS ("+
+				"SELECT g.owner_id, 0 FROM groups g WHERE g.id IN (%s) AND g.owner_id IS NOT NULL "+
+				"UNION ALL "+
+				"SELECT p.owner_id, d.depth + 1 FROM groups p JOIN _mrql_desc d ON p.id = d.id WHERE p.owner_id IS NOT NULL AND d.depth < %d"+
+				") SELECT id FROM _mrql_desc",
+			mSub, recursiveDepthGuard)
+	}
+
+	outerCol := tc.tableName + ".owner_id"
+	if tc.entityType == EntityGroup {
+		outerCol = tc.tableName + ".id"
+	}
+
+	inOp := "IN"
+	if isNegated {
+		inOp = "NOT IN"
+	}
+	sql := fmt.Sprintf("%s %s (%s)", outerCol, inOp, setSub)
+	if isNegated && tc.entityType != EntityGroup {
+		// Owner-less rows have no base group, so they have no ancestors/descendants
+		// and trivially satisfy a negated existential.
+		sql = "(" + sql + " OR " + tc.tableName + ".owner_id IS NULL)"
+	}
+	db = db.Where(sql, mVal)
+	return db, nil
+}
+
+// buildRecursiveMatchSubquery builds the "matching groups" subquery M for a
+// recursive comparison, always as the positive form of the operator (negation is
+// applied by the caller at the outer IN/NOT IN). It returns a
+// "SELECT <group id> FROM ..." fragment with a single ? placeholder and the
+// single bind value. All matching groups are drawn from the groups table via the
+// alias "gm".
+func (tc *translateContext) buildRecursiveMatchSubquery(expr *ComparisonExpr) (string, interface{}, error) {
+	parts := expr.Field.Parts
+	posOp := tc.flipOperator(expr.Operator) // flips !=/!~ to =/~; positive operators unchanged
+
+	// Meta subpath leaf: ancestors.meta.a.b.c
+	if len(parts) >= 3 && parts[1].Value == "meta" {
+		segments := make([]string, 0, len(parts)-2)
+		for i := 2; i < len(parts); i++ {
+			segments = append(segments, parts[i].Value)
+		}
+		if err := validateMetaSegments(segments); err != nil {
+			return "", nil, &TranslateError{Message: err.Error(), Pos: parts[2].Pos}
+		}
+		metaFd := FieldDef{Name: "meta." + strings.Join(segments, "."), Type: FieldMeta, Column: "meta." + strings.Join(segments, ".")}
+		val, err := tc.resolveValue(expr.Value, metaFd)
+		if err != nil {
+			return "", nil, err
+		}
+		isNumericVal := isNumericValue(val)
+		var jsonExpr, numericFilter string
+		if isNumericVal {
+			jsonExpr = tc.metaNumericExprOn("gm", segments)
+			numericFilter = tc.metaTypeFilterOn("gm", segments)
+		} else {
+			jsonExpr = tc.metaJsonExprOn("gm", segments)
+		}
+		textExpr := tc.metaJsonTextExprOn("gm", segments)
+		clause, clauseVal := tc.buildMetaClause(jsonExpr, textExpr, posOp, val, isNumericVal)
+		if numericFilter != "" {
+			clause = numericFilter + " AND " + clause
+		}
+		return "SELECT gm.id FROM groups gm WHERE " + clause, clauseVal, nil
+	}
+
+	// Single group-field leaf (scalar or tags).
+	leaf := parts[len(parts)-1].Value
+	subFd, ok := LookupField(EntityGroup, leaf)
+	if !ok {
+		if !IsCommonField(leaf) {
+			return "", nil, &TranslateError{Message: fmt.Sprintf("unknown field %q for %s", leaf, parts[0].Value), Pos: parts[len(parts)-1].Pos}
+		}
+		subFd, _ = LookupField(EntityGroup, leaf)
+	}
+
+	val, err := tc.resolveValue(expr.Value, subFd)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// Tags leaf: M = groups that carry the (positively) matching tag.
+	if subFd.Type == FieldRelation && subFd.Column == "tags" {
+		var tagClause string
+		var tagVal interface{}
+		if posOp.Type == TokenLike {
+			tagClause = "LOWER(t.name) " + tc.likeOperator() + " LOWER(?) ESCAPE '\\'"
+			tagVal = convertMRQLWildcards(fmt.Sprint(val))
+		} else {
+			tagClause = "LOWER(t.name) = LOWER(?)"
+			tagVal = val
+		}
+		return "SELECT gt.group_id FROM group_tags gt JOIN tags t ON t.id = gt.tag_id WHERE " + tagClause, tagVal, nil
+	}
+
+	// Scalar leaf.
+	clause, clauseVal := tc.buildScalarClause("gm."+subFd.Column, posOp, val, subFd)
+	return "SELECT gm.id FROM groups gm WHERE " + clause, clauseVal, nil
+}
+
 // buildMetaClause builds a WHERE clause for a meta JSON comparison.
 // It receives pre-built JSON and text expressions so it works with both
 // single keys and subpaths.
@@ -572,6 +719,15 @@ func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *Compariso
 			}
 			db = db.Where(countExpr+" "+tc.sqlOperator(expr.Operator)+" ?", val)
 			return db, nil
+		}
+	}
+
+	// Handle recursive hierarchy traversal: ancestors.X / descendants.X.
+	// Checked before the FK-chain routing since these are distinct roots.
+	if len(expr.Field.Parts) >= 2 {
+		root := expr.Field.Parts[0].Value
+		if recursiveRoots[root] {
+			return tc.translateRecursiveComparison(db, expr)
 		}
 	}
 

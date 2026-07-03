@@ -172,6 +172,25 @@ type = note AND owner.children.name ~ "Sprint*"
 
 Valid leaf fields after traversal: group scalars (`name`, `description`, `category`, `id`, `created`, `updated`), relations (`tags`, `parent`, `children`), and meta (`meta.<key>`).
 
+### Recursive Traversal — `ancestors.` / `descendants.`
+
+Walk the group hierarchy transitively at any depth (no need to know how many
+`parent.` steps to write). Valid on every entity type.
+
+```
+type = group AND ancestors.name = "Archive"        # groups anywhere below "Archive"
+type = group AND descendants.tags = "wip"           # groups with a WIP-tagged descendant
+type = resource AND ancestors.meta.region = "eu"    # resources under an EU group (via owner)
+```
+
+- Base group: the group itself, or (for resources/notes) the `owner` group.
+- **Strict** — excludes the base group. Combine with `owner`/`parent` to include
+  it: `owner.name = "Archive" OR ancestors.name = "Archive"`.
+- Leaf is exactly one group field: a scalar, `tags`, or `meta.<key>`. No further
+  chaining.
+- Negation is existential: `ancestors.category != 3` = *no ancestor has category
+  3*. Not supported: `IN`, `IS EMPTY`/`IS NULL`, `ORDER BY`, `GROUP BY`.
+
 ## Rendering
 
 The `--render` CLI flag (and `render=1` query parameter on `POST /v1/mrql`) requests server-side template rendering via `CustomMRQLResult` templates defined on Category, Resource Category, or Note Type. Matching entities include a `renderedHTML` field in the response.

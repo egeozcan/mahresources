@@ -148,6 +148,9 @@ func TestMRQLGeneratorPromptIncludesCompactSyntaxGuide(t *testing.T) {
 		"duplicate resources by hash -> type = resource GROUP BY hash COUNT() HAVING COUNT() > 1 ORDER BY count DESC LIMIT 50",
 		"notes per month -> type = note GROUP BY created.month COUNT() ORDER BY created.month ASC LIMIT 50",
 		"untagged resources -> type = resource AND tags.count = 0 LIMIT 50",
+		`Use ancestors.<group field> or descendants.<group field> for recursive hierarchy checks at any depth`,
+		`resources anywhere under a group named <name> -> type = resource AND ancestors.name = "<name>" LIMIT 50`,
+		`groups containing a descendant tagged <tag> -> type = group AND descendants.tags = "<tag>" LIMIT 50`,
 	} {
 		if !strings.Contains(provider.seenPrompt, want) {
 			t.Fatalf("prompt missing %q in:\n%s", want, provider.seenPrompt)
