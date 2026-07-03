@@ -543,13 +543,11 @@ func (tc *translateContext) buildRecursiveMatchSubquery(expr *ComparisonExpr) (s
 	}
 
 	// Single group-field leaf (scalar or tags).
+	// LookupField checks common fields first, so a miss covers those too.
 	leaf := parts[len(parts)-1].Value
 	subFd, ok := LookupField(EntityGroup, leaf)
 	if !ok {
-		if !IsCommonField(leaf) {
-			return "", nil, &TranslateError{Message: fmt.Sprintf("unknown field %q for %s", leaf, parts[0].Value), Pos: parts[len(parts)-1].Pos}
-		}
-		subFd, _ = LookupField(EntityGroup, leaf)
+		return "", nil, &TranslateError{Message: fmt.Sprintf("unknown field %q for %s", leaf, parts[0].Value), Pos: parts[len(parts)-1].Pos}
 	}
 
 	val, err := tc.resolveValue(expr.Value, subFd)

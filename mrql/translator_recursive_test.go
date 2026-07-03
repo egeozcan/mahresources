@@ -204,6 +204,8 @@ func TestRecursiveValidationErrors(t *testing.T) {
 		{"relation leaf (resources)", `descendants.resources = "x"`, EntityGroup},
 		{"meta without key", `ancestors.meta = "x"`, EntityGroup},
 		{"ORDER BY recursive", `type = "group" AND name ~ "a" ORDER BY ancestors.name`, EntityGroup},
+		{"GROUP BY recursive (aggregated)", `type = "group" GROUP BY ancestors.name COUNT()`, EntityGroup},
+		{"GROUP BY recursive (bucketed)", `type = "group" GROUP BY descendants.name`, EntityGroup},
 		{"cross-entity (no type)", `ancestors.name = "x"`, EntityUnspecified},
 	}
 	for _, tc := range cases {
@@ -253,6 +255,14 @@ func TestRecursiveCompletion(t *testing.T) {
 		if !hasSuggestion(suggestions, "descendants.name") {
 			t.Errorf("%q: expected descendants.name suggestion, got %v", prefix, suggestions)
 		}
+	}
+
+	// Cross-entity mode (no type filter) rejects recursive roots, so the
+	// completer must not offer them there.
+	crossEntity := `name ~ "a" AND `
+	crossSuggestions := Complete(crossEntity, len(crossEntity))
+	if hasSuggestion(crossSuggestions, "ancestors.name") || hasSuggestion(crossSuggestions, "descendants.name") {
+		t.Errorf("cross-entity: recursive roots should not be suggested, got %v", crossSuggestions)
 	}
 
 	// After "ancestors." → group leaf fields (name, tags, category, meta.), no chaining.

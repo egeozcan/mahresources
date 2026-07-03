@@ -273,9 +273,12 @@ func fieldSuggestions(entityType EntityType) []Suggestion {
 	// Relation count pseudo-fields (tags.count, notes.count, children.count, ...)
 	suggs = append(suggs, countFieldSuggestions(entityType)...)
 
-	// Recursive hierarchy traversal roots (valid on every entity type).
-	suggs = append(suggs, Suggestion{Value: "ancestors.name", Type: "field", Label: "any ancestor group"})
-	suggs = append(suggs, Suggestion{Value: "descendants.name", Type: "field", Label: "any descendant group"})
+	// Recursive hierarchy traversal roots (valid on every explicit entity type,
+	// but rejected in cross-entity mode, so only suggest once a type is known).
+	if entityType != EntityUnspecified {
+		suggs = append(suggs, Suggestion{Value: "ancestors.name", Type: "field", Label: "any ancestor group"})
+		suggs = append(suggs, Suggestion{Value: "descendants.name", Type: "field", Label: "any descendant group"})
+	}
 
 	// Always add TEXT keyword as a special entry.
 	suggs = append(suggs, Suggestion{Value: "TEXT", Type: "keyword", Label: "full-text search"})

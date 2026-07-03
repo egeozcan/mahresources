@@ -827,16 +827,14 @@ func validateRecursiveChain(f *FieldExpr, entityType EntityType) error {
 	}
 
 	leaf := f.Parts[1].Value
+	// LookupField checks common fields first, so a miss covers those too.
 	subFd, ok := LookupField(EntityGroup, leaf)
-	if !ok && !IsCommonField(leaf) {
+	if !ok {
 		return &ValidationError{
 			Message: fmt.Sprintf("unknown field %q for %s; valid fields: name, description, tags, category, id, created, updated, meta.<key>", leaf, root),
 			Pos:     f.Parts[1].Pos,
 			Length:  len(leaf),
 		}
-	}
-	if !ok {
-		subFd, _ = LookupField(EntityGroup, leaf)
 	}
 	// Only tags is supported as a relation leaf; parent/children/resources/notes are not.
 	if subFd.Type == FieldRelation && leaf != "tags" {
@@ -879,6 +877,16 @@ func validateGroupBy(gb *GroupByClause, entityType EntityType, orderBy []OrderBy
 				Message: "cannot GROUP BY type: it is a filter pseudo-field, not a data column",
 				Pos:     f.Pos(),
 				Length:  len("type"),
+			}
+		}
+
+		// Reject recursive traversal roots (ancestors/descendants) — they are
+		// existential filter predicates, not groupable columns.
+		if len(f.Parts) >= 2 && recursiveRoots[f.Parts[0].Value] {
+			return &ValidationError{
+				Message: fmt.Sprintf("cannot GROUP BY %s: ancestors/descendants are filter-only and not groupable", f.Name()),
+				Pos:     f.Pos(),
+				Length:  len(f.Name()),
 			}
 		}
 
