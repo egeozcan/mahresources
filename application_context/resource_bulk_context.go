@@ -10,6 +10,7 @@ import (
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"mahresources/mrql"
 	"mahresources/server/interfaces"
 	"path"
 	"strings"
@@ -599,6 +600,13 @@ func (ctx *MahresourcesContext) GetPopularResourceTags(query *query_models.Resou
 		Group("t.id, t.name").
 		Order("count DESC").
 		Limit(20)
+
+	// The tag sidebar must reflect the same MRQL filter as the list, or it
+	// silently lies about which tags are present in the filtered set.
+	db, err := ctx.applyMRQLFilter(db, mrql.EntityResource, query.MRQL)
+	if err != nil {
+		return nil, err
+	}
 
 	return res, db.Scan(&res).Error
 }

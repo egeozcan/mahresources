@@ -396,6 +396,8 @@ components:
                     items:
                         type: integer
                     type: array
+                MRQL:
+                    type: string
                 MetaQuery:
                     items:
                         $ref: '#/components/schemas/ColumnMetaPartial'
@@ -852,6 +854,8 @@ components:
                     items:
                         type: integer
                     type: array
+                MRQL:
+                    type: string
                 MetaQuery:
                     items:
                         $ref: '#/components/schemas/ColumnMetaPartial'
@@ -1436,6 +1440,8 @@ components:
                     type: array
                 IncludeSubgroups:
                     type: boolean
+                MRQL:
+                    type: string
                 MaxHeight:
                     type: integer
                 MaxResults:
@@ -2755,6 +2761,10 @@ paths:
                         type: integer
                     type: array
                   style: form
+                - in: query
+                  name: MRQL
+                  schema:
+                    type: string
                 - description: Page number for pagination
                   in: query
                   name: page
@@ -3053,6 +3063,10 @@ paths:
                         type: integer
                     type: array
                   style: form
+                - in: query
+                  name: MRQL
+                  schema:
+                    type: string
                 - description: 'Time granularity: yearly, monthly, or weekly (default: monthly)'
                   in: query
                   name: granularity
@@ -4334,6 +4348,10 @@ paths:
                   schema:
                     nullable: true
                     type: boolean
+                - in: query
+                  name: MRQL
+                  schema:
+                    type: string
                 - description: Page number for pagination
                   in: query
                   name: page
@@ -4559,6 +4577,10 @@ paths:
                   schema:
                     nullable: true
                     type: boolean
+                - in: query
+                  name: MRQL
+                  schema:
+                    type: string
                 - description: 'Time granularity: yearly, monthly, or weekly (default: monthly)'
                   in: query
                   name: granularity
@@ -6023,6 +6045,10 @@ paths:
                   name: IncludeSubgroups
                   schema:
                     type: boolean
+                - in: query
+                  name: MRQL
+                  schema:
+                    type: string
                 - description: Page number for pagination
                   in: query
                   name: page
@@ -6381,6 +6407,10 @@ paths:
                   name: IncludeSubgroups
                   schema:
                     type: boolean
+                - in: query
+                  name: MRQL
+                  schema:
+                    type: string
                 - description: 'Time granularity: yearly, monthly, or weekly (default: monthly)'
                   in: query
                   name: granularity

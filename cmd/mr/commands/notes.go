@@ -379,6 +379,7 @@ func NewNotesCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comma
 
 func newNotesListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	var name, description, tagsStr, groupsStr, createdBefore, createdAfter string
+	var mrqlFilter string
 	var ownerID, noteTypeID uint
 
 	help := helptext.Load(notesHelpFS, "notes_help/notes_list.md")
@@ -427,6 +428,9 @@ func newNotesListCmd(c *client.Client, opts *output.Options, page *int) *cobra.C
 			if createdAfter != "" {
 				q.Set("createdAfter", createdAfter)
 			}
+			if mrqlFilter != "" {
+				q.Set("mrql", mrqlFilter)
+			}
 
 			var raw json.RawMessage
 			if err := c.Get("/v1/notes", q, &raw); err != nil {
@@ -472,6 +476,7 @@ func newNotesListCmd(c *client.Client, opts *output.Options, page *int) *cobra.C
 	cmd.Flags().UintVar(&noteTypeID, "note-type-id", 0, "Filter by note type ID")
 	cmd.Flags().StringVar(&createdBefore, "created-before", "", "Filter by creation date (before)")
 	cmd.Flags().StringVar(&createdAfter, "created-after", "", "Filter by creation date (after)")
+	cmd.Flags().StringVar(&mrqlFilter, "mrql", "", "MRQL filter expression (type = \"note\" implied), e.g. 'tags = \"todo\" AND created > -7d'")
 
 	return cmd
 }

@@ -42,6 +42,11 @@ export function globalSearch() {
         requestAborter: null,
         debounceTimer: null,
         _liveRegion: null,
+        // Package 5b: when the typed query is a valid MRQL query, a pinned
+        // "Run MRQL query" row is shown above the search results. It derives
+        // from validation state, never from the /v1/search cache.
+        mrqlRow: null,
+        _mrqlTimer: null,
 
         typeIcons: {
             resource: '\u{1F4C4}',
@@ -52,7 +57,9 @@ export function globalSearch() {
             resourceCategory: '\u{1F4C2}',
             query: '\u{1F50D}',
             relationType: '\u{1F517}',
-            noteType: '\u{1F4CB}'
+            noteType: '\u{1F4CB}',
+            mrqlQuery: '\u{1F4CA}',
+            mrql: '\u{25B6}\u{FE0F}'
         },
 
         typeLabels: {
@@ -64,7 +71,17 @@ export function globalSearch() {
             resourceCategory: 'Resource Category',
             query: 'Query',
             relationType: 'Relation Type',
-            noteType: 'Note Type'
+            noteType: 'Note Type',
+            mrqlQuery: 'Saved Query',
+            mrql: 'MRQL'
+        },
+
+        // navResults is the navigable listbox contents: the pinned MRQL action
+        // row (when present) followed by the search results. Rendering and
+        // arrow-key navigation operate over this; the search cache holds only
+        // `results`.
+        get navResults() {
+            return this.mrqlRow ? [this.mrqlRow, ...this.results] : this.results;
         },
 
         init() {
@@ -100,6 +117,9 @@ export function globalSearch() {
             if (this.debounceTimer) {
                 clearTimeout(this.debounceTimer);
             }
+            if (this._mrqlTimer) {
+                clearTimeout(this._mrqlTimer);
+            }
             if (this.requestAborter) {
                 this.requestAborter();
                 this.requestAborter = null;
@@ -111,6 +131,7 @@ export function globalSearch() {
             if (this.isOpen) {
                 this.query = '';
                 this.results = [];
+                this.mrqlRow = null;
                 this.selectedIndex = 0;
             }
         },
@@ -119,6 +140,7 @@ export function globalSearch() {
             this.isOpen = false;
             this.query = '';
             this.results = [];
+            this.mrqlRow = null;
         },
 
         search() {
@@ -132,6 +154,9 @@ export function globalSearch() {
             }
 
             const searchTerm = this.query.trim();
+
+            // Package 5b: evaluate the MRQL interpretation alongside the search.
+            this.evaluateMRQL(searchTerm);
 
             // Require at least 2 characters to search
             if (searchTerm.length < 2) {
@@ -196,26 +221,29 @@ export function globalSearch() {
         },
 
         navigateUp() {
-            if (this.results.length === 0) return;
+            const items = this.navResults;
+            if (items.length === 0) return;
             this.selectedIndex = this.selectedIndex === 0
-                ? this.results.length - 1
+                ? items.length - 1
                 : this.selectedIndex - 1;
             this.scrollToSelected();
             this.announceSelectedResult();
         },
 
         navigateDown() {
-            if (this.results.length === 0) return;
-            this.selectedIndex = (this.selectedIndex + 1) % this.results.length;
+            const items = this.navResults;
+            if (items.length === 0) return;
+            this.selectedIndex = (this.selectedIndex + 1) % items.length;
             this.scrollToSelected();
             this.announceSelectedResult();
         },
 
         announceSelectedResult() {
-            const result = this.results[this.selectedIndex];
+            const items = this.navResults;
+            const result = items[this.selectedIndex];
             if (result) {
                 const typeLabel = this.getLabel(result.type);
-                this.announce(`${result.name}, ${typeLabel}, ${this.selectedIndex + 1} of ${this.results.length}`);
+                this.announce(`${result.name}, ${typeLabel}, ${this.selectedIndex + 1} of ${items.length}`);
             }
         },
 
@@ -230,10 +258,65 @@ export function globalSearch() {
         },
 
         selectResult() {
-            const result = this.results[this.selectedIndex];
+            const result = this.navResults[this.selectedIndex];
             if (result) {
                 this.navigateTo(result.url);
             }
+        },
+
+        // evaluateMRQL gates on a cheap heuristic (so ordinary search terms
+        // never trigger a request), then debounced-validates the full grammar.
+        // Only a valid query pins the "Run MRQL query" row; anything else clears
+        // it silently (no error noise in the search modal).
+        evaluateMRQL(term) {
+            if (this._mrqlTimer) {
+                clearTimeout(this._mrqlTimer);
+                this._mrqlTimer = null;
+            }
+            if (!this.looksLikeMRQL(term)) {
+                this.mrqlRow = null;
+                return;
+            }
+            this._mrqlTimer = setTimeout(() => {
+                fetch('/v1/mrql/validate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: term }),
+                })
+                    .then((resp) => (resp.ok ? resp.json() : null))
+                    .then((data) => {
+                        // Ignore stale responses (the query moved on).
+                        if (this.query.trim() !== term) return;
+                        if (data && data.valid) {
+                            const wasAbsent = !this.mrqlRow;
+                            this.mrqlRow = {
+                                type: 'mrql',
+                                id: 0,
+                                name: 'Run MRQL query',
+                                description: term,
+                                url: '/mrql?q=' + encodeURIComponent(term),
+                            };
+                            if (wasAbsent) {
+                                this.announce('Run MRQL query action available. It is the first result.');
+                            }
+                        } else {
+                            this.mrqlRow = null;
+                        }
+                    })
+                    .catch(() => {
+                        // Network/parse error — leave no MRQL row.
+                    });
+            }, 200);
+        },
+
+        // looksLikeMRQL is the pre-network gate: the input plausibly is a query
+        // (comparison operator, an IS/IN/EMPTY/SIMILAR keyword, or a leading
+        // `type `). Ordinary search terms never match.
+        looksLikeMRQL(term) {
+            if (!term || term.length < 2) return false;
+            return /[=~<>]/.test(term)
+                || /\b(IS|IN|EMPTY|SIMILAR)\b/i.test(term)
+                || /^type\s/i.test(term);
         },
 
         navigateTo(url) {

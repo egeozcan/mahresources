@@ -7,6 +7,7 @@ import (
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
+	"mahresources/mrql"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/template_entities"
 	"net/http"
@@ -34,16 +35,35 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 			return addErrContext(err, baseContext)
 		}
 
-		resources, err := context.GetResources(int(offset), resultsPerPage, &query)
-
-		if err != nil {
-			return addErrContext(err, baseContext)
+		// Package 5 filter bar: fail closed on a bad MRQL expression — render the
+		// list with a banner and zero results, never the unfiltered list (bulk
+		// actions act on "everything that matched"; a dropped filter is dangerous).
+		mrqlError := ""
+		if fe := context.CheckMRQLFilter(mrql.EntityResource, query.MRQL); fe != nil {
+			mrqlError = fe.Error()
 		}
 
-		resourceCount, err := context.GetResourceCount(&query)
+		var resources []models.Resource
+		var resourceCount int64
+		var popularTags []application_context.PopularTag
+		if mrqlError == "" {
+			resources, err = context.GetResources(int(offset), resultsPerPage, &query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
 
-		if err != nil {
-			return addErrContext(err, baseContext)
+			resourceCount, err = context.GetResourceCount(&query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
+
+			popularTags, err = context.GetPopularResourceTags(&query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
+		} else {
+			resources = []models.Resource{}
+			popularTags = []application_context.PopularTag{}
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), resourceCount, resultsPerPage, int(page))
@@ -78,16 +98,11 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 			}
 		}
 
-		popularTags, err := context.GetPopularResourceTags(&query)
-
-		if err != nil {
-			return addErrContext(err, baseContext)
-		}
-
 		return pongo2.Context{
 			"pageTitle":                "Resources",
 			"resources":                resources,
 			"pagination":               pagination,
+			"mrqlError":                mrqlError,
 			"tags":                     tags,
 			"popularTags":              popularTags,
 			"notes":                    notes,
@@ -232,14 +247,24 @@ func ResourceTimelineContextProvider(context *application_context.MahresourcesCo
 			}
 		}
 
-		popularTags, err := context.GetPopularResourceTags(&query)
+		mrqlError := ""
+		if fe := context.CheckMRQLFilter(mrql.EntityResource, query.MRQL); fe != nil {
+			mrqlError = fe.Error()
+		}
 
-		if err != nil {
-			return addErrContext(err, baseContext)
+		var popularTags []application_context.PopularTag
+		if mrqlError == "" {
+			popularTags, err = context.GetPopularResourceTags(&query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
+		} else {
+			popularTags = []application_context.PopularTag{}
 		}
 
 		return pongo2.Context{
 			"pageTitle":                "Resources - Timeline",
+			"mrqlError":                mrqlError,
 			"tags":                     tags,
 			"popularTags":              popularTags,
 			"notes":                    notes,

@@ -1,4 +1,6 @@
 <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter resources">
+    {# Preserve the package 5 MRQL filter bar value when refining sidebar filters. #}
+    {% if parsedQuery.MRQL %}<input type="hidden" name="mrql" value="{{ parsedQuery.MRQL }}">{% endif %}
     {% if popularTags %}
     <div class="sidebar-group">
         {% include "/partials/sideTitle.tpl" with title="Tags" %}

@@ -290,10 +290,17 @@ export function mrqlEditor() {
       container._cmView = this.view;
 
       // Load query from URL if present, and auto-execute
-      const urlQuery = new URLSearchParams(window.location.search).get('q');
+      const params = new URLSearchParams(window.location.search);
+      const urlQuery = params.get('q');
+      const savedId = params.get('saved');
       if (urlQuery) {
         this.setQuery(urlQuery);
         this.execute({ pushState: false });
+      } else if (savedId) {
+        // Package 5c: ?saved=<id> loads a saved query (found via global search).
+        // loadSavedQuery handles parameterized queries (focuses the first empty
+        // param input instead of auto-running).
+        this.loadSavedQueryById(savedId);
       }
 
       // Handle back/forward navigation
@@ -611,6 +618,19 @@ export function mrqlEditor() {
         if (resp.ok) {
           this.savedQueries = await resp.json();
           if (!Array.isArray(this.savedQueries)) this.savedQueries = [];
+        }
+      } catch (_) { /* ignore */ }
+    },
+
+    // loadSavedQueryById fetches a single saved query by id and loads it,
+    // used for the ?saved=<id> deep link from global search (package 5c).
+    async loadSavedQueryById(id) {
+      try {
+        const resp = await fetch('/v1/mrql/saved?id=' + encodeURIComponent(id));
+        if (!resp.ok) return;
+        const q = await resp.json();
+        if (q && (q.query || q.Query)) {
+          this.loadSavedQuery(q);
         }
       } catch (_) { /* ignore */ }
     },

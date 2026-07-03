@@ -82,6 +82,10 @@ type ResourceSearchQuery struct {
 	// IncludeSubgroups widens the OwnerId filter to the whole group subtree
 	// (owner and all descendant subgroups, recursively). No-op when OwnerId is 0.
 	IncludeSubgroups bool
+	// MRQL is an optional MRQL filter expression (package 5 list-page bar). It is
+	// parsed with mrql.ParseFilter (WHERE-clause grammar only, type = "resource"
+	// implied) and composed as an id-membership predicate. Empty = no MRQL filter.
+	MRQL string
 }
 
 type ResourceThumbnailQuery struct {

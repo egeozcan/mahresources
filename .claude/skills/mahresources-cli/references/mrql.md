@@ -513,6 +513,22 @@ Returns: `{query, total, results: [{id, type, name, score, description, url, ext
 
 Supports FTS5 syntax: phrase queries (`"exact phrase"`), boolean operators, prefix matching (`invoice*`).
 
+## Filtering List Commands with `--mrql`
+
+`mr resources list`, `mr notes list`, and `mr groups list` accept `--mrql "<expr>"`, a bare filter expression whose entity type is implied by the command. It composes with the other list flags and paginates like any list command.
+
+```bash
+mr resources list --mrql 'tags = "vacation" AND created > -30d'
+mr notes list --mrql 'tags = "todo" AND updated > -7d'
+mr groups list --mrql 'descendants.category = "Archive"'
+```
+
+The `--mrql` grammar is the WHERE clause only: `ORDER BY`, `LIMIT`, `OFFSET`, `GROUP BY`, `SCOPE`, `$name` parameters, and an explicit `type` field are rejected. `SIMILAR TO resource(N)` (predicate form) is allowed. An invalid expression errors.
+
+Over HTTP the same grammar is the `mrql` query parameter on the list endpoints `GET /v1/resources`, `GET /v1/notes`, and `GET /v1/groups`; an invalid expression returns HTTP 400 with a positioned error.
+
+In the web UI the same expression grammar powers the list-page filter bar and the `Ctrl/Cmd+K` **Run MRQL query** row (valid queries only), and saved MRQL queries are findable by name in global search.
+
 ---
 
 ## Saved MRQL Queries vs. Saved SQL Queries

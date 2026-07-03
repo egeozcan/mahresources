@@ -55,8 +55,8 @@
                             aria-autocomplete="list"
                             aria-controls="search-results"
                             aria-label="Search"
-                            :aria-expanded="results.length > 0"
-                            :aria-activedescendant="results.length > 0 ? 'search-result-' + selectedIndex : null"
+                            :aria-expanded="navResults.length > 0"
+                            :aria-activedescendant="navResults.length > 0 ? 'search-result-' + selectedIndex : null"
                         >
                         <template x-if="loading">
                             <svg class="w-5 h-5 text-stone-400 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
@@ -66,7 +66,7 @@
                         </template>
                         <template x-if="query.length > 0 && !loading">
                             <button
-                                @click="query = ''; results = [];"
+                                @click="query = ''; results = []; mrqlRow = null;"
                                 class="p-1 text-stone-400 hover:text-stone-600 rounded-md hover:bg-stone-100 transition-colors"
                                 aria-label="Clear search"
                                 type="button"
@@ -83,9 +83,9 @@
                         id="search-results"
                         role="listbox"
                         class="max-h-[60vh] overflow-y-auto overscroll-contain"
-                        x-show="results.length > 0"
+                        x-show="navResults.length > 0"
                     >
-                        <template x-for="(result, index) in results" :key="result.type + '-' + result.id">
+                        <template x-for="(result, index) in navResults" :key="result.type + '-' + result.id">
                             <li
                                 :id="'search-result-' + index"
                                 @click="navigateTo(result.url)"
@@ -138,7 +138,7 @@
                     </ul>
 
                     <div
-                        x-show="query.trim().length >= 2 && results.length === 0 && !loading"
+                        x-show="query.trim().length >= 2 && navResults.length === 0 && !loading"
                         class="px-4 py-12 text-center"
                     >
                         <svg class="w-12 h-12 text-stone-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -149,7 +149,7 @@
                     </div>
 
                     <div
-                        x-show="query.length === 0 && results.length === 0"
+                        x-show="query.length === 0 && navResults.length === 0"
                         class="px-4 py-12 text-center"
                     >
                         <svg class="w-12 h-12 text-stone-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -5,11 +5,13 @@
 {% endblock %}
 
 {% block body %}
+    {% include "/partials/mrqlBar.tpl" with entity="note" %}
     {% include "/partials/timeline.tpl" with entityApiUrl="/v1/notes" entityType="notes" entityDefaultView="/notes" %}
 {% endblock %}
 
 {% block sidebar %}
     <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter notes">
+        {% if parsedQuery.MRQL %}<input type="hidden" name="mrql" value="{{ parsedQuery.MRQL }}">{% endif %}
         {% if popularTags %}
         <div class="sidebar-group">
             {% include "/partials/sideTitle.tpl" with title="Tags" %}

@@ -449,6 +449,7 @@ func NewGroupsCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comm
 
 func newGroupsListCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
 	var name, description, tagsStr, groupsStr, urlStr, createdBefore, createdAfter string
+	var mrqlFilter string
 	var ownerID, categoryID uint
 
 	help := helptext.Load(groupsHelpFS, "groups_help/groups_list.md")
@@ -500,6 +501,9 @@ func newGroupsListCmd(c *client.Client, opts *output.Options, page *int) *cobra.
 			if createdAfter != "" {
 				q.Set("createdAfter", createdAfter)
 			}
+			if mrqlFilter != "" {
+				q.Set("mrql", mrqlFilter)
+			}
 
 			var raw json.RawMessage
 			if err := c.Get("/v1/groups", q, &raw); err != nil {
@@ -546,6 +550,7 @@ func newGroupsListCmd(c *client.Client, opts *output.Options, page *int) *cobra.
 	cmd.Flags().StringVar(&urlStr, "url", "", "Filter by URL")
 	cmd.Flags().StringVar(&createdBefore, "created-before", "", "Filter by creation date (before)")
 	cmd.Flags().StringVar(&createdAfter, "created-after", "", "Filter by creation date (after)")
+	cmd.Flags().StringVar(&mrqlFilter, "mrql", "", "MRQL filter expression (type = \"group\" implied), e.g. 'descendants.category = \"Archive\"'")
 
 	return cmd
 }

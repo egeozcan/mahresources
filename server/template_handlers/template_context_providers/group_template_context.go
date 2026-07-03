@@ -8,6 +8,7 @@ import (
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
+	"mahresources/mrql"
 	"mahresources/server/http_utils"
 	"mahresources/server/interfaces"
 	"mahresources/server/template_handlers/template_entities"
@@ -29,16 +30,33 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 			return addErrContext(err, baseContext)
 		}
 
-		groups, err := context.GetGroups(int(offset), resultsPerPage, &query)
-
-		if err != nil {
-			return addErrContext(err, baseContext)
+		// Package 5 filter bar: fail closed on a bad MRQL expression.
+		mrqlError := ""
+		if fe := context.CheckMRQLFilter(mrql.EntityGroup, query.MRQL); fe != nil {
+			mrqlError = fe.Error()
 		}
 
-		groupsCount, err := context.GetGroupsCount(&query)
+		var groups []models.Group
+		var groupsCount int64
+		var popularTags []application_context.PopularTag
+		if mrqlError == "" {
+			groups, err = context.GetGroups(int(offset), resultsPerPage, &query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
 
-		if err != nil {
-			return addErrContext(err, baseContext)
+			groupsCount, err = context.GetGroupsCount(&query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
+
+			popularTags, err = context.GetPopularGroupTags(&query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
+		} else {
+			groups = []models.Group{}
+			popularTags = []application_context.PopularTag{}
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), groupsCount, resultsPerPage, int(page))
@@ -83,12 +101,6 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 			return addErrContext(err, baseContext)
 		}
 
-		popularTags, err := context.GetPopularGroupTags(&query)
-
-		if err != nil {
-			return addErrContext(err, baseContext)
-		}
-
 		return pongo2.Context{
 			"pageTitle":       "Groups",
 			"groups":          groups,
@@ -96,6 +108,7 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 			"groupsSelection": groupsSelection,
 			"categories":      categories,
 			"pagination":      pagination,
+			"mrqlError":       mrqlError,
 			"tags":            tags,
 			"popularTags":     popularTags,
 			"notes":           notes,
@@ -167,10 +180,19 @@ func GroupTimelineContextProvider(context *application_context.MahresourcesConte
 			return addErrContext(err, baseContext)
 		}
 
-		popularTags, err := context.GetPopularGroupTags(&query)
+		mrqlError := ""
+		if fe := context.CheckMRQLFilter(mrql.EntityGroup, query.MRQL); fe != nil {
+			mrqlError = fe.Error()
+		}
 
-		if err != nil {
-			return addErrContext(err, baseContext)
+		var popularTags []application_context.PopularTag
+		if mrqlError == "" {
+			popularTags, err = context.GetPopularGroupTags(&query)
+			if err != nil {
+				return addErrContext(err, baseContext)
+			}
+		} else {
+			popularTags = []application_context.PopularTag{}
 		}
 
 		return pongo2.Context{
@@ -178,6 +200,7 @@ func GroupTimelineContextProvider(context *application_context.MahresourcesConte
 			"owners":          owners,
 			"groupsSelection": groupsSelection,
 			"categories":      categories,
+			"mrqlError":       mrqlError,
 			"tags":            tags,
 			"popularTags":     popularTags,
 			"notes":           notes,

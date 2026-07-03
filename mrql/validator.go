@@ -110,6 +110,63 @@ func isTraversalRoot(fieldName string, entityType EntityType) bool {
 	return false
 }
 
+// rejectFilterConstructs walks a filter-bar expression rejecting the two
+// constructs ParseFilter forbids beyond the clause keywords the parser already
+// catches: the `type` pseudo-field (implied by the page) and `$name` parameter
+// placeholders (bar queries must be self-contained). Positions match the input.
+func rejectFilterConstructs(node Node) error {
+	switch n := node.(type) {
+	case *BinaryExpr:
+		if err := rejectFilterConstructs(n.Left); err != nil {
+			return err
+		}
+		return rejectFilterConstructs(n.Right)
+	case *NotExpr:
+		return rejectFilterConstructs(n.Expr)
+	case *ComparisonExpr:
+		if isTypeField(n.Field) {
+			return filterTypeFieldError(n.Field)
+		}
+		return rejectParamValue(n.Value)
+	case *InExpr:
+		if isTypeField(n.Field) {
+			return filterTypeFieldError(n.Field)
+		}
+		for _, v := range n.Values {
+			if err := rejectParamValue(v); err != nil {
+				return err
+			}
+		}
+	case *IsExpr:
+		if isTypeField(n.Field) {
+			return filterTypeFieldError(n.Field)
+		}
+	}
+	return nil
+}
+
+// filterTypeFieldError builds the positioned error for using the `type`
+// pseudo-field inside a filter-bar expression.
+func filterTypeFieldError(f *FieldExpr) *ValidationError {
+	return &ValidationError{
+		Message: "the type field is implied by the page and cannot be used in a filter expression",
+		Pos:     f.Pos(),
+		Length:  len(f.Name()),
+	}
+}
+
+// rejectParamValue rejects a $name parameter placeholder appearing as a value.
+func rejectParamValue(value Node) error {
+	if pr, ok := value.(*ParamRef); ok {
+		return &ValidationError{
+			Message: fmt.Sprintf("parameter placeholder $%s is not allowed in a filter expression", pr.Name),
+			Pos:     pr.Pos(),
+			Length:  len(pr.Name) + 1,
+		}
+	}
+	return nil
+}
+
 // Validate performs semantic validation of a parsed Query AST.
 //
 // It proceeds in two passes:

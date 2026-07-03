@@ -10,6 +10,7 @@ import (
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"mahresources/mrql"
 )
 
 func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreator) (*models.Group, error) {
@@ -407,7 +408,13 @@ func (ctx *MahresourcesContext) GetGroups(offset, maxResults int, query *query_m
 	var groups []models.Group
 	groupScope := database_scopes.GroupQuery(query, false, ctx.db)
 
-	return groups, ctx.db.Scopes(groupScope).Limit(maxResults).
+	db := ctx.db.Scopes(groupScope)
+	db, err := ctx.applyMRQLFilter(db, mrql.EntityGroup, query.MRQL)
+	if err != nil {
+		return nil, err
+	}
+
+	return groups, db.Limit(maxResults).
 		Offset(offset).Preload("Tags").Preload("Category").Find(&groups).Error
 }
 
@@ -425,7 +432,13 @@ func (ctx *MahresourcesContext) GetGroupsCount(query *query_models.GroupQuery) (
 	var group models.Group
 	var count int64
 
-	return count, ctx.db.Scopes(database_scopes.GroupQuery(query, true, ctx.db)).Model(&group).Count(&count).Error
+	db := ctx.db.Scopes(database_scopes.GroupQuery(query, true, ctx.db)).Model(&group)
+	db, err := ctx.applyMRQLFilter(db, mrql.EntityGroup, query.MRQL)
+	if err != nil {
+		return 0, err
+	}
+
+	return count, db.Count(&count).Error
 }
 
 func (ctx *MahresourcesContext) GetPopularGroupTags(query *query_models.GroupQuery) ([]PopularTag, error) {
@@ -439,6 +452,11 @@ func (ctx *MahresourcesContext) GetPopularGroupTags(query *query_models.GroupQue
 		Group("t.id, t.name").
 		Order("count DESC").
 		Limit(20)
+
+	db, err := ctx.applyMRQLFilter(db, mrql.EntityGroup, query.MRQL)
+	if err != nil {
+		return nil, err
+	}
 
 	return res, db.Scan(&res).Error
 }

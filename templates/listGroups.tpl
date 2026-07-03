@@ -8,6 +8,7 @@
 {% endblock %}
 
 {% block body %}
+    {% include "/partials/mrqlBar.tpl" with entity="group" %}
     {% plugin_slot "group_list_before" %}
     <div class="flex flex-col gap-4 items-container"{% if owners && owners|length == 1 %} data-paste-context='{"type":"group","id":{{ owners.0.ID }},"name":"{{ owners.0.Name|escapejs }}"}'{% endif %}>
         {% for entity in groups %}
@@ -20,6 +21,7 @@
 
 {% block sidebar %}
     <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter groups">
+        {% if parsedQuery.MRQL %}<input type="hidden" name="mrql" value="{{ parsedQuery.MRQL }}">{% endif %}
         {% if popularTags %}
         <div class="sidebar-group">
             {% include "/partials/sideTitle.tpl" with title="Tags" %}

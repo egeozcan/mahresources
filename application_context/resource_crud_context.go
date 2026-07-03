@@ -10,6 +10,7 @@ import (
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"mahresources/mrql"
 )
 
 func (ctx *MahresourcesContext) GetResource(id uint) (*models.Resource, error) {
@@ -178,7 +179,13 @@ func (ctx *MahresourcesContext) GetResourceCount(query *query_models.ResourceSea
 	var resource models.Resource
 	var count int64
 
-	return count, ctx.db.Scopes(database_scopes.ResourceQuery(query, true, ctx.db)).Model(&resource).Count(&count).Error
+	db := ctx.db.Scopes(database_scopes.ResourceQuery(query, true, ctx.db)).Model(&resource)
+	db, err := ctx.applyMRQLFilter(db, mrql.EntityResource, query.MRQL)
+	if err != nil {
+		return 0, err
+	}
+
+	return count, db.Count(&count).Error
 }
 
 func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *query_models.ResourceSearchQuery) ([]models.Resource, error) {
@@ -189,7 +196,13 @@ func (ctx *MahresourcesContext) GetResources(offset, maxResults int, query *quer
 		resLimit = int(query.MaxResults)
 	}
 
-	return resources, ctx.db.Scopes(database_scopes.ResourceQuery(query, false, ctx.db)).
+	db := ctx.db.Scopes(database_scopes.ResourceQuery(query, false, ctx.db))
+	db, err := ctx.applyMRQLFilter(db, mrql.EntityResource, query.MRQL)
+	if err != nil {
+		return nil, err
+	}
+
+	return resources, db.
 		Limit(resLimit).
 		Offset(offset).
 		Preload("Tags").
