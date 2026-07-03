@@ -269,6 +269,25 @@ func (l *Lexer) readWord(start int) Token {
 		l.pos = savedPos
 	}
 
+	// Check for SIMILAR TO (two-word keyword): word is "SIMILAR" followed by
+	// whitespace then "TO". "SIMILAR" alone stays a plain identifier so fields
+	// or meta keys named similar keep working.
+	if upper == "SIMILAR" {
+		savedPos := l.pos
+		tmp := l.pos
+		for tmp < len(l.input) && unicode.IsSpace(rune(l.input[tmp])) {
+			tmp++
+		}
+		if tmp+2 <= len(l.input) && strings.ToUpper(l.input[tmp:tmp+2]) == "TO" {
+			endTo := tmp + 2
+			if endTo >= len(l.input) || !isWordChar(l.input[endTo]) {
+				l.pos = endTo
+				return Token{Type: TokenSimilarTo, Value: "SIMILAR TO", Pos: start, Length: l.pos - start}
+			}
+		}
+		l.pos = savedPos
+	}
+
 	// Aggregate function keyword: word followed by "(" — emit keyword, don't consume "("
 	if l.pos < len(l.input) && l.input[l.pos] == '(' {
 		if aggType, ok := aggregateKeywords[upper]; ok {

@@ -138,6 +138,13 @@ func Validate(q *Query) error {
 	isAggregatedGroupBy := q.GroupBy != nil && len(q.GroupBy.Aggregates) > 0
 	for _, ob := range q.OrderBy {
 		if !isAggregatedGroupBy {
+			// "distance" is the SIMILAR TO sort key, not a real column.
+			if len(ob.Field.Parts) == 1 && ob.Field.Parts[0].Value == "distance" {
+				if err := validateDistanceOrderKey(q, entityType, ob.Field); err != nil {
+					return err
+				}
+				continue
+			}
 			// In bucketed GROUP BY mode, a date bucket key that is also a
 			// GROUP BY field is a valid sort key (constant within each bucket,
 			// used to order the bucket keys).
@@ -161,6 +168,42 @@ func Validate(q *Query) error {
 	}
 
 	return nil
+}
+
+// validateDistanceOrderKey validates ORDER BY distance: resource entity only,
+// no GROUP BY, and exactly one SIMILAR TO predicate in the WHERE clause (its
+// target defines the distance).
+func validateDistanceOrderKey(q *Query, entityType EntityType, f *FieldExpr) error {
+	if entityType != EntityResource {
+		return &ValidationError{
+			Message: "ORDER BY distance requires type = \"resource\" with a SIMILAR TO predicate",
+			Pos:     f.Pos(),
+			Length:  len("distance"),
+		}
+	}
+	if q.GroupBy != nil {
+		return &ValidationError{
+			Message: "ORDER BY distance is not supported with GROUP BY",
+			Pos:     f.Pos(),
+			Length:  len("distance"),
+		}
+	}
+	switch len(collectSimilarToExprs(q.Where)) {
+	case 0:
+		return &ValidationError{
+			Message: "ORDER BY distance requires a SIMILAR TO predicate in the query",
+			Pos:     f.Pos(),
+			Length:  len("distance"),
+		}
+	case 1:
+		return nil
+	default:
+		return &ValidationError{
+			Message: "ORDER BY distance is ambiguous with multiple SIMILAR TO predicates; use exactly one",
+			Pos:     f.Pos(),
+			Length:  len("distance"),
+		}
+	}
 }
 
 // ExtractEntityType is a public wrapper that extracts the entity type from the
@@ -464,6 +507,33 @@ func validateNode(node Node, entityType EntityType) error {
 
 	case *TextSearchExpr:
 		// TEXT ~ "..." has no field reference to validate
+		return nil
+
+	case *SimilarToExpr:
+		// SIMILAR TO reads resource perceptual-hash pairs — resource-only.
+		// In type-guarded OR branches the BinaryExpr case above re-derives
+		// the entity type per branch, so this sees the branch's type.
+		if entityType != EntityResource {
+			return &ValidationError{
+				Message: "SIMILAR TO requires type = \"resource\" — only resources have perceptual hashes",
+				Pos:     n.Pos(),
+				Length:  len("SIMILAR TO"),
+			}
+		}
+		if n.TargetID <= 0 {
+			return &ValidationError{
+				Message: "SIMILAR TO requires a positive resource ID",
+				Pos:     n.Pos(),
+				Length:  len("SIMILAR TO"),
+			}
+		}
+		if n.Within > MaxSimilarityDistance {
+			return &ValidationError{
+				Message: fmt.Sprintf("WITHIN %d exceeds the maximum similarity distance %d — pairs are only stored up to distance %d", n.Within, MaxSimilarityDistance, MaxSimilarityDistance),
+				Pos:     n.Pos(),
+				Length:  len("SIMILAR TO"),
+			}
+		}
 		return nil
 	}
 	return nil

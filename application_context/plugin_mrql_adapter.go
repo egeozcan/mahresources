@@ -58,7 +58,7 @@ func (a *pluginMRQLAdapter) ExecuteMRQL(reqCtx context.Context, query string, op
 	}
 
 	// Flat path
-	translateOpts := mrql.TranslateOptions{}
+	translateOpts := a.ctx.mrqlTranslateOptions()
 	result, err := a.ctx.ExecuteSingleEntityWithScope(reqCtx, parsed, entityType, translateOpts, scopeID)
 	if err != nil {
 		return nil, err

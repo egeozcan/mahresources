@@ -293,6 +293,34 @@ type = resource AND descendants.category = 3        # (owner-based; see below)
   category 3* (owner-less rows match). Not valid: `IN`, `IS EMPTY`/`IS NULL`,
   `ORDER BY`, `GROUP BY`.
 
+## Similarity Search
+
+`SIMILAR TO resource(<id>)` matches resources perceptually similar to the
+target resource, using the precomputed similarity pairs (same data as the
+resource page's similarity sidebar). Resource entity only.
+
+```
+type = resource AND SIMILAR TO resource(1234)                          # runtime threshold (default 10)
+type = resource AND SIMILAR TO resource(1234) WITHIN 2                 # near-duplicates only
+type = resource AND SIMILAR TO resource(1234) AND tags != "reviewed"
+type = resource AND SIMILAR TO resource(1234) ORDER BY distance ASC LIMIT 20
+```
+
+- **Threshold:** without `WITHIN`, the live `hash_similarity_threshold`
+  runtime setting applies, and the `hash_ahash_threshold` secondary filter
+  always applies — results match the similarity sidebar exactly. `WITHIN <d>`
+  overrides the primary distance only; valid range 0-11 (pairs are stored up
+  to distance 11).
+- **Strict:** the target itself never matches; `NOT SIMILAR TO resource(N)`
+  therefore includes resource N.
+- **Empty, not error:** a nonexistent target or one without a computed hash
+  (non-image, not yet processed) matches nothing.
+- **`ORDER BY distance`** (ASC/DESC) sorts by perceptual distance to the
+  target; requires exactly one `SIMILAR TO` in the query. Rows matched by
+  other OR branches without a stored pair sort last.
+- Not valid on notes/groups; in a type-guarded OR, the other entities simply
+  don't match the similarity branch.
+
 ## Cross-Entity Queries
 
 Omit `type =` to fan query across all entity types (resources, notes, groups simultaneously).

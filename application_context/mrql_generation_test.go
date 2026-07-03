@@ -151,6 +151,9 @@ func TestMRQLGeneratorPromptIncludesCompactSyntaxGuide(t *testing.T) {
 		`Use ancestors.<group field> or descendants.<group field> for recursive hierarchy checks at any depth`,
 		`resources anywhere under a group named <name> -> type = resource AND ancestors.name = "<name>" LIMIT 50`,
 		`groups containing a descendant tagged <tag> -> type = group AND descendants.tags = "<tag>" LIMIT 50`,
+		`SIMILAR TO resource(<id>) matches resources perceptually similar to resource <id>`,
+		`resources similar to resource <id> -> type = resource AND SIMILAR TO resource(<id>) ORDER BY distance ASC LIMIT 50`,
+		`near-duplicates of resource <id> -> type = resource AND SIMILAR TO resource(<id>) WITHIN 2 ORDER BY distance ASC LIMIT 50`,
 	} {
 		if !strings.Contains(provider.seenPrompt, want) {
 			t.Fatalf("prompt missing %q in:\n%s", want, provider.seenPrompt)

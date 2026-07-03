@@ -22,7 +22,30 @@ func (e *TranslateError) Error() string {
 // TranslateOptions provides configurable options for query translation.
 type TranslateOptions struct {
 	ScopeGroupID uint // resolved scope group ID; 0 = no scope
+
+	// SimilarityThreshold is the max effective perceptual distance
+	// (COALESCE(p_distance, hamming_distance)) for SIMILAR TO predicates
+	// without an explicit WITHIN. Callers fill it from the runtime
+	// hash_similarity_threshold setting; nil falls back to 10, mirroring
+	// application_context.similarityThresholds().
+	SimilarityThreshold *int
+	// AHashThreshold is the secondary aHash distance filter for SIMILAR TO,
+	// from the runtime hash_ahash_threshold setting. 0 disables it (the
+	// runtime setting's own convention). Legacy pairs with NULL a_distance
+	// always pass.
+	AHashThreshold uint64
 }
+
+// defaultSimilarityThreshold mirrors similarityThresholds()'s fallback in
+// application_context when no runtime settings are wired.
+const defaultSimilarityThreshold = 10
+
+// MaxSimilarityDistance is the largest WITHIN value SIMILAR TO accepts.
+// Similarity pairs are only stored up to hash_worker.MaxStoredPDistance, so a
+// larger radius would silently under-match. An equality test in
+// application_context keeps the two constants in sync (mrql must not import
+// hash_worker).
+const MaxSimilarityDistance = 11
 
 // Translate converts a validated MRQL Query AST into a GORM DB query.
 // The entity type must be determinable (either set on the Query or extractable
@@ -46,11 +69,7 @@ func TranslateWithOptions(q *Query, db *gorm.DB, opts TranslateOptions) (*gorm.D
 	}
 
 	// Build the translator context
-	tc := &translateContext{
-		db:         db,
-		entityType: entityType,
-		tableName:  entityTableName(entityType),
-	}
+	tc := newTranslateContext(db, entityType, q, opts)
 
 	// Start with the correct table
 	result := tc.db.Table(tc.tableName)
@@ -97,6 +116,59 @@ type translateContext struct {
 	db         *gorm.DB
 	entityType EntityType
 	tableName  string
+
+	// SIMILAR TO state (package 3). similarTarget is the single SimilarToExpr
+	// in the WHERE clause when exactly one exists — the validator guarantees
+	// this before ORDER BY distance is accepted.
+	similarityThreshold int
+	aHashThreshold      uint64
+	similarTarget       *SimilarToExpr
+}
+
+// newTranslateContext builds a translateContext for a resolved entity type,
+// carrying the option-derived SIMILAR TO state. Shared by the flat and
+// GROUP BY translation entry points.
+func newTranslateContext(db *gorm.DB, entityType EntityType, q *Query, opts TranslateOptions) *translateContext {
+	return &translateContext{
+		db:                  db,
+		entityType:          entityType,
+		tableName:           entityTableName(entityType),
+		similarityThreshold: resolveSimilarityThreshold(opts),
+		aHashThreshold:      opts.AHashThreshold,
+		similarTarget:       findSimilarTarget(q.Where),
+	}
+}
+
+// resolveSimilarityThreshold applies the nil fallback for the SIMILAR TO
+// default distance.
+func resolveSimilarityThreshold(opts TranslateOptions) int {
+	if opts.SimilarityThreshold != nil {
+		return *opts.SimilarityThreshold
+	}
+	return defaultSimilarityThreshold
+}
+
+// findSimilarTarget scans a WHERE tree and returns the SimilarToExpr when the
+// tree contains exactly one, else nil. Used to resolve ORDER BY distance.
+func findSimilarTarget(node Node) *SimilarToExpr {
+	targets := collectSimilarToExprs(node)
+	if len(targets) == 1 {
+		return targets[0]
+	}
+	return nil
+}
+
+// collectSimilarToExprs returns all SimilarToExpr nodes in an expression tree.
+func collectSimilarToExprs(node Node) []*SimilarToExpr {
+	switch n := node.(type) {
+	case *BinaryExpr:
+		return append(collectSimilarToExprs(n.Left), collectSimilarToExprs(n.Right)...)
+	case *NotExpr:
+		return collectSimilarToExprs(n.Expr)
+	case *SimilarToExpr:
+		return []*SimilarToExpr{n}
+	}
+	return nil
 }
 
 // fkStep describes one level of a foreign-key traversal (owner, parent, or children).
@@ -625,12 +697,52 @@ func (tc *translateContext) translateNode(db *gorm.DB, node Node) (*gorm.DB, err
 		return tc.translateIsExpr(db, n)
 	case *TextSearchExpr:
 		return tc.translateTextSearch(db, n)
+	case *SimilarToExpr:
+		return tc.translateSimilarTo(db, n)
 	default:
 		return nil, &TranslateError{
 			Message: fmt.Sprintf("unsupported AST node type %T", node),
 			Pos:     node.Pos(),
 		}
 	}
+}
+
+// translateSimilarTo translates SIMILAR TO resource(N) [WITHIN d] into an IN
+// over the precomputed resource_similarities pairs, both directions (pairs are
+// stored once with resource_id1 < resource_id2). The effective distance is
+// COALESCE(p_distance, hamming_distance) — the same read path as the resource
+// page's similarity sidebar. The target ID and thresholds are validated
+// integers and are inlined as literals (ORDER BY distance must inline anyway —
+// GORM's Order() takes no bind values — so the predicate matches).
+func (tc *translateContext) translateSimilarTo(db *gorm.DB, expr *SimilarToExpr) (*gorm.DB, error) {
+	if tc.entityType != EntityResource {
+		// Cross-entity clone of a type-guarded OR branch: inject FALSE, never
+		// a TranslateError (which would make executeCrossEntity drop this
+		// entity's results entirely). Explicit non-resource queries are
+		// already rejected at validation.
+		return db.Where("1 = 0"), nil
+	}
+
+	dist := expr.Within
+	if dist < 0 {
+		dist = tc.similarityThreshold
+	}
+
+	filter := fmt.Sprintf("COALESCE(rs.p_distance, rs.hamming_distance) <= %d", dist)
+	if tc.aHashThreshold > 0 {
+		// Secondary aHash filter, matching the sidebar: legacy pairs with
+		// NULL a_distance always pass.
+		filter += fmt.Sprintf(" AND (rs.a_distance IS NULL OR rs.a_distance <= %d)", tc.aHashThreshold)
+	}
+
+	sql := fmt.Sprintf(
+		"%s.id IN ("+
+			"SELECT rs.resource_id2 FROM resource_similarities rs WHERE rs.resource_id1 = %d AND %s "+
+			"UNION ALL "+
+			"SELECT rs.resource_id1 FROM resource_similarities rs WHERE rs.resource_id2 = %d AND %s"+
+			")",
+		tc.tableName, expr.TargetID, filter, expr.TargetID, filter)
+	return db.Where(sql), nil
 }
 
 // translateBinaryExpr handles AND and OR expressions.
@@ -1518,6 +1630,18 @@ func (tc *translateContext) relationCountExpr(fieldName string) (string, bool) {
 func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) string {
 	fieldName := f.Name()
 
+	// "distance" → perceptual distance to the single SIMILAR TO target
+	// (validated: resource entity, exactly one SimilarToExpr in WHERE). The
+	// COALESCE(..., 255) sentinel pins pairless rows (possible under OR/NOT)
+	// to the end in ASC order on both dialects — SQLite sorts NULLs first,
+	// Postgres last.
+	if len(f.Parts) == 1 && f.Parts[0].Value == "distance" && tc.similarTarget != nil && tc.entityType == EntityResource {
+		return fmt.Sprintf(
+			"COALESCE((SELECT MIN(COALESCE(rs.p_distance, rs.hamming_distance)) FROM resource_similarities rs "+
+				"WHERE (rs.resource_id1 = %d AND rs.resource_id2 = %s.id) OR (rs.resource_id2 = %d AND rs.resource_id1 = %s.id)), 255)",
+			tc.similarTarget.TargetID, tc.tableName, tc.similarTarget.TargetID, tc.tableName)
+	}
+
 	// <relation>.count → correlated COUNT(*) subquery (valid in ORDER BY on
 	// both SQLite and PostgreSQL).
 	if len(f.Parts) == 2 && f.Parts[1].Value == "count" {
@@ -1628,11 +1752,7 @@ func TranslateGroupBy(q *Query, db *gorm.DB, opts TranslateOptions) (*GroupByRes
 		return nil, &TranslateError{Message: "entity type is required for GROUP BY", Pos: 0}
 	}
 
-	tc := &translateContext{
-		db:         db,
-		entityType: entityType,
-		tableName:  entityTableName(entityType),
-	}
+	tc := newTranslateContext(db, entityType, q, opts)
 
 	result := db.Table(tc.tableName)
 

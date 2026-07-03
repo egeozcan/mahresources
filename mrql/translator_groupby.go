@@ -25,11 +25,7 @@ func TranslateGroupByKeys(q *Query, db *gorm.DB, opts TranslateOptions) ([]map[s
 		return nil, &TranslateError{Message: "entity type is required for GROUP BY", Pos: 0}
 	}
 
-	tc := &translateContext{
-		db:         db,
-		entityType: entityType,
-		tableName:  entityTableName(entityType),
-	}
+	tc := newTranslateContext(db, entityType, q, opts)
 
 	result := db.Table(tc.tableName)
 
@@ -116,11 +112,7 @@ func TranslateGroupByBucket(q *Query, db *gorm.DB, key map[string]any, opts Tran
 		return nil, &TranslateError{Message: "entity type is required for GROUP BY", Pos: 0}
 	}
 
-	tc := &translateContext{
-		db:         db,
-		entityType: entityType,
-		tableName:  entityTableName(entityType),
-	}
+	tc := newTranslateContext(db, entityType, q, opts)
 
 	result := db.Table(tc.tableName)
 

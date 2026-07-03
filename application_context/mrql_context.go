@@ -96,7 +96,7 @@ func (ctx *MahresourcesContext) ExecuteMRQL(reqCtx context.Context, queryStr str
 
 	entityType := mrql.ExtractEntityType(parsed)
 
-	opts := mrql.TranslateOptions{}
+	opts := ctx.mrqlTranslateOptions()
 	if parsed.Scope != nil {
 		scopeID, err := mrql.ResolveScope(parsed, ctx.db)
 		if err != nil {
@@ -146,6 +146,17 @@ func (ctx *MahresourcesContext) defaultMRQLLimit() int {
 		return ctx.Config.MRQLDefaultLimit
 	}
 	return DefaultMRQLLimitFallback
+}
+
+// mrqlTranslateOptions returns TranslateOptions pre-filled with the runtime
+// similarity thresholds, so SIMILAR TO predicates match the resource page's
+// similarity sidebar (same read path, same live-tunable thresholds).
+func (ctx *MahresourcesContext) mrqlTranslateOptions() mrql.TranslateOptions {
+	pThreshold, aThreshold := ctx.similarityThresholds()
+	return mrql.TranslateOptions{
+		SimilarityThreshold: &pThreshold,
+		AHashThreshold:      aThreshold,
+	}
 }
 
 // mrqlQueryTimeout returns the current MRQL query timeout from runtime settings,
@@ -220,7 +231,7 @@ func (ctx *MahresourcesContext) ExecuteMRQLGrouped(reqCtx context.Context, parse
 		parsed.Limit = ctx.defaultMRQLLimit()
 	}
 
-	opts := mrql.TranslateOptions{}
+	opts := ctx.mrqlTranslateOptions()
 	if parsed.Scope != nil {
 		scopeID, err := mrql.ResolveScope(parsed, ctx.db)
 		if err != nil {
@@ -871,7 +882,9 @@ func (ctx *MahresourcesContext) ExecuteMRQLGroupedWithScope(reqCtx context.Conte
 // scope filtering via the translator's recursive CTE mechanism.
 func (ctx *MahresourcesContext) executeAggregatedQueryScoped(reqCtx context.Context, parsed *mrql.Query, scopeID uint) (*MRQLGroupedResult, error) {
 	db := ctx.db.WithContext(reqCtx)
-	gbResult, err := mrql.TranslateGroupBy(parsed, db, mrql.TranslateOptions{ScopeGroupID: scopeID})
+	opts := ctx.mrqlTranslateOptions()
+	opts.ScopeGroupID = scopeID
+	gbResult, err := mrql.TranslateGroupBy(parsed, db, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -891,7 +904,8 @@ func (ctx *MahresourcesContext) executeAggregatedQueryScoped(reqCtx context.Cont
 // scope filtering via the translator's recursive CTE mechanism for both
 // key discovery and bucket materialization.
 func (ctx *MahresourcesContext) executeBucketedQueryScoped(reqCtx context.Context, parsed *mrql.Query, scopeID uint) (*MRQLGroupedResult, error) {
-	scopeOpts := mrql.TranslateOptions{ScopeGroupID: scopeID}
+	scopeOpts := ctx.mrqlTranslateOptions()
+	scopeOpts.ScopeGroupID = scopeID
 	db := ctx.db.WithContext(reqCtx)
 
 	allKeys, err := mrql.TranslateGroupByKeys(parsed, db, scopeOpts)
@@ -1014,7 +1028,8 @@ func (ctx *MahresourcesContext) ResolveMRQLScope(q *mrql.Query) (uint, error) {
 // Supports cross-entity queries.
 func (ctx *MahresourcesContext) ExecuteMRQLScoped(reqCtx context.Context, parsed *mrql.Query, scopeGroupID uint) (*MRQLResult, error) {
 	entityType := mrql.ExtractEntityType(parsed)
-	opts := mrql.TranslateOptions{ScopeGroupID: scopeGroupID}
+	opts := ctx.mrqlTranslateOptions()
+	opts.ScopeGroupID = scopeGroupID
 	if entityType != mrql.EntityUnspecified {
 		return ctx.executeSingleEntity(reqCtx, parsed, entityType, opts)
 	}

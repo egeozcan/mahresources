@@ -280,6 +280,11 @@ func fieldSuggestions(entityType EntityType) []Suggestion {
 		suggs = append(suggs, Suggestion{Value: "descendants.name", Type: "field", Label: "any descendant group"})
 	}
 
+	// Perceptual similarity predicate — resources only.
+	if entityType == EntityResource {
+		suggs = append(suggs, Suggestion{Value: "SIMILAR TO resource(", Type: "keyword", Label: "perceptual similarity"})
+	}
+
 	// Always add TEXT keyword as a special entry.
 	suggs = append(suggs, Suggestion{Value: "TEXT", Type: "keyword", Label: "full-text search"})
 
@@ -391,6 +396,31 @@ func orderByFieldSuggestions(entityType EntityType) []Suggestion {
 	suggs = append(suggs, Suggestion{Value: "meta.<key>", Type: "field", Label: "any meta key"})
 
 	return suggs
+}
+
+// containsSimilarTo reports whether the token stream includes a SIMILAR TO
+// keyword (the query filters by perceptual similarity).
+func containsSimilarTo(tokens []Token) bool {
+	for _, t := range tokens {
+		if t.Type == TokenSimilarTo {
+			return true
+		}
+	}
+	return false
+}
+
+// endsWithSimilarToClose reports whether the tokens end with the closing paren
+// of a SIMILAR TO resource(N) argument, i.e. [..., SIMILAR TO, ident, (, number, )].
+func endsWithSimilarToClose(tokens []Token) bool {
+	n := len(tokens)
+	if n < 5 {
+		return false
+	}
+	return tokens[n-5].Type == TokenSimilarTo &&
+		tokens[n-4].Type == TokenIdentifier &&
+		tokens[n-3].Type == TokenLParen &&
+		tokens[n-2].Type == TokenNumber &&
+		tokens[n-1].Type == TokenRParen
 }
 
 // orderByDirectionSuggestions are suggested after a sort field in ORDER BY.
@@ -610,7 +640,12 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 			if aggKeys != nil {
 				return aggKeys
 			}
-			return orderByFieldSuggestions(entityType)
+			suggs := orderByFieldSuggestions(entityType)
+			// "distance" sorts by the SIMILAR TO target's perceptual distance.
+			if entityType == EntityResource && containsSimilarTo(tokens) {
+				suggs = append(suggs, Suggestion{Value: "distance", Type: "field", Label: "similarity distance"})
+			}
+			return suggs
 		}
 
 		switch last.Type {
@@ -652,6 +687,10 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 	// — suggest logical connectives / ORDER BY / LIMIT.
 	switch last.Type {
 	case TokenString, TokenNumber, TokenRelDate, TokenFunc, TokenRParen:
+		// After the ")" of SIMILAR TO resource(N), WITHIN is also available.
+		if last.Type == TokenRParen && endsWithSimilarToClose(tokens) {
+			return append([]Suggestion{{Value: "WITHIN", Type: "keyword", Label: "max perceptual distance"}}, postValueKeywords...)
+		}
 		return postValueKeywords
 	}
 

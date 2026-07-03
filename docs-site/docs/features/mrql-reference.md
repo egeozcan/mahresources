@@ -191,6 +191,29 @@ type = resource AND ancestors.meta.region = "eu"    # resources under an EU grou
 - Negation is existential: `ancestors.category != 3` = *no ancestor has category
   3*. Not supported: `IN`, `IS EMPTY`/`IS NULL`, `ORDER BY`, `GROUP BY`.
 
+### Similarity Search — `SIMILAR TO`
+
+Match resources perceptually similar to a target resource, from the
+precomputed similarity pairs (the same data the resource page's similarity
+sidebar reads). Resource entity only.
+
+```
+type = resource AND SIMILAR TO resource(1234)
+type = resource AND SIMILAR TO resource(1234) WITHIN 2
+type = resource AND SIMILAR TO resource(1234) ORDER BY distance ASC LIMIT 20
+```
+
+- Without `WITHIN`, the runtime `hash_similarity_threshold` setting applies
+  (default 10); the `hash_ahash_threshold` secondary filter always applies, so
+  results match the similarity sidebar. `WITHIN <d>` (0-11) overrides the
+  primary distance; pairs are stored up to distance 11, so larger values are
+  rejected.
+- The target itself never matches. A nonexistent or unhashed target matches
+  nothing.
+- `ORDER BY distance` (ASC/DESC) sorts by the distance to the target and
+  requires exactly one `SIMILAR TO` predicate. Rows without a stored pair
+  (matched via other OR branches) sort last.
+
 ## Rendering
 
 The `--render` CLI flag (and `render=1` query parameter on `POST /v1/mrql`) requests server-side template rendering via `CustomMRQLResult` templates defined on Category, Resource Category, or Note Type. Matching entities include a `renderedHTML` field in the response.

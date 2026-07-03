@@ -66,6 +66,19 @@ type TextSearchExpr struct {
 func (t *TextSearchExpr) nodeType() string { return "TextSearchExpr" }
 func (t *TextSearchExpr) Pos() int         { return t.TextToken.Pos }
 
+// SimilarToExpr represents: SIMILAR TO resource(1234) [WITHIN 5]
+// It matches resources whose precomputed perceptual distance to the target
+// resource is within the threshold. Within is -1 when no WITHIN was given
+// (the runtime similarity threshold applies at translation time).
+type SimilarToExpr struct {
+	Token    Token // the SIMILAR TO token (for position)
+	TargetID int64
+	Within   int
+}
+
+func (s *SimilarToExpr) nodeType() string { return "SimilarToExpr" }
+func (s *SimilarToExpr) Pos() int         { return s.Token.Pos }
+
 // FieldExpr represents a field reference: name, meta.key, parent.name
 type FieldExpr struct {
 	Parts []Token // e.g., ["parent", "name"] or ["meta", "rating"] or ["name"]

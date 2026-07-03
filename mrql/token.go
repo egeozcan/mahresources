@@ -31,9 +31,10 @@ const (
 	TokenAvg     // AVG (followed by '(')
 	TokenMin     // MIN (followed by '(')
 	TokenMax     // MAX (followed by '(')
-	TokenText    // TEXT (for TEXT ~)
-	TokenKwType  // TYPE (also usable as field name via context)
-	TokenScope   // SCOPE
+	TokenText      // TEXT (for TEXT ~)
+	TokenKwType    // TYPE (also usable as field name via context)
+	TokenScope     // SCOPE
+	TokenSimilarTo // SIMILAR TO (two words, merged by lexer)
 
 	// Operators
 	TokenEq      // =

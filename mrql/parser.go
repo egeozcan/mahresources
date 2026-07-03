@@ -221,6 +221,9 @@ func (p *parser) parsePrimary() (Node, error) {
 	case TokenText:
 		return p.parseTextSearch()
 
+	case TokenSimilarTo:
+		return p.parseSimilarTo()
+
 	case TokenIdentifier, TokenKwType, TokenHaving:
 		// TokenHaving: the word "having" stays usable as a field name here —
 		// the HAVING clause is only recognized inside GROUP BY.
@@ -263,6 +266,74 @@ func (p *parser) parseTextSearch() (Node, error) {
 		TextToken: textTok,
 		Value:     &StringLiteral{Token: strTok, Value: strTok.Value},
 	}, nil
+}
+
+// similarTo = "SIMILAR TO" "resource" "(" NUMBER ")" [ "WITHIN" NUMBER ]
+// WITHIN is deliberately not a lexer keyword — it is matched here as a plain
+// identifier so fields or meta keys named "within" keep working.
+func (p *parser) parseSimilarTo() (Node, error) {
+	simTok := p.lexer.Next() // consume SIMILAR TO
+
+	kindTok := p.lexer.Next()
+	if kindTok.Type != TokenIdentifier || !strings.EqualFold(kindTok.Value, "resource") {
+		return nil, &ParseError{
+			Message: fmt.Sprintf("SIMILAR TO expects resource(<id>), got %q — only resources have perceptual hashes", kindTok.Value),
+			Pos:     kindTok.Pos,
+			Length:  kindTok.Length,
+		}
+	}
+
+	lp := p.lexer.Next()
+	if lp.Type != TokenLParen {
+		return nil, &ParseError{
+			Message: fmt.Sprintf("expected '(' after SIMILAR TO resource, got %q", lp.Value),
+			Pos:     lp.Pos,
+			Length:  lp.Length,
+		}
+	}
+
+	idTok := p.lexer.Next()
+	targetID, err := similarToInt(idTok)
+	if err != nil {
+		return nil, &ParseError{
+			Message: fmt.Sprintf("expected an integer resource ID in SIMILAR TO resource(...), got %q", idTok.Value),
+			Pos:     idTok.Pos,
+			Length:  idTok.Length,
+		}
+	}
+
+	rp := p.lexer.Next()
+	if rp.Type != TokenRParen {
+		return nil, &ParseError{
+			Message: fmt.Sprintf("expected ')' to close SIMILAR TO resource(, got %q", rp.Value),
+			Pos:     rp.Pos,
+			Length:  rp.Length,
+		}
+	}
+
+	within := -1
+	if next := p.lexer.Peek(); next.Type == TokenIdentifier && strings.EqualFold(next.Value, "within") {
+		p.lexer.Next() // consume WITHIN
+		distTok := p.lexer.Next()
+		within, err = similarToInt(distTok)
+		if err != nil {
+			return nil, &ParseError{
+				Message: fmt.Sprintf("expected an integer distance after WITHIN, got %q", distTok.Value),
+				Pos:     distTok.Pos,
+				Length:  distTok.Length,
+			}
+		}
+	}
+
+	return &SimilarToExpr{Token: simTok, TargetID: int64(targetID), Within: within}, nil
+}
+
+// similarToInt parses a TokenNumber as a plain non-fractional integer.
+func similarToInt(tok Token) (int, error) {
+	if tok.Type != TokenNumber || strings.Contains(tok.Value, ".") {
+		return 0, fmt.Errorf("not a plain integer")
+	}
+	return strconv.Atoi(tok.Value)
 }
 
 // fieldExpr = field (comparison | inExpr | isExpr)

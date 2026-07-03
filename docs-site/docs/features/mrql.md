@@ -465,6 +465,23 @@ type = resource AND ancestors.meta.region = "eu"    # resources whose owner sits
 - **One leaf field.** The predicate takes exactly one group field: a scalar (`name`, `category`, `id`, ...), `tags`, or `meta.<key>`. Chaining further (`ancestors.parent.name`) is not supported.
 - **Existential negation.** `ancestors.category != 3` means *no ancestor has category 3* (and owner-less rows, which have no ancestors, match). `IN`, `IS EMPTY`/`IS NULL`, `ORDER BY`, and `GROUP BY` are not supported on these roots.
 
+### Similarity Search: `SIMILAR TO`
+
+`SIMILAR TO resource(<id>)` matches resources that are perceptually similar to the target resource. It reads the precomputed similarity pairs -- the same data behind the resource page's similarity sidebar -- so it is fast at any library size and never computes hashes at query time.
+
+```
+type = resource AND SIMILAR TO resource(1234)                    # similar images, runtime threshold
+type = resource AND SIMILAR TO resource(1234) WITHIN 2           # near-duplicates only
+type = resource AND SIMILAR TO resource(1234) AND tags != "reviewed"
+type = resource AND SIMILAR TO resource(1234) ORDER BY distance ASC LIMIT 20
+```
+
+- **Thresholds.** Without `WITHIN`, the live `hash_similarity_threshold` runtime setting applies (default 10), and the `hash_ahash_threshold` secondary filter always applies -- MRQL results match the similarity sidebar exactly, and tuning the settings applies to saved queries instantly. `WITHIN <d>` overrides the primary distance; the valid range is 0-11 because pairs are only stored up to distance 11.
+- **The target never matches itself.** Consequently `NOT SIMILAR TO resource(N)` includes resource N.
+- **Missing data means empty, not an error.** A nonexistent target, a non-image, or a resource the hash worker has not processed yet matches nothing.
+- **Sorting.** `ORDER BY distance` (ASC or DESC) sorts by the perceptual distance to the target and requires exactly one `SIMILAR TO` predicate in the query. Rows matched by other OR branches that have no stored pair sort last.
+- **Resource entity only.** `type = note/group` queries reject it; in a type-guarded OR, the similarity branch simply matches nothing for other entities.
+
 ## Cross-Entity Queries
 
 Omitting `type` causes MRQL to fan out the query across resources, notes, and groups simultaneously. Only common fields (`id`, `name`, `description`, `created`, `updated`, `tags`) are valid in cross-entity mode.
