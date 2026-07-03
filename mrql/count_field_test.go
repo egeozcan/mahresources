@@ -3,6 +3,8 @@ package mrql
 import (
 	"strings"
 	"testing"
+
+	"gorm.io/gorm"
 )
 
 // parseAndValidate is a helper returning the validation error for a query.
@@ -186,6 +188,86 @@ func TestCountFieldExecution(t *testing.T) {
 		// resources 2 and 4 have no notes
 		if len(resources) != 2 {
 			t.Fatalf("expected 2 resources without notes, got %d: %v", len(resources), namesOfResources(resources))
+		}
+	})
+}
+
+// TestCountFieldCrossEntityTypeGuardedOr covers count pseudo-fields inside
+// type-guarded OR branches of a cross-entity query. executeCrossEntity
+// validates once (cross-entity, per-branch types) and then translates the
+// full AST once per entity type — so a count field that is only valid on
+// another entity must translate to FALSE for the current entity, exactly
+// like entity-specific scalar fields, instead of failing the whole entity
+// query with a TranslateError (which would silently drop that entity's
+// results).
+func TestCountFieldCrossEntityTypeGuardedOr(t *testing.T) {
+	db := setupTestDB(t)
+
+	// Mimics executeCrossEntity: validate cross-entity, translate a per-entity clone.
+	translateForEntity := func(t *testing.T, input string, et EntityType) *gorm.DB {
+		t.Helper()
+		q, err := Parse(input)
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		if err := Validate(q); err != nil {
+			t.Fatalf("validation error: %v", err)
+		}
+		clone := *q
+		clone.EntityType = et
+		result, err := Translate(&clone, db)
+		if err != nil {
+			t.Fatalf("translate error for %s: %v", et, err)
+		}
+		return result
+	}
+
+	query := `(type = "group" AND children.count > 0) OR (type = "resource" AND contentType ~ "image/*")`
+
+	t.Run("resource branch survives group-only count field", func(t *testing.T) {
+		// children.count is group-only; on the resource entity it must become
+		// FALSE, leaving the image branch to match resources 1 and 2.
+		result := translateForEntity(t, query, EntityResource)
+		var resources []testResource
+		if err := result.Order("id").Find(&resources).Error; err != nil {
+			t.Fatalf("query error: %v", err)
+		}
+		if len(resources) != 2 || resources[0].ID != 1 || resources[1].ID != 2 {
+			t.Fatalf("expected resources [1 2], got %v", namesOfResources(resources))
+		}
+	})
+
+	t.Run("group branch matches groups with children", func(t *testing.T) {
+		result := translateForEntity(t, query, EntityGroup)
+		var groups []testGroup
+		if err := result.Order("id").Find(&groups).Error; err != nil {
+			t.Fatalf("query error: %v", err)
+		}
+		// Vacation(1) and Work(2) have children.
+		if len(groups) != 2 || groups[0].ID != 1 || groups[1].ID != 2 {
+			t.Fatalf("expected groups [1 2], got %v", namesOfGroups(groups))
+		}
+	})
+
+	t.Run("note entity matches nothing but does not error", func(t *testing.T) {
+		result := translateForEntity(t, query, EntityNote)
+		var notes []testNote
+		if err := result.Find(&notes).Error; err != nil {
+			t.Fatalf("query error: %v", err)
+		}
+		if len(notes) != 0 {
+			t.Fatalf("expected no notes, got %d", len(notes))
+		}
+	})
+
+	t.Run("junction-backed count field on wrong entity", func(t *testing.T) {
+		// notes.count is valid on resources and groups but not notes: the note
+		// entity clone must translate (FALSE branch), not error.
+		q := `(type = "resource" AND notes.count > 0) OR (type = "note" AND name ~ "*meeting*")`
+		result := translateForEntity(t, q, EntityNote)
+		var notes []testNote
+		if err := result.Find(&notes).Error; err != nil {
+			t.Fatalf("query error: %v", err)
 		}
 	})
 }

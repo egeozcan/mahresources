@@ -718,6 +718,15 @@ func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *Compariso
 			db = db.Where(countExpr+" "+tc.sqlOperator(expr.Operator)+" ?", val)
 			return db, nil
 		}
+		// Count field valid on another entity type: cross-entity field mismatch
+		// (e.g., children.count while translating the resource clone of a
+		// type-guarded OR). Inject FALSE instead of erroring, matching the
+		// entity-specific scalar field behavior below — a TranslateError here
+		// would make executeCrossEntity drop this entity's results entirely.
+		if isCountFieldOnAnyEntity(expr.Field.Parts[0].Value) {
+			db = db.Where("1 = 0")
+			return db, nil
+		}
 	}
 
 	// Handle recursive hierarchy traversal: ancestors.X / descendants.X.

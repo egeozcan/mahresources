@@ -137,3 +137,14 @@ func isFieldOnAnyEntity(fieldName string) bool {
 	}
 	return false
 }
+
+// isCountFieldOnAnyEntity returns true if <fieldName>.count is a valid count
+// pseudo-field on at least one entity type.
+func isCountFieldOnAnyEntity(fieldName string) bool {
+	for _, et := range []EntityType{EntityResource, EntityNote, EntityGroup} {
+		if _, ok := countableRelation(et, fieldName); ok {
+			return true
+		}
+	}
+	return false
+}
