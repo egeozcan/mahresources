@@ -11,7 +11,7 @@ import (
 )
 
 func mockExecutor(result *QueryResult, err error) QueryExecutor {
-	return func(ctx context.Context, query string, savedName string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error) {
+	return func(ctx context.Context, query string, savedName string, params map[string]string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error) {
 		return result, err
 	}
 }
@@ -142,7 +142,7 @@ func TestMRQLShortcodeNoQueryOrSaved(t *testing.T) {
 
 func TestMRQLShortcodeRecursionDepthCap(t *testing.T) {
 	callCount := 0
-	var executor QueryExecutor = func(ctx context.Context, query string, savedName string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error) {
+	var executor QueryExecutor = func(ctx context.Context, query string, savedName string, params map[string]string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error) {
 		callCount++
 		return &QueryResult{
 			EntityType: "resource",
@@ -171,7 +171,7 @@ func TestMRQLShortcodeRecursionDepthCap(t *testing.T) {
 
 func TestMRQLShortcodeSavedQuery(t *testing.T) {
 	var capturedSaved string
-	executor := func(ctx context.Context, query string, savedName string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error) {
+	executor := func(ctx context.Context, query string, savedName string, params map[string]string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error) {
 		capturedSaved = savedName
 		return &QueryResult{EntityType: "resource", Mode: "flat", Items: []QueryResultItem{
 			{EntityType: "resource", EntityID: 1, Entity: testEntity{ID: 1, Name: "Saved Result"}, Meta: []byte(`{}`)},
@@ -187,7 +187,7 @@ func TestMRQLShortcodeSavedQuery(t *testing.T) {
 
 func TestMRQLShortcodeDefaultLimits(t *testing.T) {
 	var capturedLimit, capturedBuckets int
-	executor := func(ctx context.Context, query string, savedName string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error) {
+	executor := func(ctx context.Context, query string, savedName string, params map[string]string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error) {
 		capturedLimit = limit
 		capturedBuckets = buckets
 		return &QueryResult{EntityType: "resource", Mode: "flat"}, nil

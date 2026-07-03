@@ -3466,6 +3466,93 @@ paths:
             summary: Get MRQL autocomplete suggestions
             tags:
                 - mrql
+    /v1/mrql/explain:
+        post:
+            description: |-
+                Parses, binds parameters, validates, and translates an MRQL query, then
+                returns the SQL statement(s) that would run — without executing the query.
+
+                Request body fields (provide one of query / id / name):
+                  - query  (string) — inline MRQL source
+                  - id     (integer) — saved query id
+                  - name   (string) — saved query name
+                  - params (object) — $name placeholder bindings
+
+                Query parameters:
+                  - param.<name>=<value> — alternative to the params object (always strings)
+
+                Response: {"entityType", "statements": [{"label","sql","vars","interpolated"}], "warnings", "default_limit_applied", "applied_limit"}.
+                Reported SQL reflects the default LIMIT, resolved SCOPE, and any RBAC forced scope.
+            operationId: explainMRQL
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Explain the SQL an MRQL query would run
+            tags:
+                - mrql
+    /v1/mrql/export:
+        get:
+            description: 'GET form of /v1/mrql/export: all inputs (query, id/name, format, param.<name>, pagination) are supplied as query parameters. See the POST form for the CSV/JSON shape details.'
+            operationId: exportMRQLGet
+            parameters:
+                - description: Inline MRQL source (or use id/name)
+                  in: query
+                  name: query
+                  schema:
+                    type: string
+                - description: Saved query id
+                  in: query
+                  name: id
+                  schema:
+                    type: integer
+                - description: Saved query name
+                  in: query
+                  name: name
+                  schema:
+                    type: string
+                - description: 'Export format: csv (default) or json'
+                  in: query
+                  name: format
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Export MRQL query results as CSV or JSON (GET)
+            tags:
+                - mrql
+        post:
+            description: |-
+                Executes a query (inline or saved) and streams the result as a file download.
+
+                Accepts the same inputs as /v1/mrql (query or id/name, params / param.<name>, limit,
+                page, buckets, offset) plus:
+                  - format (csv|json) — default csv
+
+                CSV shapes: aggregated → GROUP BY keys + aggregate aliases; flat → fixed scalar
+                columns per entity (meta as a JSON string); bucketed → bucket-key columns then the
+                flat item columns. CSV requires a single entity type; use format=json for
+                cross-entity results. When no explicit LIMIT is present the default is applied and
+                reported via the X-MRQL-Default-Limit-Applied response header.
+            operationId: exportMRQL
+            parameters:
+                - description: 'Export format: csv (default) or json'
+                  in: query
+                  name: format
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Export MRQL query results as CSV or JSON
+            tags:
+                - mrql
     /v1/mrql/generate:
         post:
             description: |-

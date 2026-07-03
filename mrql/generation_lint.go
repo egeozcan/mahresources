@@ -24,6 +24,11 @@ func LintGeneratedQuery(q *Query) []map[string]any {
 	if q.Offset > MaxGeneratedOffset {
 		add(-1, "OFFSET must be between 0 and 10000 for generated MRQL")
 	}
+	// Generated queries must be directly runnable; parameter placeholders
+	// ($name) would leave the query unbound and unexecutable.
+	if len(ListParams(q)) > 0 {
+		add(-1, "generated MRQL must not contain parameter placeholders ($name)")
+	}
 
 	walkGeneratedNode(q.Where, func(n Node) {
 		switch expr := n.(type) {

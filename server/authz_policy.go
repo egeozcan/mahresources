@@ -111,6 +111,7 @@ func requiredCapability(method, rawPath string) capability {
 func isReadViaPost(path string) bool {
 	switch path {
 	case "/v1/mrql", "/v1/mrql/validate", "/v1/mrql/complete",
+		"/v1/mrql/explain", "/v1/mrql/export",
 		"/v1/query/run", "/v1/mrql/saved/run", "/v1/search",
 		"/v1/groups/export/estimate":
 		return true

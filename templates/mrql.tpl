@@ -290,6 +290,29 @@
             </template>
         </div>
 
+        {# Package 4: parameter inputs — one labeled text field per $placeholder. #}
+        <template x-if="params.length > 0">
+            <fieldset data-testid="mrql-params" class="mt-2 border border-stone-200 rounded-md p-3">
+                <legend class="text-xs font-mono font-medium text-stone-600 px-1">Parameters</legend>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <template x-for="name in params" :key="name">
+                        <div>
+                            <label :for="'mrql-param-' + name"
+                                   class="block text-xs font-mono font-medium text-stone-700 mb-1"
+                                   x-text="'$' + name"></label>
+                            <input type="text"
+                                   :id="'mrql-param-' + name"
+                                   :data-param="name"
+                                   x-model="paramValues[name]"
+                                   @keydown.enter.prevent="execute()"
+                                   class="w-full border border-stone-300 rounded-md px-3 py-2 text-sm font-mono focus:ring-amber-600 focus:border-amber-600"
+                                   :placeholder="'value for $' + name" />
+                        </div>
+                    </template>
+                </div>
+            </fieldset>
+        </template>
+
         {# Action buttons #}
         <div class="flex items-center gap-2 mt-2">
             <button type="button"
@@ -304,6 +327,15 @@
                 </template>
                 <span x-text="executing ? 'Running...' : 'Run'"></span>
                 <kbd class="ml-2 text-xs" aria-hidden="true" x-text="navigator.platform.indexOf('Mac') > -1 ? '⌘↵' : 'Ctrl+Enter'"></kbd>
+            </button>
+            {# Package 4: Explain — preview the SQL without executing. #}
+            <button type="button"
+                    @click="explain()"
+                    :disabled="explaining"
+                    data-testid="mrql-explain-button"
+                    class="inline-flex items-center px-4 py-2 border border-stone-300 rounded-md shadow-sm text-sm font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                <span x-text="explaining ? 'Explaining...' : 'Explain'"></span>
+                <kbd class="ml-2 text-xs" aria-hidden="true" x-text="navigator.platform.indexOf('Mac') > -1 ? '⌘⇧↵' : 'Ctrl+Shift+Enter'"></kbd>
             </button>
             {# BH-012: Update button — only rendered when a saved query is loaded + query is valid. #}
             <button type="button"
@@ -361,6 +393,65 @@
         </div>
     </template>
 
+    {# ── Explain Panel (Package 4) ───────────────────────────────── #}
+    <template x-if="showExplain && explainResult">
+        <section aria-label="Query plan" data-testid="mrql-explain-panel"
+                 class="border border-stone-300 rounded-md bg-stone-50 p-4 space-y-3"
+                 aria-live="polite">
+            <div class="flex items-center justify-between">
+                <h2 class="text-base font-semibold font-mono text-stone-800">
+                    Explain
+                    <span class="text-sm font-normal text-stone-500"
+                          x-text="'(' + (explainResult.entityType || '') + ')'"></span>
+                </h2>
+                <button type="button" @click="showExplain = false"
+                        data-testid="mrql-explain-close"
+                        class="text-sm font-mono text-stone-500 hover:text-stone-800 cursor-pointer"
+                        aria-label="Close explain panel">Close</button>
+            </div>
+
+            <template x-if="explainResult.default_limit_applied">
+                <div class="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800 font-mono" role="status">
+                    Default limit applied (<span x-text="explainResult.applied_limit"></span> rows).
+                </div>
+            </template>
+
+            <template x-if="explainResult.warnings && explainResult.warnings.length > 0">
+                <div class="rounded-md bg-amber-50 border border-amber-200 p-3 space-y-1" role="status">
+                    <template x-for="(w, wIdx) in explainResult.warnings" :key="wIdx">
+                        <p class="text-sm text-amber-800 font-mono" x-text="w"></p>
+                    </template>
+                </div>
+            </template>
+
+            <template x-for="(st, sIdx) in explainResult.statements" :key="sIdx">
+                <div class="space-y-1" x-data="{ raw: false }">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-sm font-semibold font-mono text-amber-800" x-text="st.label"></h3>
+                        <div class="flex items-center gap-3">
+                            <button type="button" @click="raw = !raw"
+                                    class="text-xs font-mono text-stone-500 hover:text-stone-800 cursor-pointer"
+                                    :aria-expanded="raw ? 'true' : 'false'"
+                                    x-text="raw ? 'Hide raw SQL' : 'Show raw SQL'"></button>
+                            <button type="button" @click="copyText(raw ? st.sql : st.interpolated)"
+                                    class="text-xs font-mono text-stone-500 hover:text-stone-800 cursor-pointer"
+                                    aria-label="Copy SQL to clipboard">Copy</button>
+                        </div>
+                    </div>
+                    <pre class="overflow-x-auto bg-white border border-stone-200 rounded-md p-3 text-xs font-mono text-stone-800"><code x-text="st.interpolated"></code></pre>
+                    <template x-if="raw">
+                        <div class="space-y-1">
+                            <pre class="overflow-x-auto bg-white border border-stone-200 rounded-md p-3 text-xs font-mono text-stone-800"><code x-text="st.sql"></code></pre>
+                            <p class="text-xs font-mono text-stone-500">
+                                vars: <span x-text="JSON.stringify(st.vars)"></span>
+                            </p>
+                        </div>
+                    </template>
+                </div>
+            </template>
+        </section>
+    </template>
+
     {# ── Results Section ─────────────────────────────────────────── #}
     <section aria-label="Query results">
         <template x-if="error">
@@ -380,14 +471,31 @@
 
         <template x-if="result && !error">
             <div class="space-y-3">
-                <div class="flex items-center justify-between">
+                <div class="flex items-center justify-between gap-2 flex-wrap">
                     <h2 class="text-base font-semibold font-mono text-stone-800">
                         Results
                         <span class="text-sm font-normal text-stone-500"
                               x-text="result.mode === 'aggregated' ? '(' + totalCount + ' rows)' : result.mode === 'bucketed' ? '(' + (result.groups?.length || 0) + ' groups, ' + totalCount + ' items)' : '(' + totalCount + ' items)'"></span>
                     </h2>
-                    <span class="text-xs text-stone-500 font-mono"
-                          x-text="'Entity: ' + (['resource','note','group'].includes(result.entityType) ? result.entityType : 'all types')"></span>
+                    <div class="flex items-center gap-2">
+                        {# Package 4: export the current query + params as a download. #}
+                        <button type="button"
+                                @click="exportResults('csv')"
+                                :disabled="exporting"
+                                data-testid="mrql-export-csv"
+                                class="inline-flex items-center px-3 py-1.5 border border-stone-300 rounded-md text-xs font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                            Export CSV
+                        </button>
+                        <button type="button"
+                                @click="exportResults('json')"
+                                :disabled="exporting"
+                                data-testid="mrql-export-json"
+                                class="inline-flex items-center px-3 py-1.5 border border-stone-300 rounded-md text-xs font-mono font-medium text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                            Export JSON
+                        </button>
+                        <span class="text-xs text-stone-500 font-mono"
+                              x-text="'Entity: ' + (['resource','note','group'].includes(result.entityType) ? result.entityType : 'all types')"></span>
+                    </div>
                 </div>
 
                 {# BH-013: default-limit banner — shown when no explicit LIMIT was supplied. #}

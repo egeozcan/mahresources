@@ -13,6 +13,25 @@ const (
 	defaultMRQLShortcodeBuckets = 5
 )
 
+// shortcodeParamPrefix marks shortcode attributes that bind MRQL $name
+// placeholders, e.g. [mrql saved="report" param-tag="x" param-since="-7d"].
+const shortcodeParamPrefix = "param-"
+
+// collectShortcodeParams extracts `param-<name>` attributes into a params map
+// (keyed by <name>). Returns nil when none are present.
+func collectShortcodeParams(attrs map[string]string) map[string]string {
+	var params map[string]string
+	for k, v := range attrs {
+		if name, ok := strings.CutPrefix(k, shortcodeParamPrefix); ok && name != "" {
+			if params == nil {
+				params = map[string]string{}
+			}
+			params[name] = v
+		}
+	}
+	return params
+}
+
 // RenderMRQLShortcode expands an [mrql] shortcode into rendered query results.
 // The depth parameter tracks recursion level for custom templates that may
 // contain nested [mrql] shortcodes.
@@ -27,8 +46,9 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 	buckets := parseIntAttr(sc.Attrs["buckets"], defaultMRQLShortcodeBuckets)
 	format := sc.Attrs["format"] // "" means auto-resolve
 	scopeGroupID := resolveScopeKeyword(sc.Attrs["scope"], ctx)
+	params := collectShortcodeParams(sc.Attrs)
 
-	result, err := executor(reqCtx, query, saved, limit, buckets, scopeGroupID)
+	result, err := executor(reqCtx, query, saved, params, limit, buckets, scopeGroupID)
 	if err != nil {
 		return fmt.Sprintf(
 			`<div class="mrql-results mrql-error text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-3 font-mono">%s</div>`,

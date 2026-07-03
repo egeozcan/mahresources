@@ -71,6 +71,8 @@ sidebar_label: CLI
 | `mr logs list` | List log entries | [Details](./logs/list.md) |
 | `mr mrql` | Execute and manage MRQL queries | [Details](./mrql/index.md) |
 | `mr mrql delete` | Delete a saved MRQL query by ID | [Details](./mrql/delete.md) |
+| `mr mrql explain` | Show the SQL an MRQL query would run, without executing it | [Details](./mrql/explain.md) |
+| `mr mrql export` | Export MRQL query results as CSV or JSON | [Details](./mrql/export.md) |
 | `mr mrql list` | List saved MRQL queries | [Details](./mrql/list.md) |
 | `mr mrql run` | Run a saved MRQL query by name or ID | [Details](./mrql/run.md) |
 | `mr mrql save` | Save a MRQL query | [Details](./mrql/save.md) |

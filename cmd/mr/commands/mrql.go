@@ -71,6 +71,7 @@ func NewMRQLCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comman
 		buckets  int
 		offset   int
 		render   bool
+		params   []string
 	)
 
 	help := helptext.Load(mrqlHelpFS, "mrql_help/mrql.md")
@@ -120,9 +121,11 @@ func NewMRQLCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comman
 				body["page"] = *page
 			}
 
-			var q url.Values
+			q := url.Values{}
+			if err := addParamFlags(q, params); err != nil {
+				return err
+			}
 			if render {
-				q = url.Values{}
 				q.Set("render", "1")
 			}
 
@@ -141,13 +144,29 @@ func NewMRQLCmd(c *client.Client, opts *output.Options, page *int) *cobra.Comman
 	mrqlCmd.Flags().IntVar(&buckets, "buckets", 0, "Groups per page for bucketed GROUP BY queries")
 	mrqlCmd.Flags().IntVar(&offset, "offset", 0, "Bucket offset for cursor-based GROUP BY pagination")
 	mrqlCmd.Flags().BoolVar(&render, "render", false, "Request server-side template rendering via CustomMRQLResult")
+	mrqlCmd.Flags().StringArrayVar(&params, "param", nil, "Bind a query parameter placeholder, repeatable: --param name=value")
 
 	mrqlCmd.AddCommand(newMRQLSaveCmd(c, opts))
 	mrqlCmd.AddCommand(newMRQLListCmd(c, opts, page))
 	mrqlCmd.AddCommand(newMRQLRunCmd(c, opts, page))
+	mrqlCmd.AddCommand(newMRQLExplainCmd(c, opts))
+	mrqlCmd.AddCommand(newMRQLExportCmd(c, opts, page))
 	mrqlCmd.AddCommand(newMRQLDeleteCmd(c, opts))
 
 	return mrqlCmd
+}
+
+// addParamFlags parses repeatable --param name=value flags into `param.<name>`
+// query parameters (the server accepts these for execute/run/explain/export).
+func addParamFlags(q url.Values, params []string) error {
+	for _, p := range params {
+		name, value, ok := strings.Cut(p, "=")
+		if !ok || name == "" {
+			return fmt.Errorf("invalid --param %q: expected name=value", p)
+		}
+		q.Set("param."+name, value)
+	}
+	return nil
 }
 
 func newMRQLSaveCmd(c *client.Client, opts *output.Options) *cobra.Command {
@@ -243,6 +262,7 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 		buckets int
 		offset  int
 		render  bool
+		params  []string
 	)
 
 	help := helptext.Load(mrqlHelpFS, "mrql_help/mrql_run.md")
@@ -272,6 +292,9 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 			if cmd.Flags().Changed("page") {
 				q.Set("page", strconv.Itoa(*page))
 			}
+			if err := addParamFlags(q, params); err != nil {
+				return err
+			}
 			if render {
 				q.Set("render", "1")
 			}
@@ -290,8 +313,230 @@ func newMRQLRunCmd(c *client.Client, opts *output.Options, page *int) *cobra.Com
 	cmd.Flags().IntVar(&buckets, "buckets", 0, "Groups per page for bucketed GROUP BY queries")
 	cmd.Flags().IntVar(&offset, "offset", 0, "Bucket offset for cursor-based GROUP BY pagination")
 	cmd.Flags().BoolVar(&render, "render", false, "Request server-side template rendering via CustomMRQLResult")
+	cmd.Flags().StringArrayVar(&params, "param", nil, "Bind a query parameter placeholder, repeatable: --param name=value")
 
 	return cmd
+}
+
+// mrqlExplainStatement mirrors one statement in the /v1/mrql/explain response.
+type mrqlExplainStatement struct {
+	Label        string `json:"label"`
+	SQL          string `json:"sql"`
+	Vars         []any  `json:"vars"`
+	Interpolated string `json:"interpolated"`
+}
+
+type mrqlExplainResponse struct {
+	EntityType          string                 `json:"entityType"`
+	Statements          []mrqlExplainStatement `json:"statements"`
+	Warnings            []string               `json:"warnings,omitempty"`
+	DefaultLimitApplied bool                   `json:"default_limit_applied"`
+	AppliedLimit        int                    `json:"applied_limit,omitempty"`
+}
+
+// newMRQLExplainCmd returns the "mrql explain" subcommand.
+func newMRQLExplainCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	var (
+		saved    string
+		fileFlag string
+		params   []string
+		asJSON   bool
+	)
+
+	help := helptext.Load(mrqlHelpFS, "mrql_help/mrql_explain.md")
+	cmd := &cobra.Command{
+		Use:         "explain [query]",
+		Short:       "Show the SQL an MRQL query would run, without executing it",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			body := map[string]interface{}{}
+			q := url.Values{}
+			if err := addParamFlags(q, params); err != nil {
+				return err
+			}
+
+			if saved != "" {
+				// The server expects a numeric id; send it only when --saved is
+				// numeric, and always send the name so numeric-only names still
+				// resolve via the server's name fallback.
+				if id, err := strconv.ParseUint(saved, 10, 64); err == nil {
+					body["id"] = id
+				}
+				body["name"] = saved
+			} else {
+				queryText, err := readQueryText(args, fileFlag)
+				if err != nil {
+					return err
+				}
+				body["query"] = queryText
+			}
+
+			var raw json.RawMessage
+			if err := c.Post("/v1/mrql/explain", q, body, &raw); err != nil {
+				return err
+			}
+
+			if asJSON || opts.JSON {
+				fmt.Println(string(raw))
+				return nil
+			}
+
+			var resp mrqlExplainResponse
+			if err := json.Unmarshal(raw, &resp); err != nil {
+				fmt.Println(string(raw))
+				return nil
+			}
+			printExplain(resp)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&saved, "saved", "", "Explain a saved query by name or ID instead of an inline query")
+	cmd.Flags().StringVarP(&fileFlag, "file", "f", "", "Read query from file")
+	cmd.Flags().StringArrayVar(&params, "param", nil, "Bind a query parameter placeholder, repeatable: --param name=value")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Emit the raw explain response as JSON")
+
+	return cmd
+}
+
+// printExplain renders the explain response as label headers plus interpolated SQL.
+func printExplain(resp mrqlExplainResponse) {
+	for _, w := range resp.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
+	if resp.DefaultLimitApplied {
+		fmt.Fprintf(os.Stderr, "Default LIMIT %d applied.\n", resp.AppliedLimit)
+	}
+	for i, st := range resp.Statements {
+		if i > 0 {
+			fmt.Println()
+		}
+		fmt.Printf("-- %s --\n", st.Label)
+		fmt.Println(st.Interpolated)
+	}
+}
+
+// newMRQLExportCmd returns the "mrql export" subcommand.
+func newMRQLExportCmd(c *client.Client, opts *output.Options, page *int) *cobra.Command {
+	var (
+		saved    string
+		fileFlag string
+		format   string
+		outFile  string
+		params   []string
+		limit    int
+		buckets  int
+		offset   int
+	)
+
+	help := helptext.Load(mrqlHelpFS, "mrql_help/mrql_export.md")
+	cmd := &cobra.Command{
+		Use:         "export [query]",
+		Short:       "Export MRQL query results as CSV or JSON",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			q := url.Values{}
+			if err := addParamFlags(q, params); err != nil {
+				return err
+			}
+			if format != "" {
+				q.Set("format", format)
+			}
+			if saved != "" {
+				// id must be numeric for the server's query decoder; always send
+				// the name so numeric-only names still resolve via the fallback.
+				if _, err := strconv.ParseUint(saved, 10, 64); err == nil {
+					q.Set("id", saved)
+				}
+				q.Set("name", saved)
+			} else {
+				queryText, err := readQueryText(args, fileFlag)
+				if err != nil {
+					return err
+				}
+				q.Set("query", queryText)
+			}
+			if cmd.Flags().Changed("limit") {
+				q.Set("limit", strconv.Itoa(limit))
+			}
+			if cmd.Flags().Changed("buckets") {
+				q.Set("buckets", strconv.Itoa(buckets))
+			}
+			if cmd.Flags().Changed("offset") {
+				q.Set("offset", strconv.Itoa(offset))
+			}
+			if cmd.Flags().Changed("page") {
+				q.Set("page", strconv.Itoa(*page))
+			}
+
+			resp, err := c.GetRaw("/v1/mrql/export", q)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != 200 {
+				data, _ := io.ReadAll(resp.Body)
+				return fmt.Errorf("export failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(data)))
+			}
+
+			out := os.Stdout
+			if outFile != "" {
+				f, err := os.Create(outFile)
+				if err != nil {
+					return fmt.Errorf("creating %q: %w", outFile, err)
+				}
+				defer f.Close()
+				out = f
+			}
+			if _, err := io.Copy(out, resp.Body); err != nil {
+				return fmt.Errorf("writing export: %w", err)
+			}
+			if outFile != "" && !opts.Quiet {
+				fmt.Fprintf(os.Stderr, "Wrote %s\n", outFile)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&saved, "saved", "", "Export a saved query by name or ID instead of an inline query")
+	cmd.Flags().StringVarP(&fileFlag, "file", "f", "", "Read query from file")
+	cmd.Flags().StringVar(&format, "format", "csv", "Export format: csv or json")
+	cmd.Flags().StringVarP(&outFile, "output", "o", "", "Write to a file instead of stdout")
+	cmd.Flags().StringArrayVar(&params, "param", nil, "Bind a query parameter placeholder, repeatable: --param name=value")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Items per bucket for GROUP BY, or total items for regular queries")
+	cmd.Flags().IntVar(&buckets, "buckets", 0, "Groups per page for bucketed GROUP BY queries")
+	cmd.Flags().IntVar(&offset, "offset", 0, "Bucket offset for cursor-based GROUP BY pagination")
+
+	return cmd
+}
+
+// readQueryText resolves query text from a positional arg, a file, or stdin ('-').
+func readQueryText(args []string, fileFlag string) (string, error) {
+	if len(args) == 1 && args[0] == "-" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", fmt.Errorf("reading stdin: %w", err)
+		}
+		return string(data), nil
+	}
+	if fileFlag != "" {
+		data, err := os.ReadFile(fileFlag)
+		if err != nil {
+			return "", fmt.Errorf("reading file %q: %w", fileFlag, err)
+		}
+		return string(data), nil
+	}
+	if len(args) == 1 {
+		return args[0], nil
+	}
+	return "", fmt.Errorf("provide a query as an argument, use -f <file>, pipe to stdin with '-', or use --saved <name-or-id>")
 }
 
 // printMRQLResponse handles rendering of both grouped and standard MRQL responses,

@@ -123,6 +123,21 @@ local total = mah.db.count_resources({ owner_id = 5, content_type = "image/%" })
 local tagged = mah.db.count_notes({ tags = {1} })
 ```
 
+### MRQL Query
+
+```lua
+local result, err = mah.db.mrql_query("type=resource AND name ~ $needle", {
+    limit = 50,
+    buckets = 5,
+    scope = "entity",             -- "global" | "entity" | "parent" | "root"
+    scope_entity_id = ctx.entity_id,
+    entity_type = ctx.entity_type,
+    params = { needle = "sunset" }, -- binds $name placeholders (value positions only)
+})
+```
+
+Runs an [MRQL](./mrql.md) query and returns a result table (`{entity_type, mode, items|rows|groups}`) or `nil, error_string`. The `params` table binds `$name` placeholders; values are stringified and coerced like typed literals. Every placeholder must be supplied or the call errors. Results are cached per `(query, scope, limit, buckets, params)`.
+
 ### Resource File Access
 
 ```lua

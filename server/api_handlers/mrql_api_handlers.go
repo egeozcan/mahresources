@@ -23,15 +23,85 @@ import (
 // -- Request/response types for MRQL endpoints --
 
 type mrqlExecuteRequest struct {
-	Query   string `json:"query" schema:"query"`
-	Limit   int    `json:"limit" schema:"limit"`     // items per bucket (grouped) or total items (non-grouped)
-	Buckets int    `json:"buckets" schema:"buckets"` // buckets per page (grouped mode only)
-	Page    int    `json:"page" schema:"page"`       // page number (paginates buckets in grouped mode)
-	Offset  int    `json:"offset" schema:"offset"`   // direct offset for cursor-based bucket paging
+	Query   string         `json:"query" schema:"query"`
+	Limit   int            `json:"limit" schema:"limit"`     // items per bucket (grouped) or total items (non-grouped)
+	Buckets int            `json:"buckets" schema:"buckets"` // buckets per page (grouped mode only)
+	Page    int            `json:"page" schema:"page"`       // page number (paginates buckets in grouped mode)
+	Offset  int            `json:"offset" schema:"offset"`   // direct offset for cursor-based bucket paging
+	Params  map[string]any `json:"params" schema:"-"`        // $name placeholder bindings (JSON body only)
 }
 
 type mrqlValidateRequest struct {
 	Query string `json:"query" schema:"query"`
+}
+
+type mrqlExplainRequest struct {
+	Query  string         `json:"query" schema:"query"`
+	ID     uint           `json:"id" schema:"id"`
+	Name   string         `json:"name" schema:"name"`
+	Params map[string]any `json:"params" schema:"-"`
+}
+
+// applyGroupedPagination applies request pagination to a parsed GROUP BY query.
+// Aggregated mode: limit/page are standard row pagination. Bucketed mode:
+// limit = items per bucket, buckets = groups per page, page/offset paginate groups.
+func applyGroupedPagination(parsed *mrql.Query, limit, buckets, page, directOffset int) {
+	if limit > 0 {
+		parsed.Limit = limit
+	}
+
+	if len(parsed.GroupBy.Aggregates) > 0 {
+		// Aggregated: standard LIMIT/OFFSET row pagination.
+		if page >= 1 {
+			effectiveLimit := parsed.Limit
+			if effectiveLimit < 0 {
+				effectiveLimit = 1000
+			}
+			parsed.Offset = (page - 1) * effectiveLimit
+		}
+		return
+	}
+
+	// Bucketed: BucketLimit controls groups per page, clamped to MaxBuckets.
+	if buckets > 0 {
+		parsed.BucketLimit = buckets
+	} else if limit > 0 && page >= 1 {
+		parsed.BucketLimit = limit
+	} else if parsed.Limit > 0 && page >= 1 {
+		parsed.BucketLimit = parsed.Limit
+	}
+	if parsed.BucketLimit > mrql.MaxBuckets {
+		parsed.BucketLimit = mrql.MaxBuckets
+	}
+	// Direct offset (cursor-based) takes precedence over page computation.
+	if directOffset > 0 {
+		parsed.Offset = directOffset
+	} else if page >= 1 {
+		effectiveBuckets := parsed.BucketLimit
+		if effectiveBuckets < 0 {
+			effectiveBuckets = mrql.MaxBuckets
+		}
+		parsed.Offset = (page - 1) * effectiveBuckets
+	}
+}
+
+// collectMRQLParams merges JSON-body param bindings with url `param.<name>=`
+// query parameters (CLI/curl-friendly, always strings). Query parameters win on
+// key collisions. Returns nil when no params were supplied.
+func collectMRQLParams(request *http.Request, jsonParams map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range jsonParams {
+		out[k] = v
+	}
+	for key, vals := range request.URL.Query() {
+		if name, ok := strings.CutPrefix(key, "param."); ok && name != "" && len(vals) > 0 {
+			out[name] = vals[0]
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 type mrqlCompleteRequest struct {
@@ -46,6 +116,7 @@ type mrqlGenerateRequest struct {
 type mrqlValidateResponse struct {
 	Valid  bool             `json:"valid"`
 	Errors []map[string]any `json:"errors,omitempty"`
+	Params []string         `json:"params,omitempty"`
 }
 
 type mrqlCompleteResponse struct {
@@ -279,10 +350,14 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 			return
 		}
 
-		// Parse and validate to check for GROUP BY before execution
+		// Parse, bind params, then validate to check for GROUP BY before execution
 		parsed, err := mrql.Parse(req.Query)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			return
+		}
+		if err := mrql.BindParams(parsed, collectMRQLParams(request, req.Params)); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 		if err := mrql.Validate(parsed); err != nil {
@@ -299,46 +374,8 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 			}
 			parsed.EntityType = entityType
 
-			// Override pagination with request parameters.
-			// Aggregated mode: limit/page are standard row pagination.
-			// Bucketed mode: limit = items per bucket, buckets = groups per page, page paginates groups.
-			if req.Limit > 0 {
-				parsed.Limit = req.Limit
-			}
-
-			isAggregated := len(parsed.GroupBy.Aggregates) > 0
-			if isAggregated {
-				// Aggregated: standard LIMIT/OFFSET row pagination
-				if req.Page >= 1 {
-					effectiveLimit := parsed.Limit
-					if effectiveLimit < 0 {
-						effectiveLimit = 1000
-					}
-					parsed.Offset = (req.Page - 1) * effectiveLimit
-				}
-			} else {
-				// Bucketed: BucketLimit controls groups per page, clamped to MaxBuckets
-				if req.Buckets > 0 {
-					parsed.BucketLimit = req.Buckets
-				} else if req.Limit > 0 && req.Page >= 1 {
-					parsed.BucketLimit = req.Limit
-				} else if parsed.Limit > 0 && req.Page >= 1 {
-					parsed.BucketLimit = parsed.Limit
-				}
-				if parsed.BucketLimit > mrql.MaxBuckets {
-					parsed.BucketLimit = mrql.MaxBuckets
-				}
-				// Direct offset (cursor-based) takes precedence over page computation
-				if req.Offset > 0 {
-					parsed.Offset = req.Offset
-				} else if req.Page >= 1 {
-					effectiveBuckets := parsed.BucketLimit
-					if effectiveBuckets < 0 {
-						effectiveBuckets = mrql.MaxBuckets
-					}
-					parsed.Offset = (req.Page - 1) * effectiveBuckets
-				}
-			}
+			// Override pagination with request parameters (aggregated vs bucketed).
+			applyGroupedPagination(parsed, req.Limit, req.Buckets, req.Page, req.Offset)
 
 			grouped, err := ctx.ExecuteMRQLGrouped(request.Context(), parsed)
 			if err != nil {
@@ -356,8 +393,8 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 			return
 		}
 
-		// Non-grouped query: use the existing path
-		result, err := ctx.ExecuteMRQL(request.Context(), req.Query, req.Limit, req.Page)
+		// Non-grouped query: parsed is already bound + validated above.
+		result, err := ctx.ExecuteMRQLParsed(request.Context(), parsed, req.Limit, req.Page)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
@@ -388,7 +425,70 @@ func GetValidateMRQLHandler(ctx *application_context.MahresourcesContext) func(h
 		_ = json.NewEncoder(writer).Encode(mrqlValidateResponse{
 			Valid:  valid,
 			Errors: errs,
+			Params: ctx.MRQLParams(req.Query),
 		})
+	}
+}
+
+// lookupSavedMRQLQuery resolves a saved query by id (preferred) or name,
+// mirroring the saved/run fallback (numeric-only names still resolve).
+func lookupSavedMRQLQuery(ctx *application_context.MahresourcesContext, id uint, name string) (*models.SavedMRQLQuery, error) {
+	if id != 0 {
+		saved, err := ctx.GetSavedMRQLQuery(id)
+		if err != nil && name != "" {
+			return ctx.GetSavedMRQLQueryByName(name)
+		}
+		return saved, err
+	}
+	if name != "" {
+		return ctx.GetSavedMRQLQueryByName(name)
+	}
+	return nil, errors.New("query text or saved id/name is required")
+}
+
+// GetExplainMRQLHandler handles POST /v1/mrql/explain — return the SQL that a
+// query (inline or saved) would run, without executing it.
+func GetExplainMRQLHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		var req mrqlExplainRequest
+		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+
+		// Resolve the query text: inline query, or a saved query by id/name.
+		queryText := req.Query
+		if queryText == "" {
+			saved, err := lookupSavedMRQLQuery(ctx, req.ID, req.Name)
+			if err != nil {
+				http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+				return
+			}
+			queryText = saved.Query
+		}
+
+		parsed, err := mrql.Parse(queryText)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			return
+		}
+		if err := mrql.BindParams(parsed, collectMRQLParams(request, req.Params)); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
+			return
+		}
+		if err := mrql.Validate(parsed); err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			return
+		}
+
+		explain, err := ctx.ExplainMRQL(request.Context(), parsed)
+		if err != nil {
+			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			return
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(explain)
 	}
 }
 
@@ -468,7 +568,7 @@ func GetSavedMRQLQueriesHandler(ctx *application_context.MahresourcesContext) fu
 			}
 
 			writer.Header().Set("Content-Type", constants.JSON)
-			_ = json.NewEncoder(writer).Encode(query)
+			_ = json.NewEncoder(writer).Encode(savedQueryWithParams(query))
 			return
 		}
 
@@ -486,9 +586,31 @@ func GetSavedMRQLQueriesHandler(ctx *application_context.MahresourcesContext) fu
 			return
 		}
 
+		out := make([]savedMRQLQueryResponse, len(queries))
+		for i := range queries {
+			out[i] = savedQueryWithParams(&queries[i])
+		}
+
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(queries)
+		_ = json.NewEncoder(writer).Encode(out)
 	}
+}
+
+// savedMRQLQueryResponse augments a saved query with its derived parameter
+// placeholder names. The embedded pointer flattens the model's JSON fields.
+type savedMRQLQueryResponse struct {
+	*models.SavedMRQLQuery
+	Params []string `json:"params,omitempty"`
+}
+
+// savedQueryWithParams derives the query's $name placeholders; a parse failure
+// yields no params (the field is omitted).
+func savedQueryWithParams(q *models.SavedMRQLQuery) savedMRQLQueryResponse {
+	resp := savedMRQLQueryResponse{SavedMRQLQuery: q}
+	if parsed, err := mrql.Parse(q.Query); err == nil {
+		resp.Params = mrql.ListParams(parsed)
+	}
+	return resp
 }
 
 // GetCreateSavedMRQLQueryHandler handles POST /v1/mrql/saved — create a saved MRQL query.
@@ -600,11 +722,18 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 		page := int(http_utils.GetUIntQueryParameter(request, "page", 0))
 		buckets := int(http_utils.GetUIntQueryParameter(request, "buckets", 0))
 		directOffset := int(http_utils.GetUIntQueryParameter(request, "offset", 0))
+		params := collectMRQLParams(request, savedRunJSONParams(request))
 
 		// Revalidate saved query — schema changes may have invalidated it since save time.
 		parsed, parseErr := mrql.Parse(saved.Query)
 		if parseErr != nil {
 			http_utils.HandleError(fmt.Errorf("saved query is no longer valid: %w", parseErr), writer, request, http.StatusBadRequest)
+			return
+		}
+		// Bind supplied params before revalidation. A missing/unknown-param error
+		// is a caller error (400), surfaced directly.
+		if err := mrql.BindParams(parsed, params); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
 		if valErr := mrql.Validate(parsed); valErr != nil {
@@ -620,40 +749,7 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 			}
 			parsed.EntityType = entityType
 
-			if limit > 0 {
-				parsed.Limit = limit
-			}
-
-			isAggregated := len(parsed.GroupBy.Aggregates) > 0
-			if isAggregated {
-				if page >= 1 {
-					effectiveLimit := parsed.Limit
-					if effectiveLimit < 0 {
-						effectiveLimit = 1000
-					}
-					parsed.Offset = (page - 1) * effectiveLimit
-				}
-			} else {
-				if buckets > 0 {
-					parsed.BucketLimit = buckets
-				} else if limit > 0 && page >= 1 {
-					parsed.BucketLimit = limit
-				} else if parsed.Limit > 0 && page >= 1 {
-					parsed.BucketLimit = parsed.Limit
-				}
-				if parsed.BucketLimit > mrql.MaxBuckets {
-					parsed.BucketLimit = mrql.MaxBuckets
-				}
-				if directOffset > 0 {
-					parsed.Offset = directOffset
-				} else if page >= 1 {
-					effectiveBuckets := parsed.BucketLimit
-					if effectiveBuckets < 0 {
-						effectiveBuckets = mrql.MaxBuckets
-					}
-					parsed.Offset = (page - 1) * effectiveBuckets
-				}
-			}
+			applyGroupedPagination(parsed, limit, buckets, page, directOffset)
 
 			grouped, err := ctx.ExecuteMRQLGrouped(request.Context(), parsed)
 			if err != nil {
@@ -671,7 +767,7 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 			return
 		}
 
-		result, err := ctx.ExecuteMRQL(request.Context(), saved.Query, limit, page)
+		result, err := ctx.ExecuteMRQLParsed(request.Context(), parsed, limit, page)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 			return
@@ -685,4 +781,18 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(result)
 	}
+}
+
+// savedRunJSONParams reads the `params` object from a JSON request body for
+// saved-query execution. Non-JSON bodies yield nil (params then come only from
+// `param.<name>` query parameters).
+func savedRunJSONParams(request *http.Request) map[string]any {
+	if !strings.HasPrefix(request.Header.Get("Content-Type"), constants.JSON) {
+		return nil
+	}
+	var body struct {
+		Params map[string]any `json:"params"`
+	}
+	_ = json.NewDecoder(request.Body).Decode(&body)
+	return body.Params
 }

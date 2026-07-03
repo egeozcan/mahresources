@@ -13,8 +13,29 @@ const MaxBuckets = 1000
 // TranslateGroupByKeys executes a SELECT DISTINCT query to get unique bucket keys.
 // Returns a slice of maps, each containing the group-by field values for one bucket.
 func TranslateGroupByKeys(q *Query, db *gorm.DB, opts TranslateOptions) ([]map[string]any, error) {
+	result, err := BuildGroupByKeys(q, db, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	var keys []map[string]any
+	if err := result.Find(&keys).Error; err != nil {
+		return nil, err
+	}
+
+	// Strip internal _gbid_ keys from the public key maps — they're used
+	// internally by TranslateGroupByBucket but shouldn't appear in API responses.
+	// Note: we keep them in the maps so the caller (executeBucketedQuery) passes
+	// them through to TranslateGroupByBucket. The execution layer strips them
+	// from the MRQLBucket.Key before serialization.
+	return keys, nil
+}
+
+// BuildGroupByKeys composes the bucket-key discovery query (SELECT DISTINCT the
+// group-by columns) as a *gorm.DB without executing it. Used by EXPLAIN.
+func BuildGroupByKeys(q *Query, db *gorm.DB, opts TranslateOptions) (*gorm.DB, error) {
 	if q.GroupBy == nil || len(q.GroupBy.Aggregates) > 0 {
-		return nil, &TranslateError{Message: "TranslateGroupByKeys requires GROUP BY without aggregates", Pos: 0}
+		return nil, &TranslateError{Message: "BuildGroupByKeys requires GROUP BY without aggregates", Pos: 0}
 	}
 
 	entityType := q.EntityType
@@ -87,17 +108,7 @@ func TranslateGroupByKeys(q *Query, db *gorm.DB, opts TranslateOptions) ([]map[s
 	// correctly — DB-level OFFSET would skip keys that the item cap might need.
 	result = result.Limit(MaxBuckets + 1)
 
-	var keys []map[string]any
-	if err := result.Find(&keys).Error; err != nil {
-		return nil, err
-	}
-
-	// Strip internal _gbid_ keys from the public key maps — they're used
-	// internally by TranslateGroupByBucket but shouldn't appear in API responses.
-	// Note: we keep them in the maps so the caller (executeBucketedQuery) passes
-	// them through to TranslateGroupByBucket. The execution layer strips them
-	// from the MRQLBucket.Key before serialization.
-	return keys, nil
+	return result, nil
 }
 
 // TranslateGroupByBucket returns a GORM DB scoped to a specific bucket.

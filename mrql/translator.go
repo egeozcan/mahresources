@@ -1778,8 +1778,58 @@ func TranslateGroupBy(q *Query, db *gorm.DB, opts TranslateOptions) (*GroupByRes
 	return nil, nil
 }
 
+// BuildAggregatedGroupBy composes the aggregated GROUP BY query (SELECT ...
+// GROUP BY ... HAVING ... ORDER BY ... LIMIT) as a *gorm.DB without executing
+// it. Used by EXPLAIN; the execution path goes through TranslateGroupBy.
+func BuildAggregatedGroupBy(q *Query, db *gorm.DB, opts TranslateOptions) (*gorm.DB, error) {
+	if q.GroupBy == nil || len(q.GroupBy.Aggregates) == 0 {
+		return nil, &TranslateError{Message: "BuildAggregatedGroupBy requires GROUP BY with aggregates", Pos: 0}
+	}
+	entityType := q.EntityType
+	if entityType == EntityUnspecified {
+		entityType = ExtractEntityType(q)
+	}
+	if entityType == EntityUnspecified {
+		return nil, &TranslateError{Message: "entity type is required for GROUP BY", Pos: 0}
+	}
+
+	tc := newTranslateContext(db, entityType, q, opts)
+	result := db.Table(tc.tableName)
+
+	if q.Where != nil {
+		var err error
+		result, err = tc.translateNode(result, q.Where)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if opts.ScopeGroupID > 0 {
+		result = ApplyScopeCTE(result, entityType, opts.ScopeGroupID)
+	}
+	return tc.buildAggregatedGroupByDB(result, q)
+}
+
 // translateAggregatedGroupBy builds SELECT ... GROUP BY ... and executes.
 func (tc *translateContext) translateAggregatedGroupBy(db *gorm.DB, q *Query) (*GroupByResult, error) {
+	built, err := tc.buildAggregatedGroupByDB(db, q)
+	if err != nil {
+		return nil, err
+	}
+
+	var rows []map[string]any
+	if err := built.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	return &GroupByResult{
+		Mode: "aggregated",
+		Rows: rows,
+	}, nil
+}
+
+// buildAggregatedGroupByDB composes the aggregated SELECT/GROUP BY/HAVING/ORDER
+// BY/LIMIT onto db and returns it without executing.
+func (tc *translateContext) buildAggregatedGroupByDB(db *gorm.DB, q *Query) (*gorm.DB, error) {
 	// Add JOINs for relation fields (tags, owner, groups) if used in GROUP BY
 	var relationExprs map[string]groupByRelExpr
 	db, relationExprs = tc.groupByRelationJoins(db, q.GroupBy.Fields)
@@ -1856,15 +1906,7 @@ func (tc *translateContext) translateAggregatedGroupBy(db *gorm.DB, q *Query) (*
 		db = db.Offset(q.Offset)
 	}
 
-	var rows []map[string]any
-	if err := db.Find(&rows).Error; err != nil {
-		return nil, err
-	}
-
-	return &GroupByResult{
-		Mode: "aggregated",
-		Rows: rows,
-	}, nil
+	return db, nil
 }
 
 // buildGroupByAliasMap creates a mapping from all original GROUP BY field names

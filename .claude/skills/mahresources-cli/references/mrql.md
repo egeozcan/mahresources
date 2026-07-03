@@ -440,8 +440,50 @@ mr mrql run "recent-photos" --json | jq '.resources[].ID'  # JSON output
 - `--offset <n>` — Bucket page offset.
 - `--render` — Enable template rendering.
 - `--page <n>` — Global page.
+- `--param name=value` — Bind a `$name` placeholder (repeatable).
 
 Returns the same response shape as `mrql` (standard or grouped result).
+
+## Parameterized Queries — `$name` placeholders
+
+A query may contain `$name` placeholders in **value positions** (comparison RHS,
+`IN (...)` items, `HAVING` RHS) — not in field names, `LIMIT`/`OFFSET`, `SCOPE`,
+`WITHIN`, or `GROUP BY` keys. `$name` inside a quoted string stays literal.
+
+```bash
+mr mrql 'type = resource AND created > $since' --param since=-7d
+mr mrql run monthly-report --param month=2026-07
+```
+
+- Binding is value-level (injection-safe); a supplied string coerces like a typed
+  literal (`-7d`, `10mb`, `NOW()`, or a quoted string that unwraps), else a plain
+  string. Force a string: `--param n='"42"'`.
+- Every placeholder must be supplied (missing → error); unknown params rejected.
+- API: `params` object on `POST /v1/mrql`; `param.<name>=value` on
+  `POST /v1/mrql/saved/run`. `POST /v1/mrql/validate` returns a `params` array.
+
+## mr mrql explain — Preview SQL without executing
+
+```bash
+mr mrql explain 'type = resource AND fileSize > 1mb'
+mr mrql explain --saved my-report --param since=-7d --json
+```
+
+Returns label-headed interpolated SQL (or `--json` for the raw response with
+parameterized `sql` + `vars`). Honours default `LIMIT`, `SCOPE`, and RBAC scope.
+One statement for flat/aggregated; three for cross-entity; bucketed shows the
+key-discovery query plus a fan-out note. Endpoint: `POST /v1/mrql/explain`.
+
+## mr mrql export — Download results as CSV/JSON
+
+```bash
+mr mrql export 'type = resource' --format csv -o out.csv
+mr mrql export --saved my-report --format json --param since=-7d
+```
+
+**Flags:** `--format csv|json` (default csv), `--output <file>`, `--saved <name-or-id>`,
+`--param`, plus `--limit`/`--buckets`/`--offset`/`--page`. CSV requires a single
+entity type (use `--format json` for cross-entity). Endpoint: `GET|POST /v1/mrql/export`.
 
 ## mr mrql delete — Delete a saved query
 

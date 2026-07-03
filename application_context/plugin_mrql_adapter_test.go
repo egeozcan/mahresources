@@ -101,3 +101,27 @@ func TestPluginMRQLAdapterInvalidQuery(t *testing.T) {
 	_, err := adapter.ExecuteMRQL(context.Background(), "!!!invalid!!!", plugin_system.MRQLExecOptions{})
 	require.Error(t, err)
 }
+
+func TestPluginMRQLAdapterBindsParams(t *testing.T) {
+	ctx := createTestContext(t)
+	adapter := &pluginMRQLAdapter{ctx: ctx}
+
+	// A bound param filters like a typed literal (no error, valid result).
+	result, err := adapter.ExecuteMRQL(context.Background(), "type=resource AND name ~ $needle", plugin_system.MRQLExecOptions{
+		Limit:  10,
+		Params: map[string]string{"needle": "nonexistent-xyz"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "flat", result.Mode)
+	assert.Empty(t, result.Items)
+}
+
+func TestPluginMRQLAdapterMissingParamErrors(t *testing.T) {
+	ctx := createTestContext(t)
+	adapter := &pluginMRQLAdapter{ctx: ctx}
+
+	_, err := adapter.ExecuteMRQL(context.Background(), "type=resource AND name ~ $needle", plugin_system.MRQLExecOptions{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing parameter $needle")
+}

@@ -214,6 +214,49 @@ type = resource AND SIMILAR TO resource(1234) ORDER BY distance ASC LIMIT 20
   requires exactly one `SIMILAR TO` predicate. Rows without a stored pair
   (matched via other OR branches) sort last.
 
+## Parameters — `$name`
+
+Placeholders in value positions only (comparison RHS, `IN (...)` items, `HAVING` RHS). Not in field names, `LIMIT`/`OFFSET`, `SCOPE`, `WITHIN`, or `GROUP BY` keys. `$name` inside a quoted string is literal.
+
+```
+type = "resource" AND tags = $tag AND created > $since
+type = "resource" GROUP BY contentType COUNT() HAVING COUNT() > $min
+```
+
+- Binding is value-level (bind placeholders), never string interpolation — injection-safe.
+- A supplied string coerces like a typed literal (`-7d`, `10mb`, `NOW()`, quoted-string unwraps); otherwise a plain string. Force a string with quotes: `--param n='"42"'`.
+- Every placeholder must be supplied (missing → 400); unknown params rejected. Case-sensitive.
+
+```bash
+mr mrql 'type = resource AND created > $since' --param since=-7d
+mr mrql run monthly --param month=2026-07
+```
+
+API: `params` object on `POST /v1/mrql`; `param.<name>=value` query params on `POST /v1/mrql/saved/run`. Shortcodes: `param-<name>` attrs. `POST /v1/mrql/validate` returns a `params` array; saved-query responses carry a derived `params` array.
+
+## EXPLAIN
+
+`POST /v1/mrql/explain` / `mr mrql explain` — return the SQL a query would run, without executing it. Honours default `LIMIT`, `SCOPE`, and RBAC forced scope. One statement for flat/aggregated; three (resources/notes/groups) for cross-entity; bucketed shows the key-discovery query plus a fan-out note.
+
+```bash
+mr mrql explain 'type = resource AND fileSize > 1mb'
+mr mrql explain --saved my-report --param since=-7d --json
+```
+
+Web: **Explain** button / `Mod-Shift-Enter`.
+
+## Export
+
+`GET|POST /v1/mrql/export` / `mr mrql export` — stream results as `format=csv` (default) or `format=json`. Same inputs as execution.
+
+- CSV aggregated: group keys + aggregate aliases. Flat: fixed scalar columns per entity (`meta` as JSON string); single entity type only. Bucketed: bucket-key columns + flat item columns.
+- JSON: the exact `/v1/mrql` body. Default-limit signalled via the `X-MRQL-Default-Limit-Applied` header.
+
+```bash
+mr mrql export 'type = resource' --format csv -o out.csv
+mr mrql export --saved my-report --format json
+```
+
 ## Rendering
 
 The `--render` CLI flag (and `render=1` query parameter on `POST /v1/mrql`) requests server-side template rendering via `CustomMRQLResult` templates defined on Category, Resource Category, or Note Type. Matching entities include a `renderedHTML` field in the response.
@@ -228,4 +271,4 @@ Entities without a `CustomMRQLResult` template omit `renderedHTML`.
 
 - [MRQL Query Language](./mrql.md) — conceptual overview with worked examples
 - [Saved Queries](./saved-queries.md) — persisting and reusing queries
-- CLI: [`mr mrql`](../cli/mrql/index.md), [`mr mrql run`](../cli/mrql/run.md), [`mr mrql list`](../cli/mrql/list.md)
+- CLI: [`mr mrql`](../cli/mrql/index.md), [`mr mrql run`](../cli/mrql/run.md), [`mr mrql explain`](../cli/mrql/explain.md), [`mr mrql export`](../cli/mrql/export.md), [`mr mrql list`](../cli/mrql/list.md)

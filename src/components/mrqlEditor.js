@@ -23,6 +23,20 @@ export function mrqlEditor() {
     // Results
     result: null,
 
+    // Package 4: parameter placeholders ($name) derived from the validate
+    // response, plus their current values. paramValues is preserved while the
+    // placeholder set is unchanged.
+    params: [],
+    paramValues: {},
+
+    // Package 4: EXPLAIN panel state.
+    explainResult: null,
+    showExplain: false,
+    explaining: false,
+
+    // Package 4: export in-flight flag.
+    exporting: false,
+
     // BH-013: banner state, driven by the response's default_limit_applied flag.
     defaultLimitApplied: false,
     appliedLimit: 0,
@@ -231,6 +245,20 @@ export function mrqlEditor() {
               return true;
             },
           },
+          {
+            key: 'Mod-Shift-Enter',
+            run() {
+              self.explain();
+              return true;
+            },
+          },
+          {
+            key: 'Ctrl-Shift-Enter',
+            run() {
+              self.explain();
+              return true;
+            },
+          },
           ...closeBracketsKeymap,
           ...defaultKeymap,
           ...historyKeymap,
@@ -317,6 +345,7 @@ export function mrqlEditor() {
           return;
         }
         const data = await resp.json();
+        this.syncParams(data.params || []);
         if (data.valid) {
           this.validationError = '';
         } else if (data.errors && data.errors.length > 0) {
@@ -327,6 +356,47 @@ export function mrqlEditor() {
       } catch (_) {
         // Network error — silently ignore
       }
+    },
+
+    // syncParams reconciles the placeholder list from a validate response with
+    // the current param inputs, preserving already-entered values while the
+    // placeholder set is unchanged.
+    syncParams(names) {
+      names = Array.isArray(names) ? names : [];
+      const unchanged = names.length === this.params.length
+        && names.every((n, i) => n === this.params[i]);
+      if (unchanged) return;
+      const next = {};
+      for (const n of names) {
+        next[n] = Object.prototype.hasOwnProperty.call(this.paramValues, n)
+          ? this.paramValues[n] : '';
+      }
+      this.paramValues = next;
+      this.params = names;
+    },
+
+    // paramsPayload builds the params object to send with execute/explain/export.
+    // Empty inputs are omitted so the server reports them as missing (400) rather
+    // than binding an empty string.
+    paramsPayload() {
+      const out = {};
+      for (const n of this.params) {
+        const v = this.paramValues[n];
+        if (v !== undefined && v !== null && v !== '') out[n] = v;
+      }
+      return out;
+    },
+
+    // focusFirstEmptyParam moves focus to the first param input without a value.
+    focusFirstEmptyParam() {
+      this.$nextTick(() => {
+        for (const n of this.params) {
+          if (!this.paramValues[n]) {
+            const el = document.getElementById('mrql-param-' + n);
+            if (el) { el.focus(); return; }
+          }
+        }
+      });
     },
 
     async generateFromPrompt() {
@@ -417,7 +487,7 @@ export function mrqlEditor() {
         const resp = await fetch('/v1/mrql?render=1', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query }),
+          body: JSON.stringify({ query, params: this.paramsPayload() }),
         });
 
         if (!resp.ok) {
@@ -448,6 +518,80 @@ export function mrqlEditor() {
       }
     },
 
+    // explain calls /v1/mrql/explain and shows the SQL panel. Bound to the
+    // Explain button and Mod-Shift-Enter (Run stays Mod-Enter).
+    async explain() {
+      const query = this.getQuery().trim();
+      if (!query) return;
+
+      this.explaining = true;
+      this.error = '';
+      try {
+        const resp = await fetch('/v1/mrql/explain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, params: this.paramsPayload() }),
+        });
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => null);
+          this.error = errData?.error || errData?.Error || `Explain failed (${resp.status})`;
+          return;
+        }
+        this.explainResult = await resp.json();
+        this.showExplain = true;
+      } catch (err) {
+        this.error = err.message || 'Network error';
+      } finally {
+        this.explaining = false;
+      }
+    },
+
+    // exportResults re-submits the current query + params to /v1/mrql/export and
+    // triggers a file download via a blob URL.
+    async exportResults(format) {
+      const query = this.getQuery().trim();
+      if (!query) return;
+
+      this.exporting = true;
+      this.error = '';
+      try {
+        const resp = await fetch('/v1/mrql/export?format=' + encodeURIComponent(format), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, params: this.paramsPayload() }),
+        });
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => null);
+          this.error = errData?.error || errData?.Error || `Export failed (${resp.status})`;
+          return;
+        }
+        const blob = await resp.blob();
+        let filename = 'mrql-export.' + format;
+        const cd = resp.headers.get('Content-Disposition') || '';
+        const m = /filename="?([^";]+)"?/.exec(cd);
+        if (m) filename = m[1];
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        this.error = err.message || 'Network error';
+      } finally {
+        this.exporting = false;
+      }
+    },
+
+    // copyText copies a statement's SQL to the clipboard (best-effort).
+    async copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (_) { /* clipboard unavailable — ignore */ }
+    },
+
     addToHistory(query) {
       // Remove duplicate if exists, prepend
       this.history = [query, ...this.history.filter((h) => h !== query)].slice(0, 20);
@@ -476,7 +620,15 @@ export function mrqlEditor() {
       // BH-012: remember which saved query we loaded so Save can branch to PUT.
       this.loadedSavedQueryId = q.id ?? q.ID ?? null;
       this.loadedSavedQueryName = q.name ?? q.Name ?? '';
-      this.execute();
+      // Package 4: a parameterized saved query is not auto-run (that would 400
+      // on the unbound params); instead surface the inputs and focus the first.
+      const names = q.params ?? q.Params ?? [];
+      this.syncParams(names);
+      if (names.length > 0) {
+        this.focusFirstEmptyParam();
+      } else {
+        this.execute();
+      }
     },
 
     // BH-012: reset loaded-saved-query tracking so the next Save acts as a
