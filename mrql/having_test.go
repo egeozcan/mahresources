@@ -131,6 +131,62 @@ func TestParseHavingErrors(t *testing.T) {
 	}
 }
 
+// TestHavingWordStaysUsableAsIdentifier guards against the HAVING keyword
+// breaking pre-existing queries that use "having" as a meta key, a bare
+// string value, or a field name (all valid before HAVING was introduced).
+func TestHavingWordStaysUsableAsIdentifier(t *testing.T) {
+	t.Run("meta key", func(t *testing.T) {
+		q, err := Parse(`meta.having = "yes"`)
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		ce, ok := q.Where.(*ComparisonExpr)
+		if !ok || ce.Field.Name() != "meta.having" {
+			t.Fatalf("expected meta.having comparison, got %#v", q.Where)
+		}
+	})
+
+	t.Run("traversal meta key", func(t *testing.T) {
+		q, err := Parse(`owner.meta.having = "x"`)
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		ce, ok := q.Where.(*ComparisonExpr)
+		if !ok || ce.Field.Name() != "owner.meta.having" {
+			t.Fatalf("expected owner.meta.having comparison, got %#v", q.Where)
+		}
+	})
+
+	t.Run("bare value", func(t *testing.T) {
+		q, err := Parse(`name = having`)
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		ce := q.Where.(*ComparisonExpr)
+		sl, ok := ce.Value.(*StringLiteral)
+		if !ok || sl.Value != "having" {
+			t.Fatalf("expected string value \"having\", got %#v", ce.Value)
+		}
+	})
+
+	t.Run("field position", func(t *testing.T) {
+		// Parses like any unknown field (validation rejects it later).
+		if _, err := Parse(`having = "x"`); err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+	})
+
+	t.Run("HAVING clause still recognized after GROUP BY aggregates", func(t *testing.T) {
+		q, err := Parse(`type = "resource" GROUP BY hash COUNT() HAVING COUNT() > 1`)
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		if q.GroupBy == nil || q.GroupBy.Having == nil {
+			t.Fatal("expected HAVING clause to be parsed")
+		}
+	})
+}
+
 func TestValidateHaving(t *testing.T) {
 	valid := []struct {
 		name       string

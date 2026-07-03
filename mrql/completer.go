@@ -410,12 +410,12 @@ func extractAggregatedOrderKeys(tokens []Token) []Suggestion {
 
 	var suggs []Suggestion
 
-	// Extract GROUP BY field names: tokens between GROUP BY and the first aggregate/ORDER BY/LIMIT
+	// Extract GROUP BY field names: tokens between GROUP BY and the first aggregate/HAVING/ORDER BY/LIMIT
 	i := gbIdx + 1
 	for i < len(tokens) {
 		t := tokens[i]
 		if t.Type == TokenCount || t.Type == TokenSum || t.Type == TokenAvg || t.Type == TokenMin || t.Type == TokenMax ||
-			t.Type == TokenOrderBy || t.Type == TokenLimit || t.Type == TokenOffset {
+			t.Type == TokenHaving || t.Type == TokenOrderBy || t.Type == TokenLimit || t.Type == TokenOffset {
 			break
 		}
 		if t.Type == TokenIdentifier || t.Type == TokenKwType {
@@ -431,10 +431,12 @@ func extractAggregatedOrderKeys(tokens []Token) []Suggestion {
 		i++
 	}
 
-	// Extract aggregate output keys from aggregate tokens
+	// Extract aggregate output keys from aggregate tokens. Stop at HAVING —
+	// aggregates inside HAVING are not part of the SELECT list and are not
+	// valid ORDER BY keys.
 	for i < len(tokens) {
 		t := tokens[i]
-		if t.Type == TokenOrderBy || t.Type == TokenLimit || t.Type == TokenOffset {
+		if t.Type == TokenHaving || t.Type == TokenOrderBy || t.Type == TokenLimit || t.Type == TokenOffset {
 			break
 		}
 		switch t.Type {

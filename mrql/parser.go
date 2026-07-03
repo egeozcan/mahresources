@@ -221,7 +221,9 @@ func (p *parser) parsePrimary() (Node, error) {
 	case TokenText:
 		return p.parseTextSearch()
 
-	case TokenIdentifier, TokenKwType:
+	case TokenIdentifier, TokenKwType, TokenHaving:
+		// TokenHaving: the word "having" stays usable as a field name here —
+		// the HAVING clause is only recognized inside GROUP BY.
 		return p.parseFieldExpr()
 
 	default:
@@ -308,10 +310,18 @@ func (p *parser) parseFieldExpr() (Node, error) {
 // maxFieldParts is the maximum number of parts in a dotted field expression.
 const maxFieldParts = 8
 
+// isFieldNameToken reports whether tok can serve as a field name or dotted
+// field segment. TokenHaving is included so the word "having" stays usable as
+// a field/meta-key name (the HAVING clause is only recognized inside GROUP BY,
+// where it never collides with field parsing).
+func isFieldNameToken(tok Token) bool {
+	return tok.Type == TokenIdentifier || tok.Type == TokenKwType || tok.Type == TokenHaving
+}
+
 // parseField reads a field name: IDENT (. IDENT)* with up to maxFieldParts parts.
 func (p *parser) parseField() (*FieldExpr, error) {
 	tok := p.lexer.Next()
-	if tok.Type != TokenIdentifier && tok.Type != TokenKwType {
+	if !isFieldNameToken(tok) {
 		return nil, &ParseError{
 			Message: fmt.Sprintf("expected field name (identifier), got %q", tok.Value),
 			Pos:     tok.Pos,
@@ -333,7 +343,7 @@ func (p *parser) parseField() (*FieldExpr, error) {
 		p.lexer.Next() // consume '.'
 
 		nextTok := p.lexer.Next()
-		if nextTok.Type != TokenIdentifier && nextTok.Type != TokenKwType {
+		if !isFieldNameToken(nextTok) {
 			return nil, &ParseError{
 				Message: fmt.Sprintf("expected identifier after '.', got %q", nextTok.Value),
 				Pos:     nextTok.Pos,
@@ -464,8 +474,9 @@ func (p *parser) parseValue() (Node, error) {
 		p.lexer.Next()
 		return &FuncCall{Token: tok, Name: tok.Value}, nil
 
-	case TokenIdentifier:
-		// Bare identifier: treat as string value
+	case TokenIdentifier, TokenHaving:
+		// Bare identifier: treat as string value. TokenHaving keeps the word
+		// "having" usable as a bare value (e.g. name = having).
 		p.lexer.Next()
 		return &StringLiteral{Token: tok, Value: tok.Value}, nil
 

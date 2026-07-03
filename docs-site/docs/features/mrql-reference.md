@@ -42,7 +42,7 @@ A compact syntax reference for the Mahresources Query Language (MRQL). For the f
 
 **Groups only:** `category`, `parent`, `children`, `resources`, `notes`.
 
-Relation fields (`tags`, `groups`/`group`, `notes`, `resources`, `children`) match related entities by name with `=`, `!=`, `~`, `!~`, support `IN` / `NOT IN`, and `IS [NOT] EMPTY`.
+Relation fields (`tags`, `groups`/`group`, `notes`, `resources`, `children`) match related entities by name with `=`, `!=`, `~`, `!~` and support `IS [NOT] EMPTY`. The junction-backed relations (`tags`, `groups`/`group`, `notes`, `resources`) additionally support `IN` / `NOT IN`; `children`, `owner`, and `parent` do not.
 
 ## Relation Counts
 

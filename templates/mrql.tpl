@@ -121,7 +121,7 @@
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Set Membership</h3>
-                <p class="text-xs"><code class="bg-stone-200 px-1 rounded">IN (...)</code> / <code class="bg-stone-200 px-1 rounded">NOT IN (...)</code>. Not supported on traversal chains/subfields (e.g. <code>owner.tags IN (...)</code> is invalid, but <code>tags IN (...)</code> and <code>groups IN (...)</code> work).</p>
+                <p class="text-xs"><code class="bg-stone-200 px-1 rounded">IN (...)</code> / <code class="bg-stone-200 px-1 rounded">NOT IN (...)</code>. Not supported on traversal chains/subfields (e.g. <code>owner.tags IN (...)</code> is invalid, but <code>tags IN (...)</code>, <code>groups IN (...)</code>, <code>notes IN (...)</code>, and <code>resources IN (...)</code> work). <code>children</code>, <code>owner</code>, and <code>parent</code> do not support <code>IN</code>.</p>
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">contentType IN ("image/png", "image/jpeg", "image/webp")</pre>
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND NOT (tags IN ("draft", "archived"))</pre>
             </div>

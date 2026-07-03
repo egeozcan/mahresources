@@ -101,6 +101,23 @@ func TestComplete_AggregatedOrderKeysIncludeBucket(t *testing.T) {
 	}
 }
 
+// TestComplete_AggregatedOrderKeysExcludeHavingAggregates verifies that
+// aggregates appearing only in HAVING are not offered as ORDER BY keys
+// (validation rejects them — only the GROUP BY aggregate list is orderable).
+func TestComplete_AggregatedOrderKeysExcludeHavingAggregates(t *testing.T) {
+	q := `type = "resource" GROUP BY hash COUNT() HAVING SUM(fileSize) > 100 ORDER BY `
+	suggestions := Complete(q, len(q))
+	if !hasSuggestion(suggestions, "count") {
+		t.Errorf("expected count as ORDER BY key, got: %v", suggestions)
+	}
+	if !hasSuggestion(suggestions, "hash") {
+		t.Errorf("expected hash as ORDER BY key, got: %v", suggestions)
+	}
+	if hasSuggestion(suggestions, "sum_fileSize") {
+		t.Errorf("sum_fileSize is HAVING-only and must not be suggested, got: %v", suggestions)
+	}
+}
+
 // TestComplete_NewRelationFieldsSuggested verifies notes/resources relation
 // fields appear via the field catalog.
 func TestComplete_NewRelationFieldsSuggested(t *testing.T) {
