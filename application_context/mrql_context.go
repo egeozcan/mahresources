@@ -910,27 +910,11 @@ func (ctx *MahresourcesContext) ValidateMRQL(queryStr string) (bool, []map[strin
 
 	parsed, err := mrql.Parse(queryStr)
 	if err != nil {
-		var parseErr *mrql.ParseError
-		if errors.As(err, &parseErr) {
-			return false, []map[string]any{
-				{"message": parseErr.Message, "pos": parseErr.Pos, "length": parseErr.Length},
-			}
-		}
-		return false, []map[string]any{
-			{"message": err.Error(), "pos": 0, "length": 0},
-		}
+		return false, mrqlErrorPayload(err)
 	}
 
 	if err := mrql.Validate(parsed); err != nil {
-		var validationErr *mrql.ValidationError
-		if errors.As(err, &validationErr) {
-			return false, []map[string]any{
-				{"message": validationErr.Message, "pos": validationErr.Pos, "length": validationErr.Length},
-			}
-		}
-		return false, []map[string]any{
-			{"message": err.Error(), "pos": 0, "length": 0},
-		}
+		return false, mrqlErrorPayload(err)
 	}
 
 	return true, nil

@@ -1,6 +1,8 @@
 package api_tests
 
 import (
+	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -44,5 +46,20 @@ func TestMRQLTimelineFilter_NarrowsAndReusesSubquery(t *testing.T) {
 	}
 	if total != 3 {
 		t.Fatalf("expected 3 resources unfiltered, got %d", total)
+	}
+}
+
+// TestMRQLTimelineFilter_InvalidExpressionIs400 verifies the timeline endpoints
+// treat a bad MRQL filter as caller error (400), matching the list endpoints.
+func TestMRQLTimelineFilter_InvalidExpressionIs400(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	for _, path := range []string{"/v1/resources/timeline", "/v1/notes/timeline", "/v1/groups/timeline"} {
+		q := url.Values{}
+		q.Set("mrql", `tags = "unterminated`)
+		rr := tc.MakeRequest(http.MethodGet, path+"?"+q.Encode(), nil)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("%s: expected 400 for invalid mrql, got %d: %s", path, rr.Code, rr.Body.String())
+		}
 	}
 }
