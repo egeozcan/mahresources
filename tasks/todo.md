@@ -53,3 +53,37 @@ Notable implementation points:
 - Self-review finding checked and cleared: negative WITHIN/target IDs lex
   as rel-date tokens, so they already fail parsing; regression test added.
 
+
+---
+
+# MRQL default resource card: thumbnail opens lightbox (2026-07-04)
+
+## Review
+
+Default `/mrql` resource result cards (flat + bucketed GROUP BY) now open the
+Alpine lightbox when the image thumbnail is clicked; the card body still
+navigates to `/resource?id=N`.
+
+- `templates/mrql.tpl`: card `<a>` split into a `<div>` with two sibling
+  links (nested anchors are invalid HTML) — thumbnail link carries the
+  canonical `data-lightbox-item` + `data-*` pattern from
+  `partials/resource.tpl`; grids gained the `gallery` marker class
+  (deliberately NOT `list-container`, which refreshPageContent/download-
+  completed morph).
+- `src/components/mrqlEditor.js` `execute()`: `$nextTick` →
+  `Alpine.store('lightbox').initFromDOM()` after results render (timeline.js
+  precedent). /mrql has no pagination nav, so lightbox paging stays inert.
+- New `e2e/tests/104-mrql-lightbox.spec.ts` (4 tests, TDD red→green).
+- `e2e/pages/MRQLPage.ts` `getResults()` now excludes `[data-lightbox-item]`
+  — the thumbnail href `/v1/resource/view?id=` also matches `a[href*="?id="]`
+  and broke a text assertion in mrql-ergonomics (PG-only regex test).
+
+Verification: Go unit (SQLite + PG) green; browser+CLI e2e 1644 passed;
+PG e2e 1646 passed after the getResults fix; full browser+CLI suite re-run
+green after dropping the focus assertion. Flakes seen along the way, both
+load-only: (a) the new 104 test's focus-restore-after-Escape assertion
+failed under full-suite load on both backends (close()'s sync focus() races
+x-trap's async release; no other lightbox spec asserts focus restore) —
+assertion removed; (b) pre-existing 13e "Ctrl+Z undoes quick-slot tag"
+passed on retry in the same runs and passes 6/6 in isolation — untouched
+by this change.
