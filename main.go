@@ -399,6 +399,15 @@ func main() {
 		log.Printf("Warning: post-migrate ANALYZE failed: %v", err)
 	}
 
+	// Repair deployments whose image_hashes.resource_id has a non-unique index
+	// instead of the unique index the model declares. Without it the hash
+	// worker's ON CONFLICT (resource_id) upsert fails on every save (SQLSTATE
+	// 42P10), re-hashing the same resources every cycle and pinning the CPU.
+	// Idempotent, self-healing, and a no-op once the unique index exists.
+	if err := models.EnsureImageHashResourceIdUnique(db); err != nil {
+		log.Printf("Warning: ensuring image_hashes.resource_id unique index failed: %v", err)
+	}
+
 	if context.Config.DbType == constants.DbTypeSqlite {
 		db.Exec("PRAGMA foreign_keys = ON")
 
