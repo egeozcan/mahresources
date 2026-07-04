@@ -2321,10 +2321,12 @@ paths:
                   - css        (string) — CustomCSS to process alongside
                   - categoryId (integer) — the category being edited (for a mismatch warning)
 
-                Response: {"html", "css", "issues": [...lint issues...]}. Executes MRQL and
-                plugin shortcodes, so it is gated at the same capability as saving the template
-                (admin for category/resourceCategory, editor for noteType). [mrql] result limits
-                are capped for responsiveness.
+                Response: {"html", "css", "entity", "issues": [...lint issues...]}. "entity" is
+                the carrier entity marshaled like the display pages' json filter, so the preview
+                frame can recreate the x-data="{ entity: ... }" Alpine scope those pages provide.
+                Executes MRQL and plugin shortcodes, so it is gated at the same capability as
+                saving the template (admin for category/resourceCategory, editor for noteType).
+                [mrql] result limits are capped for responsiveness.
             operationId: previewCategoryTemplate
             responses:
                 "200":
@@ -4279,10 +4281,12 @@ paths:
                   - css        (string) — CustomCSS to process alongside
                   - categoryId (integer) — the category being edited (for a mismatch warning)
 
-                Response: {"html", "css", "issues": [...lint issues...]}. Executes MRQL and
-                plugin shortcodes, so it is gated at the same capability as saving the template
-                (admin for category/resourceCategory, editor for noteType). [mrql] result limits
-                are capped for responsiveness.
+                Response: {"html", "css", "entity", "issues": [...lint issues...]}. "entity" is
+                the carrier entity marshaled like the display pages' json filter, so the preview
+                frame can recreate the x-data="{ entity: ... }" Alpine scope those pages provide.
+                Executes MRQL and plugin shortcodes, so it is gated at the same capability as
+                saving the template (admin for category/resourceCategory, editor for noteType).
+                [mrql] result limits are capped for responsiveness.
             operationId: previewNoteTypeTemplate
             responses:
                 "200":
@@ -5959,10 +5963,12 @@ paths:
                   - css        (string) — CustomCSS to process alongside
                   - categoryId (integer) — the category being edited (for a mismatch warning)
 
-                Response: {"html", "css", "issues": [...lint issues...]}. Executes MRQL and
-                plugin shortcodes, so it is gated at the same capability as saving the template
-                (admin for category/resourceCategory, editor for noteType). [mrql] result limits
-                are capped for responsiveness.
+                Response: {"html", "css", "entity", "issues": [...lint issues...]}. "entity" is
+                the carrier entity marshaled like the display pages' json filter, so the preview
+                frame can recreate the x-data="{ entity: ... }" Alpine scope those pages provide.
+                Executes MRQL and plugin shortcodes, so it is gated at the same capability as
+                saving the template (admin for category/resourceCategory, editor for noteType).
+                [mrql] result limits are capped for responsiveness.
             operationId: previewResourceCategoryTemplate
             responses:
                 "200":

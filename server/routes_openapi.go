@@ -1949,10 +1949,12 @@ Request body fields:
   - css        (string) — CustomCSS to process alongside
   - categoryId (integer) — the category being edited (for a mismatch warning)
 
-Response: {"html", "css", "issues": [...lint issues...]}. Executes MRQL and
-plugin shortcodes, so it is gated at the same capability as saving the template
-(admin for category/resourceCategory, editor for noteType). [mrql] result limits
-are capped for responsiveness.`
+Response: {"html", "css", "entity", "issues": [...lint issues...]}. "entity" is
+the carrier entity marshaled like the display pages' json filter, so the preview
+frame can recreate the x-data="{ entity: ... }" Alpine scope those pages provide.
+Executes MRQL and plugin shortcodes, so it is gated at the same capability as
+saving the template (admin for category/resourceCategory, editor for noteType).
+[mrql] result limits are capped for responsiveness.`
 
 	for _, p := range []struct{ path, op, carrier string }{
 		{"/v1/category/previewTemplate", "previewCategoryTemplate", "group"},

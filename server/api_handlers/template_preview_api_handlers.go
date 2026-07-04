@@ -27,8 +27,13 @@ type templatePreviewRequest struct {
 }
 
 type templatePreviewResponse struct {
-	HTML   string                 `json:"html"`
-	CSS    string                 `json:"css"`
+	HTML string `json:"html"`
+	CSS  string `json:"css"`
+	// Entity is the carrier entity marshaled exactly like the display pages'
+	// `{{ group|json }}` filter (plain json.Marshal of the model), so the
+	// preview frame can recreate the `x-data="{ entity: ... }"` Alpine scope
+	// those pages wrap the Custom* slots in.
+	Entity json.RawMessage        `json:"entity"`
 	Issues []shortcodes.LintIssue `json:"issues"`
 }
 
@@ -96,8 +101,13 @@ func GetPreviewTemplateHandler(ctx *application_context.MahresourcesContext, ent
 			issues = []shortcodes.LintIssue{}
 		}
 
+		entityJSON, err := json.Marshal(entity)
+		if err != nil {
+			entityJSON = json.RawMessage("null")
+		}
+
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(templatePreviewResponse{HTML: html, CSS: css, Issues: issues})
+		_ = json.NewEncoder(writer).Encode(templatePreviewResponse{HTML: html, CSS: css, Entity: entityJSON, Issues: issues})
 	}
 }
 

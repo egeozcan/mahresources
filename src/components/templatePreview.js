@@ -195,7 +195,7 @@ export function templatePreview({ entityType = 'group', previewPath = '' } = {})
         const data = await resp.json();
         if (seq !== this._refreshSeq) return;
         this.issues = data.issues || [];
-        this._renderFrame(data.html || '', data.css || '');
+        this._renderFrame(data.html || '', data.css || '', data.entity);
       } catch (e) {
         if (seq !== this._refreshSeq) return;
         this.error = 'Preview request failed.';
@@ -203,13 +203,19 @@ export function templatePreview({ entityType = 'group', previewPath = '' } = {})
       this.loading = false;
     },
 
-    _renderFrame(html, css) {
+    _renderFrame(html, css, entity) {
       const frame = this.$refs.frame;
       if (!frame) return;
+      // Escape "<" inside the JSON so entity content containing "</script>"
+      // cannot break out of the inline script block.
+      const entityJson = JSON.stringify(entity ?? null).replace(/</g, '\\u003c');
       // Self-contained document: the same stylesheets base.tpl ships, the
       // returned CustomCSS, and the app JS bundle (so [meta] web components and
       // Alpine widgets hydrate — /public/ is served with a CORS header because
       // module scripts are CORS-fetched from this frame's opaque origin).
+      // The rendered slot is wrapped in the same x-data="{ entity: ... }"
+      // scope the display pages provide, so Alpine expressions like
+      // x-text="entity.Name" behave as they will on the real page.
       // sandbox="allow-scripts" (no allow-same-origin) keeps it origin-isolated;
       // API-backed widgets degrade gracefully.
       frame.srcdoc = `<!doctype html><html><head>
@@ -219,8 +225,11 @@ export function templatePreview({ entityType = 'group', previewPath = '' } = {})
 <link rel="stylesheet" href="/public/jsonTable.css">
 <style>${css}</style>
 <style>body{margin:0;padding:1rem;background:#fff;color:#1c1917;}</style>
+<script>window.__previewEntity = ${entityJson};</script>
 </head><body>
+<div x-data="{ entity: window.__previewEntity }">
 ${html}
+</div>
 <script type="module" src="/public/dist/main.js"></script>
 </body></html>`;
     },

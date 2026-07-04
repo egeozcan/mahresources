@@ -12,9 +12,10 @@ import (
 )
 
 type previewResponse struct {
-	HTML   string      `json:"html"`
-	CSS    string      `json:"css"`
-	Issues []lintIssue `json:"issues"`
+	HTML   string          `json:"html"`
+	CSS    string          `json:"css"`
+	Entity json.RawMessage `json:"entity"`
+	Issues []lintIssue     `json:"issues"`
 }
 
 func TestPreviewTemplate_HappyPath(t *testing.T) {
@@ -43,6 +44,46 @@ func TestPreviewTemplate_HappyPath(t *testing.T) {
 	}
 	if !strings.Contains(resp.CSS, "color: red") {
 		t.Errorf("expected css to be echoed, got %q", resp.CSS)
+	}
+}
+
+// TestPreviewTemplate_ReturnsEntity verifies the response carries the entity
+// marshaled exactly like the display pages' `{{ group|json }}` (plain
+// json.Marshal of the model), so the preview frame can recreate the
+// `x-data="{ entity: ... }"` Alpine scope those pages wrap the Custom* slots in.
+func TestPreviewTemplate_ReturnsEntity(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	g := &models.Group{Name: "Entity Scope Group"}
+	if err := tc.DB.Create(g).Error; err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+
+	rr := tc.MakeRequest(http.MethodPost, "/v1/category/previewTemplate", map[string]any{
+		"entityId": g.ID,
+		"content":  `<span x-text="entity.Name"></span>`,
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	var resp previewResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Entity) == 0 || string(resp.Entity) == "null" {
+		t.Fatalf("expected entity JSON in preview response, got %q", string(resp.Entity))
+	}
+
+	var entity struct {
+		ID   uint   `json:"ID"`
+		Name string `json:"Name"`
+	}
+	if err := json.Unmarshal(resp.Entity, &entity); err != nil {
+		t.Fatalf("entity unmarshal: %v", err)
+	}
+	if entity.ID != g.ID || entity.Name != "Entity Scope Group" {
+		t.Errorf("expected entity {ID:%d Name:%q}, got %+v", g.ID, "Entity Scope Group", entity)
 	}
 }
 

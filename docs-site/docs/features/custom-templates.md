@@ -523,6 +523,7 @@ Below the template fields, a **Live preview** pane renders a selected slot again
 - Pick the entity to render against (defaults to the most recent one; the choice is remembered per entity type in the browser).
 - Choose which slot to preview from the dropdown.
 - The result renders in a sandboxed `<iframe>` that includes the app's CSS and JS bundle, so `[meta]` web components and Alpine widgets hydrate. The sandbox is origin-isolated, so widgets that need API calls are non-functional in preview -- a note in the pane states this.
+- The rendered slot is wrapped in the same `x-data="{ entity: ... }"` Alpine scope the display pages provide, so expressions like `x-text="entity.Name"` behave as they will on the real page.
 - Edits refresh the preview automatically (debounced).
 
 Preview executes MRQL and plugin shortcodes, so it is gated at the same permission level as saving the template: **admin** for Category and Resource Category, **editor** for Note Type. To keep it responsive on large deployments, `[mrql]` result limits are capped during preview.

@@ -46,4 +46,31 @@ test.describe('Template live preview', () => {
       )
       .toBe(true);
   });
+
+  test('Alpine expressions see the same entity scope as the real pages', async ({
+    page,
+    apiClient,
+  }) => {
+    const category = await apiClient.createCategory('Alpine Scope Cat');
+    const groupName = `Alpine Scope Target ${Date.now()}`;
+    await apiClient.createGroup({ name: groupName, categoryId: category.ID });
+
+    await page.goto('/category/new');
+    await page.waitForLoadState('load');
+
+    const entityInput = page.locator('#tp-entity-group');
+    await expect(entityInput).toBeVisible({ timeout: 10000 });
+    await expect(entityInput).toHaveValue(groupName, { timeout: 10000 });
+
+    const header = page.locator('.cm-content[aria-label="Custom Header"]');
+    await expect(header).toBeVisible({ timeout: 10000 });
+    await header.click();
+    // Only Alpine can materialize this text: the server returns the markup
+    // verbatim, so the assertion proves the frame recreates the display pages'
+    // x-data="{ entity: ... }" scope.
+    await page.keyboard.type('<div id="scope-probe" x-text="entity.Name"></div>');
+
+    const frame = page.frameLocator('iframe[title="Template slot preview"]');
+    await expect(frame.locator('#scope-probe')).toHaveText(groupName, { timeout: 10000 });
+  });
 });
