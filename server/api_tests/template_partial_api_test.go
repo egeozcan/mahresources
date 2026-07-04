@@ -57,6 +57,26 @@ func TestTemplatePartialCreateListGetUpdateDelete(t *testing.T) {
 	assert.Equal(t, int64(0), count)
 }
 
+// A JSON update using the model's lower-case response shape ("content"/
+// "description") must apply, not be silently dropped by the preservation check.
+func TestTemplatePartialLowercaseJSONUpdateApplies(t *testing.T) {
+	tc := SetupTestEnv(t)
+	tc.DB.Create(&models.TemplatePartial{Name: "lc", Description: "orig desc", Content: "orig"})
+	var existing models.TemplatePartial
+	require.NoError(t, tc.DB.Where("name = ?", "lc").First(&existing).Error)
+
+	resp := tc.MakeRequest(http.MethodPost, "/v1/templatePartial", map[string]any{
+		"id":      existing.ID,
+		"content": "<b>new</b>",
+	})
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+
+	var check models.TemplatePartial
+	require.NoError(t, tc.DB.First(&check, existing.ID).Error)
+	assert.Equal(t, "<b>new</b>", check.Content, "lower-case content update must apply")
+	assert.Equal(t, "orig desc", check.Description, "unsent description preserved")
+}
+
 func TestTemplatePartialRejectsNonKebabName(t *testing.T) {
 	tc := SetupTestEnv(t)
 

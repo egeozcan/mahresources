@@ -1596,9 +1596,8 @@ func registerTemplatePartialRoutes(r *openapi.Registry) {
 		IDRequired:   true,
 	})
 
-	r.Register(openapi.NewRoute(http.MethodPost, "/v1/templatePartial/editName", "editTemplatePartialName", "Edit a template partial's name (admin only)", "templatePartials").
-		WithIDParam("id", true))
-
+	// No editName route: a partial's Name must stay kebab-case, which the
+	// generic name editor does not enforce. Names change via create/update.
 	r.Register(openapi.NewRoute(http.MethodPost, "/v1/templatePartial/editDescription", "editTemplatePartialDescription", "Edit a template partial's description (admin only)", "templatePartials").
 		WithIDParam("id", true))
 

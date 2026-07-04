@@ -7195,29 +7195,6 @@ paths:
             summary: Edit a template partial's description (admin only)
             tags:
                 - templatePartials
-    /v1/templatePartial/editName:
-        post:
-            operationId: editTemplatePartialName
-            parameters:
-                - in: query
-                  name: id
-                  required: true
-                  schema:
-                    type: integer
-            responses:
-                "200":
-                    content:
-                        application/json: {}
-                    description: Successful response
-                "400":
-                    description: Invalid input
-                "404":
-                    description: Not found
-                "500":
-                    description: Internal server error
-            summary: Edit a template partial's name (admin only)
-            tags:
-                - templatePartials
     /v1/templatePartials:
         get:
             operationId: listTemplatePartials

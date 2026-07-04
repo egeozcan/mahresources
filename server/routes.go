@@ -585,7 +585,9 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/templatePartial").HandlerFunc(api_handlers.GetAddTemplatePartialHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/templatePartial/edit").HandlerFunc(api_handlers.GetAddTemplatePartialHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/templatePartial/delete").HandlerFunc(api_handlers.GetRemoveTemplatePartialHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/templatePartial/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.TemplatePartial](basicTemplatePartialWriter, "templatePartial"))
+	// No /editName route: a partial's Name must stay kebab-case, which the
+	// generic EntityWriter.UpdateName (ValidateEntityName only) does not enforce.
+	// Names change through the full create/update path, which validates.
 	router.Methods(http.MethodPost).Path("/v1/templatePartial/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.TemplatePartial](basicTemplatePartialWriter, "templatePartial"))
 
 	// Starter template presets (static embedded bundles; read-only, open)

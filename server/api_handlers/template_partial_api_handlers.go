@@ -60,12 +60,20 @@ func GetAddTemplatePartialHandler(ctx interfaces.TemplatePartialWriter) func(htt
 			if editor.ID != 0 {
 				var raw map[string]json.RawMessage
 				_ = json.Unmarshal(bodyBytes, &raw)
+				// json.Unmarshal matches keys case-insensitively, and the model's
+				// JSON shape is lower-case (json:"content"), so a client can send
+				// "content"/"description". Normalize sent keys to lower-case so the
+				// preservation check doesn't clobber a lower-case update.
+				sent := make(map[string]bool, len(raw))
+				for k := range raw {
+					sent[strings.ToLower(k)] = true
+				}
 				existing, getErr := effectiveCtx.GetTemplatePartial(editor.ID)
 				if getErr == nil {
-					if _, sent := raw["Description"]; !sent {
+					if !sent["description"] {
 						editor.Description = existing.Description
 					}
-					if _, sent := raw["Content"]; !sent {
+					if !sent["content"] {
 						editor.Content = existing.Content
 					}
 				}
