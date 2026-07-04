@@ -73,4 +73,33 @@ test.describe('Template live preview', () => {
     const frame = page.frameLocator('iframe[title="Template slot preview"]');
     await expect(frame.locator('#scope-probe')).toHaveText(groupName, { timeout: 10000 });
   });
+
+  test('editing a category only offers entities from that category', async ({
+    page,
+    apiClient,
+  }) => {
+    const stamp = Date.now();
+    const catA = await apiClient.createCategory(`Scoped Cat A ${stamp}`);
+    const catB = await apiClient.createCategory(`Scoped Cat B ${stamp}`);
+    const inA = `In Category A ${stamp}`;
+    const inB = `In Category B ${stamp}`;
+    await apiClient.createGroup({ name: inA, categoryId: catA.ID });
+    // Created last, so it is the most recent group overall — an unfiltered
+    // default would pick this one.
+    await apiClient.createGroup({ name: inB, categoryId: catB.ID });
+
+    await page.goto(`/category/edit?id=${catA.ID}`);
+    await page.waitForLoadState('load');
+
+    // The default preview entity must come from category A, not the newer
+    // group in category B.
+    const entityInput = page.locator('#tp-entity-group');
+    await expect(entityInput).toBeVisible({ timeout: 10000 });
+    await expect(entityInput).toHaveValue(inA, { timeout: 10000 });
+
+    // Searching by the other category's group name yields no suggestions.
+    await entityInput.fill(inB);
+    await page.waitForTimeout(600); // debounce + request
+    await expect(page.locator('#tp-suggestions-group li')).toHaveCount(0);
+  });
 });

@@ -520,7 +520,7 @@ The Category, Resource Category, and Note Type edit forms provide a feedback loo
 
 Below the template fields, a **Live preview** pane renders a selected slot against a real entity without saving:
 
-- Pick the entity to render against (defaults to the most recent one; the choice is remembered per entity type in the browser).
+- Pick the entity to render against. When editing an existing category or note type, the search and the default pick are restricted to entities of that category (the choice is remembered per category in the browser). On the create form, where no entity can belong to the new category yet, the pick falls back to all entities and defaults to the most recent one.
 - Choose which slot to preview from the dropdown.
 - The result renders in a sandboxed `<iframe>` that includes the app's CSS and JS bundle, so `[meta]` web components and Alpine widgets hydrate. The sandbox is origin-isolated, so widgets that need API calls are non-functional in preview -- a note in the pane states this.
 - The rendered slot is wrapped in the same `x-data="{ entity: ... }"` Alpine scope the display pages provide, so expressions like `x-text="entity.Name"` behave as they will on the real page.

@@ -34,10 +34,18 @@ function entityName(it) {
   return it.Name ?? it.name ?? `#${entityId(it)}`;
 }
 
-export function templatePreview({ entityType = 'group', previewPath = '' } = {}) {
+// Query parameter that restricts each list endpoint to one category/type.
+const CATEGORY_PARAMS = {
+  group: 'categoryId',
+  resource: 'resourceCategoryId',
+  note: 'noteTypeId',
+};
+
+export function templatePreview({ entityType = 'group', previewPath = '', categoryId = null } = {}) {
   return {
     entityType,
     previewPath,
+    categoryId: categoryId || null,
     slots: SLOTS,
     slot: 'CustomHeader',
     entityId: null,
@@ -85,7 +93,17 @@ export function templatePreview({ entityType = 'group', previewPath = '' } = {})
     },
 
     _storageKey() {
-      return `templatePreview:${this.entityType}`;
+      // Keyed per category so a remembered entity from another category (or
+      // from the create form) is never restored into a scoped editor.
+      return `templatePreview:${this.entityType}:${this.categoryId || 'any'}`;
+    },
+
+    // _scopeParam returns the query-string fragment restricting list requests
+    // to the category being edited, or '' on the create form (a new category
+    // cannot have entities yet, so the pick falls back to all entities there).
+    _scopeParam() {
+      if (!this.categoryId) return '';
+      return `&${CATEGORY_PARAMS[this.entityType]}=${encodeURIComponent(this.categoryId)}`;
     },
 
     slotLabel() {
@@ -99,7 +117,7 @@ export function templatePreview({ entityType = 'group', previewPath = '' } = {})
 
     async _loadDefaultEntity() {
       try {
-        const resp = await fetch(`${LIST_ENDPOINTS[this.entityType]}?maxResults=1`);
+        const resp = await fetch(`${LIST_ENDPOINTS[this.entityType]}?maxResults=1${this._scopeParam()}`);
         if (!resp.ok) return;
         const first = normalizeList(await resp.json())[0];
         if (first) this._selectEntity(first);
@@ -122,7 +140,7 @@ export function templatePreview({ entityType = 'group', previewPath = '' } = {})
       }
       try {
         const resp = await fetch(
-          `${LIST_ENDPOINTS[this.entityType]}?name=${encodeURIComponent(q)}&maxResults=8`,
+          `${LIST_ENDPOINTS[this.entityType]}?name=${encodeURIComponent(q)}&maxResults=8${this._scopeParam()}`,
         );
         if (!resp.ok) return;
         this.suggestions = normalizeList(await resp.json())
@@ -182,7 +200,12 @@ export function templatePreview({ entityType = 'group', previewPath = '' } = {})
         const resp = await fetch(this.previewPath, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entityId: Number(this.entityId), content, css }),
+          body: JSON.stringify({
+            entityId: Number(this.entityId),
+            content,
+            css,
+            categoryId: this.categoryId ? Number(this.categoryId) : 0,
+          }),
         });
         if (seq !== this._refreshSeq) return;
         if (!resp.ok) {

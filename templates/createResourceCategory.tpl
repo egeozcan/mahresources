@@ -144,7 +144,7 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=resourceCategory.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." shortcodes=true %}
     </fieldset>
 
-    {% include "/partials/form/templatePreviewPane.tpl" with entityType="resource" previewPath="/v1/resourceCategory/previewTemplate" %}
+    {% include "/partials/form/templatePreviewPane.tpl" with entityType="resource" previewPath="/v1/resourceCategory/previewTemplate" categoryId=resourceCategory.ID %}
     <div class="flex gap-2 items-start">
         <div class="flex-1">
             {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Meta JSON Schema" name="MetaSchema" value=resourceCategory.MetaSchema mode="json" id="rcMetaSchemaTextarea" %}
