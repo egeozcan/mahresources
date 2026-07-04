@@ -188,6 +188,29 @@ func TestLintMRQLSyntax(t *testing.T) {
 	}
 }
 
+func TestLintMRQLErrorAnchorsToAttr(t *testing.T) {
+	known := KnownFromBuiltins()
+	validate := func(q string) error {
+		if strings.Contains(q, "BAD") {
+			return errors.New("syntax error near BAD")
+		}
+		return nil
+	}
+
+	// "query=" is a suffix of "param-query="; the error range must anchor to
+	// the real query attribute, not the earlier param-query occurrence.
+	input := `[mrql param-query="resources" query="BAD"]`
+	issues := Lint(input, LintOptions{Known: known, ValidateMRQL: validate})
+	got := findIssue(issues, "MRQL error in query")
+	if got == nil {
+		t.Fatalf("expected MRQL syntax issue, got %+v", issues)
+	}
+	wantStart := strings.Index(input, ` query="BAD"`) + 1
+	if got.Start != wantStart {
+		t.Errorf("expected issue to start at %d (the query attr), got %d", wantStart, got.Start)
+	}
+}
+
 func TestLintUndocumentedPluginSkipsAttrChecks(t *testing.T) {
 	// A plugin shortcode present in the catalogue but undocumented: attribute
 	// checks are skipped, but structural rules still apply.

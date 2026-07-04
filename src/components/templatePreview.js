@@ -51,6 +51,7 @@ export function templatePreview({ entityType = 'group', previewPath = '' } = {})
     _refreshTimer: null,
     _searchTimer: null,
     _form: null,
+    _refreshSeq: 0,
 
     async init() {
       this._form = this.$root.closest('form');
@@ -170,6 +171,9 @@ export function templatePreview({ entityType = 'group', previewPath = '' } = {})
 
     async refresh() {
       if (!this.entityId || !this.previewPath) return;
+      // Concurrent refreshes (slot switch racing a debounced edit) can resolve
+      // out of order; only the newest request may touch the pane state.
+      const seq = ++this._refreshSeq;
       this.loading = true;
       this.error = '';
       const content = this._readSlot(this.slot);
@@ -180,16 +184,20 @@ export function templatePreview({ entityType = 'group', previewPath = '' } = {})
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ entityId: Number(this.entityId), content, css }),
         });
+        if (seq !== this._refreshSeq) return;
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({}));
+          if (seq !== this._refreshSeq) return;
           this.error = err.error || `Preview failed (${resp.status})`;
           this.loading = false;
           return;
         }
         const data = await resp.json();
+        if (seq !== this._refreshSeq) return;
         this.issues = data.issues || [];
         this._renderFrame(data.html || '', data.css || '');
       } catch (e) {
+        if (seq !== this._refreshSeq) return;
         this.error = 'Preview request failed.';
       }
       this.loading = false;
@@ -198,14 +206,17 @@ export function templatePreview({ entityType = 'group', previewPath = '' } = {})
     _renderFrame(html, css) {
       const frame = this.$refs.frame;
       if (!frame) return;
-      // Self-contained document: Tailwind + app CSS, the returned CustomCSS, and
-      // the app JS bundle (so [meta] web components and Alpine widgets hydrate).
+      // Self-contained document: the same stylesheets base.tpl ships, the
+      // returned CustomCSS, and the app JS bundle (so [meta] web components and
+      // Alpine widgets hydrate — /public/ is served with a CORS header because
+      // module scripts are CORS-fetched from this frame's opaque origin).
       // sandbox="allow-scripts" (no allow-same-origin) keeps it origin-isolated;
       // API-backed widgets degrade gracefully.
       frame.srcdoc = `<!doctype html><html><head>
 <meta charset="utf-8">
+<link rel="stylesheet" href="/public/index.css">
 <link rel="stylesheet" href="/public/tailwind.css">
-<link rel="stylesheet" href="/public/dist/main.css">
+<link rel="stylesheet" href="/public/jsonTable.css">
 <style>${css}</style>
 <style>body{margin:0;padding:1rem;background:#fff;color:#1c1917;}</style>
 </head><body>

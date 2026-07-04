@@ -51,3 +51,27 @@ All four steps shipped, additive, no flags. Test results:
    `startCompletion` nudge while the caret is inside a bracket.
 3. `[metaa path=x]` parses as a REAL `meta` shortcode (regex eats the extra char as attrs), so
    near-miss typo detection must use edit distance on names WITHOUT a builtin prefix (`condtional`).
+
+## Post-review fixes (2026-07-04, second pass)
+
+A live-browser probe showed the preview iframe never hydrated: the bundle is a module
+script, module fetches are CORS-gated, and the sandboxed iframe has an opaque origin, so
+the browser blocked `/public/dist/main.js` (no ACAO header). Three stacked causes fixed:
+
+1. `/public/` now served with `Access-Control-Allow-Origin: *` (`corsStaticAssets` in
+   server/server.go; test: `TestPublicAssetsCORSHeader`). Auth-exempt static files, so the
+   wildcard exposes nothing new.
+2. `storeConfig.js` read `sessionStorage` at bundle startup — throws SecurityError in any
+   sandboxed document, killing the whole bundle. Now guarded (`sessionGet`/`sessionSet`).
+3. The srcdoc referenced `/public/dist/main.css`, which does not exist (404 on every
+   render). Replaced with the stylesheets base.tpl actually ships (index/tailwind/jsonTable).
+
+Hydration is now asserted end-to-end in template-preview.spec.ts (polls `window.Alpine`
+inside the srcdoc frame). Also fixed from review: lint `attrOffset` anchored `query=`
+inside `param-query=` (boundary check + `TestLintMRQLErrorAnchorsToAttr`), and
+`templatePreview.refresh()` got a request-sequence guard so out-of-order responses can't
+paint a stale preview.
+
+Second-pass test results: Go full suite pass; Go Postgres (mrql + api_tests) pass;
+combined browser+CLI E2E 1653 passed / 5 skipped / 1 known unrelated flaky (lightbox
+undo, passed on retry).

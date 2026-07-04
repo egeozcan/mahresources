@@ -41,7 +41,12 @@ func BuildPrimaryRouter(appContext *application_context.MahresourcesContext, fs 
 	router.PathPrefix(filePathPrefix).Handler(
 		guardedFileServer(appContext, filePathPrefix,
 			http.StripPrefix(filePathPrefix, http.FileServer(afero.NewHttpFs(fs).Dir("/")))))
-	router.PathPrefix("/public/").Handler(http.StripPrefix("/public/", mimeTypeHandler(http.FileServer(http.Dir("./public")))))
+	// /public/ assets are served with a wildcard CORS header: the template
+	// live-preview pane loads the app bundle as a module script from a
+	// sandboxed (opaque-origin) iframe, and module fetches are CORS-gated.
+	// These assets are auth-exempt static files, so the wildcard exposes
+	// nothing that was not already world-readable.
+	router.PathPrefix("/public/").Handler(corsStaticAssets(http.StripPrefix("/public/", mimeTypeHandler(http.FileServer(http.Dir("./public"))))))
 
 	for key, systemName := range altFs {
 		system := createCachedStorage(systemName)
@@ -108,6 +113,16 @@ func createCachedStorage(path string) afero.Fs {
 	base := afero.NewBasePathFs(afero.NewOsFs(), path)
 	layer := afero.NewMemMapFs()
 	return afero.NewCacheOnReadFs(base, layer, 10*time.Minute)
+}
+
+// corsStaticAssets allows any origin to read the wrapped static responses.
+// Needed by the template live-preview iframe (sandboxed, opaque origin) to
+// load the app bundle: module scripts are always fetched in CORS mode.
+func corsStaticAssets(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // mimeTypeHandler wraps a handler to set correct Content-Type headers

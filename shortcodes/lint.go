@@ -246,10 +246,24 @@ func hasAnyOperator(attrs map[string]string) bool {
 }
 
 // attrOffset returns a best-effort byte range for the given attribute within a
-// token, falling back to the whole token span.
+// token, falling back to the whole token span. Matches must sit on an attribute
+// boundary (preceded by whitespace) so "query=" does not anchor inside a longer
+// attribute like "param-query=".
 func attrOffset(tk token, attr string) (int, int) {
-	if idx := strings.Index(tk.raw, attr+"="); idx >= 0 {
-		return tk.start + idx, tk.end
+	needle := attr + "="
+	for from := 0; ; {
+		idx := strings.Index(tk.raw[from:], needle)
+		if idx < 0 {
+			break
+		}
+		idx += from
+		if idx > 0 {
+			switch tk.raw[idx-1] {
+			case ' ', '\t', '\n', '\r':
+				return tk.start + idx, tk.end
+			}
+		}
+		from = idx + 1
 	}
 	return tk.start, tk.end
 }

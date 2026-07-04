@@ -28,5 +28,22 @@ test.describe('Template live preview', () => {
     // The sandboxed iframe should render the group's name (debounced refresh).
     const frame = page.frameLocator('iframe[title="Template slot preview"]');
     await expect(frame.locator('body')).toContainText(groupName, { timeout: 10000 });
+
+    // The app bundle must hydrate inside the sandboxed (opaque-origin) frame:
+    // module scripts are CORS-fetched, so this only works while /public/ is
+    // served with Access-Control-Allow-Origin. Guards against regressing the
+    // "web components and Alpine widgets hydrate in preview" behaviour.
+    await expect
+      .poll(
+        async () => {
+          const srcdocFrame = page.frames().find((f) => f.url() === 'about:srcdoc');
+          if (!srcdocFrame) return false;
+          return srcdocFrame
+            .evaluate(() => typeof (window as { Alpine?: unknown }).Alpine !== 'undefined')
+            .catch(() => false);
+        },
+        { timeout: 10000 },
+      )
+      .toBe(true);
   });
 });
