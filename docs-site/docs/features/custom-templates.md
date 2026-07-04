@@ -542,9 +542,37 @@ These editor tools are backed by three API endpoints:
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /v1/shortcodes/docs` | Machine-readable catalogue of the four built-in shortcodes plus enabled plugin shortcodes. Powers lint and autocomplete. |
+| `GET /v1/shortcodes/docs` | Machine-readable catalogue of the built-in shortcodes plus enabled plugin shortcodes. Powers lint and autocomplete. |
 | `POST /v1/shortcodes/lint` | Pure-parse linting of shortcode markup (no shortcode/plugin execution; only the MRQL parser runs). |
 | `POST /v1/{category\|resourceCategory\|noteType}/previewTemplate` | Renders a slot against an entity. Gated like the corresponding template save. |
+
+## Reusing templates
+
+Three tools cut duplication across category templates: reusable partials, per-form copy/export/import, and starter presets.
+
+### Template partials
+
+A **template partial** is a named, reusable snippet of HTML plus shortcodes, managed under **Template Partials** (admin only). Reference one from any slot with:
+
+```
+[partial name="status-badge"]
+```
+
+The partial expands with the including entity's context, so its own `[meta]`, `[conditional]`, `[mrql]`, and `[each]` shortcodes resolve against that entity. An unknown name renders an HTML comment instead of leaking the raw shortcode, and recursive partials terminate at the depth limit. Writes are admin-only because a partial expands inside every carrier's templates, including admin-managed Category surfaces; reads are open.
+
+### Copy, export, and import bundles
+
+The **Reuse & Presets** panel on each edit form fills the form without saving (nothing is written until you submit):
+
+- **Copy from…** fills the slots from another category, of the same carrier or a different one. Cross-carrier copies fill the shared fields (all six slots plus the Meta JSON Schema) and skip Section Config, whose shape differs per carrier.
+- **Export bundle** downloads the current editor contents as a `.json` bundle (schema version 1). It exports unsaved edits, so it doubles as a backup before experimenting.
+- **Import bundle** loads a bundle back into the form, warning on a carrier mismatch (then filling shared fields only) and rejecting a newer bundle schema version.
+
+A bundle is a UI convenience, not part of the group export/import archive contract. A bundle that references `[partial name="x"]` imports fine; the linter flags the reference if that partial does not exist.
+
+### Starter presets
+
+The **Start from preset** picker offers a few ready-made templates (a project dashboard, a media collection, a contact card, and a reading log) that exercise the shortcode language. Applying a preset routes through the same client-side import path as a bundle, filling the form for review before you save.
 
 ## Related Pages
 

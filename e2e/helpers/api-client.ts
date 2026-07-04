@@ -324,6 +324,27 @@ export class ApiClient {
     return this.postVoidRetry(`${this.baseUrl}/v1/note/noteType/delete?Id=${id}`);
   }
 
+  // TemplatePartial operations
+  async createTemplatePartial(
+    name: string,
+    content: string,
+    description?: string
+  ): Promise<{ id: number; name: string; content: string }> {
+    const formData = new URLSearchParams();
+    formData.append('Name', name);
+    formData.append('Content', content);
+    if (description) formData.append('Description', description);
+
+    return this.postRetry(`${this.baseUrl}/v1/templatePartial`, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: formData.toString(),
+    });
+  }
+
+  async deleteTemplatePartial(id: number): Promise<void> {
+    return this.postVoidRetry(`${this.baseUrl}/v1/templatePartial/delete?id=${id}`);
+  }
+
   async getNoteTypes(): Promise<NoteType[]> {
     const response = await this.request.get(`${this.baseUrl}/v1/note/noteTypes`);
     return this.handleResponse<NoteType[]>(response);

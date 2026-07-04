@@ -15,7 +15,7 @@ Shortcodes are bracket-delimited expressions embedded in custom template fields 
 
 The parser recognizes these patterns:
 
-- **Built-in:** `[meta ...]`, `[property ...]`, `[mrql ...]`, `[conditional ...]...[/conditional]`, `[link ...]`
+- **Built-in:** `[meta ...]`, `[property ...]`, `[mrql ...]`, `[conditional ...]...[/conditional]`, `[link ...]`, `[each ...]...[/each]`, `[item ...]`, `[partial ...]`
 - **Plugin:** `[plugin:plugin-name:shortcode-name ...]`
 
 Attribute values can be double-quoted, single-quoted, or unquoted. When a key appears more than once, the last value wins.
@@ -502,6 +502,72 @@ When the target cannot be resolved (unknown `to`, an unset category, or an owner
 [link to="owner"]Back to group[/link]
 [link to="category"]View type[/link]
 ```
+
+## `[each]` -- Iterate an array
+
+Renders its inner content once per element of an array meta value.
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `path` | Yes | | Dot-notation path to an array in the entity meta, e.g. `ingredients` |
+| `limit` | No | `100` | Maximum number of elements to render |
+
+### How It Works
+
+`[each]` is a block shortcode. Reference the current element with `[item]` inside the block. A non-array or empty value renders the `[else]` branch, or nothing when there is no `[else]`. Inner `[meta]`, `[conditional]`, `[mrql]`, and `[property]` shortcodes run against the **parent entity**, not the element — use `[item]` for element data.
+
+### `[item]`
+
+`[item]` renders the current element inside an `[each]` block. It uses the same `format`, `layout`, and `default` helpers as `[property]`, and is HTML-escaped unless `raw="true"`. Outside an `[each]` block it renders nothing.
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `path` | No | | Dot-path into the current element when it is an object, e.g. `name`. Omit to render a scalar element directly |
+| `index` | No | `false` | When `true`, renders the element's 1-based position instead of its value |
+| `format` | No | | `date`/`datetime`/`time` for time values; `filesize` for byte counts |
+| `layout` | No | | Custom Go time layout for time values (wins over `format`) |
+| `default` | No | | Text rendered when the resolved value is empty |
+| `raw` | No | `false` | When `true`, output is not HTML-escaped |
+
+### Examples
+
+```
+[each path="tags"]
+  <span class="badge">[item]</span>
+[/each]
+
+[each path="ingredients"]
+  <li>[item index="true"]. [item path="name"] — [item path="qty" default="?"]</li>
+[else]
+  <p>No ingredients.</p>
+[/each]
+```
+
+`[item]` binds to the nearest enclosing `[each]`; `[item]` tokens inside a nested `[each]` belong to that inner loop.
+
+## `[partial]` -- Reusable snippets
+
+Expands a reusable template partial by name. Partials are managed under **Template Partials** (admin only) and referenced from any category-template slot.
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `name` | Yes | | Kebab-case name of the partial to expand, e.g. `status-badge` |
+
+### How It Works
+
+The partial's content is rendered with the **current entity context**, so its own `[meta]`, `[conditional]`, `[mrql]`, and `[each]` shortcodes resolve against the entity that includes it. An unknown name renders an HTML comment (`<!-- partial "x" not found -->`) rather than leaking the raw shortcode. Self- and mutually-referential partials terminate at the recursion depth limit.
+
+### Example
+
+```
+[partial name="status-badge"]
+```
+
+See [Custom Templates](./custom-templates.md) for authoring partials, bundles, and presets.
 
 ## Plugin Shortcodes
 

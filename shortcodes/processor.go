@@ -53,6 +53,31 @@ type QueryResultGroup struct {
 // other's output to prevent runaway recursive expansion.
 const maxRecursionDepth = 10
 
+// PartialResolver resolves a [partial name="…"] reference to its raw template
+// content. found is false when no partial with that name exists. It is injected
+// per-request via WithPartialResolver, mirroring how the MRQL render cache is
+// threaded on the request context, so the shortcodes package stays free of DB
+// imports. A nil/absent resolver makes every [partial] render its not-found
+// comment.
+type PartialResolver func(name string) (content string, found bool)
+
+type partialResolverKey struct{}
+
+// WithPartialResolver returns a context carrying r, consulted by [partial]
+// expansion during Process. Callers build the resolver once per page render
+// (with a request-scoped cache) and attach it here.
+func WithPartialResolver(ctx context.Context, r PartialResolver) context.Context {
+	return context.WithValue(ctx, partialResolverKey{}, r)
+}
+
+func partialResolverFrom(ctx context.Context) PartialResolver {
+	if ctx == nil {
+		return nil
+	}
+	r, _ := ctx.Value(partialResolverKey{}).(PartialResolver)
+	return r
+}
+
 // Process parses shortcodes in input and replaces them with rendered HTML.
 // Built-in "meta" and "property" shortcodes are handled directly.
 // "mrql" shortcodes use the provided executor callback (left as-is if nil).
@@ -96,6 +121,15 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			}
 		case sc.Name == "link":
 			replacement = RenderLinkShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+		case sc.Name == "partial":
+			replacement = RenderPartialShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+		case sc.Name == "each":
+			replacement = RenderEachShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+		case sc.Name == "item":
+			// [item] only has meaning inside an [each] block, where the each
+			// handler substitutes it before this dispatch runs. A bare [item]
+			// (outside any [each]) renders empty.
+			replacement = ""
 		case strings.HasPrefix(sc.Name, "plugin:"):
 			if renderer != nil {
 				parts := strings.SplitN(sc.Name, ":", 3)

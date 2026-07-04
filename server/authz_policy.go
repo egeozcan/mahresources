@@ -143,10 +143,14 @@ func isSystemPath(path string) bool {
 	return false
 }
 
-// isTaxonomyPath matches Category and Resource Category endpoints.
+// isTaxonomyPath matches Category, Resource Category, and Template Partial
+// endpoints. Template partials expand inside every carrier's templates
+// (including admin-managed Category surfaces), so their write gate matches the
+// most privileged consumer — admin-only. Reads stay open.
 func isTaxonomyPath(path string) bool {
 	return strings.HasPrefix(path, "/v1/category") ||
-		strings.HasPrefix(path, "/v1/resourceCategory")
+		strings.HasPrefix(path, "/v1/resourceCategory") ||
+		strings.HasPrefix(path, "/v1/templatePartial")
 }
 
 // isEditorPath matches editor-level operations. Reads of these surfaces remain

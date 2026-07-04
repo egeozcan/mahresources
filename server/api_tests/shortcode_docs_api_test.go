@@ -106,7 +106,7 @@ func TestShortcodeDocsEndpoint(t *testing.T) {
 		byName[d.Name] = d
 	}
 
-	for _, want := range []string{"meta", "property", "mrql", "conditional"} {
+	for _, want := range []string{"meta", "property", "mrql", "conditional", "link", "each", "item", "partial"} {
 		d, ok := byName[want]
 		if !ok {
 			t.Errorf("missing built-in %q in docs", want)
@@ -120,7 +120,7 @@ func TestShortcodeDocsEndpoint(t *testing.T) {
 		}
 	}
 
-	// Block capability snapshot for the four built-ins.
+	// Block capability snapshot for the built-ins.
 	if got := byName["meta"].IsBlock; got != "no" {
 		t.Errorf("meta isBlock: expected 'no', got %q", got)
 	}
@@ -129,6 +129,12 @@ func TestShortcodeDocsEndpoint(t *testing.T) {
 	}
 	if got := byName["mrql"].IsBlock; got != "optional" {
 		t.Errorf("mrql isBlock: expected 'optional', got %q", got)
+	}
+	if got := byName["each"].IsBlock; got != "required" {
+		t.Errorf("each isBlock: expected 'required', got %q", got)
+	}
+	if got := byName["item"].IsBlock; got != "no" {
+		t.Errorf("item isBlock: expected 'no', got %q", got)
 	}
 
 	// meta requires path.

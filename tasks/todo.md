@@ -1,77 +1,56 @@
-# Category Template Authoring Feedback Loop (Phase 1) — STATUS
+# Phase 3: Template Composition and Reuse
 
-## Step 1 — Shortcode docs registry + JSON endpoint  ✅ DONE
-- [x] shortcodes/builtin_docs.go registry
-- [x] PluginManager.AllShortcodeDocs()
-- [x] GET /v1/shortcodes/docs handler + routes + OpenAPI
-- [x] Go unit + API tests
+Plan: `docs/plans/category-template-composition-phase3.md`
 
-## Step 2 — Lint  ✅ DONE
-- [x] shortcodes/lint.go (Lint + KnownShortcodes) + parser matchTokens refactor
-- [x] POST /v1/shortcodes/lint + isReadViaPost + OpenAPI
-- [x] @codemirror/lint, codeEditor shortcodeLint, submit soft-warn
-- [x] Go table tests + API test + E2E (shortcode-lint.spec.ts)
+## Work item 1 — `[each]` iteration over meta arrays  ✅ DONE
+- [x] Parser: add `each` (block) + `item` (inline) to shortcodePattern/closingTagPattern
+- [x] `shortcodes/each_handler.go`: RenderEachShortcode + item substitution (skip nested each)
+- [x] processor.go: dispatch `each`/`item`
+- [x] builtin_docs.go: `each` + `item` doc entries
+- [x] lint.go: `[item]` outside `[each]` warning + typo names + each path completion (JS)
+- [x] Tests: each_handler_test.go + lint tests + docs API tests (pass)
 
-## Step 4 — Live preview  ✅ DONE
-- [x] BuildMetaContextForEntity exported helper
-- [x] previewTemplateHandler at 3 paths + routes + OpenAPI (capped MRQL limit)
-- [x] templatePreview component + partial + iframe srcdoc, per-form include
-- [x] API tests (role matrix) + E2E (template-preview.spec.ts)
+## Work item 2 — `[partial]` reusable snippets  ✅ DONE
+- [x] Model `TemplatePartial` + AutoMigrate + stampedModels() + CLAUDE.md count (14→15)
+- [x] Resolver via request-context (WithPartialResolver) — DEVIATION from struct refactor:
+      threaded through reqCtx (WithMRQLCache pattern, plan item 7) — no signature/test churn,
+      DB-free shortcodes pkg. Injected at all 5 render sites.
+- [x] processor.go: `partial` case, BuildPartialResolver + per-render cache
+- [x] Parser: add `partial` (inline); builtin_docs + lint (self-reference via PartialName)
+- [x] CRUD: model/query/scope/context/interfaces/handlers, routes /v1/templatePartial(s),
+      OpenAPI, template pages (list/create/display), context providers, nav + stats card
+- [x] Authorization: isTaxonomyPath prefix (admin-only writes, reads open)
+- [x] Tests: partial_handler_test, lint self-ref, API CRUD + kebab reject + unique, authz matrix — all green
+- [ ] docs-site "reusing templates" page (deferred to docs pass)
 
-## Step 3 — Autocomplete + hover docs  ✅ DONE
-- [x] src/components/shortcodeCompletion.js (override source + autoTrigger + hover)
-- [x] Wired into codeEditor.js (override composes html/css completion)
-- [x] path= completion from live MetaSchema
-- [x] E2E (shortcode-autocomplete.spec.ts)
+## Work item 3 — Template-set duplication and export/import  ✅ DONE
+- [x] Single-item slots exposed via list endpoints (full objects) — no new GET needed
+- [x] `templateBundle` Alpine component + `templateBundleTools.tpl` (all 3 forms)
+- [x] "Copy from…" (same + cross carrier), Export (bundle JSON v1), Import (carrier + schemaVersion checks)
+- [x] Cross-carrier fills shared fields only; SectionConfig same-carrier via Alpine.$data
 
-## Remaining
-- [ ] a11y pass on modified forms
-- [ ] OpenAPI regen + docs-site
-- [ ] Full E2E (browser+CLI) + Postgres suites
+## Work item 4 — Starter template gallery  ✅ DONE
+- [x] 4 preset bundles server/template_presets/*.json (go:embed) — lint-clean regression fixture
+- [x] GET /v1/templatePresets + OpenAPI
+- [x] "start from preset" picker → same client import path
+- [x] E2E 97-template-composition-phase3: each/partial/unknown-partial/preset-import — 4 pass
+- [x] presets_test.go: parse + carrier + shortcode-lint every slot
 
-## Review (2026-07-04) — ALL COMPLETE
+## Verification
+- [x] Go unit (json1 fts5) — full suite green; rebuilt ./mahresources
+- [x] E2E: 97-phase3 (4), carrier forms 02/03/21 (32), shortcodes (30), lint/autocomplete/template-authoring (7)
+- [x] a11y: 01-a11y-pages (177, incl. new templatePartial list/create + modified forms)
+- [x] CLI E2E: admin/stats + related (22) green
+- [x] Postgres suite (MRQL + api_tests) green — fixed PG migration list gap
+- [x] docs-site: shortcodes.md (each/item/partial) + custom-templates.md (Reusing templates); OpenAPI drift green (no committed spec)
 
-All four steps shipped, additive, no flags. Test results:
-- Go full suite (`./...`): pass
-- Go Postgres (mrql + api_tests): pass
-- Browser E2E: 1653 passed, 5 skipped, 1 unrelated flaky (lightbox undo, recovered on retry)
-- CLI E2E: pass
-- New E2E (lint/autocomplete/preview): pass on SQLite AND Postgres
-- a11y (category + noteType forms + preview pane labels): pass
-- OpenAPI regenerated (openapi.yaml); docs-site/features/custom-templates.md updated
+## Migration-list gaps fixed (stampedModels + GetDataStats count reach every test DB)
+- user_context_test, user_admin_guard_test, created_by_stamp_test, admin_context_test,
+  api_test_utils (SetupTestEnv), pg_test_helper_test — all add &models.TemplatePartial{}
 
-### Non-obvious gotchas hit
-1. codeEditor.js used `EditorState` before its lazy import; the silent catch swallowed the
-   TypeError and disabled ALL shortcode tooling (lint too). Fix: build shortcode extensions
-   AFTER the core CodeMirror import; log errors in the catch.
-2. A global `EditorState.languageData.of({autocomplete})` source does NOT auto-trigger on typing
-   and gets flooded/overridden by the HTML language completion (popup showed only `<tag`s).
-   Fix: `autocompletion({override:[source]})` where the source returns shortcode completions inside
-   `[ ]` and delegates to `htmlCompletionSource`/`cssCompletionSource` elsewhere. Plus an explicit
-   `startCompletion` nudge while the caret is inside a bracket.
-3. `[metaa path=x]` parses as a REAL `meta` shortcode (regex eats the extra char as attrs), so
-   near-miss typo detection must use edit distance on names WITHOUT a builtin prefix (`condtional`).
-
-## Post-review fixes (2026-07-04, second pass)
-
-A live-browser probe showed the preview iframe never hydrated: the bundle is a module
-script, module fetches are CORS-gated, and the sandboxed iframe has an opaque origin, so
-the browser blocked `/public/dist/main.js` (no ACAO header). Three stacked causes fixed:
-
-1. `/public/` now served with `Access-Control-Allow-Origin: *` (`corsStaticAssets` in
-   server/server.go; test: `TestPublicAssetsCORSHeader`). Auth-exempt static files, so the
-   wildcard exposes nothing new.
-2. `storeConfig.js` read `sessionStorage` at bundle startup — throws SecurityError in any
-   sandboxed document, killing the whole bundle. Now guarded (`sessionGet`/`sessionSet`).
-3. The srcdoc referenced `/public/dist/main.css`, which does not exist (404 on every
-   render). Replaced with the stylesheets base.tpl actually ships (index/tailwind/jsonTable).
-
-Hydration is now asserted end-to-end in template-preview.spec.ts (polls `window.Alpine`
-inside the srcdoc frame). Also fixed from review: lint `attrOffset` anchored `query=`
-inside `param-query=` (boundary check + `TestLintMRQLErrorAnchorsToAttr`), and
-`templatePreview.refresh()` got a request-sequence guard so out-of-order responses can't
-paint a stale preview.
-
-Second-pass test results: Go full suite pass; Go Postgres (mrql + api_tests) pass;
-combined browser+CLI E2E 1653 passed / 5 skipped / 1 known unrelated flaky (lightbox
-undo, passed on retry).
+## Notable deviations / follow-ups
+- Partial resolver threaded via reqCtx (WithPartialResolver) instead of the planned Handlers
+  struct — same goal, far less churn, matches WithMRQLCache pattern (plan item 7).
+- PartialName self-reference lint capability exists + tested; not yet wired to a per-partial
+  preview endpoint (partials use the generic code editor). Runtime recursion is bounded anyway.
+- CLI commands for partials: intentionally not added (plan lists as optional follow-up).

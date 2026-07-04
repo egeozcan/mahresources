@@ -67,8 +67,10 @@ func GetPreviewTemplateHandler(ctx *application_context.MahresourcesContext, ent
 			return
 		}
 
-		// Request context with a per-render MRQL cache (mirrors the tag path).
+		// Request context with a per-render MRQL cache and partial resolver
+		// (mirrors the tag path).
 		reqCtx := plugin_system.WithMRQLCache(request.Context())
+		reqCtx = shortcodes.WithPartialResolver(reqCtx, template_filters.BuildPartialResolver(ctx))
 
 		var renderer shortcodes.PluginRenderer
 		if pm := ctx.PluginManager(); pm != nil {

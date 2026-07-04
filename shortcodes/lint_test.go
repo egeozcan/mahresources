@@ -91,6 +91,33 @@ func TestLint(t *testing.T) {
 			input: "[conditional path=\"x\" eq=\"y\"]a[else]b[/conditional]",
 		},
 		{
+			name:  "each with item inside is valid",
+			input: "[each path=\"tags\"]<li>[item]</li>[/each]",
+		},
+		{
+			name:       "each missing path",
+			input:      "[each]<li>[item]</li>[/each]",
+			wantSubstr: `missing required attribute "path"`,
+			wantSev:    SeverityError,
+		},
+		{
+			name:       "unclosed each block",
+			input:      `[each path="x"]<li>[item]</li>`,
+			wantSubstr: `must be a block`,
+			wantSev:    SeverityError,
+		},
+		{
+			name:       "item outside each",
+			input:      `<li>[item path="name"]</li>`,
+			wantSubstr: `only meaningful inside an [each] block`,
+			wantSev:    SeverityWarning,
+		},
+		{
+			name:     "item inside each not flagged",
+			input:    "[each path=\"x\"][item path=\"n\"][/each]",
+			wantNone: []string{"only meaningful inside"},
+		},
+		{
 			name:       "unknown attribute on documented shortcode",
 			input:      `[meta path="x" bogus="1"]`,
 			wantSubstr: `unknown attribute "bogus"`,

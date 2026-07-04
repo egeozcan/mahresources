@@ -89,6 +89,7 @@ import { adminOverview } from './components/adminOverview.js';
 import timeline from './components/timeline.js';
 import { schemaEditorModal } from './components/schemaEditorModal.ts';
 import { sectionConfigForm } from './components/sectionConfigForm.js';
+import { templateBundle } from './components/templateBundle.js';
 
 // Import utility modules
 import { renderMentions } from './utils/renderMentions.js';
@@ -191,6 +192,7 @@ Alpine.data('adminOverview', adminOverview);
 Alpine.data('timeline', timeline);
 Alpine.data('schemaEditorModal', schemaEditorModal);
 Alpine.data('sectionConfigForm', sectionConfigForm);
+Alpine.data('templateBundle', templateBundle);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;

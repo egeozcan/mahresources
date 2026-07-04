@@ -202,8 +202,8 @@ function valueOptionsFor(doc, attrName, schemaProvider) {
   if (attr && attr.type === 'boolean') {
     return ['true', 'false'];
   }
-  // Meta-path completion for [meta]/[conditional] path from the live schema.
-  if (attrName === 'path' && (doc.name === 'meta' || doc.name === 'conditional') && typeof schemaProvider === 'function') {
+  // Meta-path completion for [meta]/[conditional]/[each] path from the live schema.
+  if (attrName === 'path' && (doc.name === 'meta' || doc.name === 'conditional' || doc.name === 'each') && typeof schemaProvider === 'function') {
     return schemaPaths(schemaProvider());
   }
   return [];

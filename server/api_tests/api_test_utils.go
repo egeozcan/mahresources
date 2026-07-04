@@ -70,6 +70,7 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 		&models.PluginState{},
 		&models.PluginKV{},
 		&models.SavedMRQLQuery{},
+		&models.TemplatePartial{},
 		&models.RuntimeSetting{},
 		&models.User{},
 		&models.UserSetting{},

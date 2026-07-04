@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "reading-log",
+  "title": "Reading log (Note Type)",
+  "carrier": "noteType",
+  "description": "A note template for a reading log: a star rating from meta, a formatted finish date, and a summary slot.",
+  "slots": {
+    "header": "<div class=\"pt-preset-reading\">\n  <h2 class=\"text-lg font-semibold\">Reading Log</h2>\n  [conditional path=\"rating\" not-empty=\"true\"]\n    <p>Rating: [meta path=\"rating\"] / 5</p>\n  [else]\n    <p class=\"text-stone-400\">Unrated</p>\n  [/conditional]\n</div>",
+    "sidebar": "<div class=\"pt-preset-reading-side\">\n  <p class=\"text-sm\">Finished: [meta path=\"finished\" default=\"in progress\"]</p>\n  <p class=\"text-xs text-stone-500\">Logged [property path=\"CreatedAt\" format=\"date\"]</p>\n</div>",
+    "summary": "<p class=\"text-xs\">[property path=\"Name\"] — [meta path=\"author\" default=\"unknown author\"]</p>",
+    "avatar": "",
+    "mrqlResult": "<div class=\"pt-preset-reading-card\">[property path=\"Name\"]</div>",
+    "css": ".pt-preset-reading h2 { color: #7c2d12; }"
+  },
+  "metaSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"author\": { \"type\": \"string\" },\n    \"rating\": { \"type\": \"integer\", \"minimum\": 1, \"maximum\": 5 },\n    \"finished\": { \"type\": \"string\" }\n  }\n}",
+  "sectionConfig": ""
+}

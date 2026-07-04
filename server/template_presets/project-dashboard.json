@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "project-dashboard",
+  "title": "Project dashboard (Category)",
+  "carrier": "category",
+  "description": "A group/category dashboard: live counts via [mrql], a status badge via [conditional], and a formatted summary.",
+  "slots": {
+    "header": "<div class=\"pt-preset-project\">\n  <h2 class=\"text-lg font-semibold\">Project Dashboard</h2>\n  [conditional path=\"status\" eq=\"active\"]\n    <span class=\"inline-block px-2 py-0.5 rounded bg-green-100 text-green-800 text-xs\">Active</span>\n  [elseif path=\"status\" eq=\"paused\"]\n    <span class=\"inline-block px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-xs\">Paused</span>\n  [else]\n    <span class=\"inline-block px-2 py-0.5 rounded bg-stone-100 text-stone-600 text-xs\">Status unknown</span>\n  [/conditional]\n  <p class=\"text-sm text-stone-600 mt-2\">Resources here: [mrql query=\"resources\" scope=\"entity\"]</p>\n</div>",
+    "sidebar": "<div class=\"pt-preset-project-side\">\n  <h3 class=\"font-semibold text-sm\">Owner</h3>\n  <p>[property path=\"Name\"]</p>\n  [conditional path=\"lead\" not-empty=\"true\"]\n    <p class=\"text-sm\">Lead: [meta path=\"lead\"]</p>\n  [/conditional]\n</div>",
+    "summary": "<p class=\"text-xs text-stone-500\">Created [property path=\"CreatedAt\" format=\"date\"]</p>",
+    "avatar": "",
+    "mrqlResult": "<div class=\"pt-preset-project-card\"><a href=\"[link]\">[property path=\"Name\"]</a></div>",
+    "css": ".pt-preset-project h2 { letter-spacing: -0.01em; }"
+  },
+  "metaSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"status\": { \"type\": \"string\", \"enum\": [\"active\", \"paused\", \"archived\"] },\n    \"lead\": { \"type\": \"string\" }\n  }\n}",
+  "sectionConfig": ""
+}

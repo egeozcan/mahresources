@@ -14,6 +14,8 @@
     {% include "/partials/form/createFormTextInput.tpl" with title="Name" name="name" value=queryValues.name.0|default:noteType.Name required=true %}
     {% include "/partials/form/createFormTextareaInput.tpl" with title="Description" name="Description" value=queryValues.Description.0|default:noteType.Description %}
 
+    {% include "/partials/form/templateBundleTools.tpl" with carrier="noteType" %}
+
     <fieldset class="rounded-lg border border-stone-200 bg-stone-50/50 p-4 sm:p-6 space-y-2" x-data="{ showTemplateDocs: false }">
         <legend class="text-base font-semibold font-mono text-stone-800 px-2">Custom Templates</legend>
 

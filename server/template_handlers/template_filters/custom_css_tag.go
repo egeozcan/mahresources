@@ -165,6 +165,11 @@ func customCSSReqCtx(ctx *pongo2.ExecutionContext) context.Context {
 		}
 	}
 	reqCtx = plugin_system.WithMRQLCache(reqCtx)
+	if appCtxVal, ok := ctx.Public["_appContext"]; ok && appCtxVal != nil {
+		if appCtx, ok := appCtxVal.(*application_context.MahresourcesContext); ok {
+			reqCtx = shortcodes.WithPartialResolver(reqCtx, BuildPartialResolver(appCtx))
+		}
+	}
 	ctx.Public["_reqCtxWithCache"] = reqCtx
 	return reqCtx
 }

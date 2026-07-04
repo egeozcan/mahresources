@@ -12,6 +12,11 @@ var (
 	_ interfaces.NoteMetaReader          = (*MahresourcesContext)(nil)
 	_ interfaces.NoteTypeReader          = (*MahresourcesContext)(nil)
 
+	// Template Partial interfaces
+	_ interfaces.TemplatePartialReader  = (*MahresourcesContext)(nil)
+	_ interfaces.TemplatePartialWriter  = (*MahresourcesContext)(nil)
+	_ interfaces.TemplatePartialDeleter = (*MahresourcesContext)(nil)
+
 	// Granular Resource interfaces
 	_ interfaces.ResourceCreator        = (*MahresourcesContext)(nil)
 	_ interfaces.ResourceEditor         = (*MahresourcesContext)(nil)

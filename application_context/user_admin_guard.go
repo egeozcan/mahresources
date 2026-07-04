@@ -27,6 +27,7 @@ func stampedModels() []any {
 		&models.GroupRelation{},
 		&models.GroupRelationType{},
 		&models.ResourceVersion{},
+		&models.TemplatePartial{},
 	}
 }
 
