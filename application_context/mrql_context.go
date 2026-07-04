@@ -684,16 +684,28 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 	}
 	result.Warnings = warnings
 
-	// Build unified sortable items
-	items := make([]crossEntityItem, 0, len(allResources)+len(allNotes)+len(allGroups))
-	for i, r := range allResources {
-		items = append(items, crossEntityItem{entityType: "resource", name: r.Name, created: r.CreatedAt, updated: r.UpdatedAt, index: i})
-	}
-	for i, n := range allNotes {
-		items = append(items, crossEntityItem{entityType: "note", name: n.Name, created: n.CreatedAt, updated: n.UpdatedAt, index: i})
-	}
-	for i, g := range allGroups {
-		items = append(items, crossEntityItem{entityType: "group", name: g.Name, created: g.CreatedAt, updated: g.UpdatedAt, index: i})
+	// Build unified sortable items. When ORDER BY RANDOM() is the primary sort,
+	// select a population-proportional sample instead of merging every fetched
+	// row: the per-entity cap fetches at most globalOffset+globalLimit rows per
+	// type, so merging them all overrepresents rare entity types (99 notes + 1
+	// group would include the lone group ~91% of the time instead of ~1%). The
+	// downstream shuffle/offset/limit then run over the proportional sample.
+	// RANDOM() used only as a tiebreak (e.g. `ORDER BY created, RANDOM()`) keeps
+	// the plain merge — the leading field already fixes the global top-k.
+	var items []crossEntityItem
+	if len(parsed.OrderBy) > 0 && parsed.OrderBy[0].Random {
+		items = ctx.proportionalRandomItems(reqCtx, parsed, opts, allResources, allNotes, allGroups, perEntityCap, globalOffset+globalLimit)
+	} else {
+		items = make([]crossEntityItem, 0, len(allResources)+len(allNotes)+len(allGroups))
+		for i, r := range allResources {
+			items = append(items, crossEntityItem{entityType: "resource", name: r.Name, created: r.CreatedAt, updated: r.UpdatedAt, index: i})
+		}
+		for i, n := range allNotes {
+			items = append(items, crossEntityItem{entityType: "note", name: n.Name, created: n.CreatedAt, updated: n.UpdatedAt, index: i})
+		}
+		for i, g := range allGroups {
+			items = append(items, crossEntityItem{entityType: "group", name: g.Name, created: g.CreatedAt, updated: g.UpdatedAt, index: i})
+		}
 	}
 
 	// ORDER BY RANDOM() clauses (Field == nil) compare on a per-item random key.
@@ -794,6 +806,106 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 	}
 
 	return result, nil
+}
+
+// proportionalRandomItems selects up to k items across the three entity types
+// with probability proportional to each type's true (filtered) population, so a
+// cross-entity ORDER BY RANDOM() sample is not skewed toward small types by the
+// per-entity fetch cap. The returned items reference the first take[type] rows of
+// each slice (already DB-side randomized); the caller's shuffle/offset/limit run
+// over them. Selection is weighted-without-replacement over the populations,
+// capped by however many rows were actually fetched.
+func (ctx *MahresourcesContext) proportionalRandomItems(
+	reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions,
+	resources []models.Resource, notes []models.Note, groups []models.Group,
+	perEntityCap, k int,
+) []crossEntityItem {
+	// A slice shorter than the cap means the whole (filtered) population was
+	// fetched, so its length is the true count. One at the cap may have more rows;
+	// count it so its weight reflects the real population.
+	trueCount := func(et mrql.EntityType, fetched int) int {
+		if fetched < perEntityCap {
+			return fetched
+		}
+		n, err := ctx.countCrossEntity(reqCtx, parsed, opts, et)
+		if err != nil || int(n) < fetched {
+			return fetched
+		}
+		return int(n)
+	}
+
+	order := []string{"resource", "note", "group"}
+	avail := map[string]int{"resource": len(resources), "note": len(notes), "group": len(groups)}
+	remaining := map[string]int{
+		"resource": trueCount(mrql.EntityResource, len(resources)),
+		"note":     trueCount(mrql.EntityNote, len(notes)),
+		"group":    trueCount(mrql.EntityGroup, len(groups)),
+	}
+	total := remaining["resource"] + remaining["note"] + remaining["group"]
+
+	take := map[string]int{}
+	for picks := 0; picks < k && total > 0; picks++ {
+		r := rand.IntN(total)
+		chosen := order[len(order)-1]
+		acc := 0
+		for _, e := range order {
+			acc += remaining[e]
+			if r < acc {
+				chosen = e
+				break
+			}
+		}
+		// Never draw more than we physically fetched for a type. If a capped type
+		// is exhausted, drop its remaining weight and redraw against the others.
+		if take[chosen] >= avail[chosen] {
+			total -= remaining[chosen]
+			remaining[chosen] = 0
+			picks--
+			continue
+		}
+		take[chosen]++
+		remaining[chosen]--
+		total--
+	}
+
+	items := make([]crossEntityItem, 0, take["resource"]+take["note"]+take["group"])
+	for i := 0; i < take["resource"]; i++ {
+		r := resources[i]
+		items = append(items, crossEntityItem{entityType: "resource", name: r.Name, created: r.CreatedAt, updated: r.UpdatedAt, index: i})
+	}
+	for i := 0; i < take["note"]; i++ {
+		n := notes[i]
+		items = append(items, crossEntityItem{entityType: "note", name: n.Name, created: n.CreatedAt, updated: n.UpdatedAt, index: i})
+	}
+	for i := 0; i < take["group"]; i++ {
+		g := groups[i]
+		items = append(items, crossEntityItem{entityType: "group", name: g.Name, created: g.CreatedAt, updated: g.UpdatedAt, index: i})
+	}
+	return items
+}
+
+// countCrossEntity counts the rows one entity type contributes to a cross-entity
+// query, applying the same WHERE/scope translation but no ORDER BY / LIMIT /
+// OFFSET, so proportionalRandomItems can weight by true population size.
+func (ctx *MahresourcesContext) countCrossEntity(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions, et mrql.EntityType) (int64, error) {
+	clone := *parsed
+	clone.EntityType = et
+	clone.OrderBy = nil
+	clone.Limit = -1
+	clone.Offset = -1
+
+	entityCtx, cancel := context.WithTimeout(reqCtx, ctx.mrqlQueryTimeout())
+	defer cancel()
+
+	db, err := mrql.TranslateWithOptions(&clone, ctx.db.WithContext(entityCtx), opts)
+	if err != nil {
+		return 0, err
+	}
+	var n int64
+	if err := db.Count(&n).Error; err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // MRQLExplainResult describes the SQL statement(s) that a query would run,
