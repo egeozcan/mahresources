@@ -119,10 +119,11 @@ func resultCount(result *QueryResult) int {
 }
 
 // viewAllURL builds the "/mrql" link that reproduces the shortcode's result set.
-// Saved queries link by ID (resolving the shortcode's name→ID asymmetry
-// server-side); inline queries link by their effective text, appending the
-// applied scope as a SCOPE clause when the text has none. Returns "" when
-// neither a saved ID nor an effective query is available.
+// The executor pre-resolves both fields: an unscoped saved query links by ID
+// (/mrql?saved=<id>, preserving the saved-query identity), while an inline query
+// — or a scoped saved query, which cannot use the globally-opening ?saved= link
+// — links by its effective text with any applied scope already spliced in.
+// Returns "" when neither a saved ID nor an effective query is available.
 func viewAllURL(result *QueryResult) string {
 	if result.SavedID != 0 {
 		return "/mrql?saved=" + strconv.FormatUint(uint64(result.SavedID), 10)
@@ -130,9 +131,6 @@ func viewAllURL(result *QueryResult) string {
 	q := result.EffectiveQuery
 	if strings.TrimSpace(q) == "" {
 		return ""
-	}
-	if result.LinkScopeGroupID != 0 {
-		q = q + " SCOPE " + strconv.FormatUint(uint64(result.LinkScopeGroupID), 10)
 	}
 	return "/mrql?q=" + url.QueryEscape(q)
 }

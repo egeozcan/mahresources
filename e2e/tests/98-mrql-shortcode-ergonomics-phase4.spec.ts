@@ -12,8 +12,11 @@ test.describe('MRQL shortcode ergonomics (Phase 4)', () => {
     // CustomHeader uses inline scalar mode; CustomSidebar uses a block template
     // with a header slot ({count}/{total}), an [else] empty state, and link-all.
     const header = `<div class="p4-count">Notes: [mrql query='type = "note"' scope="entity" value="count"]</div>`;
+    // ORDER BY in the query text means the view-all link must splice SCOPE
+    // *before* it (SCOPE ... ORDER BY), so following the link exercises the
+    // clause-ordering fix end-to-end — the /mrql page below must still resolve.
     const sidebar = [
-      `[mrql query='type = "note"' scope="entity" limit="10" link-all="true"]`,
+      `[mrql query='type = "note" ORDER BY name' scope="entity" limit="10" link-all="true"]`,
       `  [header]<h4 class="p4-head">Recent ({count} of {total})</h4>[/header]`,
       `  <div class="p4-item">[property path="Name"]</div>`,
       `[else]`,

@@ -52,11 +52,6 @@ type QueryResult struct {
 	// Total is the true row count ignoring Limit, populated only when
 	// QueryOptions.WantTotal was set; nil otherwise.
 	Total *int64
-	// LinkScopeGroupID is the scope group ID to append as a SCOPE clause when a
-	// "view all" link is built for an inline query that carried no explicit
-	// SCOPE. 0 means "do not append" (global scope, an explicit SCOPE already in
-	// the query text, or an unresolved scope).
-	LinkScopeGroupID uint
 }
 
 // QueryResultItem represents a single entity returned by a query.

@@ -70,10 +70,11 @@ func TestViewAllURLInline(t *testing.T) {
 		viewAllURL(&QueryResult{EffectiveQuery: "resources where tag = 'x'"}))
 }
 
-func TestViewAllURLInlineWithScope(t *testing.T) {
-	// Applied scope with no explicit SCOPE in the text → SCOPE appended.
-	assert.Equal(t, "/mrql?q=resources+SCOPE+7",
-		viewAllURL(&QueryResult{EffectiveQuery: "resources", LinkScopeGroupID: 7}))
+func TestViewAllURLInlineScopeAlreadyInText(t *testing.T) {
+	// The executor bakes any applied scope into EffectiveQuery, so viewAllURL
+	// only URL-encodes it. A SCOPE clause in the text is carried verbatim.
+	assert.Equal(t, "/mrql?q=type+%3D+%22resource%22+SCOPE+7",
+		viewAllURL(&QueryResult{EffectiveQuery: `type = "resource" SCOPE 7`}))
 }
 
 func TestViewAllURLEmpty(t *testing.T) {

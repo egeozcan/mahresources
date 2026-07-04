@@ -301,10 +301,11 @@ Set `link-all="true"` to append a default **"View all →"** link after the resu
 [/mrql]
 ```
 
-The link points at the `/mrql` page:
+The link points at the `/mrql` page and always reproduces the same result set, scope included:
 
-- **Saved queries** link by ID (`/mrql?saved=<id>`), resolving the name→ID lookup server-side.
-- **Inline queries** link by their text (`/mrql?q=<query>`). When the shortcode applied a scope (via `scope=` or the default entity scope) and the query has no explicit `SCOPE` clause, a `SCOPE <id>` clause is appended so the `/mrql` page reproduces the same result set.
+- **Unscoped saved queries** link by ID (`/mrql?saved=<id>`), preserving the saved-query identity (the name→ID lookup is resolved server-side).
+- **Inline queries** link by their text (`/mrql?q=<query>`). When the shortcode applied a scope (via `scope=` or the default entity scope) and the query has no explicit `SCOPE` clause, a `SCOPE <id>` clause is spliced in at the correct position (before `GROUP BY` / `ORDER BY` / `LIMIT` / `OFFSET`) so the query stays valid.
+- **Scoped saved queries** link by text as well (`/mrql?q=…`), because `/mrql?saved=<id>` would open the query globally and lose the scope. The saved-query identity is traded for a correct, scoped result set.
 - Parameterized (`param-*`) queries link with their `$placeholders` unbound; the `/mrql` page renders inputs for the user to fill.
 
 #### Combining with other attributes

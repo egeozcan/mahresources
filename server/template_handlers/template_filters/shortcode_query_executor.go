@@ -66,11 +66,18 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context
 		scopeGroupID = resolvedID
 	}
 
-	// A view-all link appends " SCOPE <id>" only when the shortcode applied a
-	// non-global scope that the query text does not already carry.
-	linkScope := uint(0)
+	// View-all link fields. Prefer the saved deep-link (/mrql?saved=<id>) so the
+	// saved-query identity survives — but only when there is no applied scope to
+	// carry: ?saved=<id> opens the query globally, so a scoped saved query must
+	// fall back to an inline ?q= link with the scope baked into the query text.
+	// Inline queries get the scope spliced at the grammatically correct position
+	// (SCOPE must precede GROUP BY / ORDER BY / LIMIT / OFFSET), which a naive
+	// append would break.
+	linkQuery := actualQuery
+	linkSavedID := savedID
 	if !explicitScope && scopeGroupID != 0 && scopeGroupID != mrql.UnresolvedScopeSentinel {
-		linkScope = scopeGroupID
+		linkQuery = mrql.InsertScopeClause(actualQuery, scopeGroupID)
+		linkSavedID = 0
 	}
 
 	// GROUP BY queries use the grouped execution path
@@ -90,9 +97,8 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context
 			return nil, err
 		}
 		qr := convertGroupedResultItems(grouped, appCtx)
-		qr.EffectiveQuery = actualQuery
-		qr.SavedID = savedID
-		qr.LinkScopeGroupID = linkScope
+		qr.EffectiveQuery = linkQuery
+		qr.SavedID = linkSavedID
 		return qr, nil
 	}
 
@@ -103,11 +109,10 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context
 	}
 
 	qr := &shortcodes.QueryResult{
-		EntityType:       result.EntityType,
-		Mode:             "flat",
-		EffectiveQuery:   actualQuery,
-		SavedID:          savedID,
-		LinkScopeGroupID: linkScope,
+		EntityType:     result.EntityType,
+		Mode:           "flat",
+		EffectiveQuery: linkQuery,
+		SavedID:        linkSavedID,
 	}
 	qr.Items = convertResultItems(result, appCtx)
 
