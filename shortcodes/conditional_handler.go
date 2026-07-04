@@ -230,7 +230,9 @@ func toFloat(v any) (float64, bool) {
 
 func RenderConditionalShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor, depth int) string {
 	if !sc.IsBlock {
-		return sc.Raw
+		// A [conditional] with no closing tag can't gate anything — surface it as
+		// an author-facing marker instead of leaking the raw opening tag.
+		return shortcodeErrorMarker("conditional", "conditional requires a closing [/conditional]")
 	}
 
 	branches := SplitBranches(sc.InnerContent)

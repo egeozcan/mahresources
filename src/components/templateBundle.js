@@ -105,7 +105,11 @@ export function templateBundle({ carrier } = {}) {
       for (const [key, field] of Object.entries(SLOT_FIELDS)) {
         slots[key] = obj[field] || '';
       }
-      let sectionConfig = obj.SectionConfig;
+      // Carrier JSON tags disagree: Category/Resource Category serialize this as
+      // `sectionConfig` (lowercase json tag), Note Type as `SectionConfig` (no
+      // tag, so the Go field name). Accept either so copy-from keeps the section
+      // layout for all three carriers.
+      let sectionConfig = obj.SectionConfig ?? obj.sectionConfig;
       if (sectionConfig && typeof sectionConfig !== 'string') {
         sectionConfig = JSON.stringify(sectionConfig);
       }

@@ -26,6 +26,7 @@ boot value.
 | `max_upload_size` | int64 (bytes) | 1 KiB–1 TiB; 0 = unlimited | `-max-upload-size` | next upload request |
 | `max_import_size` | int64 (bytes) | 1 MiB–1 TiB | `-max-import-size` | next import parse |
 | `mrql_default_limit` | int | 1–100000 | `-mrql-default-limit` | next MRQL query |
+| `mrql_page_query_budget` | int | 0–100000; 0 disables | `-mrql-page-query-budget` | next page render |
 | `mrql_query_timeout` | duration | 100ms–5m | `-mrql-query-timeout` | next MRQL query |
 | `export_retention` | duration | 1m–30d | `-export-retention` | next sweep + UI disclosure |
 | `remote_connect_timeout` | duration | 1s–10m | `-remote-connect-timeout` | next remote download |

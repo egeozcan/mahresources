@@ -118,6 +118,10 @@ type MahresourcesConfig struct {
 	// DefaultMRQLLimitFallback constant (keeps test fixtures that instantiate
 	// MahresourcesConfig{} directly working without updates).
 	MRQLDefaultLimit int
+	// MRQLPageQueryBudget caps how many distinct MRQL queries a single page
+	// render may execute via inline [mrql] shortcodes (per-card scoping means
+	// list pages can accumulate many). 0 disables the budget.
+	MRQLPageQueryBudget int
 	// MRQLQueryTimeoutBoot is the boot-time default for the MRQL query timeout.
 	// Runtime overrides live in RuntimeSettings.
 	MRQLQueryTimeoutBoot time.Duration
@@ -235,6 +239,9 @@ type MahresourcesInputConfig struct {
 	// MRQLDefaultLimit is the default LIMIT applied to MRQL queries without an
 	// explicit LIMIT clause (default: 500).
 	MRQLDefaultLimit int
+	// MRQLPageQueryBudget caps how many distinct MRQL queries a single page
+	// render may execute via inline [mrql] shortcodes (default: 200, 0 disables).
+	MRQLPageQueryBudget int
 	// MRQLQueryTimeoutBoot is the boot-time default for the MRQL query timeout.
 	// Runtime overrides live in RuntimeSettings.
 	MRQLQueryTimeoutBoot time.Duration
@@ -1013,6 +1020,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		MaxJSONBodySize:              cfg.MaxJSONBodySize,
 		MaxUserTokens:                cfg.MaxUserTokens,
 		MRQLDefaultLimit:             cfg.MRQLDefaultLimit,
+		MRQLPageQueryBudget:          cfg.MRQLPageQueryBudget,
 		MRQLQueryTimeoutBoot:         cfg.MRQLQueryTimeoutBoot,
 		DeepSeekAPIKey:               cfg.DeepSeekAPIKey,
 		DeepSeekModel:                cfg.DeepSeekModel,

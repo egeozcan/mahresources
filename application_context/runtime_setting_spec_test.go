@@ -57,11 +57,11 @@ func TestEnvelopeDurationEncodedAsNanos(t *testing.T) {
 
 func TestBuildSpecs_AllKeys(t *testing.T) {
 	specs := buildSpecs()
-	if len(specs) != 12 {
-		t.Fatalf("want 12 specs, got %d", len(specs))
+	if len(specs) != 13 {
+		t.Fatalf("want 13 specs, got %d", len(specs))
 	}
 	expected := []string{
-		KeyMaxUploadSize, KeyMaxImportSize, KeyMRQLDefaultLimit, KeyMRQLQueryTimeout,
+		KeyMaxUploadSize, KeyMaxImportSize, KeyMRQLDefaultLimit, KeyMRQLPageQueryBudget, KeyMRQLQueryTimeout,
 		KeyExportRetention, KeyRemoteConnectTimeout, KeyRemoteIdleTimeout, KeyRemoteOverallTimeout,
 		KeySharePublicURL, KeyHashSimilarityThreshold, KeyHashAHashThreshold, KeyHashBackfillPaused,
 	}

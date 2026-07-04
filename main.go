@@ -175,6 +175,7 @@ func main() {
 	// MRQL options
 	mrqlTimeout := flag.Duration("mrql-query-timeout", parseDurationEnv("MRQL_QUERY_TIMEOUT", 10*time.Second), "Maximum execution time for MRQL queries (env: MRQL_QUERY_TIMEOUT)")
 	mrqlDefaultLimit := flag.Int("mrql-default-limit", parseIntEnv("MRQL_DEFAULT_LIMIT", 500), "Default LIMIT applied to MRQL queries without an explicit LIMIT clause (env: MRQL_DEFAULT_LIMIT)")
+	mrqlPageQueryBudget := flag.Int("mrql-page-query-budget", parseIntEnv("MRQL_PAGE_QUERY_BUDGET", 200), "Maximum distinct MRQL queries a single page render may execute via inline [mrql] shortcodes; 0 disables (env: MRQL_PAGE_QUERY_BUDGET)")
 
 	// Plugin options
 	pluginPath := flag.String("plugin-path", getEnvOrDefault("PLUGIN_PATH", "./plugins"), "Path to plugin directory (env: PLUGIN_PATH)")
@@ -278,6 +279,7 @@ func main() {
 		MaxJSONBodySize:              *maxJSONBody,
 		MaxUserTokens:                *maxUserTokens,
 		MRQLDefaultLimit:             *mrqlDefaultLimit,
+		MRQLPageQueryBudget:          *mrqlPageQueryBudget,
 		MRQLQueryTimeoutBoot:         *mrqlTimeout,
 		DeepSeekAPIKey:               deepSeekAPIKey,
 		DeepSeekModel:                deepSeekModel,

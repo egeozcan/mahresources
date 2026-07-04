@@ -200,7 +200,7 @@ func TestConditionalElseBranchTrue(t *testing.T) {
 	assert.Equal(t, "yes", result)
 }
 
-func TestConditionalSelfClosingPreservesRaw(t *testing.T) {
+func TestConditionalSelfClosingRendersMarker(t *testing.T) {
 	sc := Shortcode{
 		Name:    "conditional",
 		Attrs:   map[string]string{"path": "status", "eq": "active"},
@@ -209,22 +209,26 @@ func TestConditionalSelfClosingPreservesRaw(t *testing.T) {
 	}
 	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"status": "active"})}
 	result := RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0)
-	// Unmatched conditional must NOT silently eat the tag — preserve it as literal text
-	assert.Equal(t, `[conditional path="status" eq="active"]`, result)
+	// A conditional with no closing tag can't gate anything: surface an
+	// author-facing marker rather than leaking the raw tag.
+	assert.Contains(t, result, `class="shortcode-error`)
+	assert.Contains(t, result, "closing [/conditional]")
+	assert.NotContains(t, result, `[conditional path="status" eq="active"]`)
 }
 
-func TestProcessUnmatchedConditionalPreservesContent(t *testing.T) {
+func TestProcessUnmatchedConditionalRendersMarker(t *testing.T) {
 	ctx := MetaShortcodeContext{
 		EntityType: "group",
 		EntityID:   1,
 		Meta:       makeMetaJSON(t, map[string]any{"status": "inactive"}),
 	}
-	// Unmatched [conditional] without closing tag — must not expose trailing content
+	// Unmatched [conditional] without closing tag — the tag becomes a marker and
+	// the (ungated) trailing text stays put, so the author sees the broken tag.
 	input := `[conditional path="status" eq="active"]SECRET`
 	result := Process(context.Background(), input, ctx, nil, nil)
-	assert.Contains(t, result, `[conditional path="status" eq="active"]`)
-	assert.Contains(t, result, "SECRET")
-	assert.Equal(t, input, result) // entire input preserved as-is
+	assert.Contains(t, result, `class="shortcode-error`)
+	assert.NotContains(t, result, `[conditional path="status" eq="active"]`)
+	assert.Contains(t, result, "SECRET") // trailing literal text is outside the tag
 }
 
 func TestConditionalFieldSource(t *testing.T) {

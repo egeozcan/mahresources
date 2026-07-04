@@ -1,56 +1,43 @@
-# Phase 3: Template Composition and Reuse
+# Phase 5: Template Robustness and Consistency
 
-Plan: `docs/plans/category-template-composition-phase3.md`
+Plan: `docs/plans/category-template-robustness-phase5.md`
 
-## Work item 1 — `[each]` iteration over meta arrays  ✅ DONE
-- [x] Parser: add `each` (block) + `item` (inline) to shortcodePattern/closingTagPattern
-- [x] `shortcodes/each_handler.go`: RenderEachShortcode + item substitution (skip nested each)
-- [x] processor.go: dispatch `each`/`item`
-- [x] builtin_docs.go: `each` + `item` doc entries
-- [x] lint.go: `[item]` outside `[each]` warning + typo names + each path completion (JS)
-- [x] Tests: each_handler_test.go + lint tests + docs API tests (pass)
+## Work item 1 — Visible failure markers (shortcodes package) ✅ DONE
+- [x] `shortcodes/markers.go`: `shortcodeErrorMarker` (inline span, escaped), `shortcodeComment`
+- [x] processor.go depth cap → content as-is + `<!-- mr:shortcode depth limit reached -->` (only if shortcodes remain)
+- [x] processor.go `[mrql]` nil executor → `<!-- mr:mrql unavailable in this context -->`
+- [x] processor.go plugin renderer nil → `<!-- mr:plugin unavailable in this context -->`
+- [x] processor.go plugin renderer error → marker `⚠ plugin:foo:bar` (error in title)
+- [x] processor.go malformed plugin name → marker (defensive; parser regex makes it unreachable via Process — no test)
+- [x] conditional_handler.go non-block `[conditional]` → marker
+- [x] Updated stale raw-leak tests + new table-driven marker/comment tests
+- Lint coverage: unclosed `[conditional]` already flagged by BlockRequired rule; plugin runtime errors are not statically lintable
 
-## Work item 2 — `[partial]` reusable snippets  ✅ DONE
-- [x] Model `TemplatePartial` + AutoMigrate + stampedModels() + CLAUDE.md count (14→15)
-- [x] Resolver via request-context (WithPartialResolver) — DEVIATION from struct refactor:
-      threaded through reqCtx (WithMRQLCache pattern, plan item 7) — no signature/test churn,
-      DB-free shortcodes pkg. Injected at all 5 render sites.
-- [x] processor.go: `partial` case, BuildPartialResolver + per-render cache
-- [x] Parser: add `partial` (inline); builtin_docs + lint (self-reference via PartialName)
-- [x] CRUD: model/query/scope/context/interfaces/handlers, routes /v1/templatePartial(s),
-      OpenAPI, template pages (list/create/display), context providers, nav + stats card
-- [x] Authorization: isTaxonomyPath prefix (admin-only writes, reads open)
-- [x] Tests: partial_handler_test, lint self-ref, API CRUD + kebab reject + unique, authz matrix — all green
-- [ ] docs-site "reusing templates" page (deferred to docs pass)
+## Work item 2 — Per-page MRQL query budget ✅ DONE
+- [x] config `MRQLPageQueryBudget`, flag `-mrql-page-query-budget`, env `MRQL_PAGE_QUERY_BUDGET`, default 200, 0 disables
+- [x] runtime setting `KeyMRQLPageQueryBudget` (0–100000, AllowZero) mirroring `mrql_default_limit`
+- [x] exported accessor `appCtx.MRQLPageQueryBudget()`
+- [x] `shortcodes/query_budget.go`: QueryBudget + BudgetedExecutor (cache dedup, count misses, clone to avoid alias), one-shot MarkExceeded
+- [x] `BuildQueryExecutor` uses BudgetedExecutor + one-warning-per-page log (entity type mrql)
+- [x] attach budget in shortcode_tag.go + custom_css_tag.go
+- [x] unit tests (limit, cache-hit-no-increment, clone isolation, disabled, key distinctness)
+- [x] E2E `mrql-page-query-budget.spec.ts` (per-card trips budget; dedup does not) — PASS
+- [x] CLAUDE.md config table + docs-site advanced.md + runtime-settings.md + shortcodes.md notes
+- Fixed setting-count tests (12→13): runtime_setting_spec_test.go, admin_settings_test.go
 
-## Work item 3 — Template-set duplication and export/import  ✅ DONE
-- [x] Single-item slots exposed via list endpoints (full objects) — no new GET needed
-- [x] `templateBundle` Alpine component + `templateBundleTools.tpl` (all 3 forms)
-- [x] "Copy from…" (same + cross carrier), Export (bundle JSON v1), Import (carrier + schemaVersion checks)
-- [x] Cross-carrier fills shared fields only; SectionConfig same-carrier via Alpine.$data
-
-## Work item 4 — Starter template gallery  ✅ DONE
-- [x] 4 preset bundles server/template_presets/*.json (go:embed) — lint-clean regression fixture
-- [x] GET /v1/templatePresets + OpenAPI
-- [x] "start from preset" picker → same client import path
-- [x] E2E 97-template-composition-phase3: each/partial/unknown-partial/preset-import — 4 pass
-- [x] presets_test.go: parse + carrier + shortcode-lint every slot
+## Work item 3 — CustomAvatar semantics (docs only) ✅ DONE
+- [x] createResourceCategory.tpl → "...resources keep their thumbnail"
+- [x] createCategory.tpl / createNoteType.tpl already accurate ("Replaces the default initials avatar")
+- [x] docs-site custom-templates.md per-carrier clarification
+- [x] no model/template changes (explicit non-goal honored)
 
 ## Verification
-- [x] Go unit (json1 fts5) — full suite green; rebuilt ./mahresources
-- [x] E2E: 97-phase3 (4), carrier forms 02/03/21 (32), shortcodes (30), lint/autocomplete/template-authoring (7)
-- [x] a11y: 01-a11y-pages (177, incl. new templatePartial list/create + modified forms)
-- [x] CLI E2E: admin/stats + related (22) green
-- [x] Postgres suite (MRQL + api_tests) green — fixed PG migration list gap
-- [x] docs-site: shortcodes.md (each/item/partial) + custom-templates.md (Reusing templates); OpenAPI drift green (no committed spec)
+- [x] `go test --tags 'json1 fts5' ./...` — green
+- [x] rebuild `./mahresources` — OK
+- [x] E2E browser + CLI (`test:with-server:all`) — 1668 passed, 1 known-flaky (lightbox), 0 unexpected after fixing 2 setting-count assertions (admin-settings.spec.ts, cli/admin-settings-list.spec.ts)
+- [x] Postgres suites (`json1 fts5 postgres` mrql + api_tests) — green
 
-## Migration-list gaps fixed (stampedModels + GetDataStats count reach every test DB)
-- user_context_test, user_admin_guard_test, created_by_stamp_test, admin_context_test,
-  api_test_utils (SetupTestEnv), pg_test_helper_test — all add &models.TemplatePartial{}
-
-## Notable deviations / follow-ups
-- Partial resolver threaded via reqCtx (WithPartialResolver) instead of the planned Handlers
-  struct — same goal, far less churn, matches WithMRQLCache pattern (plan item 7).
-- PartialName self-reference lint capability exists + tested; not yet wired to a per-partial
-  preview endpoint (partials use the generic code editor). Runtime recursion is bounded anyway.
-- CLI commands for partials: intentionally not added (plan lists as optional follow-up).
+## Review
+- Work item 1: raw shortcode leaks replaced by inline `shortcode-error` markers (plugin errors, unclosed [conditional]) and `<!-- mr:… -->` comments (depth cap, absent executor/renderer). Unblocks Phase 6 share rendering.
+- Work item 2: per-page inline-MRQL query budget via a context-threaded QueryBudget + BudgetedExecutor (cache dedup, count misses, clone-on-store/lookup to avoid aliasing). Config flag + runtime setting + accessor + one warning/page. Default 200 (default page size 50 × 3-query summary = 150 < 200; only trips genuinely heavy pages).
+- Work item 3: docs-only. Resource-category CustomAvatar description clarified (kept its per-carrier semantics); docs-site updated. No model/template changes.

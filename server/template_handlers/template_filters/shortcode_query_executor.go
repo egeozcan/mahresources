@@ -14,10 +14,44 @@ import (
 // BuildQueryExecutor creates a QueryExecutor callback that uses the application
 // context to execute MRQL queries. It preloads categories on result entities to
 // extract CustomMRQLResult templates.
+//
+// When a per-page QueryBudget is attached to the request context (list-page
+// renders wire one), the executor serves identical queries from the budget's
+// result cache (free) and charges each cache miss against the budget. Once the
+// budget is spent it refuses further misses with a budget error — rendered as
+// the standard MRQL error box — and logs a single warning per page.
 func BuildQueryExecutor(appCtx *application_context.MahresourcesContext) shortcodes.QueryExecutor {
-	return func(reqCtx context.Context, query string, opts shortcodes.QueryOptions) (*shortcodes.QueryResult, error) {
+	base := func(reqCtx context.Context, query string, opts shortcodes.QueryOptions) (*shortcodes.QueryResult, error) {
 		return executeMRQLForShortcode(reqCtx, appCtx, query, opts)
 	}
+	return shortcodes.BudgetedExecutor(base, func(limit int) {
+		logPageQueryBudgetExceeded(appCtx, limit)
+	})
+}
+
+// pageQueryBudget returns the configured per-page inline-MRQL query budget,
+// or 0 (disabled) when no application context is available.
+func pageQueryBudget(appCtx *application_context.MahresourcesContext) int {
+	if appCtx == nil {
+		return 0
+	}
+	return appCtx.MRQLPageQueryBudget()
+}
+
+// logPageQueryBudgetExceeded records one warning per page render when the inline
+// MRQL query budget is hit, reviewable at /logs (entity type "mrql").
+func logPageQueryBudgetExceeded(appCtx *application_context.MahresourcesContext, limit int) {
+	if appCtx == nil {
+		return
+	}
+	appCtx.Logger().Warning(
+		models.LogActionSystem,
+		"mrql",
+		nil,
+		"",
+		fmt.Sprintf("inline MRQL query budget exceeded (%d per page); some [mrql] shortcodes were not executed. Refine templates or raise -mrql-page-query-budget.", limit),
+		map[string]interface{}{"budget": limit},
+	)
 }
 
 // executeMRQLForShortcode runs an MRQL query and converts the result into shortcode types.

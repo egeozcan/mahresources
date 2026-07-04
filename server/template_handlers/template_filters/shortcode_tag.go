@@ -66,6 +66,7 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 		}
 		reqCtx = plugin_system.WithMRQLCache(reqCtx)
 		reqCtx = shortcodes.WithPartialResolver(reqCtx, BuildPartialResolver(appCtx))
+		reqCtx = shortcodes.WithQueryBudget(reqCtx, pageQueryBudget(appCtx))
 		ctx.Public["_reqCtxWithCache"] = reqCtx
 	}
 

@@ -36,6 +36,14 @@ Block shortcodes can be nested. The inner content is processed after the outer s
 
 Shortcodes are processed via the `process_shortcodes` Pongo2 template tag. The five custom template fields (CustomHeader, CustomSidebar, CustomSummary, CustomAvatar, CustomMRQLResult) process shortcodes automatically. Entity description fields also process shortcodes on detail pages; truncated previews in list views do not.
 
+### Failure markers
+
+A shortcode that cannot be expanded never leaks its raw `[…]` source. Instead, the rendered page carries a diagnosable marker:
+
+- **A failing plugin shortcode** renders an inline `<span class="shortcode-error" title="…">⚠ plugin:name:shortcode</span>` with the error in the `title` attribute.
+- **An unclosed `[conditional]`** (used without `[/conditional]`) renders the same inline marker — it can't gate anything as written. The template lint flags this at edit time.
+- **Structural stops** render an HTML comment rather than visible noise: the recursion depth cap emits `<!-- mr:shortcode depth limit reached -->`, and a context that deliberately wires no query executor or plugin renderer emits `<!-- mr:mrql unavailable in this context -->` / `<!-- mr:plugin unavailable in this context -->`.
+
 ## `[meta]` -- Metadata Display
 
 Renders a metadata field from the entity's `meta` JSON, using the category's MetaSchema for type-aware display.
@@ -198,9 +206,13 @@ The `scope` attribute limits query results to a group's subtree. By default, it 
 
 An explicit `SCOPE` clause in the MRQL query takes precedence over the attribute.
 
+### Per-page query budget
+
+Because a category's `Custom*` templates render once per card, an entity-scoped `[mrql]` in a `CustomSummary` runs **one query per card** — so a list page of many cards can execute many queries. Identical queries within a single render are deduplicated by a per-page cache and cost nothing; each distinct query counts against the per-page budget (`-mrql-page-query-budget`, default 200). Once the budget is spent, further distinct `[mrql]` queries render the standard error box ("inline query budget exceeded (N per page)…") instead of executing, and one warning per page is logged. Raise the flag if a legitimately dense page trips it, or set `0` to disable. See [Advanced configuration](../configuration/advanced.md#inline-mrql-page-query-budget).
+
 ### Nesting
 
-Shortcodes can nest up to 10 levels deep (the processing recursion limit). This allows CustomMRQLResult templates and block templates to contain their own shortcodes, including nested `[mrql]` queries. Beyond the depth limit, unprocessed shortcodes are left as literal text.
+Shortcodes can nest up to 10 levels deep (the processing recursion limit). This allows CustomMRQLResult templates and block templates to contain their own shortcodes, including nested `[mrql]` queries. Beyond the depth limit, the remaining content is emitted as-is with a trailing `<!-- mr:shortcode depth limit reached -->` comment so authors can see where expansion stopped.
 
 ### Examples
 
@@ -342,7 +354,7 @@ This makes drill-down dashboards possible. The outer query lists groups; the inn
 [/mrql]
 ```
 
-Nesting is bounded by the recursion limit of 10 levels (`maxRecursionDepth`). Beyond that, unprocessed shortcodes are left as literal text.
+Nesting is bounded by the recursion limit of 10 levels (`maxRecursionDepth`). Beyond that, the remaining content is emitted as-is with a trailing `<!-- mr:shortcode depth limit reached -->` comment.
 
 #### Heterogeneous results
 
