@@ -509,6 +509,12 @@ export function mrqlEditor() {
         this.appliedLimit = (this.result && this.result.applied_limit) || 0;
         this.addToHistory(query);
 
+        // Re-collect lightbox items once the result cards have rendered, so
+        // clicking a default-card thumbnail opens the lightbox.
+        this.$nextTick(() => {
+          window.Alpine?.store('lightbox')?.initFromDOM();
+        });
+
         // Update URL so back/forward works (skip if already the same query)
         if (pushState) {
           const currentQ = new URLSearchParams(window.location.search).get('q');

@@ -565,25 +565,35 @@
                                     </template>
                                     <span class="ml-auto text-xs text-stone-400 font-mono" x-text="(bucket.items?.length || 0) + ' items'"></span>
                                 </div>
-                                <div class="p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                <div class="gallery p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                                     <template x-for="entity in (bucket.items || [])" :key="entity.ID">
                                         <div>
                                             <template x-if="entity.renderedHTML">
                                                 <div x-html="entity.renderedHTML"></div>
                                             </template>
                                             <template x-if="!entity.renderedHTML">
-                                                <a :href="'/' + result.entityType + '?id=' + entity.ID"
-                                                   class="block p-2 bg-white border border-stone-100 rounded hover:border-amber-400 hover:shadow-sm transition-colors">
+                                                <div class="p-2 bg-white border border-stone-100 rounded hover:border-amber-400 hover:shadow-sm transition-colors">
                                                     <div class="flex items-start gap-2">
                                                         <template x-if="entity.ContentType && entity.ContentType.startsWith('image/')">
-                                                            <img :src="'/v1/resource/preview?id=' + entity.ID + '&width=64&height=64'" :alt="entity.Name" class="w-8 h-8 rounded object-cover flex-shrink-0" loading="lazy" />
+                                                            <a :href="'/v1/resource/view?id=' + entity.ID + (entity.Hash ? '&v=' + entity.Hash : '')"
+                                                               @click.prevent="$store.lightbox.openFromClick($event, entity.ID, entity.ContentType)"
+                                                               data-lightbox-item
+                                                               :data-resource-id="entity.ID"
+                                                               :data-content-type="entity.ContentType"
+                                                               :data-resource-name="entity.Name"
+                                                               :data-resource-hash="entity.Hash"
+                                                               :data-resource-width="entity.Width"
+                                                               :data-resource-height="entity.Height"
+                                                               class="flex-shrink-0 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500">
+                                                                <img :src="'/v1/resource/preview?id=' + entity.ID + '&width=64&height=64'" :alt="'Preview of ' + (entity.Name || 'resource')" class="w-8 h-8 rounded object-cover" loading="lazy" />
+                                                            </a>
                                                         </template>
-                                                        <div class="min-w-0 flex-1">
+                                                        <a :href="'/' + result.entityType + '?id=' + entity.ID" class="block min-w-0 flex-1">
                                                             <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
                                                             <p class="text-xs text-stone-500 mt-0.5" x-text="entity.ContentType || entity.Description || ''"></p>
-                                                        </div>
+                                                        </a>
                                                     </div>
-                                                </a>
+                                                </div>
                                             </template>
                                         </div>
                                     </template>
@@ -602,25 +612,35 @@
                 <template x-if="!result.mode && result.resources && result.resources.length > 0">
                     <div>
                         <h3 class="text-sm font-semibold font-mono text-amber-800 mb-2" x-show="result.entityType !== 'resource' && result.entityType !== 'note' && result.entityType !== 'group'">Resources</h3>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        <div class="gallery grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                             <template x-for="entity in result.resources" :key="entity.ID">
                                 <div>
                                     <template x-if="entity.renderedHTML">
                                         <div x-html="entity.renderedHTML"></div>
                                     </template>
                                     <template x-if="!entity.renderedHTML">
-                                        <a :href="'/resource?id=' + entity.ID"
-                                           class="block p-3 bg-white border border-stone-200 rounded-md hover:border-amber-400 hover:shadow-sm transition-colors">
+                                        <div class="p-3 bg-white border border-stone-200 rounded-md hover:border-amber-400 hover:shadow-sm transition-colors">
                                             <div class="flex items-start gap-2">
                                                 <template x-if="entity.ContentType && entity.ContentType.startsWith('image/')">
-                                                    <img :src="'/v1/resource/preview?id=' + entity.ID + '&width=96&height=96'" :alt="entity.Name" class="w-12 h-12 rounded object-cover flex-shrink-0" loading="lazy" />
+                                                    <a :href="'/v1/resource/view?id=' + entity.ID + (entity.Hash ? '&v=' + entity.Hash : '')"
+                                                       @click.prevent="$store.lightbox.openFromClick($event, entity.ID, entity.ContentType)"
+                                                       data-lightbox-item
+                                                       :data-resource-id="entity.ID"
+                                                       :data-content-type="entity.ContentType"
+                                                       :data-resource-name="entity.Name"
+                                                       :data-resource-hash="entity.Hash"
+                                                       :data-resource-width="entity.Width"
+                                                       :data-resource-height="entity.Height"
+                                                       class="flex-shrink-0 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500">
+                                                        <img :src="'/v1/resource/preview?id=' + entity.ID + '&width=96&height=96'" :alt="'Preview of ' + (entity.Name || 'resource')" class="w-12 h-12 rounded object-cover" loading="lazy" />
+                                                    </a>
                                                 </template>
-                                                <div class="min-w-0 flex-1">
+                                                <a :href="'/resource?id=' + entity.ID" class="block min-w-0 flex-1">
                                                     <p class="text-sm font-medium text-stone-900 truncate" x-text="entity.Name"></p>
                                                     <p class="text-xs text-stone-500 mt-0.5" x-text="entity.ContentType || ''"></p>
-                                                </div>
+                                                </a>
                                             </div>
-                                        </a>
+                                        </div>
                                     </template>
                                 </div>
                             </template>

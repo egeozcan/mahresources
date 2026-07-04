@@ -136,9 +136,11 @@ export class MRQLPage {
 
   /**
    * Get result link elements from the results section.
+   * Excludes lightbox thumbnail links (they point at /v1/resource/view and
+   * carry no text) so text assertions target the card body links.
    */
   async getResults(): Promise<Locator> {
-    return this.resultsSection.locator('a[href*="?id="]');
+    return this.resultsSection.locator('a[href*="?id="]:not([data-lightbox-item])');
   }
 
   /**
