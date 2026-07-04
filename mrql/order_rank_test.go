@@ -1,3 +1,5 @@
+//go:build json1 && fts5
+
 package mrql
 
 import (
