@@ -32,6 +32,55 @@ func collectShortcodeParams(attrs map[string]string) map[string]string {
 	return params
 }
 
+// mrqlErrorHTML renders an executor error. The block/inline distinction keeps an
+// inline [mrql value=] error from injecting a block-level <div> mid-sentence:
+// inline errors are a <span>, block errors keep the original results-styled div.
+func mrqlErrorHTML(err error, inline bool) string {
+	if inline {
+		return fmt.Sprintf(
+			`<span class="mrql-error text-red-700 font-mono">%s</span>`,
+			html.EscapeString(err.Error()),
+		)
+	}
+	return fmt.Sprintf(
+		`<div class="mrql-results mrql-error text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-3 font-mono">%s</div>`,
+		html.EscapeString(err.Error()),
+	)
+}
+
+// extractScalarFromResult draws a single scalar value from a query result.
+//
+//	key "count" (or "")  → item count (flat), group count (bucketed), row count
+//	                       (aggregated).
+//	key "<column>"       → Rows[0][column] for aggregated results; nil for other
+//	                       modes (a column has no meaning outside aggregation).
+//
+// It is the shared value-extraction logic behind [conditional]'s mrql source and
+// inline [mrql value=], so their semantics stay identical. Returns nil for a nil
+// result or an empty aggregated set.
+func extractScalarFromResult(result *QueryResult, key string) any {
+	if result == nil {
+		return nil
+	}
+	if key == "" || key == "count" {
+		switch result.Mode {
+		case "aggregated":
+			return float64(len(result.Rows))
+		case "bucketed":
+			return float64(len(result.Groups))
+		default:
+			return float64(len(result.Items))
+		}
+	}
+	if result.Mode == "aggregated" {
+		if len(result.Rows) == 0 {
+			return nil
+		}
+		return result.Rows[0][key]
+	}
+	return nil
+}
+
 // RenderMRQLShortcode expands an [mrql] shortcode into rendered query results.
 // The depth parameter tracks recursion level for custom templates that may
 // contain nested [mrql] shortcodes.
@@ -48,28 +97,58 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 	scopeGroupID := resolveScopeKeyword(sc.Attrs["scope"], ctx)
 	params := collectShortcodeParams(sc.Attrs)
 
-	result, err := executor(reqCtx, query, saved, params, limit, buckets, scopeGroupID)
+	// Inline scalar mode: [mrql value="…"] renders a single escaped text value
+	// with no wrapper. Its block body (if any) is ignored (a lint error). Errors
+	// render as an inline span so they don't break the surrounding sentence.
+	value := sc.Attrs["value"]
+	inline := value != ""
+
+	// Decompose the block body into header/footer/else slots + per-item template
+	// up front: a {total} placeholder in any slot must set WantTotal before the
+	// query runs (otherwise the extra COUNT query never happens).
+	var slots mrqlSlots
+	if sc.IsBlock && !inline {
+		slots = parseMRQLSlots(sc.InnerContent)
+	}
+
+	result, err := executor(reqCtx, query, QueryOptions{
+		SavedName:    saved,
+		Params:       params,
+		Limit:        limit,
+		Buckets:      buckets,
+		ScopeGroupID: scopeGroupID,
+		WantTotal:    slots.mentionsTotal(),
+	})
 	if err != nil {
-		return fmt.Sprintf(
-			`<div class="mrql-results mrql-error text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-3 font-mono">%s</div>`,
-			html.EscapeString(err.Error()),
-		)
+		return mrqlErrorHTML(err, inline)
 	}
 
 	if result == nil {
 		return ""
 	}
 
-	// Block template: trim and check. Non-empty trimmed content overrides
-	// CustomMRQLResult on every item and forces custom rendering.
-	blockTemplate := ""
-	if sc.IsBlock {
-		blockTemplate = strings.TrimSpace(sc.InnerContent)
+	if inline {
+		scalar := extractScalarFromResult(result, value)
+		return html.EscapeString(formatScalarValue(scalar, sc.Attrs["format"], sc.Attrs["layout"]))
 	}
 
-	if blockTemplate != "" {
-		applyBlockTemplate(result, blockTemplate)
+	// Per-item template (block body minus slots). Non-empty content overrides
+	// CustomMRQLResult on every item and forces custom rendering.
+	itemTemplate := strings.TrimSpace(slots.Item)
+	if itemTemplate != "" {
+		applyBlockTemplate(result, itemTemplate)
 		format = "custom"
+	}
+
+	empty := resultIsEmpty(result)
+
+	// Empty state: header, footer, and the view-all link are chrome around
+	// results and are suppressed when there are none. An [else] branch, when
+	// present, is the entire empty-state output; otherwise the renderer's own
+	// "No results." placeholder shows.
+	if empty && slots.HasElse {
+		elseHTML := renderMRQLSlot(reqCtx, slots.Else, result, ctx, renderer, executor, depth)
+		return fmt.Sprintf(`<div class="mrql-results">%s</div>`, elseHTML)
 	}
 
 	var inner string
@@ -87,7 +166,31 @@ func RenderMRQLShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 	// the same way the /mrql page styles them.
 	cssPrefix := renderResultCSS(reqCtx, result, renderer, executor, depth)
 
-	return fmt.Sprintf(`<div class="mrql-results">%s%s</div>`, cssPrefix, inner)
+	// Assemble: header (once) wraps the results; a default "View all →" link
+	// (link-all="true") sits after the results, before any custom footer.
+	var b strings.Builder
+	b.WriteString(`<div class="mrql-results">`)
+	b.WriteString(cssPrefix)
+	if !empty && slots.HasHeader {
+		b.WriteString(renderMRQLSlot(reqCtx, slots.Header, result, ctx, renderer, executor, depth))
+	}
+	b.WriteString(inner)
+	if !empty && sc.Attrs["link-all"] == "true" {
+		b.WriteString(defaultViewAllLinkHTML(result))
+	}
+	if !empty && slots.HasFooter {
+		b.WriteString(renderMRQLSlot(reqCtx, slots.Footer, result, ctx, renderer, executor, depth))
+	}
+	b.WriteString(`</div>`)
+	return b.String()
+}
+
+// renderMRQLSlot substitutes placeholders in a header/footer slot and processes
+// it with the parent entity context (the slot renders once, around the results —
+// not per item).
+func renderMRQLSlot(reqCtx context.Context, slot string, result *QueryResult, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor, depth int) string {
+	substituted := substitutePlaceholders(slot, result)
+	return processWithDepth(reqCtx, substituted, ctx, renderer, executor, depth+1)
 }
 
 // renderResultCSS emits a deduped <style> block for each distinct category among the result items

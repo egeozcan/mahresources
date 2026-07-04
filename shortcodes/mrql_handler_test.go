@@ -11,7 +11,7 @@ import (
 )
 
 func mockExecutor(result *QueryResult, err error) QueryExecutor {
-	return func(ctx context.Context, query string, savedName string, params map[string]string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error) {
+	return func(ctx context.Context, query string, opts QueryOptions) (*QueryResult, error) {
 		return result, err
 	}
 }
@@ -142,7 +142,7 @@ func TestMRQLShortcodeNoQueryOrSaved(t *testing.T) {
 
 func TestMRQLShortcodeRecursionDepthCap(t *testing.T) {
 	callCount := 0
-	var executor QueryExecutor = func(ctx context.Context, query string, savedName string, params map[string]string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error) {
+	var executor QueryExecutor = func(ctx context.Context, query string, opts QueryOptions) (*QueryResult, error) {
 		callCount++
 		return &QueryResult{
 			EntityType: "resource",
@@ -171,8 +171,8 @@ func TestMRQLShortcodeRecursionDepthCap(t *testing.T) {
 
 func TestMRQLShortcodeSavedQuery(t *testing.T) {
 	var capturedSaved string
-	executor := func(ctx context.Context, query string, savedName string, params map[string]string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error) {
-		capturedSaved = savedName
+	executor := func(ctx context.Context, query string, opts QueryOptions) (*QueryResult, error) {
+		capturedSaved = opts.SavedName
 		return &QueryResult{EntityType: "resource", Mode: "flat", Items: []QueryResultItem{
 			{EntityType: "resource", EntityID: 1, Entity: testEntity{ID: 1, Name: "Saved Result"}, Meta: []byte(`{}`)},
 		}}, nil
@@ -187,9 +187,9 @@ func TestMRQLShortcodeSavedQuery(t *testing.T) {
 
 func TestMRQLShortcodeDefaultLimits(t *testing.T) {
 	var capturedLimit, capturedBuckets int
-	executor := func(ctx context.Context, query string, savedName string, params map[string]string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error) {
-		capturedLimit = limit
-		capturedBuckets = buckets
+	executor := func(ctx context.Context, query string, opts QueryOptions) (*QueryResult, error) {
+		capturedLimit = opts.Limit
+		capturedBuckets = opts.Buckets
 		return &QueryResult{EntityType: "resource", Mode: "flat"}, nil
 	}
 	sc := Shortcode{Name: "mrql", Attrs: map[string]string{"query": "test"}, Raw: `[mrql query="test"]`}
@@ -449,4 +449,300 @@ func TestMRQLShortcodeCustomCSS(t *testing.T) {
 	assert.Contains(t, html, `data-mr-custom-css="note:7"`)
 	// Category 9 has no custom card, so its CustomCSS is not emitted.
 	assert.NotContains(t, html, ".skip {}")
+}
+
+// --- Work item 1: inline scalar value mode ---
+
+func TestMRQLInlineValueCountFlat(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "flat",
+		Items: []QueryResultItem{
+			{EntityType: "resource", EntityID: 1, Entity: testEntity{ID: 1, Name: "A"}, Meta: []byte(`{}`)},
+			{EntityType: "resource", EntityID: 2, Entity: testEntity{ID: 2, Name: "B"}, Meta: []byte(`{}`)},
+			{EntityType: "resource", EntityID: 3, Entity: testEntity{ID: 3, Name: "C"}, Meta: []byte(`{}`)},
+		},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{Name: "mrql", Attrs: map[string]string{"query": "resources", "value": "count"}, Raw: `[mrql query="resources" value="count"]`}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	// No wrapper div: bare escaped text.
+	assert.Equal(t, "3", html)
+}
+
+func TestMRQLInlineValueCountBucketed(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "bucketed",
+		Groups: []QueryResultGroup{
+			{Key: map[string]any{"t": "a"}},
+			{Key: map[string]any{"t": "b"}},
+		},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{Name: "mrql", Attrs: map[string]string{"query": "x group by t", "value": "count"}, Raw: `[mrql query="x" value="count"]`}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Equal(t, "2", html)
+}
+
+func TestMRQLInlineValueColumnAggregated(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "aggregated",
+		Rows: []map[string]any{
+			{"total": float64(42), "category": "photo"},
+		},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{Name: "mrql", Attrs: map[string]string{"query": "x group by category count()", "value": "total"}, Raw: `[mrql query="x" value="total"]`}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Equal(t, "42", html)
+}
+
+func TestMRQLInlineValueNoWrapperOrCSS(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "flat",
+		Items: []QueryResultItem{
+			{EntityType: "resource", EntityID: 1, CategoryID: 7, Entity: testEntity{ID: 1, Name: "A"}, Meta: []byte(`{}`),
+				CustomMRQLResult: `<div>x</div>`, CustomCSS: `.rc {}`},
+		},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{Name: "mrql", Attrs: map[string]string{"query": "resources", "value": "count"}, Raw: `[mrql query="resources" value="count"]`}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Equal(t, "1", html)
+	assert.NotContains(t, html, "mrql-results")
+	assert.NotContains(t, html, "<style")
+}
+
+func TestMRQLInlineValueColumnOnFlatIsEmpty(t *testing.T) {
+	// A column value has no meaning on a flat (non-aggregated) result.
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "flat",
+		Items: []QueryResultItem{
+			{EntityType: "resource", EntityID: 1, Entity: testEntity{ID: 1, Name: "A"}, Meta: []byte(`{}`)},
+		},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{Name: "mrql", Attrs: map[string]string{"query": "resources", "value": "total"}, Raw: `[mrql query="resources" value="total"]`}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Equal(t, "", html)
+}
+
+func TestMRQLInlineValueError(t *testing.T) {
+	executor := mockExecutor(nil, fmt.Errorf("boom"))
+	sc := Shortcode{Name: "mrql", Attrs: map[string]string{"query": "bad", "value": "count"}, Raw: `[mrql query="bad" value="count"]`}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	// Inline error is a span (does not break surrounding block layout), not a div.
+	assert.Contains(t, html, "<span")
+	assert.Contains(t, html, "mrql-error")
+	assert.Contains(t, html, "boom")
+	assert.NotContains(t, html, "<div")
+}
+
+func TestMRQLInlineValueIgnoresBlockBody(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "flat",
+		Items:      []QueryResultItem{{EntityType: "resource", EntityID: 1, Entity: testEntity{ID: 1, Name: "A"}, Meta: []byte(`{}`)}},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{
+		Name:         "mrql",
+		Attrs:        map[string]string{"query": "resources", "value": "count"},
+		Raw:          `[mrql query="resources" value="count"]<b>[property path="Name"]</b>[/mrql]`,
+		InnerContent: `<b>[property path="Name"]</b>`,
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Equal(t, "1", html)
+	assert.NotContains(t, html, "<b>")
+}
+
+func TestMRQLInlineValueFormatFilesize(t *testing.T) {
+	result := &QueryResult{
+		EntityType: "resource",
+		Mode:       "aggregated",
+		Rows:       []map[string]any{{"bytes": int64(2048)}},
+	}
+	executor := mockExecutor(result, nil)
+	sc := Shortcode{Name: "mrql", Attrs: map[string]string{"query": "x", "value": "bytes", "format": "filesize"}, Raw: `[mrql query="x" value="bytes" format="filesize"]`}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Equal(t, "2.0 KB", html)
+}
+
+// --- Work items 2 & 3: header/footer/else slots, totals, link-all ---
+
+func flatResult(names ...string) *QueryResult {
+	r := &QueryResult{EntityType: "resource", Mode: "flat"}
+	for i, n := range names {
+		r.Items = append(r.Items, QueryResultItem{EntityType: "resource", EntityID: uint(i + 1), Entity: testEntity{ID: uint(i + 1), Name: n}, Meta: []byte(`{}`)})
+	}
+	return r
+}
+
+func blockMRQL(inner string, attrs map[string]string) Shortcode {
+	if attrs == nil {
+		attrs = map[string]string{}
+	}
+	if attrs["query"] == "" {
+		attrs["query"] = "resources"
+	}
+	return Shortcode{Name: "mrql", Attrs: attrs, IsBlock: true, InnerContent: inner, Raw: "[mrql]" + inner + "[/mrql]"}
+}
+
+func TestMRQLHeaderFooterWrapResults(t *testing.T) {
+	executor := mockExecutor(flatResult("Alpha", "Beta"), nil)
+	sc := blockMRQL(`[header]<h4>Items ({count})</h4>[/header]<li>[property path="Name"]</li>[footer]<p>done</p>[/footer]`, nil)
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, html, `<h4>Items (2)</h4>`)
+	assert.Contains(t, html, `<li>Alpha</li>`)
+	assert.Contains(t, html, `<li>Beta</li>`)
+	assert.Contains(t, html, `<p>done</p>`)
+	// Header appears before the items, footer after.
+	assert.Less(t, strings.Index(html, "Items (2)"), strings.Index(html, "Alpha"))
+	assert.Less(t, strings.Index(html, "Beta"), strings.Index(html, "done"))
+}
+
+func TestMRQLElseBranchOnEmpty(t *testing.T) {
+	executor := mockExecutor(&QueryResult{EntityType: "resource", Mode: "flat"}, nil)
+	sc := blockMRQL(`[header]<h4>H</h4>[/header]<li>[property path="Name"]</li>[footer]F[/footer][else]<p>Nothing 🎉</p>`, nil)
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, html, `<p>Nothing 🎉</p>`)
+	// Header/footer are NOT rendered on the empty branch.
+	assert.NotContains(t, html, "<h4>H</h4>")
+	assert.NotContains(t, html, ">F<")
+	assert.NotContains(t, html, "No results.")
+}
+
+func TestMRQLNoElseEmptyKeepsDefault(t *testing.T) {
+	executor := mockExecutor(&QueryResult{EntityType: "resource", Mode: "flat"}, nil)
+	sc := blockMRQL(`<li>[property path="Name"]</li>`, nil)
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, html, "No results.")
+}
+
+func TestMRQLHeaderNotRenderedOnEmptyWithoutElse(t *testing.T) {
+	// Header/footer are chrome around results and are suppressed on an empty
+	// result even without an [else]; only the "No results." placeholder shows.
+	executor := mockExecutor(&QueryResult{EntityType: "resource", Mode: "flat"}, nil)
+	sc := blockMRQL(`[header]<h4>H</h4>[/header]<li>[property path="Name"]</li>[footer]<p>F</p>[/footer]`, map[string]string{"query": "resources", "link-all": "true"})
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.NotContains(t, html, "<h4>H</h4>")
+	assert.NotContains(t, html, "<p>F</p>")
+	assert.NotContains(t, html, "mrql-view-all")
+	assert.Contains(t, html, "No results.")
+}
+
+func TestMRQLTotalPlaceholderSetsWantTotalAndRenders(t *testing.T) {
+	var capturedWantTotal bool
+	total := int64(150)
+	executor := func(ctx context.Context, query string, opts QueryOptions) (*QueryResult, error) {
+		capturedWantTotal = opts.WantTotal
+		r := flatResult("A", "B")
+		r.Total = &total
+		return r, nil
+	}
+	sc := blockMRQL(`[header]{count} of {total}[/header]<li>[property path="Name"]</li>`, nil)
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.True(t, capturedWantTotal, "{total} in a slot must set WantTotal")
+	assert.Contains(t, html, "2 of 150")
+}
+
+func TestMRQLNoTotalPlaceholderLeavesWantTotalOff(t *testing.T) {
+	var capturedWantTotal bool
+	executor := func(ctx context.Context, query string, opts QueryOptions) (*QueryResult, error) {
+		capturedWantTotal = opts.WantTotal
+		return flatResult("A"), nil
+	}
+	sc := blockMRQL(`[header]{count} items[/header]<li>[property path="Name"]</li>`, nil)
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.False(t, capturedWantTotal)
+}
+
+func TestMRQLLinkAllDefaultLinkInline(t *testing.T) {
+	r := flatResult("A")
+	r.EffectiveQuery = "resources where tag = 'x'"
+	executor := mockExecutor(r, nil)
+	sc := blockMRQL(`<li>[property path="Name"]</li>`, map[string]string{"query": "resources", "link-all": "true"})
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, html, "mrql-view-all")
+	assert.Contains(t, html, "/mrql?q=resources+where+tag+%3D+%27x%27")
+	assert.Contains(t, html, "View all")
+}
+
+func TestMRQLLinkAllDefaultLinkSaved(t *testing.T) {
+	r := flatResult("A")
+	r.SavedID = 9
+	executor := mockExecutor(r, nil)
+	sc := blockMRQL(`<li>[property path="Name"]</li>`, map[string]string{"query": "", "saved": "rep", "link-all": "true"})
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, html, `href="/mrql?saved=9"`)
+}
+
+func TestMRQLLinkAllBeforeFooter(t *testing.T) {
+	r := flatResult("A")
+	r.EffectiveQuery = "resources"
+	executor := mockExecutor(r, nil)
+	sc := blockMRQL(`<li>[property path="Name"]</li>[footer]<p>myfoot</p>[/footer]`, map[string]string{"query": "resources", "link-all": "true"})
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Less(t, strings.Index(html, "mrql-view-all"), strings.Index(html, "myfoot"))
+}
+
+func TestMRQLLinkAllPlaceholderInFooter(t *testing.T) {
+	r := flatResult("A")
+	r.EffectiveQuery = "resources"
+	executor := mockExecutor(r, nil)
+	sc := blockMRQL(`<li>[property path="Name"]</li>[footer]<a href="{link-all}">more</a>[/footer]`, map[string]string{"query": "resources"})
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, html, `<a href="/mrql?q=resources">more</a>`)
+	// Without link-all="true", no default link is injected.
+	assert.NotContains(t, html, "mrql-view-all")
+}
+
+func TestMRQLBucketedElseOnZeroBuckets(t *testing.T) {
+	executor := mockExecutor(&QueryResult{EntityType: "resource", Mode: "bucketed"}, nil)
+	sc := blockMRQL(`<li>[property path="Name"]</li>[else]<p>no buckets</p>`, map[string]string{"query": "x group by t"})
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1}
+
+	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Contains(t, html, "<p>no buckets</p>")
 }

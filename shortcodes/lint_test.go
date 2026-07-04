@@ -189,6 +189,20 @@ func TestLint(t *testing.T) {
 			input:    `[conditional path="s" eq="1"]a[elseif path="s" eq="2"]b[else]c[/conditional]`,
 			wantNone: []string{"did you mean", "unknown shortcode", "malformed"},
 		},
+		{
+			name:  "valid mrql inline value",
+			input: `[mrql query="resources" value="count"]`,
+		},
+		{
+			name:  "valid mrql with slots and link-all",
+			input: "[mrql query=\"resources\" link-all=\"true\"][header]<h4>{count}</h4>[/header]<li>x</li>[else]none[/mrql]",
+		},
+		{
+			name:       "mrql value with block body conflict",
+			input:      `[mrql query="resources" value="count"]<b>x</b>[/mrql]`,
+			wantSubstr: `cannot have a block body`,
+			wantSev:    SeverityError,
+		},
 	}
 
 	for _, tt := range tests {

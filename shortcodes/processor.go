@@ -12,12 +12,29 @@ import (
 // Returns rendered HTML or an error (in which case the original text is preserved).
 type PluginRenderer func(pluginName string, sc Shortcode, ctx MetaShortcodeContext) (string, error)
 
+// QueryOptions carries the non-query parameters of a QueryExecutor call.
+// Grouping the tail into a struct keeps the callback signature stable as new
+// knobs (e.g. WantTotal) are added.
+type QueryOptions struct {
+	// SavedName names a saved MRQL query to resolve when query is empty.
+	SavedName string
+	// Params binds $name placeholders (nil/empty when none).
+	Params map[string]string
+	// Limit caps the number of returned items.
+	Limit int
+	// Buckets controls the grouping bucket count.
+	Buckets int
+	// ScopeGroupID restricts results to a group subtree (0 means global/no filter).
+	ScopeGroupID uint
+	// WantTotal asks the executor to also compute QueryResult.Total, the true
+	// row count ignoring Limit. Off by default because it runs a second query.
+	WantTotal bool
+}
+
 // QueryExecutor is a callback that executes an MRQL query and returns results.
-// query is the raw MRQL expression, savedName is an optional saved query name,
-// params binds $name placeholders (nil/empty when none), limit caps the number
-// of returned items, buckets controls grouping bucket count, and scopeGroupID
-// restricts results to a group subtree (0 means global/no filter).
-type QueryExecutor func(ctx context.Context, query string, savedName string, params map[string]string, limit int, buckets int, scopeGroupID uint) (*QueryResult, error)
+// query is the raw MRQL expression; opts carries the saved-query name, param
+// bindings, limit/bucket caps, scope, and the total-count flag.
+type QueryExecutor func(ctx context.Context, query string, opts QueryOptions) (*QueryResult, error)
 
 // QueryResult holds the output of a QueryExecutor call.
 type QueryResult struct {
@@ -26,6 +43,20 @@ type QueryResult struct {
 	Items      []QueryResultItem
 	Rows       []map[string]any
 	Groups     []QueryResultGroup
+
+	// EffectiveQuery is the MRQL text actually executed (resolved from a saved
+	// query when SavedName was used). Empty for a bare/failed execution.
+	EffectiveQuery string
+	// SavedID is the resolved saved-query ID when SavedName was used (0 otherwise).
+	SavedID uint
+	// Total is the true row count ignoring Limit, populated only when
+	// QueryOptions.WantTotal was set; nil otherwise.
+	Total *int64
+	// LinkScopeGroupID is the scope group ID to append as a SCOPE clause when a
+	// "view all" link is built for an inline query that carried no explicit
+	// SCOPE. 0 means "do not append" (global scope, an explicit SCOPE already in
+	// the query text, or an unresolved scope).
+	LinkScopeGroupID uint
 }
 
 // QueryResultItem represents a single entity returned by a query.
