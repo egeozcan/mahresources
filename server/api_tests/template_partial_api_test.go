@@ -2,11 +2,13 @@ package api_tests
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"testing"
 
 	"mahresources/models"
+	"mahresources/models/types"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,4 +106,52 @@ func TestTemplatePartialUniqueNameConflict(t *testing.T) {
 	var count int64
 	tc.DB.Model(&models.TemplatePartial{}).Where("name = ?", "dup").Count(&count)
 	assert.Equal(t, int64(1), count)
+}
+
+// A [partial] inside a CustomMRQLResult must expand on the bucketed GROUP BY
+// render path (/v1/mrql?render=1), not just the flat path. Regression for the
+// grouped renderer missing WithPartialResolver.
+func TestTemplatePartialExpandsInBucketedMRQLRender(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	require.NoError(t, tc.DB.Create(&models.TemplatePartial{
+		Name:    "mrql-badge",
+		Content: `<span class="mrql-tp">BADGE</span>`,
+	}).Error)
+
+	cat := &models.Category{Name: "MRQL Cat", CustomMRQLResult: `[partial name="mrql-badge"]`}
+	require.NoError(t, tc.DB.Create(cat).Error)
+
+	for i := 0; i < 2; i++ {
+		require.NoError(t, tc.DB.Create(&models.Group{
+			Name:       fmt.Sprintf("G%d", i),
+			CategoryId: &cat.ID,
+			Meta:       types.JSON(`{"status":"active"}`),
+		}).Error)
+	}
+
+	resp := tc.MakeRequest(http.MethodPost, "/v1/mrql?render=1", map[string]any{
+		"query": fmt.Sprintf("type = group AND category = %d GROUP BY meta.status", cat.ID),
+	})
+	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+
+	var out struct {
+		Mode   string `json:"mode"`
+		Groups []struct {
+			Items []map[string]any `json:"items"`
+		} `json:"groups"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &out))
+	require.Equal(t, "bucketed", out.Mode, resp.Body.String())
+
+	var rendered string
+	for _, g := range out.Groups {
+		for _, it := range g.Items {
+			if h, ok := it["renderedHTML"].(string); ok {
+				rendered += h
+			}
+		}
+	}
+	assert.Contains(t, rendered, "BADGE", "partial must expand in bucketed MRQL render")
+	assert.NotContains(t, rendered, "not found", "partial must not render the not-found comment")
 }

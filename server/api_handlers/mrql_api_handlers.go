@@ -281,6 +281,12 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 		return // aggregated results are summary rows, not entities
 	}
 
+	// Mirror the flat path (renderMRQLCustomTemplates): attach the per-render
+	// MRQL cache and partial resolver before building the plugin renderer, so
+	// bucketed CustomMRQLResult/CustomCSS templates can expand [partial name=…].
+	reqCtx = plugin_system.WithMRQLCache(reqCtx)
+	reqCtx = shortcodes.WithPartialResolver(reqCtx, template_filters.BuildPartialResolver(appCtx))
+
 	executor := template_filters.BuildQueryExecutor(appCtx)
 	pluginRenderer := buildPluginRenderer(appCtx, reqCtx)
 	cssSeen := map[string]bool{}
