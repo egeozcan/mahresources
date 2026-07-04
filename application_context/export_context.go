@@ -1194,6 +1194,7 @@ func (ctx *MahresourcesContext) writeCategoryDefs(w *archive.Writer, plan *expor
 			CustomSidebar:    row.CustomSidebar,
 			CustomSummary:    row.CustomSummary,
 			CustomAvatar:     row.CustomAvatar,
+			CustomListHeader: row.CustomListHeader,
 			CustomMRQLResult: row.CustomMRQLResult,
 			CustomCSS:        row.CustomCSS,
 			MetaSchema:       row.MetaSchema,
@@ -1215,19 +1216,23 @@ func (ctx *MahresourcesContext) writeNoteTypeDefs(w *archive.Writer, plan *expor
 	defs := make([]archive.NoteTypeDef, 0, len(rows))
 	for _, row := range rows {
 		defs = append(defs, archive.NoteTypeDef{
-			ExportID:         plan.noteTypeExportID[row.ID],
-			SourceID:         row.ID,
-			GUID:             ctx.ensureGUID("note_types", row.ID, row.GUID),
-			Name:             row.Name,
-			Description:      row.Description,
-			CustomHeader:     row.CustomHeader,
-			CustomSidebar:    row.CustomSidebar,
-			CustomSummary:    row.CustomSummary,
-			CustomAvatar:     row.CustomAvatar,
-			CustomMRQLResult: row.CustomMRQLResult,
-			CustomCSS:        row.CustomCSS,
-			MetaSchema:       row.MetaSchema,
-			SectionConfig:    jsonToMap(row.SectionConfig),
+			CategoryDef: archive.CategoryDef{
+				ExportID:         plan.noteTypeExportID[row.ID],
+				SourceID:         row.ID,
+				GUID:             ctx.ensureGUID("note_types", row.ID, row.GUID),
+				Name:             row.Name,
+				Description:      row.Description,
+				CustomHeader:     row.CustomHeader,
+				CustomSidebar:    row.CustomSidebar,
+				CustomSummary:    row.CustomSummary,
+				CustomAvatar:     row.CustomAvatar,
+				CustomListHeader: row.CustomListHeader,
+				CustomMRQLResult: row.CustomMRQLResult,
+				CustomCSS:        row.CustomCSS,
+				MetaSchema:       row.MetaSchema,
+				SectionConfig:    jsonToMap(row.SectionConfig),
+			},
+			ApplyTemplatesToShares: row.ApplyTemplatesToShares,
 		})
 	}
 	return w.WriteNoteTypeDefs(defs)
@@ -1255,6 +1260,7 @@ func (ctx *MahresourcesContext) writeResourceCategoryDefs(w *archive.Writer, pla
 				CustomSidebar:    row.CustomSidebar,
 				CustomSummary:    row.CustomSummary,
 				CustomAvatar:     row.CustomAvatar,
+				CustomListHeader: row.CustomListHeader,
 				CustomMRQLResult: row.CustomMRQLResult,
 				CustomCSS:        row.CustomCSS,
 				MetaSchema:       row.MetaSchema,

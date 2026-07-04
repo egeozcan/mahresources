@@ -546,6 +546,7 @@ func (s *applyState) applySchemaDefDecisions() error {
 				cat.CustomSidebar = def.CustomSidebar
 				cat.CustomSummary = def.CustomSummary
 				cat.CustomAvatar = def.CustomAvatar
+				cat.CustomListHeader = def.CustomListHeader
 				cat.CustomMRQLResult = def.CustomMRQLResult
 				cat.CustomCSS = def.CustomCSS
 				cat.MetaSchema = def.MetaSchema
@@ -624,6 +625,8 @@ func (s *applyState) applySchemaDefDecisions() error {
 				nt.CustomSidebar = def.CustomSidebar
 				nt.CustomSummary = def.CustomSummary
 				nt.CustomAvatar = def.CustomAvatar
+				nt.CustomListHeader = def.CustomListHeader
+				nt.ApplyTemplatesToShares = def.ApplyTemplatesToShares
 				nt.CustomMRQLResult = def.CustomMRQLResult
 				nt.CustomCSS = def.CustomCSS
 				nt.MetaSchema = def.MetaSchema
@@ -698,6 +701,7 @@ func (s *applyState) applySchemaDefDecisions() error {
 				rc.CustomSidebar = def.CustomSidebar
 				rc.CustomSummary = def.CustomSummary
 				rc.CustomAvatar = def.CustomAvatar
+				rc.CustomListHeader = def.CustomListHeader
 				rc.CustomMRQLResult = def.CustomMRQLResult
 				rc.CustomCSS = def.CustomCSS
 				rc.MetaSchema = def.MetaSchema

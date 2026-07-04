@@ -19,6 +19,10 @@ type MetaShortcodeContext struct {
 	ScopeGroupID  uint            // resolved "entity" scope (owning group or sentinel for ownerless)
 	ParentGroupID uint            // resolved "parent" scope (owner's owner)
 	RootGroupID   uint            // resolved "root" scope (top of chain)
+	// ForceReadOnly forces every [meta] to render non-editable regardless of the
+	// shortcode's editable attr. Set by the share renderer: the public /s/<token>
+	// page must never emit an edit affordance that would POST to the primary server.
+	ForceReadOnly bool
 }
 
 // RenderMetaShortcode expands a [meta] shortcode into a <meta-shortcode> custom element.
@@ -29,6 +33,9 @@ func RenderMetaShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 	}
 
 	editable := sc.Attrs["editable"] == "true"
+	if ctx.ForceReadOnly {
+		editable = false
+	}
 	hideEmpty := sc.Attrs["hide-empty"] == "true"
 	defaultVal := sc.Attrs["default"]
 

@@ -28,6 +28,16 @@ type NoteType struct {
 	// CustomAvatar replaces the default initials avatar on note cards in list views.
 	// Shortcodes are processed server-side; an Alpine entity variable is available.
 	CustomAvatar string `gorm:"type:text"`
+	// CustomListHeader is rendered at the top of note list pages when the list is
+	// filtered to exactly this one note type. It is processed with the note type itself
+	// as the entity: [property path="Name"] yields the type name, [meta] renders its
+	// empty state (the type carries no meta), and [mrql] resolves against global scope.
+	CustomListHeader string `gorm:"type:text"`
+	// ApplyTemplatesToShares opts this note type's CustomHeader and CustomCSS into the
+	// public /s/<token> share page. Default false: existing shares keep their appearance
+	// until an author explicitly enables it. On share pages templates run in a restricted
+	// mode — no [mrql] queries, no plugin shortcodes, read-only [meta] (see share_server.go).
+	ApplyTemplatesToShares bool `gorm:"not null;default:false"`
 	// CustomMRQLResult is an HTML+shortcode template for rendering notes of this type
 	// in [mrql] query results. Processed entirely server-side; Alpine directives are not
 	// initialized in the rendered output.

@@ -4,6 +4,7 @@
 
 {% block top %}
     <div class="my-4">{% include "/partials/boxSelect.tpl" with options=displayOptions %}</div>
+    {% include "/partials/customListHeader.tpl" %}
     {% include "/partials/mrqlBar.tpl" with entity="resource" %}
 {% endblock %}
 {% block gallery %}

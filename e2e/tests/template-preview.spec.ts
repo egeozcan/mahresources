@@ -74,6 +74,35 @@ test.describe('Template live preview', () => {
     await expect(frame.locator('#scope-probe')).toHaveText(groupName, { timeout: 10000 });
   });
 
+  test('the List Header slot previews against the category itself (carrier mode)', async ({
+    page,
+    apiClient,
+  }) => {
+    const stamp = Date.now();
+    const catName = `Carrier Preview Cat ${stamp}`;
+    const category = await apiClient.createCategory(catName);
+
+    // Carrier preview needs a saved category (the create form has no carrier yet).
+    await page.goto(`/category/edit?id=${category.ID}`);
+    await page.waitForLoadState('load');
+
+    // Switch the slot selector to List Header.
+    await page.locator('#tp-slot-group').selectOption('CustomListHeader');
+
+    // The entity picker is irrelevant in carrier mode and is hidden.
+    await expect(page.locator('#tp-entity-group')).toBeHidden();
+
+    // Type a property shortcode into the Custom List Header editor.
+    const editor = page.locator('.cm-content[aria-label="Custom List Header"]');
+    await expect(editor).toBeVisible({ timeout: 10000 });
+    await editor.click();
+    await page.keyboard.type('CARRIER=[property path="Name"]');
+
+    // The iframe renders [property path="Name"] against the category itself.
+    const frame = page.frameLocator('iframe[title="Template slot preview"]');
+    await expect(frame.locator('body')).toContainText(`CARRIER=${catName}`, { timeout: 10000 });
+  });
+
   test('editing a category only offers entities from that category', async ({
     page,
     apiClient,

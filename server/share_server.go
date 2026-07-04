@@ -14,8 +14,9 @@ import (
 	"mahresources/application_context"
 	"mahresources/models"
 	"mahresources/server/template_handlers/loaders"
-	_ "mahresources/server/template_handlers/template_filters"
 	"mahresources/server/template_handlers/template_context_providers"
+	template_filters "mahresources/server/template_handlers/template_filters"
+	"mahresources/shortcodes"
 )
 
 // templateBlock represents a block with decoded Content and State for template rendering
@@ -455,6 +456,45 @@ func normalizeTableBlockContent(content map[string]interface{}) {
 	content["rows"] = normRows
 }
 
+// processShareTemplates renders a NoteType's CustomHeader and CustomCSS for the
+// public /s/<token> page, but only when the type has opted in via
+// ApplyTemplatesToShares. Templates run in a deliberately restricted mode
+// appropriate to an anonymous surface (Phase 6 work item 2):
+//
+//   - QueryExecutor is nil: [mrql] must not run queries on the unauthenticated
+//     surface (it would leak beyond the shared note and add DB load). With the
+//     failure markers this renders an HTML comment, not raw shortcode text.
+//   - PluginRenderer is nil: plugin Lua runs against the unscoped DB handle, so
+//     an anonymous surface must never trigger it. [plugin:*] renders a comment.
+//   - ForceReadOnly forces every [meta] non-editable, so the page ships no edit
+//     affordance that would POST to the primary server.
+//
+// [property]/[conditional]/[each]/[link]/[partial] are pure functions over the
+// already-authorized note and run normally; [partial] resolution is a plain DB
+// read, so the resolver is wired.
+func (s *ShareServer) processShareTemplates(note *models.Note) (header, css string) {
+	if note.NoteType == nil || !note.NoteType.ApplyTemplatesToShares {
+		return "", ""
+	}
+	if note.NoteType.CustomHeader == "" && note.NoteType.CustomCSS == "" {
+		return "", ""
+	}
+	metaCtx := template_filters.BuildMetaContextForEntity(note, s.appContext)
+	if metaCtx == nil {
+		return "", ""
+	}
+	metaCtx.ForceReadOnly = true
+
+	reqCtx := shortcodes.WithPartialResolver(context.Background(), template_filters.BuildPartialResolver(s.appContext))
+	if note.NoteType.CustomHeader != "" {
+		header = shortcodes.Process(reqCtx, note.NoteType.CustomHeader, *metaCtx, nil, nil)
+	}
+	if note.NoteType.CustomCSS != "" {
+		css = shortcodes.Process(reqCtx, note.NoteType.CustomCSS, *metaCtx, nil, nil)
+	}
+	return header, css
+}
+
 func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note, shareToken string) {
 	template := pongo2.Must(s.templateSet.FromFile("/shared/displayNote.tpl"))
 
@@ -585,6 +625,9 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		}
 	}
 
+	// Opt-in NoteType templating for the public share page (Phase 6 item 2).
+	shareCustomHeader, shareCustomCSS := s.processShareTemplates(note)
+
 	ctx := pongo2.Context{
 		"note":            note,
 		"blocks":          blocks,
@@ -594,6 +637,8 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 		"resourceNameMap": resourceNameMap,
 		"groupDataMap":    groupDataMap,
 		"assetVersion":    template_context_providers.AssetVersion,
+		"customHeader":    shareCustomHeader,
+		"customCSS":       shareCustomCSS,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

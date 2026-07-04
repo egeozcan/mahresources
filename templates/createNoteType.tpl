@@ -148,7 +148,18 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=noteType.CustomSidebar mode="html" description="Rendered in the note detail page sidebar (both default and wide layouts)." shortcodes=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=noteType.CustomSummary mode="html" description="Rendered on note cards in list views, below the title." shortcodes=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=noteType.CustomAvatar mode="html" description="Replaces the default initials avatar on note cards." shortcodes=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header" name="CustomListHeader" value=noteType.CustomListHeader mode="html" description="Rendered at the top of note list pages filtered to exactly this note type. Processed against the note type itself: [property path=&quot;Name&quot;] is the type name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=noteType.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." shortcodes=true %}
+
+        <div class="mt-4 border-t border-stone-200 pt-4">
+            <label class="flex items-start gap-2 text-sm cursor-pointer">
+                <input type="checkbox" name="ApplyTemplatesToShares" value="true" {% if noteType.ApplyTemplatesToShares %}checked{% endif %} class="mt-1 h-4 w-4 text-amber-700 border-stone-300 rounded focus:ring-amber-600">
+                <span>
+                    <span class="font-medium text-stone-700">Apply templates to public share pages</span>
+                    <span class="block text-xs text-stone-500">When a note of this type is shared via a public <code class="bg-stone-100 text-stone-700 px-1 rounded">/s/&lt;token&gt;</code> link, render its Custom Header and Custom CSS on that page. Runs in a restricted mode fit for an anonymous surface: no <code class="bg-stone-100 text-stone-700 px-1 rounded">[mrql]</code> queries, no plugin shortcodes, and read-only <code class="bg-stone-100 text-stone-700 px-1 rounded">[meta]</code>. Off by default, so existing shares never change appearance without this choice.</span>
+                </span>
+            </label>
+        </div>
     </fieldset>
 
     {% include "/partials/form/templatePreviewPane.tpl" with entityType="note" previewPath="/v1/noteType/previewTemplate" categoryId=noteType.ID %}

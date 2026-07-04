@@ -61,6 +61,7 @@ import { globalSearch } from './components/globalSearch.js';
 import { registerLightboxStore } from './components/lightbox.js';
 import { registerEntityPickerStore } from './components/picker/index.js';
 import { registerPasteUploadStore, setupPasteListener } from './components/pasteUpload.js';
+import { setupHoverCard } from './components/hoverCard.js';
 import { multiSort } from './components/multiSort.js';
 import { downloadCockpit } from './components/downloadCockpit.js';
 import { compareView } from './components/compareView.js';
@@ -211,6 +212,9 @@ setupBulkSelectionListeners();
 
 // Setup global paste listener (handles file-input paste, modal, and context detection)
 setupPasteListener();
+
+// Setup entity-link hover-preview cards (respects the "showHoverPreviews" setting)
+setupHoverCard();
 
 // Refresh resource lists when background downloads complete
 window.addEventListener('download-completed', async (e) => {

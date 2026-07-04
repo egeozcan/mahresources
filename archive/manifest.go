@@ -293,15 +293,21 @@ type CategoryDef struct {
 	CustomSidebar    string         `json:"custom_sidebar"`
 	CustomSummary    string         `json:"custom_summary"`
 	CustomAvatar     string         `json:"custom_avatar"`
+	CustomListHeader string         `json:"custom_list_header,omitempty"`
 	CustomMRQLResult string         `json:"custom_mrql_result"`
 	CustomCSS        string         `json:"custom_css"`
 	MetaSchema       string         `json:"meta_schema"`
 	SectionConfig    map[string]any `json:"section_config"`
 }
 
-// NoteTypeDef is structurally identical to CategoryDef but is exported as its
-// own type so the importer's resolver branches by type.
-type NoteTypeDef = CategoryDef
+// NoteTypeDef is CategoryDef plus the note-type-only ApplyTemplatesToShares
+// opt-in (whether the type's CustomHeader/CustomCSS render on public share
+// pages). apply_templates_to_shares is additive: omitempty keeps it out of
+// archives where it is false, and older readers ignore the key.
+type NoteTypeDef struct {
+	CategoryDef
+	ApplyTemplatesToShares bool `json:"apply_templates_to_shares,omitempty"`
+}
 
 // ResourceCategoryDef adds AutoDetectRules.
 type ResourceCategoryDef struct {

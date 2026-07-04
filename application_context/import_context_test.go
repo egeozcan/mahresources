@@ -276,7 +276,7 @@ func TestParseImport_AmbiguousNoteType(t *testing.T) {
 	}
 
 	err = w.WriteNoteTypeDefs([]archive.NoteTypeDef{
-		{ExportID: "nt0001", SourceID: 1, Name: "ParseTestDiary"},
+		{CategoryDef: archive.CategoryDef{ExportID: "nt0001", SourceID: 1, Name: "ParseTestDiary"}},
 	})
 	if err != nil {
 		t.Fatalf("WriteNoteTypeDefs: %v", err)

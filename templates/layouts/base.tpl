@@ -48,6 +48,10 @@
                         Show Descriptions
                         <input type="checkbox" name="showDescriptions" x-data x-init="$store.savedSetting.registerEl($root)" />
                     </label>
+                    <label class="flex justify-between items-center text-sm font-mono mt-2">
+                        Show Hover Previews
+                        <input type="checkbox" name="showHoverPreviews" x-data x-init="$store.savedSetting.registerEl($root)" />
+                    </label>
                     {% block settings %}{% endblock %}
                 </div>
             </div>

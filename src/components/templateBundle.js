@@ -7,15 +7,17 @@
 // Bundle shape (schemaVersion 1), shared with server/template_presets/*.json and
 // the export download:
 //   { schemaVersion, carrier, name, description,
-//     slots: { header, sidebar, summary, avatar, mrqlResult, css },
+//     slots: { header, sidebar, summary, avatar, listHeader, mrqlResult, css },
 //     metaSchema, sectionConfig }
 
-// Slot key -> hidden-input field name on the form (all six slots + meta schema).
+// Slot key -> hidden-input field name on the form. listHeader is additive to the
+// schemaVersion-1 bundle: older bundles simply omit it and import leaves it empty.
 const SLOT_FIELDS = {
   header: 'CustomHeader',
   sidebar: 'CustomSidebar',
   summary: 'CustomSummary',
   avatar: 'CustomAvatar',
+  listHeader: 'CustomListHeader',
   mrqlResult: 'CustomMRQLResult',
   css: 'CustomCSS',
 };

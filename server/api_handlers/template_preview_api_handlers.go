@@ -24,6 +24,11 @@ type templatePreviewRequest struct {
 	Content    string `json:"content" schema:"content"`
 	CSS        string `json:"css" schema:"css"`
 	CategoryID uint   `json:"categoryId" schema:"categoryId"` // optional: the category being edited, for a mismatch warning
+	// Carrier previews the slot against the carrier (Category/ResourceCategory/
+	// NoteType) itself rather than a member entity — used for CustomListHeader,
+	// which renders against the category, not a group/resource/note. CategoryID is
+	// then required and EntityID is ignored.
+	Carrier bool `json:"carrier" schema:"carrier"`
 }
 
 type templatePreviewResponse struct {
@@ -50,12 +55,22 @@ func GetPreviewTemplateHandler(ctx *application_context.MahresourcesContext, ent
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
-		if req.EntityID == 0 {
-			http_utils.HandleError(errors.New("entityId is required to preview a template"), writer, request, http.StatusBadRequest)
-			return
+		var entity any
+		var entityCategoryID uint
+		var err error
+		if req.Carrier {
+			if req.CategoryID == 0 {
+				http_utils.HandleError(errors.New("categoryId is required to preview a list-header template"), writer, request, http.StatusBadRequest)
+				return
+			}
+			entity, err = loadPreviewCarrier(ctx, entityType, req.CategoryID)
+		} else {
+			if req.EntityID == 0 {
+				http_utils.HandleError(errors.New("entityId is required to preview a template"), writer, request, http.StatusBadRequest)
+				return
+			}
+			entity, entityCategoryID, err = loadPreviewEntity(ctx, entityType, req.EntityID)
 		}
-
-		entity, entityCategoryID, err := loadPreviewEntity(ctx, entityType, req.EntityID)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusNotFound))
 			return
@@ -145,6 +160,22 @@ func loadPreviewEntity(ctx *application_context.MahresourcesContext, entityType 
 		return n, catID, nil
 	default:
 		return nil, 0, errors.New("unknown preview entity type")
+	}
+}
+
+// loadPreviewCarrier fetches the carrier itself (Category / ResourceCategory /
+// NoteType) for a carrier-mode preview (CustomListHeader). entityType is the
+// member entity type the carrier governs ("group"/"resource"/"note").
+func loadPreviewCarrier(ctx *application_context.MahresourcesContext, entityType string, id uint) (any, error) {
+	switch entityType {
+	case "group":
+		return ctx.GetCategory(id)
+	case "resource":
+		return ctx.GetResourceCategory(id)
+	case "note":
+		return ctx.GetNoteType(id)
+	default:
+		return nil, errors.New("unknown preview entity type")
 	}
 }
 

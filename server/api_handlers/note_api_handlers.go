@@ -276,6 +276,12 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 					if _, sent := raw["CustomAvatar"]; !sent {
 						editor.CustomAvatar = existing.CustomAvatar
 					}
+					if _, sent := raw["CustomListHeader"]; !sent {
+						editor.CustomListHeader = existing.CustomListHeader
+					}
+					if _, sent := raw["ApplyTemplatesToShares"]; !sent {
+						editor.ApplyTemplatesToShares = existing.ApplyTemplatesToShares
+					}
 					if _, sent := raw["CustomMRQLResult"]; !sent {
 						editor.CustomMRQLResult = existing.CustomMRQLResult
 					}
@@ -314,6 +320,9 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 					}
 					if editor.CustomAvatar == "" && !formHasField(request, "CustomAvatar") {
 						editor.CustomAvatar = existing.CustomAvatar
+					}
+					if editor.CustomListHeader == "" && !formHasField(request, "CustomListHeader") {
+						editor.CustomListHeader = existing.CustomListHeader
 					}
 					if editor.CustomMRQLResult == "" && !formHasField(request, "CustomMRQLResult") {
 						editor.CustomMRQLResult = existing.CustomMRQLResult
