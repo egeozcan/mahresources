@@ -10,6 +10,7 @@ export class MetaShortcode extends LitElement {
   @property({ attribute: 'data-path' }) path = '';
   @property({ attribute: 'data-editable' }) editable = 'false';
   @property({ attribute: 'data-hide-empty' }) hideEmpty = 'false';
+  @property({ attribute: 'data-default' }) defaultValue = '';
   @property({ attribute: 'data-entity-type' }) entityType = '';
   @property({ attribute: 'data-entity-id' }) entityId = '';
   @property({ attribute: 'data-schema' }) schemaStr = '';
@@ -134,6 +135,14 @@ export class MetaShortcode extends LitElement {
       : nothing;
 
     if (this._isEmpty) {
+      // A configured default renders as plain text in place of the empty state.
+      // hide-empty still wins (render() returns nothing before reaching here).
+      if (this.defaultValue) {
+        return html`
+          <span class="text-sm">${this.defaultValue}</span>
+          ${editButton}
+        `;
+      }
       return html`
         <span class="text-stone-400 text-sm">${this._label}: —</span>
         ${editButton}

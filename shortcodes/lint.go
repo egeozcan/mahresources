@@ -62,12 +62,14 @@ func KnownFromBuiltins() KnownShortcodes {
 	return k
 }
 
-// conditionalOperators are the mutually-testable operator attributes on
-// [conditional]; at least one must be present.
-var conditionalOperators = []string{"eq", "neq", "gt", "lt", "contains", "empty", "not-empty"}
+// conditionalOperators are the operator attributes on [conditional]; at least
+// one must be present. Every operator present must pass (or any, with
+// combine="any"). Shared with the conditional handler so lint and evaluation
+// agree on the operator vocabulary.
+var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "property", "mrql", "conditional"}
+var builtinBaseNames = []string{"meta", "property", "mrql", "conditional", "link"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -142,14 +144,27 @@ func Lint(input string, opts LintOptions) []LintIssue {
 
 		// Unknown attributes (warning — documented shortcodes only).
 		for attrName := range tk.attrs {
-			if !knownAttr(known, attrName) {
-				add(tk.start, tk.end, SeverityWarning,
-					"unknown attribute \""+attrName+"\" on ["+tk.name+"]")
+			if knownAttr(known, attrName) {
+				continue
 			}
+			// [conditional] accepts numbered-suffix source/operator attrs
+			// (path2, eq2, …) for multi-value conditions.
+			if tk.name == "conditional" {
+				if base := stripTrailingDigits(attrName); base != attrName && knownAttr(known, base) {
+					continue
+				}
+			}
+			add(tk.start, tk.end, SeverityWarning,
+				"unknown attribute \""+attrName+"\" on ["+tk.name+"]")
 		}
 
 		// Name-specific semantic checks.
 		switch tk.name {
+		case "meta":
+			if strings.TrimSpace(tk.attrs["default"]) != "" && tk.attrs["hide-empty"] == "true" {
+				add(tk.start, tk.end, SeverityWarning,
+					`[meta] has both hide-empty and default; hide-empty wins and the default is never shown`)
+			}
 		case "mrql":
 			if strings.TrimSpace(tk.attrs["query"]) == "" && strings.TrimSpace(tk.attrs["saved"]) == "" {
 				add(tk.start, tk.end, SeverityError,
@@ -164,7 +179,18 @@ func Lint(input string, opts LintOptions) []LintIssue {
 			}
 			if !hasAnyOperator(tk.attrs) {
 				add(tk.start, tk.end, SeverityError,
-					"[conditional] needs a comparison operator (eq, neq, gt, lt, contains, empty, not-empty)")
+					"[conditional] needs a comparison operator (eq, neq, gt, lt, gte, lte, in, contains, matches, empty, not-empty)")
+			}
+			// Invalid regex in any matches operator (matches, matches2, …) is an
+			// error at edit time — at render it silently evaluates to false.
+			for attrName, attrVal := range tk.attrs {
+				if stripTrailingDigits(attrName) == "matches" {
+					if _, err := regexp.Compile(attrVal); err != nil {
+						start, end := attrOffset(tk, attrName)
+						add(start, end, SeverityError,
+							"invalid regular expression in "+attrName+": "+err.Error())
+					}
+				}
 			}
 			if inner, ok := condInner[tk.start]; ok && countTopLevelElse(inner) > 1 {
 				add(tk.start, tk.end, SeverityError,
@@ -194,7 +220,7 @@ func Lint(input string, opts LintOptions) []LintIssue {
 			continue
 		}
 		name := input[m[2]:m[3]]
-		if name == "else" {
+		if name == "else" || name == "elseif" {
 			continue
 		}
 		if strings.HasPrefix(name, "plugin:") {
@@ -234,6 +260,16 @@ func knownAttr(known KnownShortcode, attrName string) bool {
 		}
 	}
 	return false
+}
+
+// stripTrailingDigits removes a trailing run of ASCII digits, so "eq2" → "eq"
+// and "path10" → "path". Used to recognize numbered-suffix conditional attrs.
+func stripTrailingDigits(s string) string {
+	end := len(s)
+	for end > 0 && s[end-1] >= '0' && s[end-1] <= '9' {
+		end--
+	}
+	return s[:end]
 }
 
 func hasAnyOperator(attrs map[string]string) bool {

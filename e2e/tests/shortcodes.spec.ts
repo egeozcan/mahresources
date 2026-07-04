@@ -425,6 +425,123 @@ test.describe('Built-in conditional shortcode', () => {
   });
 });
 
+test.describe('Meta shortcode default fallback (Phase 2)', () => {
+  let categoryId: number;
+  let groupId: number;
+
+  test.beforeAll(async ({ apiClient }) => {
+    const cat = await apiClient.createCategory(
+      `Meta Default ${Date.now()}`,
+      'Tests [meta default] fallback',
+      {
+        CustomSidebar: '<div class="meta-default-test">[meta path="rating" default="n/a"]</div>',
+      },
+    );
+    categoryId = cat.ID;
+
+    const group = await apiClient.createGroup({
+      name: `Meta Default Group ${Date.now()}`,
+      categoryId: cat.ID,
+      meta: JSON.stringify({}),
+    });
+    groupId = group.ID;
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    if (groupId) await apiClient.deleteGroup(groupId);
+    if (categoryId) await apiClient.deleteCategory(categoryId);
+  });
+
+  test('[meta default] renders the default text when the value is missing', async ({ page }) => {
+    await page.goto(`/group?id=${groupId}`);
+    await page.waitForLoadState('load');
+
+    const shortcode = page.locator('meta-shortcode[data-path="rating"][data-default="n/a"]');
+    await expect(shortcode).toBeVisible({ timeout: 5000 });
+    await expect(shortcode).toContainText('n/a');
+    // The empty-state em dash must not appear when a default is set.
+    await expect(shortcode).not.toContainText('—');
+  });
+});
+
+test.describe('Conditional elseif chain and link helper (Phase 2)', () => {
+  let categoryId: number;
+  let parentGroupId: number;
+  let childGroupId: number;
+
+  test.beforeAll(async ({ apiClient }) => {
+    const cat = await apiClient.createCategory(
+      `ElseIf Link ${Date.now()}`,
+      'Tests [elseif] chains and [link to="owner"]',
+      {
+        CustomSidebar: [
+          '<div class="elseif-link-test">',
+          '[conditional path="tier" eq="gold"]<span class="tier">GOLD</span>[elseif path="tier" eq="silver"]<span class="tier">SILVER</span>[else]<span class="tier">BASIC</span>[/conditional]',
+          '[link to="owner"]<span class="owner-link-text">Parent</span>[/link]',
+          '</div>',
+        ].join('\n'),
+      },
+    );
+    categoryId = cat.ID;
+
+    const parent = await apiClient.createGroup({
+      name: `ElseIf Parent ${Date.now()}`,
+      categoryId: cat.ID,
+      meta: JSON.stringify({ tier: 'gold' }),
+    });
+    parentGroupId = parent.ID;
+
+    const child = await apiClient.createGroup({
+      name: `ElseIf Child ${Date.now()}`,
+      categoryId: cat.ID,
+      ownerId: parentGroupId,
+      meta: JSON.stringify({ tier: 'silver' }),
+    });
+    childGroupId = child.ID;
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    if (childGroupId) await apiClient.deleteGroup(childGroupId);
+    if (parentGroupId) await apiClient.deleteGroup(parentGroupId);
+    if (categoryId) await apiClient.deleteCategory(categoryId);
+  });
+
+  test('elseif selects the matching middle branch', async ({ page }) => {
+    await page.goto(`/group?id=${childGroupId}`);
+    await page.waitForLoadState('load');
+    const tier = page.locator('.elseif-link-test .tier');
+    await expect(tier).toBeVisible({ timeout: 5000 });
+    await expect(tier).toHaveText('SILVER');
+  });
+
+  test('if branch wins on the parent (tier=gold)', async ({ page }) => {
+    await page.goto(`/group?id=${parentGroupId}`);
+    await page.waitForLoadState('load');
+    const tier = page.locator('.elseif-link-test .tier');
+    await expect(tier).toBeVisible({ timeout: 5000 });
+    await expect(tier).toHaveText('GOLD');
+  });
+
+  test('[link to="owner"] renders an anchor to the owning group', async ({ page }) => {
+    await page.goto(`/group?id=${childGroupId}`);
+    await page.waitForLoadState('load');
+    const link = page.locator(`.elseif-link-test a[href="/group?id=${parentGroupId}"]`);
+    await expect(link).toBeVisible({ timeout: 5000 });
+    await expect(link).toContainText('Parent');
+  });
+
+  test('[link to="owner"] renders inner-only (no anchor) when there is no owner', async ({ page }) => {
+    await page.goto(`/group?id=${parentGroupId}`);
+    await page.waitForLoadState('load');
+    // Parent has no owner: the link block renders its inner text without an anchor.
+    const ownerText = page.locator('.elseif-link-test .owner-link-text');
+    await expect(ownerText).toBeVisible({ timeout: 5000 });
+    await expect(ownerText).toContainText('Parent');
+    const anchor = page.locator('.elseif-link-test a');
+    await expect(anchor).toHaveCount(0);
+  });
+});
+
 test.describe('Block MRQL shortcode', () => {
   let parentCategoryId: number;
   let parentGroupId: number;

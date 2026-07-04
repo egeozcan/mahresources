@@ -44,7 +44,7 @@ type shortcodeDocResponse struct {
 }
 
 // GetShortcodeDocsHandler handles GET /v1/shortcodes/docs — a machine-readable
-// catalogue of the four built-in shortcodes plus every shortcode registered by
+// catalogue of the five built-in shortcodes plus every shortcode registered by
 // an enabled plugin. It powers editor lint, autocomplete, and hover docs.
 func GetShortcodeDocsHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {

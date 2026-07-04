@@ -124,6 +124,44 @@ func TestLint(t *testing.T) {
 			input:    `<div>styles[class] and array[0]</div>`,
 			wantNone: []string{"did you mean", "unknown shortcode", "malformed"},
 		},
+		{
+			name:       "meta hide-empty and default conflict",
+			input:      `[meta path="x" hide-empty="true" default="n/a"]`,
+			wantSubstr: `hide-empty wins`,
+			wantSev:    SeverityWarning,
+		},
+		{
+			name:     "meta default alone is fine",
+			input:    `[meta path="x" default="n/a"]`,
+			wantNone: []string{"hide-empty wins"},
+		},
+		{
+			name:     "conditional numbered-suffix attrs not flagged",
+			input:    `[conditional path="a" eq="1" path2="b" gte2="5" combine="any"]x[/conditional]`,
+			wantNone: []string{"unknown attribute"},
+		},
+		{
+			name:     "conditional new operators not flagged",
+			input:    `[conditional path="s" in="a,b" matches="^x" gte="1" lte="9"]x[/conditional]`,
+			wantNone: []string{"unknown attribute", "needs a comparison operator"},
+		},
+		{
+			name:       "conditional invalid matches regex",
+			input:      `[conditional path="s" matches="([bad"]x[/conditional]`,
+			wantSubstr: `invalid regular expression in matches`,
+			wantSev:    SeverityError,
+		},
+		{
+			name:       "conditional invalid matches2 regex",
+			input:      `[conditional path="s" eq="1" path2="t" matches2="([bad"]x[/conditional]`,
+			wantSubstr: `invalid regular expression in matches2`,
+			wantSev:    SeverityError,
+		},
+		{
+			name:     "elseif divider not flagged as unknown shortcode",
+			input:    `[conditional path="s" eq="1"]a[elseif path="s" eq="2"]b[else]c[/conditional]`,
+			wantNone: []string{"did you mean", "unknown shortcode", "malformed"},
+		},
 	}
 
 	for _, tt := range tests {

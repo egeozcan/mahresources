@@ -105,3 +105,133 @@ func TestPropertyShortcodePointerEntity(t *testing.T) {
 	result := RenderPropertyShortcode(sc, ctx)
 	assert.Equal(t, "Pointer Entity", result)
 }
+
+// --- Phase 2: dot-path traversal, format, default ---
+
+type traversalOwner struct {
+	Name string
+	ID   uint
+}
+
+type traversalTag struct {
+	Name string
+}
+
+type traversalEntity struct {
+	ID        uint
+	Name      string
+	Owner     *traversalOwner
+	Tags      []*traversalTag
+	CreatedAt time.Time
+	FileSize  int64
+	Count     int
+}
+
+func TestPropertyShortcodeDotPath(t *testing.T) {
+	entity := traversalEntity{Owner: &traversalOwner{Name: "Alice"}}
+	ctx := MetaShortcodeContext{Entity: entity}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "Owner.Name"}}
+	assert.Equal(t, "Alice", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeDotPathNilPointer(t *testing.T) {
+	entity := traversalEntity{Owner: nil}
+	ctx := MetaShortcodeContext{Entity: entity}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "Owner.Name"}}
+	assert.Equal(t, "", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeDotPathMissingSegment(t *testing.T) {
+	entity := traversalEntity{Owner: &traversalOwner{Name: "Alice"}}
+	ctx := MetaShortcodeContext{Entity: entity}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "Owner.Nope"}}
+	assert.Equal(t, "", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeSliceIndex(t *testing.T) {
+	entity := traversalEntity{Tags: []*traversalTag{{Name: "photo"}, {Name: "landscape"}}}
+	ctx := MetaShortcodeContext{Entity: entity}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "Tags.1.Name"}}
+	assert.Equal(t, "landscape", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeSliceIndexOutOfRange(t *testing.T) {
+	entity := traversalEntity{Tags: []*traversalTag{{Name: "photo"}}}
+	ctx := MetaShortcodeContext{Entity: entity}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "Tags.5.Name"}}
+	assert.Equal(t, "", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeDefault(t *testing.T) {
+	entity := traversalEntity{Owner: nil}
+	ctx := MetaShortcodeContext{Entity: entity}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "Owner.Name", "default": "Unassigned"}}
+	assert.Equal(t, "Unassigned", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeDefaultNotUsedWhenPresent(t *testing.T) {
+	entity := traversalEntity{Name: "Real"}
+	ctx := MetaShortcodeContext{Entity: entity}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "Name", "default": "Fallback"}}
+	assert.Equal(t, "Real", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeDefaultHTMLEscaped(t *testing.T) {
+	ctx := MetaShortcodeContext{Entity: traversalEntity{}}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "Name", "default": "<b>x</b>"}}
+	assert.Equal(t, "&lt;b&gt;x&lt;/b&gt;", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeDefaultRaw(t *testing.T) {
+	ctx := MetaShortcodeContext{Entity: traversalEntity{}}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "Name", "default": "<b>x</b>", "raw": "true"}}
+	assert.Equal(t, "<b>x</b>", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeFormatDate(t *testing.T) {
+	ts := time.Date(2026, 4, 9, 12, 30, 0, 0, time.UTC)
+	ctx := MetaShortcodeContext{Entity: traversalEntity{CreatedAt: ts}}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "CreatedAt", "format": "date"}}
+	assert.Equal(t, "2026-04-09", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeFormatDateTime(t *testing.T) {
+	ts := time.Date(2026, 4, 9, 12, 30, 0, 0, time.UTC)
+	ctx := MetaShortcodeContext{Entity: traversalEntity{CreatedAt: ts}}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "CreatedAt", "format": "datetime"}}
+	assert.Equal(t, "2026-04-09 12:30", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeFormatTime(t *testing.T) {
+	ts := time.Date(2026, 4, 9, 12, 30, 0, 0, time.UTC)
+	ctx := MetaShortcodeContext{Entity: traversalEntity{CreatedAt: ts}}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "CreatedAt", "format": "time"}}
+	assert.Equal(t, "12:30", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeLayoutWinsOverFormat(t *testing.T) {
+	ts := time.Date(2026, 4, 9, 12, 30, 0, 0, time.UTC)
+	ctx := MetaShortcodeContext{Entity: traversalEntity{CreatedAt: ts}}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "CreatedAt", "format": "date", "layout": "Jan 2, 2006"}}
+	assert.Equal(t, "Apr 9, 2026", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeFormatFilesize(t *testing.T) {
+	ctx := MetaShortcodeContext{Entity: traversalEntity{FileSize: 1536}}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "FileSize", "format": "filesize"}}
+	result := RenderPropertyShortcode(sc, ctx)
+	assert.Contains(t, result, "1.5")
+	assert.Contains(t, result, "KB")
+}
+
+func TestPropertyShortcodeFormatUnknownPassesThrough(t *testing.T) {
+	ctx := MetaShortcodeContext{Entity: traversalEntity{Name: "Hello"}}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "Name", "format": "bogus"}}
+	assert.Equal(t, "Hello", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeFormatDateOnNonTimePassesThrough(t *testing.T) {
+	ctx := MetaShortcodeContext{Entity: traversalEntity{Name: "Hello"}}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "Name", "format": "date"}}
+	assert.Equal(t, "Hello", RenderPropertyShortcode(sc, ctx))
+}

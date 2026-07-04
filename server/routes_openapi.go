@@ -1910,8 +1910,8 @@ The endpoint does not execute MRQL. The server sends the prompt and syntax-only 
 		Path:        "/v1/shortcodes/docs",
 		OperationID: "listShortcodeDocs",
 		Summary:     "List shortcode documentation",
-		Description: `Returns a machine-readable catalogue of the four built-in shortcodes
-(meta, property, mrql, conditional) plus every shortcode registered by an
+		Description: `Returns a machine-readable catalogue of the five built-in shortcodes
+(meta, property, mrql, conditional, link) plus every shortcode registered by an
 enabled plugin. Powers editor lint, autocomplete, and hover docs.
 
 Each item: {name, syntax, description, isBlock ("no"|"optional"|"required"),

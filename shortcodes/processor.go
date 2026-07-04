@@ -94,6 +94,8 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			} else {
 				replacement = sc.Raw
 			}
+		case sc.Name == "link":
+			replacement = RenderLinkShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case strings.HasPrefix(sc.Name, "plugin:"):
 			if renderer != nil {
 				parts := strings.SplitN(sc.Name, ":", 3)

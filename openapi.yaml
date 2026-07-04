@@ -6736,8 +6736,8 @@ paths:
     /v1/shortcodes/docs:
         get:
             description: |-
-                Returns a machine-readable catalogue of the four built-in shortcodes
-                (meta, property, mrql, conditional) plus every shortcode registered by an
+                Returns a machine-readable catalogue of the five built-in shortcodes
+                (meta, property, mrql, conditional, link) plus every shortcode registered by an
                 enabled plugin. Powers editor lint, autocomplete, and hover docs.
 
                 Each item: {name, syntax, description, isBlock ("no"|"optional"|"required"),
