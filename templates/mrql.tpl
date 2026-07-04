@@ -27,7 +27,7 @@
             <div>
                 <h3 class="font-semibold text-stone-700">Syntax Overview</h3>
                 <p>MRQL queries filter entities using field-value conditions connected with <code class="bg-stone-200 px-1 rounded">AND</code> / <code class="bg-stone-200 px-1 rounded">OR</code>.</p>
-                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">name ~ "search term" AND tags = "important" [GROUP BY field [COUNT() SUM(f)]] ORDER BY created DESC LIMIT 20</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">name ~ "search term" AND tags = "important" [SCOPE id] [GROUP BY field [COUNT() SUM(f)]] ORDER BY created DESC LIMIT 20</pre>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Entity Types</h3>
@@ -44,7 +44,9 @@
                     <code class="bg-stone-200 px-1 rounded">created</code>,
                     <code class="bg-stone-200 px-1 rounded">updated</code>,
                     <code class="bg-stone-200 px-1 rounded">tags</code>,
+                    <code class="bg-stone-200 px-1 rounded">guid</code>,
                     <code class="bg-stone-200 px-1 rounded">meta.*</code>
+                    &mdash; <code class="bg-stone-200 px-1 rounded">guid</code> is the stable unique identifier.
                 </p>
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">name ~ "budget" AND created > -30d</pre>
             </div>
@@ -107,6 +109,12 @@
                 Use <code class="bg-stone-200 px-1 rounded">*</code> (any characters) and <code class="bg-stone-200 px-1 rounded">?</code> (single character) for anchored patterns: <code>name ~ "project*"</code> matches only names starting with "project".</p>
             </div>
             <div>
+                <h3 class="font-semibold text-stone-700">Regex Match <span class="text-xs font-normal text-stone-400">(PostgreSQL only)</span></h3>
+                <p class="text-xs"><code class="bg-stone-200 px-1 rounded">~*</code> / <code class="bg-stone-200 px-1 rounded">!~*</code> match a string or <code class="bg-stone-200 px-1 rounded">meta.*</code> field against a case-insensitive POSIX regular expression. The pattern is a real regex &mdash; <code class="bg-stone-200 px-1 rounded">*</code> and <code class="bg-stone-200 px-1 rounded">?</code> are quantifiers, not the wildcard shortcuts used by <code class="bg-stone-200 px-1 rounded">~</code>. Available on PostgreSQL deployments only; SQLite rejects these operators.</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND name ~* "^IMG_[0-9]{4}"</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = note AND meta.code !~* "^draft-"</pre>
+            </div>
+            <div>
                 <h3 class="font-semibold text-stone-700">Full-Text Search</h3>
                 <p class="text-xs"><code class="bg-stone-200 px-1 rounded">TEXT ~ "phrase"</code> searches across name, description, and content. Uses indexed full-text search when available, falls back to name/description substring match otherwise.</p>
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">TEXT ~ "quarterly earnings"</pre>
@@ -124,6 +132,12 @@
                 <p class="text-xs"><code class="bg-stone-200 px-1 rounded">IN (...)</code> / <code class="bg-stone-200 px-1 rounded">NOT IN (...)</code>. Not supported on traversal chains/subfields (e.g. <code>owner.tags IN (...)</code> is invalid, but <code>tags IN (...)</code>, <code>groups IN (...)</code>, <code>notes IN (...)</code>, and <code>resources IN (...)</code> work). <code>children</code>, <code>owner</code>, and <code>parent</code> do not support <code>IN</code>.</p>
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">contentType IN ("image/png", "image/jpeg", "image/webp")</pre>
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND NOT (tags IN ("draft", "archived"))</pre>
+            </div>
+            <div>
+                <h3 class="font-semibold text-stone-700">Ranges (BETWEEN)</h3>
+                <p class="text-xs"><code class="bg-stone-200 px-1 rounded">field BETWEEN lo AND hi</code> / <code class="bg-stone-200 px-1 rounded">field NOT BETWEEN lo AND hi</code> match an inclusive range. Bounds may be numbers (including file-size units), dates, relative dates, or date functions.</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND fileSize BETWEEN 1mb AND 10mb</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND created BETWEEN -30d AND NOW()</pre>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Boolean Logic</h3>
@@ -178,10 +192,22 @@
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND owner.parent.name = "Acme Corp"</pre>
             </div>
             <div>
+                <h3 class="font-semibold text-stone-700">Recursive Traversal</h3>
+                <p class="text-xs"><code class="bg-stone-200 px-1 rounded">ancestors.&lt;field&gt;</code> and <code class="bg-stone-200 px-1 rounded">descendants.&lt;field&gt;</code> match any group above or below in the hierarchy, at any depth. They take exactly one group leaf field and are <strong>strict</strong> &mdash; they exclude the item's own group, so combine with <code class="bg-stone-200 px-1 rounded">owner.</code> / <code class="bg-stone-200 px-1 rounded">parent.</code> to include it. Not supported with <code class="bg-stone-200 px-1 rounded">IN</code>, <code class="bg-stone-200 px-1 rounded">IS EMPTY</code>, <code class="bg-stone-200 px-1 rounded">ORDER BY</code>, or <code class="bg-stone-200 px-1 rounded">GROUP BY</code>.</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND ancestors.name = "Archive"</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = group AND descendants.tags = "wip"</pre>
+            </div>
+            <div>
                 <h3 class="font-semibold text-stone-700">Relation Counts</h3>
                 <p class="text-xs">Compare the number of related entities with <code class="bg-stone-200 px-1 rounded">&lt;relation&gt;.count</code> and <code class="bg-stone-200 px-1 rounded">=</code>, <code class="bg-stone-200 px-1 rounded">!=</code>, <code class="bg-stone-200 px-1 rounded">&gt;</code>, <code class="bg-stone-200 px-1 rounded">&gt;=</code>, <code class="bg-stone-200 px-1 rounded">&lt;</code>, <code class="bg-stone-200 px-1 rounded">&lt;=</code> against a non-negative integer. Works on <code class="bg-stone-200 px-1 rounded">tags</code>, <code class="bg-stone-200 px-1 rounded">groups</code>, <code class="bg-stone-200 px-1 rounded">notes</code>, <code class="bg-stone-200 px-1 rounded">resources</code>, and <code class="bg-stone-200 px-1 rounded">children</code>; also valid in ORDER BY. <code class="bg-stone-200 px-1 rounded">owner</code> and <code class="bg-stone-200 px-1 rounded">parent</code> are single references &mdash; use <code class="bg-stone-200 px-1 rounded">IS NULL</code> instead.</p>
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND tags.count = 0</pre>
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = group AND resources.count >= 100 ORDER BY resources.count DESC</pre>
+            </div>
+            <div>
+                <h3 class="font-semibold text-stone-700">Perceptual Similarity</h3>
+                <p class="text-xs"><code class="bg-stone-200 px-1 rounded">SIMILAR TO resource(&lt;id&gt;)</code> matches resources visually similar to the given resource (resources only; needs a numeric ID). Add <code class="bg-stone-200 px-1 rounded">WITHIN &lt;0&ndash;11&gt;</code> to tighten the maximum distance (2 &approx; near-duplicates; default 10). <code class="bg-stone-200 px-1 rounded">ORDER BY distance ASC</code> sorts nearest first and requires exactly one <code class="bg-stone-200 px-1 rounded">SIMILAR TO</code>.</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND SIMILAR TO resource(42) ORDER BY distance ASC</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND SIMILAR TO resource(42) WITHIN 2 ORDER BY distance ASC LIMIT 20</pre>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Cross-Entity Queries</h3>
@@ -190,10 +216,23 @@
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">tags = "urgent" LIMIT 50</pre>
             </div>
             <div>
+                <h3 class="font-semibold text-stone-700">Scope to a Group Subtree</h3>
+                <p class="text-xs"><code class="bg-stone-200 px-1 rounded">SCOPE &lt;id&gt;</code> or <code class="bg-stone-200 px-1 rounded">SCOPE "name"</code> restricts results to a group and all of its descendants. It comes after the filter expression and before <code class="bg-stone-200 px-1 rounded">GROUP BY</code> / <code class="bg-stone-200 px-1 rounded">ORDER BY</code>.</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND tags = "photo" SCOPE 5</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = note SCOPE "Field Work" ORDER BY created DESC</pre>
+            </div>
+            <div>
                 <h3 class="font-semibold text-stone-700">ORDER BY / LIMIT / OFFSET</h3>
                 <p class="text-xs">Sort by scalar or <code class="bg-stone-200 px-1 rounded">meta.*</code> fields. Relation and traversal fields are not sortable. Multiple ORDER BY columns supported. In bucketed GROUP BY, ORDER BY applies within each bucket.</p>
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource ORDER BY created DESC LIMIT 20</pre>
                 <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = note ORDER BY updated ASC, name ASC LIMIT 50 OFFSET 100</pre>
+            </div>
+            <div>
+                <h3 class="font-semibold text-stone-700">Random &amp; Relevance Ordering</h3>
+                <p class="text-xs"><code class="bg-stone-200 px-1 rounded">ORDER BY RANDOM()</code> returns rows in random order &mdash; a random sample when paired with <code class="bg-stone-200 px-1 rounded">LIMIT</code>. It takes no direction and cannot be combined with GROUP BY.
+                <code class="bg-stone-200 px-1 rounded">ORDER BY RANK</code> sorts by full-text relevance (most relevant first); it requires exactly one <code class="bg-stone-200 px-1 rounded">TEXT ~</code> predicate, a single entity type, and no GROUP BY.</p>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = resource AND tags.count = 0 ORDER BY RANDOM() LIMIT 10</pre>
+                <pre class="bg-stone-100 p-2 rounded mt-1 overflow-x-auto">type = note AND TEXT ~ "invoice" ORDER BY RANK</pre>
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">GROUP BY</h3>
@@ -229,6 +268,9 @@
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = group AND resources.count >= 100 ORDER BY resources.count DESC</pre>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = note GROUP BY created.month COUNT() ORDER BY created.month ASC</pre>
                 <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">TEXT ~ "quarterly review" LIMIT 30</pre>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource AND SIMILAR TO resource(42) WITHIN 2 ORDER BY distance ASC</pre>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource AND created BETWEEN -30d AND NOW() ORDER BY RANDOM() LIMIT 10</pre>
+                <pre class="bg-stone-100 p-2 rounded overflow-x-auto mt-1">type = resource AND ancestors.name = "Archive" AND contentType ~ "image/*"</pre>
             </div>
         </div>
 

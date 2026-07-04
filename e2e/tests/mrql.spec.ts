@@ -193,18 +193,24 @@ test.describe('MRQL Docs Panel', () => {
     'Group Fields',
     'Operators',
     'Wildcards in',
+    'Regex Match',
     'Full-Text Search',
     'Existence Checks',
     'Set Membership',
+    'Ranges (BETWEEN)',
     'Boolean Logic',
     'Relative Dates',
     'Date Functions',
     'File Size Units',
     'String Escaping',
     'Traversal',
+    'Recursive Traversal',
     'Relation Counts',
+    'Perceptual Similarity',
     'Cross-Entity Queries',
+    'Scope to a Group Subtree',
     'ORDER BY / LIMIT / OFFSET',
+    'Random & Relevance Ordering',
     'GROUP BY',
     'Examples',
   ];
@@ -233,9 +239,10 @@ test.describe('MRQL Docs Panel', () => {
     // At least 20 pre blocks across all sections
     expect(preCount).toBeGreaterThanOrEqual(20);
 
-    // Spot-check a few example blocks
-    await expect(mrql.docsPanel.locator('pre', { hasText: 'contentType ~ "image/*"' })).toBeVisible();
-    await expect(mrql.docsPanel.locator('pre', { hasText: 'TEXT ~ "quarterly earnings"' })).toBeVisible();
+    // Spot-check a few example blocks (a pattern may appear in more than one
+    // section's example, so match the first).
+    await expect(mrql.docsPanel.locator('pre', { hasText: 'contentType ~ "image/*"' }).first()).toBeVisible();
+    await expect(mrql.docsPanel.locator('pre', { hasText: 'TEXT ~ "quarterly earnings"' }).first()).toBeVisible();
   });
 
   test('openDocs is idempotent', async ({ page }) => {

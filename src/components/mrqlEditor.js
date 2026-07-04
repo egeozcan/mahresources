@@ -127,7 +127,8 @@ export function mrqlEditor() {
       const mrqlKeywords = new Set([
         'AND', 'OR', 'NOT', 'IN', 'IS', 'EMPTY', 'NULL',
         'ORDER', 'BY', 'ASC', 'DESC', 'LIMIT', 'OFFSET',
-        'TEXT', 'TYPE',
+        'TEXT', 'TYPE', 'BETWEEN', 'GROUP', 'HAVING', 'SCOPE',
+        'SIMILAR', 'TO', 'WITHIN', 'RANDOM', 'RANK',
       ]);
 
       const mrqlLang = StreamLanguage.define({

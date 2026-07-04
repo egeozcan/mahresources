@@ -37,7 +37,8 @@ type DocExample struct {
 	Notes string `json:"notes,omitempty"`
 }
 
-// BuiltinDoc documents one built-in shortcode (meta, property, mrql, conditional).
+// BuiltinDoc documents one built-in shortcode (meta, property, mrql,
+// conditional, link, each, item, partial).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
 	Syntax      string          `json:"syntax"`
@@ -47,7 +48,7 @@ type BuiltinDoc struct {
 	Examples    []DocExample    `json:"examples"`
 }
 
-// BuiltinDocs returns machine-readable documentation for the seven built-in
+// BuiltinDocs returns machine-readable documentation for the eight built-in
 // shortcodes. It is the single source of truth for both the docs endpoint and
 // the linter's KnownShortcodes, so lint rules stay in sync with the docs.
 func BuiltinDocs() []BuiltinDoc {
@@ -105,11 +106,11 @@ func BuiltinDocs() []BuiltinDoc {
 				{Name: "param-", Type: "string", Wildcard: true, Description: "Binds an MRQL $name placeholder, e.g. param-tag=\"x\" fills $tag."},
 			},
 			Examples: []DocExample{
-				{Title: "Inline query", Code: `[mrql query="resources where tag = 'draft'" format="list"]`},
-				{Title: "Inline count value", Code: `[mrql query="resources" value="count"]`, Notes: "Counts returned rows, capped by limit. For a true total use an aggregated count() query or the {total} slot placeholder."},
+				{Title: "Inline query", Code: `[mrql query='type = resource AND tags = "draft"' format="list"]`},
+				{Title: "Inline count value", Code: `[mrql query='type = resource' value="count"]`, Notes: "Counts returned rows, capped by limit. For a true total use an aggregated count() query or the {total} slot placeholder."},
 				{Title: "Saved query with params", Code: `[mrql saved="recent" param-since="-7d"]`},
-				{Title: "Custom item template (block)", Code: "[mrql query=\"resources limit 3\"]\n  <div>[property path=\"Name\"]</div>\n[/mrql]"},
-				{Title: "Header / footer / empty slots", Code: "[mrql query=\"notes where tag = 'todo'\" link-all=\"true\"]\n  [header]<h4>TODO ({count} of {total})</h4>[/header]\n  <li>[property path=\"Name\"]</li>\n[else]\n  <p>Nothing to do 🎉</p>\n[/mrql]", Notes: "[header]/[footer] render once around results; [else] is the whole empty-state output. {count} = returned rows, {total} = true total (its presence triggers the count query)."},
+				{Title: "Custom item template (block)", Code: "[mrql query='type = resource LIMIT 3']\n  <div>[property path=\"Name\"]</div>\n[/mrql]"},
+				{Title: "Header / footer / empty slots", Code: "[mrql query='type = note AND tags = \"todo\"' link-all=\"true\"]\n  [header]<h4>TODO ({count} of {total})</h4>[/header]\n  <li>[property path=\"Name\"]</li>\n[else]\n  <p>Nothing to do 🎉</p>\n[/mrql]", Notes: "[header]/[footer] render once around results; [else] is the whole empty-state output. {count} = returned rows, {total} = true total (its presence triggers the count query)."},
 			},
 		},
 		{

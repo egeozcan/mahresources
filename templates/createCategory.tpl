@@ -59,6 +59,10 @@
                         <dd>Replaces the default initials avatar on group cards</dd>
                     </div>
                     <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom List Header</dt>
+                        <dd>Top of group list pages filtered to exactly this category, rendered against the category itself (<code class="bg-stone-100 px-1 rounded">[meta]</code> is empty, <code class="bg-stone-100 px-1 rounded">[mrql]</code> runs at global scope)</dd>
+                    </div>
+                    <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[7rem]">Custom MRQL Result</dt>
                         <dd>Server-rendered template in <code class="bg-stone-100 px-1 rounded">[mrql]</code> results; Alpine directives not available</dd>
                     </div>
@@ -66,36 +70,42 @@
             </div>
             <div>
                 <h3 class="font-semibold text-stone-700">Shortcodes</h3>
+                <p class="text-xs text-stone-400 mt-1">Type <code class="bg-stone-100 px-1 rounded">[</code> in any template editor for autocomplete; hover a shortcode for its full attribute list.</p>
                 <div class="mt-1 space-y-3 text-xs">
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[meta path="dotted.path"]</code>
                         &mdash; render a metadata field value inline. Schema-aware when a Meta JSON Schema is defined.
                         <br><span class="text-stone-400 ml-4">
                             <b class="text-stone-500">path</b> (required) dot-notation into Meta JSON
-                            &middot; <b class="text-stone-500">editable</b>=true show edit button
-                            &middot; <b class="text-stone-500">hide-empty</b>=true hide when absent
+                            &middot; <b class="text-stone-500">editable</b>="true" show edit button
+                            &middot; <b class="text-stone-500">hide-empty</b>="true" hide when absent
+                            &middot; <b class="text-stone-500">default</b>="text" fallback when the value is missing
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[meta path="status"]
-[meta path="contact.email" editable=true]
-[meta path="address.city" hide-empty=true]
+[meta path="contact.email" editable="true"]
+[meta path="address.city" hide-empty="true"]
+[meta path="review.score" default="Unrated"]
 &lt;div class="flex gap-4"&gt;
-  &lt;strong&gt;Rating:&lt;/strong&gt; [meta path="review.score" editable=true]
-  &lt;strong&gt;Notes:&lt;/strong&gt; [meta path="review.notes" hide-empty=true]
+  &lt;strong&gt;Rating:&lt;/strong&gt; [meta path="review.score" editable="true"]
+  &lt;strong&gt;Notes:&lt;/strong&gt; [meta path="review.notes" hide-empty="true"]
 &lt;/div&gt;</code></pre>
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[property path="FieldName"]</code>
                         &mdash; render a struct field of the group. Output is HTML-escaped by default.
                         <br><span class="text-stone-400 ml-4">
-                            <b class="text-stone-500">path</b> (required) field name
-                            &middot; <b class="text-stone-500">raw</b>=true skip HTML escaping
+                            <b class="text-stone-500">path</b> (required) field name or dot path (e.g. <span class="font-mono">Owner.Name</span>)
+                            &middot; <b class="text-stone-500">raw</b>="true" skip HTML escaping
+                            &middot; <b class="text-stone-500">format</b>="date|datetime|time|filesize"
+                            &middot; <b class="text-stone-500">layout</b>="Jan 2, 2006" custom time layout
+                            &middot; <b class="text-stone-500">default</b>="text" fallback when empty
                         </span>
                         <br><span class="text-stone-400 ml-4">
                             Fields: <span class="font-mono">ID, Name, Description, CreatedAt, UpdatedAt, URL, OwnerId, CategoryId, Meta</span>
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[property path="Name"]
-[property path="CreatedAt"]
-[property path="Description" raw=true]
+[property path="CreatedAt" format="date"]
+[property path="Description" raw="true"]
 &lt;a :href="'/group?id=' + entity.ID"&gt;[property path="Name"]&lt;/a&gt;</code></pre>
                     </div>
                     <div>
@@ -110,16 +120,53 @@
                             &middot; <b class="text-stone-500">buckets</b>=5 (for GROUP BY)
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[mrql query='type = resource AND tags = "photos"']
-[mrql query='type = note AND created > -7d' format=table limit=10]
-[mrql query='type = resource AND contentType ~ "image/*"' format=list limit=5]
-[mrql query='type = group AND category = 3 GROUP BY meta.status' buckets=10]
-[mrql saved="recent-uploads" format=compact]</code></pre>
+[mrql query='type = note AND created > -7d' format="table" limit="10"]
+[mrql query='type = resource AND contentType ~ "image/*"' format="list" limit="5"]
+[mrql query='type = group AND category = 3 GROUP BY meta.status' buckets="10"]
+[mrql saved="recent-uploads" format="compact"]</code></pre>
                         <p class="mt-1 text-stone-400">
                             <b class="text-stone-500">scope</b>=entity|parent|root|global
                             &mdash; filter to a group subtree. Default: <code class="bg-stone-100 px-1 rounded">entity</code> (current group).
                             An explicit <code class="bg-stone-100 px-1 rounded">SCOPE</code> clause in the query takes precedence.
                             Nests up to 10 levels deep inside Custom MRQL Result templates.
                         </p>
+                    </div>
+                    <div>
+                        <code class="bg-stone-100 px-1 rounded">[conditional path="..." eq="..."]…[/conditional]</code>
+                        &mdash; render the inner content only when a condition holds. Test a <b class="text-stone-500">path</b> (Meta), <b class="text-stone-500">field</b> (struct field), or <b class="text-stone-500">mrql</b> result count.
+                        <br><span class="text-stone-400 ml-4">
+                            Operators: <span class="font-mono">eq neq gt lt gte lte in contains matches empty not-empty</span>
+                            &middot; <b class="text-stone-500">combine</b>="all"|"any" (AND / OR)
+                            &middot; add <b class="text-stone-500">[elseif …]</b> / <b class="text-stone-500">[else]</b> branches
+                            &middot; numbered suffixes (<span class="font-mono">path2, eq2…</span>) add conditions
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[conditional path="rating" not-empty="true"]
+  Rated: [meta path="rating"]
+[/conditional]
+[conditional path="tier" eq="gold"]Gold[elseif path="tier" eq="silver"]Silver[else]Basic[/conditional]</code></pre>
+                    </div>
+                    <div>
+                        <code class="bg-stone-100 px-1 rounded">[each path="arrayPath"]…[item]…[/each]</code>
+                        &mdash; iterate an array in Meta, rendering the block once per element. Reference the element with <code class="bg-stone-100 px-1 rounded">[item]</code> (<code class="bg-stone-100 px-1 rounded">[item path="field"]</code> for objects, <code class="bg-stone-100 px-1 rounded">[item index="true"]</code> for its 1-based position). An optional <code class="bg-stone-100 px-1 rounded">[else]</code> branch renders when the array is empty.
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[each path="ingredients"]
+  &lt;li&gt;[item path="name"] &mdash; [item path="qty" default="?"]&lt;/li&gt;
+[else]
+  &lt;li&gt;No items&lt;/li&gt;
+[/each]</code></pre>
+                    </div>
+                    <div>
+                        <code class="bg-stone-100 px-1 rounded">[link to="self"]</code>
+                        &mdash; resolve a detail-page URL. Inline it renders just the URL; as a block it wraps its content in an anchor.
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">to</b>="self|owner|root|category"
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>&lt;a href="[link]" class="underline"&gt;[property path="Name"]&lt;/a&gt;
+[link to="owner"]Back to group[/link]</code></pre>
+                    </div>
+                    <div>
+                        <code class="bg-stone-100 px-1 rounded">[partial name="kebab-name"]</code>
+                        &mdash; expand a reusable Template Partial by name, rendered with the current entity so its own shortcodes resolve here. Manage these under Template Partials.
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[partial name="status-badge"]</code></pre>
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[plugin:name:shortcode attr="val"]</code>
