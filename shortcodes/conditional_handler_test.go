@@ -354,6 +354,166 @@ func TestConditionalMRQLSourceBucketed(t *testing.T) {
 	assert.Equal(t, "many groups", result)
 }
 
+// --- Phase 2: new operators ---
+
+func TestConditionalGte(t *testing.T) {
+	for _, score := range []float64{50, 75} {
+		sc := Shortcode{Name: "conditional", Attrs: map[string]string{"path": "score", "gte": "50"}, InnerContent: "ok", IsBlock: true}
+		ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"score": score})}
+		assert.Equal(t, "ok", RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0), "score=%v", score)
+	}
+	sc := Shortcode{Name: "conditional", Attrs: map[string]string{"path": "score", "gte": "50"}, InnerContent: "ok", IsBlock: true}
+	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"score": float64(49)})}
+	assert.Equal(t, "", RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0))
+}
+
+func TestConditionalLte(t *testing.T) {
+	for _, score := range []float64{10, 50} {
+		sc := Shortcode{Name: "conditional", Attrs: map[string]string{"path": "score", "lte": "50"}, InnerContent: "ok", IsBlock: true}
+		ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"score": score})}
+		assert.Equal(t, "ok", RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0), "score=%v", score)
+	}
+	sc := Shortcode{Name: "conditional", Attrs: map[string]string{"path": "score", "lte": "50"}, InnerContent: "ok", IsBlock: true}
+	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"score": float64(51)})}
+	assert.Equal(t, "", RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0))
+}
+
+func TestConditionalIn(t *testing.T) {
+	sc := Shortcode{Name: "conditional", Attrs: map[string]string{"path": "status", "in": "active, pending ,closed"}, InnerContent: "in", IsBlock: true}
+	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"status": "pending"})}
+	assert.Equal(t, "in", RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0))
+
+	ctx2 := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"status": "archived"})}
+	assert.Equal(t, "", RenderConditionalShortcode(context.Background(), sc, ctx2, nil, nil, 0))
+}
+
+func TestConditionalMatches(t *testing.T) {
+	sc := Shortcode{Name: "conditional", Attrs: map[string]string{"path": "sku", "matches": "^SKU-[0-9]+$"}, InnerContent: "valid", IsBlock: true}
+	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"sku": "SKU-42"})}
+	assert.Equal(t, "valid", RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0))
+
+	ctx2 := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"sku": "nope"})}
+	assert.Equal(t, "", RenderConditionalShortcode(context.Background(), sc, ctx2, nil, nil, 0))
+}
+
+func TestConditionalMatchesInvalidRegexIsFalse(t *testing.T) {
+	sc := Shortcode{Name: "conditional", Attrs: map[string]string{"path": "sku", "matches": "([unterminated"}, InnerContent: "valid", IsBlock: true}
+	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"sku": "anything"})}
+	// Invalid regex must evaluate to false, never an error box.
+	result := RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0)
+	assert.Equal(t, "", result)
+	assert.NotContains(t, result, "mrql-error")
+}
+
+// --- Phase 2: multi-operator AND / combine ---
+
+func TestConditionalMultiOperatorAND(t *testing.T) {
+	// Range: gte AND lte must both pass.
+	sc := Shortcode{Name: "conditional", Attrs: map[string]string{"path": "score", "gte": "1", "lte": "10"}, InnerContent: "in range", IsBlock: true}
+	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"score": float64(5)})}
+	assert.Equal(t, "in range", RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0))
+
+	ctx2 := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"score": float64(20)})}
+	assert.Equal(t, "", RenderConditionalShortcode(context.Background(), sc, ctx2, nil, nil, 0))
+}
+
+func TestConditionalCombineAny(t *testing.T) {
+	// combine=any: OR across present operators.
+	sc := Shortcode{Name: "conditional", Attrs: map[string]string{"path": "score", "lt": "1", "gt": "10", "combine": "any"}, InnerContent: "outside", IsBlock: true}
+	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"score": float64(20)})}
+	assert.Equal(t, "outside", RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0))
+
+	ctx2 := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"score": float64(5)})}
+	assert.Equal(t, "", RenderConditionalShortcode(context.Background(), sc, ctx2, nil, nil, 0))
+}
+
+// --- Phase 2: numbered-suffix multi-value conditions ---
+
+func TestConditionalMultiValueAND(t *testing.T) {
+	// Default combine=all: both path (status=active) and path2 (score>=5) must hold.
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"path": "status", "eq": "active", "path2": "score", "gte2": "5"},
+		InnerContent: "both",
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"status": "active", "score": float64(8)})}
+	assert.Equal(t, "both", RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0))
+
+	ctx2 := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"status": "active", "score": float64(2)})}
+	assert.Equal(t, "", RenderConditionalShortcode(context.Background(), sc, ctx2, nil, nil, 0))
+}
+
+func TestConditionalMultiValueOR(t *testing.T) {
+	// combine=any across conditions: either status=active OR score>=5.
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"path": "status", "eq": "active", "path2": "score", "gte2": "5", "combine": "any"},
+		InnerContent: "either",
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"status": "closed", "score": float64(8)})}
+	assert.Equal(t, "either", RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0))
+
+	ctx2 := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"status": "closed", "score": float64(2)})}
+	assert.Equal(t, "", RenderConditionalShortcode(context.Background(), sc, ctx2, nil, nil, 0))
+}
+
+// --- Phase 2: [elseif] chains ---
+
+func TestConditionalElseIfChain(t *testing.T) {
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"path": "tier", "eq": "gold"},
+		InnerContent: `G[elseif path="tier" eq="silver"]S[elseif path="tier" eq="bronze"]B[else]none`,
+		IsBlock:      true,
+	}
+	cases := map[string]string{"gold": "G", "silver": "S", "bronze": "B", "wood": "none"}
+	for tier, want := range cases {
+		ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"tier": tier})}
+		assert.Equal(t, want, RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0), "tier=%s", tier)
+	}
+}
+
+func TestConditionalElseIfFirstMatchWins(t *testing.T) {
+	// Both the if and an elseif would match; the if branch wins.
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"path": "n", "gt": "0"},
+		InnerContent: `positive[elseif path="n" gt="-100"]big[else]other`,
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"n": float64(5)})}
+	assert.Equal(t, "positive", RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0))
+}
+
+func TestConditionalElseIfNoMatchNoElse(t *testing.T) {
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"path": "tier", "eq": "gold"},
+		InnerContent: `G[elseif path="tier" eq="silver"]S`,
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"tier": "bronze"})}
+	assert.Equal(t, "", RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0))
+}
+
+func TestConditionalElseIfNestedBlockIgnored(t *testing.T) {
+	// An [elseif] inside a nested conditional block must not split the outer one.
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"path": "a", "eq": "1"},
+		InnerContent: `[conditional path="b" eq="2"]inner[elseif path="b" eq="3"]innerB[/conditional]OUT[else]elsebranch`,
+		IsBlock:      true,
+	}
+	// a=1 → if branch renders; nested conditional b=3 → its elseif renders "innerB", then "OUT".
+	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"a": "1", "b": "3"})}
+	assert.Equal(t, "innerBOUT", RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0))
+	// a=9 → else branch.
+	ctx2 := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"a": "9", "b": "3"})}
+	assert.Equal(t, "elsebranch", RenderConditionalShortcode(context.Background(), sc, ctx2, nil, nil, 0))
+}
+
 func TestConditionalMRQLSourcePriorityOverPath(t *testing.T) {
 	// executor returns 0 items → gt="0" fails (0 > 0 is false)
 	executor := mockExecutor(&QueryResult{Mode: "flat", Items: []QueryResultItem{}}, nil)

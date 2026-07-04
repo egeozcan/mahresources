@@ -30,15 +30,17 @@ func RenderMetaShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 
 	editable := sc.Attrs["editable"] == "true"
 	hideEmpty := sc.Attrs["hide-empty"] == "true"
+	defaultVal := sc.Attrs["default"]
 
 	valueJSON := extractValueAtPath(ctx.Meta, path)
 	schemaSlice := extractSchemaSlice(ctx.MetaSchema, path, ctx.Meta)
 
 	return fmt.Sprintf(
-		`<meta-shortcode data-path="%s" data-editable="%t" data-hide-empty="%t" data-entity-type="%s" data-entity-id="%d" data-schema="%s" data-value="%s"></meta-shortcode>`,
+		`<meta-shortcode data-path="%s" data-editable="%t" data-hide-empty="%t" data-default="%s" data-entity-type="%s" data-entity-id="%d" data-schema="%s" data-value="%s"></meta-shortcode>`,
 		html.EscapeString(path),
 		editable,
 		hideEmpty,
+		html.EscapeString(defaultVal),
 		html.EscapeString(ctx.EntityType),
 		ctx.EntityID,
 		html.EscapeString(schemaSlice),

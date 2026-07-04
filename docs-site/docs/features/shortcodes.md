@@ -15,7 +15,7 @@ Shortcodes are bracket-delimited expressions embedded in custom template fields 
 
 The parser recognizes these patterns:
 
-- **Built-in:** `[meta ...]`, `[property ...]`, `[mrql ...]`, `[conditional ...]...[/conditional]`
+- **Built-in:** `[meta ...]`, `[property ...]`, `[mrql ...]`, `[conditional ...]...[/conditional]`, `[link ...]`
 - **Plugin:** `[plugin:plugin-name:shortcode-name ...]`
 
 Attribute values can be double-quoted, single-quoted, or unquoted. When a key appears more than once, the last value wins.
@@ -47,6 +47,7 @@ Renders a metadata field from the entity's `meta` JSON, using the category's Met
 | `path` | Yes | -- | Dot-notation path into the entity's Meta JSON (e.g., `cooking.time`, `address.city`) |
 | `editable` | No | `false` | Shows a pencil edit button; clicking opens a schema-aware inline form |
 | `hide-empty` | No | `false` | Hides the shortcode entirely when the value is absent or null |
+| `default` | No | -- | Text rendered in place of the empty state when the value is missing. Ignored when `hide-empty` is set (hide wins) |
 
 ### How It Works
 
@@ -62,6 +63,7 @@ Renders a metadata field from the entity's `meta` JSON, using the category's Met
 [meta path="cooking.time"]
 [meta path="cooking.difficulty" editable=true]
 [meta path="address.city" hide-empty=true]
+[meta path="rating" default="Unrated"]
 ```
 
 Mixed with HTML:
@@ -81,23 +83,45 @@ Renders a struct field value from the entity object itself (not metadata). Uses 
 
 | Attribute | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `path` | Yes | -- | The struct field name on the entity (e.g., `Name`, `Description`, `CreatedAt`) |
+| `path` | Yes | -- | Field name or dot path on the entity (e.g., `Name`, `Owner.Name`, `Tags.0.Name`) |
 | `raw` | No | `false` | Skip HTML escaping; output the value verbatim |
+| `default` | No | -- | Text rendered when the resolved value is empty |
+| `format` | No | -- | Post-processes the value: `date`, `datetime`, `time` (time fields), or `filesize` (integer byte counts) |
+| `layout` | No | -- | Custom Go time layout for time fields (e.g., `Jan 2, 2006`); wins over `format` |
 
 ### How It Works
 
 - Accesses the field using Go reflection on the entity struct
 - Output is HTML-escaped by default for safety
-- `time.Time` values are formatted as RFC3339
+- `time.Time` values are formatted as RFC3339 unless `format`/`layout` is set
 - `json.RawMessage` values are returned as-is
 - Slices are joined with ", "
 - Other types fall back to JSON encoding
+
+### Dot-path Traversal
+
+`path` may traverse into related structs and slices with dot notation:
+
+- `Owner.Name` follows a related struct one hop.
+- `Tags.0.Name` indexes into a slice (a purely numeric segment); an out-of-range index renders empty.
+- A `nil` pointer, missing field, or out-of-range index anywhere along the path renders empty (or the `default`).
+
+The shortcode never triggers database loads by design (list pages render many cards). Related structs resolve only where the page already preloaded them — detail pages preload `Owner`; card contexts may not. When a related struct is not loaded, the path renders empty.
+
+### Formatting
+
+- `format="date"` → `2006-01-02`, `format="datetime"` → `2006-01-02 15:04`, `format="time"` → `15:04` for `time.Time` fields; non-time values pass through unchanged.
+- `layout="..."` applies a custom Go time layout and takes precedence over `format`.
+- `format="filesize"` humanizes integer byte counts (e.g. `1.5 KB`).
+- Unknown `format` values pass the text through unchanged (never an error).
 
 ### Examples
 
 ```
 [property path="Name"]
-[property path="CreatedAt"]
+[property path="CreatedAt" format="date"]
+[property path="Owner.Name" default="Unassigned"]
+[property path="FileSize" format="filesize"]
 [property path="Description" raw=true]
 ```
 
@@ -197,7 +221,8 @@ Each result entity gets its own shortcode context (entity type, ID, meta, and th
 | `[property path="..."]` | Reads a struct field off the current item (`Name`, `Description`, `ContentType`, `CreatedAt`, ...) |
 | `[meta path="..."]` | Reads the current item's meta JSON, rendered schema-aware using that item's own category MetaSchema |
 | `[meta path="..." editable=true]` | Edits target the current item; the pencil writes back to that specific entity |
-| `[conditional ...]...[/conditional]` | Branches on the current item's meta, fields, or a nested query, including `[else]` |
+| `[conditional ...]...[/conditional]` | Branches on the current item's meta, fields, or a nested query, including `[elseif ...]` and `[else]` |
+| `[link to="..."]` | Resolves a detail-page URL for the current item (`self`, `owner`, `root`, `category`) |
 | `[mrql ...]` | A nested query; `scope` keywords resolve relative to the current item (see [Nested queries and scope](#nested-queries-and-scope)) |
 | `[plugin:name:shortcode ...]` | Plugin shortcodes receive the current item context |
 
@@ -338,11 +363,36 @@ Conditionally renders content based on a metadata value, entity field, or query 
 | `neq` | No | -- | True when value does not equal this string |
 | `gt` | No | -- | True when numeric value is greater than this |
 | `lt` | No | -- | True when numeric value is less than this |
+| `gte` | No | -- | True when numeric value is greater than or equal to this |
+| `lte` | No | -- | True when numeric value is less than or equal to this |
+| `in` | No | -- | True when value equals one of a comma-separated list (e.g. `in="a,b,c"`) |
 | `contains` | No | -- | True when value contains this substring |
+| `matches` | No | -- | True when value matches this Go regular expression. An invalid pattern evaluates to false |
 | `empty` | No | -- | True when value is nil or empty string |
 | `not-empty` | No | -- | True when value is non-nil and non-empty |
+| `combine` | No | `all` | How to fold multiple operators and numbered-suffix conditions: `all` (AND) or `any` (OR) |
 
 *One of `path`, `field`, or `mrql` is required as the condition source.
+
+### Multiple Operators and Conditions
+
+When more than one operator is present on the same tag, **every operator must pass** (AND). This makes natural ranges easy:
+
+```
+[conditional path="score" gte="1" lte="10"]In range[/conditional]
+```
+
+Set `combine="any"` to OR across the present operators instead.
+
+For conditions on *different* values, add numbered-suffix sources and operators (`path2`, `field2`, `mrql2`, `eq2`, `gte2`, …). Each numbered group is an additional condition, folded with the same `combine` mode (default AND). The loop stops at the first suffix with no source:
+
+```
+[conditional path="status" eq="active" path2="score" gte2="5"]
+  Active and scoring
+[/conditional]
+```
+
+Nesting `[conditional]` blocks remains the readable way to AND several conditions; the numbered suffixes mainly exist to make OR across values expressible.
 
 ### Condition Sources
 
@@ -352,7 +402,7 @@ Conditionally renders content based on a metadata value, entity field, or query 
 
 **MRQL**: runs a query and extracts a scalar value. For flat results, the value is the item count. For aggregated results, use the `aggregate` attribute to name the column. For bucketed results, the value is the number of groups.
 
-### Else Branch
+### Else and Elseif Branches
 
 Use `[else]` inside the block to define a fallback when the condition is false:
 
@@ -363,6 +413,22 @@ Use `[else]` inside the block to define a fallback when the condition is false:
   <span class="text-stone-400">Inactive</span>
 [/conditional]
 ```
+
+Use `[elseif ...]` dividers to chain additional conditions. Each `[elseif]` carries its own condition attributes (the same set as the opening tag). The first matching branch renders; `[else]` matches unconditionally:
+
+```
+[conditional path="tier" eq="gold"]
+  Gold
+[elseif path="tier" eq="silver"]
+  Silver
+[elseif path="tier" eq="bronze"]
+  Bronze
+[else]
+  Basic
+[/conditional]
+```
+
+`[elseif]` and `[else]` dividers nested inside an inner `[conditional]` block belong to that inner block, not the outer one.
 
 ### Nesting
 
@@ -394,6 +460,47 @@ Conditional blocks can be nested, and can contain any other shortcode:
 [conditional path="notes" not-empty="true"]
   <p>This item has notes attached.</p>
 [/conditional]
+```
+
+## `[link]` -- Detail-page URLs
+
+Resolves a detail-page URL for the current entity or a related target.
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `to` | No | `self` | Link target: `self`, `owner`, `root`, or `category` |
+
+### Targets
+
+- `self` (default) — the current entity's detail page (`/group?id=`, `/resource?id=`, `/note?id=` by entity type).
+- `owner` — the owning group (`/group?id=`). For resources and notes this is their group; for groups it is the parent group.
+- `root` — the root of the ownership chain (`/group?id=`).
+- `category` — the entity's category/type page (`/category?id=`, `/resourceCategory?id=`, `/noteType?id=`).
+
+### Inline vs Block
+
+- **Inline** (`[link to="..."]`) renders just the URL, HTML-escaped, so you can write it inside an `href`:
+
+  ```html
+  <a href="[link]" class="underline">Open</a>
+  ```
+
+- **Block** (`[link to="..."]inner[/link]`) renders a full anchor around its processed inner content:
+
+  ```
+  [link to="owner"]Back to group[/link]
+  ```
+
+When the target cannot be resolved (unknown `to`, an unset category, or an owner/root that is not resolvable), the inline form renders nothing and the block form renders its inner content without a wrapping anchor — never a link to a placeholder ID.
+
+### Examples
+
+```
+<a href="[link]" class="btn">This page</a>
+[link to="owner"]Back to group[/link]
+[link to="category"]View type[/link]
 ```
 
 ## Plugin Shortcodes

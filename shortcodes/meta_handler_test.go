@@ -57,6 +57,41 @@ func TestRenderMetaEditable(t *testing.T) {
 	assert.Contains(t, result, `data-value="&#34;test&#34;"`)
 }
 
+func TestRenderMetaDefaultAttr(t *testing.T) {
+	ctx := MetaShortcodeContext{
+		EntityType: "group",
+		EntityID:   1,
+		Meta:       []byte(`{}`),
+		MetaSchema: "",
+	}
+
+	result := RenderMetaShortcode(Shortcode{
+		Name:  "meta",
+		Attrs: map[string]string{"path": "missing", "default": "n/a"},
+	}, ctx)
+
+	assert.Contains(t, result, `data-default="n/a"`)
+}
+
+func TestRenderMetaDefaultAttrOmittedWhenUnset(t *testing.T) {
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1, Meta: []byte(`{}`)}
+	result := RenderMetaShortcode(Shortcode{
+		Name:  "meta",
+		Attrs: map[string]string{"path": "x"},
+	}, ctx)
+	assert.Contains(t, result, `data-default=""`)
+}
+
+func TestRenderMetaDefaultAttrEscaped(t *testing.T) {
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1, Meta: []byte(`{}`)}
+	result := RenderMetaShortcode(Shortcode{
+		Name:  "meta",
+		Attrs: map[string]string{"path": "x", "default": `<b>"y"</b>`},
+	}, ctx)
+	assert.NotContains(t, result, "<b>")
+	assert.Contains(t, result, "&lt;b&gt;")
+}
+
 func TestRenderMetaMissingPath(t *testing.T) {
 	ctx := MetaShortcodeContext{
 		EntityType: "group",
