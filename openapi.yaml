@@ -2309,6 +2309,31 @@ paths:
             summary: Edit a category's name
             tags:
                 - categories
+    /v1/category/previewTemplate:
+        post:
+            description: |-
+                Renders a Custom* template slot against a real entity without saving, for a
+                live preview in the editor.
+
+                Request body fields:
+                  - entityId   (integer, required) — the entity to render against
+                  - content    (string) — the template slot markup to render
+                  - css        (string) — CustomCSS to process alongside
+                  - categoryId (integer) — the category being edited (for a mismatch warning)
+
+                Response: {"html", "css", "issues": [...lint issues...]}. Executes MRQL and
+                plugin shortcodes, so it is gated at the same capability as saving the template
+                (admin for category/resourceCategory, editor for noteType). [mrql] result limits
+                are capped for responsiveness.
+            operationId: previewCategoryTemplate
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Preview a custom template slot
+            tags:
+                - shortcodes
     /v1/download/cancel:
         post:
             description: Cancels a pending or in-progress download job.
@@ -4242,6 +4267,31 @@ paths:
             summary: Edit a note type's name
             tags:
                 - notes
+    /v1/noteType/previewTemplate:
+        post:
+            description: |-
+                Renders a Custom* template slot against a real entity without saving, for a
+                live preview in the editor.
+
+                Request body fields:
+                  - entityId   (integer, required) — the entity to render against
+                  - content    (string) — the template slot markup to render
+                  - css        (string) — CustomCSS to process alongside
+                  - categoryId (integer) — the category being edited (for a mismatch warning)
+
+                Response: {"html", "css", "issues": [...lint issues...]}. Executes MRQL and
+                plugin shortcodes, so it is gated at the same capability as saving the template
+                (admin for category/resourceCategory, editor for noteType). [mrql] result limits
+                are capped for responsiveness.
+            operationId: previewNoteTypeTemplate
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Preview a custom template slot
+            tags:
+                - shortcodes
     /v1/notes:
         get:
             description: Get all notes, paginated, with optional filters.
@@ -5897,6 +5947,31 @@ paths:
             summary: Edit a resource category's name
             tags:
                 - resourceCategories
+    /v1/resourceCategory/previewTemplate:
+        post:
+            description: |-
+                Renders a Custom* template slot against a real entity without saving, for a
+                live preview in the editor.
+
+                Request body fields:
+                  - entityId   (integer, required) — the entity to render against
+                  - content    (string) — the template slot markup to render
+                  - css        (string) — CustomCSS to process alongside
+                  - categoryId (integer) — the category being edited (for a mismatch warning)
+
+                Response: {"html", "css", "issues": [...lint issues...]}. Executes MRQL and
+                plugin shortcodes, so it is gated at the same capability as saving the template
+                (admin for category/resourceCategory, editor for noteType). [mrql] result limits
+                are capped for responsiveness.
+            operationId: previewResourceCategoryTemplate
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Preview a custom template slot
+            tags:
+                - shortcodes
     /v1/resources:
         get:
             operationId: listResources
@@ -6652,6 +6727,46 @@ paths:
             summary: List series
             tags:
                 - series
+    /v1/shortcodes/docs:
+        get:
+            description: |-
+                Returns a machine-readable catalogue of the four built-in shortcodes
+                (meta, property, mrql, conditional) plus every shortcode registered by an
+                enabled plugin. Powers editor lint, autocomplete, and hover docs.
+
+                Each item: {name, syntax, description, isBlock ("no"|"optional"|"required"),
+                source ("builtin"|"plugin"), attrs: [{name, type, required, default, description,
+                enum, wildcard}], examples: [{title, code, notes}]}.
+            operationId: listShortcodeDocs
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: List shortcode documentation
+            tags:
+                - shortcodes
+    /v1/shortcodes/lint:
+        post:
+            description: |-
+                Parses shortcode markup and returns diagnostics without executing any
+                shortcode, plugin code, or database query (only the MRQL parser runs, to
+                syntax-check query attributes).
+
+                Request body fields:
+                  - content (string) — the template text to lint
+
+                Response: {"issues": [{"start", "end", "severity" ("error"|"warning"|"info"),
+                "message"}]}. Offsets are byte positions into content.
+            operationId: lintShortcodes
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Lint shortcode markup
+            tags:
+                - shortcodes
     /v1/tag:
         post:
             operationId: createOrUpdateTag
@@ -7127,6 +7242,8 @@ tags:
       name: search
     - description: Operations related to series
       name: series
+    - description: Operations related to shortcodes
+      name: shortcodes
     - description: Operations related to tags
       name: tags
     - description: Operations related to timeline

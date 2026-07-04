@@ -1901,6 +1901,75 @@ The endpoint does not execute MRQL. The server sends the prompt and syntax-only 
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
+
+	// Shortcode editor tooling
+	shortcodesTag := []string{"shortcodes"}
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/shortcodes/docs",
+		OperationID: "listShortcodeDocs",
+		Summary:     "List shortcode documentation",
+		Description: `Returns a machine-readable catalogue of the four built-in shortcodes
+(meta, property, mrql, conditional) plus every shortcode registered by an
+enabled plugin. Powers editor lint, autocomplete, and hover docs.
+
+Each item: {name, syntax, description, isBlock ("no"|"optional"|"required"),
+source ("builtin"|"plugin"), attrs: [{name, type, required, default, description,
+enum, wildcard}], examples: [{title, code, notes}]}.`,
+		Tags:                 shortcodesTag,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/shortcodes/lint",
+		OperationID: "lintShortcodes",
+		Summary:     "Lint shortcode markup",
+		Description: `Parses shortcode markup and returns diagnostics without executing any
+shortcode, plugin code, or database query (only the MRQL parser runs, to
+syntax-check query attributes).
+
+Request body fields:
+  - content (string) — the template text to lint
+
+Response: {"issues": [{"start", "end", "severity" ("error"|"warning"|"info"),
+"message"}]}. Offsets are byte positions into content.`,
+		Tags:                 shortcodesTag,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	previewDescription := `Renders a Custom* template slot against a real entity without saving, for a
+live preview in the editor.
+
+Request body fields:
+  - entityId   (integer, required) — the entity to render against
+  - content    (string) — the template slot markup to render
+  - css        (string) — CustomCSS to process alongside
+  - categoryId (integer) — the category being edited (for a mismatch warning)
+
+Response: {"html", "css", "issues": [...lint issues...]}. Executes MRQL and
+plugin shortcodes, so it is gated at the same capability as saving the template
+(admin for category/resourceCategory, editor for noteType). [mrql] result limits
+are capped for responsiveness.`
+
+	for _, p := range []struct{ path, op, carrier string }{
+		{"/v1/category/previewTemplate", "previewCategoryTemplate", "group"},
+		{"/v1/resourceCategory/previewTemplate", "previewResourceCategoryTemplate", "resource"},
+		{"/v1/noteType/previewTemplate", "previewNoteTypeTemplate", "note"},
+	} {
+		r.Register(openapi.RouteInfo{
+			Method:               http.MethodPost,
+			Path:                 p.path,
+			OperationID:          p.op,
+			Summary:              "Preview a custom template slot",
+			Description:          previewDescription,
+			Tags:                 shortcodesTag,
+			RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+			ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		})
+	}
 }
 
 func registerLogRoutes(r *openapi.Registry) {

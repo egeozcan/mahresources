@@ -1,4 +1,4 @@
-export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {}) {
+export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortcodes = false } = {}) {
   return {
     view: null,
     langCompartment: null,
@@ -7,6 +7,7 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {})
 
     async init() {
       this.mode = mode;
+      this.shortcodes = shortcodes;
       const hiddenInput = this.$refs.hiddenInput;
       const container = this.$refs.editorContainer;
       const initialValue = hiddenInput.value || '';
@@ -27,6 +28,38 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {})
         import('@codemirror/language'),
         import('@codemirror/autocomplete'),
       ]);
+
+      // Shortcode editor tooling (lint + autocomplete + hover) — loaded only for
+      // template slots that carry shortcodes, so plain SQL/JSON editors stay lean.
+      // Built here (after the core import) because it needs EditorState.
+      let shortcodeExtensions = [];
+      let shortcodeMod = null;
+      if (shortcodes) {
+        try {
+          const [lintMod, completionMod] = await Promise.all([
+            import('./shortcodeLint.js'),
+            import('./shortcodeCompletion.js'),
+          ]);
+          shortcodeMod = lintMod;
+          // Meta-path autocomplete reads the MetaSchema being edited in the same form.
+          const form = container.closest('form');
+          const schemaProvider = () => {
+            const el = form && form.querySelector('input[name="MetaSchema"]');
+            return el ? el.value : '';
+          };
+          shortcodeExtensions = [
+            ...lintMod.shortcodeLintExtensions(),
+            // Override completion with a combined source: shortcode completions
+            // inside [ ... ] brackets, delegating to the html/css source elsewhere.
+            autocompletion({ override: [completionMod.shortcodeOverrideSource(mode, schemaProvider)] }),
+            completionMod.shortcodeAutoTrigger(),
+            completionMod.shortcodeHoverTooltip(),
+          ];
+        } catch (e) {
+          console.error('shortcode editor tooling failed to load', e);
+          shortcodeExtensions = [];
+        }
+      }
 
       this.langCompartment = new Compartment();
 
@@ -49,9 +82,19 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {})
           indentWithTab,
         ]),
         this.langCompartment.of([]),
+        ...shortcodeExtensions,
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             hiddenInput.value = update.state.doc.toString();
+            // Notify a live preview pane (if present) that this slot changed.
+            if (shortcodes) {
+              container.dispatchEvent(
+                new CustomEvent('template-slot-changed', {
+                  bubbles: true,
+                  detail: { name: fieldName, value: hiddenInput.value },
+                }),
+              );
+            }
           }
         }),
         EditorView.contentAttributes.of({
@@ -75,6 +118,11 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '' } = {})
 
       // Expose the view on the container for test automation
       container._cmView = this.view;
+
+      // Soft-warn on submit when a shortcode template holds error diagnostics.
+      if (shortcodes && shortcodeMod) {
+        shortcodeMod.installSubmitGuard(container.closest('form'), this.view);
+      }
 
       // Load language extension asynchronously
       if (mode === 'sql') {

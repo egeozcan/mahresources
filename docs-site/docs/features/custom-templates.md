@@ -512,6 +512,39 @@ Example MetaSchema:
 }
 ```
 
+## Editor authoring tools
+
+The Category, Resource Category, and Note Type edit forms provide a feedback loop for authoring the `Custom*` template slots (including `CustomCSS`, which supports shortcodes). These tools apply only to the template slots -- the Meta JSON Schema editor is unaffected.
+
+### Live preview
+
+Below the template fields, a **Live preview** pane renders a selected slot against a real entity without saving:
+
+- Pick the entity to render against (defaults to the most recent one; the choice is remembered per entity type in the browser).
+- Choose which slot to preview from the dropdown.
+- The result renders in a sandboxed `<iframe>` that includes the app's CSS and JS bundle, so `[meta]` web components and Alpine widgets hydrate. The sandbox is origin-isolated, so widgets that need API calls are non-functional in preview -- a note in the pane states this.
+- Edits refresh the preview automatically (debounced).
+
+Preview executes MRQL and plugin shortcodes, so it is gated at the same permission level as saving the template: **admin** for Category and Resource Category, **editor** for Note Type. To keep it responsive on large deployments, `[mrql]` result limits are capped during preview.
+
+### Linting
+
+The template editors underline problems as you type -- unclosed `[conditional]` blocks, closing tags on inline shortcodes, unknown attributes, missing required attributes, `[mrql]` without a `query`/`saved`, invalid MRQL syntax inside a `query`/`mrql` attribute, and likely shortcode typos. Diagnostics are colored by severity (error, warning, info). Linting never blocks saving: if a slot still has errors when you submit, a confirmation asks whether to save anyway. This preserves the trust model, which allows arbitrary HTML and must tolerate false positives.
+
+### Autocomplete and hover docs
+
+Inside a `[` bracket the editor suggests shortcode names, then attribute names, then values for closed enums (`scope`, `format`, boolean flags). For `[meta]`/`[conditional]` `path=` values, suggestions are drawn from the Meta JSON Schema you are editing in the same form. Hovering a shortcode name shows a documentation card. HTML tag and CSS property completion outside of brackets is unaffected.
+
+### Supporting endpoints
+
+These editor tools are backed by three API endpoints:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /v1/shortcodes/docs` | Machine-readable catalogue of the four built-in shortcodes plus enabled plugin shortcodes. Powers lint and autocomplete. |
+| `POST /v1/shortcodes/lint` | Pure-parse linting of shortcode markup (no shortcode/plugin execution; only the MRQL parser runs). |
+| `POST /v1/{category\|resourceCategory\|noteType}/previewTemplate` | Renders a slot against an entity. Gated like the corresponding template save. |
+
 ## Related Pages
 
 - [Meta Schemas](./meta-schemas.md) -- JSON Schema validation for entity metadata

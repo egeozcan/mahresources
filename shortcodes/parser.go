@@ -82,10 +82,11 @@ type token struct {
 	matched bool
 }
 
-// ParseWithBlocks scans input for shortcode patterns and returns all top-level
-// matches, including block shortcodes ([name]...[/name]). Nested shortcodes
-// inside a block's InnerContent are left as raw text — they are not returned.
-func ParseWithBlocks(input string) []Shortcode {
+// matchTokens scans input for opening and closing shortcode tags, sorts them by
+// position, and pairs them inside-out (setting token.matched on both sides of a
+// pair). It is the shared front-end for ParseWithBlocks (which builds a shortcode
+// tree from the result) and Lint (which reports unmatched/misused tokens).
+func matchTokens(input string) []token {
 	var tokens []token
 
 	for _, m := range shortcodePattern.FindAllStringSubmatchIndex(input, -1) {
@@ -130,7 +131,7 @@ func ParseWithBlocks(input string) []Shortcode {
 		return false
 	})
 
-	// Phase 2: match pairs inside-out.
+	// Match pairs inside-out.
 	for i := range tokens {
 		if !tokens[i].closing {
 			continue
@@ -147,7 +148,19 @@ func ParseWithBlocks(input string) []Shortcode {
 		}
 	}
 
-	// Phase 3: build top-level results.
+	return tokens
+}
+
+// ParseWithBlocks scans input for shortcode patterns and returns all top-level
+// matches, including block shortcodes ([name]...[/name]). Nested shortcodes
+// inside a block's InnerContent are left as raw text — they are not returned.
+func ParseWithBlocks(input string) []Shortcode {
+	tokens := matchTokens(input)
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	// Build top-level results.
 	var result []Shortcode
 	skipUntil := -1
 

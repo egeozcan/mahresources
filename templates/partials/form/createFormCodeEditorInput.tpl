@@ -5,7 +5,7 @@
         {% if description %}<p class="text-xs text-stone-500 mt-0.5 font-sans font-normal">{{ description }}</p>{% endif %}
     </label>
     <div class="mt-1 sm:mt-0 sm:col-span-2"
-         x-data="codeEditor({ mode: '{{ mode }}', dbType: '{{ dbType }}', label: '{{ title }}' })">
+         x-data="codeEditor({ mode: '{{ mode }}', dbType: '{{ dbType }}', label: '{{ title }}', shortcodes: {% if shortcodes %}true{% else %}false{% endif %} })">
         <input type="hidden" id="{{ field_id }}" name="{{ name }}" x-ref="hiddenInput" value="{{ value }}">
         {% if mode == "json" or mode == "html" %}
         <div class="flex items-center justify-end mb-1">
