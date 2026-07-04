@@ -40,6 +40,11 @@ var templates = map[string]templateInformation{
 	"/noteType":      {template_context_providers.NoteTypeContextProvider, "displayNoteType.tpl", http.MethodGet},
 	"/noteType/edit": {template_context_providers.NoteTypeCreateContextProvider, "createNoteType.tpl", http.MethodGet},
 
+	"/templatePartial/new":  {template_context_providers.TemplatePartialCreateContextProvider, "createTemplatePartial.tpl", http.MethodGet},
+	"/templatePartials":     {template_context_providers.TemplatePartialListContextProvider, "listTemplatePartials.tpl", http.MethodGet},
+	"/templatePartial":      {template_context_providers.TemplatePartialContextProvider, "displayTemplatePartial.tpl", http.MethodGet},
+	"/templatePartial/edit": {template_context_providers.TemplatePartialCreateContextProvider, "createTemplatePartial.tpl", http.MethodGet},
+
 	"/resource/new":      {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
 	"/resources":         {template_context_providers.ResourceListContextProvider, "listResources.tpl", http.MethodGet},
 	"/resources/details": {template_context_providers.ResourceListContextProvider, "listResourcesDetails.tpl", http.MethodGet},
@@ -235,6 +240,7 @@ func resolveEntityScope(appCtx *application_context.MahresourcesContext, entityT
 // Only called for JSON responses — HTML responses use the process_shortcodes template tag.
 func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManager, appCtx *application_context.MahresourcesContext, reqCtx context.Context) {
 	reqCtx = plugin_system.WithMRQLCache(reqCtx)
+	reqCtx = shortcodes.WithPartialResolver(reqCtx, template_filters.BuildPartialResolver(appCtx))
 	mainEntity := ctx["mainEntity"]
 	entityType, _ := ctx["mainEntityType"].(string)
 	if mainEntity == nil || entityType == "" {
@@ -572,6 +578,18 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/delete").HandlerFunc(api_handlers.GetRemoveResourceCategoryHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.ResourceCategory](basicResourceCategoryWriter, "resourceCategory"))
 	router.Methods(http.MethodPost).Path("/v1/resourceCategory/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.ResourceCategory](basicResourceCategoryWriter, "resourceCategory"))
+
+	// Template Partial routes (admin-only writes via isTaxonomyPath; reads open)
+	basicTemplatePartialWriter := application_context.NewEntityWriter[models.TemplatePartial](appContext)
+	router.Methods(http.MethodGet).Path("/v1/templatePartials").HandlerFunc(api_handlers.GetTemplatePartialsHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/templatePartial").HandlerFunc(api_handlers.GetAddTemplatePartialHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/templatePartial/edit").HandlerFunc(api_handlers.GetAddTemplatePartialHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/templatePartial/delete").HandlerFunc(api_handlers.GetRemoveTemplatePartialHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/templatePartial/editName").HandlerFunc(api_handlers.GetEditEntityNameHandler[models.TemplatePartial](basicTemplatePartialWriter, "templatePartial"))
+	router.Methods(http.MethodPost).Path("/v1/templatePartial/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.TemplatePartial](basicTemplatePartialWriter, "templatePartial"))
+
+	// Starter template presets (static embedded bundles; read-only, open)
+	router.Methods(http.MethodGet).Path("/v1/templatePresets").HandlerFunc(api_handlers.GetTemplatePresetsHandler())
 
 	// Query routes using factory
 	queryReader, queryWriter := appContext.QueryCRUD()

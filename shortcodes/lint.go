@@ -45,10 +45,14 @@ type LintOptions struct {
 	// ValidateMRQL, when non-nil, validates the query/mrql attribute values and
 	// its error is surfaced as a lint issue. nil skips MRQL syntax checks.
 	ValidateMRQL func(query string) error
+	// PartialName, when non-empty, is the name of the partial whose content is
+	// being linted. A [partial name="<PartialName>"] reference inside it is a
+	// direct self-reference and is flagged as a warning.
+	PartialName string
 }
 
-// KnownFromBuiltins builds a KnownShortcodes catalogue seeded with the four
-// built-in shortcodes. Callers add plugin shortcodes on top. Keeping this
+// KnownFromBuiltins builds a KnownShortcodes catalogue seeded with the built-in
+// shortcodes. Callers add plugin shortcodes on top. Keeping this
 // derived from BuiltinDocs keeps lint in sync with the docs endpoint.
 func KnownFromBuiltins() KnownShortcodes {
 	k := make(KnownShortcodes)
@@ -69,7 +73,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "property", "mrql", "conditional", "link"}
+var builtinBaseNames = []string{"meta", "property", "mrql", "conditional", "link", "each", "item"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -96,6 +100,10 @@ func Lint(input string, opts LintOptions) []LintIssue {
 	// Inner content per conditional block (opener.start -> inner text), for
 	// counting [else] dividers.
 	condInner := conditionalInnerRanges(input, tokens)
+
+	// Inner byte spans of every [each] block, so [item] outside any [each] can
+	// be flagged.
+	eachSpans := eachInnerSpans(tokens)
 
 	// --- Structural checks over the token stream ---
 	for _, tk := range tokens {
@@ -160,6 +168,16 @@ func Lint(input string, opts LintOptions) []LintIssue {
 
 		// Name-specific semantic checks.
 		switch tk.name {
+		case "item":
+			if !insideSpans(tk.start, eachSpans) {
+				add(tk.start, tk.end, SeverityWarning,
+					"[item] is only meaningful inside an [each] block")
+			}
+		case "partial":
+			if opts.PartialName != "" && tk.attrs["name"] == opts.PartialName {
+				add(tk.start, tk.end, SeverityWarning,
+					"[partial] references itself; this recursion stops at the depth limit")
+			}
 		case "meta":
 			if strings.TrimSpace(tk.attrs["default"]) != "" && tk.attrs["hide-empty"] == "true" {
 				add(tk.start, tk.end, SeverityWarning,
@@ -403,6 +421,30 @@ func conditionalInnerRanges(input string, tokens []token) map[int]string {
 		}
 	}
 	return result
+}
+
+// eachInnerSpans returns the inner-content byte ranges [openerEnd, closerStart)
+// of every [each] block, pairing openers with closers by depth over the token
+// stream. Used to detect [item] tokens sitting outside any [each].
+func eachInnerSpans(tokens []token) [][2]int {
+	var spans [][2]int
+	var stack []int
+	for i := range tokens {
+		if tokens[i].name != "each" {
+			continue
+		}
+		if !tokens[i].closing {
+			stack = append(stack, i)
+			continue
+		}
+		if len(stack) == 0 {
+			continue
+		}
+		openIdx := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		spans = append(spans, [2]int{tokens[openIdx].end, tokens[i].start})
+	}
+	return spans
 }
 
 // countTopLevelElse counts [else] dividers in content that are not nested

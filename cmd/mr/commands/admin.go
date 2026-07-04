@@ -52,6 +52,7 @@ type adminEntityCountsResponse struct {
 	ResourceCategories int64 `json:"resourceCategories"`
 	NoteTypes          int64 `json:"noteTypes"`
 	Queries            int64 `json:"queries"`
+	TemplatePartials   int64 `json:"templatePartials"`
 	Relations          int64 `json:"relations"`
 	RelationTypes      int64 `json:"relationTypes"`
 	LogEntries         int64 `json:"logEntries"`

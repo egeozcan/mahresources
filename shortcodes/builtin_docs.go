@@ -47,7 +47,7 @@ type BuiltinDoc struct {
 	Examples    []DocExample    `json:"examples"`
 }
 
-// BuiltinDocs returns machine-readable documentation for the five built-in
+// BuiltinDocs returns machine-readable documentation for the seven built-in
 // shortcodes. It is the single source of truth for both the docs endpoint and
 // the linter's KnownShortcodes, so lint rules stay in sync with the docs.
 func BuiltinDocs() []BuiltinDoc {
@@ -153,6 +153,52 @@ func BuiltinDocs() []BuiltinDoc {
 				{Title: "Inline URL in an anchor", Code: `<a href="[link]" class="underline">Open</a>`},
 				{Title: "Block anchor", Code: "[link to=\"owner\"]Back to group[/link]"},
 				{Title: "Category page", Code: `[link to="category"]View type[/link]`},
+			},
+		},
+		{
+			Name:        "each",
+			Syntax:      `[each path="..."]...[item ...]...[/each]`,
+			Description: "Iterates an array value from the entity's Meta JSON, rendering its inner content once per element. Reference the current element with [item] inside the block. A non-array or empty value renders the [else] branch (nothing when there is no [else]). Inner [meta]/[conditional]/[mrql] shortcodes run against the parent entity, not the element.",
+			IsBlock:     BlockRequired,
+			Attrs: []DocAttr{
+				{Name: "path", Type: "string", Required: true, Description: "Dot-notation path to an array in the entity Meta, e.g. ingredients."},
+				{Name: "limit", Type: "number", Default: "100", Description: "Maximum number of elements to render."},
+			},
+			Examples: []DocExample{
+				{Title: "List a scalar array", Code: "[each path=\"tags\"]\n  <span>[item]</span>\n[/each]"},
+				{Title: "Objects with fields and empty state", Code: "[each path=\"ingredients\"]\n  <li>[item path=\"name\"] — [item path=\"qty\" default=\"?\"]</li>\n[else]\n  <p>No ingredients.</p>\n[/each]"},
+				{Title: "Numbered list", Code: "[each path=\"steps\"]\n  <p>[item index=\"true\"]. [item]</p>\n[/each]"},
+			},
+		},
+		{
+			Name:        "item",
+			Syntax:      `[item path="..."]`,
+			Description: "Renders the current element inside an [each] block: the element itself (scalar) or a dot-path into it (object). Uses the same format/layout/default helpers as [property] and is HTML-escaped unless raw is set. Outside an [each] block it renders nothing.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "path", Type: "string", Required: false, Description: "Dot-path into the current element when it is an object, e.g. name. Omit to render a scalar element directly."},
+				{Name: "index", Type: "boolean", Default: "false", Description: "When true, renders the element's 1-based position instead of its value.", Enum: []string{"true", "false"}},
+				{Name: "format", Type: "enum", Required: false, Description: "Post-processes the value (date/datetime/time for time values, filesize for byte counts). Unknown values and non-matching types pass through unchanged.", Enum: []string{"date", "datetime", "time", "filesize"}},
+				{Name: "layout", Type: "string", Required: false, Description: "Custom Go time layout for time values (e.g. Jan 2, 2006). Wins over format."},
+				{Name: "default", Type: "string", Required: false, Description: "Text rendered when the resolved value is empty."},
+				{Name: "raw", Type: "boolean", Default: "false", Description: "When true, output is not HTML-escaped.", Enum: []string{"true", "false"}},
+			},
+			Examples: []DocExample{
+				{Title: "Scalar element", Code: `[item]`},
+				{Title: "Object field with fallback", Code: `[item path="qty" default="?"]`},
+				{Title: "1-based position", Code: `[item index="true"]`},
+			},
+		},
+		{
+			Name:        "partial",
+			Syntax:      `[partial name="..."]`,
+			Description: "Expands a reusable template partial by name, rendered with the current entity context so the partial's own shortcodes resolve against the carrier entity. An unknown name renders an HTML comment. Partials are managed under Template Partials.",
+			IsBlock:     BlockNo,
+			Attrs: []DocAttr{
+				{Name: "name", Type: "string", Required: true, Description: "Kebab-case name of the partial to expand, e.g. status-badge."},
+			},
+			Examples: []DocExample{
+				{Title: "Include a partial", Code: `[partial name="status-badge"]`},
 			},
 		},
 	}

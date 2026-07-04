@@ -369,6 +369,7 @@ func main() {
 		&models.PluginKV{},
 		&models.RuntimeSetting{},
 		&models.SavedMRQLQuery{},
+		&models.TemplatePartial{},
 		// Tables with FK to independent tables
 		&models.Group{},             // FK to Category (self-referencing Owner is handled by GORM)
 		&models.GroupRelationType{}, // FK to Category

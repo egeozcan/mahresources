@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "contact-card",
+  "title": "Contact card (Category)",
+  "carrier": "category",
+  "description": "A compact contact card: editable meta fields, a category link, and an avatar initial.",
+  "slots": {
+    "header": "<div class=\"pt-preset-contact\">\n  <h2 class=\"text-lg font-semibold\">Contact Card</h2>\n  <dl class=\"text-sm\">\n    <div>[conditional path=\"email\" not-empty=\"true\"]Email: [meta path=\"email\" editable=\"true\"][/conditional]</div>\n    <div>[conditional path=\"phone\" not-empty=\"true\"]Phone: [meta path=\"phone\" editable=\"true\"][/conditional]</div>\n  </dl>\n</div>",
+    "sidebar": "<div class=\"pt-preset-contact-side\">\n  [link to=\"category\"]View type[/link]\n</div>",
+    "summary": "<p class=\"text-xs\">[meta path=\"title\" default=\"Contact\"]</p>",
+    "avatar": "<span class=\"pt-preset-contact-avatar\">[property path=\"Name\"]</span>",
+    "mrqlResult": "",
+    "css": ".pt-preset-contact dl div { padding: 0.1rem 0; }"
+  },
+  "metaSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"title\": { \"type\": \"string\" },\n    \"email\": { \"type\": \"string\" },\n    \"phone\": { \"type\": \"string\" }\n  }\n}",
+  "sectionConfig": ""
+}

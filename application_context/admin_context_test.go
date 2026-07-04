@@ -44,6 +44,7 @@ func createAdminTestContext(t *testing.T, cacheName string) *MahresourcesContext
 		&models.NoteBlock{},
 		&models.PluginKV{},
 		&models.ResourceVersion{},
+		&models.TemplatePartial{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)

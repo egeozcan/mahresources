@@ -975,6 +975,11 @@ components:
                 Name:
                     type: string
             type: object
+        PresetPartial:
+            properties:
+                name:
+                    type: string
+            type: object
         PreviewPartial:
             properties:
                 ID:
@@ -1766,6 +1771,57 @@ components:
                 UpdatedAfter:
                     type: string
                 UpdatedBefore:
+                    type: string
+            type: object
+        TemplatePartial:
+            properties:
+                content:
+                    type: string
+                createdAt:
+                    format: date-time
+                    readOnly: true
+                    type: string
+                createdByUserId:
+                    nullable: true
+                    type: integer
+                description:
+                    type: string
+                guid:
+                    nullable: true
+                    type: string
+                id:
+                    readOnly: true
+                    type: integer
+                name:
+                    type: string
+                updatedAt:
+                    format: date-time
+                    readOnly: true
+                    type: string
+            type: object
+        TemplatePartialEditor:
+            properties:
+                Content:
+                    type: string
+                Description:
+                    type: string
+                ID:
+                    type: integer
+                Name:
+                    type: string
+            type: object
+        TemplatePartialPartial:
+            properties:
+                id:
+                    type: integer
+                name:
+                    type: string
+            type: object
+        TemplatePartialQuery:
+            properties:
+                Description:
+                    type: string
+                Name:
                     type: string
             type: object
         TimelineBucketPartial:
@@ -6736,9 +6792,9 @@ paths:
     /v1/shortcodes/docs:
         get:
             description: |-
-                Returns a machine-readable catalogue of the five built-in shortcodes
-                (meta, property, mrql, conditional, link) plus every shortcode registered by an
-                enabled plugin. Powers editor lint, autocomplete, and hover docs.
+                Returns a machine-readable catalogue of the built-in shortcodes
+                (meta, property, mrql, conditional, link, each, item) plus every shortcode
+                registered by an enabled plugin. Powers editor lint, autocomplete, and hover docs.
 
                 Each item: {name, syntax, description, isBlock ("no"|"optional"|"required"),
                 source ("builtin"|"plugin"), attrs: [{name, type, required, default, description,
@@ -7057,6 +7113,156 @@ paths:
             tags:
                 - tags
                 - timeline
+    /v1/templatePartial:
+        post:
+            operationId: createOrUpdateTemplatePartial
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/TemplatePartialEditor'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/TemplatePartialEditor'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TemplatePartial'
+                    description: Successful response
+            summary: Create or update a template partial (admin only)
+            tags:
+                - templatePartials
+    /v1/templatePartial/delete:
+        post:
+            operationId: deleteTemplatePartial
+            parameters:
+                - in: query
+                  name: Id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    description: Successful response
+            summary: Delete a template partial (admin only)
+            tags:
+                - templatePartials
+    /v1/templatePartial/edit:
+        post:
+            operationId: updateTemplatePartial
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/TemplatePartialEditor'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/TemplatePartialEditor'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TemplatePartial'
+                    description: Successful response
+            summary: Update a template partial (admin only; form alias)
+            tags:
+                - templatePartials
+    /v1/templatePartial/editDescription:
+        post:
+            operationId: editTemplatePartialDescription
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Edit a template partial's description (admin only)
+            tags:
+                - templatePartials
+    /v1/templatePartial/editName:
+        post:
+            operationId: editTemplatePartialName
+            parameters:
+                - in: query
+                  name: id
+                  required: true
+                  schema:
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+                "400":
+                    description: Invalid input
+                "404":
+                    description: Not found
+                "500":
+                    description: Internal server error
+            summary: Edit a template partial's name (admin only)
+            tags:
+                - templatePartials
+    /v1/templatePartials:
+        get:
+            operationId: listTemplatePartials
+            parameters:
+                - in: query
+                  name: Name
+                  schema:
+                    type: string
+                - in: query
+                  name: Description
+                  schema:
+                    type: string
+                - description: Page number for pagination
+                  in: query
+                  name: page
+                  schema:
+                    default: 1
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/TemplatePartialPartial'
+                                type: array
+                    description: Successful response
+            summary: List template partials
+            tags:
+                - templatePartials
+    /v1/templatePresets:
+        get:
+            operationId: listTemplatePresets
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/PresetPartial'
+                                type: array
+                    description: Successful response
+            summary: List starter template presets (static bundles)
+            tags:
+                - templatePartials
     /v1/user:
         get:
             operationId: getUser
@@ -7252,6 +7458,8 @@ tags:
       name: shortcodes
     - description: Operations related to tags
       name: tags
+    - description: Operations related to templatePartials
+      name: templatePartials
     - description: Operations related to timeline
       name: timeline
     - description: Operations related to users

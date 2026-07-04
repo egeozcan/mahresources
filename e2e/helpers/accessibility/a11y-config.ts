@@ -22,6 +22,7 @@ export const STATIC_PAGES = [
   { path: '/relationTypes', name: 'Relation types list' },
   { path: '/relations', name: 'Relations list' },
   { path: '/resourceCategories', name: 'Resource categories list' },
+  { path: '/templatePartials', name: 'Template partials list' },
   { path: '/logs', name: 'Logs list' },
 
   // Create/new forms
@@ -32,6 +33,7 @@ export const STATIC_PAGES = [
   { path: '/category/new', name: 'Create category form' },
   { path: '/query/new', name: 'Create query form' },
   { path: '/noteType/new', name: 'Create note type form' },
+  { path: '/templatePartial/new', name: 'Create template partial form' },
   { path: '/relationType/new', name: 'Create relation type form' },
   { path: '/relation/new', name: 'Create relation form' },
 

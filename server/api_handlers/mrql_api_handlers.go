@@ -208,6 +208,7 @@ func mrqlCategoryCSS(reqCtx context.Context, seen map[string]bool, entityType st
 // and populates the RenderedHTML field when a template is configured.
 func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, result *application_context.MRQLResult, reqCtx context.Context) {
 	reqCtx = plugin_system.WithMRQLCache(reqCtx)
+	reqCtx = shortcodes.WithPartialResolver(reqCtx, template_filters.BuildPartialResolver(appCtx))
 	executor := template_filters.BuildQueryExecutor(appCtx)
 	pluginRenderer := buildPluginRenderer(appCtx, reqCtx)
 	cssSeen := map[string]bool{}

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "media-collection",
+  "title": "Media collection (Resource Category)",
+  "carrier": "resourceCategory",
+  "description": "A resource template that lists a credits array with [each] and links back to its group.",
+  "slots": {
+    "header": "<div class=\"pt-preset-media\">\n  <h2 class=\"text-lg font-semibold\">Media Collection</h2>\n  <p class=\"text-sm\">Format: [meta path=\"format\" default=\"unknown\"]</p>\n</div>",
+    "sidebar": "<div class=\"pt-preset-media-side\">\n  <h3 class=\"font-semibold text-sm\">Credits</h3>\n  <ul class=\"list-disc pl-4 text-sm\">\n  [each path=\"credits\"]\n    <li>[item index=\"true\"]. [item path=\"role\" default=\"—\"]: [item path=\"name\"]</li>\n  [else]\n    <li class=\"text-stone-400\">No credits listed.</li>\n  [/each]\n  </ul>\n  [link to=\"owner\"]Back to group[/link]\n</div>",
+    "summary": "<p class=\"text-xs\">[property path=\"Name\"]</p>",
+    "avatar": "",
+    "mrqlResult": "<div class=\"pt-preset-media-card\">[property path=\"Name\"]</div>",
+    "css": ".pt-preset-media-side ul { margin: 0.25rem 0; }"
+  },
+  "metaSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"format\": { \"type\": \"string\" },\n    \"credits\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"object\",\n        \"properties\": { \"role\": { \"type\": \"string\" }, \"name\": { \"type\": \"string\" } }\n      }\n    }\n  }\n}",
+  "sectionConfig": ""
+}

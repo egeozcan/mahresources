@@ -10,6 +10,7 @@ import (
 	"mahresources/models/query_models"
 	"mahresources/server/api_handlers"
 	"mahresources/server/openapi"
+	"mahresources/server/template_presets"
 )
 
 // RegisterAPIRoutesWithOpenAPI registers all API routes with the OpenAPI registry.
@@ -56,6 +57,9 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 
 	// Resource Categories
 	registerResourceCategoryRoutes(registry)
+
+	// Template Partials
+	registerTemplatePartialRoutes(registry)
 
 	// Queries
 	registerQueryRoutes(registry)
@@ -1540,6 +1544,75 @@ func registerResourceCategoryRoutes(r *openapi.Registry) {
 		WithIDParam("id", true))
 }
 
+func registerTemplatePartialRoutes(r *openapi.Registry) {
+	templatePartialType := reflect.TypeOf(models.TemplatePartial{})
+	templatePartialQueryType := reflect.TypeOf(query_models.TemplatePartialQuery{})
+	templatePartialEditorType := reflect.TypeOf(query_models.TemplatePartialEditor{})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/templatePartials",
+		OperationID:          "listTemplatePartials",
+		Summary:              "List template partials",
+		Tags:                 []string{"templatePartials"},
+		QueryType:            templatePartialQueryType,
+		ResponseType:         reflect.SliceOf(templatePartialType),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		Paginated:            true,
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/templatePartial",
+		OperationID:          "createOrUpdateTemplatePartial",
+		Summary:              "Create or update a template partial (admin only)",
+		Tags:                 []string{"templatePartials"},
+		RequestType:          templatePartialEditorType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseType:         templatePartialType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	// /edit is a form-submission alias of the create/update route above.
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/templatePartial/edit",
+		OperationID:          "updateTemplatePartial",
+		Summary:              "Update a template partial (admin only; form alias)",
+		Tags:                 []string{"templatePartials"},
+		RequestType:          templatePartialEditorType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseType:         templatePartialType,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:       http.MethodPost,
+		Path:         "/v1/templatePartial/delete",
+		OperationID:  "deleteTemplatePartial",
+		Summary:      "Delete a template partial (admin only)",
+		Tags:         []string{"templatePartials"},
+		IDQueryParam: "Id",
+		IDRequired:   true,
+	})
+
+	r.Register(openapi.NewRoute(http.MethodPost, "/v1/templatePartial/editName", "editTemplatePartialName", "Edit a template partial's name (admin only)", "templatePartials").
+		WithIDParam("id", true))
+
+	r.Register(openapi.NewRoute(http.MethodPost, "/v1/templatePartial/editDescription", "editTemplatePartialDescription", "Edit a template partial's description (admin only)", "templatePartials").
+		WithIDParam("id", true))
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/templatePresets",
+		OperationID:          "listTemplatePresets",
+		Summary:              "List starter template presets (static bundles)",
+		Tags:                 []string{"templatePartials"},
+		ResponseType:         reflect.SliceOf(reflect.TypeOf(template_presets.Preset{})),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+}
+
 func registerQueryRoutes(r *openapi.Registry) {
 	queryType := reflect.TypeOf(models.Query{})
 	queryQueryType := reflect.TypeOf(query_models.QueryQuery{})
@@ -1910,9 +1983,9 @@ The endpoint does not execute MRQL. The server sends the prompt and syntax-only 
 		Path:        "/v1/shortcodes/docs",
 		OperationID: "listShortcodeDocs",
 		Summary:     "List shortcode documentation",
-		Description: `Returns a machine-readable catalogue of the five built-in shortcodes
-(meta, property, mrql, conditional, link) plus every shortcode registered by an
-enabled plugin. Powers editor lint, autocomplete, and hover docs.
+		Description: `Returns a machine-readable catalogue of the built-in shortcodes
+(meta, property, mrql, conditional, link, each, item) plus every shortcode
+registered by an enabled plugin. Powers editor lint, autocomplete, and hover docs.
 
 Each item: {name, syntax, description, isBlock ("no"|"optional"|"required"),
 source ("builtin"|"plugin"), attrs: [{name, type, required, default, description,
