@@ -90,21 +90,26 @@ func BuiltinDocs() []BuiltinDoc {
 		{
 			Name:        "mrql",
 			Syntax:      `[mrql query="..."]`,
-			Description: "Runs an MRQL query and renders the results. Provide either an inline query or a saved query name. Optionally wrap a custom item template as a block.",
+			Description: "Runs an MRQL query and renders the results. Provide either an inline query or a saved query name. Set value= for a single inline scalar, or wrap a block body for a custom item template with optional [header]/[footer]/[else] slots.",
 			IsBlock:     BlockOptional,
 			Attrs: []DocAttr{
 				{Name: "query", Type: "string", Required: false, Description: "Inline MRQL expression. Required unless saved is set."},
 				{Name: "saved", Type: "string", Required: false, Description: "Name of a saved MRQL query. Required unless query is set."},
-				{Name: "format", Type: "enum", Default: "auto", Description: "Result layout. Auto-resolves to custom templates when available.", Enum: []string{"table", "list", "compact", "custom"}},
+				{Name: "value", Type: "string", Required: false, Description: "Inline scalar mode: renders a single escaped value with no wrapper. Use \"count\" for the result count (returned rows, capped by limit) or a column name from an aggregated result. Conflicts with a block body."},
+				{Name: "format", Type: "enum", Default: "auto", Description: "Result layout, or (with value=) the scalar's format like [property]: date/datetime/time/filesize. Auto-resolves to custom templates when available.", Enum: []string{"table", "list", "compact", "custom"}},
+				{Name: "layout", Type: "string", Required: false, Description: "Custom Go time layout for a value= time scalar (e.g. Jan 2, 2006). Wins over format."},
 				{Name: "limit", Type: "number", Default: "20", Description: "Maximum number of results."},
 				{Name: "buckets", Type: "number", Default: "5", Description: "Bucket count for grouped (GROUP BY) results."},
 				{Name: "scope", Type: "enum", Default: "entity", Description: "Group subtree to scope results to.", Enum: []string{"entity", "parent", "root", "global"}},
+				{Name: "link-all", Type: "boolean", Default: "false", Description: "Appends a default \"View all →\" link (after results, before a custom [footer]) to the /mrql page for this query. In [header]/[footer]/[else] slots, the {link-all} placeholder expands to the bare URL.", Enum: []string{"true", "false"}},
 				{Name: "param-", Type: "string", Wildcard: true, Description: "Binds an MRQL $name placeholder, e.g. param-tag=\"x\" fills $tag."},
 			},
 			Examples: []DocExample{
 				{Title: "Inline query", Code: `[mrql query="resources where tag = 'draft'" format="list"]`},
+				{Title: "Inline count value", Code: `[mrql query="resources" value="count"]`, Notes: "Counts returned rows, capped by limit. For a true total use an aggregated count() query or the {total} slot placeholder."},
 				{Title: "Saved query with params", Code: `[mrql saved="recent" param-since="-7d"]`},
 				{Title: "Custom item template (block)", Code: "[mrql query=\"resources limit 3\"]\n  <div>[property path=\"Name\"]</div>\n[/mrql]"},
+				{Title: "Header / footer / empty slots", Code: "[mrql query=\"notes where tag = 'todo'\" link-all=\"true\"]\n  [header]<h4>TODO ({count} of {total})</h4>[/header]\n  <li>[property path=\"Name\"]</li>\n[else]\n  <p>Nothing to do 🎉</p>\n[/mrql]", Notes: "[header]/[footer] render once around results; [else] is the whole empty-state output. {count} = returned rows, {total} = true total (its presence triggers the count query)."},
 			},
 		},
 		{

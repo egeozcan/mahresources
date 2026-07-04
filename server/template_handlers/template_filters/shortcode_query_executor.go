@@ -15,22 +15,24 @@ import (
 // context to execute MRQL queries. It preloads categories on result entities to
 // extract CustomMRQLResult templates.
 func BuildQueryExecutor(appCtx *application_context.MahresourcesContext) shortcodes.QueryExecutor {
-	return func(reqCtx context.Context, query string, savedName string, params map[string]string, limit int, buckets int, scopeGroupID uint) (*shortcodes.QueryResult, error) {
-		return executeMRQLForShortcode(reqCtx, appCtx, query, savedName, params, limit, buckets, scopeGroupID)
+	return func(reqCtx context.Context, query string, opts shortcodes.QueryOptions) (*shortcodes.QueryResult, error) {
+		return executeMRQLForShortcode(reqCtx, appCtx, query, opts)
 	}
 }
 
 // executeMRQLForShortcode runs an MRQL query and converts the result into shortcode types.
 // It detects GROUP BY queries and routes them through ExecuteMRQLGrouped.
-func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context.MahresourcesContext, query string, savedName string, params map[string]string, limit int, buckets int, scopeGroupID uint) (*shortcodes.QueryResult, error) {
+func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context.MahresourcesContext, query string, opts shortcodes.QueryOptions) (*shortcodes.QueryResult, error) {
 	// Resolve saved query name to query string
 	actualQuery := query
-	if savedName != "" && query == "" {
-		saved, err := appCtx.GetSavedMRQLQueryByName(savedName)
+	var savedID uint
+	if opts.SavedName != "" && query == "" {
+		saved, err := appCtx.GetSavedMRQLQueryByName(opts.SavedName)
 		if err != nil {
 			return nil, err
 		}
 		actualQuery = saved.Query
+		savedID = saved.ID
 	}
 
 	// Parse to detect GROUP BY
@@ -39,7 +41,7 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context
 		return nil, err
 	}
 	// Bind $name placeholders (from param-<name> shortcode attrs) before validation.
-	if err := mrql.BindParams(parsed, shortcodeParamsToAny(params)); err != nil {
+	if err := mrql.BindParams(parsed, shortcodeParamsToAny(opts.Params)); err != nil {
 		return nil, err
 	}
 	if err := mrql.Validate(parsed); err != nil {
@@ -47,17 +49,35 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context
 	}
 
 	// Apply limit override
-	if limit > 0 {
-		parsed.Limit = limit
+	if opts.Limit > 0 {
+		parsed.Limit = opts.Limit
 	}
 
-	// Explicit SCOPE in the query text takes precedence over the shortcode scope attr
-	if parsed.Scope != nil {
+	// Explicit SCOPE in the query text takes precedence over the shortcode scope
+	// attr. When it does, the scope is already reproduced by the query text, so a
+	// "view all" link must not append a second SCOPE clause.
+	scopeGroupID := opts.ScopeGroupID
+	explicitScope := parsed.Scope != nil
+	if explicitScope {
 		resolvedID, err := appCtx.ResolveMRQLScope(parsed)
 		if err != nil {
 			return nil, err
 		}
 		scopeGroupID = resolvedID
+	}
+
+	// View-all link fields. Prefer the saved deep-link (/mrql?saved=<id>) so the
+	// saved-query identity survives — but only when there is no applied scope to
+	// carry: ?saved=<id> opens the query globally, so a scoped saved query must
+	// fall back to an inline ?q= link with the scope baked into the query text.
+	// Inline queries get the scope spliced at the grammatically correct position
+	// (SCOPE must precede GROUP BY / ORDER BY / LIMIT / OFFSET), which a naive
+	// append would break.
+	linkQuery := actualQuery
+	linkSavedID := savedID
+	if !explicitScope && scopeGroupID != 0 && scopeGroupID != mrql.UnresolvedScopeSentinel {
+		linkQuery = mrql.InsertScopeClause(actualQuery, scopeGroupID)
+		linkSavedID = 0
 	}
 
 	// GROUP BY queries use the grouped execution path
@@ -68,15 +88,18 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context
 		}
 		parsed.EntityType = entityType
 
-		if buckets > 0 {
-			parsed.BucketLimit = buckets
+		if opts.Buckets > 0 {
+			parsed.BucketLimit = opts.Buckets
 		}
 
 		grouped, err := appCtx.ExecuteMRQLGroupedWithScope(reqCtx, parsed, scopeGroupID)
 		if err != nil {
 			return nil, err
 		}
-		return convertGroupedResultItems(grouped, appCtx), nil
+		qr := convertGroupedResultItems(grouped, appCtx)
+		qr.EffectiveQuery = linkQuery
+		qr.SavedID = linkSavedID
+		return qr, nil
 	}
 
 	// Non-grouped: flat query using scoped execution
@@ -86,10 +109,22 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context
 	}
 
 	qr := &shortcodes.QueryResult{
-		EntityType: result.EntityType,
-		Mode:       "flat",
+		EntityType:     result.EntityType,
+		Mode:           "flat",
+		EffectiveQuery: linkQuery,
+		SavedID:        linkSavedID,
 	}
 	qr.Items = convertResultItems(result, appCtx)
+
+	// A true total (ignoring limit) is only needed when the template references
+	// {total}; it runs a second COUNT query over the same WHERE/scope.
+	if opts.WantTotal {
+		total, err := appCtx.CountMRQLScoped(reqCtx, parsed, scopeGroupID)
+		if err != nil {
+			return nil, err
+		}
+		qr.Total = &total
+	}
 
 	return qr, nil
 }

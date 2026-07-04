@@ -46,29 +46,29 @@ func resolveConditionalValue(reqCtx context.Context, attrs map[string]string, su
 		limit := parseIntAttr(attr("limit"), defaultMRQLShortcodeLimit)
 		buckets := parseIntAttr(attr("buckets"), defaultMRQLShortcodeBuckets)
 		params := collectShortcodeParams(attrs)
-		result, err := executor(reqCtx, query, "", params, limit, buckets, scope)
+		result, err := executor(reqCtx, query, QueryOptions{
+			Params:       params,
+			Limit:        limit,
+			Buckets:      buckets,
+			ScopeGroupID: scope,
+		})
 		if err != nil {
 			return nil, err
 		}
 		if result == nil {
 			return nil, nil
 		}
-		switch result.Mode {
-		case "flat", "":
-			return float64(len(result.Items)), nil
-		case "aggregated":
+		// Aggregated results need an explicit column to test; other modes fold to
+		// a count. extractScalarFromResult is the shared value-extraction helper
+		// (also used by inline [mrql value=]), so the two can never drift apart.
+		if result.Mode == "aggregated" {
 			agg := attr("aggregate")
 			if agg == "" {
 				return nil, fmt.Errorf("mrql aggregated results require aggregate=\"column_name\" attribute")
 			}
-			if len(result.Rows) == 0 {
-				return nil, nil
-			}
-			return result.Rows[0][agg], nil
-		case "bucketed":
-			return float64(len(result.Groups)), nil
+			return extractScalarFromResult(result, agg), nil
 		}
-		return nil, nil
+		return extractScalarFromResult(result, "count"), nil
 	}
 	if fieldName := attr("field"); fieldName != "" && ctx.Entity != nil {
 		v := reflect.ValueOf(ctx.Entity)

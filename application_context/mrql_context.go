@@ -1535,6 +1535,30 @@ func (ctx *MahresourcesContext) ExecuteMRQLScoped(reqCtx context.Context, parsed
 	return ctx.executeCrossEntity(reqCtx, parsed, opts)
 }
 
+// CountMRQLScoped returns the true number of rows a non-grouped MRQL query
+// matches, ignoring LIMIT/OFFSET/ORDER BY. It reuses the same WHERE and scope
+// translation as ExecuteMRQLScoped (via countCrossEntity), so the count can
+// never diverge from the result set the shortcode renders. Cross-entity queries
+// sum the per-entity counts. GROUP BY queries are not counted here — the
+// [mrql] handler only requests a total for the flat path.
+func (ctx *MahresourcesContext) CountMRQLScoped(reqCtx context.Context, parsed *mrql.Query, scopeGroupID uint) (int64, error) {
+	opts := ctx.mrqlTranslateOptions()
+	opts.ScopeGroupID = scopeGroupID
+	entityType := mrql.ExtractEntityType(parsed)
+	if entityType != mrql.EntityUnspecified {
+		return ctx.countCrossEntity(reqCtx, parsed, opts, entityType)
+	}
+	var total int64
+	for _, et := range []mrql.EntityType{mrql.EntityResource, mrql.EntityNote, mrql.EntityGroup} {
+		n, err := ctx.countCrossEntity(reqCtx, parsed, opts, et)
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, nil
+}
+
 // ResolveParentScopeID returns the owner_id of the group with the given ID.
 // Returns mrql.UnresolvedScopeSentinel if the group doesn't exist or has no owner.
 func (ctx *MahresourcesContext) ResolveParentScopeID(groupID uint) uint {

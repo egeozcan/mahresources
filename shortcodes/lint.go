@@ -188,6 +188,12 @@ func Lint(input string, opts LintOptions) []LintIssue {
 				add(tk.start, tk.end, SeverityError,
 					"[mrql] requires a \"query\" or \"saved\" attribute")
 			}
+			// Inline scalar mode (value=) and a block body are mutually exclusive:
+			// value= renders a single value, so the body is silently ignored.
+			if strings.TrimSpace(tk.attrs["value"]) != "" && tk.matched {
+				add(tk.start, tk.end, SeverityError,
+					"[mrql value=…] renders a single value and cannot have a block body; the body is ignored")
+			}
 		case "conditional":
 			if strings.TrimSpace(tk.attrs["path"]) == "" &&
 				strings.TrimSpace(tk.attrs["field"]) == "" &&

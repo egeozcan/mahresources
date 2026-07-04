@@ -154,10 +154,10 @@ func cappedQueryExecutor(inner shortcodes.QueryExecutor, limitCap int) shortcode
 	if inner == nil {
 		return nil
 	}
-	return func(reqCtx context.Context, query, savedName string, params map[string]string, limit, buckets int, scopeGroupID uint) (*shortcodes.QueryResult, error) {
-		if limit <= 0 || limit > limitCap {
-			limit = limitCap
+	return func(reqCtx context.Context, query string, opts shortcodes.QueryOptions) (*shortcodes.QueryResult, error) {
+		if opts.Limit <= 0 || opts.Limit > limitCap {
+			opts.Limit = limitCap
 		}
-		return inner(reqCtx, query, savedName, params, limit, buckets, scopeGroupID)
+		return inner(reqCtx, query, opts)
 	}
 }

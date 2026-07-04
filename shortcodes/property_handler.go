@@ -139,6 +139,18 @@ func formatPropertyValue(v reflect.Value, format, layout string) string {
 	return formatFieldValue(v)
 }
 
+// formatScalarValue renders an arbitrary scalar (int, float, string, time.Time,
+// …) to display text, honoring the same format/layout attrs as [property]. It is
+// the formatting entry point for inline [mrql value=], reusing formatPropertyValue
+// so a count or aggregate column formats identically to an entity field. A nil
+// value renders empty.
+func formatScalarValue(v any, format, layout string) string {
+	if v == nil {
+		return ""
+	}
+	return formatPropertyValue(reflect.ValueOf(v), format, layout)
+}
+
 // asInt64 returns the int64 value of an integer reflect.Value, or (0, false)
 // for non-integer kinds.
 func asInt64(v reflect.Value) (int64, bool) {

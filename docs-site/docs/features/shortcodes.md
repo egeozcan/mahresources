@@ -143,12 +143,33 @@ Embeds MRQL query results inline. Executes a query and renders the results in on
 |-----------|----------|---------|-------------|
 | `query` | Yes* | -- | MRQL query expression (e.g., `type = resource AND tags = "photos"`) |
 | `saved` | Yes* | -- | Name of a saved MRQL query to execute |
-| `format` | No | auto | Render format: `table`, `list`, `compact`, `custom`, or empty for auto |
+| `value` | No | -- | [Inline scalar mode](#inline-scalar-value): renders a single escaped value with no wrapper. `count` for the result count, or a column name from an aggregated result. Conflicts with a block body |
+| `format` | No | auto | Render format: `table`, `list`, `compact`, `custom`, or empty for auto. With `value=`, formats the scalar like `[property]` (`date`/`datetime`/`time`/`filesize`) |
+| `layout` | No | -- | Custom Go time layout for a `value=` time scalar (e.g., `Jan 2, 2006`). Wins over `format` |
 | `limit` | No | `20` | Maximum number of results |
 | `buckets` | No | `5` | Number of buckets for bucketed GROUP BY queries |
 | `scope` | No | `"entity"` | Scope filter: `entity` (default), `parent`, `root`, `global`, or a numeric group ID |
+| `link-all` | No | `false` | Appends a default "View all →" link to the `/mrql` page for this query (see [Totals and the view-all link](#totals-and-the-view-all-link)) |
 
 *Either `query` or `saved` is required.
+
+### Inline scalar value
+
+`value=` turns `[mrql]` into an inline scalar: it renders a single escaped text value with **no wrapper `<div>`**, usable mid-sentence.
+
+```html
+<p>You have <strong>[mrql query="resources" value="count"]</strong> files.</p>
+```
+
+- `value="count"` -- the flat item count, the bucket count (bucketed), or the row count (aggregated).
+- `value="<column>"` -- `Rows[0][<column>]` from an aggregated result (the same contract as `aggregate=` on `[conditional]`). A column has no meaning on a non-aggregated result and renders empty.
+- `format=` / `layout=` post-process the value exactly like `[property]` (e.g. `format="filesize"` on a byte count, `format="date"` on a timestamp column).
+- Errors render as an inline `<span class="mrql-error">` rather than a block `<div>`, so they don't break the surrounding line.
+- A `value=` shortcode with a block body is a lint error; the body is ignored at render time.
+
+:::caution `value="count"` is capped by `limit`
+`value="count"` counts the **returned** rows, so it is bounded by `limit` (default 20). For a true total, use an aggregated `count()` query (`... GROUP BY ... count()` with `value="<count column>"`) or the `{total}` placeholder in a [block slot](#totals-and-the-view-all-link).
+:::
 
 ### Render Formats
 
@@ -242,19 +263,50 @@ Because the body is HTML, you can wrap shortcodes in any markup (grids, cards, b
 | Bucketed `GROUP BY` (with `buckets`) | Body rendered once per entity *within* each bucket; bucket header bars render normally |
 | Aggregated `GROUP BY` | Body ignored; the aggregated table renders as usual (aggregated rows are not entities, so there is nothing to bind) |
 
-#### Empty results
+#### Header, footer, and empty (`[else]`) slots
 
-When the query matches nothing, the block renders the standard `No results.` placeholder. The `[mrql]` block has no `[else]` branch. To show a fallback message when a query is empty, wrap the block in a `[conditional mrql="..."]`:
+A block body may carry three optional slots alongside the per-item template, using literal tags handled locally by `[mrql]` (like `[else]` inside `[conditional]` -- they carry meaning only inside an `[mrql]` block):
 
 ```
-[conditional mrql='type = resource AND tags = "recipe"' gt="0"]
-  [mrql query='type = resource AND tags = "recipe"' limit="5"]
-    <div class="recipe-card"><h3>[property path="Name"]</h3></div>
-  [/mrql]
+[mrql query='notes WHERE tags = "todo"' limit="10"]
+  [header]<h4>Open TODOs ({count} of {total})</h4>[/header]
+  <li>[property path="Name"]</li>
+  [footer]<p class="text-xs">updated live</p>[/footer]
 [else]
-  <p class="text-stone-400">No recipes yet.</p>
-[/conditional]
+  <p>Nothing to do 🎉</p>
+[/mrql]
 ```
+
+- **`[header]` / `[footer]`** render **once**, wrapped around the results, with the parent (page) entity as context -- not per item. The first occurrence of each is used; a `[header]`/`[footer]` nested inside another block is left untouched.
+- **`[else]`** is the complete empty-state output. When the result has no rows (no items, no buckets, or no aggregated rows), only the `[else]` branch renders -- header and footer are suppressed. Without an `[else]`, an empty result still shows the standard `No results.` placeholder.
+- The remaining content (after the slots are removed) is the per-item template, exactly as before.
+
+Wrapping the block in a `[conditional mrql="..."]` still works and remains useful when the fallback needs to live outside the `[mrql]` wrapper.
+
+#### Totals and the view-all link
+
+Header, footer, and `[else]` slots substitute three placeholders **before** their content is processed:
+
+| Placeholder | Expands to |
+|-------------|------------|
+| `{count}` | The number of rendered rows (items, buckets, or aggregated rows) -- capped by `limit` |
+| `{total}` | The true total ignoring `limit`. Its presence anywhere in a slot triggers a second `COUNT` query over the same filter and scope; without it, no count query runs. Falls back to `{count}` for grouped/aggregated queries |
+| `{link-all}` | The bare `/mrql` URL that reproduces this query (for custom markup) |
+
+Set `link-all="true"` to append a default **"View all →"** link after the results (before a custom `[footer]`):
+
+```
+[mrql query='resources WHERE tags = "photo"' limit="6" link-all="true"]
+  <li>[property path="Name"]</li>
+[/mrql]
+```
+
+The link points at the `/mrql` page and always reproduces the same result set, scope included:
+
+- **Unscoped saved queries** link by ID (`/mrql?saved=<id>`), preserving the saved-query identity (the name→ID lookup is resolved server-side).
+- **Inline queries** link by their text (`/mrql?q=<query>`). When the shortcode applied a scope (via `scope=` or the default entity scope) and the query has no explicit `SCOPE` clause, a `SCOPE <id>` clause is spliced in at the correct position (before `GROUP BY` / `ORDER BY` / `LIMIT` / `OFFSET`) so the query stays valid.
+- **Scoped saved queries** link by text as well (`/mrql?q=…`), because `/mrql?saved=<id>` would open the query globally and lose the scope. The saved-query identity is traded for a correct, scoped result set.
+- Parameterized (`param-*`) queries link with their `$placeholders` unbound; the `/mrql` page renders inputs for the user to fill.
 
 #### Combining with other attributes
 
