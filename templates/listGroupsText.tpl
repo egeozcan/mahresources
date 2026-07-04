@@ -8,6 +8,7 @@
 {% endblock %}
 
 {% block body %}
+    {% include "/partials/customListHeader.tpl" %}
     {% include "/partials/mrqlBar.tpl" with entity="group" %}
     <div class="flex flex-col gap-4 items-container">
         {% for entity in groups %}

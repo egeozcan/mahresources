@@ -461,6 +461,8 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 	noteType.CustomSidebar = query.CustomSidebar
 	noteType.CustomSummary = query.CustomSummary
 	noteType.CustomAvatar = query.CustomAvatar
+	noteType.CustomListHeader = query.CustomListHeader
+	noteType.ApplyTemplatesToShares = query.ApplyTemplatesToShares
 	noteType.CustomMRQLResult = query.CustomMRQLResult
 	noteType.CustomCSS = query.CustomCSS
 	noteType.MetaSchema = query.MetaSchema

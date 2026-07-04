@@ -5,7 +5,7 @@
         <div class="flex flex-wrap items-end gap-3 p-3 border-b border-stone-200 bg-stone-50">
             <h3 class="w-full text-sm font-mono font-semibold text-stone-700">Live preview</h3>
 
-            <div class="relative">
+            <div class="relative" x-show="!isCarrierSlot()">
                 <label for="tp-entity-{{ entityType }}" class="block text-xs font-mono text-stone-600 mb-0.5">Preview against</label>
                 <input id="tp-entity-{{ entityType }}" type="text"
                        x-model="query" @input="onSearchInput()" @focus="open = suggestions.length > 0"
@@ -36,6 +36,8 @@
                     </template>
                 </select>
             </div>
+
+            <span x-show="isCarrierSlot()" class="text-xs font-mono text-stone-500 self-end pb-1.5">Previewed against this category itself.</span>
 
             <button type="button" @click="refresh()"
                     class="inline-flex items-center px-2 py-1 text-xs font-mono font-medium text-stone-600 bg-stone-100 border border-stone-300 rounded hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">

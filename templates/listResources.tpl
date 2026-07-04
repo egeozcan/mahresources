@@ -8,6 +8,7 @@
 {% endblock %}
 
 {% block body %}
+    {% include "/partials/customListHeader.tpl" %}
     {% include "/partials/mrqlBar.tpl" with entity="resource" %}
     {% plugin_slot "resource_list_before" %}
     <section class="list-container"{% if owner && owner|length == 1 %} data-paste-context='{"type":"group","id":{{ owner.0.ID }},"name":"{{ owner.0.Name|escapejs }}"}'{% endif %}>

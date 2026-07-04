@@ -5,6 +5,7 @@
 {% endblock %}
 
 {% block body %}
+    {% include "/partials/customListHeader.tpl" %}
     {% include "/partials/mrqlBar.tpl" with entity="note" %}
     {% include "/partials/timeline.tpl" with entityApiUrl="/v1/notes" entityType="notes" entityDefaultView="/notes" %}
 {% endblock %}

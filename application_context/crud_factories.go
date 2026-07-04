@@ -84,6 +84,7 @@ func buildCategory(creator *query_models.CategoryCreator) (models.Category, erro
 		CustomSidebar:    creator.CustomSidebar,
 		CustomSummary:    creator.CustomSummary,
 		CustomAvatar:     creator.CustomAvatar,
+		CustomListHeader: creator.CustomListHeader,
 		CustomMRQLResult: creator.CustomMRQLResult,
 		CustomCSS:        creator.CustomCSS,
 		MetaSchema:       creator.MetaSchema,
@@ -120,6 +121,7 @@ func buildResourceCategory(creator *query_models.ResourceCategoryCreator) (model
 		CustomSidebar:    creator.CustomSidebar,
 		CustomSummary:    creator.CustomSummary,
 		CustomAvatar:     creator.CustomAvatar,
+		CustomListHeader: creator.CustomListHeader,
 		CustomMRQLResult: creator.CustomMRQLResult,
 		CustomCSS:        creator.CustomCSS,
 		MetaSchema:       creator.MetaSchema,
@@ -182,14 +184,16 @@ func buildNoteType(editor *query_models.NoteTypeEditor) (models.NoteType, error)
 		return models.NoteType{}, errors.New("note type name must be non-empty")
 	}
 	return models.NoteType{
-		ID:            editor.ID,
-		Name:          editor.Name,
-		Description:   editor.Description,
-		CustomHeader:  editor.CustomHeader,
-		CustomSidebar: editor.CustomSidebar,
-		CustomSummary: editor.CustomSummary,
-		CustomAvatar:  editor.CustomAvatar,
-		CustomCSS:     editor.CustomCSS,
+		ID:                     editor.ID,
+		Name:                   editor.Name,
+		Description:            editor.Description,
+		CustomHeader:           editor.CustomHeader,
+		CustomSidebar:          editor.CustomSidebar,
+		CustomSummary:          editor.CustomSummary,
+		CustomAvatar:           editor.CustomAvatar,
+		CustomListHeader:       editor.CustomListHeader,
+		ApplyTemplatesToShares: editor.ApplyTemplatesToShares,
+		CustomCSS:              editor.CustomCSS,
 	}, nil
 }
 

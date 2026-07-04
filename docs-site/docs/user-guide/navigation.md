@@ -47,6 +47,9 @@ On smaller screens, the navigation collapses into a hamburger menu. Tap the menu
 The gear icon in the top-right corner opens a settings dropdown with display preferences:
 
 - **Show Descriptions** - Toggle whether entity descriptions appear in list views
+- **Show Hover Previews** - Toggle the popover preview shown when you hover or focus a group, resource, or note link. On by default. The preview reuses the entity type's Custom Avatar and Custom Summary templates, and is dismissible (Escape), hoverable, and keyboard-accessible.
+
+Both toggles are saved to your account, so they persist across devices and sessions.
 
 ## Global Search
 

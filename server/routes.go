@@ -349,6 +349,17 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 		HandlerFunc(template_handlers.
 			RenderTemplate("partials/form/autocompleter.tpl", wrapContextWithPlugins(appContext, template_context_providers.PartialContextProvider(appContext))))
 
+	// Hover-card preview fragment (Phase 6 item 3). Built against a principal-
+	// scoped context so a group-limited user cannot preview entities outside its
+	// subtree (fail-closed: out-of-scope IDs resolve to a "Preview unavailable"
+	// fragment). GET → capRead via the shared authorization middleware.
+	router.Methods(http.MethodGet).
+		Path("/hovercard").
+		HandlerFunc(template_handlers.RenderTemplate("partials/hovercard.tpl", func(request *http.Request) pongo2.Context {
+			sc := scopedCtx(appContext, request)
+			return wrapContextWithPlugins(sc, template_context_providers.HoverCardContextProvider(sc))(request)
+		}))
+
 	router.Methods(http.MethodGet).Path("/").HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		http.Redirect(writer, request, "/dashboard", http.StatusMovedPermanently)
 	})

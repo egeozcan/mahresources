@@ -80,6 +80,7 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 		CustomSidebar:    categoryQuery.CustomSidebar,
 		CustomSummary:    categoryQuery.CustomSummary,
 		CustomAvatar:     categoryQuery.CustomAvatar,
+		CustomListHeader: categoryQuery.CustomListHeader,
 		CustomMRQLResult: categoryQuery.CustomMRQLResult,
 		CustomCSS:        categoryQuery.CustomCSS,
 		MetaSchema:       categoryQuery.MetaSchema,
@@ -138,6 +139,7 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	category.CustomSidebar = categoryQuery.CustomSidebar
 	category.CustomSummary = categoryQuery.CustomSummary
 	category.CustomAvatar = categoryQuery.CustomAvatar
+	category.CustomListHeader = categoryQuery.CustomListHeader
 	category.CustomMRQLResult = categoryQuery.CustomMRQLResult
 	category.CustomCSS = categoryQuery.CustomCSS
 	category.MetaSchema = categoryQuery.MetaSchema

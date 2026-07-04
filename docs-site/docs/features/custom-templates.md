@@ -24,6 +24,7 @@ Each Category (for Groups), Resource Category (for Resources), and Note Type (fo
 | **CustomSidebar** | Sidebar of the entity detail page |
 | **CustomSummary** | Entity cards in list views |
 | **CustomAvatar** | Avatar/icon when linking to the entity |
+| **CustomListHeader** | Top of a list page, only when it is filtered to exactly this one category/type (see [CustomListHeader](#customlistheader)) |
 | **CustomCSS** | Raw CSS injected as a page-level `<style>` block (see [CustomCSS](#customcss)) |
 
 The four `Custom*` slots above hold HTML markup. `CustomCSS` is different -- it holds raw CSS rather than markup, and exists so the other slots can be styled globally without inlining `<style>` tags in each.
@@ -212,6 +213,26 @@ This is intentional, not an inconsistency; avatar-replacement on resource cards 
 </template>
 ```
 
+## CustomListHeader
+
+`CustomListHeader` renders a banner at the **top of a list page**, but only when the list is filtered to **exactly one** category/type — a group list at `/groups?categories=42`, a resource list at `/resources?resourceCategoryId=7`, or a note list at `/notes?noteTypeId=3`. Unfiltered lists, and lists filtered to more than one category, show no header. It is the natural home for a category "dashboard": a title, a description, and a few `[mrql]` counts.
+
+Unlike the other slots, `CustomListHeader` is processed with **the category/type itself as the entity**, not a member group/resource/note. This has three consequences:
+
+- `[property path="Name"]` yields the category's own name (and `path="Description"` its description). Other `[property]` paths that expect a member entity's fields will be empty.
+- `[meta]` renders its empty state — a category carries no `Meta`, so a `[meta path="..." default="—"]` shows the default.
+- `[mrql]` resolves against **global scope** (not a group subtree), so dashboard queries count across the whole instance. Add an explicit `scope="..."` attribute if you want to narrow it.
+
+```html
+<div class="cat-dashboard">
+  <h2>[property path="Name"]</h2>
+  <p>[property path="Description"]</p>
+  <p><strong>[mrql query="type = group" value="count"]</strong> groups in this instance</p>
+</div>
+```
+
+Style it from the same `CustomCSS` field (the header markup ships inside a `custom-list-header` wrapper). The live preview pane on the edit form previews this slot against the category itself; it is only available once the category has been saved.
+
 ## CustomCSS
 
 Categories, Resource Categories, and Note Types each have a `CustomCSS` field. Unlike the four `Custom*` template slots, it holds raw CSS, not HTML. The content is injected verbatim into a page-level `<style>` block, so you can style the other slots (header, sidebar, summary, avatar, and Custom MRQL Result cards) from one place instead of inlining `<style>` in each template.
@@ -253,6 +274,7 @@ Shortcodes (`[meta]`, `[property]`, `[mrql]`) inside `CustomCSS` are processed s
    - **Custom Sidebar** - HTML for the detail page sidebar
    - **Custom Summary** - HTML for list view cards
    - **Custom Avatar** - HTML for link avatars
+   - **Custom List Header** - HTML shown atop a list filtered to this category/type
 5. Click **Submit**
 
 ## Creating Resource Categories with Templates
@@ -265,6 +287,7 @@ Shortcodes (`[meta]`, `[property]`, `[mrql]`) inside `CustomCSS` are processed s
    - **Custom Sidebar** - HTML for the resource detail page sidebar
    - **Custom Summary** - HTML for list view cards
    - **Custom Avatar** - HTML for link avatars
+   - **Custom List Header** - HTML shown atop a list filtered to this category/type
 5. Optionally define a **MetaSchema** (JSON Schema for metadata validation)
 6. Click **Submit**
 

@@ -8,6 +8,7 @@
 {% endblock %}
 
 {% block body %}
+    {% include "/partials/customListHeader.tpl" %}
     {% include "/partials/mrqlBar.tpl" with entity="resource" %}
     <div class="detail-table-wrap">
         <table class="gallery detail-table" aria-label="Resources">

@@ -67,6 +67,7 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 		CustomSidebar:    query.CustomSidebar,
 		CustomSummary:    query.CustomSummary,
 		CustomAvatar:     query.CustomAvatar,
+		CustomListHeader: query.CustomListHeader,
 		CustomMRQLResult: query.CustomMRQLResult,
 		CustomCSS:        query.CustomCSS,
 		MetaSchema:       query.MetaSchema,
@@ -104,6 +105,7 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	resourceCategory.CustomSidebar = query.CustomSidebar
 	resourceCategory.CustomSummary = query.CustomSummary
 	resourceCategory.CustomAvatar = query.CustomAvatar
+	resourceCategory.CustomListHeader = query.CustomListHeader
 	resourceCategory.CustomMRQLResult = query.CustomMRQLResult
 	resourceCategory.CustomCSS = query.CustomCSS
 	resourceCategory.MetaSchema = query.MetaSchema

@@ -2016,10 +2016,14 @@ Response: {"issues": [{"start", "end", "severity" ("error"|"warning"|"info"),
 live preview in the editor.
 
 Request body fields:
-  - entityId   (integer, required) — the entity to render against
+  - entityId   (integer, required unless carrier) — the entity to render against
   - content    (string) — the template slot markup to render
   - css        (string) — CustomCSS to process alongside
-  - categoryId (integer) — the category being edited (for a mismatch warning)
+  - categoryId (integer) — the category being edited (for a mismatch warning;
+    required when carrier is set)
+  - carrier    (boolean) — render against the category/type itself rather than a
+    member entity (used for the CustomListHeader slot). entityId is then ignored
+    and categoryId identifies the carrier.
 
 Response: {"html", "css", "entity", "issues": [...lint issues...]}. "entity" is
 the carrier entity marshaled like the display pages' json filter, so the preview

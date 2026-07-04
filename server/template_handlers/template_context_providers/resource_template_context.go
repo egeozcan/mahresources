@@ -91,14 +91,20 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 		}
 
 		var selectedResourceCategory []*models.ResourceCategory
+		// listHeaderCarrier is the single resource category the list is filtered to
+		// (or nil). It drives the shared customListHeader.tpl partial, which renders
+		// the category's CustomListHeader slot against the category itself.
+		var listHeaderCarrier *models.ResourceCategory
 		if query.ResourceCategoryId != 0 {
 			rc, err := context.GetResourceCategory(query.ResourceCategoryId)
 			if err == nil {
 				selectedResourceCategory = []*models.ResourceCategory{rc}
+				listHeaderCarrier = rc
 			}
 		}
 
 		return pongo2.Context{
+			"listHeaderCarrier":        listHeaderCarrier,
 			"pageTitle":                "Resources",
 			"resources":                resources,
 			"pagination":               pagination,
@@ -240,10 +246,12 @@ func ResourceTimelineContextProvider(context *application_context.MahresourcesCo
 		}
 
 		var selectedResourceCategory []*models.ResourceCategory
+		var listHeaderCarrier *models.ResourceCategory
 		if query.ResourceCategoryId != 0 {
 			rc, err := context.GetResourceCategory(query.ResourceCategoryId)
 			if err == nil {
 				selectedResourceCategory = []*models.ResourceCategory{rc}
+				listHeaderCarrier = rc
 			}
 		}
 
@@ -271,6 +279,7 @@ func ResourceTimelineContextProvider(context *application_context.MahresourcesCo
 			"owner":                    owner,
 			"groups":                   groups,
 			"selectedResourceCategory": selectedResourceCategory,
+			"listHeaderCarrier":        listHeaderCarrier,
 			"parsedQuery":              query,
 			"action": template_entities.Entry{
 				Name: "Create",

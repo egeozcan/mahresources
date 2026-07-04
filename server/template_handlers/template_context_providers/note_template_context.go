@@ -102,17 +102,26 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 			return addErrContext(err, baseContext)
 		}
 
+		// listHeaderCarrier is the single note type the list is filtered to (or nil).
+		// It drives the shared customListHeader.tpl partial, which renders the note
+		// type's CustomListHeader slot against the note type itself.
+		var listHeaderCarrier *models.NoteType
+		if query.NoteTypeId != 0 && len(noteTypes) == 1 {
+			listHeaderCarrier = &noteTypes[0]
+		}
+
 		return pongo2.Context{
-			"pageTitle":   "Notes",
-			"notes":       cards,
-			"groups":      groups,
-			"owners":      owners,
-			"pagination":  pagination,
-			"mrqlError":   mrqlError,
-			"tags":        tags,
-			"popularTags": popularTags,
-			"noteTypes":   noteTypes,
-			"parsedQuery": query,
+			"pageTitle":         "Notes",
+			"notes":             cards,
+			"groups":            groups,
+			"owners":            owners,
+			"pagination":        pagination,
+			"mrqlError":         mrqlError,
+			"tags":              tags,
+			"popularTags":       popularTags,
+			"noteTypes":         noteTypes,
+			"listHeaderCarrier": listHeaderCarrier,
+			"parsedQuery":       query,
 			"action": template_entities.Entry{
 				Name: "Create",
 				Url:  "/note/new",
@@ -180,15 +189,21 @@ func NoteTimelineContextProvider(context *application_context.MahresourcesContex
 			popularTags = []application_context.PopularTag{}
 		}
 
+		var listHeaderCarrier *models.NoteType
+		if query.NoteTypeId != 0 && len(noteTypes) == 1 {
+			listHeaderCarrier = &noteTypes[0]
+		}
+
 		return pongo2.Context{
-			"pageTitle":   "Notes - Timeline",
-			"groups":      groups,
-			"owners":      owners,
-			"mrqlError":   mrqlError,
-			"tags":        tags,
-			"popularTags": popularTags,
-			"noteTypes":   noteTypes,
-			"parsedQuery": query,
+			"pageTitle":         "Notes - Timeline",
+			"groups":            groups,
+			"owners":            owners,
+			"mrqlError":         mrqlError,
+			"tags":              tags,
+			"popularTags":       popularTags,
+			"noteTypes":         noteTypes,
+			"listHeaderCarrier": listHeaderCarrier,
+			"parsedQuery":       query,
 			"action": template_entities.Entry{
 				Name: "Create",
 				Url:  "/note/new",

@@ -101,13 +101,23 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 			return addErrContext(err, baseContext)
 		}
 
+		// listHeaderCarrier is the single category the list is filtered to (or nil).
+		// It drives the shared customListHeader.tpl partial, which renders the
+		// category's CustomListHeader slot against the category itself. Groups filter
+		// on the multi-value Categories slice, so "single" means exactly one.
+		var listHeaderCarrier *models.Category
+		if len(query.Categories) == 1 && len(categories) == 1 {
+			listHeaderCarrier = &categories[0]
+		}
+
 		return pongo2.Context{
-			"pageTitle":       "Groups",
-			"groups":          groups,
-			"owners":          owners,
-			"groupsSelection": groupsSelection,
-			"categories":      categories,
-			"pagination":      pagination,
+			"pageTitle":         "Groups",
+			"groups":            groups,
+			"owners":            owners,
+			"groupsSelection":   groupsSelection,
+			"categories":        categories,
+			"listHeaderCarrier": listHeaderCarrier,
+			"pagination":        pagination,
 			"mrqlError":       mrqlError,
 			"tags":            tags,
 			"popularTags":     popularTags,
@@ -195,16 +205,22 @@ func GroupTimelineContextProvider(context *application_context.MahresourcesConte
 			popularTags = []application_context.PopularTag{}
 		}
 
+		var listHeaderCarrier *models.Category
+		if len(query.Categories) == 1 && len(categories) == 1 {
+			listHeaderCarrier = &categories[0]
+		}
+
 		return pongo2.Context{
-			"pageTitle":       "Groups - Timeline",
-			"owners":          owners,
-			"groupsSelection": groupsSelection,
-			"categories":      categories,
-			"mrqlError":       mrqlError,
-			"tags":            tags,
-			"popularTags":     popularTags,
-			"notes":           notes,
-			"resources":       resources,
+			"pageTitle":         "Groups - Timeline",
+			"owners":            owners,
+			"groupsSelection":   groupsSelection,
+			"categories":        categories,
+			"listHeaderCarrier": listHeaderCarrier,
+			"mrqlError":         mrqlError,
+			"tags":              tags,
+			"popularTags":       popularTags,
+			"notes":             notes,
+			"resources":         resources,
 			"parsedQuery":     query,
 			"action": template_entities.Entry{
 				Name: "Add",

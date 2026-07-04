@@ -8,6 +8,7 @@
 {% endblock %}
 
 {% block body %}
+    {% include "/partials/customListHeader.tpl" %}
     {% include "/partials/mrqlBar.tpl" with entity="note" %}
     {% plugin_slot "note_list_before" %}
     <section class="list-container"{% if owners && owners|length == 1 %} data-paste-context='{"type":"group","id":{{ owners.0.ID }},"name":"{{ owners.0.Name|escapejs }}"}'{% endif %}>

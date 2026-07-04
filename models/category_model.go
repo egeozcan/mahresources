@@ -30,6 +30,11 @@ type Category struct {
 	// CustomAvatar replaces the default initials avatar on group cards in list views.
 	// Shortcodes are processed server-side; an Alpine entity variable is available.
 	CustomAvatar string `gorm:"type:text"`
+	// CustomListHeader is rendered at the top of group list pages when the list is
+	// filtered to exactly this one category. It is processed with the category itself
+	// as the entity: [property path="Name"] yields the category name, [meta] renders its
+	// empty state (the category carries no meta), and [mrql] resolves against global scope.
+	CustomListHeader string `gorm:"type:text"`
 	// CustomMRQLResult is an HTML+shortcode template for rendering groups of this category
 	// in [mrql] query results. Processed entirely server-side; Alpine directives are not
 	// initialized in the rendered output.

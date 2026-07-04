@@ -2098,6 +2098,9 @@
   .self-center {
     align-self: center;
   }
+  .self-end {
+    align-self: flex-end;
+  }
   .self-start {
     align-self: flex-start;
   }
@@ -2797,6 +2800,9 @@
   .pb-1 {
     padding-bottom: var(--spacing);
   }
+  .pb-1\.5 {
+    padding-bottom: calc(var(--spacing) * 1.5);
+  }
   .pb-2 {
     padding-bottom: calc(var(--spacing) * 2);
   }
@@ -3429,6 +3435,12 @@
   }
   .\[plugin\:\%s\] {
     plugin: %s;
+  }
+  .\[plugin\:\*\] {
+    plugin: *;
+  }
+  .\[plugin\:\.\.\.\] {
+    plugin: ...;
   }
   .\[plugin\:foo\] {
     plugin: foo;

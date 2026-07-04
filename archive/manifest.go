@@ -293,6 +293,7 @@ type CategoryDef struct {
 	CustomSidebar    string         `json:"custom_sidebar"`
 	CustomSummary    string         `json:"custom_summary"`
 	CustomAvatar     string         `json:"custom_avatar"`
+	CustomListHeader string         `json:"custom_list_header,omitempty"`
 	CustomMRQLResult string         `json:"custom_mrql_result"`
 	CustomCSS        string         `json:"custom_css"`
 	MetaSchema       string         `json:"meta_schema"`

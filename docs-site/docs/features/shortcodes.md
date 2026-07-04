@@ -166,7 +166,7 @@ Embeds MRQL query results inline. Executes a query and renders the results in on
 `value=` turns `[mrql]` into an inline scalar: it renders a single escaped text value with **no wrapper `<div>`**, usable mid-sentence.
 
 ```html
-<p>You have <strong>[mrql query="resources" value="count"]</strong> files.</p>
+<p>You have <strong>[mrql query="type = resource" value="count"]</strong> files.</p>
 ```
 
 - `value="count"` -- the flat item count, the bucket count (bucketed), or the row count (aggregated).
@@ -280,7 +280,7 @@ Because the body is HTML, you can wrap shortcodes in any markup (grids, cards, b
 A block body may carry three optional slots alongside the per-item template, using literal tags handled locally by `[mrql]` (like `[else]` inside `[conditional]` -- they carry meaning only inside an `[mrql]` block):
 
 ```
-[mrql query='notes WHERE tags = "todo"' limit="10"]
+[mrql query='type = note AND tags = "todo"' limit="10"]
   [header]<h4>Open TODOs ({count} of {total})</h4>[/header]
   <li>[property path="Name"]</li>
   [footer]<p class="text-xs">updated live</p>[/footer]
@@ -308,7 +308,7 @@ Header, footer, and `[else]` slots substitute three placeholders **before** thei
 Set `link-all="true"` to append a default **"View all →"** link after the results (before a custom `[footer]`):
 
 ```
-[mrql query='resources WHERE tags = "photo"' limit="6" link-all="true"]
+[mrql query='type = resource AND tags = "photo"' limit="6" link-all="true"]
   <li>[property path="Name"]</li>
 [/mrql]
 ```

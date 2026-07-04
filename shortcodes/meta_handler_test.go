@@ -57,6 +57,28 @@ func TestRenderMetaEditable(t *testing.T) {
 	assert.Contains(t, result, `data-value="&#34;test&#34;"`)
 }
 
+func TestRenderMetaForceReadOnly(t *testing.T) {
+	meta := map[string]any{"name": "test"}
+	metaJSON, _ := json.Marshal(meta)
+
+	// ForceReadOnly (set by the share renderer) must override editable="true",
+	// so the public share page never emits an edit affordance.
+	ctx := MetaShortcodeContext{
+		EntityType:    "note",
+		EntityID:      7,
+		Meta:          metaJSON,
+		ForceReadOnly: true,
+	}
+
+	result := RenderMetaShortcode(Shortcode{
+		Name:  "meta",
+		Attrs: map[string]string{"path": "name", "editable": "true"},
+	}, ctx)
+
+	assert.Contains(t, result, `data-editable="false"`)
+	assert.NotContains(t, result, `data-editable="true"`)
+}
+
 func TestRenderMetaDefaultAttr(t *testing.T) {
 	ctx := MetaShortcodeContext{
 		EntityType: "group",

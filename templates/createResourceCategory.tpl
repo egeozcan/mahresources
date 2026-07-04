@@ -143,6 +143,7 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=resourceCategory.CustomSidebar mode="html" description="Rendered in the resource detail page sidebar and lightbox panel." shortcodes=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=resourceCategory.CustomSummary mode="html" description="Rendered on resource cards in list views, below the title." shortcodes=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=resourceCategory.CustomAvatar mode="html" description="Shown next to the category name on resource cards. Resources keep their thumbnail — there is no initials avatar to replace." shortcodes=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header" name="CustomListHeader" value=resourceCategory.CustomListHeader mode="html" description="Rendered at the top of resource list pages filtered to exactly this category. Processed against the category itself: [property path=&quot;Name&quot;] is the category name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=resourceCategory.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." shortcodes=true %}
     </fieldset>
 

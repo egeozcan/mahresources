@@ -142,6 +142,23 @@ func buildMetaContext(entity any, appCtx *application_context.MahresourcesContex
 	case "Note":
 		entityType = "note"
 		metaSchema = extractCategorySchema(v, "NoteType")
+	case "Category", "ResourceCategory", "NoteType":
+		// Carrier types render their own list-header slot (CustomListHeader). The
+		// carrier is not a content entity: it has no Meta (so [meta] renders its
+		// empty state) and no owning group, so [mrql] must resolve against global
+		// scope (0/0/0) — dashboard queries like "count of groups in this category"
+		// are the whole point. carrierEntityType maps the struct name to the
+		// [meta] data-entity-type attribute (cosmetic here since Meta is empty).
+		return &shortcodes.MetaShortcodeContext{
+			EntityType:    carrierEntityType(typeName),
+			EntityID:      id,
+			Meta:          metaJSON, // nil — carriers have no Meta field
+			MetaSchema:    "",
+			Entity:        entity,
+			ScopeGroupID:  0,
+			ParentGroupID: 0,
+			RootGroupID:   0,
+		}
 	default:
 		return nil
 	}
@@ -158,6 +175,21 @@ func buildMetaContext(entity any, appCtx *application_context.MahresourcesContex
 		ScopeGroupID:  scopeID,
 		ParentGroupID: parentID,
 		RootGroupID:   rootID,
+	}
+}
+
+// carrierEntityType maps a carrier struct name (Category/ResourceCategory/NoteType)
+// to the entity-type string used in the [meta] data-entity-type attribute.
+func carrierEntityType(typeName string) string {
+	switch typeName {
+	case "Category":
+		return "category"
+	case "ResourceCategory":
+		return "resource_category"
+	case "NoteType":
+		return "note_type"
+	default:
+		return typeName
 	}
 }
 

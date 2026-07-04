@@ -8,6 +8,7 @@ type ResourceCategoryCreator struct {
 	CustomSidebar    string
 	CustomSummary    string
 	CustomAvatar     string
+	CustomListHeader string
 	CustomMRQLResult string
 	CustomCSS        string
 	MetaSchema       string

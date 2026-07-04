@@ -9,9 +9,14 @@ const SLOTS = [
   { name: 'CustomSidebar', label: 'Sidebar' },
   { name: 'CustomSummary', label: 'Summary' },
   { name: 'CustomAvatar', label: 'Avatar' },
+  { name: 'CustomListHeader', label: 'List Header' },
   { name: 'CustomMRQLResult', label: 'MRQL Result' },
   { name: 'CustomCSS', label: 'CSS' },
 ];
+
+// Carrier slots render against the category/type itself (not a member entity),
+// so the preview uses carrier mode: no member entity picked, categoryId required.
+const CARRIER_SLOTS = new Set(['CustomListHeader']);
 
 const LIST_ENDPOINTS = {
   group: '/v1/groups',
@@ -111,6 +116,12 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       return s ? s.label : this.slot;
     },
 
+    // isCarrierSlot reports whether the selected slot renders against the
+    // category/type itself (carrier mode) rather than a member entity.
+    isCarrierSlot() {
+      return CARRIER_SLOTS.has(this.slot);
+    },
+
     hasErrors() {
       return this.issues.some((i) => i.severity === 'error');
     },
@@ -188,7 +199,20 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
     },
 
     async refresh() {
-      if (!this.entityId || !this.previewPath) return;
+      if (!this.previewPath) return;
+      const carrier = this.isCarrierSlot();
+      if (carrier) {
+        // A list-header slot renders against the category itself, which must
+        // already exist. On the create form there is no carrier yet.
+        if (!this.categoryId) {
+          this.error = 'Save this category first, then reopen the form to preview the list header.';
+          this.issues = [];
+          this._renderFrame('', '', null);
+          return;
+        }
+      } else if (!this.entityId) {
+        return;
+      }
       // Concurrent refreshes (slot switch racing a debounced edit) can resolve
       // out of order; only the newest request may touch the pane state.
       const seq = ++this._refreshSeq;
@@ -197,15 +221,18 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       const content = this._readSlot(this.slot);
       const css = this._readSlot('CustomCSS');
       try {
+        const body = carrier
+          ? { carrier: true, content, css, categoryId: Number(this.categoryId) }
+          : {
+              entityId: Number(this.entityId),
+              content,
+              css,
+              categoryId: this.categoryId ? Number(this.categoryId) : 0,
+            };
         const resp = await fetch(this.previewPath, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            entityId: Number(this.entityId),
-            content,
-            css,
-            categoryId: this.categoryId ? Number(this.categoryId) : 0,
-          }),
+          body: JSON.stringify(body),
         });
         if (seq !== this._refreshSeq) return;
         if (!resp.ok) {
