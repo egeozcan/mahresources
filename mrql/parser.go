@@ -413,20 +413,31 @@ func (p *parser) parseFieldExpr() (Node, error) {
 
 	next := p.lexer.Peek()
 
+	// BETWEEN is not a lexer keyword — it arrives as a bare identifier, matched
+	// case-insensitively here (like WITHIN in package 3) so field/meta keys named
+	// "between" keep working. `field BETWEEN lo AND hi` desugars to
+	// `(field >= lo AND field <= hi)`.
+	if next.Type == TokenIdentifier && strings.EqualFold(next.Value, "BETWEEN") {
+		return p.parseBetween(field, nil)
+	}
+
 	switch next.Type {
-	case TokenEq, TokenNeq, TokenGt, TokenGte, TokenLt, TokenLte, TokenLike, TokenNotLike:
+	case TokenEq, TokenNeq, TokenGt, TokenGte, TokenLt, TokenLte, TokenLike, TokenNotLike, TokenRegex, TokenNotRegex:
 		return p.parseComparison(field)
 
 	case TokenIn:
 		return p.parseInExpr(field, false)
 
 	case TokenNot:
-		// field NOT IN (...)
+		// field NOT IN (...) or field NOT BETWEEN lo AND hi
 		notTok := p.lexer.Next() // consume NOT
-		inTok := p.lexer.Peek()
-		if inTok.Type != TokenIn {
+		nextTok := p.lexer.Peek()
+		if nextTok.Type == TokenIdentifier && strings.EqualFold(nextTok.Value, "BETWEEN") {
+			return p.parseBetween(field, &notTok)
+		}
+		if nextTok.Type != TokenIn {
 			return nil, &ParseError{
-				Message: fmt.Sprintf("expected IN after field NOT, got %q", inTok.Value),
+				Message: fmt.Sprintf("expected IN or BETWEEN after field NOT, got %q", nextTok.Value),
 				Pos:     notTok.Pos,
 				Length:  notTok.Length,
 			}
@@ -508,6 +519,50 @@ func (p *parser) parseComparison(field *FieldExpr) (Node, error) {
 		Operator: opTok,
 		Value:    val,
 	}, nil
+}
+
+// parseBetween parses `BETWEEN lo AND hi` and desugars it into existing nodes:
+// `field >= lo AND field <= hi`, wrapped in NotExpr for `NOT BETWEEN`. No new AST
+// node — validation, param binding, translation, EXPLAIN, and the filter bar all
+// operate on the desugared tree unchanged. The synthesized operator/AND tokens
+// carry the BETWEEN token's position so downstream errors still point at the
+// query text. The two comparisons get separate FieldExpr nodes (sharing the
+// read-only Parts slice) to avoid shared-node aliasing.
+func (p *parser) parseBetween(field *FieldExpr, notTok *Token) (Node, error) {
+	betweenTok := p.lexer.Next() // consume BETWEEN identifier
+
+	lo, err := p.parseValue()
+	if err != nil {
+		return nil, err
+	}
+
+	andTok := p.lexer.Next()
+	if andTok.Type != TokenAnd {
+		return nil, &ParseError{
+			Message: fmt.Sprintf("expected AND between BETWEEN bounds, got %q", andTok.Value),
+			Pos:     andTok.Pos,
+			Length:  andTok.Length,
+		}
+	}
+
+	hi, err := p.parseValue()
+	if err != nil {
+		return nil, err
+	}
+
+	gteTok := Token{Type: TokenGte, Value: ">=", Pos: betweenTok.Pos, Length: betweenTok.Length}
+	lteTok := Token{Type: TokenLte, Value: "<=", Pos: betweenTok.Pos, Length: betweenTok.Length}
+	andSynth := Token{Type: TokenAnd, Value: "AND", Pos: betweenTok.Pos, Length: betweenTok.Length}
+
+	fieldHi := &FieldExpr{Parts: field.Parts}
+	lower := &ComparisonExpr{Field: field, Operator: gteTok, Value: lo}
+	upper := &ComparisonExpr{Field: fieldHi, Operator: lteTok, Value: hi}
+	andExpr := &BinaryExpr{Left: lower, Operator: andSynth, Right: upper}
+
+	if notTok != nil {
+		return &NotExpr{Token: *notTok, Expr: andExpr}, nil
+	}
+	return andExpr, nil
 }
 
 // parseInExpr = ["NOT"] "IN" "(" value ("," value)* ")"
@@ -693,6 +748,34 @@ func (p *parser) parseOrderBy() ([]OrderByClause, error) {
 		field, err := p.parseField()
 		if err != nil {
 			return nil, err
+		}
+
+		// RANDOM() is a context-sensitive sort key, not a lexer keyword: a
+		// single-part field spelled RANDOM followed by "()" is the random-order
+		// clause. It takes no direction.
+		if len(field.Parts) == 1 && strings.EqualFold(field.Parts[0].Value, "RANDOM") && p.lexer.Peek().Type == TokenLParen {
+			p.lexer.Next() // consume '('
+			rp := p.lexer.Next()
+			if rp.Type != TokenRParen {
+				return nil, &ParseError{
+					Message: fmt.Sprintf("expected ')' after RANDOM(, got %q", rp.Value),
+					Pos:     rp.Pos,
+					Length:  rp.Length,
+				}
+			}
+			if dir := p.lexer.Peek(); dir.Type == TokenAsc || dir.Type == TokenDesc {
+				return nil, &ParseError{
+					Message: "RANDOM() does not take a direction",
+					Pos:     dir.Pos,
+					Length:  dir.Length,
+				}
+			}
+			clauses = append(clauses, OrderByClause{Random: true})
+			if p.lexer.Peek().Type != TokenComma {
+				break
+			}
+			p.lexer.Next() // consume ','
+			continue
 		}
 
 		ascending := true // default is ASC

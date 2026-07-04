@@ -91,12 +91,25 @@ Entity type (`type = "..."`) is optional; omitting it triggers **cross-entity mo
 |----------|---------|----------|---------|---|
 | `~` | Contains / matches | Wraps with `*` unless wildcards present; regex-like | `name ~ "report"` (matches anywhere) | No |
 | `!~` | Not contains / not matches | Negated `~` | `contentType !~ "image"` | No |
+| `~*` | Regex match (**PostgreSQL only**) | Case-insensitive POSIX regex; no wildcard shortcuts | `name ~* "^IMG_[0-9]{4}"` | No |
+| `!~*` | Negated regex match (**PostgreSQL only**) | Negated `~*` | `originalName !~* "\.(tmp\|bak)$"` | No |
 
 **Wildcard syntax** (when manually specified):
 - `*` = any sequence of characters
 - `?` = single character
 
 When value has no `*` or `?`, it's automatically treated as substring (`*pattern*`).
+
+`~*`/`!~*` use a real POSIX regular expression (no `*`/`?` shortcuts, no implicit anchoring) and are allowed on string and `meta.<key>` fields only. On SQLite they return an error.
+
+### Ranges
+
+| Operator | Meaning | Example |
+|----------|---------|---------|
+| `BETWEEN ... AND ...` | Inclusive range (both ends) | `created BETWEEN "2024-01-01" AND "2024-06-30"` |
+| `NOT BETWEEN ... AND ...` | Outside the range | `fileSize NOT BETWEEN 1mb AND 10mb` |
+
+`f BETWEEN a AND b` is exactly `(f >= a AND f <= b)`. Works on dates, numbers (with size units), strings, and `meta.<key>`; bounds may be relative dates, `NOW()`, or `$params`.
 
 ### Set Operations
 
@@ -227,7 +240,7 @@ type = note GROUP BY owner ORDER BY name ASC LIMIT 3
 ## ORDER BY and LIMIT
 
 ```
-ORDER BY <field> [ASC|DESC] [, <field> [ASC|DESC]...]
+ORDER BY <field> [ASC|DESC] [, <field> [ASC|DESC]...] | RANDOM() | RANK
 LIMIT <n>
 OFFSET <n>
 ```
@@ -235,6 +248,10 @@ OFFSET <n>
 **Multiple columns:** Supported; separate with commas.
 
 **Direction:** `ASC` (ascending) or `DESC` (descending); defaults to `ASC` if omitted.
+
+**`ORDER BY RANDOM()`:** Random order (or random sample with `LIMIT`). Takes no direction; not allowed with `GROUP BY`. Pagination re-rolls the order, so pages can repeat rows.
+
+**`ORDER BY RANK`:** Full-text relevance, most relevant first. Requires exactly one `TEXT ~` predicate, a single entity type, and no `GROUP BY`; errors when FTS is disabled (`-skip-fts`). Example: `type = note AND TEXT ~ "kubernetes" ORDER BY RANK LIMIT 10`.
 
 **Default LIMIT:** No `LIMIT` clause applies the server's configured default — the `-mrql-default-limit` flag (env `MRQL_DEFAULT_LIMIT`), which the standard binary sets to **500** (the internal code fallback is 1000 if the flag is left unwired).
 

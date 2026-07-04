@@ -3,7 +3,10 @@
 package mrql
 
 import (
+	"strings"
 	"testing"
+
+	"gorm.io/gorm"
 )
 
 func TestPG_ResourceNameContains(t *testing.T) {
@@ -147,5 +150,22 @@ func TestPG_OwnerIsEmpty(t *testing.T) {
 	}
 	if len(resources) != 2 {
 		t.Fatalf("expected 2 resources with no owner, got %d: %v", len(resources), namesOfResources(resources))
+	}
+}
+
+func TestPG_OrderByRandomSQL(t *testing.T) {
+	db := setupPostgresTestDB(t)
+	q := mustParse(t, `type = "resource" ORDER BY RANDOM()`)
+	q.EntityType = EntityResource
+	if err := Validate(q); err != nil {
+		t.Fatalf("validate error: %v", err)
+	}
+	result, err := Translate(q, db)
+	if err != nil {
+		t.Fatalf("translate error: %v", err)
+	}
+	sql := result.Session(&gorm.Session{DryRun: true}).Find(&[]testResource{}).Statement.SQL.String()
+	if !strings.Contains(strings.ToUpper(sql), "ORDER BY RANDOM()") {
+		t.Fatalf("expected ORDER BY RANDOM() in SQL, got: %s", sql)
 	}
 }

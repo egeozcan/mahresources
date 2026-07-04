@@ -99,6 +99,8 @@ reusable as-is.
 
 ## Package 6: Ergonomics
 
+Design: `v3-package-6-ergonomics-design.md`
+
 Smaller wins, individually shippable:
 
 - `BETWEEN` sugar for dates and numbers.

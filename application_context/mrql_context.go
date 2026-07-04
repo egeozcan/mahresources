@@ -289,6 +289,16 @@ func (ctx *MahresourcesContext) defaultMRQLLimit() int {
 	return DefaultMRQLLimitFallback
 }
 
+// rejectSQLiteRegex returns a TranslateError when the query uses a regex match
+// operator (~* / !~*) on a non-PostgreSQL database. SQLite has no native regex,
+// so the operator is PostgreSQL-only.
+func (ctx *MahresourcesContext) rejectSQLiteRegex(q *mrql.Query) error {
+	if mrql.ContainsRegexOperator(q) && ctx.db.Config.Dialector.Name() != "postgres" {
+		return &mrql.TranslateError{Message: "regex match (~*) requires PostgreSQL", Pos: 0}
+	}
+	return nil
+}
+
 // mrqlTranslateOptions returns TranslateOptions pre-filled with the runtime
 // similarity thresholds, so SIMILAR TO predicates match the resource page's
 // similarity sidebar (same read path, same live-tunable thresholds).
@@ -566,6 +576,15 @@ type crossEntityItem struct {
 // others. If an entity times out, its results are omitted and a warning is
 // included in the response.
 func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLResult, error) {
+	// Up-front regex/dialect gate: this path swallows per-entity TranslateErrors
+	// (a non-resolvable entity is skipped), so a SQLite regex query without a
+	// `type =` filter would otherwise return silent empty results instead of a
+	// clear 400. Reject it here before fan-out. The per-comparison TranslateError
+	// in the translator remains as defense-in-depth for the determined-entity path.
+	if err := ctx.rejectSQLiteRegex(parsed); err != nil {
+		return nil, err
+	}
+
 	result := &MRQLResult{EntityType: "all"}
 
 	globalLimit := ctx.defaultMRQLLimit()

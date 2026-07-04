@@ -90,7 +90,19 @@ func TranslateWithOptions(q *Query, db *gorm.DB, opts TranslateOptions) (*gorm.D
 
 	// Translate ORDER BY clauses
 	for _, ob := range q.OrderBy {
-		col := tc.resolveOrderByColumn(ob.Field)
+		if ob.Random {
+			result = result.Order("RANDOM()")
+			continue
+		}
+		col, err := tc.resolveOrderByColumn(ob.Field)
+		if err != nil {
+			return nil, err
+		}
+		if col == "" {
+			// Rank key with an empty/dropped FTS term degrades to no ordering,
+			// mirroring how the TEXT predicate itself drops.
+			continue
+		}
 		direction := "ASC"
 		if !ob.Ascending {
 			direction = "DESC"
@@ -123,6 +135,11 @@ type translateContext struct {
 	similarityThreshold int
 	aHashThreshold      uint64
 	similarTarget       *SimilarToExpr
+
+	// textSearchTarget is the single TEXT ~ predicate in the WHERE clause when
+	// exactly one exists — the validator guarantees this before ORDER BY RANK is
+	// accepted. It defines the relevance the rank key orders by.
+	textSearchTarget *TextSearchExpr
 }
 
 // newTranslateContext builds a translateContext for a resolved entity type,
@@ -136,7 +153,55 @@ func newTranslateContext(db *gorm.DB, entityType EntityType, q *Query, opts Tran
 		similarityThreshold: resolveSimilarityThreshold(opts),
 		aHashThreshold:      opts.AHashThreshold,
 		similarTarget:       findSimilarTarget(q.Where),
+		textSearchTarget:    findTextSearchTarget(q.Where),
 	}
+}
+
+// findTextSearchTarget returns the single TextSearchExpr in a WHERE tree when
+// exactly one exists, else nil. Used to resolve ORDER BY RANK.
+func findTextSearchTarget(node Node) *TextSearchExpr {
+	targets := collectTextSearchExprs(node)
+	if len(targets) == 1 {
+		return targets[0]
+	}
+	return nil
+}
+
+// ContainsRegexOperator reports whether the query's WHERE tree contains a regex
+// match operator (~* / !~*). application_context uses this to reject regex on
+// SQLite up front — before execution and regardless of entity-type resolution —
+// so cross-entity queries (which swallow per-entity TranslateErrors) don't turn a
+// SQLite regex into silent empty results.
+func ContainsRegexOperator(q *Query) bool {
+	if q == nil {
+		return false
+	}
+	return nodeContainsRegex(q.Where)
+}
+
+func nodeContainsRegex(node Node) bool {
+	switch n := node.(type) {
+	case *BinaryExpr:
+		return nodeContainsRegex(n.Left) || nodeContainsRegex(n.Right)
+	case *NotExpr:
+		return nodeContainsRegex(n.Expr)
+	case *ComparisonExpr:
+		return isRegexOperator(n.Operator)
+	}
+	return false
+}
+
+// collectTextSearchExprs returns all TextSearchExpr nodes in an expression tree.
+func collectTextSearchExprs(node Node) []*TextSearchExpr {
+	switch n := node.(type) {
+	case *BinaryExpr:
+		return append(collectTextSearchExprs(n.Left), collectTextSearchExprs(n.Right)...)
+	case *NotExpr:
+		return collectTextSearchExprs(n.Expr)
+	case *TextSearchExpr:
+		return []*TextSearchExpr{n}
+	}
+	return nil
 }
 
 // resolveSimilarityThreshold applies the nil fallback for the SIMILAR TO
@@ -275,7 +340,7 @@ func (tc *translateContext) buildScalarClause(qualifiedCol string, op Token, val
 // translateFKChainScalar translates a chained traversal ending in a scalar field
 // comparison. Example: owner.parent.name = "Vacation" → nested IN subqueries.
 func (tc *translateContext) translateFKChainScalar(db *gorm.DB, steps []fkStep, leafCol string, op Token, val interface{}, leafFd FieldDef) (*gorm.DB, error) {
-	isNegated := op.Type == TokenNeq || op.Type == TokenNotLike
+	isNegated := op.Type == TokenNeq || op.Type == TokenNotLike || op.Type == TokenNotRegex
 	isChildrenRoot := tc.isChildrenStep(steps[0])
 
 	if isNegated && isChildrenRoot {
@@ -377,6 +442,8 @@ func (tc *translateContext) flipOperator(op Token) Token {
 		flipped.Type = TokenEq
 	case TokenNotLike:
 		flipped.Type = TokenLike
+	case TokenNotRegex:
+		flipped.Type = TokenRegex
 	}
 	return flipped
 }
@@ -477,7 +544,7 @@ func (tc *translateContext) translateChainedMetaComparison(db *gorm.DB, expr *Co
 		innerWhere = numericFilter + " AND " + innerWhere
 	}
 
-	isNegated := expr.Operator.Type == TokenNeq || expr.Operator.Type == TokenNotLike
+	isNegated := expr.Operator.Type == TokenNeq || expr.Operator.Type == TokenNotLike || expr.Operator.Type == TokenNotRegex
 	isChildrenRoot := tc.isChildrenStep(steps[0])
 
 	if isNegated && isChildrenRoot {
@@ -527,7 +594,7 @@ const recursiveDepthGuard = 50
 func (tc *translateContext) translateRecursiveComparison(db *gorm.DB, expr *ComparisonExpr) (*gorm.DB, error) {
 	parts := expr.Field.Parts
 	root := parts[0].Value // "ancestors" or "descendants"
-	isNegated := expr.Operator.Type == TokenNeq || expr.Operator.Type == TokenNotLike
+	isNegated := expr.Operator.Type == TokenNeq || expr.Operator.Type == TokenNotLike || expr.Operator.Type == TokenNotRegex
 
 	mSub, mVal, err := tc.buildRecursiveMatchSubquery(expr)
 	if err != nil {
@@ -660,6 +727,11 @@ func (tc *translateContext) buildMetaClause(jsonExpr string, textExpr string, op
 	}
 
 	sqlOp := tc.sqlOperator(op)
+
+	// Regex match applies to the text-extracted value, not the raw JSON value.
+	if isRegexOperator(op) {
+		return textExpr + " " + sqlOp + " ?", val
+	}
 
 	if !isNumericVal && (op.Type == TokenEq || op.Type == TokenNeq) {
 		return "LOWER(" + jsonExpr + ") " + sqlOp + " LOWER(?)", val
@@ -797,6 +869,18 @@ func (tc *translateContext) translateNotExpr(db *gorm.DB, expr *NotExpr) (*gorm.
 func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *ComparisonExpr) (*gorm.DB, error) {
 	fieldName := expr.Field.Name()
 
+	// Regex match (~* / !~*) is PostgreSQL-only. SQLite has no native regex, so
+	// reject here as defense-in-depth for direct Translate callers. The primary
+	// guard is the up-front ContainsRegexOperator scan in application_context,
+	// which returns the same error before execution so cross-entity queries
+	// (which swallow per-entity TranslateErrors) don't yield silent empties.
+	if isRegexOperator(expr.Operator) && !tc.isPostgres() {
+		return nil, &TranslateError{
+			Message: "regex match (~*) requires PostgreSQL",
+			Pos:     expr.Operator.Pos,
+		}
+	}
+
 	// Handle type comparisons. These must produce explicit TRUE/FALSE clauses
 	// so they compose correctly inside OR and NOT expressions. Returning db
 	// unchanged (no clause) would break boolean composition — GORM treats an
@@ -895,6 +979,13 @@ func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *Compariso
 
 	if expr.Operator.Type == TokenLike || expr.Operator.Type == TokenNotLike {
 		return tc.translateLikeComparison(db, column, expr.Operator, val)
+	}
+
+	// Regex match: the ~* operator is itself case-insensitive, so no LOWER()
+	// wrapping and no wildcard conversion — the pattern is a bind parameter.
+	if isRegexOperator(expr.Operator) {
+		db = db.Where(column+" "+op+" ?", val)
+		return db, nil
 	}
 
 	// For string equality, use case-insensitive comparison
@@ -1202,6 +1293,14 @@ func (tc *translateContext) translateMetaComparison(db *gorm.DB, fd FieldDef, op
 			likeOp = "NOT " + likeOp
 		}
 		db = db.Where(textExpr+" "+likeOp+" ? ESCAPE '\\'", likePattern)
+		return db, nil
+	}
+
+	// Regex match on a meta value: apply ~*/!~* to the text-extracted value
+	// (->> on Postgres). Pattern is a bind parameter.
+	if isRegexOperator(op) {
+		textExpr := tc.metaJsonTextExpr(segments)
+		db = db.Where(textExpr+" "+sqlOp+" ?", val)
 		return db, nil
 	}
 
@@ -1592,9 +1691,19 @@ func (tc *translateContext) sqlOperator(op Token) string {
 		return tc.likeOperator()
 	case TokenNotLike:
 		return "NOT " + tc.likeOperator()
+	case TokenRegex:
+		return "~*"
+	case TokenNotRegex:
+		return "!~*"
 	default:
 		return "="
 	}
+}
+
+// isRegexOperator reports whether op is the PostgreSQL regex match (~*) or its
+// negation (!~*).
+func isRegexOperator(op Token) bool {
+	return op.Type == TokenRegex || op.Type == TokenNotRegex
 }
 
 // likeOperator returns "ILIKE" for Postgres, "LIKE" for everything else.
@@ -1626,9 +1735,19 @@ func (tc *translateContext) relationCountExpr(fieldName string) (string, bool) {
 	return "", false
 }
 
-// resolveOrderByColumn converts a FieldExpr to a qualified column name for ORDER BY.
-func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) string {
+// resolveOrderByColumn converts a FieldExpr to a qualified column name for
+// ORDER BY. It returns an error only for context-sensitive keys that can fail at
+// translation time (currently RANK when the FTS index is unavailable); a "" (nil
+// error) result means "drop this ordering" (rank with an empty/dropped term).
+func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) (string, error) {
 	fieldName := f.Name()
+
+	// "rank" → full-text relevance of the single TEXT ~ predicate (validated:
+	// determined entity, no GROUP BY, exactly one TextSearchExpr). Checked before
+	// field lookup so a stray field named rank never shadows it.
+	if len(f.Parts) == 1 && strings.EqualFold(f.Parts[0].Value, "rank") && tc.textSearchTarget != nil {
+		return tc.rankOrderExpr()
+	}
 
 	// "distance" → perceptual distance to the single SIMILAR TO target
 	// (validated: resource entity, exactly one SimilarToExpr in WHERE). The
@@ -1639,14 +1758,14 @@ func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) string {
 		return fmt.Sprintf(
 			"COALESCE((SELECT MIN(COALESCE(rs.p_distance, rs.hamming_distance)) FROM resource_similarities rs "+
 				"WHERE (rs.resource_id1 = %d AND rs.resource_id2 = %s.id) OR (rs.resource_id2 = %d AND rs.resource_id1 = %s.id)), 255)",
-			tc.similarTarget.TargetID, tc.tableName, tc.similarTarget.TargetID, tc.tableName)
+			tc.similarTarget.TargetID, tc.tableName, tc.similarTarget.TargetID, tc.tableName), nil
 	}
 
 	// <relation>.count → correlated COUNT(*) subquery (valid in ORDER BY on
 	// both SQLite and PostgreSQL).
 	if len(f.Parts) == 2 && f.Parts[1].Value == "count" {
 		if expr, ok := tc.relationCountExpr(f.Parts[0].Value); ok {
-			return expr
+			return expr, nil
 		}
 	}
 
@@ -1654,7 +1773,7 @@ func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) string {
 	// GROUP BY clause) order by the bucket expression.
 	if len(f.Parts) == 2 {
 		if expr, ok := tc.dateBucketFieldExpr(fieldName); ok {
-			return expr
+			return expr, nil
 		}
 	}
 
@@ -1665,16 +1784,77 @@ func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) string {
 	// codebase's meta sort behavior in database_scopes/db_utils.go.
 	if strings.HasPrefix(fieldName, "meta.") {
 		segments := metaSubpathSegments(fieldName)
-		return tc.metaJsonExpr(segments)
+		return tc.metaJsonExpr(segments), nil
 	}
 
 	fd, ok := LookupField(tc.entityType, fieldName)
 	if !ok {
 		// Fallback: use the field name as-is (validation should have caught this)
-		return tc.tableName + "." + fieldName
+		return tc.tableName + "." + fieldName, nil
 	}
 
-	return tc.qualifiedColumn(fd.Column)
+	return tc.qualifiedColumn(fd.Column), nil
+}
+
+// rankOrderExpr builds the inline ORDER BY relevance expression for the single
+// TEXT ~ predicate. It returns "" (nil error) when the term is empty or drops
+// (the predicate drops too), and a TranslateError when the FTS index is
+// unavailable (a rank over a LIKE fallback would silently lie). GORM's Order()
+// takes no bind values, so the term is inlined — safely, per dialect (see below).
+func (tc *translateContext) rankOrderExpr() (string, error) {
+	term := strings.TrimSpace(tc.textSearchTarget.Value.Value)
+	if term == "" {
+		return "", nil
+	}
+
+	if tc.isPostgres() {
+		var colExists int
+		tc.db.Raw(
+			"SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = 'search_vector'",
+			tc.tableName,
+		).Scan(&colExists)
+		if colExists == 0 {
+			return "", &TranslateError{
+				Message: "ORDER BY RANK requires the full-text index (server started with FTS disabled)",
+				Pos:     0,
+			}
+		}
+		// ts_rank of a non-match is 0; negation orders matches (>0) first.
+		// COALESCE covers NULL search_vector rows. The raw term is inlined as a
+		// standard SQL string literal (single quotes doubled);
+		// standard_conforming_strings is on by default, and plainto_tsquery
+		// treats the string as plain text (no tsquery-operator injection).
+		lit := "'" + strings.ReplaceAll(term, "'", "''") + "'"
+		return fmt.Sprintf(
+			"COALESCE(-ts_rank(%s.search_vector, plainto_tsquery('english', %s)), 0)",
+			tc.tableName, lit), nil
+	}
+
+	// SQLite: sanitize the term to the same alphabet the TEXT predicate binds
+	// (translator.go sanitizeFTS5). An empty result drops the ordering, just as
+	// translateTextSearch drops the predicate.
+	sanitized := sanitizeFTS5(term)
+	if sanitized == "" {
+		return "", nil
+	}
+	ftsTable := tc.tableName + "_fts"
+	var tableExists int
+	tc.db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", ftsTable).Scan(&tableExists)
+	if tableExists == 0 {
+		return "", &TranslateError{
+			Message: "ORDER BY RANK requires the full-text index (server started with FTS disabled)",
+			Pos:     0,
+		}
+	}
+	// bm25 of a match is negative (smaller = better); the 1e9 sentinel pins
+	// non-matching rows (possible when the TEXT predicate sits under OR/NOT) to
+	// the end in ASC order. The sanitized term's alphabet is [a-zA-Z0-9 .,], so
+	// it cannot contain a quote — inlining inside '...' is injection-safe by
+	// construction (same string the TEXT predicate binds).
+	lit := "'" + sanitized + "'"
+	return fmt.Sprintf(
+		"COALESCE((SELECT bm25(%s) FROM %s WHERE rowid = %s.id AND %s MATCH %s), 1e9)",
+		ftsTable, ftsTable, tc.tableName, ftsTable, lit), nil
 }
 
 // translateLikeComparison handles ~ and !~ operators with MRQL wildcard conversion.

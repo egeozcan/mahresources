@@ -183,9 +183,16 @@ func TranslateGroupByBucket(q *Query, db *gorm.DB, key map[string]any, opts Tran
 		result = result.Limit(q.Limit)
 	}
 
-	// Apply ORDER BY (within bucket)
+	// Apply ORDER BY (within bucket). RANDOM()/RANK are rejected with GROUP BY
+	// at validation, so they never reach here.
 	for _, ob := range q.OrderBy {
-		col := tc.resolveOrderByColumn(ob.Field)
+		if ob.Random {
+			continue
+		}
+		col, err := tc.resolveOrderByColumn(ob.Field)
+		if err != nil {
+			return nil, err
+		}
 		direction := "ASC"
 		if !ob.Ascending {
 			direction = "DESC"

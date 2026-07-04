@@ -14,7 +14,7 @@ A compact syntax reference for the Mahresources Query Language (MRQL). For the f
 [type = "resource|note|group" AND] <conditions>
   [SCOPE <group-id-or-name>]
   [GROUP BY <field>[, <field>...] [<aggregates>] [HAVING <aggregate-conditions>]]
-  [ORDER BY <field> [ASC|DESC]]
+  [ORDER BY <field> [ASC|DESC] | RANDOM() | RANK]
   [LIMIT <n>] [OFFSET <n>]
 ```
 
@@ -27,6 +27,8 @@ A compact syntax reference for the Mahresources Query Language (MRQL). For the f
 | `>` `>=` `<` `<=` | Numeric / datetime comparisons | `fileSize > 1mb`, `created >= -30d` |
 | `~` | Contains / wildcard pattern (case-insensitive) | `name ~ "project*"`, `contentType ~ "image"` |
 | `!~` | Negated pattern match | `contentType !~ "image"` |
+| `~*` / `!~*` | Case-insensitive POSIX regex match / negation (**PostgreSQL only**) | `name ~* "^IMG_[0-9]{4}"` |
+| `BETWEEN ... AND ...` | Inclusive range (also `NOT BETWEEN`) | `created BETWEEN "2024-01-01" AND "2024-06-30"`, `fileSize NOT BETWEEN 1mb AND 10mb` |
 | `IS EMPTY` / `IS NOT EMPTY` | Value is empty/null or has content | `description IS NOT EMPTY` |
 | `IS NULL` / `IS NOT NULL` | Meta key absent / present | `meta.rating IS NOT NULL` |
 | `IN (...)` / `NOT IN (...)` | Set membership | `contentType IN ("image/png", "image/jpeg")` |
@@ -213,6 +215,24 @@ type = resource AND SIMILAR TO resource(1234) ORDER BY distance ASC LIMIT 20
 - `ORDER BY distance` (ASC/DESC) sorts by the distance to the target and
   requires exactly one `SIMILAR TO` predicate. Rows without a stored pair
   (matched via other OR branches) sort last.
+
+## Ordering Keys
+
+Besides plain fields, `ORDER BY` accepts these context-sensitive keys:
+
+```
+type = resource AND tags IS EMPTY ORDER BY RANDOM() LIMIT 20
+type = note AND TEXT ~ "kubernetes migration" ORDER BY RANK LIMIT 10
+```
+
+- `RANDOM()` — random order (or a random sample with `LIMIT`). Takes no
+  `ASC`/`DESC`. Not allowed with `GROUP BY`. `LIMIT`/`OFFSET` re-roll the order
+  on each request, so paging a random order can repeat rows — that is the
+  expected "give me N random items" behavior.
+- `RANK` — full-text relevance; most relevant first (no direction needed;
+  `RANK DESC` reverses to least-relevant first). Requires exactly one `TEXT ~`
+  predicate, a single entity type, and no `GROUP BY`. Errors if the server was
+  started with full-text search disabled (`-skip-fts`).
 
 ## Parameters — `$name`
 

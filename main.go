@@ -301,9 +301,10 @@ func main() {
 			nil,
 		)
 		context.SetMRQLGenerator(application_context.NewMRQLGenerator(provider, application_context.MRQLGenerationConfig{
-			APIKey:  context.Config.DeepSeekAPIKey,
-			Model:   context.Config.DeepSeekModel,
-			Timeout: context.Config.DeepSeekTimeout,
+			APIKey:   context.Config.DeepSeekAPIKey,
+			Model:    context.Config.DeepSeekModel,
+			Timeout:  context.Config.DeepSeekTimeout,
+			Postgres: context.Config.DbType == constants.DbTypePosgres,
 		}))
 	}
 
