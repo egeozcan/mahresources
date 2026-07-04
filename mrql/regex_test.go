@@ -99,6 +99,43 @@ func TestRegexRejectedOnNumericField(t *testing.T) {
 	}
 }
 
+// TestRegexRejectedOnTraversalNonStringLeaf validates that traversal and
+// recursive chains reject regex on tags and numeric/datetime leaves — the same
+// rule enforced for single-part fields. Without this, `owner.tags ~* "x"` would
+// silently translate to an equality match on the pattern string.
+func TestRegexRejectedOnTraversalNonStringLeaf(t *testing.T) {
+	for _, q := range []string{
+		`type = "resource" AND owner.tags ~* "^x"`,
+		`type = "resource" AND owner.tags !~* "^x"`,
+		`type = "group" AND ancestors.tags ~* "^x"`,
+		`type = "group" AND descendants.tags !~* "^x"`,
+		`type = "resource" AND owner.id ~* "1"`,
+		`type = "resource" AND owner.created ~* "2024"`,
+	} {
+		parsed := mustParse(t, q)
+		err := Validate(parsed)
+		if err == nil || !strings.Contains(err.Error(), "does not support regex match") {
+			t.Fatalf("query %q: expected traversal-leaf rejection, got %v", q, err)
+		}
+	}
+}
+
+// TestRegexAllowedOnStringAndMetaLeaves pins the allowed set: string leaves,
+// meta keys (including one literally named "tags"), and traversal meta subpaths.
+func TestRegexAllowedOnStringAndMetaLeaves(t *testing.T) {
+	for _, q := range []string{
+		`type = "resource" AND owner.name ~* "^x"`,
+		`type = "resource" AND meta.tags ~* "^x"`,
+		`type = "resource" AND owner.meta.tags ~* "^x"`,
+		`type = "group" AND ancestors.name ~* "^x"`,
+	} {
+		parsed := mustParse(t, q)
+		if err := Validate(parsed); err != nil {
+			t.Fatalf("query %q: expected valid, got %v", q, err)
+		}
+	}
+}
+
 // TestRegexRequiresStringPattern rejects a non-string regex value.
 func TestRegexRequiresStringPattern(t *testing.T) {
 	parsed := mustParse(t, `type = "resource" AND name ~* 5`)

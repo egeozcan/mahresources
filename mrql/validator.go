@@ -325,6 +325,45 @@ func validateRankOrderKey(q *Query, entityType EntityType, f *FieldExpr) error {
 	}
 }
 
+// validateRegexTraversalLeaf rejects ~*/!~* on traversal (owner./parent./
+// children.) and recursive (ancestors./descendants.) chain leaves that are not
+// string-typed. All chains resolve their leaf on the group entity; tags leaves
+// and numeric/datetime leaves do not support regex — without this check
+// `owner.tags ~* "x"` would silently translate to an equality match on the
+// pattern string. Meta subpaths (meta.<key>, owner.meta.<key>) are dynamically
+// typed and stay allowed: "meta" anywhere before the leaf marks the rest of the
+// chain as a JSON subpath.
+func validateRegexTraversalLeaf(n *ComparisonExpr) error {
+	parts := n.Field.Parts
+	if len(parts) < 2 {
+		return nil
+	}
+	for _, p := range parts[:len(parts)-1] {
+		if p.Value == "meta" {
+			return nil
+		}
+	}
+	root := parts[0].Value
+	if !recursiveRoots[root] {
+		if _, ok := traversalRoots[root]; !ok {
+			return nil
+		}
+	}
+	leaf := parts[len(parts)-1].Value
+	fd, ok := LookupField(EntityGroup, leaf)
+	if !ok {
+		return nil // unknown leaves are caught by the chain validators
+	}
+	if fd.Type == FieldRelation || fd.Type == FieldNumber || fd.Type == FieldDateTime {
+		return &ValidationError{
+			Message: fmt.Sprintf("field %q does not support regex match", n.Field.Name()),
+			Pos:     n.Operator.Pos,
+			Length:  n.Operator.Length,
+		}
+	}
+	return nil
+}
+
 // ExtractEntityType is a public wrapper that extracts the entity type from the
 // query's WHERE clause without performing full validation.
 func ExtractEntityType(q *Query) EntityType {
@@ -492,9 +531,13 @@ func validateNode(node Node, entityType EntityType) error {
 			}
 		}
 		// Regex match (~*/!~*): PostgreSQL-only (dialect enforced at translation),
-		// requires a string pattern, and is not allowed on numeric/datetime fields.
-		// Relation fields are already rejected above (regex is not in their allowed
-		// set). String, meta, and traversal string leaves are allowed.
+		// requires a string pattern, and is not allowed on numeric/datetime fields
+		// or relation fields. Single-part relation fields are already rejected
+		// above (regex is not in their allowed set); traversal/recursive leaves
+		// are checked here against the group entity so `owner.tags ~* "x"` fails
+		// loudly instead of silently equality-matching the pattern string.
+		// String fields, meta keys (any subpath), and traversal string leaves
+		// are allowed.
 		if isRegexOperator(n.Operator) {
 			switch n.Value.(type) {
 			case *StringLiteral, *ParamRef:
@@ -516,6 +559,9 @@ func validateNode(node Node, entityType EntityType) error {
 						}
 					}
 				}
+			}
+			if err := validateRegexTraversalLeaf(n); err != nil {
+				return err
 			}
 		}
 		// Validate value type compatibility with field type
