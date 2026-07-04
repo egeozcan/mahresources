@@ -718,12 +718,12 @@ func TestApplyImport_AmbiguousNoteTypeRequiresDecision(t *testing.T) {
 	}
 
 	// Write a NoteTypeDef without a GUID so name-based resolution is used.
-	noteTypeDef := archive.NoteTypeDef{
+	noteTypeDef := archive.NoteTypeDef{CategoryDef: archive.CategoryDef{
 		ExportID: "nt0001",
 		SourceID: nt.ID,
 		// GUID intentionally omitted to force name-based resolution.
 		Name: "AmbigDiary",
-	}
+	}}
 	if err := w.WriteNoteTypeDefs([]archive.NoteTypeDef{noteTypeDef}); err != nil {
 		t.Fatalf("WriteNoteTypeDefs: %v", err)
 	}
@@ -2010,12 +2010,12 @@ func TestApplyImport_NoGUIDNoteTypeCreateRespectsUserChoice(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
-	if err := w.WriteNoteTypeDefs([]archive.NoteTypeDef{{
+	if err := w.WriteNoteTypeDefs([]archive.NoteTypeDef{{CategoryDef: archive.CategoryDef{
 		ExportID: "nt0001",
 		SourceID: 1,
 		Name:     "DupNoteType",
 		// GUID intentionally absent.
-	}}); err != nil {
+	}}}); err != nil {
 		t.Fatalf("WriteNoteTypeDefs: %v", err)
 	}
 	if err := w.WriteGroup(&archive.GroupPayload{
@@ -2185,12 +2185,12 @@ func TestApplyImport_NoGUIDNoteTypeMappedIsRetrySafe(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
-	if err := w.WriteNoteTypeDefs([]archive.NoteTypeDef{{
+	if err := w.WriteNoteTypeDefs([]archive.NoteTypeDef{{CategoryDef: archive.CategoryDef{
 		ExportID: "nt0001",
 		SourceID: 1,
 		Name:     "MapTargetNT",
 		// GUID intentionally absent.
-	}}); err != nil {
+	}}}); err != nil {
 		t.Fatalf("WriteNoteTypeDefs: %v", err)
 	}
 	if err := w.WriteGroup(&archive.GroupPayload{
@@ -2273,12 +2273,12 @@ func TestApplyImport_NoGUIDNoteTypeDefMarksRetryUnsafe(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
-	if err := w.WriteNoteTypeDefs([]archive.NoteTypeDef{{
+	if err := w.WriteNoteTypeDefs([]archive.NoteTypeDef{{CategoryDef: archive.CategoryDef{
 		ExportID: "nt0001",
 		SourceID: 1,
 		Name:     "UnsafeNoGUIDNT",
 		// GUID intentionally absent.
-	}}); err != nil {
+	}}}); err != nil {
 		t.Fatalf("WriteNoteTypeDefs: %v", err)
 	}
 	if err := w.WriteGroup(&archive.GroupPayload{

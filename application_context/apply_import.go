@@ -626,6 +626,7 @@ func (s *applyState) applySchemaDefDecisions() error {
 				nt.CustomSummary = def.CustomSummary
 				nt.CustomAvatar = def.CustomAvatar
 				nt.CustomListHeader = def.CustomListHeader
+				nt.ApplyTemplatesToShares = def.ApplyTemplatesToShares
 				nt.CustomMRQLResult = def.CustomMRQLResult
 				nt.CustomCSS = def.CustomCSS
 				nt.MetaSchema = def.MetaSchema
