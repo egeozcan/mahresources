@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"sort"
 	"strings"
 	"sync"
@@ -568,6 +569,7 @@ type crossEntityItem struct {
 	created    time.Time
 	updated    time.Time
 	index      int // original index within its type slice
+	rand       int // random sort key for ORDER BY RANDOM() (unique via rand.Perm)
 }
 
 // executeCrossEntity runs the query against resources, notes, and groups
@@ -685,19 +687,36 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 	// Build unified sortable items
 	items := make([]crossEntityItem, 0, len(allResources)+len(allNotes)+len(allGroups))
 	for i, r := range allResources {
-		items = append(items, crossEntityItem{"resource", r.Name, r.CreatedAt, r.UpdatedAt, i})
+		items = append(items, crossEntityItem{entityType: "resource", name: r.Name, created: r.CreatedAt, updated: r.UpdatedAt, index: i})
 	}
 	for i, n := range allNotes {
-		items = append(items, crossEntityItem{"note", n.Name, n.CreatedAt, n.UpdatedAt, i})
+		items = append(items, crossEntityItem{entityType: "note", name: n.Name, created: n.CreatedAt, updated: n.UpdatedAt, index: i})
 	}
 	for i, g := range allGroups {
-		items = append(items, crossEntityItem{"group", g.Name, g.CreatedAt, g.UpdatedAt, i})
+		items = append(items, crossEntityItem{entityType: "group", name: g.Name, created: g.CreatedAt, updated: g.UpdatedAt, index: i})
+	}
+
+	// ORDER BY RANDOM() clauses (Field == nil) compare on a per-item random key.
+	// A permutation keeps the keys unique, so the comparator stays a strict
+	// order at the clause's position — `ORDER BY RANDOM()` is a global shuffle,
+	// `ORDER BY created, RANDOM()` a random tiebreak, matching SQL semantics.
+	for _, ob := range parsed.OrderBy {
+		if ob.Random {
+			for k, p := range rand.Perm(len(items)) {
+				items[k].rand = p
+			}
+			break
+		}
 	}
 
 	// Global sort if ORDER BY is specified
 	if len(parsed.OrderBy) > 0 {
 		sort.SliceStable(items, func(i, j int) bool {
 			for _, ob := range parsed.OrderBy {
+				if ob.Random {
+					// Unique keys: never a tie, no direction (parser enforces).
+					return items[i].rand < items[j].rand
+				}
 				fieldName := ob.Field.Name()
 				cmp := 0
 				switch fieldName {
