@@ -51,7 +51,7 @@
                     </div>
                     <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Avatar</dt>
-                        <dd>Shown next to the category name on resource cards</dd>
+                        <dd>Shown next to the category name on resource cards — resources keep their thumbnail (unlike groups/notes, there is no initials avatar to replace)</dd>
                     </div>
                     <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[7rem]">Custom MRQL Result</dt>
@@ -142,7 +142,7 @@
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=resourceCategory.CustomCSS mode="css" description="Injected as a <style> block on the resource detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template." shortcodes=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=resourceCategory.CustomSidebar mode="html" description="Rendered in the resource detail page sidebar and lightbox panel." shortcodes=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=resourceCategory.CustomSummary mode="html" description="Rendered on resource cards in list views, below the title." shortcodes=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=resourceCategory.CustomAvatar mode="html" description="Shown next to the category name on resource cards." shortcodes=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=resourceCategory.CustomAvatar mode="html" description="Shown next to the category name on resource cards. Resources keep their thumbnail — there is no initials avatar to replace." shortcodes=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=resourceCategory.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." shortcodes=true %}
     </fieldset>
 

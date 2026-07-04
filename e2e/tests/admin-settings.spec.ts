@@ -1,13 +1,13 @@
 import { test, expect } from '../fixtures/base.fixture';
 
 test.describe('/admin/settings', () => {
-  test('renders 12 settings grouped across 6 sections', async ({ page }) => {
+  test('renders 13 settings grouped across 6 sections', async ({ page }) => {
     await page.goto('/admin/settings');
     await expect(page.getByRole('heading', { name: 'Runtime Settings', level: 1 })).toBeVisible();
     const groupCount = await page.locator('section[aria-labelledby^="grp-"]').count();
     expect(groupCount).toBe(6);
     const rowCount = await page.locator('[data-testid^="setting-row-"]').count();
-    expect(rowCount).toBe(12);
+    expect(rowCount).toBe(13);
   });
 
   test('max_upload_size save + reset roundtrip', async ({ page, request }) => {

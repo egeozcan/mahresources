@@ -151,6 +151,7 @@ const (
 	KeyMaxUploadSize           = "max_upload_size"
 	KeyMaxImportSize           = "max_import_size"
 	KeyMRQLDefaultLimit        = "mrql_default_limit"
+	KeyMRQLPageQueryBudget     = "mrql_page_query_budget"
 	KeyMRQLQueryTimeout        = "mrql_query_timeout"
 	KeyExportRetention         = "export_retention"
 	KeyRemoteConnectTimeout    = "remote_connect_timeout"
@@ -183,6 +184,12 @@ func buildSpecs() map[string]SettingSpec {
 			Description: "Default LIMIT applied to MRQL queries without an explicit LIMIT clause.",
 			Group:       GroupQueries, Type: SettingTypeInt,
 			MinNumeric: 1, MaxNumeric: 100000,
+		},
+		KeyMRQLPageQueryBudget: {
+			Key: KeyMRQLPageQueryBudget, Label: "MRQL page query budget",
+			Description: "Maximum distinct MRQL queries a single page render may execute via inline [mrql] shortcodes. Because Custom* templates render per card, list pages can accumulate many. 0 disables the budget.",
+			Group:       GroupQueries, Type: SettingTypeInt,
+			MinNumeric: 0, MaxNumeric: 100000, AllowZero: true,
 		},
 		KeyMRQLQueryTimeout: {
 			Key: KeyMRQLQueryTimeout, Label: "MRQL query timeout",
@@ -268,6 +275,7 @@ func BuildDefaultsFromConfig(cfg *MahresourcesConfig) map[string]any {
 		KeyMaxUploadSize:           cfg.MaxUploadSize,
 		KeyMaxImportSize:           cfg.MaxImportSize,
 		KeyMRQLDefaultLimit:        cfg.MRQLDefaultLimit,
+		KeyMRQLPageQueryBudget:     cfg.MRQLPageQueryBudget,
 		KeyMRQLQueryTimeout:        cfg.MRQLQueryTimeoutBoot,
 		KeyExportRetention:         cfg.ExportRetention,
 		KeyRemoteConnectTimeout:    cfg.RemoteResourceConnectTimeout,

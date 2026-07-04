@@ -170,6 +170,23 @@ Limits the maximum execution time for MRQL (Mahresources Query Language) queries
 ./mahresources -mrql-query-timeout=30s ...
 ```
 
+## Inline MRQL Page Query Budget
+
+Bounds how many distinct MRQL queries a single page render may execute through inline `[mrql]` shortcodes:
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `-mrql-page-query-budget` | `MRQL_PAGE_QUERY_BUDGET` | `200` | Maximum distinct inline `[mrql]` queries per page render; `0` disables |
+
+Because a category's `Custom*` templates render once per card, an entity-scoped `[mrql]` in a `CustomSummary` runs one query per card — so a list page of many cards can execute many queries. Identical queries within a render are deduplicated by a per-page cache (free); each cache *miss* consumes one unit of budget. Once the budget is spent, further distinct queries render the standard MRQL error box ("inline query budget exceeded (N per page)…") instead of executing, and one warning per page is written to the [activity log](../features/activity-log.md) (entity type `mrql`).
+
+The default of 200 is generous — a three-query summary on a 20-card page is only 60. Raise it if a legitimately dense page trips the limit, or set `0` to disable entirely (deployments with millions of resources are the motivation for keeping it on).
+
+```bash
+# Raise the per-page inline-MRQL budget
+./mahresources -mrql-page-query-budget=500 ...
+```
+
 ## MRQL Natural-Language Generation
 
 MRQL generation is optional and configured with environment variables only. There are no CLI flags for the provider credentials in v1.

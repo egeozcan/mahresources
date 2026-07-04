@@ -192,7 +192,12 @@ The CustomSummary template appears in list views. Keep it compact:
 
 ## CustomAvatar Example
 
-The CustomAvatar template controls how the entity appears when linked:
+The CustomAvatar template controls how the entity appears when linked. Its placement differs by carrier, for a structural reason:
+
+- **Group cards** (via Category) and **Note cards** (via Note Type): CustomAvatar **replaces the default initials avatar**. When it is empty, the initials avatar shows instead.
+- **Resource cards** (via Resource Category): resource cards are thumbnail-led and have no initials avatar to replace, so CustomAvatar is **shown next to the category name** under the thumbnail — the thumbnail always remains.
+
+This is intentional, not an inconsistency; avatar-replacement on resource cards would be a feature change, not a fix.
 
 ```html
 <template x-if="entity.Meta?.avatarUrl">

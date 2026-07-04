@@ -141,6 +141,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-hash-worker-disabled` | `HASH_WORKER_DISABLED=1` | Disable background hash worker |
 | `-hash-cache-size` | `HASH_CACHE_SIZE` | Maximum entries in the hash similarity LRU cache (default: 100000) |
 | `-mrql-default-limit` | `MRQL_DEFAULT_LIMIT` | Default `LIMIT` applied to MRQL queries without an explicit LIMIT clause (default: 500) |
+| `-mrql-page-query-budget` | `MRQL_PAGE_QUERY_BUDGET` | Maximum distinct MRQL queries a single page render may execute via inline `[mrql]` shortcodes (default: 200; `0` disables). Because `Custom*` templates render once per card, an entity-scoped `[mrql]` in a `CustomSummary` runs one query per card — so list pages can accumulate many. Identical queries within a render dedupe via a per-page cache (free); each cache miss consumes budget. Beyond the budget the shortcode renders the standard MRQL error box and one warning per page is logged (entity type `mrql`, at `/logs`). Runtime-editable. |
 | (env-only) | `DEEPSEEK_API_KEY` | DeepSeek API key for `/mrql` natural-language generation. No CLI flag in v1. |
 | (env-only) | `DEEPSEEK_MODEL` | DeepSeek model for MRQL generation (default: `deepseek-v4-pro`). |
 | (env-only) | `DEEPSEEK_TIMEOUT` | Timeout for one DeepSeek MRQL generation call (default: `20s`). Invalid values fail startup. |

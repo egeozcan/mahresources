@@ -478,6 +478,10 @@ func ptrInt64(v int64) *int64 { return &v }
 func (s *RuntimeSettings) MaxUploadSize() int64 { v, _ := s.getRaw(KeyMaxUploadSize); return v.(int64) }
 func (s *RuntimeSettings) MaxImportSize() int64 { v, _ := s.getRaw(KeyMaxImportSize); return v.(int64) }
 func (s *RuntimeSettings) MRQLDefaultLimit() int { v, _ := s.getRaw(KeyMRQLDefaultLimit); return v.(int) }
+func (s *RuntimeSettings) MRQLPageQueryBudget() int {
+	v, _ := s.getRaw(KeyMRQLPageQueryBudget)
+	return v.(int)
+}
 func (s *RuntimeSettings) MRQLQueryTimeout() time.Duration {
 	v, _ := s.getRaw(KeyMRQLQueryTimeout)
 	return v.(time.Duration)

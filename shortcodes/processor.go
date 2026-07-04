@@ -115,6 +115,12 @@ func Process(reqCtx context.Context, input string, ctx MetaShortcodeContext, ren
 
 func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeContext, renderer PluginRenderer, executor QueryExecutor, depth int) string {
 	if depth >= maxRecursionDepth {
+		// Emit the content as-is (it may be meaningful text), but when it still
+		// contains unexpanded shortcodes, append a comment so an author reading
+		// the page source sees why expansion stopped here.
+		if len(ParseWithBlocks(input)) > 0 {
+			return input + shortcodeComment("shortcode depth limit reached")
+		}
 		return input
 	}
 
@@ -143,7 +149,10 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			if executor != nil && depth < maxRecursionDepth {
 				replacement = RenderMRQLShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 			} else {
-				replacement = sc.Raw
+				// No executor wired (a context that deliberately omits one, e.g.
+				// share-page rendering) — leave a comment rather than leaking the
+				// raw shortcode text.
+				replacement = shortcodeComment("mrql unavailable in this context")
 			}
 		case sc.Name == "link":
 			replacement = RenderLinkShortcode(reqCtx, sc, ctx, renderer, executor, depth)
@@ -168,13 +177,17 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 							replacement = processWithDepth(reqCtx, replacement, ctx, renderer, executor, depth+1)
 						}
 					} else {
-						replacement = sc.Raw
+						// Plugin rendering failed — an actionable, author-facing
+						// error. Surface the shortcode name inline with the error
+						// in the title attribute.
+						replacement = shortcodeErrorMarker(sc.Name, err.Error())
 					}
 				} else {
-					replacement = sc.Raw
+					replacement = shortcodeErrorMarker(sc.Name, "malformed plugin shortcode name (expected plugin:<name>:<shortcode>)")
 				}
 			} else {
-				replacement = sc.Raw
+				// No plugin renderer wired in this context — comment, not a leak.
+				replacement = shortcodeComment("plugin unavailable in this context")
 			}
 		}
 

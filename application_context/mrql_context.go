@@ -290,6 +290,20 @@ func (ctx *MahresourcesContext) defaultMRQLLimit() int {
 	return DefaultMRQLLimitFallback
 }
 
+// MRQLPageQueryBudget returns the maximum number of distinct MRQL queries a
+// single page render may execute via inline [mrql] shortcodes. 0 disables the
+// budget. Runtime overrides win over the boot-time config; unlike the default
+// LIMIT there is no non-zero fallback because 0 is a meaningful "disabled" value.
+func (ctx *MahresourcesContext) MRQLPageQueryBudget() int {
+	if ctx.settings != nil {
+		return ctx.settings.MRQLPageQueryBudget()
+	}
+	if ctx.Config != nil {
+		return ctx.Config.MRQLPageQueryBudget
+	}
+	return 0
+}
+
 // rejectSQLiteRegex returns a TranslateError when the query uses a regex match
 // operator (~* / !~*) on a non-PostgreSQL database. SQLite has no native regex,
 // so the operator is PostgreSQL-only.
