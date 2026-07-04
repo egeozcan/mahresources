@@ -598,6 +598,16 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/mrql/saved/delete").HandlerFunc(api_handlers.GetDeleteSavedMRQLQueryHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/mrql/saved/run").HandlerFunc(scopedAPI(appContext, api_handlers.GetRunSavedMRQLQueryHandler))
 
+	// Shortcode editor tooling (docs registry powers lint + autocomplete)
+	router.Methods(http.MethodGet).Path("/v1/shortcodes/docs").HandlerFunc(api_handlers.GetShortcodeDocsHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/shortcodes/lint").HandlerFunc(api_handlers.GetShortcodeLintHandler(appContext))
+
+	// Live template preview — mounted per carrier so the existing path-prefix
+	// authorization applies (category/resourceCategory → admin, noteType → editor).
+	router.Methods(http.MethodPost).Path("/v1/category/previewTemplate").HandlerFunc(api_handlers.GetPreviewTemplateHandler(appContext, "group"))
+	router.Methods(http.MethodPost).Path("/v1/resourceCategory/previewTemplate").HandlerFunc(api_handlers.GetPreviewTemplateHandler(appContext, "resource"))
+	router.Methods(http.MethodPost).Path("/v1/noteType/previewTemplate").HandlerFunc(api_handlers.GetPreviewTemplateHandler(appContext, "note"))
+
 	// Global Search
 	router.Methods(http.MethodGet).Path("/v1/search").HandlerFunc(scopedAPI(appContext, api_handlers.GetGlobalSearchHandler))
 

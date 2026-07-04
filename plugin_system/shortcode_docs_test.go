@@ -764,3 +764,55 @@ func TestDocsPreviewSkipsMismatchedCode(t *testing.T) {
 	// But the code block should still be shown
 	assert.Contains(t, html, "Mismatched code")
 }
+
+func TestAllShortcodeDocs(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "sc-list", `
+		plugin = { name = "sc-list", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "widget",
+				label = "Widget",
+				render = function(ctx) return "<span>w</span>" end,
+				description = "A widget.",
+				attrs = {
+					{ name = "size", type = "string", required = true, description = "Widget size" },
+				},
+			})
+			mah.shortcode({
+				name = "undocumented",
+				label = "Undocumented",
+				render = function(ctx) return "<span>u</span>" end,
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+
+	// Before enabling, no shortcodes are registered.
+	assert.Empty(t, pm.AllShortcodeDocs())
+
+	require.NoError(t, pm.EnablePlugin("sc-list"))
+
+	docs := pm.AllShortcodeDocs()
+	require.Len(t, docs, 2)
+
+	// Sorted by full type name: undocumented < widget.
+	assert.Equal(t, "plugin:sc-list:undocumented", docs[0].FullName)
+	assert.Equal(t, "undocumented", docs[0].Name)
+
+	widget := docs[1]
+	assert.Equal(t, "plugin:sc-list:widget", widget.FullName)
+	assert.Equal(t, "widget", widget.Name)
+	assert.Equal(t, "sc-list", widget.PluginName)
+	assert.Equal(t, "A widget.", widget.Description)
+	require.Len(t, widget.Attrs, 1)
+	assert.Equal(t, "size", widget.Attrs[0].Name)
+	assert.True(t, widget.Attrs[0].Required)
+
+	// Disabling removes the plugin's shortcodes from the catalogue.
+	require.NoError(t, pm.DisablePlugin("sc-list"))
+	assert.Empty(t, pm.AllShortcodeDocs())
+}

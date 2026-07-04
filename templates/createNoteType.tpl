@@ -141,13 +141,15 @@
             </div>
         </div>
 
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=noteType.CustomHeader mode="html" description="Rendered at the top of the note detail page, above the description." %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=noteType.CustomCSS mode="css" description="Injected as a <style> block on the note detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template." %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=noteType.CustomSidebar mode="html" description="Rendered in the note detail page sidebar (both default and wide layouts)." %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=noteType.CustomSummary mode="html" description="Rendered on note cards in list views, below the title." %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=noteType.CustomAvatar mode="html" description="Replaces the default initials avatar on note cards." %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=noteType.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=noteType.CustomHeader mode="html" description="Rendered at the top of the note detail page, above the description." shortcodes=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=noteType.CustomCSS mode="css" description="Injected as a <style> block on the note detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template." shortcodes=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=noteType.CustomSidebar mode="html" description="Rendered in the note detail page sidebar (both default and wide layouts)." shortcodes=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=noteType.CustomSummary mode="html" description="Rendered on note cards in list views, below the title." shortcodes=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=noteType.CustomAvatar mode="html" description="Replaces the default initials avatar on note cards." shortcodes=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=noteType.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." shortcodes=true %}
     </fieldset>
+
+    {% include "/partials/form/templatePreviewPane.tpl" with entityType="note" previewPath="/v1/noteType/previewTemplate" %}
     <div class="flex gap-2 items-start">
         <div class="flex-1">
             {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Meta JSON Schema" name="MetaSchema" value=noteType.MetaSchema mode="json" id="metaSchemaTextarea" %}

@@ -9,6 +9,25 @@ function safeParse(raw) {
     }
 }
 
+// Sandboxed documents (the template live-preview iframe renders the app bundle
+// in an opaque-origin iframe) deny all storage access with a SecurityError, so
+// every sessionStorage touch must be guarded or the whole bundle dies at load.
+function sessionGet(key) {
+    try {
+        return sessionStorage.getItem(key);
+    } catch {
+        return null;
+    }
+}
+
+function sessionSet(key, value) {
+    try {
+        sessionStorage.setItem(key, value);
+    } catch {
+        /* sandboxed or quota-restricted — the in-page store copy still applies */
+    }
+}
+
 // Registered local-setting inputs, kept module-level so DOM nodes are never placed in the
 // reactive Alpine store. They are re-painted once the server-backed settings hydrate.
 const registeredLocalEls = [];
@@ -32,7 +51,7 @@ function applyToEl(el, defVal, settings) {
 export function registerSavedSettingStore(Alpine) {
     Alpine.store('savedSetting', {
         // sessionSettings remain ephemeral/per-session (sessionStorage), unchanged.
-        sessionSettings: safeParse(sessionStorage.getItem("settings")),
+        sessionSettings: safeParse(sessionGet("settings")),
         // localSettings are now server-backed (user-setting key "uiSettings"). They start
         // from defaults and are populated once the settings load resolves.
         localSettings: {},
@@ -60,7 +79,7 @@ export function registerSavedSettingStore(Alpine) {
                     }
                 } else {
                     this.sessionSettings[el.name] = value;
-                    sessionStorage.setItem("settings", JSON.stringify(this.sessionSettings));
+                    sessionSet("settings", JSON.stringify(this.sessionSettings));
                 }
             });
         }

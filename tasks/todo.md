@@ -1,89 +1,77 @@
-# MRQL v3 Package 3: Similarity Search — active task
+# Category Template Authoring Feedback Loop (Phase 1) — STATUS
 
-Design: `mrql/v3-package-3-similarity-design.md` (semantics confirmed via
-AskUserQuestion: runtime-setting default threshold, aHash filter always,
-WITHIN>11 = validation error, ORDER BY distance included in v1).
+## Step 1 — Shortcode docs registry + JSON endpoint  ✅ DONE
+- [x] shortcodes/builtin_docs.go registry
+- [x] PluginManager.AllShortcodeDocs()
+- [x] GET /v1/shortcodes/docs handler + routes + OpenAPI
+- [x] Go unit + API tests
 
-## Plan (TDD: red tests per slice, then green)
+## Step 2 — Lint  ✅ DONE
+- [x] shortcodes/lint.go (Lint + KnownShortcodes) + parser matchTokens refactor
+- [x] POST /v1/shortcodes/lint + isReadViaPost + OpenAPI
+- [x] @codemirror/lint, codeEditor shortcodeLint, submit soft-warn
+- [x] Go table tests + API test + E2E (shortcode-lint.spec.ts)
 
-- [x] 1. Branch `feat/mrql-package3-similarity`
-- [x] 2. Lexer: `TokenSimilarTo` merged token (SIMILAR + TO, ORDER BY precedent);
-       `SIMILAR` alone stays identifier. Lexer tests.
-- [x] 3. AST + parser: `SimilarToExpr`, `parseSimilarTo` from `parsePrimary`;
-       contextual `WITHIN` (identifier, not keyword). Parser tests (shapes + errors).
-- [x] 4. Validator: entity=resource only, positive ID, WITHIN 0..11
-       (`MaxSimilarityDistance`), ORDER BY `distance` rules (exactly one
-       SIMILAR TO). Validator tests.
-- [x] 5. Translator: `translateSimilarTo` (UNION ALL both directions, COALESCE
-       filter, aHash clause, 1=0 entity fallback), `TranslateOptions`
-       thresholds, `resolveOrderByColumn` distance key. Test-schema
-       `testResourceSimilarity` + seeded pairs. SQL-shape + execution tests
-       (SQLite), PG counterpart.
-- [x] 6. application_context: fill options from `similarityThresholds()` at
-       every TranslateOptions construction site (incl. plugin adapter);
-       constant-sync test vs `hash_worker.MaxStoredPDistance`.
-- [x] 7. Completer: SIMILAR TO suggestion (resource-gated), WITHIN after `)`,
-       `distance` in ORDER BY context. Completer tests.
-- [x] 8. NL generation: prompt rule + examples + prompt test; generation_lint
-       case + test.
-- [x] 9. Docs: skill mrql.md, docs-site mrql.md + mrql-reference.md.
-- [x] 10. E2E: `e2e/tests/mrql-similarity.spec.ts` (syntax + validation-error UX).
-- [x] 11. Full verification: Go unit, build, browser+CLI e2e, PG Go, PG e2e.
-- [x] 12. Self-review the diff (same bar as package 2), fix findings.
+## Step 4 — Live preview  ✅ DONE
+- [x] BuildMetaContextForEntity exported helper
+- [x] previewTemplateHandler at 3 paths + routes + OpenAPI (capped MRQL limit)
+- [x] templatePreview component + partial + iframe srcdoc, per-form include
+- [x] API tests (role matrix) + E2E (template-preview.spec.ts)
 
-## Review
+## Step 3 — Autocomplete + hover docs  ✅ DONE
+- [x] src/components/shortcodeCompletion.js (override source + autoTrigger + hover)
+- [x] Wired into codeEditor.js (override composes html/css completion)
+- [x] path= completion from live MetaSchema
+- [x] E2E (shortcode-autocomplete.spec.ts)
 
-Shipped on `feat/mrql-package3-similarity` (design 6b5af872, implementation
-fcec7bb0). All verification green: full Go unit suite, Postgres Go (incl.
-TestPG_SimilarTo), browser+CLI e2e (1608), Postgres e2e (1610).
+## Remaining
+- [ ] a11y pass on modified forms
+- [ ] OpenAPI regen + docs-site
+- [ ] Full E2E (browser+CLI) + Postgres suites
 
-Notable implementation points:
-- SIMILAR TO merges in the lexer only when followed by TO; WITHIN and
-  distance are contextual identifiers — no new reserved words.
-- Predicate reads precomputed resource_similarities via UNION ALL +
-  COALESCE(p_distance, hamming_distance); dialect-neutral, no PG/SQLite
-  branches. Thresholds plumbed via TranslateOptions from
-  similarityThresholds() at all six construction sites (helper
-  ctx.mrqlTranslateOptions()); shared newTranslateContext() feeds the
-  GROUP BY entry points too.
-- ORDER BY distance = correlated MIN subquery + COALESCE(..., 255)
-  sentinel (neutralizes SQLite NULLS FIRST vs PG NULLS LAST).
-- Cross-entity clones translate SIMILAR TO to 1 = 0 (the package-2 review
-  lesson); explicit non-resource queries fail validation.
-- Self-review finding checked and cleared: negative WITHIN/target IDs lex
-  as rel-date tokens, so they already fail parsing; regression test added.
+## Review (2026-07-04) — ALL COMPLETE
 
+All four steps shipped, additive, no flags. Test results:
+- Go full suite (`./...`): pass
+- Go Postgres (mrql + api_tests): pass
+- Browser E2E: 1653 passed, 5 skipped, 1 unrelated flaky (lightbox undo, recovered on retry)
+- CLI E2E: pass
+- New E2E (lint/autocomplete/preview): pass on SQLite AND Postgres
+- a11y (category + noteType forms + preview pane labels): pass
+- OpenAPI regenerated (openapi.yaml); docs-site/features/custom-templates.md updated
 
----
+### Non-obvious gotchas hit
+1. codeEditor.js used `EditorState` before its lazy import; the silent catch swallowed the
+   TypeError and disabled ALL shortcode tooling (lint too). Fix: build shortcode extensions
+   AFTER the core CodeMirror import; log errors in the catch.
+2. A global `EditorState.languageData.of({autocomplete})` source does NOT auto-trigger on typing
+   and gets flooded/overridden by the HTML language completion (popup showed only `<tag`s).
+   Fix: `autocompletion({override:[source]})` where the source returns shortcode completions inside
+   `[ ]` and delegates to `htmlCompletionSource`/`cssCompletionSource` elsewhere. Plus an explicit
+   `startCompletion` nudge while the caret is inside a bracket.
+3. `[metaa path=x]` parses as a REAL `meta` shortcode (regex eats the extra char as attrs), so
+   near-miss typo detection must use edit distance on names WITHOUT a builtin prefix (`condtional`).
 
-# MRQL default resource card: thumbnail opens lightbox (2026-07-04)
+## Post-review fixes (2026-07-04, second pass)
 
-## Review
+A live-browser probe showed the preview iframe never hydrated: the bundle is a module
+script, module fetches are CORS-gated, and the sandboxed iframe has an opaque origin, so
+the browser blocked `/public/dist/main.js` (no ACAO header). Three stacked causes fixed:
 
-Default `/mrql` resource result cards (flat + bucketed GROUP BY) now open the
-Alpine lightbox when the image thumbnail is clicked; the card body still
-navigates to `/resource?id=N`.
+1. `/public/` now served with `Access-Control-Allow-Origin: *` (`corsStaticAssets` in
+   server/server.go; test: `TestPublicAssetsCORSHeader`). Auth-exempt static files, so the
+   wildcard exposes nothing new.
+2. `storeConfig.js` read `sessionStorage` at bundle startup — throws SecurityError in any
+   sandboxed document, killing the whole bundle. Now guarded (`sessionGet`/`sessionSet`).
+3. The srcdoc referenced `/public/dist/main.css`, which does not exist (404 on every
+   render). Replaced with the stylesheets base.tpl actually ships (index/tailwind/jsonTable).
 
-- `templates/mrql.tpl`: card `<a>` split into a `<div>` with two sibling
-  links (nested anchors are invalid HTML) — thumbnail link carries the
-  canonical `data-lightbox-item` + `data-*` pattern from
-  `partials/resource.tpl`; grids gained the `gallery` marker class
-  (deliberately NOT `list-container`, which refreshPageContent/download-
-  completed morph).
-- `src/components/mrqlEditor.js` `execute()`: `$nextTick` →
-  `Alpine.store('lightbox').initFromDOM()` after results render (timeline.js
-  precedent). /mrql has no pagination nav, so lightbox paging stays inert.
-- New `e2e/tests/104-mrql-lightbox.spec.ts` (4 tests, TDD red→green).
-- `e2e/pages/MRQLPage.ts` `getResults()` now excludes `[data-lightbox-item]`
-  — the thumbnail href `/v1/resource/view?id=` also matches `a[href*="?id="]`
-  and broke a text assertion in mrql-ergonomics (PG-only regex test).
+Hydration is now asserted end-to-end in template-preview.spec.ts (polls `window.Alpine`
+inside the srcdoc frame). Also fixed from review: lint `attrOffset` anchored `query=`
+inside `param-query=` (boundary check + `TestLintMRQLErrorAnchorsToAttr`), and
+`templatePreview.refresh()` got a request-sequence guard so out-of-order responses can't
+paint a stale preview.
 
-Verification: Go unit (SQLite + PG) green; browser+CLI e2e 1644 passed;
-PG e2e 1646 passed after the getResults fix; full browser+CLI suite re-run
-green after dropping the focus assertion. Flakes seen along the way, both
-load-only: (a) the new 104 test's focus-restore-after-Escape assertion
-failed under full-suite load on both backends (close()'s sync focus() races
-x-trap's async release; no other lightbox spec asserts focus restore) —
-assertion removed; (b) pre-existing 13e "Ctrl+Z undoes quick-slot tag"
-passed on retry in the same runs and passes 6/6 in isolation — untouched
-by this change.
+Second-pass test results: Go full suite pass; Go Postgres (mrql + api_tests) pass;
+combined browser+CLI E2E 1653 passed / 5 skipped / 1 known unrelated flaky (lightbox
+undo, passed on retry).

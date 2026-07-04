@@ -91,6 +91,13 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 	return nil
 }
 
+// BuildMetaContextForEntity builds the shortcode rendering context for an entity
+// (Group, Resource, or Note). It is the exported entry point so the template
+// preview handler and the process_shortcodes tag share one implementation.
+func BuildMetaContextForEntity(entity any, appCtx *application_context.MahresourcesContext) *shortcodes.MetaShortcodeContext {
+	return buildMetaContext(entity, appCtx)
+}
+
 // buildMetaContext uses reflection to extract entity type, ID, Meta, and MetaSchema
 // from Group, Resource, or Note model structs. When appCtx is non-nil, scope fields
 // (parent, root) are resolved via DB; otherwise falls back to best-effort sentinels.

@@ -5,10 +5,52 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"sort"
 	"strings"
 
 	"mahresources/shortcodes"
 )
+
+// PluginShortcodeInfo is a documentation snapshot of one shortcode registered
+// by an enabled plugin. It is a plain-data copy (no Lua handles) safe to hand
+// to HTTP handlers that build the /v1/shortcodes/docs response.
+type PluginShortcodeInfo struct {
+	FullName    string // full type, e.g. "plugin:foo:badge"
+	Name        string // short name, e.g. "badge"
+	PluginName  string
+	Label       string
+	Description string
+	Attrs       []ShortcodeDocAttr
+	Examples    []ShortcodeDocExample
+	Notes       []string
+}
+
+// AllShortcodeDocs returns a snapshot of every shortcode registered by an
+// enabled plugin (documented or not), sorted by full type name for stable
+// output. Only enabled plugins have entries in pm.shortcodes, so disabled
+// plugins are naturally excluded.
+func (pm *PluginManager) AllShortcodeDocs() []PluginShortcodeInfo {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	var out []PluginShortcodeInfo
+	for _, scs := range pm.shortcodes {
+		for _, sc := range scs {
+			out = append(out, PluginShortcodeInfo{
+				FullName:    sc.TypeName,
+				Name:        shortcodeName(sc),
+				PluginName:  sc.PluginName,
+				Label:       sc.Label,
+				Description: sc.Description,
+				Attrs:       sc.Attrs,
+				Examples:    sc.Examples,
+				Notes:       sc.Notes,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].FullName < out[j].FullName })
+	return out
+}
 
 // docItem is the unified representation used by the docs renderer.
 // Both PluginShortcode and PluginDoc convert to this before rendering.

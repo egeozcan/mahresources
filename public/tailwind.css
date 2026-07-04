@@ -1484,6 +1484,9 @@
   .h-64 {
     height: calc(var(--spacing) * 64);
   }
+  .h-96 {
+    height: calc(var(--spacing) * 96);
+  }
   .h-\[600px\] {
     height: 600px;
   }
@@ -1504,6 +1507,9 @@
   }
   .max-h-48 {
     max-height: calc(var(--spacing) * 48);
+  }
+  .max-h-52 {
+    max-height: calc(var(--spacing) * 52);
   }
   .max-h-60 {
     max-height: calc(var(--spacing) * 60);
@@ -1630,6 +1636,9 @@
   }
   .w-48 {
     width: calc(var(--spacing) * 48);
+  }
+  .w-56 {
+    width: calc(var(--spacing) * 56);
   }
   .w-64 {
     width: calc(var(--spacing) * 64);
@@ -3418,6 +3427,9 @@
   .\[plugin\:\%s\] {
     plugin: %s;
   }
+  .\[plugin\:foo\] {
+    plugin: foo;
+  }
   .ring-inset {
     --tw-ring-inset: inset;
   }
@@ -4311,6 +4323,11 @@
   .focus\:border-transparent {
     &:focus {
       border-color: transparent;
+    }
+  }
+  .focus\:bg-amber-50 {
+    &:focus {
+      background-color: var(--color-amber-50);
     }
   }
   .focus\:bg-amber-700 {
