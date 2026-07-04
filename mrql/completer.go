@@ -19,6 +19,9 @@ var operators = []Suggestion{
 	{Value: "<=", Type: "operator"},
 	{Value: "~", Type: "operator", Label: "contains"},
 	{Value: "!~", Type: "operator", Label: "not contains"},
+	{Value: "~*", Type: "operator", Label: "regex match (PostgreSQL)"},
+	{Value: "!~*", Type: "operator", Label: "regex not match (PostgreSQL)"},
+	{Value: "BETWEEN", Type: "operator", Label: "range (inclusive)"},
 	{Value: "IN", Type: "operator"},
 	{Value: "NOT IN", Type: "operator"},
 	{Value: "IS", Type: "operator"},
@@ -409,6 +412,18 @@ func containsSimilarTo(tokens []Token) bool {
 	return false
 }
 
+// containsTextSearch reports whether the token stream contains a TEXT keyword,
+// used to gate the ORDER BY RANK suggestion (the relevance key needs a TEXT ~
+// predicate to define what it ranks).
+func containsTextSearch(tokens []Token) bool {
+	for _, t := range tokens {
+		if t.Type == TokenText {
+			return true
+		}
+	}
+	return false
+}
+
 // endsWithSimilarToClose reports whether the tokens end with the closing paren
 // of a SIMILAR TO resource(N) argument, i.e. [..., SIMILAR TO, ident, (, number, )].
 func endsWithSimilarToClose(tokens []Token) bool {
@@ -644,6 +659,12 @@ func suggestionsForContext(tokens []Token, entityType EntityType, cursor int) []
 			// "distance" sorts by the SIMILAR TO target's perceptual distance.
 			if entityType == EntityResource && containsSimilarTo(tokens) {
 				suggs = append(suggs, Suggestion{Value: "distance", Type: "field", Label: "similarity distance"})
+			}
+			// RANDOM() is always a valid sort key.
+			suggs = append(suggs, Suggestion{Value: "RANDOM()", Type: "function", Label: "random order"})
+			// "rank" sorts by full-text relevance when a TEXT ~ predicate is present.
+			if containsTextSearch(tokens) {
+				suggs = append(suggs, Suggestion{Value: "RANK", Type: "field", Label: "relevance"})
 			}
 			return suggs
 		}

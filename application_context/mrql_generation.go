@@ -29,6 +29,10 @@ type MRQLGenerationConfig struct {
 	APIKey  string
 	Model   string
 	Timeout time.Duration
+	// Postgres gates dialect-specific syntax in the generation prompt (the regex
+	// match operator ~* is PostgreSQL-only), so the model is never taught syntax
+	// the deployment would reject.
+	Postgres bool
 }
 
 type MRQLGenerationResult struct {
@@ -78,7 +82,7 @@ func (g *defaultMRQLGenerator) GenerateMRQL(ctx context.Context, prompt string) 
 	callCtx, cancel := context.WithTimeout(ctx, g.config.Timeout)
 	defer cancel()
 
-	draft, err := g.provider.GenerateDraft(callCtx, buildMRQLGenerationPrompt(prompt))
+	draft, err := g.provider.GenerateDraft(callCtx, buildMRQLGenerationPrompt(prompt, g.config.Postgres))
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(callCtx.Err(), context.DeadlineExceeded) {
 			return nil, ErrMRQLGenerationTimeout
@@ -118,8 +122,8 @@ func (g *defaultMRQLGenerator) GenerateMRQL(ctx context.Context, prompt string) 
 	return result, nil
 }
 
-func buildMRQLGenerationPrompt(userPrompt string) string {
-	return strings.Join([]string{
+func buildMRQLGenerationPrompt(userPrompt string, postgres bool) string {
+	lines := []string{
 		"Generate one Mahresources MRQL query from the user request.",
 		"Return strict JSON only with keys query and explanation.",
 		"Use only MRQL syntax rules and values explicitly present in the user request.",
@@ -149,6 +153,9 @@ func buildMRQLGenerationPrompt(userPrompt string) string {
 		"GROUP BY supports date buckets created.day, created.week, created.month, created.year (same for updated). Date buckets are valid only in GROUP BY and its ORDER BY, never in the filter expression.",
 		"Use ancestors.<group field> or descendants.<group field> for recursive hierarchy checks at any depth (e.g. ancestors.name = \"Archive\", descendants.tags = \"wip\", ancestors.meta.region = \"eu\"). ancestors/descendants are strict (they exclude the item's own group); combine with owner./parent. to include it. They take exactly one group leaf field, never IN, IS EMPTY, ORDER BY, or GROUP BY.",
 		"SIMILAR TO resource(<id>) matches resources perceptually similar to resource <id> (resource entity only, requires a numeric ID). Optional WITHIN <0-11> tightens the max distance (2 = near-duplicates). ORDER BY distance ASC sorts nearest first and requires exactly one SIMILAR TO.",
+		"Use field BETWEEN <lo> AND <hi> (or field NOT BETWEEN <lo> AND <hi>) for an inclusive range on dates, numbers (including size units like 1mb), or strings. Bounds may be dates, numbers, relative dates, or functions.",
+		"Use ORDER BY RANDOM() for a random order or random sample (often with LIMIT). RANDOM() takes no direction and cannot be used with GROUP BY.",
+		"Use ORDER BY RANK to sort by full-text relevance (most relevant first). RANK requires exactly one TEXT ~ predicate, a single entity type, and no GROUP BY.",
 		"Add LIMIT 50 for broad queries unless the user asks for another small limit.",
 		"Example mappings use <placeholders>; replace them with user-provided values and never emit the placeholder tokens.",
 		"images with tag <tag> -> type = resource AND contentType ~ \"image/*\" AND tags = \"<tag>\" LIMIT 50",
@@ -164,6 +171,19 @@ func buildMRQLGenerationPrompt(userPrompt string) string {
 		"groups containing a descendant tagged <tag> -> type = group AND descendants.tags = \"<tag>\" LIMIT 50",
 		"resources similar to resource <id> -> type = resource AND SIMILAR TO resource(<id>) ORDER BY distance ASC LIMIT 50",
 		"near-duplicates of resource <id> -> type = resource AND SIMILAR TO resource(<id>) WITHIN 2 ORDER BY distance ASC LIMIT 50",
-		"User request: " + userPrompt,
-	}, "\n")
+		"photos created between <date1> and <date2> -> type = resource AND contentType ~ \"image/*\" AND created BETWEEN \"<date1>\" AND \"<date2>\" LIMIT 50",
+		"<n> random untagged resources -> type = resource AND tags.count = 0 ORDER BY RANDOM() LIMIT <n>",
+		"most relevant notes about <text> -> type = note AND TEXT ~ \"<text>\" ORDER BY RANK LIMIT 50",
+	}
+
+	// Regex match (~*) is PostgreSQL-only; only teach it on Postgres deployments.
+	if postgres {
+		lines = append(lines,
+			"Use field ~* \"<regex>\" (or !~* for negation) for a case-insensitive POSIX regex match on string or meta fields (e.g. name ~* \"^IMG_[0-9]{4}\"). The pattern is a real regex: no * or ? wildcard shortcuts.",
+			"resources whose name matches regex <regex> -> type = resource AND name ~* \"<regex>\" LIMIT 50",
+		)
+	}
+
+	lines = append(lines, "User request: "+userPrompt)
+	return strings.Join(lines, "\n")
 }

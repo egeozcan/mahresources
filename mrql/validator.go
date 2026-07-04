@@ -194,6 +194,30 @@ func Validate(q *Query) error {
 	// In aggregated GROUP BY mode, ORDER BY is validated by validateGroupBy instead.
 	isAggregatedGroupBy := q.GroupBy != nil && len(q.GroupBy.Aggregates) > 0
 	for _, ob := range q.OrderBy {
+		// ORDER BY RANDOM(): no field to validate. Rejected with GROUP BY in
+		// both modes (meaningless for aggregate buckets; clashes with the
+		// alias-based ORDER BY of aggregated mode).
+		if ob.Random {
+			if q.GroupBy != nil {
+				return &ValidationError{
+					Message: "ORDER BY RANDOM() is not supported with GROUP BY",
+					Pos:     0,
+					Length:  0,
+				}
+			}
+			continue
+		}
+		// "rank" is the full-text relevance sort key (context-sensitive, like
+		// distance). No entity has a real rank column, so it always means the
+		// relevance key here; validateRankOrderKey enforces the TEXT ~ predicate
+		// and rejects GROUP BY with a specific message (checked before the
+		// aggregated-mode ORDER BY path so the message is stable in both modes).
+		if len(ob.Field.Parts) == 1 && strings.EqualFold(ob.Field.Parts[0].Value, "rank") {
+			if err := validateRankOrderKey(q, entityType, ob.Field); err != nil {
+				return err
+			}
+			continue
+		}
 		if !isAggregatedGroupBy {
 			// "distance" is the SIMILAR TO sort key, not a real column.
 			if len(ob.Field.Parts) == 1 && ob.Field.Parts[0].Value == "distance" {
@@ -261,6 +285,83 @@ func validateDistanceOrderKey(q *Query, entityType EntityType, f *FieldExpr) err
 			Length:  len("distance"),
 		}
 	}
+}
+
+// validateRankOrderKey validates ORDER BY RANK: a determined single entity type,
+// no GROUP BY, and exactly one TEXT ~ predicate in the WHERE clause (its term
+// defines the relevance). Mirrors validateDistanceOrderKey. Cross-entity is
+// rejected because bm25/ts_rank scores are not comparable across corpora.
+func validateRankOrderKey(q *Query, entityType EntityType, f *FieldExpr) error {
+	rankLen := len(f.Name())
+	if entityType == EntityUnspecified {
+		return &ValidationError{
+			Message: "ORDER BY RANK requires a single entity type (add a type = ... filter)",
+			Pos:     f.Pos(),
+			Length:  rankLen,
+		}
+	}
+	if q.GroupBy != nil {
+		return &ValidationError{
+			Message: "ORDER BY RANK is not supported with GROUP BY",
+			Pos:     f.Pos(),
+			Length:  rankLen,
+		}
+	}
+	switch len(collectTextSearchExprs(q.Where)) {
+	case 0:
+		return &ValidationError{
+			Message: "ORDER BY RANK requires a TEXT ~ predicate in the query",
+			Pos:     f.Pos(),
+			Length:  rankLen,
+		}
+	case 1:
+		return nil
+	default:
+		return &ValidationError{
+			Message: "ORDER BY RANK is ambiguous with multiple TEXT predicates; use exactly one",
+			Pos:     f.Pos(),
+			Length:  rankLen,
+		}
+	}
+}
+
+// validateRegexTraversalLeaf rejects ~*/!~* on traversal (owner./parent./
+// children.) and recursive (ancestors./descendants.) chain leaves that are not
+// string-typed. All chains resolve their leaf on the group entity; tags leaves
+// and numeric/datetime leaves do not support regex — without this check
+// `owner.tags ~* "x"` would silently translate to an equality match on the
+// pattern string. Meta subpaths (meta.<key>, owner.meta.<key>) are dynamically
+// typed and stay allowed: "meta" anywhere before the leaf marks the rest of the
+// chain as a JSON subpath.
+func validateRegexTraversalLeaf(n *ComparisonExpr) error {
+	parts := n.Field.Parts
+	if len(parts) < 2 {
+		return nil
+	}
+	for _, p := range parts[:len(parts)-1] {
+		if p.Value == "meta" {
+			return nil
+		}
+	}
+	root := parts[0].Value
+	if !recursiveRoots[root] {
+		if _, ok := traversalRoots[root]; !ok {
+			return nil
+		}
+	}
+	leaf := parts[len(parts)-1].Value
+	fd, ok := LookupField(EntityGroup, leaf)
+	if !ok {
+		return nil // unknown leaves are caught by the chain validators
+	}
+	if fd.Type == FieldRelation || fd.Type == FieldNumber || fd.Type == FieldDateTime {
+		return &ValidationError{
+			Message: fmt.Sprintf("field %q does not support regex match", n.Field.Name()),
+			Pos:     n.Operator.Pos,
+			Length:  n.Operator.Length,
+		}
+	}
+	return nil
 }
 
 // ExtractEntityType is a public wrapper that extracts the entity type from the
@@ -427,6 +528,40 @@ func validateNode(node Node, entityType EntityType) error {
 						Length:  n.Operator.Length,
 					}
 				}
+			}
+		}
+		// Regex match (~*/!~*): PostgreSQL-only (dialect enforced at translation),
+		// requires a string pattern, and is not allowed on numeric/datetime fields
+		// or relation fields. Single-part relation fields are already rejected
+		// above (regex is not in their allowed set); traversal/recursive leaves
+		// are checked here against the group entity so `owner.tags ~* "x"` fails
+		// loudly instead of silently equality-matching the pattern string.
+		// String fields, meta keys (any subpath), and traversal string leaves
+		// are allowed.
+		if isRegexOperator(n.Operator) {
+			switch n.Value.(type) {
+			case *StringLiteral, *ParamRef:
+				// ok — ParamRef re-checked after BindParams substitutes a literal.
+			default:
+				return &ValidationError{
+					Message: fmt.Sprintf("regex match requires a string pattern for field %q", n.Field.Name()),
+					Pos:     n.Value.Pos(),
+					Length:  0,
+				}
+			}
+			if !isTypeField(n.Field) && len(n.Field.Parts) == 1 {
+				if fd, ok := LookupField(entityType, n.Field.Parts[0].Value); ok {
+					if fd.Type == FieldNumber || fd.Type == FieldDateTime {
+						return &ValidationError{
+							Message: fmt.Sprintf("field %q does not support regex match", n.Field.Parts[0].Value),
+							Pos:     n.Operator.Pos,
+							Length:  n.Operator.Length,
+						}
+					}
+				}
+			}
+			if err := validateRegexTraversalLeaf(n); err != nil {
+				return err
 			}
 		}
 		// Validate value type compatibility with field type

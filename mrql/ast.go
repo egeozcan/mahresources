@@ -176,9 +176,11 @@ type GroupByClause struct {
 }
 
 // OrderByClause is a single ORDER BY column+direction.
+// When Random is true the clause is `RANDOM()` (Field is nil, direction ignored).
 type OrderByClause struct {
 	Field     *FieldExpr
 	Ascending bool // true = ASC, false = DESC
+	Random    bool // true = ORDER BY RANDOM()
 }
 
 // ScopeClause restricts query results to a group's ownership subtree.

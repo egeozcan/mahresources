@@ -85,6 +85,12 @@ func (l *Lexer) next() Token {
 		l.pos++
 		return Token{Type: TokenEq, Value: "=", Pos: start, Length: 1}
 	case '~':
+		// ~* is the PostgreSQL case-insensitive regex operator; longest match first
+		// so plain ~ (contains) stays unaffected. A space (`~ *`) is not a match.
+		if l.pos+1 < len(l.input) && l.input[l.pos+1] == '*' {
+			l.pos += 2
+			return Token{Type: TokenRegex, Value: "~*", Pos: start, Length: 2}
+		}
 		l.pos++
 		return Token{Type: TokenLike, Value: "~", Pos: start, Length: 1}
 	case '>':
@@ -108,6 +114,11 @@ func (l *Lexer) next() Token {
 				return Token{Type: TokenNeq, Value: "!=", Pos: start, Length: 2}
 			}
 			if l.input[l.pos+1] == '~' {
+				// !~* is the negated PostgreSQL case-insensitive regex operator.
+				if l.pos+2 < len(l.input) && l.input[l.pos+2] == '*' {
+					l.pos += 3
+					return Token{Type: TokenNotRegex, Value: "!~*", Pos: start, Length: 3}
+				}
 				l.pos += 2
 				return Token{Type: TokenNotLike, Value: "!~", Pos: start, Length: 2}
 			}

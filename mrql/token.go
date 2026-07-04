@@ -43,8 +43,10 @@ const (
 	TokenGte     // >=
 	TokenLt      // <
 	TokenLte     // <=
-	TokenLike    // ~
-	TokenNotLike // !~
+	TokenLike     // ~
+	TokenNotLike  // !~
+	TokenRegex    // ~*  (PostgreSQL case-insensitive POSIX regex match)
+	TokenNotRegex // !~* (negated)
 
 	// Delimiters
 	TokenLParen // (

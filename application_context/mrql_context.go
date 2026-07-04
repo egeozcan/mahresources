@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"sort"
 	"strings"
 	"sync"
@@ -289,6 +290,16 @@ func (ctx *MahresourcesContext) defaultMRQLLimit() int {
 	return DefaultMRQLLimitFallback
 }
 
+// rejectSQLiteRegex returns a TranslateError when the query uses a regex match
+// operator (~* / !~*) on a non-PostgreSQL database. SQLite has no native regex,
+// so the operator is PostgreSQL-only.
+func (ctx *MahresourcesContext) rejectSQLiteRegex(q *mrql.Query) error {
+	if mrql.ContainsRegexOperator(q) && ctx.db.Config.Dialector.Name() != "postgres" {
+		return &mrql.TranslateError{Message: "regex match (~*) requires PostgreSQL", Pos: 0}
+	}
+	return nil
+}
+
 // mrqlTranslateOptions returns TranslateOptions pre-filled with the runtime
 // similarity thresholds, so SIMILAR TO predicates match the resource page's
 // similarity sidebar (same read path, same live-tunable thresholds).
@@ -558,6 +569,7 @@ type crossEntityItem struct {
 	created    time.Time
 	updated    time.Time
 	index      int // original index within its type slice
+	rand       int // random sort key for ORDER BY RANDOM() (unique via rand.Perm)
 }
 
 // executeCrossEntity runs the query against resources, notes, and groups
@@ -566,6 +578,15 @@ type crossEntityItem struct {
 // others. If an entity times out, its results are omitted and a warning is
 // included in the response.
 func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLResult, error) {
+	// Up-front regex/dialect gate: this path swallows per-entity TranslateErrors
+	// (a non-resolvable entity is skipped), so a SQLite regex query without a
+	// `type =` filter would otherwise return silent empty results instead of a
+	// clear 400. Reject it here before fan-out. The per-comparison TranslateError
+	// in the translator remains as defense-in-depth for the determined-entity path.
+	if err := ctx.rejectSQLiteRegex(parsed); err != nil {
+		return nil, err
+	}
+
 	result := &MRQLResult{EntityType: "all"}
 
 	globalLimit := ctx.defaultMRQLLimit()
@@ -666,19 +687,36 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 	// Build unified sortable items
 	items := make([]crossEntityItem, 0, len(allResources)+len(allNotes)+len(allGroups))
 	for i, r := range allResources {
-		items = append(items, crossEntityItem{"resource", r.Name, r.CreatedAt, r.UpdatedAt, i})
+		items = append(items, crossEntityItem{entityType: "resource", name: r.Name, created: r.CreatedAt, updated: r.UpdatedAt, index: i})
 	}
 	for i, n := range allNotes {
-		items = append(items, crossEntityItem{"note", n.Name, n.CreatedAt, n.UpdatedAt, i})
+		items = append(items, crossEntityItem{entityType: "note", name: n.Name, created: n.CreatedAt, updated: n.UpdatedAt, index: i})
 	}
 	for i, g := range allGroups {
-		items = append(items, crossEntityItem{"group", g.Name, g.CreatedAt, g.UpdatedAt, i})
+		items = append(items, crossEntityItem{entityType: "group", name: g.Name, created: g.CreatedAt, updated: g.UpdatedAt, index: i})
+	}
+
+	// ORDER BY RANDOM() clauses (Field == nil) compare on a per-item random key.
+	// A permutation keeps the keys unique, so the comparator stays a strict
+	// order at the clause's position — `ORDER BY RANDOM()` is a global shuffle,
+	// `ORDER BY created, RANDOM()` a random tiebreak, matching SQL semantics.
+	for _, ob := range parsed.OrderBy {
+		if ob.Random {
+			for k, p := range rand.Perm(len(items)) {
+				items[k].rand = p
+			}
+			break
+		}
 	}
 
 	// Global sort if ORDER BY is specified
 	if len(parsed.OrderBy) > 0 {
 		sort.SliceStable(items, func(i, j int) bool {
 			for _, ob := range parsed.OrderBy {
+				if ob.Random {
+					// Unique keys: never a tie, no direction (parser enforces).
+					return items[i].rand < items[j].rand
+				}
 				fieldName := ob.Field.Name()
 				cmp := 0
 				switch fieldName {

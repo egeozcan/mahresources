@@ -188,6 +188,29 @@ contentType !~ "image"    # does not contain "image"
 
 Both `~` and `!~` are case-insensitive.
 
+#### Regex Matching (PostgreSQL only)
+
+On PostgreSQL deployments, `~*` and `!~*` match against a case-insensitive POSIX regular expression. Unlike `~`, the pattern is a real regex — no `*`/`?` wildcard shortcuts, no implicit anchoring or `%...%` wrapping:
+
+```
+name ~* "^IMG_[0-9]{4}\.(jpe?g|png)$"    # names like IMG_0421.jpg
+originalName !~* "\.(tmp|bak)$"          # not ending in .tmp or .bak
+```
+
+Allowed on string and `meta.<key>` fields (and string traversal leaves like `owner.name`). Not on numeric, datetime, or relation fields. On SQLite (no native regex) `~*`/`!~*` return an error. An invalid pattern surfaces the database's "invalid regular expression" message.
+
+### Ranges — `BETWEEN`
+
+`BETWEEN` matches an inclusive range on both ends; `NOT BETWEEN` is the complement. It works wherever `>=`/`<=` do — dates, numbers (including size units), strings (lexicographic), and `meta.<key>`. Bounds can be any value, including relative dates, `NOW()`, and `$params`:
+
+```
+created BETWEEN "2024-01-01" AND "2024-06-30"
+fileSize NOT BETWEEN 1mb AND 10mb
+created BETWEEN -30d AND NOW()
+```
+
+`f BETWEEN a AND b` is exactly `(f >= a AND f <= b)`.
+
 ### Existence Checks
 
 ```
@@ -319,6 +342,27 @@ type = note ORDER BY updated ASC, name ASC LIMIT 50 OFFSET 100
 ```
 
 The default sort order when `ORDER BY` is omitted is implementation-defined (typically insertion order).
+
+### Random Order — `RANDOM()`
+
+`ORDER BY RANDOM()` returns rows in a random order — handy for a random sample with `LIMIT`:
+
+```
+type = resource AND tags IS EMPTY ORDER BY RANDOM() LIMIT 20
+type = note ORDER BY name, RANDOM()        # random tiebreak within equal names
+```
+
+`RANDOM()` takes no `ASC`/`DESC` and cannot be combined with `GROUP BY`. Because the order is re-rolled on every request, paging past the first page (`LIMIT`/`OFFSET`) draws a fresh random sample that can repeat earlier rows — this is the expected "give me N random items" behavior, not stable pagination.
+
+### Relevance Order — `RANK`
+
+`ORDER BY RANK` sorts full-text results by relevance, most relevant first (no direction needed; `RANK DESC` reverses to least-relevant first):
+
+```
+type = note AND TEXT ~ "kubernetes migration" ORDER BY RANK LIMIT 10
+```
+
+`RANK` requires exactly one `TEXT ~` predicate (its term defines the relevance), a single entity type, and no `GROUP BY`. It errors if the server was started with full-text search disabled (`-skip-fts`) — a relevance sort over the non-indexed fallback would be meaningless.
 
 ## Scope
 
