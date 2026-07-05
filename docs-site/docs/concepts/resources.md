@@ -87,7 +87,7 @@ Mahresources computes cryptographic hashes for integrity and deduplication:
 - Enables detection of duplicate uploads
 
 ### Perceptual Hashes (Images)
-For image files, Mahresources computes two perceptual hashes using the imgsim library: AHash (average hash) and DHash (difference hash). Both are stored in the database, but DHash is used for similarity comparison. Similarity between two images is measured by the Hamming distance between their DHash values -- the number of differing bits.
+For image files, Mahresources computes three perceptual hashes from a single decode. The primary metric is the goimagehash Perception Hash (pHash), a DCT-based hash whose value is indexed in four chunk columns for fast database-side candidate lookup. Alongside it, the legacy imgsim Difference Hash (dHash) and Average Hash (aHash) are also stored. Similarity between two images is measured by the Hamming distance between their pHash values -- the number of differing bits. The dHash distance is a fallback for rows not yet migrated to the v2 pipeline, and the aHash distance feeds a secondary check that suppresses solid-color false positives.
 
 Perceptual hashes detect visually similar images even across different resolutions, minor edits, format conversions, and color adjustments.
 

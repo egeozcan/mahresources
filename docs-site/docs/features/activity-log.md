@@ -5,7 +5,7 @@ title: Activity Log
 
 # Activity Log
 
-Most create, update, and delete operations are recorded, and request-driven writes capture the HTTP request context (path, user agent, IP) that triggered them. Coverage is not universal. The generic inline-edit path used by simpler entities (Tag, Category, Query, Note Type, Series, Resource Category, Template Partial, group relations, and group relation types) does not log name, description, or metadata PATCH edits; plugin and background-worker writes log without request context; the hash and thumbnail workers log at batch granularity or not at all; and some bulk operations record a single aggregate entry. Log entries are written synchronously but with fire-and-forget error handling -- errors during log writes are printed to stdout but never propagate to break the original operation.
+Most create, update, and delete operations are recorded, and request-driven writes capture the HTTP request context (path, user agent, IP) that triggered them. Coverage is not universal. The generic inline quick-edit path does not log name, description, or metadata edits; it is used by the simpler entities (Tag, Category, Query, Note Type, Series, Resource Category, Template Partial, group relations, and group relation types) and also by the inline quick-edits on Notes, Groups, and Resources (though the full create and update paths for Notes, Groups, and Resources still log normally); plugin and background-worker writes log without request context; the hash and thumbnail workers log at batch granularity or not at all; and some bulk operations record a single aggregate entry. Log entries are written synchronously but with fire-and-forget error handling -- errors during log writes are printed to stdout but never propagate to break the original operation.
 
 ![Activity log showing recent entity changes](/img/activity-log.png)
 
@@ -14,7 +14,7 @@ Most create, update, and delete operations are recorded, and request-driven writ
 | Property | Type | Description |
 |----------|------|-------------|
 | `level` | string | `info`, `warning`, or `error` |
-| `action` | string | `create`, `update`, `delete`, `system`, `progress`, `plugin`, or `reset` |
+| `action` | string | `create`, `update`, `delete`, `system`, `progress`, `plugin`, `reset`, or `error` |
 | `entityType` | string | Entity kind: `resource`, `note`, `group`, etc. |
 | `entityId` | uint | ID of the affected entity (nullable) |
 | `entityName` | string | Name of the entity at the time of the action |
@@ -43,6 +43,7 @@ Most create, update, and delete operations are recorded, and request-driven writ
 | `progress` | Long-running operation progress updates |
 | `plugin` | Plugin hook or action execution events |
 | `reset` | A runtime setting was reset to its default |
+| `error` | An error condition (e.g., emitted by the background hash worker) |
 
 ## Viewing Logs
 
@@ -59,7 +60,7 @@ Filter log entries by combining any of these parameters:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `level` | string | Filter by level: `info`, `warning`, `error` |
-| `action` | string | Filter by action: `create`, `update`, `delete`, `system`, `progress`, `plugin`, `reset` |
+| `action` | string | Filter by action: `create`, `update`, `delete`, `system`, `progress`, `plugin`, `reset`, `error` |
 | `entityType` | string | Filter by entity kind |
 | `entityId` | uint | Filter by specific entity ID |
 | `Message` | string | Search by log message |

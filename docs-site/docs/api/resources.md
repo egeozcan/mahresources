@@ -196,6 +196,7 @@ POST /v1/resource/remote
 | `GroupCategoryName` | string | Auto-create owner group with this category |
 | `GroupName` | string | Auto-create owner group with this name |
 | `GroupMeta` | string | Metadata for auto-created group |
+| `PathName` | string | Alternative filesystem key to store into (empty = default filesystem) |
 
 ### Example
 

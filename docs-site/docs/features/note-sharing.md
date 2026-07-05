@@ -111,7 +111,7 @@ http://your-share-server:8383/s/{token}
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/s/{token}` | View the shared Note |
-| `POST` | `/s/{token}/block/{blockId}/state` | Update block state (todo checkboxes, calendar view/events) |
+| `POST` | `/s/{token}/block/{blockId}/state` | Update block state (todo checkboxes only; other block types are rejected with HTTP 403) |
 | `GET` | `/s/{token}/block/{blockId}/calendar/events` | Get calendar events for a calendar block |
 | `GET` | `/s/{token}/resource/{hash}` | Access a Resource file by its hash |
 
@@ -138,7 +138,7 @@ Templates run in a **restricted mode** appropriate to an anonymous, unauthentica
 
 ## Interactive Blocks on Shared Notes
 
-Two block types support interaction on shared notes: **todos** and **calendars**.
+Two block types respond to visitor interaction on shared notes: **todos**, which visitors can toggle, and **calendars**, which visitors can browse (view-only).
 
 ### Table Blocks and Saved Queries
 
@@ -152,7 +152,7 @@ Adding, removing, or editing todo items is not allowed on shared views -- only t
 
 ### Shared Calendars
 
-Calendar blocks on shared notes support browsing month and agenda views, viewing ICS-sourced events, and creating, editing, or deleting custom events. Event changes are persisted to the share server via `POST /s/{token}/block/{blockId}/state` and `GET /s/{token}/block/{blockId}/calendar/events`.
+Calendar blocks on shared notes are view-only. Visitors can browse month and agenda views and see events sourced from the block's ICS feed, but they cannot create, edit, or delete events. The share server rejects state writes for every block type except todos (HTTP 403, BH-031), so calendar changes never persist. `GET /s/{token}/block/{blockId}/calendar/events` serves the events for display only.
 
 ### Shared Block Constraints
 
@@ -162,8 +162,8 @@ Calendar blocks on shared notes support browsing month and agenda views, viewing
 | Toggle/check items | Yes | -- |
 | Browse month/agenda views | -- | Yes |
 | View ICS-sourced events | -- | Yes |
-| Create custom events | -- | Yes |
-| Edit/delete custom events | -- | Yes |
+| Create custom events | -- | No |
+| Edit/delete custom events | -- | No |
 | Add/remove items | No | -- |
 | Edit block content | No | No |
 

@@ -163,4 +163,4 @@ mr plugin enable data-views
 
 ## Plugin Documentation Pages
 
-After enabling a plugin, its documentation page shows all registered shortcodes with descriptions, parameters, and live previews using example data. Access it from the plugin management page by clicking the plugin name.
+After enabling a plugin, its documentation page shows all registered shortcodes with descriptions, parameters, and live previews using example data. Access it from the plugin management page by clicking the **View documentation** link shown under the plugin (present only when the plugin ships docs).

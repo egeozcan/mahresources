@@ -15,7 +15,7 @@ MRQL (Mahresources Query Language) is a structured query language for searching 
 | Filter by one or two fields | Entity list filters |
 | Complex multi-field conditions | **MRQL** |
 | Date range + tag + file size combinations | **MRQL** |
-| Reusable cross-entity queries | **MRQL + Saved Queries** |
+| Reusable cross-entity queries | **MRQL + saved MRQL queries** |
 | Raw SQL with joins and aggregates | Saved Queries (SQL) |
 
 ## Accessing MRQL
@@ -854,4 +854,4 @@ re-submit the current query and parameters.
 ## See Also
 
 - [MRQL Reference](./mrql-reference.md) — compact syntax cheatsheet for quick lookup
-- [Saved Queries](./saved-queries.md) — persisting MRQL queries for reuse
+- [Saved Queries (SQL)](./saved-queries.md) — the raw-SQL query runner, separate from MRQL saved queries (documented above)

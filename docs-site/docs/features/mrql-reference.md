@@ -316,5 +316,5 @@ mr resources list --mrql 'tags = "vacation" AND created > -30d'
 ## See Also
 
 - [MRQL Query Language](./mrql.md) — conceptual overview with worked examples
-- [Saved Queries](./saved-queries.md) — persisting and reusing queries
+- [Saved Queries (SQL)](./saved-queries.md) — the raw-SQL query runner, separate from MRQL saved queries
 - CLI: [`mr mrql`](../cli/mrql/index.md), [`mr mrql run`](../cli/mrql/run.md), [`mr mrql explain`](../cli/mrql/explain.md), [`mr mrql export`](../cli/mrql/export.md), [`mr mrql list`](../cli/mrql/list.md)

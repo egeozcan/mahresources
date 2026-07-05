@@ -152,6 +152,8 @@ If a filter is set but the entity lacks the filtered field, the action does not 
 | `card` | Entity card in list views (single entity) |
 | `bulk` | Bulk action bar (multiple selected entities) |
 
+The `bulk` placement renders a button only on the Resource and Group list pages. The Note list page does not expose bulk plugin actions, so a `bulk` action declared with `entity = "note"` shows no button there. Running it directly via `POST /v1/jobs/action/run` with multiple note IDs still works.
+
 ## Synchronous Execution
 
 Sync actions (the default) run within a single request-response cycle. The handler receives a context table and returns a result table.
@@ -186,6 +188,7 @@ mah.action({
 | `success` | boolean | Whether the action succeeded |
 | `message` | string | Message displayed to the user |
 | `redirect` | string | Optional URL to redirect to after completion |
+| `job_id` | string | Optional job ID a sync handler can return as a poll handle |
 | `data` | table | Optional additional data |
 
 ## Asynchronous Execution

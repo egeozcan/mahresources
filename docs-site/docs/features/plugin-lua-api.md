@@ -141,7 +141,7 @@ local result, err = mah.db.mrql_query("type=resource AND name ~ $needle", {
 })
 ```
 
-Runs an [MRQL](./mrql.md) query and returns a result table (`{entity_type, mode, items|rows|groups}`) or `nil, error_string`. The `params` table binds `$name` placeholders; values are stringified and coerced like typed literals. Every placeholder must be supplied or the call errors. Results are cached per `(query, scope, limit, buckets, params)`.
+Runs an [MRQL](./mrql.md) query and returns a result table (`{entity_type, mode, items|rows|groups}`) or `nil, error_string`. The `params` table binds `$name` placeholders; values are stringified and coerced like typed literals. Every placeholder must be supplied or the call errors. Results are cached per `(query, resolved scope owner id, limit, buckets, params)`, where the scope owner id is the group id that `scope` resolves to for this entity, not the literal scope string.
 
 ### Resource File Access
 
@@ -167,6 +167,7 @@ local resource, err = mah.db.create_resource_from_url(url, options)
 | `options.owner_id` | number | Owner Group ID |
 | `options.tags` | table | Array of Tag IDs |
 | `options.groups` | table | Array of Group IDs |
+| `options.meta` | string | JSON-encoded metadata string |
 
 Returns a Resource table (`id`, `name`, `description`, `content_type`, `original_filename`, `hash`, `owner_id`) on success. Returns `nil, error_string` on failure.
 
@@ -195,6 +196,22 @@ local ok, err = mah.db.delete_resource(id)
 ```
 
 Returns `true` on success, or `nil, error_string` on failure.
+
+### Resource Versions
+
+```lua
+local version, err = mah.db.add_resource_version_from_url(resource_id, url, comment)
+```
+
+Downloads the content at `url` and appends it as a new version of an existing resource.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `resource_id` | number | ID of the resource to add a version to |
+| `url` | string | Must use `http://` or `https://` scheme |
+| `comment` | string | Optional version comment (defaults to `""`) |
+
+Returns a version table (`id`, `resource_id`, `version_number`, `content_type`, `file_size`, `hash`) on success, or `nil, error_string` on failure.
 
 ### Group CRUD
 
@@ -525,7 +542,7 @@ Callbacks are queued and executed on the plugin's VM thread with a 5-second dead
 
 ### Sync Functions
 
-Action handlers MUST use sync HTTP functions. Async callbacks cannot fire while the VM lock is held by the handler, so async requests will silently never complete.
+Action handlers MUST use sync HTTP functions. An async callback cannot fire while the handler holds the VM lock; it is queued and only runs after the handler returns and releases the lock, which is too late to consume inside the handler. Use the sync functions to read a response within a handler.
 
 Sync functions block the Lua execution until the response arrives.
 
@@ -580,6 +597,29 @@ Parses a JSON string into Lua values. Returns the value on success, or `nil, err
 local data, err = mah.json.decode('{"name": "test", "count": 42}')
 if data then
     print(data.name, data.count)
+end
+```
+
+## mah.image -- Image Processing
+
+Image manipulation utilities that operate on base64 data URIs.
+
+### mah.image.pad_to_aspect_ratio(data_uri, target_ratio)
+
+Pads an image with white borders so it exactly matches the target aspect ratio, without stretching or cropping the original content.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `data_uri` | string | A `data:image/...;base64,...` URI |
+| `target_ratio` | string | Aspect ratio such as `"16:9"`, `"1:1"`, or `"4:3"` |
+
+Returns `padded_data_uri` (string), `new_width` (number), `new_height` (number) on success, or `nil, error_string` on failure. Check the first return value before using it.
+
+```lua
+local padded, w, h = mah.image.pad_to_aspect_ratio(data_uri, "16:9")
+if not padded then
+    print("Error: " .. w)  -- error string is the second return value
+    return
 end
 ```
 
@@ -837,6 +877,7 @@ The `render` function receives a single `ctx` table:
 | `ctx.settings` | Plugin settings key-value pairs |
 | `ctx.inner_content` | Content between opening and closing tags (empty for self-closing shortcodes) |
 | `ctx.is_block` | `true` if the shortcode was used as a block `[name]...[/name]`, `false` otherwise |
+| `ctx.entity` | The full entity as a Lua table (fields vary by type). Present only when the render was given an entity |
 
 ### Name Rules
 
@@ -919,6 +960,14 @@ local enabled = mah.get_setting("enabled")   -- boolean
 ```
 
 Values are returned with their correct Lua type based on the setting definition.
+
+## mah.sleep(seconds)
+
+Blocks the calling plugin VM for the given number of seconds. The value is clamped to the range `[0, 30]`: negatives become `0` and anything above `30` becomes `30`. Useful for polling an external async API from within a sync action handler.
+
+```lua
+mah.sleep(2)  -- pause for 2 seconds
+```
 
 ## mah.abort(reason)
 

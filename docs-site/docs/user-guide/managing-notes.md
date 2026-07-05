@@ -100,6 +100,13 @@ Note types add custom templates and styling to notes.
 | `customSidebar` | HTML template displayed in the sidebar |
 | `customSummary` | HTML template for list views |
 | `customAvatar` | HTML template for Note avatars |
+| `customListHeader` | HTML template rendered at the top of note list pages filtered to this one type |
+| `customMRQLResult` | HTML template for rendering notes of this type in `[mrql]` query results |
+| `customCSS` | Page-level `<style>` block injected on pages that render this type's templates |
+| `metaSchema` | JSON Schema for the metadata of notes of this type |
+| `sectionConfig` | Controls which sections are visible on note detail pages |
+
+For fuller descriptions of the template slots and metadata schema, see [Notes](../concepts/notes.md).
 
 ### Using Note Types
 

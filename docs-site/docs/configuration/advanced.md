@@ -289,6 +289,7 @@ The share server binds to `0.0.0.0` (all interfaces) by default. If you only wan
 |------|--------------|---------|-------------|
 | `-share-port` | `SHARE_PORT` | (disabled) | Port for the share server. Must be set to enable sharing. |
 | `-share-bind-address` | `SHARE_BIND_ADDRESS` | `0.0.0.0` | Bind address for the share server |
+| `-share-public-url` | `SHARE_PUBLIC_URL` | (unset) | Externally-routable base URL for shared notes (e.g. `https://share.example.com`). When unset, the share UI shows a warning and the relative `/s/<token>` path instead of a bind-address fallback. |
 
 ### Example
 
@@ -365,6 +366,7 @@ Each plugin lives in a subdirectory of the plugin path and must contain a `plugi
 | `-max-db-connections` | `MAX_DB_CONNECTIONS` | `0` (no limit) | Connection pool limit |
 | `-share-port` | `SHARE_PORT` | (disabled) | Share server port |
 | `-share-bind-address` | `SHARE_BIND_ADDRESS` | `0.0.0.0` | Share server bind address |
+| `-share-public-url` | `SHARE_PUBLIC_URL` | (unset) | Externally-routable base URL for shared notes |
 | `-cleanup-logs-days` | `CLEANUP_LOGS_DAYS` | `0` (disabled) | Delete old logs on startup |
 | `-plugin-path` | `PLUGIN_PATH` | `./plugins` | Plugin directory |
 | `-plugins-disabled` | `PLUGINS_DISABLED=1` | `false` | Disable plugin system |

@@ -85,7 +85,7 @@ Process:
 3. Run LibreOffice headless: `--convert-to png`
 4. Decode the generated PNG, resize, and encode as JPEG
 
-Per-Resource lock with a 30-second default timeout.
+Per-Resource lock with a fixed 30-second timeout. Unlike the video thumbnail lock (`-video-thumb-lock-timeout`), this timeout is hardcoded and has no configuration flag.
 
 ### LibreOffice Configuration
 
@@ -109,7 +109,7 @@ A background worker pre-generates thumbnails for video Resources so they are ava
 
 The worker operates in two modes:
 - **Queue-based** -- Newly uploaded videos are queued for immediate thumbnail generation
-- **Backfill** -- When enabled, scans at server startup for existing videos without thumbnails and processes them in batches. This is a one-time startup scan, not a continuous process.
+- **Backfill** -- When enabled, scans for existing videos without thumbnails and processes them in batches. After an initial scan following server startup, it repeats on the `-thumb-poll-interval` schedule for the life of the process.
 
 The worker creates null thumbnails (width=0, height=0) so any size can be derived from the cached frame.
 

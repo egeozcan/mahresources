@@ -40,7 +40,7 @@ cd mahresources
 docker build -t mahresources .
 
 # Run in ephemeral mode (data lost on exit)
-docker run -p 8181:8181 mahresources -ephemeral
+docker run -p 8181:8181 mahresources ./mahresources -ephemeral
 
 # Run with persistent storage
 docker run -p 8181:8181 \

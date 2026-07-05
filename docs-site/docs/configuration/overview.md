@@ -85,6 +85,7 @@ Command-line flags take precedence over environment variables, so a flag overrid
 | `-mrql-default-limit` | `MRQL_DEFAULT_LIMIT` | Default `LIMIT` for MRQL queries without an explicit LIMIT | `500` |
 | `-share-port` | `SHARE_PORT` | Port for public share server | (disabled) |
 | `-share-bind-address` | `SHARE_BIND_ADDRESS` | Share server bind address | `0.0.0.0` |
+| `-share-public-url` | `SHARE_PUBLIC_URL` | Externally-routable base URL for shared notes | (relative path) |
 | `-cleanup-logs-days` | `CLEANUP_LOGS_DAYS` | Delete log entries older than N days on startup | `0` (disabled) |
 | `-plugin-path` | `PLUGIN_PATH` | Directory to scan for plugins | `./plugins` |
 | `-plugins-disabled` | `PLUGINS_DISABLED=1` | Disable the plugin system entirely | `false` |

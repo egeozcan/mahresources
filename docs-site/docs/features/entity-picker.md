@@ -4,7 +4,7 @@ sidebar_position: 7
 
 # Entity Picker
 
-The entity picker is a reusable modal component for selecting entities in the block editor and other UI contexts. It ships with configurations for resources, groups, and notes, though only the resource and group pickers are currently wired into the UI. New entity types (e.g., tags, categories) can be added through configuration objects without modifying core logic.
+The entity picker is a reusable modal component for selecting entities in the block editor and other UI contexts. It ships with configurations for resources, groups, and notes. The shipped page UI opens only the resource and group pickers directly, but a plugin action's `entity_ref` param can open the picker for any of resource, note, or group. New entity types (e.g., tags, categories) can be added through configuration objects without modifying core logic.
 
 ## Using the Picker
 
@@ -29,9 +29,11 @@ openPicker() {
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `entityType` | string | Required. Entity type key: `'resource'` or `'group'` |
+| `entityType` | string | Required. Entity type key: `'resource'`, `'group'`, or `'note'` |
 | `noteId` | number | Optional. Note ID for "Note's Resources" tab |
 | `existingIds` | number[] | IDs already selected (shown as "Added") |
+| `lockedFilters` | object | Optional. Filter values forced on every search (passed into `searchParams`), not user-editable. Defaults to `{}` |
+| `multiSelect` | boolean | Optional. Whether more than one entity can be selected at once. Defaults to `true` |
 | `onConfirm` | function | Callback receiving array of selected IDs |
 
 ### Multi-Selection
@@ -44,7 +46,7 @@ The picker is designed to be extensible. To add support for a new entity type (e
 
 ### 1. Add Configuration
 
-Edit `src/components/picker/entityConfigs.js`. A `note` configuration (with a `noteCard` render mode) already ships in this file as a complete worked example, even though no picker entry point currently opens it. Use it as a reference for the shape of a config object:
+Edit `src/components/picker/entityConfigs.js`. A `note` configuration (with a `noteCard` render mode) already ships in this file as a complete worked example. No shipped page UI opens the note picker directly, though a plugin action's `entity_ref` param can select `entityType: 'note'` (as well as `'resource'` or `'group'`). Use it as a reference for the shape of a config object:
 
 ```javascript
 export const entityConfigs = {

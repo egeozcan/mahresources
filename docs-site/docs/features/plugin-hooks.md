@@ -78,7 +78,7 @@ Injections render HTML into named slots on existing pages. Register them during 
 
 ```lua
 function init()
-    mah.inject("resource_sidebar", function(ctx)
+    mah.inject("resource_detail_sidebar", function(ctx)
         local resource = mah.db.get_resource(ctx.entity_id)
         if resource and resource.content_type == "image/jpeg" then
             return '<div class="p-2 bg-blue-50 rounded">JPEG image</div>'
@@ -87,6 +87,34 @@ function init()
     end)
 end
 ```
+
+### Slot Names
+
+Slots are declared with `{% plugin_slot "..." %}` in the templates. Injecting into a name that does not exist is silently a no-op: `RenderSlot` returns an empty string for slots with no registered renderers. The full set of 21 slots:
+
+| Slot | Location |
+|------|----------|
+| `head` | Inside `<head>` on every page |
+| `page_top` | Top of the page body, above the main content |
+| `sidebar_top` | Top of the global navigation sidebar |
+| `sidebar_bottom` | Bottom of the global navigation sidebar |
+| `page_bottom` | Bottom of the page body |
+| `scripts` | End of the body, alongside script tags |
+| `resource_detail_before` | Resource detail page, before the main content |
+| `resource_detail_after` | Resource detail page, after the main content |
+| `resource_detail_sidebar` | Resource detail page sidebar |
+| `note_detail_before` | Note detail page, before the main content |
+| `note_detail_after` | Note detail page, after the main content |
+| `note_detail_sidebar` | Note detail page sidebar |
+| `group_detail_before` | Group detail page, before the main content |
+| `group_detail_after` | Group detail page, after the main content |
+| `group_detail_sidebar` | Group detail page sidebar |
+| `resource_list_before` | Resource list page, before the list |
+| `resource_list_after` | Resource list page, after the list |
+| `note_list_before` | Note list page, before the list |
+| `note_list_after` | Note list page, after the list |
+| `group_list_before` | Group list page, before the list |
+| `group_list_after` | Group list page, after the list |
 
 ### How Injections Render
 
@@ -146,6 +174,8 @@ The handler receives a context table:
 | `body` | string | Request body (for POST requests) |
 | `principal` | table | The acting user: `userId`, `username`, `role`, `isAdmin`, `scopeGroupId`, `superUser`. With auth disabled it reflects the root admin (`superUser = true`). |
 
+Group-scoped principals (a group-confined user, any guest) are denied every plugin-code endpoint with HTTP 403 before the handler runs, because plugin `mah.db.*` access uses the unscoped database handle. A request that reaches your page handler therefore never carries a scope, so `scopeGroupId` is never populated here. Do not rely on it for subtree enforcement inside a plugin page.
+
 ```lua
 mah.page("search", function(ctx)
     local query = ctx.query.q or ""
@@ -194,7 +224,7 @@ function init()
     end)
 
     -- Show status badge on Group sidebar
-    mah.inject("group_sidebar", function(ctx)
+    mah.inject("group_detail_sidebar", function(ctx)
         local group = mah.db.get_group(ctx.entity_id)
         if group and group.meta and group.meta.status then
             return '<span class="px-2 py-1 bg-green-100 rounded">' .. group.meta.status .. '</span>'
