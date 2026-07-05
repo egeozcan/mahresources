@@ -213,6 +213,8 @@
 
         <div class="mt-4 border-t border-stone-200 pt-4">
             <label class="flex items-start gap-2 text-sm cursor-pointer">
+                {# Hidden companion: a full-form submit always sends this field (unchecked -> "false", checked -> "false"+"true", schema takes the last), so an omitted field means a partial update the handler preserves rather than clearing this opt-in. #}
+                <input type="hidden" name="ApplyTemplatesToShares" value="false">
                 <input type="checkbox" name="ApplyTemplatesToShares" value="true" {% if noteType.ApplyTemplatesToShares %}checked{% endif %} class="mt-1 h-4 w-4 text-amber-700 border-stone-300 rounded focus:ring-amber-600">
                 <span>
                     <span class="font-medium text-stone-700">Apply templates to public share pages</span>
