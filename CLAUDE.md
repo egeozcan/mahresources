@@ -145,6 +145,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | (env-only) | `DEEPSEEK_API_KEY` | DeepSeek API key for `/mrql` natural-language generation. No CLI flag in v1. |
 | (env-only) | `DEEPSEEK_MODEL` | DeepSeek model for MRQL generation (default: `deepseek-v4-pro`). |
 | (env-only) | `DEEPSEEK_TIMEOUT` | Timeout for one DeepSeek MRQL generation call (default: `20s`). Invalid values fail startup. |
+| (env-only) | `TEMPLATE_SIGNING_KEY` | Secret used to derive the HMAC key that authenticates the `[lazy]`/`[details]` deferred-render tokens. When unset, each process generates a per-boot random key (correct for single-process deployments). Set it to a shared value across all processes in a multi-process / behind-load-balancer deployment so a lazy-reveal request that lands on a different process than the page render still verifies. |
 | `-share-port` | `SHARE_PORT` | Port for the public share server (leave empty to disable the share feature) |
 | `-share-bind-address` | `SHARE_BIND_ADDRESS` | Bind address for the share server (default: `0.0.0.0`) |
 | `-share-public-url` | `SHARE_PUBLIC_URL` | Externally-routable base URL for shared notes (e.g. `https://share.example.com`). When set, the share sidebar and `/admin/shares` render absolute links as `{SHARE_PUBLIC_URL}/s/<token>`. When unset, the UI shows a warning and the relative `/s/<token>` path only — no bind-address fallback (BH-033). |

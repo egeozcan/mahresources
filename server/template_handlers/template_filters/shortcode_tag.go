@@ -8,6 +8,7 @@ import (
 
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
+	"mahresources/lib/deferredtoken"
 	"mahresources/mrql"
 	"mahresources/plugin_system"
 	"mahresources/shortcodes"
@@ -64,9 +65,7 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 				reqCtx = rc
 			}
 		}
-		reqCtx = plugin_system.WithMRQLCache(reqCtx)
-		reqCtx = shortcodes.WithPartialResolver(reqCtx, BuildPartialResolver(appCtx))
-		reqCtx = shortcodes.WithQueryBudget(reqCtx, pageQueryBudget(appCtx))
+		reqCtx = buildPageRenderContext(reqCtx, appCtx)
 		ctx.Public["_reqCtxWithCache"] = reqCtx
 	}
 
@@ -91,6 +90,29 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 		return ctx.Error(fmt.Sprintf("process_shortcodes: write error: %s", writeErr), nil)
 	}
 	return nil
+}
+
+// buildPageRenderContext wraps reqCtx with the per-page render helpers shared by
+// the process_shortcodes and custom_css tags: a per-render MRQL cache, the partial
+// resolver, the inline-MRQL query budget, and — when appCtx is available — the
+// deferred-render signer that makes [lazy]/[details] emit signed placeholders the
+// frontend resolves via /v1/shortcodes/deferred (every other render surface omits
+// the signer and renders those blocks inline).
+//
+// Both tags stash the result in ctx.Public["_reqCtxWithCache"] and reuse it, so
+// whichever runs first on a page (the custom_css tag renders in <head>, before the
+// body's process_shortcodes tags) must install the full set — otherwise later tags
+// reuse a context missing the signer and deferral silently degrades to inline.
+func buildPageRenderContext(reqCtx context.Context, appCtx *application_context.MahresourcesContext) context.Context {
+	reqCtx = plugin_system.WithMRQLCache(reqCtx)
+	reqCtx = shortcodes.WithPartialResolver(reqCtx, BuildPartialResolver(appCtx))
+	reqCtx = shortcodes.WithQueryBudget(reqCtx, pageQueryBudget(appCtx))
+	if appCtx != nil {
+		reqCtx = shortcodes.WithDeferredSigner(reqCtx, func(entityType string, entityID uint, body string) string {
+			return deferredtoken.Sign(appCtx.DeferredSigningKey(), entityType, entityID, body)
+		})
+	}
+	return reqCtx
 }
 
 // BuildMetaContextForEntity builds the shortcode rendering context for an entity

@@ -2012,6 +2012,28 @@ Response: {"issues": [{"start", "end", "severity" ("error"|"warning"|"info"),
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
+		Path:        "/v1/shortcodes/deferred",
+		OperationID: "renderDeferredShortcode",
+		Summary:     "Render a deferred [lazy]/[details] block",
+		Description: `Renders the inner body of a [lazy] or [details] block on demand — invoked by
+the frontend when a [lazy] block scrolls into view or a [details] disclosure is
+first opened.
+
+Request body fields:
+  - token (string, required) — the signed token emitted in the block's placeholder
+    during the display-page render. It authenticates the exact entity and template
+    body the server itself produced; no client-supplied template text is trusted.
+
+Response: {"html"}. The entity is reloaded through the request-scoped context, so
+an out-of-subtree id returns 404. Semantically a read: gated at capRead (any
+authenticated principal) and CSRF-exempt.`,
+		Tags:                 shortcodesTag,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
 	previewDescription := `Renders a Custom* template slot against a real entity without saving, for a
 live preview in the editor.
 

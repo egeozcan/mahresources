@@ -113,7 +113,8 @@ func isReadViaPost(path string) bool {
 	case "/v1/mrql", "/v1/mrql/validate", "/v1/mrql/complete",
 		"/v1/mrql/explain", "/v1/mrql/export",
 		"/v1/query/run", "/v1/mrql/saved/run", "/v1/search",
-		"/v1/groups/export/estimate", "/v1/shortcodes/lint":
+		"/v1/groups/export/estimate", "/v1/shortcodes/lint",
+		"/v1/shortcodes/deferred":
 		return true
 	default:
 		return false

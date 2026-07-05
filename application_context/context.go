@@ -1,6 +1,8 @@
 package application_context
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -132,6 +134,13 @@ type MahresourcesConfig struct {
 	DeepSeekModel string
 	// DeepSeekTimeout bounds a single MRQL generation provider call.
 	DeepSeekTimeout time.Duration
+	// TemplateSigningKey is an optional operator-supplied secret (env
+	// TEMPLATE_SIGNING_KEY) used to derive the HMAC key that authenticates the
+	// [lazy]/[details] deferred-render tokens. Set it to a shared value across all
+	// processes in a multi-process / behind-LB deployment so a lazy-reveal request
+	// that lands on a different process than the page render still verifies. When
+	// empty, each process generates its own per-boot random key. Env-only.
+	TemplateSigningKey string
 
 	// AuthEnabled turns on user accounts + RBAC. When false (default) the server
 	// behaves exactly as the historical no-auth deployment: every request runs as
@@ -252,6 +261,10 @@ type MahresourcesInputConfig struct {
 	DeepSeekModel string
 	// DeepSeekTimeout bounds a single MRQL generation provider call.
 	DeepSeekTimeout time.Duration
+	// TemplateSigningKey is an optional operator-supplied secret (env
+	// TEMPLATE_SIGNING_KEY) for the [lazy]/[details] deferred-render token HMAC
+	// key. Empty → per-boot random key. Env-only. See MahresourcesConfig.
+	TemplateSigningKey string
 
 	// AuthEnabled turns on user accounts + RBAC (env: AUTH_ENABLED=1).
 	AuthEnabled bool
@@ -339,6 +352,17 @@ type MahresourcesContext struct {
 	// via defaultActorID() (a pure atomic load); refreshed synchronously after
 	// every user mutation. See root_admin.go.
 	rootAdmin *rootAdminCache
+	// deferredSigningKey is the HMAC key that authenticates the tokens backing the
+	// [lazy]/[details] deferred-render shortcodes (lib/deferredtoken). Derived from
+	// Config.TemplateSigningKey when set, otherwise a per-boot random 32 bytes.
+	deferredSigningKey []byte
+}
+
+// DeferredSigningKey returns the HMAC key used to sign and verify deferred-render
+// tokens for the [lazy]/[details] shortcodes. It is never nil on a context built
+// by NewMahresourcesContext.
+func (ctx *MahresourcesContext) DeferredSigningKey() []byte {
+	return ctx.deferredSigningKey
 }
 
 // RunStartupExportSweep cleans up orphaned export/import tars left over from a
@@ -361,6 +385,25 @@ func (ctx *MahresourcesContext) RunStartupExportSweep() {
 	} else if removed > 0 {
 		log.Printf("startup: removed %d orphaned import files", removed)
 	}
+}
+
+// deriveDeferredSigningKey returns the HMAC key for deferred-render tokens. When
+// an operator configures TemplateSigningKey (env TEMPLATE_SIGNING_KEY) it is
+// hashed to a fixed 32 bytes so any-length passphrase works and the same value
+// yields the same key across processes (needed for multi-process / behind-LB
+// deployments where a lazy-reveal may hit a different process than the page
+// render). Otherwise a per-boot cryptographically random key is generated, which
+// is correct for the common single-process deployment.
+func deriveDeferredSigningKey(configured string) []byte {
+	if configured != "" {
+		sum := sha256.Sum256([]byte(configured))
+		return sum[:]
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		panic(err) // crypto/rand should never fail
+	}
+	return key
 }
 
 func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.DB, config *MahresourcesConfig) *MahresourcesContext {
@@ -412,6 +455,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		icsCache:                  icsCache,
 		DefaultResourceCategoryID: 1,
 		rootAdmin:                 newRootAdminCache(),
+		deferredSigningKey:        deriveDeferredSigningKey(config.TemplateSigningKey),
 	}
 
 	// Install RBAC group-subtree scoping + CreatedByUserId stamping callbacks.
@@ -1025,6 +1069,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		DeepSeekAPIKey:               cfg.DeepSeekAPIKey,
 		DeepSeekModel:                cfg.DeepSeekModel,
 		DeepSeekTimeout:              cfg.DeepSeekTimeout,
+		TemplateSigningKey:           cfg.TemplateSigningKey,
 		AuthEnabled:                  cfg.AuthEnabled,
 		SessionTTL:                   sessionTTL,
 		SessionCookieName:            "mr_session",
