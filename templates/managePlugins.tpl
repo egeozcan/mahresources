@@ -6,6 +6,12 @@
 
 {% block body %}
 <div class="content-wrap">
+    {% if docsLinksEnabled %}
+    <p class="mb-4 text-sm text-stone-500">
+        <a href="{{ docsURL("features/plugin-system") }}" target="_blank" rel="noopener" class="text-amber-700 hover:text-amber-900 underline">Plugin system docs</a>
+    </p>
+    {% endif %}
+
     {% if not plugins %}
     <p class="text-stone-500 italic">No plugins discovered. Place plugin directories in the plugins folder.</p>
     {% endif %}

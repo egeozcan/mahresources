@@ -81,7 +81,12 @@
                 {# BH-033: warn the admin when SHARE_PUBLIC_URL is unset. The old fallback synthesized http://<bind-address>:<port> which is useless for any external recipient. #}
                 <div class="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800" data-testid="share-url-unconfigured-warning">
                     <p class="font-medium">Share URL base is not configured.</p>
-                    <p class="mt-1">Set <code class="font-mono">SHARE_PUBLIC_URL</code> (flag: <code class="font-mono">--share-public-url=https://example.com</code>) to enable absolute shareable links. Until then, append the token path to your server's public URL manually.</p>
+                    <p class="mt-1">
+                        Set <code class="font-mono">SHARE_PUBLIC_URL</code> (flag: <code class="font-mono">--share-public-url=https://example.com</code>) to enable absolute shareable links. Until then, append the token path to your server's public URL manually.
+                        {% if docsLinksEnabled %}
+                        <a href="{{ docsURL("deployment/public-sharing") }}" target="_blank" rel="noopener" class="text-amber-700 hover:text-amber-900 underline">Public sharing docs</a>
+                        {% endif %}
+                    </p>
                 </div>
                 <div class="flex items-stretch gap-1">
                     <input

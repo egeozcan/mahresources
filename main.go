@@ -172,6 +172,10 @@ func main() {
 	shareBindAddress := flag.String("share-bind-address", getEnvOrDefault("SHARE_BIND_ADDRESS", "0.0.0.0"), "Bind address for share server (env: SHARE_BIND_ADDRESS)")
 	sharePublicURL := flag.String("share-public-url", os.Getenv("SHARE_PUBLIC_URL"), "Externally-routable base URL for shared notes (e.g. https://share.example.com). If unset, the share sidebar shows a warning and the relative /s/<token> path instead of synthesizing a bind-address URL (env: SHARE_PUBLIC_URL)")
 
+	// Documentation link options
+	docsSiteBaseURL := flag.String("docs-site-base-url", getEnvOrDefault("DOCS_SITE_BASE_URL", application_context.DefaultDocsSiteBaseURL), "Base URL for contextual links to the published documentation site (env: DOCS_SITE_BASE_URL)")
+	docsLinksDisabled := flag.Bool("docs-links-disabled", os.Getenv("DOCS_LINKS_DISABLED") == "1", "Disable contextual external documentation links in the app (env: DOCS_LINKS_DISABLED=1)")
+
 	// MRQL options
 	mrqlTimeout := flag.Duration("mrql-query-timeout", parseDurationEnv("MRQL_QUERY_TIMEOUT", 10*time.Second), "Maximum execution time for MRQL queries (env: MRQL_QUERY_TIMEOUT)")
 	mrqlDefaultLimit := flag.Int("mrql-default-limit", parseIntEnv("MRQL_DEFAULT_LIMIT", 500), "Default LIMIT applied to MRQL queries without an explicit LIMIT clause (env: MRQL_DEFAULT_LIMIT)")
@@ -247,6 +251,8 @@ func main() {
 		SharePort:                    *sharePort,
 		ShareBindAddress:             *shareBindAddress,
 		SharePublicURL:               *sharePublicURL,
+		DocsSiteBaseURL:              *docsSiteBaseURL,
+		DocsLinksDisabled:            *docsLinksDisabled,
 		FfmpegPath:                   *ffmpegPath,
 		LibreOfficePath:              *libreOfficePath,
 		AltFileSystems:               altFileSystems,

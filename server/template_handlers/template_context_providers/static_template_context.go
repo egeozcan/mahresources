@@ -33,9 +33,21 @@ func computeAssetVersion() string {
 
 var AssetVersion = computeAssetVersion()
 
+func DocsURL(baseURL, slug string) string {
+	base := strings.TrimRight(baseURL, "/")
+	if base == "" {
+		return ""
+	}
+	path := strings.TrimLeft(slug, "/")
+	if path == "" {
+		return base
+	}
+	return base + "/" + path
+}
+
 var baseTemplateContext = pongo2.Context{
 	"assetVersion": AssetVersion,
-	"title": "mahresources",
+	"title":        "mahresources",
 	"menu": []template_entities.Entry{
 		{
 			Name: "Dashboard",

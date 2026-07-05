@@ -158,6 +158,8 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-share-port` | `SHARE_PORT` | Port for the public share server (leave empty to disable the share feature) |
 | `-share-bind-address` | `SHARE_BIND_ADDRESS` | Bind address for the share server (default: `0.0.0.0`) |
 | `-share-public-url` | `SHARE_PUBLIC_URL` | Externally-routable base URL for shared notes (e.g. `https://share.example.com`). When set, the share sidebar and `/admin/shares` render absolute links as `{SHARE_PUBLIC_URL}/s/<token>`. When unset, the UI shows a warning and the relative `/s/<token>` path only — no bind-address fallback (BH-033). |
+| `-docs-site-base-url` | `DOCS_SITE_BASE_URL` | Base URL for contextual links to the published docs site (default: `https://egeozcan.github.io/mahresources`). Runtime-editable via `docs_site_base_url`. |
+| `-docs-links-disabled` | `DOCS_LINKS_DISABLED=1` | Disable contextual external docs links throughout the app. Runtime-editable via `docs_links_disabled` (`0` = show, `1` = hide). |
 | `-auth` | `AUTH_ENABLED=1` | Enable user accounts + RBAC. Off by default: when disabled, every request runs as an implicit administrator and behaviour matches the historical no-auth deployment (existing deployments, the `mr` CLI, and tests are unaffected). |
 | `-session-ttl` | `SESSION_TTL` | How long a browser login session stays valid (default: 720h / 30 days). |
 | `-session-cookie-secure` | `SESSION_COOKIE_SECURE=1` | Mark the session cookie `Secure` (HTTPS-only). Enable behind TLS. |

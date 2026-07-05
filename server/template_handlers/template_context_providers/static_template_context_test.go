@@ -311,3 +311,26 @@ func TestStaticTemplateCtx_QueryValuesNormalized(t *testing.T) {
 		t.Errorf("expected queryValues[Name]=QA, got %q", got)
 	}
 }
+
+func TestDocsURL_NormalizesBaseAndSlug(t *testing.T) {
+	tests := []struct {
+		name string
+		base string
+		slug string
+		want string
+	}{
+		{"plain", "https://example.com/docs", "features/mrql", "https://example.com/docs/features/mrql"},
+		{"base trailing slash", "https://example.com/docs/", "features/mrql", "https://example.com/docs/features/mrql"},
+		{"slug leading slash", "https://example.com/docs", "/features/mrql", "https://example.com/docs/features/mrql"},
+		{"both slashes", "https://example.com/docs/", "/features/mrql", "https://example.com/docs/features/mrql"},
+		{"empty slug", "https://example.com/docs/", "", "https://example.com/docs"},
+		{"empty base", "", "features/mrql", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DocsURL(tc.base, tc.slug); got != tc.want {
+				t.Fatalf("DocsURL(%q, %q) = %q, want %q", tc.base, tc.slug, got, tc.want)
+			}
+		})
+	}
+}

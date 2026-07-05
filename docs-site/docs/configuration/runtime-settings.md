@@ -33,6 +33,8 @@ boot value.
 | `remote_idle_timeout` | duration | 1s–1h | `-remote-idle-timeout` | next remote download |
 | `remote_overall_timeout` | duration | 10s–24h | `-remote-overall-timeout` | next remote download |
 | `share_public_url` | string (http/https URL) | absolute; non-empty host | `-share-public-url` | next share link render |
+| `docs_site_base_url` | string (http/https URL) | absolute; non-empty host | `-docs-site-base-url` | next page render |
+| `docs_links_disabled` | int | 0–1; 1 hides links | `-docs-links-disabled` | next page render |
 | `hash_similarity_threshold` | int | 0–11 (v2 pairs stored up to distance 11) | `-hash-similarity-threshold` | next hash comparison |
 | `hash_ahash_threshold` | uint64 | 0–64; 0 disables | `-hash-ahash-threshold` | next hash comparison |
 | `hash_backfill_paused` | int | 0–1; 1 pauses the v2 backfill | (runtime only) | next backfill cycle |

@@ -11,7 +11,12 @@
   {# BH-033: warn that absolute URLs cannot be shown until SHARE_PUBLIC_URL is set. #}
   <div class="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800" data-testid="admin-shares-public-url-warning">
     <p class="font-medium">Share URL base is not configured.</p>
-    <p class="mt-1">Set <code class="font-mono">SHARE_PUBLIC_URL</code> to enable absolute shareable links. Until then, each row shows the relative <code>/s/&lt;token&gt;</code> path; prepend your server's public URL manually.</p>
+    <p class="mt-1">
+      Set <code class="font-mono">SHARE_PUBLIC_URL</code> to enable absolute shareable links. Until then, each row shows the relative <code>/s/&lt;token&gt;</code> path; prepend your server's public URL manually.
+      {% if docsLinksEnabled %}
+      <a href="{{ docsURL("deployment/public-sharing") }}" target="_blank" rel="noopener" class="text-amber-700 hover:text-amber-900 underline">Public sharing docs</a>
+      {% endif %}
+    </p>
   </div>
   {% endif %}
 

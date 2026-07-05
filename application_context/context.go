@@ -51,6 +51,12 @@ type MahresourcesConfig struct {
 	// When unset, the UI renders a warning + the relative /s/<token> path
 	// rather than synthesizing a bind-address URL (BH-033).
 	SharePublicURL string
+	// DocsSiteBaseURL is the published documentation site's base URL. Runtime
+	// overrides live in RuntimeSettings.
+	DocsSiteBaseURL string
+	// DocsLinksDisabled hides contextual links to the external documentation
+	// site when true. Runtime overrides live in RuntimeSettings.
+	DocsLinksDisabled bool
 	// RemoteResourceConnectTimeout is the timeout for connecting to remote URLs (dial, TLS, response headers)
 	RemoteResourceConnectTimeout time.Duration
 	// RemoteResourceIdleTimeout is how long to wait before erroring if a remote server stops sending data
@@ -185,7 +191,11 @@ type MahresourcesInputConfig struct {
 	// SharePublicURL is the externally-routable base URL for shared notes.
 	// Empty by default; see MahresourcesConfig.SharePublicURL. BH-033.
 	SharePublicURL string
-	AltFileSystems map[string]string
+	// DocsSiteBaseURL is the published documentation site's base URL.
+	DocsSiteBaseURL string
+	// DocsLinksDisabled hides contextual external documentation links when true.
+	DocsLinksDisabled bool
+	AltFileSystems    map[string]string
 	// MemoryDB uses an in-memory SQLite database (ephemeral, no persistence)
 	MemoryDB bool
 	// MemoryFS uses an in-memory filesystem (ephemeral, no persistence)
@@ -1064,6 +1074,8 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		SharePort:                    cfg.SharePort,
 		ShareBindAddress:             cfg.ShareBindAddress,
 		SharePublicURL:               cfg.SharePublicURL,
+		DocsSiteBaseURL:              cfg.DocsSiteBaseURL,
+		DocsLinksDisabled:            cfg.DocsLinksDisabled,
 		RemoteResourceConnectTimeout: connectTimeout,
 		RemoteResourceIdleTimeout:    idleTimeout,
 		RemoteResourceOverallTimeout: overallTimeout,

@@ -57,17 +57,32 @@ func TestEnvelopeDurationEncodedAsNanos(t *testing.T) {
 
 func TestBuildSpecs_AllKeys(t *testing.T) {
 	specs := buildSpecs()
-	if len(specs) != 13 {
-		t.Fatalf("want 13 specs, got %d", len(specs))
+	if len(specs) != 15 {
+		t.Fatalf("want 15 specs, got %d", len(specs))
 	}
 	expected := []string{
 		KeyMaxUploadSize, KeyMaxImportSize, KeyMRQLDefaultLimit, KeyMRQLPageQueryBudget, KeyMRQLQueryTimeout,
-		KeyExportRetention, KeyRemoteConnectTimeout, KeyRemoteIdleTimeout, KeyRemoteOverallTimeout,
-		KeySharePublicURL, KeyHashSimilarityThreshold, KeyHashAHashThreshold, KeyHashBackfillPaused,
+		KeyExportRetention, KeyRemoteConnectTimeout, KeyRemoteIdleTimeout, KeyRemoteOverallTimeout, KeySharePublicURL,
+		KeyDocsSiteBaseURL, KeyDocsLinksDisabled, KeyHashSimilarityThreshold, KeyHashAHashThreshold, KeyHashBackfillPaused,
 	}
 	for _, k := range expected {
 		if _, ok := specs[k]; !ok {
 			t.Errorf("missing spec for key %q", k)
+		}
+	}
+}
+
+func TestValidateDocsSiteBaseURL(t *testing.T) {
+	ok := []string{"https://example.com", "http://example.com:8080/base", "https://example.com/docs/"}
+	bad := []string{"", "/relative", "no-scheme.example.com", "ftp://example.com", "http://", "https:///nohost"}
+	for _, s := range ok {
+		if err := validateDocsSiteBaseURL(s); err != nil {
+			t.Errorf("want accept %q, got %v", s, err)
+		}
+	}
+	for _, s := range bad {
+		if err := validateDocsSiteBaseURL(s); err == nil {
+			t.Errorf("want reject %q, got nil error", s)
 		}
 	}
 }

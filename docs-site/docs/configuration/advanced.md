@@ -301,6 +301,15 @@ The share server binds to `0.0.0.0` (all interfaces) by default. If you only wan
 ./mahresources -share-port=8282 -share-bind-address=127.0.0.1 ...
 ```
 
+## Documentation Links
+
+Contextual links in the app point to the published documentation site. These are runtime-editable via `/admin/settings`.
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `-docs-site-base-url` | `DOCS_SITE_BASE_URL` | `https://egeozcan.github.io/mahresources` | Base URL used for contextual documentation links. |
+| `-docs-links-disabled` | `DOCS_LINKS_DISABLED=1` | `false` | Hide all contextual external documentation links in the app. |
+
 ## Log Cleanup
 
 Automatically delete old log entries on startup:
@@ -367,6 +376,8 @@ Each plugin lives in a subdirectory of the plugin path and must contain a `plugi
 | `-share-port` | `SHARE_PORT` | (disabled) | Share server port |
 | `-share-bind-address` | `SHARE_BIND_ADDRESS` | `0.0.0.0` | Share server bind address |
 | `-share-public-url` | `SHARE_PUBLIC_URL` | (unset) | Externally-routable base URL for shared notes |
+| `-docs-site-base-url` | `DOCS_SITE_BASE_URL` | `https://egeozcan.github.io/mahresources` | Base URL for contextual documentation links |
+| `-docs-links-disabled` | `DOCS_LINKS_DISABLED=1` | `false` | Hide contextual documentation links |
 | `-cleanup-logs-days` | `CLEANUP_LOGS_DAYS` | `0` (disabled) | Delete old logs on startup |
 | `-plugin-path` | `PLUGIN_PATH` | `./plugins` | Plugin directory |
 | `-plugins-disabled` | `PLUGINS_DISABLED=1` | `false` | Disable plugin system |

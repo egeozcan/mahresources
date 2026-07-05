@@ -141,6 +141,14 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		retention := appContext.Settings().ExportRetention()
 		ctx["exportRetention"] = retention.String()
 		ctx["exportRetentionMs"] = retention.Milliseconds()
+		docsLinksEnabled := !appContext.Settings().DocsLinksDisabled() && appContext.Settings().DocsSiteBaseURL() != ""
+		ctx["docsLinksEnabled"] = docsLinksEnabled
+		ctx["docsURL"] = func(slug string) string {
+			if !docsLinksEnabled {
+				return ""
+			}
+			return template_context_providers.DocsURL(appContext.Settings().DocsSiteBaseURL(), slug)
+		}
 
 		if pm == nil {
 			if strings.HasSuffix(request.URL.Path, ".json") ||

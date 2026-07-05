@@ -33,6 +33,7 @@ const (
 	GroupQueries         SettingGroup = "queries"
 	GroupRemoteDownloads SettingGroup = "remote_downloads"
 	GroupSharing         SettingGroup = "sharing"
+	GroupDocs            SettingGroup = "docs"
 	GroupDeduplication   SettingGroup = "deduplication"
 	GroupExports         SettingGroup = "exports"
 )
@@ -146,6 +147,12 @@ func decodeSettingValue(typ string, data []byte) (any, error) {
 	return nil, fmt.Errorf("decode: unknown type %q", typ)
 }
 
+// DefaultDocsSiteBaseURL is the published docs URL used unless an operator
+// overrides it via env/flag or runtime settings.
+const (
+	DefaultDocsSiteBaseURL = "https://egeozcan.github.io/mahresources"
+)
+
 // Stable machine keys — also the primary keys in runtime_settings.
 const (
 	KeyMaxUploadSize           = "max_upload_size"
@@ -158,6 +165,8 @@ const (
 	KeyRemoteIdleTimeout       = "remote_idle_timeout"
 	KeyRemoteOverallTimeout    = "remote_overall_timeout"
 	KeySharePublicURL          = "share_public_url"
+	KeyDocsSiteBaseURL         = "docs_site_base_url"
+	KeyDocsLinksDisabled       = "docs_links_disabled"
 	KeyHashSimilarityThreshold = "hash_similarity_threshold"
 	KeyHashAHashThreshold      = "hash_ahash_threshold"
 	KeyHashBackfillPaused      = "hash_backfill_paused"
@@ -227,6 +236,18 @@ func buildSpecs() map[string]SettingSpec {
 			Group:       GroupSharing, Type: SettingTypeString,
 			StringValidator: validateSharePublicURL,
 		},
+		KeyDocsSiteBaseURL: {
+			Key: KeyDocsSiteBaseURL, Label: "Docs site base URL",
+			Description: "Base URL for contextual links to the published documentation site.",
+			Group:       GroupDocs, Type: SettingTypeString,
+			StringValidator: validateDocsSiteBaseURL,
+		},
+		KeyDocsLinksDisabled: {
+			Key: KeyDocsLinksDisabled, Label: "Disable docs links",
+			Description: "Set to 1 to hide contextual external documentation links throughout the app. 0 = show links.",
+			Group:       GroupDocs, Type: SettingTypeInt,
+			MinNumeric: 0, MaxNumeric: 1, AllowZero: true,
+		},
 		KeyHashSimilarityThreshold: {
 			Key: KeyHashSimilarityThreshold, Label: "Hash similarity threshold",
 			Description: "Maximum perceptual distance to consider two resources similar. Applied at read time as a filter over COALESCE(p_distance, hamming_distance), so changes take effect instantly with no recompute. v2 pairs are stored up to distance 11, so values above 11 have no additional effect for v2.",
@@ -252,6 +273,17 @@ func validateSharePublicURL(s string) error {
 	if s == "" {
 		return nil
 	}
+	return validateHTTPBaseURL(s)
+}
+
+func validateDocsSiteBaseURL(s string) error {
+	if s == "" {
+		return fmt.Errorf("must not be empty")
+	}
+	return validateHTTPBaseURL(s)
+}
+
+func validateHTTPBaseURL(s string) error {
 	u, err := url.Parse(s)
 	if err != nil {
 		return fmt.Errorf("parse url: %w", err)
@@ -271,6 +303,17 @@ func BuildSpecsExported() map[string]SettingSpec { return buildSpecs() }
 // BuildDefaultsFromConfig snapshots every in-scope setting from the boot-time
 // MahresourcesConfig into a map keyed by spec key.
 func BuildDefaultsFromConfig(cfg *MahresourcesConfig) map[string]any {
+	if cfg == nil {
+		cfg = &MahresourcesConfig{}
+	}
+	docsBaseURL := DefaultDocsSiteBaseURL
+	docsLinksDisabled := 0
+	if cfg.DocsSiteBaseURL != "" {
+		docsBaseURL = cfg.DocsSiteBaseURL
+	}
+	if cfg.DocsLinksDisabled {
+		docsLinksDisabled = 1
+	}
 	return map[string]any{
 		KeyMaxUploadSize:           cfg.MaxUploadSize,
 		KeyMaxImportSize:           cfg.MaxImportSize,
@@ -282,6 +325,8 @@ func BuildDefaultsFromConfig(cfg *MahresourcesConfig) map[string]any {
 		KeyRemoteIdleTimeout:       cfg.RemoteResourceIdleTimeout,
 		KeyRemoteOverallTimeout:    cfg.RemoteResourceOverallTimeout,
 		KeySharePublicURL:          cfg.SharePublicURL,
+		KeyDocsSiteBaseURL:         docsBaseURL,
+		KeyDocsLinksDisabled:       docsLinksDisabled,
 		KeyHashSimilarityThreshold: cfg.HashSimilarityThreshold,
 		KeyHashAHashThreshold:      cfg.HashAHashThreshold,
 		// Runtime-only operational toggle; defaults to running (not paused).

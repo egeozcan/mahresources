@@ -444,6 +444,7 @@ var groupDisplayOrder = []SettingGroup{
 	GroupQueries,
 	GroupRemoteDownloads,
 	GroupSharing,
+	GroupDocs,
 	GroupDeduplication,
 	GroupExports,
 }
@@ -477,7 +478,10 @@ func ptrInt64(v int64) *int64 { return &v }
 
 func (s *RuntimeSettings) MaxUploadSize() int64 { v, _ := s.getRaw(KeyMaxUploadSize); return v.(int64) }
 func (s *RuntimeSettings) MaxImportSize() int64 { v, _ := s.getRaw(KeyMaxImportSize); return v.(int64) }
-func (s *RuntimeSettings) MRQLDefaultLimit() int { v, _ := s.getRaw(KeyMRQLDefaultLimit); return v.(int) }
+func (s *RuntimeSettings) MRQLDefaultLimit() int {
+	v, _ := s.getRaw(KeyMRQLDefaultLimit)
+	return v.(int)
+}
 func (s *RuntimeSettings) MRQLPageQueryBudget() int {
 	v, _ := s.getRaw(KeyMRQLPageQueryBudget)
 	return v.(int)
@@ -505,14 +509,23 @@ func (s *RuntimeSettings) RemoteOverallTimeout() time.Duration {
 
 // DownloadSettings adapter methods — satisfy download_queue.DownloadSettings
 // without leaking the download_queue package into the service layer.
-func (s *RuntimeSettings) ConnectTimeout() time.Duration  { return s.RemoteConnectTimeout() }
-func (s *RuntimeSettings) IdleTimeout() time.Duration     { return s.RemoteIdleTimeout() }
-func (s *RuntimeSettings) OverallTimeout() time.Duration  { return s.RemoteOverallTimeout() }
+func (s *RuntimeSettings) ConnectTimeout() time.Duration { return s.RemoteConnectTimeout() }
+func (s *RuntimeSettings) IdleTimeout() time.Duration    { return s.RemoteIdleTimeout() }
+func (s *RuntimeSettings) OverallTimeout() time.Duration { return s.RemoteOverallTimeout() }
 
 // ExportRetention already exists on RuntimeSettings (see above).
 func (s *RuntimeSettings) SharePublicURL() string {
 	v, _ := s.getRaw(KeySharePublicURL)
 	return v.(string)
+}
+func (s *RuntimeSettings) DocsSiteBaseURL() string {
+	v, _ := s.getRaw(KeyDocsSiteBaseURL)
+	return v.(string)
+}
+func (s *RuntimeSettings) DocsLinksDisabled() bool {
+	v, _ := s.getRaw(KeyDocsLinksDisabled)
+	n, _ := v.(int)
+	return n != 0
 }
 func (s *RuntimeSettings) HashSimilarityThreshold() int {
 	v, _ := s.getRaw(KeyHashSimilarityThreshold)

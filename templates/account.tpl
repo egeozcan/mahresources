@@ -31,7 +31,12 @@
 
   <section x-data="{ name: '', created: '' }">
     <h2 class="text-lg font-mono font-semibold mb-3">API tokens</h2>
-    <p class="text-stone-600 text-sm mb-3">Use API tokens with the <code>mr</code> CLI or other clients via the <code>Authorization: Bearer</code> header.</p>
+    <p class="text-stone-600 text-sm mb-3">
+      Use API tokens with the <code>mr</code> CLI or other clients via the <code>Authorization: Bearer</code> header.
+      {% if docsLinksEnabled %}
+      <a href="{{ docsURL("features/authentication") }}" target="_blank" rel="noopener" class="text-amber-700 hover:text-amber-900 underline">Authentication docs</a>
+      {% endif %}
+    </p>
 
     <div x-show="created" x-cloak class="mb-4 rounded bg-green-50 border border-green-200 p-3 text-sm">
       <p class="mb-1 font-medium text-green-800">New token (copy it now — it won't be shown again):</p>

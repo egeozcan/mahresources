@@ -18,6 +18,9 @@
                     </svg>
                     Docs
                 </button>
+                {% if docsLinksEnabled %}
+                <a href="{{ docsURL("features/mrql-reference") }}" target="_blank" rel="noopener" class="text-sm text-amber-700 hover:text-amber-900 font-mono underline">Full reference</a>
+                {% endif %}
             </div>
         </div>
 

@@ -60,23 +60,24 @@ func RenderTemplate(templateName string, templateContextGenerator func(request *
 				"stringId":    true,
 				"getNextId":   true,
 				"dereference": true,
+				"docsURL":     true,
 				// Internal/rendering fields (should not leak to JSON consumers)
-				"_pluginManager":     true,
-				"_statusCode":        true,
-				"_appContext":        true, // BH-P05: contains full MahresourcesConfig (DbDsn, FfmpegPath, FileSavePath, AltFileSystems, ...)
-				"_requestContext":    true, // BH-P05: nested Go request context
-				"currentPath":        true,
-				"pluginMenuItems":    true,
-				"menu":               true,
-				"adminMenu":          true,
-				"title":              true,
-				"assetVersion":       true,
-				"queryValues":        true,
-				"url":                true,
-				"hasPluginManager":   true,
+				"_pluginManager":      true,
+				"_statusCode":         true,
+				"_appContext":         true, // BH-P05: contains full MahresourcesConfig (DbDsn, FfmpegPath, FileSavePath, AltFileSystems, ...)
+				"_requestContext":     true, // BH-P05: nested Go request context
+				"currentPath":         true,
+				"pluginMenuItems":     true,
+				"menu":                true,
+				"adminMenu":           true,
+				"title":               true,
+				"assetVersion":        true,
+				"queryValues":         true,
+				"url":                 true,
+				"hasPluginManager":    true,
 				"pluginDetailActions": true,
-				"pluginCardActions":  true,
-				"pluginBulkActions":  true,
+				"pluginCardActions":   true,
+				"pluginBulkActions":   true,
 			}, context)); err != nil {
 				fmt.Println(err)
 			}

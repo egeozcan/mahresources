@@ -39,6 +39,8 @@ func defaults() map[string]any {
 		KeyRemoteIdleTimeout:       60 * time.Second,
 		KeyRemoteOverallTimeout:    30 * time.Minute,
 		KeySharePublicURL:          "",
+		KeyDocsSiteBaseURL:         DefaultDocsSiteBaseURL,
+		KeyDocsLinksDisabled:       0,
 		KeyHashSimilarityThreshold: int(10),
 		KeyHashAHashThreshold:      uint64(5),
 	}
@@ -279,6 +281,12 @@ func TestRuntimeSettings_TypedGetters_Defaults(t *testing.T) {
 	if rs.SharePublicURL() != "" {
 		t.Errorf("SharePublicURL: got %q", rs.SharePublicURL())
 	}
+	if rs.DocsSiteBaseURL() != DefaultDocsSiteBaseURL {
+		t.Errorf("DocsSiteBaseURL: got %q", rs.DocsSiteBaseURL())
+	}
+	if rs.DocsLinksDisabled() {
+		t.Errorf("DocsLinksDisabled: got true")
+	}
 	if rs.HashSimilarityThreshold() != 10 {
 		t.Errorf("HashSimilarityThreshold: got %d", rs.HashSimilarityThreshold())
 	}
@@ -296,6 +304,27 @@ func TestRuntimeSettings_TypedGetters_Overrides(t *testing.T) {
 	}
 	if rs.MRQLQueryTimeout() != 2*time.Second {
 		t.Fatalf("want 2s, got %v", rs.MRQLQueryTimeout())
+	}
+}
+
+func TestRuntimeSettings_DocsOverrides(t *testing.T) {
+	db := newTestDB(t)
+	rs := NewRuntimeSettings(db, &stubLogger{}, buildSpecs(), defaults())
+	_ = rs.Load()
+	if err := rs.Set(KeyDocsSiteBaseURL, "/relative", "", ""); err == nil {
+		t.Fatalf("expected relative docs base URL to be rejected")
+	}
+	if err := rs.Set(KeyDocsSiteBaseURL, "https://docs.example.com/base/", "", ""); err != nil {
+		t.Fatalf("set docs base: %v", err)
+	}
+	if err := rs.Set(KeyDocsLinksDisabled, "1", "", ""); err != nil {
+		t.Fatalf("set docs disabled: %v", err)
+	}
+	if rs.DocsSiteBaseURL() != "https://docs.example.com/base/" {
+		t.Fatalf("DocsSiteBaseURL: got %q", rs.DocsSiteBaseURL())
+	}
+	if !rs.DocsLinksDisabled() {
+		t.Fatalf("DocsLinksDisabled: got false")
 	}
 }
 

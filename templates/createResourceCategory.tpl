@@ -26,6 +26,13 @@
                 </svg>
                 Reference
             </button>
+            {% if docsLinksEnabled %}
+            <div class="mt-1 flex flex-wrap gap-3 text-xs">
+                <a href="{{ docsURL("features/custom-templates") }}" target="_blank" rel="noopener" class="text-amber-700 hover:text-amber-900 underline">Custom templates docs</a>
+                <a href="{{ docsURL("features/shortcodes") }}" target="_blank" rel="noopener" class="text-amber-700 hover:text-amber-900 underline">Shortcodes docs</a>
+                <a href="{{ docsURL("features/meta-schemas") }}" target="_blank" rel="noopener" class="text-amber-700 hover:text-amber-900 underline">Meta schemas docs</a>
+            </div>
+            {% endif %}
         </div>
 
         <div x-show="showTemplateDocs" x-collapse id="rc-template-docs-panel"

@@ -1,6 +1,12 @@
 {% extends "/layouts/base.tpl" %}
 {% block body %}
 <div x-data="adminExport({ preselectedIds: '{{ preselectedGroupIds|default:"" }}' })" class="space-y-6">
+  {% if docsLinksEnabled %}
+  <p class="text-sm text-stone-500">
+    <a href="{{ docsURL("guides/export-import-guide") }}" target="_blank" rel="noopener" class="text-amber-700 hover:text-amber-900 underline">Export/import guide</a>
+  </p>
+  {% endif %}
+
   <section aria-label="Group picker" class="space-y-3">
     <h2 class="text-sm font-medium font-mono text-stone-700">Groups</h2>
     <div class="flex flex-wrap gap-2 mb-3" data-testid="export-group-chips">

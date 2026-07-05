@@ -2,6 +2,12 @@
 
 {% block body %}
 <div x-data="adminImport()" class="space-y-6">
+  {% if docsLinksEnabled %}
+  <p class="text-sm text-stone-500">
+    <a href="{{ docsURL("guides/export-import-guide") }}" target="_blank" rel="noopener" class="text-amber-700 hover:text-amber-900 underline">Export/import guide</a>
+  </p>
+  {% endif %}
+
   <!-- Upload Section -->
   <section aria-label="Upload" class="space-y-4">
     <h2 class="text-sm font-medium font-mono text-stone-700">Upload Archive</h2>

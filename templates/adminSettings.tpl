@@ -4,7 +4,12 @@
 <div class="space-y-6" data-testid="admin-settings">
   <header class="space-y-1">
     <h1 class="text-lg font-semibold font-mono text-stone-800">Runtime Settings</h1>
-    <p class="text-sm text-stone-500">Changes take effect immediately without a restart. Boot defaults are shown as reference and can be restored with Reset.</p>
+    <p class="text-sm text-stone-500">
+      Changes take effect immediately without a restart. Boot defaults are shown as reference and can be restored with Reset.
+      {% if docsLinksEnabled %}
+      <a href="{{ docsURL("configuration/runtime-settings") }}" target="_blank" rel="noopener" class="text-amber-700 hover:text-amber-900 underline">Runtime settings docs</a>
+      {% endif %}
+    </p>
   </header>
 
   {% for group in settingsByGroup %}
