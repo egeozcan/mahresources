@@ -41,6 +41,23 @@
         </div>
     </div>
 
+    <div class="border-t border-stone-200 pt-4">
+        <label class="block text-sm font-mono font-medium text-stone-700 mb-1" for="tb-generate-prompt">Generate whole template from a description</label>
+        <p class="text-xs text-stone-500 mb-2">Sends this description, the metadata schema, and a sample entity to the configured AI provider, then fills every slot. Review before saving.</p>
+        <div class="flex gap-2">
+            <textarea id="tb-generate-prompt" x-model="generationPrompt" rows="2"
+                      data-testid="template-bundle-generate-prompt"
+                      class="flex-1 min-w-0 rounded-md border-stone-300 text-sm focus:border-amber-500 focus:ring-amber-500"
+                      placeholder="e.g. A recipe card with the cooking time, a photo, and a list of ingredients"></textarea>
+            <button type="button" @click="generateBundle()" :disabled="generating"
+                    data-testid="template-bundle-generate-button"
+                    :aria-busy="generating.toString()"
+                    class="shrink-0 self-start inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-white bg-amber-700 border border-transparent rounded-md hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">
+                <span x-text="generating ? 'Generating…' : 'Generate'"></span>
+            </button>
+        </div>
+    </div>
+
     <div class="flex flex-wrap items-center gap-3 pt-1">
         <button type="button" @click="exportBundle()"
                 class="inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded-md hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 cursor-pointer">

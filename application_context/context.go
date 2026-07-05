@@ -346,6 +346,11 @@ type MahresourcesContext struct {
 	mrqlGenerator MRQLGenerator
 	// mrqlGenerationLimiter rate-limits provider calls per caller key.
 	mrqlGenerationLimiter *MRQLGenerationRateLimiter
+	// templateGenerator converts natural-language prompts into category template sections.
+	templateGenerator TemplateGenerator
+	// templateGenerationLimiter rate-limits template generation calls per caller key
+	// (a separate bucket from MRQL generation).
+	templateGenerationLimiter *MRQLGenerationRateLimiter
 	// rootAdmin caches a snapshot of the oldest enabled admin (the "root" user).
 	// It is a pointer so the shallow copies made by WithRequest/WithPrincipal/
 	// WithTransaction all share the same live cache. Read on the hot create path
@@ -603,6 +608,29 @@ func (ctx *MahresourcesContext) MRQLGenerationRateLimiter() *MRQLGenerationRateL
 // SetMRQLGenerationRateLimiter installs the per-caller generation limiter.
 func (ctx *MahresourcesContext) SetMRQLGenerationRateLimiter(l *MRQLGenerationRateLimiter) {
 	ctx.mrqlGenerationLimiter = l
+}
+
+// TemplateGenerator returns the configured natural-language template generator.
+func (ctx *MahresourcesContext) TemplateGenerator() TemplateGenerator {
+	return ctx.templateGenerator
+}
+
+// SetTemplateGenerator installs the natural-language template generator.
+func (ctx *MahresourcesContext) SetTemplateGenerator(generator TemplateGenerator) {
+	ctx.templateGenerator = generator
+}
+
+// TemplateGenerationRateLimiter returns the per-caller template generation limiter.
+func (ctx *MahresourcesContext) TemplateGenerationRateLimiter() *MRQLGenerationRateLimiter {
+	if ctx.templateGenerationLimiter == nil {
+		ctx.templateGenerationLimiter = NewMRQLGenerationRateLimiter(10, time.Minute)
+	}
+	return ctx.templateGenerationLimiter
+}
+
+// SetTemplateGenerationRateLimiter installs the per-caller template generation limiter.
+func (ctx *MahresourcesContext) SetTemplateGenerationRateLimiter(l *MRQLGenerationRateLimiter) {
+	ctx.templateGenerationLimiter = l
 }
 
 // GetDefaultFs returns the main filesystem (rooted at FileSavePath via

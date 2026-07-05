@@ -1,9 +1,20 @@
-export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortcodes = false } = {}) {
+export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortcodes = false, generate = false } = {}) {
   return {
     view: null,
     langCompartment: null,
     formatError: '',
     _formatErrorTimer: null,
+
+    // Natural-language generation state (only meaningful when generate is true).
+    generate,
+    generationPrompt: '',
+    generating: false,
+    generationError: '',
+    generationStatus: '',
+    generatedContent: '',
+    generatedValid: null,
+    generatedIssues: [],
+    _generationRequestId: 0,
 
     async init() {
       this.mode = mode;
@@ -205,6 +216,106 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
 
       this.view.dispatch({
         changes: { from: 0, to: this.view.state.doc.length, insert: formatted },
+      });
+    },
+
+    // generateFromPrompt asks the server to draft this slot (or MetaSchema) from
+    // the natural-language prompt, grounded on the carrier + a sample entity read
+    // from the shared templatePreview store. Valid drafts auto-apply when the
+    // editor is untouched since the request started; invalid drafts wait for an
+    // explicit "Use anyway".
+    async generateFromPrompt() {
+      const prompt = (this.generationPrompt || '').trim();
+      this.generationError = '';
+      this.generationStatus = '';
+      this.generatedContent = '';
+      this.generatedValid = null;
+      this.generatedIssues = [];
+
+      if (!prompt) {
+        this.generationError = 'Describe what you want first.';
+        return;
+      }
+
+      const store = (window.Alpine && window.Alpine.store('templatePreview')) || {};
+      const generatePath = store.generatePath || '';
+      if (!generatePath) {
+        this.generationError = 'Generation is unavailable on this form.';
+        return;
+      }
+
+      const hiddenInput = this.$refs.hiddenInput;
+      const fieldName = hiddenInput ? hiddenInput.getAttribute('name') || '' : '';
+      const target = fieldName === 'MetaSchema' ? 'metaschema' : 'slot';
+      const form = this.$refs.editorContainer.closest('form');
+      const metaSchema = (form && form.querySelector('input[name="MetaSchema"]')?.value) || '';
+
+      const requestId = ++this._generationRequestId;
+      const snapshot = this.view ? this.view.state.doc.toString() : '';
+      this.generating = true;
+      this.generationStatus = 'Generating…';
+
+      try {
+        const resp = await fetch(generatePath, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            target,
+            slot: target === 'slot' ? fieldName : '',
+            mode: this.mode,
+            content: snapshot,
+            metaSchema,
+            prompt,
+            categoryId: store.categoryId || 0,
+            entityId: store.entityId || 0,
+          }),
+        });
+        const data = await resp.json().catch(() => null);
+        if (requestId !== this._generationRequestId) return;
+        if (!resp.ok) {
+          this.generationError = (data && (data.error || data.Error)) || `Generation failed (${resp.status})`;
+          this.generationStatus = '';
+          return;
+        }
+
+        this.generatedContent = (data && data.content) || '';
+        this.generatedValid = !!(data && data.valid);
+        this.generatedIssues = data && Array.isArray(data.issues) ? data.issues : [];
+
+        if (!this.generatedContent) {
+          this.generationError = 'The model returned no content.';
+          this.generationStatus = '';
+          return;
+        }
+
+        if (!this.generatedValid) {
+          this.generationStatus = 'Generated content needs review.';
+          this.generationError =
+            this.generatedIssues.map((i) => i.message).filter(Boolean).join('; ') ||
+            'Generated content has issues.';
+          return;
+        }
+
+        // Auto-apply only when the editor is unchanged since the request started.
+        if (this.view && this.view.state.doc.toString() === snapshot) {
+          this.applyGenerated();
+          this.generationStatus = 'Generated content applied.';
+        } else {
+          this.generationStatus = 'Generated content is ready.';
+        }
+      } catch (err) {
+        if (requestId !== this._generationRequestId) return;
+        this.generationError = err.message || 'Network error';
+        this.generationStatus = '';
+      } finally {
+        if (requestId === this._generationRequestId) this.generating = false;
+      }
+    },
+
+    applyGenerated() {
+      if (!this.generatedContent || !this.view) return;
+      this.view.dispatch({
+        changes: { from: 0, to: this.view.state.doc.length, insert: this.generatedContent },
       });
     },
 

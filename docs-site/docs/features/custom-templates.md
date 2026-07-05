@@ -564,15 +564,31 @@ The template editors underline problems as you type -- unclosed `[conditional]` 
 
 Inside a `[` bracket the editor suggests shortcode names, then attribute names, then values for closed enums (`scope`, `format`, boolean flags). For `[meta]`/`[conditional]` `path=` values, suggestions are drawn from the Meta JSON Schema you are editing in the same form. Hovering a shortcode name shows a documentation card. HTML tag and CSS property completion outside of brackets is unaffected.
 
+### Generate from natural language
+
+When a DeepSeek key is configured (`DEEPSEEK_API_KEY`, the same setting that powers [natural-language MRQL](./mrql.md#natural-language-generation)), each template editor gains a **Generate** button. Describe the section you want and the server drafts it, then writes the result into the editor. The draft is grounded on:
+
+- the Meta JSON Schema you are editing (so `[meta path="..."]` uses real field names),
+- a sample entity's metadata (the one selected in the Live preview pane, or the first member of the category), so the model sees concrete values,
+- the current content of the slot (so a follow-up request refines rather than replaces), and
+- the built-in and enabled-plugin shortcode documentation.
+
+A generated slot is linted before it is returned. A clean draft is applied to the editor automatically (and the live preview refreshes); a draft with problems is held back with its issues listed, and a **Use anyway** button applies it after you review. The **Meta JSON Schema** editor has its own Generate button that drafts a JSON Schema from a description and validates that it compiles.
+
+The **Reuse & Presets** panel adds a **Generate whole template** box that designs every slot at once from one description, filling the whole form for review.
+
+Generation is available only when a key is configured (the button returns "not configured" otherwise), is rate-limited per client, and is gated at the same permission level as saving the template: **admin** for Category and Resource Category, **editor** for Note Type. Only the prompt, the schema, one sample entity's metadata, and the shortcode docs are sent to the provider.
+
 ### Supporting endpoints
 
-These editor tools are backed by three API endpoints:
+These editor tools are backed by these API endpoints:
 
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /v1/shortcodes/docs` | Machine-readable catalogue of the built-in shortcodes plus enabled plugin shortcodes. Powers lint and autocomplete. |
 | `POST /v1/shortcodes/lint` | Pure-parse linting of shortcode markup (no shortcode/plugin execution; only the MRQL parser runs). |
 | `POST /v1/{category\|resourceCategory\|noteType}/previewTemplate` | Renders a slot against an entity. Gated like the corresponding template save. |
+| `POST /v1/{category\|resourceCategory\|noteType}/generateTemplate` | Drafts a slot, the Meta JSON Schema, or a whole template from a natural-language prompt. Requires `DEEPSEEK_API_KEY`; gated like the corresponding template save. |
 
 ## Reusing templates
 

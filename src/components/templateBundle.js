@@ -43,6 +43,8 @@ export function templateBundle({ carrier } = {}) {
     message: '',
     messageKind: 'info', // 'info' | 'warn'
     loading: false,
+    generationPrompt: '',
+    generating: false,
 
     async init() {
       await Promise.all([this.loadSources(), this.loadPresets()]);
@@ -277,6 +279,63 @@ export function templateBundle({ carrier } = {}) {
       const preset = this.presets.find((p) => p.name === this.presetChoice);
       if (!preset) return;
       this.applyBundle(preset);
+    },
+
+    // ---- Whole-template generation -----------------------------------------
+
+    // generateBundle asks the server to design a full template from the prompt
+    // and fills every returned slot editor. The generate route matches the
+    // carrier prefix (/v1/{carrier}/generateTemplate); the sample entity comes
+    // from the shared templatePreview store.
+    async generateBundle() {
+      const prompt = (this.generationPrompt || '').trim();
+      if (!prompt) {
+        this.notify('Describe the template you want first.', 'warn');
+        return;
+      }
+      const store = (window.Alpine && window.Alpine.store('templatePreview')) || {};
+      const generatePath = `/v1/${this.carrier}/generateTemplate`;
+      this.generating = true;
+      this.notify('Generating the whole template…', 'info');
+      try {
+        const resp = await fetch(generatePath, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            target: 'bundle',
+            prompt,
+            metaSchema: this.getEditor('MetaSchema'),
+            categoryId: store.categoryId || 0,
+            entityId: store.entityId || 0,
+          }),
+        });
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok) {
+          this.notify((data && (data.error || data.Error)) || `Generation failed (${resp.status})`, 'warn');
+          return;
+        }
+        const slots = (data && data.slots) || {};
+        let filled = 0;
+        for (const field of Object.values(SLOT_FIELDS)) {
+          if (Object.prototype.hasOwnProperty.call(slots, field)) {
+            this.setEditor(field, slots[field] || '');
+            filled++;
+          }
+        }
+        if (!filled) {
+          this.notify((data && data.explanation) || 'The model returned no slots.', 'warn');
+          return;
+        }
+        if (data && data.valid === false) {
+          this.notify(`Filled ${filled} slot(s), but the draft has issues — review before saving.`, 'warn');
+        } else {
+          this.notify(`Filled ${filled} slot(s) from your description. Review, then save.`, 'info');
+        }
+      } catch (err) {
+        this.notify(err.message || 'Network error', 'warn');
+      } finally {
+        this.generating = false;
+      }
     },
   };
 }
