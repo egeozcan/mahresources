@@ -127,7 +127,7 @@ curl -X POST http://localhost:8181/v1/plugin/enable \
   -d "name=image-processor"
 ```
 
-Required settings must be saved before enabling. If required settings are missing, the enable request fails with a validation error.
+Required settings must be saved before enabling. If required settings are missing, the enable request fails with `400 Bad Request` and a single-message JSON body, `{"error": "missing required settings: [...]"}` (not the structured multi-error `{"errors": [...]}` format used by entity validation).
 
 ### Save Settings
 
@@ -175,5 +175,7 @@ Each enabled plugin runs in an isolated Lua VM with restricted libraries.
 **Blocked**: `os`, `io`, `debug`, `package`
 
 **Removed base functions**: `dofile`, `loadfile`, `load`
+
+The above hardening applies to the enable-time VM. The discovery-time VM (used at startup to read metadata from every `plugin.lua` on disk) is less hardened: it opens `base`, `table`, `string`, and `math` but does **not** remove `dofile`, `loadfile`, or `load`, and it executes the top-level code of every discovered `plugin.lua`. Only place trusted `plugin.lua` files in the plugin directory.
 
 Each VM has a mutex ensuring single-threaded access. All calls into the VM (hooks, actions, page handlers) acquire this lock.

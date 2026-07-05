@@ -75,7 +75,7 @@ Categories support:
 - JSON Schema metadata validation via `metaSchema`
 - Category-based filtering in queries
 
-Deleting a Category sets `categoryId` to NULL on all Groups of that Category. The Groups are preserved, just uncategorized.
+Deleting a Category sets `categoryId` to NULL on all Groups of that Category. The Groups are preserved, just uncategorized. Deletion also cascades to any [RelationType](./relationships.md) constrained to that Category (as either `fromCategoryId` or `toCategoryId`): every such RelationType is deleted along with all of its Relations, and `backRelationId` pointers on other RelationTypes that referenced them are cleared.
 
 ## Name Search
 

@@ -137,7 +137,7 @@ The shortcode never triggers database loads by design (list pages render many ca
 
 **Group:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `CategoryId`, `OwnerId`, `Meta`
 
-**Resource:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `ContentType`, `OriginalFilename`, `FileSize`, `Width`, `Height`, `Meta`
+**Resource:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `ContentType`, `OriginalName`, `FileSize`, `Width`, `Height`, `Meta`
 
 **Note:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `NoteTypeId`, `OwnerId`, `StartDate`, `EndDate`, `Meta`
 
@@ -158,6 +158,7 @@ Embeds MRQL query results inline. Executes a query and renders the results in on
 | `buckets` | No | `5` | Number of buckets for bucketed GROUP BY queries |
 | `scope` | No | `"entity"` | Scope filter: `entity` (default), `parent`, `root`, `global`, or a numeric group ID |
 | `link-all` | No | `false` | Appends a default "View all →" link to the `/mrql` page for this query (see [Totals and the view-all link](#totals-and-the-view-all-link)) |
+| `param-*` | No | -- | Wildcard family that binds an MRQL `$name` placeholder, e.g. `param-tag="x"` fills `$tag`, `param-since="-7d"` fills `$since` |
 
 *Either `query` or `saved` is required.
 
@@ -186,8 +187,8 @@ Embeds MRQL query results inline. Executes a query and renders the results in on
 | Format | Description |
 |--------|-------------|
 | (empty/auto) | Tries custom templates first (if any entity has CustomMRQLResult), falls back to card layout |
-| `table` | HTML table with entity type, name, and link |
-| `list` | Vertical list of linked entity names |
+| `table` | HTML table with columns for name (linked), entity type, and description |
+| `list` | Vertical list of linked entity names, each followed by its description when present |
 | `compact` | Inline comma-separated links |
 | `custom` | Uses each entity's CustomMRQLResult template for rendering |
 
@@ -316,7 +317,7 @@ Set `link-all="true"` to append a default **"View all →"** link after the resu
 The link points at the `/mrql` page and always reproduces the same result set, scope included:
 
 - **Unscoped saved queries** link by ID (`/mrql?saved=<id>`), preserving the saved-query identity (the name→ID lookup is resolved server-side).
-- **Inline queries** link by their text (`/mrql?q=<query>`). When the shortcode applied a scope (via `scope=` or the default entity scope) and the query has no explicit `SCOPE` clause, a `SCOPE <id>` clause is spliced in at the correct position (before `GROUP BY` / `ORDER BY` / `LIMIT` / `OFFSET`) so the query stays valid.
+- **Inline queries** link by their text (`/mrql?q=<query>`). When the shortcode applied a scope (via `scope=` or the default entity scope) and the query has no explicit `SCOPE` clause, a `SCOPE <id>` clause is spliced in at the correct position (before the first of `GROUP BY` / `HAVING` / `ORDER BY` / `LIMIT` / `OFFSET`) so the query stays valid.
 - **Scoped saved queries** link by text as well (`/mrql?q=…`), because `/mrql?saved=<id>` would open the query globally and lose the scope. The saved-query identity is traded for a correct, scoped result set.
 - Parameterized (`param-*`) queries link with their `$placeholders` unbound; the `/mrql` page renders inputs for the user to fill.
 
@@ -421,8 +422,11 @@ Conditionally renders content based on a metadata value, entity field, or query 
 | `path` | No* | -- | Dot-notation path into the entity's Meta JSON |
 | `field` | No* | -- | Entity struct field name (e.g., `Name`, `CreatedAt`) |
 | `mrql` | No* | -- | MRQL query expression; result is used as the condition value |
-| `scope` | No | `entity` | Scope for MRQL queries: `entity`, `parent`, `root`, `global` |
-| `aggregate` | No | -- | Column name for aggregated MRQL results |
+| `scope` | No | `entity` | Scope for MRQL queries: `entity`, `parent`, `root`, `global`, or a numeric group ID |
+| `aggregate` | No* | -- | Column name for aggregated MRQL results. *Required when the `mrql` source returns aggregated rows; the block renders an error if it is unset |
+| `limit` | No | `20` | Result limit for the `mrql` condition source |
+| `buckets` | No | `5` | Bucket count for a grouped `mrql` condition source |
+| `param-*` | No | -- | Wildcard family that binds an MRQL `$name` placeholder for the `mrql` condition source (e.g. `param-tag="x"`) |
 | `eq` | No | -- | True when value equals this string |
 | `neq` | No | -- | True when value does not equal this string |
 | `gt` | No | -- | True when numeric value is greater than this |
@@ -462,7 +466,7 @@ Nesting `[conditional]` blocks remains the readable way to AND several condition
 
 **Path** (default): reads from the entity's meta JSON using dot-notation.
 
-**Field**: reads a struct field from the entity object using reflection. Same fields as `[property]`.
+**Field**: reads a struct field from the entity object using reflection. Unlike `[property]`, this resolves a single top-level struct field only (`Name`, `ContentType`, `CreatedAt`, ...); it does not follow dot-paths or slice indices (`Owner.Name`, `Tags.0.Name`).
 
 **MRQL**: runs a query and extracts a scalar value. For flat results, the value is the item count. For aggregated results, use the `aggregate` attribute to name the column. For bucketed results, the value is the number of groups.
 
@@ -672,7 +676,7 @@ The load-on-open mechanism is the same signed round-trip as `[lazy]`.
 
 ### Where deferral applies
 
-`[lazy]` and `[details]` defer only on the **main authenticated display pages** (the `Custom*` slots on Group / Resource / Note pages). Everywhere else -- public share pages, the live authoring preview, JSON API responses, and carrier list-header (`CustomListHeader`) slots -- the body renders **inline** as a graceful fallback: the content still appears, and `[details]` remains a plain collapsible `<details>`.
+`[lazy]` and `[details]` defer across the **standard authenticated template pipeline**, wherever a `Custom*` slot renders a member entity (Group, Resource, or Note). That includes the entity detail pages, list-page `CustomSummary` cards, the dashboard, and hovercards. Everywhere else the body renders **inline** as a graceful fallback -- the content still appears, and `[details]` remains a plain collapsible `<details>` -- either because no deferred signer is installed (public share pages, the live authoring preview, JSON API responses) or because the context is a carrier rather than a member entity (carrier list-header (`CustomListHeader`) slots, whose `category` / `resource_category` / `note_type` context cannot be reloaded by the deferred endpoint).
 
 ### Limitations
 

@@ -56,7 +56,14 @@ Command-line flags take precedence over environment variables, so a flag overrid
 | `-libreoffice-path` | `LIBREOFFICE_PATH` | Path to LibreOffice binary | auto-detect |
 | `-skip-fts` | `SKIP_FTS=1` | Skip Full-Text Search initialization | `false` |
 | `-skip-version-migration` | `SKIP_VERSION_MIGRATION=1` | Skip resource version migration | `false` |
+| `-skip-block-ref-cleanup` | `SKIP_BLOCK_REF_CLEANUP=1` | Skip one-shot cleanup of dangling note-block references at startup | `false` |
 | `-max-db-connections` | `MAX_DB_CONNECTIONS` | Database connection pool size | `0` (no limit) |
+| `-max-upload-size` | `MAX_UPLOAD_SIZE` | Max resource/version upload body size in bytes; `0` = unlimited | `2147483648` (2 GiB) |
+| `-max-import-size` | `MAX_IMPORT_SIZE` | Max group-import tar upload size in bytes | `10737418240` (10 GiB) |
+| `-max-json-body` | `MAX_JSON_BODY` | Max `application/json` request body size in bytes; `0` disables the limit | `0` (unlimited) |
+| `-max-user-tokens` | `MAX_USER_TOKENS` | Max API tokens a single user may hold; `0` disables the cap | `100` |
+| `-max-job-concurrency` | `MAX_JOB_CONCURRENCY` | Concurrency budget for the shared background job manager | `6` |
+| `-export-retention` | `EXPORT_RETENTION` | How long completed group-export tars stay on disk | `24h` |
 | `-hash-worker-count` | `HASH_WORKER_COUNT` | Concurrent hash workers | `4` |
 | `-hash-batch-size` | `HASH_BATCH_SIZE` | Resources per batch | `500` |
 | `-hash-poll-interval` | `HASH_POLL_INTERVAL` | Time between batch cycles | `1m` |
@@ -75,6 +82,7 @@ Command-line flags take precedence over environment variables, so a flag overrid
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | Timeout for idle transfers | `60s` |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | Maximum total download time | `30m` |
 | `-mrql-query-timeout` | `MRQL_QUERY_TIMEOUT` | Maximum execution time for MRQL queries | `10s` |
+| `-mrql-default-limit` | `MRQL_DEFAULT_LIMIT` | Default `LIMIT` for MRQL queries without an explicit LIMIT | `500` |
 | `-share-port` | `SHARE_PORT` | Port for public share server | (disabled) |
 | `-share-bind-address` | `SHARE_BIND_ADDRESS` | Share server bind address | `0.0.0.0` |
 | `-cleanup-logs-days` | `CLEANUP_LOGS_DAYS` | Delete log entries older than N days on startup | `0` (disabled) |

@@ -30,7 +30,13 @@ On larger screens, the navigation displays as a two-tier horizontal menu:
 - **Relations** - Group-to-group relationships
 - **Relation Types** - Relationship type definitions
 - **Note Types** - Note type definitions
+- **Template Partials** - Reusable category-template snippets
+- **Export** - Group export jobs
+- **Import** - Group import jobs
+- **Shares** - Public note shares
+- **Settings** - Runtime system settings
 - **Logs** - System activity log viewer
+- **Users** - User account administration (admin only, or when auth is disabled)
 
 **Plugins dropdown** (appears when plugins are enabled):
 - **Manage Plugins** - Plugin enable/disable and settings
@@ -124,7 +130,7 @@ The sort options section in the sidebar contains a multi-column sort builder:
 5. Reorder criteria with the up/down arrows
 6. Remove criteria with the remove button
 
-Sort by metadata values by selecting the metadata column and entering a JSON key name (e.g., `priority`). The sort builder initializes from URL query parameters, so bookmarked sorted views restore the sort criteria on page load.
+Sort by metadata values by selecting the **Custom Property** option and entering a JSON key name (e.g., `priority`). The sort builder initializes from URL query parameters, so bookmarked sorted views restore the sort criteria on page load.
 
 ### Pagination
 

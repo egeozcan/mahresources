@@ -149,7 +149,7 @@ Common HTTP status codes:
 | 204 | No Content (block deletion, reorder, rebalance) |
 | 400 | Bad Request - Invalid parameters |
 | 404 | Not Found - Entity does not exist |
-| 409 | Conflict - Duplicate resource upload (returns `existingResourceId`) |
+| 409 | Conflict - Duplicate file on a multipart `POST /v1/resource` upload (JSON body includes `details[].existingResourceId`). A duplicate URL download via `POST /v1/resource/remote` returns 400, and `POST /v1/resource/local` is idempotent (200 with the existing resource) |
 | 500 | Internal Server Error |
 
 ## ID Parameters

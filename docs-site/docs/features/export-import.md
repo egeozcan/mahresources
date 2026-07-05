@@ -204,6 +204,13 @@ mr group import backup.tar --json
 
 Export and import jobs run through the shared [job system](./job-system). Poll `/v1/jobs/events` for real-time progress, or use the CLI's built-in polling (`--poll-interval`, `--timeout`).
 
+## Configuration
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `-export-retention` | `EXPORT_RETENTION` | `24h` | How long a completed export tar stays on disk before cleanup. Once it expires, `GET /v1/exports/{jobId}/download` returns **410 Gone** |
+| `-max-import-size` | `MAX_IMPORT_SIZE` | `10 GB` | Maximum size of an import tar uploaded to `POST /v1/groups/import/parse` |
+
 ## Archive Format
 
 The export produces a standard tar (optionally gzipped). The first entry is always `manifest.json`.
@@ -212,12 +219,12 @@ The export produces a standard tar (optionally gzipped). The first entry is alwa
 
 ```
 manifest.json
-schema_defs/
-  categories/cat_0001.json
-  note_types/nt_0001.json
-  resource_categories/rc_0001.json
-  tags/tag_0001.json
-  group_relation_types/grt_0001.json
+schemas/
+  categories.json
+  note_types.json
+  resource_categories.json
+  tags.json
+  group_relation_types.json
 groups/
   g0001.json
   g0002.json
@@ -230,13 +237,15 @@ series/
   s0001.json
 blobs/
   <sha1_hash>
-versions/
-  <sha1_hash>
 previews/
-  <export_id>_<width>x<height>
+  <resource_export_id>-p0001
 ```
 
+Each schema type is written as a single JSON array file under `schemas/` (for example, every exported category lives in `schemas/categories.json`).
+
 Entity JSON files use export IDs (e.g. `g0001`, `r0042`) for all internal cross-references instead of database IDs. This makes the archive portable across instances.
+
+There is no separate `versions/` directory. Version file bytes are content-addressed into the same `blobs/<sha1_hash>` directory as current-file bytes (identical content is stored once regardless of how many resources or versions reference it), and each version's own metadata travels inside its resource's JSON payload. Preview files are named `<resource_export_id>-p<NNNN>`.
 
 ### Manifest Contract
 
@@ -254,5 +263,5 @@ Forward compatibility rules:
 
 - Importers must ignore unknown top-level keys in `manifest.json`
 - Importers must ignore unknown keys in entity payloads
-- Importers must reject archives with a `schema_version` higher than they support
+- Importers accept only `schema_version` values they explicitly support (currently the exact set `{1}`) and reject anything else, including an absent field
 - The `schema_version` increments only for breaking changes to existing fields

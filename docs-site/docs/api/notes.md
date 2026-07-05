@@ -26,14 +26,18 @@ GET /v1/notes
 | `Tags` | integer[] | Filter by tag IDs |
 | `Ids` | integer[] | Filter by specific note IDs |
 | `NoteTypeId` | integer | Filter by note type ID |
+| `NoteTypeIds` | integer[] | Filter by multiple note type IDs |
 | `CreatedBefore` | string | Filter by creation date (ISO 8601) |
 | `CreatedAfter` | string | Filter by creation date (ISO 8601) |
+| `UpdatedBefore` | string | Filter by last-updated date (ISO 8601) |
+| `UpdatedAfter` | string | Filter by last-updated date (ISO 8601) |
 | `StartDateBefore` | string | Notes starting before this date |
 | `StartDateAfter` | string | Notes starting after this date |
 | `EndDateBefore` | string | Notes ending before this date |
 | `EndDateAfter` | string | Notes ending after this date |
-| `Shared` | boolean | Presence flag for shared notes. Include this parameter (for example `Shared=1`) to return only notes that have a share token. |
+| `Shared` | boolean | Tri-state share filter. Omit to return all notes; `Shared=1` (true) returns only notes with a share token; `Shared=0` (false) returns only notes without one. |
 | `MetaQuery` | string[] | Filter by metadata conditions (`key:value` or `key:OP:value`) |
+| `MRQL` | string | Filter with an [MRQL](/features/mrql) expression (type `note` is implied) |
 | `SortBy` | string[] | Sort order (e.g., `created_at desc`) |
 
 ### Example
@@ -184,8 +188,10 @@ curl http://localhost:8181/v1/notes/meta/keys
 
 ### Response
 
+Each key is returned as an object with a `key` field:
+
 ```json
-["attendees", "location", "priority", "status"]
+[{"key": "attendees"}, {"key": "location"}, {"key": "priority"}, {"key": "status"}]
 ```
 
 ## Inline Editing
@@ -241,13 +247,12 @@ POST /v1/note/editMeta?id={id}
 
 #### Errors
 
-- 400: Missing ID, missing path, missing value, invalid JSON, malformed path (empty segments)
+- 400: Missing ID, missing path, missing value, invalid JSON, malformed path (empty segments), or corrupt existing meta
 - 404: Note not found
-- 500: Corrupt existing meta
 
 ## Bulk Operations
 
-Bulk operations apply an action to multiple notes at once. Each endpoint accepts a JSON or form-encoded body with `ID` (repeated) for the note IDs and `EditedId` (repeated) for the entity IDs to add or remove.
+Bulk operations apply an action to multiple notes at once. Each endpoint accepts a JSON or form-encoded body with `ID` (repeated) for the note IDs. Most also take `EditedId` (repeated) for the entity IDs to add or remove; the exceptions are Add Metadata (which takes `Meta`) and Bulk Delete (which takes only `ID`).
 
 ### Add Tags
 
@@ -560,7 +565,7 @@ POST /v1/note/block
 |-------|------|-------------|
 | `noteId` | integer | **Required.** The note ID |
 | `type` | string | **Required.** Block type (text, heading, etc.) |
-| `position` | string | **Required.** Position string for ordering |
+| `position` | string | Position string for ordering. When omitted, the block is appended after all existing blocks |
 | `content` | object | Initial content (defaults to type's default content) |
 
 ### Example
@@ -932,7 +937,7 @@ A table block holds either static data (`columns`/`rows`) or a query reference (
 
 - `queryId`: ID of a saved Query to execute
 - `queryParams`: Named parameters to pass to the Query
-- `isStatic`: Set to `false` when using a query
+- `isStatic`: Optional flag, only valid when `queryId` is set (either `true` or `false` is accepted)
 
 **Content (static data):**
 ```json
@@ -949,11 +954,11 @@ A table block holds either static data (`columns`/`rows`) or a query reference (
 ```json
 {
   "sortColumn": "Name",
-  "sortDir": "asc"
+  "sortDirection": "asc"
 }
 ```
 
-- `sortDir`: Either `"asc"` or `"desc"`
+- `sortDirection`: Either `"asc"` or `"desc"`
 
 ### Calendar Block
 
@@ -997,7 +1002,7 @@ A table block holds either static data (`columns`/`rows`) or a query reference (
 }
 ```
 
-- `view`: `"month"`, `"week"`, or `"agenda"`
+- `view`: `"month"` or `"agenda"`
 - `currentDate`: ISO date string for the current view position
 - `customEvents`: User-created events (max 500 per block, each with `calendarId` set to `"custom"`)
 

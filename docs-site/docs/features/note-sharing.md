@@ -24,14 +24,14 @@ The share URL is unguessable. Knowing one token does not help discover others. T
 When a note is shared, visitors can see:
 
 - **Note content** - The note's name, description, and text content
-- **Block content** - Interactive blocks (like todo lists) with shared state
+- **Block content** - Every block type renders on the share page. Text, headings, dividers, todos, galleries, and calendars show their own content. A **references block** publishes the name, description, and category of each group it references. A **table block** backed by a saved query executes that query on the share server and renders the result rows (see [Interactive Blocks](#interactive-blocks-on-shared-notes)).
 - **Embedded resources** - Images and files attached to the note
 
 What remains private:
 
 - Tags and categories
-- Group associations
-- Metadata
+- The note's own group memberships (a references block, however, publishes the name, description, and category of the specific groups it references)
+- Metadata, **unless** the note's type opts into [applying templates to shares](#note-type-templates-on-shared-pages): a `[meta]` shortcode in a shared Custom Header renders the real metadata value (read-only) onto the public page
 - Other notes and resources
 
 ## Enabling Note Sharing
@@ -44,6 +44,7 @@ Note sharing requires configuring the share server. See [Public Sharing Deployme
 |------|-------------|---------|-------------|
 | `-share-port` | `SHARE_PORT` | (disabled) | Port for the share server |
 | `-share-bind-address` | `SHARE_BIND_ADDRESS` | `0.0.0.0` | Bind address for the share server |
+| `-share-public-url` | `SHARE_PUBLIC_URL` | (unset) | Externally-routable base URL for shared notes (e.g. `https://share.example.com`), used to build absolute share links. When unset, the UI shows only the relative `/s/<token>` path. Runtime-editable. |
 
 Start the share server by specifying a port:
 
@@ -74,10 +75,10 @@ SHARE_BIND_ADDRESS=0.0.0.0
 3. Click **Share Note**
 
 When shared:
-- The URL is automatically copied to your clipboard
 - A "Shared" badge appears
-- The share URL is displayed with a copy button
 - An **Unshare** button becomes available
+
+If `SHARE_PUBLIC_URL` is configured, the absolute share URL is copied to your clipboard automatically and displayed with a copy button. If it is unset, no clipboard copy happens: a warning is shown and only the relative `/s/<token>` path is displayed, which you must append to your server's public URL manually.
 
 ### Using the API
 
@@ -131,13 +132,17 @@ Templates run in a **restricted mode** appropriate to an anonymous, unauthentica
 
 - **No queries.** `[mrql]` shortcodes do not execute — running queries on the public surface would leak data beyond the shared note and add unauthenticated database load. They render as an HTML comment, not as results and not as leaked shortcode text.
 - **No plugins.** Plugin shortcodes (`[plugin:...]`) do not run — plugin code executes against the unscoped database. They also render as an HTML comment.
-- **Read-only metadata.** `[meta]` renders in display mode only; the share page never shows an edit control that would POST back to the primary server.
+- **Read-only metadata.** `[meta]` renders in display mode only: the share page never shows an edit control that would POST back to the primary server. Note that the metadata **value itself is still published** onto the public page as read-only text, so a shared Custom Header that references a `[meta]` field exposes that field's value to anyone with the URL.
 
 `[property]`, `[conditional]`, `[each]`, `[link]`, and `[partial]` work normally — they are pure functions over the already-shared note.
 
 ## Interactive Blocks on Shared Notes
 
 Two block types support interaction on shared notes: **todos** and **calendars**.
+
+### Table Blocks and Saved Queries
+
+A table block backed by a saved query runs that query on the share server for every visitor, unauthenticated, and renders the result rows. This is **not** gated by the note type's **Apply templates to public share pages** setting, so it happens on any shared note that contains such a block. Only share notes whose backing queries are safe to expose publicly. Manual (non-query) table blocks simply render their stored cells.
 
 ### Shared Todos
 

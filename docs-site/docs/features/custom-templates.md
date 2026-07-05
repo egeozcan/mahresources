@@ -16,7 +16,7 @@ Do not allow untrusted users to create or edit Categories, Resource Categories, 
 
 ## Template Locations
 
-Each Category (for Groups), Resource Category (for Resources), and Note Type (for Notes) can define four custom HTML templates plus a raw CSS slot:
+Each Category (for Groups), Resource Category (for Resources), and Note Type (for Notes) can define five custom HTML templates plus a raw CSS slot:
 
 | Slot | Display Location |
 |----------|-----------------|
@@ -27,13 +27,13 @@ Each Category (for Groups), Resource Category (for Resources), and Note Type (fo
 | **CustomListHeader** | Top of a list page, only when it is filtered to exactly this one category/type (see [CustomListHeader](#customlistheader)) |
 | **CustomCSS** | Raw CSS injected as a page-level `<style>` block (see [CustomCSS](#customcss)) |
 
-The four `Custom*` slots above hold HTML markup. `CustomCSS` is different -- it holds raw CSS rather than markup, and exists so the other slots can be styled globally without inlining `<style>` tags in each.
+The five `Custom*` slots above hold HTML markup. `CustomCSS` is different -- it holds raw CSS rather than markup, and exists so the other slots can be styled globally without inlining `<style>` tags in each.
 
 ## How Custom Templates Are Rendered
 
 Custom template content is processed in two ways:
 
-- **Shortcodes** (`[meta]`, `[property]`, `[mrql]`, and plugin shortcodes) are expanded server-side.
+- **Shortcodes** (`[meta]`, `[property]`, `[mrql]`, `[conditional]`, `[link]`, `[each]`, `[partial]`, and plugin shortcodes) are expanded server-side.
 - **Alpine.js directives** (`x-text`, `x-if`, `:class`, `@click`, etc.) work in CustomHeader, CustomSidebar, CustomSummary, and CustomAvatar because the outer page template wraps custom content in an `x-data` scope with the full entity available as `entity`. Alpine directives do **not** work in `customMRQLResult` templates, which are rendered server-side by the shortcode engine -- use shortcodes (`[meta]`, `[property]`, `[conditional]`) instead.
 
 :::caution Pongo2 expressions do not work
@@ -301,11 +301,16 @@ Shortcodes (`[meta]`, `[property]`, `[mrql]`) inside `CustomCSS` are processed s
 
 ## Shortcodes
 
-Shortcodes let you embed dynamic content in custom templates without writing Alpine.js code. Three built-in shortcodes are available:
+Shortcodes let you embed dynamic content in custom templates without writing Alpine.js code. The built-in shortcodes are:
 
 - **`[meta]`** -- Schema-aware metadata display with optional inline editing
 - **`[property]`** -- Entity field values (Name, CreatedAt, etc.)
 - **`[mrql]`** -- Inline MRQL query results in various formats
+- **`[conditional]`** -- Show or hide content based on a field, property, or MRQL result
+- **`[link]`** -- The detail-page URL of the current entity
+- **`[each]`** / **`[item]`** -- Iterate over an array in the entity's metadata
+- **`[partial]`** -- Include a reusable shared snippet by name
+- **`[lazy]`** / **`[details]`** -- Defer rendering until the block scrolls into view or is opened
 
 Plugins can also register custom shortcodes via `mah.shortcode()`.
 
@@ -608,7 +613,7 @@ The partial expands with the including entity's context, so its own `[meta]`, `[
 
 The **Reuse & Presets** panel on each edit form fills the form without saving (nothing is written until you submit):
 
-- **Copy from…** fills the slots from another category, of the same carrier or a different one. Cross-carrier copies fill the shared fields (all six slots plus the Meta JSON Schema) and skip Section Config, whose shape differs per carrier.
+- **Copy from…** fills the slots from another category, of the same carrier or a different one. Cross-carrier copies fill the shared fields (all seven slots -- Header, Sidebar, Summary, Avatar, List Header, MRQL Result, and CSS -- plus the Meta JSON Schema) and skip Section Config, whose shape differs per carrier.
 - **Export bundle** downloads the current editor contents as a `.json` bundle (schema version 1). It exports unsaved edits, so it doubles as a backup before experimenting.
 - **Import bundle** loads a bundle back into the form, warning on a carrier mismatch (then filling shared fields only) and rejecting a newer bundle schema version.
 

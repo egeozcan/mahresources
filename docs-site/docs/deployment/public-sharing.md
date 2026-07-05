@@ -9,7 +9,7 @@ description: Securely deploy the share server for public access
 Deploy the note sharing feature for public access while keeping the main instance private.
 
 :::danger Security Implications
-The share server makes shared notes accessible to **anyone with the URL** -- no authentication is required. Shared notes expose their name, description, and block content (including embedded resources). Metadata is **not** exposed. Only share notes you are comfortable making public. The share URL contains an unguessable token, but anyone who obtains it can view the note.
+The share server makes shared notes accessible to **anyone with the URL** -- no authentication is required. Shared notes expose their name, description, and block content (including embedded resources). A references block also exposes the referenced groups' name, description, and category, and a table block backed by a saved query executes that query and publishes its rows. Metadata is not exposed by default, but a note type that opts into applying templates to shares can surface `[meta]` values onto the public page. Only share notes you are comfortable making public. The share URL contains an unguessable token, but anyone who obtains it can view the note.
 :::
 
 ## Architecture Overview
@@ -36,6 +36,7 @@ Key principles:
 |------|--------------|-------------|---------|
 | `-share-port` | `SHARE_PORT` | Port for share server | (disabled) |
 | `-share-bind-address` | `SHARE_BIND_ADDRESS` | Interface to bind | `0.0.0.0` |
+| `-share-public-url` | `SHARE_PUBLIC_URL` | Externally-routable base URL for shared notes (e.g. `https://share.example.com`), used to build absolute share links; when unset the UI shows only the relative `/s/<token>` path. Runtime-editable. | (unset) |
 
 :::caution
 The default bind address is `0.0.0.0`, which listens on all interfaces. For production deployments, set this to `127.0.0.1` and use a reverse proxy to control public access.

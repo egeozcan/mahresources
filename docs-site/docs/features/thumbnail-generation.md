@@ -13,15 +13,15 @@ When a thumbnail is requested for a Resource:
 
 1. **Lock** -- Acquires a per-Resource lock to prevent duplicate generation
 2. **Dimension capping** -- Requested width and height are capped at internal maximums
-3. **Cache check** -- Looks for an existing thumbnail at the exact requested dimensions
-4. **Null thumbnail check** -- Checks for a full-size cached version (stored at width=0, height=0) that can be resized
-5. **Generate** -- Creates the thumbnail based on content type
+3. **Null thumbnail check** -- Looks for a canonical full-size preview (stored at width=0, height=0). If one exists it becomes the resize source for every size and the automatic pipeline is bypassed. This is how an uploaded custom thumbnail takes precedence (see [Custom Thumbnails](#custom-thumbnails)); it also drives the target-dimension calculation from the resource's aspect ratio.
+4. **Cache check** -- Looks for an existing thumbnail at the exact target dimensions and returns it if present
+5. **Generate** -- Creates the thumbnail based on content type. Images and SVGs always decode from the original file; videos and office documents extract or render a full-size frame once and cache it as their own null thumbnail (width=0, height=0) so later sizes resize from it without re-running FFmpeg or LibreOffice
 6. **Resize** -- Scales to the requested dimensions using Lanczos filtering
 7. **Store** -- Saves as JPEG in the database (Preview table)
 
 ## Image Thumbnails
 
-Supported content types: `image/jpeg`, `image/png`, `image/gif`, `image/webp`, `image/bmp`, `image/tiff`
+Content types with native Go decoders: `image/jpeg`, `image/png`, `image/gif`, `image/webp`, `image/bmp`, `image/tiff`. This list is not an allowlist -- any `image/*` type is attempted, and formats the Go decoders reject fall back to ImageMagick (see below).
 
 The image is decoded, resized, and encoded as JPEG with adaptive quality:
 
@@ -32,7 +32,7 @@ The image is decoded, resized, and encoded as JPEG with adaptive quality:
 | 400px | 80 |
 | > 400px | 85 |
 
-For HEIC and AVIF images, the system falls back to ImageMagick if the standard Go decoders cannot handle the format.
+When the native Go decoders cannot handle an `image/*` file (HEIC, AVIF, and other formats), the system falls back to ImageMagick, re-encoding the decoded frame as PNG before resizing. ImageMagick is auto-detected on `PATH` (`magick` or `convert`); there is no configuration flag for its location. If it is not installed, these formats cannot be thumbnailed.
 
 ## SVG Thumbnails
 

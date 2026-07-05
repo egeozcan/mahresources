@@ -203,7 +203,7 @@ When a Category has a schema defined and a Group (or Resource) has metadata, the
 Fields are displayed in a responsive grid layout:
 
 - **Short values** (strings, numbers, booleans, enums) appear in a multi-column grid
-- **Long values** (text exceeding ~80 characters, arrays) appear in full-width rows below the grid
+- **Long values** (text exceeding ~80 characters, arrays, and nested objects) appear in full-width rows below the grid
 - **Empty/null fields** are hidden by default, with a "Show N hidden fields" toggle at the bottom
 
 ### Type-Aware Rendering
@@ -221,7 +221,7 @@ Each field renders according to its schema type:
 | `integer` / `number` | Monospace text |
 | `boolean` | "Yes" / "No" |
 | `array` of scalars | Inline pills |
-| Nested `object` | Flattened with dot notation (e.g., "Address > City") |
+| Nested `object` | Flattened with a labeled path (e.g., "Address › City") |
 
 ### Labels and Tooltips
 
@@ -319,7 +319,7 @@ Schema-driven filter fields appear alongside the existing free-form metadata fil
 
 Groups without a Category (or with a Category that has no schema) display a free-form metadata editor. This editor renders dynamic key-value fields where you can add, remove, and edit metadata entries. Each field has a key name and a value. The editor handles type coercion for numeric, boolean, null, and date values automatically.
 
-When a schema defines `additionalProperties`, the form includes a free-form key-value section below the structured fields. This lets users add metadata beyond what the schema specifies.
+Unless a schema explicitly sets `additionalProperties: false`, the form includes a free-form key-value section below the structured fields. This lets users add metadata beyond what the schema specifies. Setting `additionalProperties: false` removes that section, restricting metadata to the declared properties.
 
 The free-form editor can also load field suggestions from a remote URL, providing autocomplete for key names based on existing metadata patterns in the database.
 
@@ -329,7 +329,7 @@ A Note Type's own detail page (the page for the type itself, not for a note) sur
 
 ### Notes Using the Type
 
-The page lists a bounded page of notes whose Note Type is this one, alongside a true total count, with a link to the full filtered note list. This makes it easy to see what a type is actually applied to. The same pattern applies to a Category's and a Resource Category's detail pages for their owned entities.
+The page lists a bounded page of notes whose Note Type is this one, alongside a true total count, with a link to the full filtered note list. This makes it easy to see what a type is actually applied to. A Resource Category's detail page uses the same true-total pattern for its resources. A Category's detail page also lists a bounded page of its groups with a link to the full list, but its group figure is the length of that capped preload rather than a true total count.
 
 ### Configuration Summary
 

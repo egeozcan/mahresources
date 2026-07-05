@@ -13,7 +13,7 @@ Authentication is **off by default**. Never expose the server directly to the pu
 ## Prerequisites
 
 ### Building from Source
-- **Go 1.25+** - [Download Go](https://go.dev/dl/)
+- **Go 1.26+** - [Download Go](https://go.dev/dl/)
 - **Node.js 20+** - [Download Node.js](https://nodejs.org/)
 
 ### Docker
@@ -33,12 +33,6 @@ npm run build
 ## Option 2: Docker
 
 No pre-built image is published. Build it locally from the repository:
-
-:::caution Dockerfile Go version
-
-The Dockerfile currently uses `golang:1.21-alpine`, but the module requires Go 1.25+. You may need to update line 11 of the Dockerfile to `golang:1.25-alpine` (or later) before building.
-
-:::
 
 ```bash
 git clone https://github.com/egeozcan/mahresources.git

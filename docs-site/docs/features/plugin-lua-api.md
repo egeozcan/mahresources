@@ -58,8 +58,13 @@ All IDs are numbers (float64 in Lua). Returns `nil` on error or not found.
 | `content_type` | string | MIME type |
 | `original_filename` | string | Original upload filename |
 | `hash` | string | SHA1 content hash |
+| `width` | number | Pixel width (0 if unknown) |
+| `height` | number | Pixel height (0 if unknown) |
+| `file_size` | number | File size in bytes |
 | `owner_id` | number | Owner Group ID (if set) |
 | `tags` | table | Array of `{ id, name }` |
+| `groups` | table | Array of `{ id, name }` (only if the resource has groups) |
+| `notes` | table | Array of `{ id, name }` (only if the resource has notes) |
 
 #### Group Fields
 
@@ -600,7 +605,7 @@ The handler receives a single `ctx` table:
 | `ctx.path` | string | Full request URL path |
 | `ctx.method` | string | HTTP method |
 | `ctx.query` | table | URL query parameters |
-| `ctx.params` | table | Form-decoded parameters (empty for non-form requests) |
+| `ctx.params` | table | Always empty for `mah.api` handlers; parse `ctx.body` instead |
 | `ctx.headers` | table | Request headers (lowercase keys) |
 | `ctx.body` | string | Raw request body |
 | `ctx.json(data)` | function | Set the JSON response body |
@@ -613,8 +618,8 @@ The handler receives a single `ctx` table:
 | `ctx.json()` called | 200 (or custom via `ctx.status()`) | JSON-encoded data |
 | `ctx.json()` not called | 204 No Content | Empty |
 | Handler error | 500 | `{"error": "internal plugin error"}` |
-| Handler timeout | 504 | `{"error": "handler timed out"}` |
-| `mah.abort()` called | 400 | `{"error": "reason"}` |
+| Handler timeout | 504 | `{"error": "handler timed out after <duration>"}` |
+| `mah.abort()` called | 400 (or a custom code set via `ctx.status()`) | `{"error": "reason"}` |
 | Path not found | 404 | `{"error": "endpoint not found"}` |
 | Wrong HTTP method | 405 | `{"error": "method not allowed"}` |
 

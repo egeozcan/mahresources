@@ -126,9 +126,11 @@ A Resource can belong to a Series -- a grouping of Resources that share common m
 
 ## Duplicate Detection
 
-Upload deduplication is hash-based (SHA1). If a file with the same hash already exists:
-- **Same owner**: Returns a `ResourceExistsError` with the existing Resource ID
-- **Different owner**: Attaches the new owner as a related Group on the existing Resource
+Upload deduplication is hash-based (SHA1). If a file with the same hash already exists, the outcome depends on the requested owner:
+- **Same owner** (the requested owner matches the existing Resource's owner): any Tags, Notes, and Groups supplied with the upload are merged onto the existing Resource, then a `ResourceExistsError` with the existing Resource ID is returned. No new Resource is created.
+- **No owner specified**: a `ResourceExistsError` is returned and nothing is changed.
+- **Different owner, already related**: if the requested owner is already a related Group of the existing Resource, a `ResourceExistsError` is returned with no re-attach.
+- **Different owner, not yet related**: the requested owner is attached as a related Group on the existing Resource, and the existing Resource is returned (no error).
 
 ## Deletion Behavior
 

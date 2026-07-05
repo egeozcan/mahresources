@@ -36,7 +36,7 @@ A compact syntax reference for the Mahresources Query Language (MRQL). For the f
 
 ## Fields (by entity type)
 
-**Common to all types:** `id`, `name`, `description`, `created`, `updated`, `tags`, `meta.<key>`, `TEXT` (full-text search).
+**Common to all types:** `id`, `name`, `description`, `created`, `updated`, `tags`, `guid` (stable UUIDv7), `meta.<key>`, `TEXT` (full-text search).
 
 **Resources only:** `groups` (alias `group`), `owner`, `category`, `contentType`, `fileSize`, `width`, `height`, `originalName`, `hash`, `notes`.
 
@@ -206,8 +206,8 @@ type = resource AND SIMILAR TO resource(1234) ORDER BY distance ASC LIMIT 20
 ```
 
 - Without `WITHIN`, the runtime `hash_similarity_threshold` setting applies
-  (default 10); the `hash_ahash_threshold` secondary filter always applies, so
-  results match the similarity sidebar. `WITHIN <d>` (0-11) overrides the
+  (default 10); the `hash_ahash_threshold` secondary filter applies whenever set
+  above 0 (its normal state), so results match the similarity sidebar. `WITHIN <d>` (0-11) overrides the
   primary distance; pairs are stored up to distance 11, so larger values are
   rejected.
 - The target itself never matches. A nonexistent or unhashed target matches

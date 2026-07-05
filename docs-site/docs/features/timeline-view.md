@@ -39,7 +39,7 @@ Three granularity levels control how time is divided into buckets:
 |------|-------------|-------------|
 | **Yearly** (Y) | `2024` | One calendar year |
 | **Monthly** (M) | `2024-06` | One calendar month |
-| **Weekly** (W) | `2024-W23` | One ISO week |
+| **Weekly** (W) | `Jun 02` | One week (labeled by its start date) |
 
 Monthly is the default. Switching granularity resets the anchor to today.
 
@@ -58,7 +58,7 @@ Clicking a bar opens a preview panel below the chart:
 1. The bar highlights as selected
 2. A heading shows the bucket label, bar type (Created or Updated), and total count
 3. Up to **20 entities** from that time range load below the heading
-4. If more than 20 exist, a **"Show all"** link navigates to the standard list view filtered to that date range
+4. A **"Show all"** link (showing the bucket's total count) navigates to the standard list view filtered to that date range
 
 Clicking the same bar again closes the preview. Clicking a different bar switches to it.
 
@@ -146,7 +146,7 @@ mr queries timeline
 | `--columns` | `15` | Number of buckets (max 60) |
 | `--json` | | Output raw JSON instead of the ASCII chart |
 
-All entity-specific filter flags are also available. For example, `mr resources timeline --name="sunset"` restricts the chart to resources matching "sunset".
+`--json` is a global `mr` flag available on every command, not specific to timeline. All entity-specific filter flags are also available. For example, `mr resources timeline --name="sunset"` restricts the chart to resources matching "sunset".
 
 ### Examples
 

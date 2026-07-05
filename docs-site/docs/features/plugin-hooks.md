@@ -144,6 +144,7 @@ The handler receives a context table:
 | `headers` | table | HTTP request headers as key-value pairs |
 | `params` | table | Form-decoded parameters (for POST requests) |
 | `body` | string | Request body (for POST requests) |
+| `principal` | table | The acting user: `userId`, `username`, `role`, `isAdmin`, `scopeGroupId`, `superUser`. With auth disabled it reflects the root admin (`superUser = true`). |
 
 ```lua
 mah.page("search", function(ctx)

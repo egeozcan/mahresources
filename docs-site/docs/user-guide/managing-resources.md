@@ -210,9 +210,9 @@ Crop an image to a rectangular region. Cropping is available for raster image fi
 4. Optionally pick an **Aspect ratio** (Free, 1:1, 16:9, 4:3, or Original) and add a **Comment**
 5. Click **Crop** in the dialog to apply
 
-Cropping creates a new version with the cropped content and clears cached thumbnails. JPEG and PNG images keep their format; GIF, WebP, BMP, and TIFF are re-encoded as PNG, and GIF animation is dropped.
+Cropping creates a new version with the cropped content and clears cached thumbnails. JPEG and PNG images keep their format; GIF, WebP, BMP, and TIFF are re-encoded as PNG, and GIF animation is dropped. HEIC and AVIF images are decoded through the ImageMagick fallback (which must be installed) and re-encoded as PNG.
 
-The in-browser cropper cannot decode every format. SVG, ICO, AVIF, and HEIC files cannot be cropped directly -- re-upload them as PNG or JPEG first.
+SVG and ICO files cannot be cropped -- re-upload them as PNG or JPEG first.
 
 ### Recalculate Dimensions
 

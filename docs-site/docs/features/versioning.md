@@ -170,7 +170,7 @@ Add a comment describing the change (e.g., "Fixed typo in title", "Higher resolu
 
 ### Disk Space
 
-Each unique file is stored once. Version records are ~200 bytes each in the database. The main storage cost is the actual file content.
+Each unique file is stored once. Version records are small -- roughly a few hundred bytes of metadata each -- so the main storage cost is the actual file content.
 
 To estimate storage needs:
 - Count unique file content (not versions)
@@ -191,8 +191,9 @@ Two cleanup modes are available:
 - Dry-run mode to preview what would be deleted
 
 **Bulk cleanup:**
-- Clean versions across all resources owned by a group
+- Clean versions across many resources at once. Supplying an owner group scopes the cleanup to resources owned by that group; with no owner scope it runs across every resource in the database
 - Same criteria options (keep last N, older than X days)
+- Dry-run mode is strongly recommended before an unscoped run
 
 :::warning
 Version deletion is permanent. Always use dry-run mode first to verify what will be deleted.

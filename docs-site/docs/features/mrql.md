@@ -106,6 +106,7 @@ Omit the `type` selector entirely to search all entity types at once (cross-enti
 | `created` | datetime | Creation timestamp |
 | `updated` | datetime | Last-updated timestamp |
 | `tags` | relation | Associated tags (match by name) |
+| `guid` | string | Stable UUIDv7 identifier |
 | `meta.<key>` | string/number | Dynamic metadata value |
 
 **Resource-only fields:**
@@ -238,7 +239,7 @@ TEXT ~ "quarterly earnings"
 type = note AND TEXT ~ "retrospective action items"
 ```
 
-Full-text search uses the database's FTS5 index and supports phrase queries. It is only available when the server is started without `-skip-fts`.
+On SQLite the search uses the FTS5 index; on PostgreSQL it matches a `tsvector` column via `plainto_tsquery`. Both backends AND the search terms together, so every word must match, rather than matching the value as an exact phrase. When the full-text index is unavailable (for example the server was started with `-skip-fts`), `TEXT ~` falls back to a case-insensitive substring match on name and description.
 
 ### Boolean Logic
 
@@ -555,7 +556,7 @@ type = resource AND SIMILAR TO resource(1234) AND tags != "reviewed"
 type = resource AND SIMILAR TO resource(1234) ORDER BY distance ASC LIMIT 20
 ```
 
-- **Thresholds.** Without `WITHIN`, the live `hash_similarity_threshold` runtime setting applies (default 10), and the `hash_ahash_threshold` secondary filter always applies -- MRQL results match the similarity sidebar exactly, and tuning the settings applies to saved queries instantly. `WITHIN <d>` overrides the primary distance; the valid range is 0-11 because pairs are only stored up to distance 11.
+- **Thresholds.** Without `WITHIN`, the live `hash_similarity_threshold` runtime setting applies (default 10), and the `hash_ahash_threshold` secondary filter applies whenever set above 0 (its normal state) -- MRQL results match the similarity sidebar exactly, and tuning the settings applies to saved queries instantly. `WITHIN <d>` overrides the primary distance; the valid range is 0-11 because pairs are only stored up to distance 11.
 - **The target never matches itself.** Consequently `NOT SIMILAR TO resource(N)` includes resource N.
 - **Missing data means empty, not an error.** A nonexistent target, a non-image, or a resource the hash worker has not processed yet matches nothing.
 - **Sorting.** `ORDER BY distance` (ASC or DESC) sorts by the perceptual distance to the target and requires exactly one `SIMILAR TO` predicate in the query. Rows matched by other OR branches that have no stored pair sort last.
@@ -563,7 +564,7 @@ type = resource AND SIMILAR TO resource(1234) ORDER BY distance ASC LIMIT 20
 
 ## Cross-Entity Queries
 
-Omitting `type` causes MRQL to fan out the query across resources, notes, and groups simultaneously. Only common fields (`id`, `name`, `description`, `created`, `updated`, `tags`) are valid in cross-entity mode.
+Omitting `type` causes MRQL to fan out the query across resources, notes, and groups simultaneously. Only common fields (`id`, `name`, `description`, `created`, `updated`, `tags`, `guid`, `meta.<key>`) and `TEXT ~` full-text search are valid in cross-entity mode.
 
 ```
 name ~ "budget*"                              # search all entity types

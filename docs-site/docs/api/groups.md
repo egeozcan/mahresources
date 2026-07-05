@@ -22,7 +22,7 @@ GET /v1/groups
 | `Name` | string | Filter by name (partial match) |
 | `Description` | string | Filter by description (partial match) |
 | `Tags` | integer[] | Filter by tag IDs |
-| `Groups` | integer[] | Filter by related Groups or parent (checks both `group_related_groups` and `owner_id`) |
+| `Groups` | integer[] | Filter by related Groups or parent (checks both `group_related_groups` and `owner_id`). Multiple values are combined with AND: only groups linked to (or owned by) every listed group are returned |
 | `Notes` | integer[] | Filter by associated note IDs |
 | `Resources` | integer[] | Filter by associated resource IDs |
 | `Categories` | integer[] | Filter by category IDs |
@@ -32,9 +32,12 @@ GET /v1/groups
 | `URL` | string | Filter by URL field |
 | `CreatedBefore` | string | Filter by creation date (ISO 8601) |
 | `CreatedAfter` | string | Filter by creation date (ISO 8601) |
-| `RelationTypeId` | integer | Filter by groups having this relation type |
-| `RelationSide` | integer | Which side of the relation (0=from, non-zero=to) |
+| `UpdatedBefore` | string | Filter by last-updated date (ISO 8601) |
+| `UpdatedAfter` | string | Filter by last-updated date (ISO 8601) |
+| `RelationTypeId` | integer | Filter by relation-type eligibility. Returns groups whose category matches the relation type's `from` category (or `to` category when `RelationSide` is non-zero). This filters by category eligibility, not by existing relation instances |
+| `RelationSide` | integer | Which side of the relation type's category constraint to match (0=from, non-zero=to) |
 | `MetaQuery` | string[] | Filter by metadata conditions (supports `parent.key` and `child.key` prefixes) |
+| `MRQL` | string | Filter with an [MRQL](/features/mrql) expression (type `group` is implied) |
 | `SearchParentsForName` | boolean | Search parent groups for name match |
 | `SearchChildrenForName` | boolean | Search child groups for name match |
 | `SearchParentsForTags` | boolean | Include parent groups when filtering by tags |
@@ -72,11 +75,12 @@ curl "http://localhost:8181/v1/groups?RelationTypeId=1&RelationSide=1"
     "CreatedAt": "2024-01-15T10:00:00Z",
     "UpdatedAt": "2024-01-15T10:00:00Z",
     "Tags": [...],
-    "Groups": [...],
     "Category": {...}
   }
 ]
 ```
+
+The list endpoint preloads only `Tags` and `Category`. Related-group associations serialize under the `RelatedGroups` key (not `Groups`) and are `null` here because they are not preloaded; fetch a single group with `GET /v1/group?id={id}` to load them.
 
 ## Get Single Group
 
@@ -108,10 +112,13 @@ curl http://localhost:8181/v1/group/parents?id=123
 
 ### Response
 
+The chain is ordered from the most distant ancestor down to the queried group, which is always included as the final element.
+
 ```json
 [
-  {"ID": 1, "Name": "Parent Group 1", ...},
-  {"ID": 2, "Name": "Grandparent Group", ...}
+  {"ID": 2, "Name": "Grandparent Group", ...},
+  {"ID": 1, "Name": "Parent Group", ...},
+  {"ID": 123, "Name": "The Queried Group", ...}
 ]
 ```
 
@@ -127,7 +134,7 @@ GET /v1/group/tree/children?parentId={parentId}
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `parentId` | integer | **Required.** Parent group ID (use `0` for root groups) |
+| `parentId` | integer | Parent group ID. Defaults to `0` (root groups) when omitted |
 | `limit` | integer | Max children to return (default: 50, max: 100) |
 
 ### Example
@@ -254,7 +261,7 @@ Returns the newly created group:
 }
 ```
 
-The clone has identical name, description, meta, URL, owner, Category, and copies all related entity associations (Resources, Notes, Groups, Tags).
+The clone has identical name, description, meta, URL, owner, Category, and copies all related entity associations (Resources, Notes, Groups, Tags). It also duplicates the group's relation instances in both directions (outgoing and incoming), pointing them at the new clone.
 
 ## Get Group Meta Keys
 
@@ -369,17 +376,23 @@ curl -X POST http://localhost:8181/v1/groups/merge \
 
 ## Inline Editing
 
+Both endpoints take the new value in the request body: send `Name` for `editName` and `Description` for `editDescription` (JSON or form-encoded). An empty `Name` is rejected with 400.
+
 ### Edit Name
 
 ```
 POST /v1/group/editName?id={id}
 ```
 
+Body field: `Name` (required, non-empty).
+
 ### Edit Description
 
 ```
 POST /v1/group/editDescription?id={id}
 ```
+
+Body field: `Description`.
 
 ### Edit Meta
 
@@ -574,6 +587,8 @@ curl -X POST "http://localhost:8181/v1/relation/delete?Id=5" \
 
 ## Inline Editing for Relations
 
+As with group inline editing, send the new value in the request body: `Name` for `editName` (required, non-empty) and `Description` for `editDescription`.
+
 ### Edit Name
 
 ```
@@ -587,6 +602,8 @@ POST /v1/relation/editDescription?id={id}
 ```
 
 ## Inline Editing for Relation Types
+
+Send the new value in the request body: `Name` for `editName` (required, non-empty) and `Description` for `editDescription`.
 
 ### Edit Name
 

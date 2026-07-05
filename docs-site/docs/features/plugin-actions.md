@@ -226,7 +226,7 @@ Same as sync, plus:
 | `mah.job_complete(job_id, result_table)` | Mark job as completed. Sets progress to 100. |
 | `mah.job_fail(job_id, error_message)` | Mark job as failed. |
 
-If the handler returns without calling `mah.job_complete` or `mah.job_fail`, the return value is parsed as an `ActionResult` and the job is updated accordingly.
+If the handler returns without calling `mah.job_complete` or `mah.job_fail`, an async job is always marked completed with progress 100. Only a returned `message` string is read from the table; a `success = false` field is ignored on the async path (unlike the sync path, which honors it). To fail an async action, call `mah.job_fail` or `mah.abort`.
 
 ### Abort
 
@@ -242,7 +242,7 @@ handler = function(ctx)
 end
 ```
 
-This returns `{ success = false, message = reason }`.
+On the synchronous path this returns `{ success = false, message = reason }`. On the asynchronous path there is no `success` field: the job is marked failed with its message set to the reason.
 
 ## API Endpoints
 

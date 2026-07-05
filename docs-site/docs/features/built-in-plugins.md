@@ -11,7 +11,7 @@ The data-views, meta-editors, and widgets plugins register shortcodes for use in
 
 ## data-views
 
-Data visualization shortcodes for rendering metadata values, charts, and tables. All charts use pure HTML/CSS or SVG with no JavaScript dependencies.
+Data visualization shortcodes for rendering metadata values, charts, and tables. The chart shortcodes render as pure HTML/CSS or SVG with no JavaScript. Two shortcodes are exceptions: `qr-code` renders client-side via an injected JavaScript encoder, and `json-tree` uses Alpine.js directives for its collapse/expand behavior.
 
 | Shortcode | Description |
 |-----------|-------------|
@@ -20,14 +20,14 @@ Data visualization shortcodes for rendering metadata values, charts, and tables.
 | `stat-card` | Card with label, value, and optional icon |
 | `meter` | Horizontal gauge bar with min/max/value |
 | `sparkline` | Inline SVG sparkline from an array meta field |
-| `table` | HTML table from an array-of-objects meta field |
+| `table` | Table of entities owned by the group, or of an MRQL query result (columns via `cols`/`labels`) |
 | `list` | Vertical list from an array meta field |
 | `count-badge` | Badge showing the count of items in an array meta field |
-| `embed` | Inline embed of a resource by ID (image, video, audio, iframe) |
+| `embed` | Text content of a resource (by ID or path), base64-decoded into a scrollable code block |
 | `image` | Image display from a meta field containing a URL or resource ID |
 | `barcode` | Code 128 barcode SVG from a meta field value |
 | `qr-code` | QR code SVG from a meta field value or literal string |
-| `link-preview` | Card with title, URL, and optional description from a meta field |
+| `link-preview` | Card linking to a URL, showing the URL and its domain from a meta field |
 | `json-tree` | Collapsible JSON tree view of a meta field |
 | `bar-chart` | Horizontal bar chart from an object or array meta field |
 | `pie-chart` | SVG pie chart from an object or array meta field |
@@ -57,7 +57,7 @@ Inline editing shortcodes for entity metadata fields. Each shortcode renders an 
 | `key-value` | Add/edit/remove key-value pairs |
 | `checklist` | Checkbox list with add/remove |
 | `url-input` | URL input with validation and clickable link |
-| `markdown` | Markdown text editor with preview |
+| `markdown` | Markdown text editor (monospace textarea, debounced auto-save, no rendered preview) |
 
 Usage: `[plugin:meta-editors:slider path="rating" min=0 max=10 step=1]`
 
@@ -68,7 +68,7 @@ Dashboard-style shortcodes for category custom templates. These query owned enti
 | Shortcode | Description |
 |-----------|-------------|
 | `summary` | Entity count dashboard (owned resources, notes, and sub-groups) |
-| `gallery` | Thumbnail grid of owned image resources with lightbox |
+| `gallery` | Thumbnail grid of owned image resources with lightbox (for a group that owns no images, falls back to its group-related resources) |
 | `progress` | Progress bar driven by a meta field value |
 | `activity` | Timeline of recently updated owned entities |
 | `tree` | Group hierarchy visualization (ancestors and children) |
@@ -100,7 +100,7 @@ Reference implementation demonstrating the plugin API: injections, hooks, pages,
 
 AI-powered image processing using [fal.ai](https://fal.ai). Requires a FAL.AI API key configured in plugin settings. The plugin registers six resource actions (available from the resource detail view, and some from resource cards in list views) plus a **Generate Image** page.
 
-Supported input formats: PNG, JPEG, WebP, GIF, TIFF, BMP.
+Supported input formats: PNG, JPEG, WebP, GIF, TIFF, BMP. The UI filter that decides which resources surface the actions also includes `image/svg+xml`, so the actions appear on SVG resources even though SVG is not a supported input format and the action fails at runtime.
 
 ### Actions
 

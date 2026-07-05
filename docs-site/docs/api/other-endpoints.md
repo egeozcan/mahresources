@@ -191,6 +191,10 @@ POST /v1/category
 | `CustomSidebar` | string | Custom sidebar template |
 | `CustomSummary` | string | Custom summary template |
 | `CustomAvatar` | string | Custom avatar template |
+| `CustomListHeader` | string | Custom list-page header template |
+| `CustomMRQLResult` | string | Custom MRQL result-card template |
+| `CustomCSS` | string | Custom CSS injected on category pages |
+| `SectionConfig` | string | JSON section layout configuration |
 | `MetaSchema` | string | JSON schema for metadata validation |
 
 #### Example
@@ -278,6 +282,11 @@ POST /v1/resourceCategory
 | `CustomSidebar` | string | Custom sidebar template |
 | `CustomSummary` | string | Custom summary template |
 | `CustomAvatar` | string | Custom avatar template |
+| `CustomListHeader` | string | Custom list-page header template |
+| `CustomMRQLResult` | string | Custom MRQL result-card template |
+| `CustomCSS` | string | Custom CSS injected on resource category pages |
+| `SectionConfig` | string | JSON section layout configuration |
+| `AutoDetectRules` | string | JSON rules for auto-assigning this category to resources |
 | `MetaSchema` | string | JSON schema for metadata validation |
 
 #### Example
@@ -411,7 +420,7 @@ GET /v1/query/schema
 curl http://localhost:8181/v1/query/schema
 ```
 
-The response is cached for 5 minutes.
+The response carries a `Cache-Control: max-age=300` header, so HTTP clients and proxies may cache it for 5 minutes. This is an HTTP caching hint, not a server-side cache.
 
 ### Inline Editing
 
@@ -437,7 +446,7 @@ GET /v1/search
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `q` | string | **Required.** Search query |
-| `limit` | integer | Maximum results (default: 20, max: 200) |
+| `limit` | integer | Maximum results (default: 20, effective max: 50 — larger values are clamped) |
 | `types` | string | Entity types to search (comma-separated: `resource`, `note`, `group`, `tag`, `category`, `query`, `relationType`, `noteType`, `resourceCategory`) |
 
 #### Example
@@ -580,7 +589,7 @@ curl "http://localhost:8181/v1/logs/entity?entityType=resource&entityId=123"
 
 ## Download Queue API
 
-Queue background downloads for remote resources. The queue holds up to 100 jobs and runs up to 3 concurrently. Completed jobs are retained for 1 hour before eviction.
+Queue background downloads for remote resources. The queue holds up to 100 jobs and runs up to 3 concurrently. Completed, failed, and cancelled jobs are retained for 1 hour before eviction; paused jobs are retained for 24 hours.
 
 The canonical route family is `/v1/jobs/*`. Legacy `/v1/download/*` aliases remain available for compatibility.
 
@@ -804,10 +813,10 @@ Get all unique metadata keys used across entities.
 | Notes | `GET /v1/notes/meta/keys` |
 | Groups | `GET /v1/groups/meta/keys` |
 
-Each returns an array of strings representing all metadata keys in use:
+Each returns an array of objects, one per metadata key, with the key under a `key` field:
 
 ```json
-["author", "source", "date_created", "location"]
+[{"key": "author"}, {"key": "source"}, {"key": "date_created"}, {"key": "location"}]
 ```
 
 ---

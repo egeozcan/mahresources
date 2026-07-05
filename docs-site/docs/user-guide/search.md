@@ -28,6 +28,7 @@ Open with **Cmd+K** (macOS) or **Ctrl+K** (Windows/Linux), or click the **Search
 | Categories | Name, Description |
 | Resource Categories | Name, Description |
 | Queries | Name, Description |
+| Saved MRQL Queries | Name, Description |
 | Note Types | Name, Description |
 | Relation Types | Name, Description |
 
@@ -38,10 +39,14 @@ When full-text search is unavailable, results are ranked by LIKE-based scoring:
 | Condition | Score |
 |-----------|-------|
 | Exact name match | 100 |
+| Exact match on an extra searchable field (e.g. Resource original filename) | 90 |
 | Name starts with search term | 80 |
 | Name contains search term | 60 |
+| Extra searchable field contains search term | 55 |
 | Description contains search term | 40 |
 | Other match | 20 |
+
+The extra-field tiers apply only where an entity has additional searchable columns beyond name and description. Currently that is the Resource original filename.
 
 ### Caching
 
@@ -153,6 +158,8 @@ Sort by JSON metadata values using the `meta->>'key'` syntax:
 SortBy=meta->>'priority' desc
 ```
 
+`->>'key'` is PostgreSQL jsonb syntax. On SQLite it is translated internally to `json_extract(meta, '$.key')`, so the same `SortBy` string works on both database engines.
+
 ### Multi-Field Sorting
 
 Pass multiple `SortBy` parameters. The first is primary; others break ties:
@@ -163,7 +170,7 @@ GET /v1/resources?SortBy=content_type asc&SortBy=created_at desc
 
 ## Full-Text Search
 
-Full-text search indexes all searchable entity types: Resource names, descriptions, and original names; Note names and descriptions; Group names and descriptions; and Tag, Category, Query, Relation Type, Note Type, and Resource Category names and descriptions.
+Full-text search indexes all searchable entity types: Resource names, descriptions, and original names; Note names and descriptions; Group names and descriptions; and Tag, Category, Query, Saved MRQL Query, Relation Type, Note Type, and Resource Category names and descriptions.
 
 ### Database Engines
 

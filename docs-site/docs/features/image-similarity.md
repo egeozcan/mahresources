@@ -12,14 +12,15 @@ Perceptual hashing finds visually similar images -- duplicates, near-duplicates,
 
 Unlike cryptographic hashes (SHA1, MD5) which produce completely different outputs for any change, perceptual hashes produce similar outputs for visually similar images.
 
-Two types of perceptual hashes are computed:
+Three perceptual hashes are computed from a single decode:
 
-| Hash Type | Description |
-|-----------|-------------|
-| **Average Hash (aHash)** | Compares the average brightness of image blocks |
-| **Difference Hash (dHash)** | Compares brightness gradients between adjacent pixels |
+| Hash Type | Role |
+|-----------|------|
+| **Perception Hash (pHash)** | Primary matcher. A DCT-based hash whose value is indexed in four chunk columns for fast database-side candidate lookup |
+| **Difference Hash (dHash)** | Secondary. Compares brightness gradients between adjacent pixels |
+| **Average Hash (aHash)** | Secondary. Compares the average brightness of image blocks |
 
-The difference hash (dHash) is used for similarity comparison because it tolerates small changes (crops, compression, resizing) better than average hash.
+The **pHash** drives similarity matching. For each newly hashed image the database finds candidates that share an indexed pHash chunk, then verifies each candidate with a full-width Hamming distance. The dHash and aHash distances are recorded alongside every stored pair; the aHash distance also feeds a secondary check (see `-hash-ahash-threshold`) that suppresses solid-color false positives.
 
 ### Hamming Distance
 
@@ -50,9 +51,9 @@ Other file types are skipped.
 ### Processing Flow
 
 1. **Batch discovery** - The worker finds images without hashes
-2. **Hash calculation** - Workers compute aHash and dHash for each image
+2. **Hash calculation** - Workers compute the pHash, dHash, and aHash for each image
 3. **Cache update** - New hashes are added to the in-memory cache
-4. **Similarity detection** - New hashes are compared against all cached hashes
+4. **Similarity detection** - The new pHash is matched against indexed hashes to find candidates, verified by full-width Hamming distance
 5. **Persistence** - Similar pairs are stored in the database
 
 ### Worker Configuration
@@ -65,6 +66,7 @@ Configure the hash worker using command-line flags or environment variables:
 | `-hash-batch-size` | `HASH_BATCH_SIZE` | `500` | Images per batch |
 | `-hash-poll-interval` | `HASH_POLL_INTERVAL` | `1m` | Time between batches |
 | `-hash-similarity-threshold` | `HASH_SIMILARITY_THRESHOLD` | `10` | Max Hamming distance |
+| `-hash-ahash-threshold` | `HASH_AHASH_THRESHOLD` | `5` | Max aHash Hamming distance for the secondary solid-color false-positive check; `0` disables it |
 | `-hash-worker-disabled` | `HASH_WORKER_DISABLED=1` | `false` | Disable entirely |
 | `-hash-cache-size` | `HASH_CACHE_SIZE` | `100000` | Maximum entries in the LRU similarity cache |
 
@@ -142,8 +144,9 @@ When you find duplicates, you can merge them:
 Merging:
 - Keeps the winner resource with all its metadata
 - Transfers all tags, notes, and group associations from merged resources
+- Reassigns and renumbers every merged resource's version records onto the winner, so the winner's history includes them
+- When the merge is run with the keep-as-version option, additionally saves each merged resource's current file as a new older version of the winner before deletion
 - Deletes the merged resources
-- Preserves the winner's version history
 
 :::warning
 Merging is permanent -- the merged resources are deleted. Verify that the winner resource is the one you intend to keep.
@@ -161,16 +164,18 @@ If hashing fails for a Resource (corrupt image, unsupported encoding), the worke
 
 ## Memory Considerations
 
-The hash worker maintains an in-memory LRU cache of image hashes for fast similarity lookups. Memory usage depends on your image count and the `-hash-cache-size` setting:
+The hash worker maintains an in-memory LRU cache of image hashes for fast similarity lookups. Memory usage depends on your image count and the `-hash-cache-size` setting.
 
-| Image Count | Estimated Cache Size |
+The figures below count only the raw hash payload per entry. Actual heap use is several times higher once Go map buckets and LRU node bookkeeping are included, so treat these as a lower bound rather than a budget:
+
+| Image Count | Raw Hash Data (lower bound) |
 |-------------|---------------------|
 | 10,000 | ~0.2 MB |
 | 100,000 | ~2.4 MB |
 | 1,000,000 | ~24 MB |
 | 10,000,000 | ~240 MB |
 
-For collections with millions of images, memory usage stays under 250 MB. The cache is loaded at startup and updated incrementally.
+The cache is loaded at startup and updated incrementally. Cap it with `-hash-cache-size` when resident memory matters on your deployment.
 
 ## On-Upload Processing
 

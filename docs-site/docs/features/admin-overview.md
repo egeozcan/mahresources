@@ -43,7 +43,7 @@ The Configuration section (part of the data stats response at `/v1/admin/data-st
 The Data Overview section shows entity counts and storage totals, also from `/v1/admin/data-stats`:
 
 - **Total Storage** and **Version Storage**: formatted byte sizes for all files and version history
-- Entity count cards for Resources, Notes, Groups, Tags, Categories, Resource Categories, Note Types, Series, Queries, Relations, Relation Types, Log Entries, and Resource Versions
+- Entity count cards for Resources, Notes, Groups, Tags, Categories, Resource Categories, Note Types, Series, Queries, Relations, Relation Types, Template Partials, Log Entries, and Resource Versions
 - Each entity card is a clickable link to the corresponding list page
 - Growth indicators (7-day) appear below resource, note, and group counts
 

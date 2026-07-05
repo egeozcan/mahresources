@@ -36,7 +36,7 @@ GET /v1/plugins/{pluginName}/block/render?blockId={id}&mode={mode}
 | `blockId` | query | integer | Yes | The ID of the block to render |
 | `mode` | query | string | Yes | `"view"` or `"edit"` |
 
-The server loads the block from the database, verifies it belongs to the specified plugin (block type must start with `plugin:<pluginName>:`), then calls the plugin's `render_view` or `render_edit` Lua function with a context table containing the block's content, state, the parent note's metadata, and the plugin's settings.
+The server loads the block from the database, verifies it belongs to the specified plugin (block type must start with `plugin:<pluginName>:`), then calls the plugin's `render_view` or `render_edit` Lua function with a context table containing the block's content, state, and position; the parent note's identity (`id`, `name`, `note_type_id`); and the plugin's settings.
 
 **Response:** `text/html` -- the HTML fragment returned by the plugin's render function.
 

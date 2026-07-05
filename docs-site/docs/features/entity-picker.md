@@ -4,7 +4,7 @@ sidebar_position: 7
 
 # Entity Picker
 
-The entity picker is a reusable modal component for selecting entities in the block editor and other UI contexts. It currently supports resources and groups. New entity types (e.g., notes, tags, categories) can be added through configuration objects without modifying core logic.
+The entity picker is a reusable modal component for selecting entities in the block editor and other UI contexts. It ships with configurations for resources, groups, and notes, though only the resource and group pickers are currently wired into the UI. New entity types (e.g., tags, categories) can be added through configuration objects without modifying core logic.
 
 ## Using the Picker
 
@@ -44,7 +44,7 @@ The picker is designed to be extensible. To add support for a new entity type (e
 
 ### 1. Add Configuration
 
-Edit `src/components/picker/entityConfigs.js`:
+Edit `src/components/picker/entityConfigs.js`. A `note` configuration (with a `noteCard` render mode) already ships in this file as a complete worked example, even though no picker entry point currently opens it. Use it as a reference for the shape of a config object:
 
 ```javascript
 export const entityConfigs = {
@@ -54,23 +54,29 @@ export const entityConfigs = {
     entityType: 'note',
     entityLabel: 'Notes',
     searchEndpoint: '/v1/notes',
-    searchParams: (query, filters, maxResults) => {
+    maxResults: 50,
+    searchParams: (query, filters, lockedFilters = {}, maxResults) => {
       const params = new URLSearchParams({ MaxResults: String(maxResults) });
       if (query) params.set('name', query);
-      if (filters.noteType) params.set('noteTypeId', filters.noteType);
+      if (filters.tags) filters.tags.forEach(id => params.append('Tags', id));
+      if (lockedFilters.note_type_ids) {
+        lockedFilters.note_type_ids.forEach(id => params.append('NoteTypeIds', id));
+      }
       return params;
     },
     filters: [
-      { key: 'noteType', label: 'Note Type', endpoint: '/v1/note/noteTypes', multi: false }
+      { key: 'tags', label: 'Tags', endpoint: '/v1/tags', multi: true }
     ],
     tabs: null,
-    renderItem: 'noteCard',  // Add new render mode
-    gridColumns: 'grid-cols-2 md:grid-cols-3',
+    renderItem: 'noteCard',
+    gridColumns: 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4',
     getItemId: (item) => item.ID,
-    getItemLabel: (item) => item.Name
+    getItemLabel: (item) => item.Name || `Note ${item.ID}`
   }
 };
 ```
+
+The `searchParams` function takes four arguments in order: `query`, `filters`, `lockedFilters`, and `maxResults`.
 
 ### 2. Add Render Mode (if needed)
 
@@ -130,10 +136,10 @@ The picker is entity-agnostic. All entity-specific behavior comes from configura
 | `entityLabel` | string | Display name for the modal title |
 | `searchEndpoint` | string | API endpoint for searching entities |
 | `maxResults` | number | Maximum results to fetch (default: 50) |
-| `searchParams` | function | Builds URLSearchParams from query, filters, and maxResults |
+| `searchParams` | function | Builds URLSearchParams from `query`, `filters`, `lockedFilters`, and `maxResults` |
 | `filters` | array | Filter definitions (see below) |
 | `tabs` | array\|null | Tab definitions (null for no tabs) |
-| `renderItem` | string | Render mode: `'thumbnail'` or `'groupCard'` |
+| `renderItem` | string | Render mode: `'thumbnail'`, `'groupCard'`, or `'noteCard'` |
 | `gridColumns` | string | Tailwind grid classes for results layout |
 | `getItemId` | function | Extracts ID from entity object |
 | `getItemLabel` | function | Extracts display label from entity object |

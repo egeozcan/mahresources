@@ -212,7 +212,7 @@ curl -X POST http://localhost:8181/v1/resource/remote \
   }'
 ```
 
-For background downloads, use `POST /v1/jobs/download/submit` instead. The URL field accepts multiple URLs separated by newlines for batch imports. Legacy alias: `POST /v1/download/submit`.
+Pass `background=true` (query or form field) to queue the download instead of blocking. The request then returns `202 Accepted` with `{"queued": true, "jobs": [...]}` rather than the created resource. `POST /v1/jobs/download/submit` always queues in the background. The URL field accepts multiple URLs separated by newlines for batch imports. Legacy alias: `POST /v1/download/submit`.
 
 ## Add Local Resource
 
@@ -270,6 +270,13 @@ POST /v1/resource/edit
 | `Meta` | string | Replace metadata JSON |
 | `Width` | integer | Set width (for images) |
 | `Height` | integer | Set height (for images) |
+| `ResourceCategoryId` | integer | Resource Category ID |
+| `Category` | string | Legacy category string |
+| `ContentCategory` | string | High-level content category label |
+| `OriginalName` | string | Original filename |
+| `OriginalLocation` | string | Original URL/path |
+| `SeriesSlug` | string | Assign to Series by slug (creates if needed) |
+| `SeriesId` | integer | Assign to Series by ID |
 
 ### Example
 
@@ -357,8 +364,10 @@ curl http://localhost:8181/v1/resources/meta/keys
 
 ### Response
 
+Each key is returned as an object with a `key` field:
+
 ```json
-["author", "source", "date_taken", "location"]
+[{"key": "author"}, {"key": "source"}, {"key": "date_taken"}, {"key": "location"}]
 ```
 
 ## Bulk Operations
@@ -476,7 +485,7 @@ POST /v1/resources/rotate
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `ID` | integer | Resource ID |
-| `Degrees` | integer | Rotation degrees (90, 180, 270) |
+| `Degrees` | integer | Rotation angle in degrees (any integer; the image is rotated and its bounds resized to fit). 90, 180, and 270 are the common right-angle cases |
 
 #### Example
 
@@ -523,6 +532,74 @@ POST /v1/resources/setDimensions
 | `ID` | integer | Resource ID |
 | `Width` | integer | Width in pixels |
 | `Height` | integer | Height in pixels |
+
+### Crop Image
+
+Crop an image resource to a rectangle and save the result as a new version.
+
+```
+POST /v1/resources/crop
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ID` | integer | Resource ID |
+| `X` | integer | Left edge of the crop rectangle in pixels |
+| `Y` | integer | Top edge of the crop rectangle in pixels |
+| `Width` | integer | Crop width in pixels |
+| `Height` | integer | Crop height in pixels |
+| `Comment` | string | Optional comment stored on the new version |
+
+### Trim Video
+
+Trim a video resource to a time range and save the result as a new version. Requires ffmpeg.
+
+```
+POST /v1/resources/trim
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ID` | integer | Resource ID |
+| `Start` | string | Start timestamp (e.g., `00:00:05` or seconds) |
+| `End` | string | End timestamp |
+| `Comment` | string | Optional comment stored on the new version |
+
+### Set Custom Thumbnail
+
+Replace a resource's thumbnail with a user-uploaded image.
+
+```
+POST /v1/resource/preview?ID={id}
+Content-Type: multipart/form-data
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ID` | integer | **Required.** Resource ID (query param) |
+| `thumbnail` | file | **Required.** Image file to use as the thumbnail |
+
+### Clear Custom Thumbnail
+
+Remove stored thumbnails so the next preview request regenerates them from the source file.
+
+```
+DELETE /v1/resource/preview?ID={id}
+```
+
+Or using POST: `POST /v1/resource/preview/clear?ID={id}`.
+
+### Suggested Tags
+
+Get tag suggestions for a resource based on its similar resources.
+
+```
+GET /v1/resource/suggestedTags?id={id}
+```
 
 ## Inline Editing
 
@@ -579,9 +656,8 @@ POST /v1/resource/editMeta?id={id}
 
 #### Errors
 
-- 400: Missing ID, missing path, missing value, invalid JSON, malformed path (empty segments)
+- 400: Missing ID, missing path, missing value, invalid JSON, malformed path (empty segments), or corrupt existing meta
 - 404: Resource not found
-- 500: Corrupt existing meta
 
 ---
 

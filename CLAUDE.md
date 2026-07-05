@@ -116,6 +116,14 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-bind-address` | `BIND_ADDRESS` | Server address:port |
 | `-ffmpeg-path` | `FFMPEG_PATH` | Path to ffmpeg for video thumbnails |
 | `-libreoffice-path` | `LIBREOFFICE_PATH` | Path to LibreOffice for office document thumbnails (auto-detects soffice/libreoffice in PATH) |
+| `-video-thumb-timeout` | `VIDEO_THUMB_TIMEOUT` | Timeout for a video thumbnail ffmpeg invocation (default: 30s) |
+| `-video-thumb-lock-timeout` | `VIDEO_THUMB_LOCK_TIMEOUT` | Timeout waiting for the video thumbnail lock (default: 60s) |
+| `-video-thumb-concurrency` | `VIDEO_THUMB_CONCURRENCY` | Max concurrent video thumbnail generations (default: 4) |
+| `-thumb-worker-count` | `THUMB_WORKER_COUNT` | Concurrent thumbnail generation workers (default: 2) |
+| `-thumb-worker-disabled` | `THUMB_WORKER_DISABLED=1` | Disable the background thumbnail worker |
+| `-thumb-batch-size` | `THUMB_BATCH_SIZE` | Videos to process per backfill cycle (default: 10) |
+| `-thumb-poll-interval` | `THUMB_POLL_INTERVAL` | Time between thumbnail backfill cycles (default: 1m) |
+| `-thumb-backfill` | `THUMB_BACKFILL=1` | Enable backfilling thumbnails for existing videos |
 | `-skip-fts` | `SKIP_FTS=1` | Skip Full-Text Search initialization |
 | `-skip-version-migration` | `SKIP_VERSION_MIGRATION=1` | Skip resource version migration at startup (for large DBs) |
 | `-alt-fs` | `FILE_ALT_*` | Alternative file systems |
@@ -138,6 +146,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-hash-batch-size` | `HASH_BATCH_SIZE` | Resources to process per batch (default: 500) |
 | `-hash-poll-interval` | `HASH_POLL_INTERVAL` | Time between batch cycles (default: 1m) |
 | `-hash-similarity-threshold` | `HASH_SIMILARITY_THRESHOLD` | Max Hamming distance for similarity (default: 10) |
+| `-hash-ahash-threshold` | `HASH_AHASH_THRESHOLD` | Max AHash Hamming distance for the secondary check that suppresses solid-color false positives (default: 5); `0` disables the check |
 | `-hash-worker-disabled` | `HASH_WORKER_DISABLED=1` | Disable background hash worker |
 | `-hash-cache-size` | `HASH_CACHE_SIZE` | Maximum entries in the hash similarity LRU cache (default: 100000) |
 | `-mrql-default-limit` | `MRQL_DEFAULT_LIMIT` | Default `LIMIT` applied to MRQL queries without an explicit LIMIT clause (default: 500) |
@@ -318,7 +327,7 @@ npm run report         # View HTML test report
 - A11y is important. Very important.
 - The group export/import archive format (manifest schema version 1) is a stable public contract. `archive/manifest.go` defines the schema. Rules: readers reject unknown major `schema_version` values with a clear error; unknown top-level keys in the manifest are silently ignored (forward compatibility). Breaking changes require bumping `schema_version`. Do not change field names, remove fields, or alter semantics without a version bump.
 - SQLite requires `--tags json1` build flag for JSON query support
-- Image processing uses bild and nfnt/resize libraries
+- Image processing uses disintegration/imaging (thumbnail resizing, Lanczos) and anthonynsimon/bild (rotation and other transforms)
 - File system abstraction via Afero supports multiple storage locations
 - Run `npm run build-js` after modifying files in `src/` to rebuild the bundle
 - Keep in mind that some deployments of this software deal with millions of resources

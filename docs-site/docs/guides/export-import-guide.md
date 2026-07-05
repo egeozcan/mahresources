@@ -224,7 +224,7 @@ After the retention period, the tar file is deleted from disk. Download your exp
 
 ### Import cleanup
 
-Import staging files (the uploaded tar and parsed plan) remain on disk until explicitly deleted. They are cleaned up automatically after a successful apply.
+Import staging files (the uploaded tar and parsed plan) stay on disk after a successful apply -- the apply step only marks the plan consumed (renaming `plan.json` to `plan.applied.json`). Staged files are reclaimed by the startup sweep, which removes import staging older than the export-retention window (default 24 hours, shared with export tars) on the next server start.
 
 To delete import staging files manually (e.g., after a dry-run or if you decide not to proceed):
 

@@ -331,7 +331,7 @@ curl -X POST http://localhost:8181/v1/plugins/my-plugin/webhook \
 | 404 | Plugin not found or path not registered | `{"error": "plugin not found"}` or `{"error": "endpoint not found"}` |
 | 405 | Path exists but method not registered | `{"error": "method not allowed"}` |
 | 500 | Handler runtime error | `{"error": "internal plugin error"}` |
-| 504 | Handler exceeded timeout | `{"error": "handler timed out"}` |
+| 504 | Handler exceeded timeout | `{"error": "handler timed out after <duration>"}` (for example `handler timed out after 5s`) |
 
 See [Plugin Lua API Reference](../features/plugin-lua-api.md) for the `mah.api()` registration function.
 

@@ -46,11 +46,11 @@ When you select one or more items, the bulk editor appears inline above the list
 |-----------|:---------:|:-----:|:------:|:----:|
 | Add Tags | Yes | Yes | Yes | - |
 | Remove Tags | Yes | Yes | Yes | - |
-| Replace Tags | API only | - | - | - |
+| Replace Tags | Card editor + API | - | - | - |
 | Add Metadata | Yes | Yes | Yes | - |
 | Add Groups | Yes | Yes | - | - |
 | Update Dimensions | Yes | - | - | - |
-| Compare | Yes (2 only) | - | - | - |
+| Compare | Yes (2 only) | - | Yes (2 only) | - |
 | Merge | Detail page only | - | Detail page only | Yes |
 | Delete | Yes | Yes | Yes | Yes |
 
@@ -70,9 +70,9 @@ Tags are added immediately. Existing tags on items are preserved. If a tag does 
 
 Only the specified Tags are removed. Other Tags remain.
 
-## Replacing Tags (API Only)
+## Replacing Tags
 
-Replace all tags on selected resources with a new set. This operation is available via the API (`POST /v1/resources/replaceTags`) but is not exposed in the bulk editor UI.
+Replace all tags on a resource with a new set. In the UI, click **Edit Tags** on a resource card to open the inline tag editor, adjust the tag set, and submit -- this replaces the card's tags via `POST /v1/resources/replaceTags`. The same endpoint is callable directly. Replace Tags is not exposed in the multi-select bulk editor.
 
 ```bash
 curl -X POST http://localhost:8181/v1/resources/replaceTags \
@@ -134,7 +134,7 @@ Bulk deletion removes database records. For Resources, files are backed up to th
 
 ## Merging Resources
 
-Merge resources from two locations:
+Merge two resources from either of two places:
 
 **From the similar resources section** on a resource detail page:
 
@@ -142,7 +142,13 @@ Merge resources from two locations:
 2. Click **Merge Others To This**
 3. Confirm the merge
 
-Resource merge is only available from the similar resources section on a resource detail page, not from bulk selection.
+**From the compare view**, reached by bulk-selecting exactly 2 resources and clicking **Compare** (see [Comparing Resources](#comparing-resources)):
+
+1. When both resources are at their current version, a **Merge** panel appears at the bottom of the compare view
+2. Select which resource wins, optionally keep the loser as an older version of the winner
+3. Confirm the merge
+
+Both paths post to `/v1/resources/merge`.
 
 The merge operation:
 - Keeps the winner resource

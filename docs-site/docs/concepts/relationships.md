@@ -18,8 +18,8 @@ Relationship Types define the kinds of connections that can exist between groups
 |----------|-------------|
 | `name` | Name for the relationship type (unique per `fromCategoryId`/`toCategoryId` pair) |
 | `description` | Explanation of what this relationship means |
-| `fromCategoryId` | Optional: restrict source to this Category |
-| `toCategoryId` | Optional: restrict target to this Category |
+| `fromCategoryId` | Required: the source group must be of this Category |
+| `toCategoryId` | Required: the target group must be of this Category |
 | `backRelationId` | Optional: FK to the inverse relationship type |
 | `createdAt` | Creation timestamp |
 | `updatedAt` | Last update timestamp |
@@ -33,19 +33,22 @@ Relationship Types define the kinds of connections that can exist between groups
 | "parent of" | Person | Person | Family relationship |
 | "child of" | Person | Person | Inverse of "parent of" |
 | "member of" | Person | Group | Membership |
-| "located in" | - | Location | Physical location |
+| "located in" | Building | Location | Physical location |
 
 ### Category Constraints
 
-RelationTypes can optionally constrain which categories of groups can participate:
+Every RelationType is bound to a source and a target Category. Both `fromCategoryId` and `toCategoryId` are required when creating a RelationType.
 
-- **fromCategoryId**: If set, only groups of this category can be the source
-- **toCategoryId**: If set, only groups of this category can be the target
-- **No constraint**: Any group can participate when left empty
+- **fromCategoryId**: only groups of this Category can be the source
+- **toCategoryId**: only groups of this Category can be the target
+
+When a Relation is created, both endpoint groups must have a Category assigned, and those categories must match the RelationType's `fromCategoryId` and `toCategoryId`. A mismatch, or a group with no Category, is rejected.
 
 Examples:
 - "works at" only makes sense from Person to Company
-- "located in" can apply to any group going to a Location
+- "located in" goes from Building to Location
+
+Because a RelationType is bound to its categories, deleting a Category cascades: every RelationType constrained to it (either direction) is deleted, all Relations of those types are deleted, and `backRelationId` pointers referencing them are cleared.
 
 ### Back Relations (Inverse)
 

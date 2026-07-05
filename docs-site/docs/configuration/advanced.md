@@ -61,6 +61,7 @@ A background worker calculates perceptual hashes for images, enabling visual sim
 | `-hash-batch-size` | `HASH_BATCH_SIZE` | `500` | Resources processed per batch |
 | `-hash-poll-interval` | `HASH_POLL_INTERVAL` | `1m` | Time between batch cycles |
 | `-hash-similarity-threshold` | `HASH_SIMILARITY_THRESHOLD` | `10` | Maximum Hamming distance for similarity |
+| `-hash-ahash-threshold` | `HASH_AHASH_THRESHOLD` | `5` | Max AHash Hamming distance for the secondary similarity check; `0` disables it |
 | `-hash-worker-disabled` | `HASH_WORKER_DISABLED=1` | `false` | Disable the hash worker entirely |
 | `-hash-cache-size` | `HASH_CACHE_SIZE` | `100000` | Max entries in hash similarity LRU cache |
 
@@ -205,6 +206,28 @@ DEEPSEEK_TIMEOUT=20s
 
 The server sends only the prompt text entered in the `/mrql` editor plus syntax-only MRQL instructions. It does not send local tag lists, categories, saved queries, or database contents to the provider.
 
+## Upload and Request Size Limits
+
+Bound the size of request bodies the server accepts:
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `-max-upload-size` | `MAX_UPLOAD_SIZE` | `2147483648` (2 GiB) | Maximum per-upload body size in bytes for resource and version uploads; `0` = unlimited |
+| `-max-import-size` | `MAX_IMPORT_SIZE` | `10737418240` (10 GiB) | Maximum group-import tar upload size in bytes |
+| `-max-json-body` | `MAX_JSON_BODY` | `0` (unlimited) | Maximum `application/json` request body size in bytes; `0` disables the limit |
+| `-max-user-tokens` | `MAX_USER_TOKENS` | `100` | Maximum API tokens a single user may hold; `0` disables the cap |
+
+:::tip Harden JSON limits under `-auth`
+`-max-json-body` defaults to `0` (unlimited) to preserve the historical unbounded behaviour. When `-auth` is enabled, any authenticated user can POST JSON, so setting an explicit limit is recommended. The limit keys on `Content-Type`, so multipart uploads (bounded by `-max-upload-size`) are unaffected.
+:::
+
+## Background Jobs and Exports
+
+| Flag | Env Variable | Default | Description |
+|------|--------------|---------|-------------|
+| `-max-job-concurrency` | `MAX_JOB_CONCURRENCY` | `6` | Concurrency budget for the shared background job manager |
+| `-export-retention` | `EXPORT_RETENTION` | `24h` | How long completed group-export tars stay on disk before cleanup |
+
 ## Server Binding
 
 Configure the server address and port:
@@ -322,6 +345,7 @@ Each plugin lives in a subdirectory of the plugin path and must contain a `plugi
 | `-hash-batch-size` | `HASH_BATCH_SIZE` | `500` | Resources per batch |
 | `-hash-poll-interval` | `HASH_POLL_INTERVAL` | `1m` | Time between batches |
 | `-hash-similarity-threshold` | `HASH_SIMILARITY_THRESHOLD` | `10` | Max Hamming distance |
+| `-hash-ahash-threshold` | `HASH_AHASH_THRESHOLD` | `5` | Secondary AHash Hamming distance check; `0` disables |
 | `-hash-worker-disabled` | `HASH_WORKER_DISABLED=1` | `false` | Disable hash worker |
 | `-hash-cache-size` | `HASH_CACHE_SIZE` | `100000` | Hash similarity LRU cache size |
 | `-thumb-worker-count` | `THUMB_WORKER_COUNT` | `2` | Concurrent thumbnail workers |
