@@ -2070,6 +2070,44 @@ saving the template (admin for category/resourceCategory, editor for noteType).
 			ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 		})
 	}
+
+	generateDescription := `Generate a custom template section from a natural-language prompt using the
+configured DeepSeek provider. Requires DEEPSEEK_API_KEY (503 when unset).
+
+Request body fields:
+  - target     (string) — "slot" (default), "metaschema", or "bundle" (whole template)
+  - slot       (string) — the slot field for target=slot (CustomHeader, CustomSidebar,
+    CustomSummary, CustomAvatar, CustomListHeader, CustomMRQLResult, CustomCSS)
+  - mode       (string) — "html", "css", or "json" (hints the output format)
+  - content    (string) — current slot content to refine/extend
+  - metaSchema (string) — the (possibly unsaved) MetaSchema being authored
+  - prompt     (string, required) — the natural-language request
+  - categoryId (integer) — the carrier being edited (for schema + sample entity)
+  - entityId   (integer) — a sample entity to ground on (else the first category member)
+
+Response: {"target", "content" | "slots", "explanation", "valid", "issues"}.
+"content" is set for slot/metaschema; "slots" (a field→markup map) for bundle.
+"valid" is false with "issues" when the draft fails lint / JSON-Schema validation;
+the draft is still returned for review (HTTP 200). Rate-limited per client IP.
+Gated at the same capability as saving the template (admin for
+category/resourceCategory, editor for noteType).`
+
+	for _, p := range []struct{ path, op string }{
+		{"/v1/category/generateTemplate", "generateCategoryTemplate"},
+		{"/v1/resourceCategory/generateTemplate", "generateResourceCategoryTemplate"},
+		{"/v1/noteType/generateTemplate", "generateNoteTypeTemplate"},
+	} {
+		r.Register(openapi.RouteInfo{
+			Method:               http.MethodPost,
+			Path:                 p.path,
+			OperationID:          p.op,
+			Summary:              "Generate a custom template section from natural language",
+			Description:          generateDescription,
+			Tags:                 shortcodesTag,
+			RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+			ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		})
+	}
 }
 
 func registerLogRoutes(r *openapi.Registry) {

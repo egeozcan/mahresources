@@ -309,6 +309,18 @@ func main() {
 			Timeout:  context.Config.DeepSeekTimeout,
 			Postgres: context.Config.DbType == constants.DbTypePosgres,
 		}))
+
+		templateProvider := application_context.NewDeepSeekTemplateDraftProvider(
+			application_context.DefaultDeepSeekChatCompletionsURL,
+			context.Config.DeepSeekAPIKey,
+			context.Config.DeepSeekModel,
+			nil,
+		)
+		context.SetTemplateGenerator(application_context.NewTemplateGenerator(templateProvider, application_context.TemplateGenerationConfig{
+			APIKey:  context.Config.DeepSeekAPIKey,
+			Model:   context.Config.DeepSeekModel,
+			Timeout: context.Config.DeepSeekTimeout,
+		}))
 	}
 
 	// Ensure plugin manager is cleaned up on shutdown

@@ -46,10 +46,11 @@ const CATEGORY_PARAMS = {
   note: 'noteTypeId',
 };
 
-export function templatePreview({ entityType = 'group', previewPath = '', categoryId = null } = {}) {
+export function templatePreview({ entityType = 'group', previewPath = '', categoryId = null, generatePath = '' } = {}) {
   return {
     entityType,
     previewPath,
+    generatePath,
     categoryId: categoryId || null,
     slots: SLOTS,
     slot: 'CustomHeader',
@@ -68,6 +69,11 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
 
     async init() {
       this._form = this.$root.closest('form');
+
+      // Publish carrier + selection to a shared store so the per-slot generate
+      // buttons (on separate codeEditor islands) can ground on the same sample
+      // entity without threading context through every editor include.
+      this._publishStore();
 
       // Restore last-used entity for this entity type.
       try {
@@ -101,6 +107,22 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       // Keyed per category so a remembered entity from another category (or
       // from the create form) is never restored into a scoped editor.
       return `templatePreview:${this.entityType}:${this.categoryId || 'any'}`;
+    },
+
+    // _publishStore mirrors the current carrier + selected entity into the global
+    // Alpine store the generate buttons read on click.
+    _publishStore() {
+      const A = window.Alpine;
+      if (!A || typeof A.store !== 'function') return;
+      let s = A.store('templatePreview');
+      if (!s) {
+        A.store('templatePreview', {});
+        s = A.store('templatePreview');
+      }
+      s.entityType = this.entityType;
+      s.categoryId = this.categoryId ? Number(this.categoryId) : 0;
+      s.entityId = this.entityId ? Number(this.entityId) : 0;
+      s.generatePath = this.generatePath;
     },
 
     // _scopeParam returns the query-string fragment restricting list requests
@@ -176,6 +198,7 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       } catch (e) {
         /* ignore quota errors */
       }
+      this._publishStore();
     },
 
     pick(it) {

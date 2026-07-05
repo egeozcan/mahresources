@@ -203,13 +203,13 @@
             </div>
         </div>
 
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=noteType.CustomHeader mode="html" description="Rendered at the top of the note detail page, above the description." shortcodes=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=noteType.CustomCSS mode="css" description="Injected as a <style> block on the note detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template." shortcodes=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=noteType.CustomSidebar mode="html" description="Rendered in the note detail page sidebar (both default and wide layouts)." shortcodes=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=noteType.CustomSummary mode="html" description="Rendered on note cards in list views, below the title." shortcodes=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=noteType.CustomAvatar mode="html" description="Replaces the default initials avatar on note cards." shortcodes=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header" name="CustomListHeader" value=noteType.CustomListHeader mode="html" description="Rendered at the top of note list pages filtered to exactly this note type. Processed against the note type itself: [property path=&quot;Name&quot;] is the type name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=noteType.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." shortcodes=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=noteType.CustomHeader mode="html" description="Rendered at the top of the note detail page, above the description." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=noteType.CustomCSS mode="css" description="Injected as a <style> block on the note detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=noteType.CustomSidebar mode="html" description="Rendered in the note detail page sidebar (both default and wide layouts)." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=noteType.CustomSummary mode="html" description="Rendered on note cards in list views, below the title." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=noteType.CustomAvatar mode="html" description="Replaces the default initials avatar on note cards." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header" name="CustomListHeader" value=noteType.CustomListHeader mode="html" description="Rendered at the top of note list pages filtered to exactly this note type. Processed against the note type itself: [property path=&quot;Name&quot;] is the type name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=noteType.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." shortcodes=true generate=true %}
 
         <div class="mt-4 border-t border-stone-200 pt-4">
             <label class="flex items-start gap-2 text-sm cursor-pointer">
@@ -224,10 +224,10 @@
         </div>
     </fieldset>
 
-    {% include "/partials/form/templatePreviewPane.tpl" with entityType="note" previewPath="/v1/noteType/previewTemplate" categoryId=noteType.ID %}
+    {% include "/partials/form/templatePreviewPane.tpl" with entityType="note" previewPath="/v1/noteType/previewTemplate" generatePath="/v1/noteType/generateTemplate" categoryId=noteType.ID %}
     <div class="flex gap-2 items-start">
         <div class="flex-1">
-            {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Meta JSON Schema" name="MetaSchema" value=noteType.MetaSchema mode="json" id="metaSchemaTextarea" %}
+            {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Meta JSON Schema" name="MetaSchema" value=noteType.MetaSchema mode="json" id="metaSchemaTextarea" generate=true %}
         </div>
         {% include "/partials/form/schemaEditorModal.tpl" with textareaId="metaSchemaTextarea" %}
     </div>
