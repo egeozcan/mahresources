@@ -284,6 +284,7 @@ func main() {
 		DeepSeekAPIKey:               deepSeekAPIKey,
 		DeepSeekModel:                deepSeekModel,
 		DeepSeekTimeout:              deepSeekTimeout,
+		TemplateSigningKey:           os.Getenv("TEMPLATE_SIGNING_KEY"),
 		AuthEnabled:                  *authEnabled,
 		SessionTTL:                   *sessionTTL,
 		SessionCookieSecure:          *sessionCookieSecure,

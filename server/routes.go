@@ -633,6 +633,11 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/shortcodes/docs").HandlerFunc(api_handlers.GetShortcodeDocsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/shortcodes/lint").HandlerFunc(api_handlers.GetShortcodeLintHandler(appContext))
 
+	// On-demand render for [lazy]/[details] deferred blocks. Semantically a read
+	// (listed in isReadViaPost → capRead, CSRF-exempt) and scoped so out-of-subtree
+	// entities fail closed; the sealed token authenticates the server-authored body and keeps it opaque on the page.
+	router.Methods(http.MethodPost).Path("/v1/shortcodes/deferred").HandlerFunc(scopedAPI(appContext, api_handlers.GetDeferredRenderHandler))
+
 	// Live template preview — mounted per carrier so the existing path-prefix
 	// authorization applies (category/resourceCategory → admin, noteType → editor).
 	router.Methods(http.MethodPost).Path("/v1/category/previewTemplate").HandlerFunc(api_handlers.GetPreviewTemplateHandler(appContext, "group"))

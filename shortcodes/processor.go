@@ -104,6 +104,32 @@ func partialResolverFrom(ctx context.Context) PartialResolver {
 	return r
 }
 
+// DeferredSigner signs the (entityType, entityID, body) triple of a [lazy] or
+// [details] block into an opaque token the deferred-render endpoint can later
+// verify and render. It is injected per-render via WithDeferredSigner, mirroring
+// how the partial resolver is threaded, so the shortcodes package stays free of
+// crypto/DB imports. When absent, [lazy]/[details] render their body inline
+// (the graceful fallback used by the share server, live preview, and JSON API —
+// none of which can serve a deferred round-trip).
+type DeferredSigner func(entityType string, entityID uint, body string) string
+
+type deferredSignerKey struct{}
+
+// WithDeferredSigner returns a context carrying signer, consulted by [lazy] and
+// [details] expansion during Process. Only the main HTML display-page render
+// path sets it; every other render surface omits it and gets the inline fallback.
+func WithDeferredSigner(ctx context.Context, signer DeferredSigner) context.Context {
+	return context.WithValue(ctx, deferredSignerKey{}, signer)
+}
+
+func deferredSignerFrom(ctx context.Context) DeferredSigner {
+	if ctx == nil {
+		return nil
+	}
+	s, _ := ctx.Value(deferredSignerKey{}).(DeferredSigner)
+	return s
+}
+
 // Process parses shortcodes in input and replaces them with rendered HTML.
 // Built-in "meta" and "property" shortcodes are handled directly.
 // "mrql" shortcodes use the provided executor callback (left as-is if nil).
@@ -160,6 +186,10 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			replacement = RenderPartialShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "each":
 			replacement = RenderEachShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+		case sc.Name == "lazy":
+			replacement = RenderLazyShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+		case sc.Name == "details":
+			replacement = RenderDetailsShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "item":
 			// [item] only has meaning inside an [each] block, where the each
 			// handler substitutes it before this dispatch runs. A bare [item]

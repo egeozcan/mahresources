@@ -107,6 +107,20 @@ Scope behavior:
 
 Use `[mrql]` in `CustomHeader` or `CustomSidebar` for "recent related items", "children by type", "open tasks", or rollups.
 
+### `[lazy]` and `[details]`
+
+Both are block shortcodes that **defer server-side rendering** of their body to a small on-demand fetch, keeping expensive shortcodes (especially `[mrql]`) out of the initial page render.
+
+- `[lazy]...[/lazy]` -- renders when the block scrolls into view. Reach for it in `CustomSummary` (per-card slots on list pages) so an entity-scoped `[mrql]` runs only for cards the user actually sees.
+- `[details summary="..." open="true|false"]...[/details]` -- a keyboard/screen-reader-accessible disclosure that renders its body the first time it is opened.
+
+Deferral applies only on the main display pages; on share pages, the live preview, and `CustomListHeader` the body renders inline (and `[details]` stays a plain collapsible `<details>`). Requires JavaScript; the deferred body renders against the entity, so an `[item]` from an enclosing `[each]` is not visible inside it.
+
+```
+[lazy][mrql query='type = "resource"' format="list"][/lazy]
+[details summary="Nutrition"][meta path="calories"] kcal[/details]
+```
+
 ## Built-in Plugin Shortcodes
 
 Only three built-in plugins currently ship shortcodes:

@@ -169,6 +169,19 @@
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[partial name="status-badge"]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[lazy]…[/lazy]</code>
+                        &mdash; defer the inner content: it renders on the server only when the block scrolls into view, keeping expensive shortcodes (especially [mrql]) out of the initial page load. Ideal for per-card slots on long lists.
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[lazy][mrql query='type = "resource"' format="list"][/lazy]</code></pre>
+                    </div>
+                    <div>
+                        <code class="bg-stone-100 px-1 rounded">[details summary="…"]…[/details]</code>
+                        &mdash; a keyboard- and screen-reader-accessible disclosure; the inner content renders on the server only the first time it is opened.
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">summary</b>="label" &nbsp; <b class="text-stone-500">open</b>="true|false"
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[details summary="Nutrition"][meta path="calories"] kcal[/details]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[plugin:name:shortcode attr="val"]</code>
                         &mdash; render a plugin-provided shortcode. See each plugin's docs page for available shortcodes.
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[plugin:meta-editors:star-rating path="rating"]
@@ -200,6 +213,8 @@
 
         <div class="mt-4 border-t border-stone-200 pt-4">
             <label class="flex items-start gap-2 text-sm cursor-pointer">
+                {# Hidden companion: a full-form submit always sends this field (unchecked -> "false", checked -> "false"+"true", schema takes the last), so an omitted field means a partial update the handler preserves rather than clearing this opt-in. #}
+                <input type="hidden" name="ApplyTemplatesToShares" value="false">
                 <input type="checkbox" name="ApplyTemplatesToShares" value="true" {% if noteType.ApplyTemplatesToShares %}checked{% endif %} class="mt-1 h-4 w-4 text-amber-700 border-stone-300 rounded focus:ring-amber-600">
                 <span>
                     <span class="font-medium text-stone-700">Apply templates to public share pages</span>

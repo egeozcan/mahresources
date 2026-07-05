@@ -164,13 +164,11 @@ func customCSSReqCtx(ctx *pongo2.ExecutionContext) context.Context {
 			reqCtx = rc
 		}
 	}
-	reqCtx = plugin_system.WithMRQLCache(reqCtx)
+	var appCtx *application_context.MahresourcesContext
 	if appCtxVal, ok := ctx.Public["_appContext"]; ok && appCtxVal != nil {
-		if appCtx, ok := appCtxVal.(*application_context.MahresourcesContext); ok {
-			reqCtx = shortcodes.WithPartialResolver(reqCtx, BuildPartialResolver(appCtx))
-			reqCtx = shortcodes.WithQueryBudget(reqCtx, pageQueryBudget(appCtx))
-		}
+		appCtx, _ = appCtxVal.(*application_context.MahresourcesContext)
 	}
+	reqCtx = buildPageRenderContext(reqCtx, appCtx)
 	ctx.Public["_reqCtxWithCache"] = reqCtx
 	return reqCtx
 }

@@ -324,6 +324,14 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 					if editor.CustomListHeader == "" && !formHasField(request, "CustomListHeader") {
 						editor.CustomListHeader = existing.CustomListHeader
 					}
+					// ApplyTemplatesToShares is a bool, so absence can't be detected by
+					// a zero-value check (unchecked and omitted both decode to false).
+					// The full edit form always sends the field (hidden false companion),
+					// so a missing field means a partial update: preserve the opt-in
+					// rather than silently turning it off.
+					if !formHasField(request, "ApplyTemplatesToShares") {
+						editor.ApplyTemplatesToShares = existing.ApplyTemplatesToShares
+					}
 					if editor.CustomMRQLResult == "" && !formHasField(request, "CustomMRQLResult") {
 						editor.CustomMRQLResult = existing.CustomMRQLResult
 					}

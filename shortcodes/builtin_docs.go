@@ -207,5 +207,29 @@ func BuiltinDocs() []BuiltinDoc {
 				{Title: "Include a partial", Code: `[partial name="status-badge"]`},
 			},
 		},
+		{
+			Name:        "lazy",
+			Syntax:      `[lazy]...[/lazy]`,
+			Description: "Defers its inner content: on a display page the body is rendered on the server only when the block scrolls into view, keeping expensive shortcodes (especially [mrql]) out of the initial page render. Ideal for per-card slots on long lists. Off the display page (share pages, live preview) the body renders inline. The body renders against the entity, so an [item] from an enclosing [each] is not available inside it.",
+			IsBlock:     BlockRequired,
+			Attrs:       []DocAttr{},
+			Examples: []DocExample{
+				{Title: "Defer an expensive query", Code: "[lazy]\n  [mrql query='type = \"resource\"' format=\"list\"]\n[/lazy]"},
+			},
+		},
+		{
+			Name:        "details",
+			Syntax:      `[details summary="..."]...[/details]`,
+			Description: "A disclosure (like the HTML details/summary element) whose inner content is rendered on the server only the first time it is opened. Keyboard- and screen-reader-accessible. Off the display page (share pages, live preview) it renders as a plain collapsible <details> with the body inline. The body renders against the entity, so an [item] from an enclosing [each] is not available inside it.",
+			IsBlock:     BlockRequired,
+			Attrs: []DocAttr{
+				{Name: "summary", Type: "string", Default: "Details", Description: "The always-visible label that toggles the disclosure."},
+				{Name: "open", Type: "boolean", Default: "false", Description: "When true, the disclosure starts expanded (and loads its content immediately).", Enum: []string{"true", "false"}},
+			},
+			Examples: []DocExample{
+				{Title: "Collapsible section", Code: "[details summary=\"Nutrition\"]\n  [meta path=\"calories\"] kcal\n[/details]"},
+				{Title: "Start expanded", Code: "[details summary=\"Notes\" open=\"true\"]\n  [property path=\"Description\"]\n[/details]"},
+			},
+		},
 	}
 }

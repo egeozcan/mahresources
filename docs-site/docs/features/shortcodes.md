@@ -633,6 +633,53 @@ The partial's content is rendered with the **current entity context**, so its ow
 
 See [Custom Templates](./custom-templates.md) for authoring partials, bundles, and presets.
 
+## `[lazy]` -- Defer until visible
+
+Defers its inner content: on a display page the body is rendered **on the server only when the block scrolls into view**, keeping expensive shortcodes -- especially `[mrql]` -- out of the initial page render. This is most valuable in per-card slots (`CustomSummary`) on long list pages, where a slot renders once per card and each entity-scoped `[mrql]` would otherwise run a query for every card up front.
+
+`[lazy]` is a block shortcode and requires a closing `[/lazy]`.
+
+```
+[lazy]
+  [mrql query='type = "resource"' format="list"]
+[/lazy]
+```
+
+### How it works
+
+On the initial render the block emits a small `<lazy-shortcode>` placeholder carrying a sealed token; nothing inside is computed yet. When the placeholder scrolls near the viewport, the browser fetches `POST /v1/shortcodes/deferred`, which opens the token, rebuilds the entity context, renders the body, and returns the HTML. The token is authenticated encryption (AES-256-GCM), so it both binds the exact template body and entity the server produced -- no client-supplied template text is ever trusted -- and keeps that body opaque on the page rather than exposing the template source in an attribute.
+
+## `[details]` -- Load on open
+
+A disclosure, like the HTML `<details>`/`<summary>` element, whose inner content is rendered **on the server only the first time it is opened**. It is keyboard- and screen-reader-accessible (it wraps a native `<details>`).
+
+`[details]` is a block shortcode and requires a closing `[/details]`.
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `summary` | No | `Details` | The always-visible label that toggles the disclosure |
+| `open` | No | `false` | When `true`, the disclosure starts expanded (and loads its content immediately) |
+
+```
+[details summary="Nutrition"]
+  [meta path="calories"] kcal
+[/details]
+```
+
+The load-on-open mechanism is the same signed round-trip as `[lazy]`.
+
+### Where deferral applies
+
+`[lazy]` and `[details]` defer only on the **main authenticated display pages** (the `Custom*` slots on Group / Resource / Note pages). Everywhere else -- public share pages, the live authoring preview, JSON API responses, and carrier list-header (`CustomListHeader`) slots -- the body renders **inline** as a graceful fallback: the content still appears, and `[details]` remains a plain collapsible `<details>`.
+
+### Limitations
+
+- **JavaScript is required** for the deferral to hydrate (as it is for the rest of the app). A `<noscript>` note is shown when it is disabled.
+- The deferred body renders against the **entity**, so an `[item]` from an enclosing `[each]` is not available inside a `[lazy]`/`[details]` block (the same non-goal as `[each]`'s element-relative paths).
+- The token key is per-process and per-boot by default, so a placeholder minted before a restart -- or, in a multi-process deployment, resolved by a different process -- fails to load and shows a small "could not load -- Retry" message. Set the `TEMPLATE_SIGNING_KEY` environment variable to a shared secret across all processes for behind-a-load-balancer deployments.
+
 ## Plugin Shortcodes
 
 Plugins can register custom shortcodes via the `mah.shortcode()` Lua API. Plugin shortcodes use the format:
