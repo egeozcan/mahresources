@@ -13,7 +13,7 @@ const defaultDetailsSummary = "Details"
 // disclosure whose inner content is rendered only when it is first opened.
 //
 // Like [lazy], on a main display page (deferred signer present, member entity)
-// it emits a <details-shortcode> placeholder carrying a signed token; the
+// it emits a <details-shortcode> placeholder carrying a sealed token; the
 // frontend wraps a native <details>/<summary> (keyboard + screen-reader safe)
 // and fetches /v1/shortcodes/deferred the first time the disclosure is opened.
 // Elsewhere it falls back to a plain native <details> with the body rendered

@@ -109,7 +109,7 @@ func buildPageRenderContext(reqCtx context.Context, appCtx *application_context.
 	reqCtx = shortcodes.WithQueryBudget(reqCtx, pageQueryBudget(appCtx))
 	if appCtx != nil {
 		reqCtx = shortcodes.WithDeferredSigner(reqCtx, func(entityType string, entityID uint, body string) string {
-			return deferredtoken.Sign(appCtx.DeferredSigningKey(), entityType, entityID, body)
+			return deferredtoken.Seal(appCtx.DeferredSigningKey(), entityType, entityID, body)
 		})
 	}
 	return reqCtx

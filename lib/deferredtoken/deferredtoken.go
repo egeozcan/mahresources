@@ -1,30 +1,36 @@
-// Package deferredtoken mints and verifies the signed tokens that back the
-// [lazy] and [details] category-template shortcodes.
+// Package deferredtoken mints and opens the tokens that back the [lazy] and
+// [details] category-template shortcodes.
 //
 // A token carries the raw inner-template body of a deferred block together with
-// the entity it must render against, authenticated by an HMAC-SHA256 signature
-// over the whole payload. The signature proves that the server itself produced
-// this exact (entityType, entityID, body) triple during a legitimate render, so
-// the on-demand render endpoint can rebuild and render the body without trusting
-// any client-supplied template text — a deferred render is provably identical to
-// what would have rendered inline for the same principal on the same entity.
+// the entity it must render against. The token is produced with authenticated
+// encryption (AES-256-GCM), which gives two properties the deferred-render
+// endpoint relies on:
 //
-// The signing key lives on the running MahresourcesContext; see
-// application_context for how it is generated (per-boot random by default, or a
-// configured static key for multi-process deployments).
+//   - Confidentiality: the token is emitted into a data-token attribute on the
+//     rendered page, so it must not leak the template source (conditional
+//     branches, MRQL text, plugin attrs). The body is encrypted, so a reader of
+//     the page cannot recover it.
+//   - Integrity/authenticity: Open fails on any tampering or a wrong key, so the
+//     endpoint only ever renders (entityType, entityID, body) triples the server
+//     itself produced — no client-supplied template text is trusted.
+//
+// The key lives on the running MahresourcesContext; see application_context for
+// how it is derived (per-boot random by default, or a configured static key for
+// multi-process deployments). Any key length is accepted — it is hashed to a
+// fixed 32-byte AES-256 key internally.
 package deferredtoken
 
 import (
-	"crypto/hmac"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
-	"strings"
 )
 
-// payload is the signed body of a deferred-render token. Field names are kept
-// short because the marshaled JSON travels inside every placeholder on the page.
+// payload is the sealed body of a deferred-render token. Field names are kept
+// short because the encrypted payload travels inside every placeholder on the page.
 type payload struct {
 	T string `json:"t"` // entity type: "group", "resource", or "note"
 	I uint   `json:"i"` // entity ID
@@ -35,50 +41,63 @@ type payload struct {
 // and request bodies without escaping.
 var b64 = base64.RawURLEncoding
 
-// Sign returns a token that encodes (entityType, entityID, body) and is
-// authenticated with key. The returned string is "<b64(payload)>.<b64(hmac)>".
-func Sign(key []byte, entityType string, entityID uint, body string) string {
-	raw, err := json.Marshal(payload{T: entityType, I: entityID, B: body})
+// aeadFor builds an AES-256-GCM AEAD from key. The key is hashed to a fixed 32
+// bytes so any key length is accepted and always yields a valid AES-256 key.
+func aeadFor(key []byte) (cipher.AEAD, error) {
+	sum := sha256.Sum256(key)
+	block, err := aes.NewCipher(sum[:])
 	if err != nil {
-		// payload is a plain struct of marshalable fields — marshaling cannot
-		// realistically fail, but never emit a half-formed token.
-		return ""
+		return nil, err
 	}
-	return b64.EncodeToString(raw) + "." + b64.EncodeToString(sign(key, raw))
+	return cipher.NewGCM(block)
 }
 
-// Verify checks token against key and returns the encoded (entityType, entityID,
-// body). ok is false when the token is malformed or its signature does not match,
-// in which case the string/uint returns are zero values and must not be used.
-func Verify(key []byte, token string) (entityType string, entityID uint, body string, ok bool) {
-	dot := strings.IndexByte(token, '.')
-	if dot <= 0 || dot == len(token)-1 {
-		return "", 0, "", false
+// Seal encrypts (entityType, entityID, body) into an opaque, authenticated token.
+// Returns "" only if encryption cannot be performed, which does not happen with a
+// valid AES-GCM AEAD and a working CSPRNG.
+func Seal(key []byte, entityType string, entityID uint, body string) string {
+	raw, err := json.Marshal(payload{T: entityType, I: entityID, B: body})
+	if err != nil {
+		return ""
 	}
+	aead, err := aeadFor(key)
+	if err != nil {
+		return ""
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return ""
+	}
+	// Seal prepends the nonce to the ciphertext+tag so Open can recover it.
+	sealed := aead.Seal(nonce, nonce, raw, nil)
+	return b64.EncodeToString(sealed)
+}
 
-	raw, err := b64.DecodeString(token[:dot])
+// Open decrypts and authenticates a token produced by Seal, returning the encoded
+// (entityType, entityID, body). ok is false when the token is malformed, tampered
+// with, or was sealed under a different key; the other returns are then zero
+// values and must not be used.
+func Open(key []byte, token string) (entityType string, entityID uint, body string, ok bool) {
+	sealed, err := b64.DecodeString(token)
 	if err != nil {
 		return "", 0, "", false
 	}
-	gotSig, err := b64.DecodeString(token[dot+1:])
+	aead, err := aeadFor(key)
 	if err != nil {
 		return "", 0, "", false
 	}
-
-	wantSig := sign(key, raw)
-	if subtle.ConstantTimeCompare(gotSig, wantSig) != 1 {
+	ns := aead.NonceSize()
+	if len(sealed) < ns {
 		return "", 0, "", false
 	}
-
+	nonce, ciphertext := sealed[:ns], sealed[ns:]
+	raw, err := aead.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", 0, "", false
+	}
 	var p payload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return "", 0, "", false
 	}
 	return p.T, p.I, p.B, true
-}
-
-func sign(key, raw []byte) []byte {
-	mac := hmac.New(sha256.New, key)
-	mac.Write(raw)
-	return mac.Sum(nil)
 }

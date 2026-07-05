@@ -27,7 +27,7 @@ func isDeferrableEntity(ctx MetaShortcodeContext) bool {
 //
 // On a main display page a deferred signer is present and the entity is a
 // member (group/resource/note): the block emits a <lazy-shortcode> placeholder
-// carrying a signed token, and nothing inside is computed server-side yet — the
+// carrying a sealed token, and nothing inside is computed server-side yet — the
 // frontend fetches /v1/shortcodes/deferred when the element intersects the
 // viewport. Everywhere else (share pages, live preview, JSON API, carrier
 // contexts) there is no signer, so the body is rendered inline as a graceful

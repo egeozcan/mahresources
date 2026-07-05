@@ -647,7 +647,7 @@ Defers its inner content: on a display page the body is rendered **on the server
 
 ### How it works
 
-On the initial render the block emits a small `<lazy-shortcode>` placeholder carrying a signed token; nothing inside is computed yet. When the placeholder scrolls near the viewport, the browser fetches `POST /v1/shortcodes/deferred`, which verifies the token, rebuilds the entity context, renders the body, and returns the HTML. The signed token authenticates the exact template body and entity the server itself produced, so no client-supplied template text is ever trusted, and the deferred render is identical to what would have appeared inline.
+On the initial render the block emits a small `<lazy-shortcode>` placeholder carrying a sealed token; nothing inside is computed yet. When the placeholder scrolls near the viewport, the browser fetches `POST /v1/shortcodes/deferred`, which opens the token, rebuilds the entity context, renders the body, and returns the HTML. The token is authenticated encryption (AES-256-GCM), so it both binds the exact template body and entity the server produced -- no client-supplied template text is ever trusted -- and keeps that body opaque on the page rather than exposing the template source in an attribute.
 
 ## `[details]` -- Load on open
 
@@ -678,7 +678,7 @@ The load-on-open mechanism is the same signed round-trip as `[lazy]`.
 
 - **JavaScript is required** for the deferral to hydrate (as it is for the rest of the app). A `<noscript>` note is shown when it is disabled.
 - The deferred body renders against the **entity**, so an `[item]` from an enclosing `[each]` is not available inside a `[lazy]`/`[details]` block (the same non-goal as `[each]`'s element-relative paths).
-- The signing key is per-process and per-boot by default, so a placeholder minted before a restart -- or, in a multi-process deployment, resolved by a different process -- fails to load and shows a small "could not load -- Retry" message. Set the `TEMPLATE_SIGNING_KEY` environment variable to a shared secret across all processes for behind-a-load-balancer deployments.
+- The token key is per-process and per-boot by default, so a placeholder minted before a restart -- or, in a multi-process deployment, resolved by a different process -- fails to load and shows a small "could not load -- Retry" message. Set the `TEMPLATE_SIGNING_KEY` environment variable to a shared secret across all processes for behind-a-load-balancer deployments.
 
 ## Plugin Shortcodes
 

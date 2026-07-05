@@ -2022,7 +2022,7 @@ the frontend when a [lazy] block scrolls into view or a [details] disclosure is
 first opened.
 
 Request body fields:
-  - token (string, required) — the signed token emitted in the block's placeholder
+  - token (string, required) — the sealed token emitted in the block's placeholder
     during the display-page render. It authenticates the exact entity and template
     body the server itself produced; no client-supplied template text is trusted.
 

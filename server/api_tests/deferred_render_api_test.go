@@ -18,7 +18,7 @@ type deferredRenderResp struct {
 
 // signToken mints a deferred-render token with the running test context's key.
 func signToken(tc *TestContext, entityType string, id uint, body string) string {
-	return deferredtoken.Sign(tc.AppCtx.DeferredSigningKey(), entityType, id, body)
+	return deferredtoken.Seal(tc.AppCtx.DeferredSigningKey(), entityType, id, body)
 }
 
 func TestDeferredRender_HappyPath(t *testing.T) {
@@ -52,11 +52,20 @@ func TestDeferredRender_InvalidTokenRejected(t *testing.T) {
 	}
 	valid := signToken(tc, "group", g.ID, `[property path="Name"]`)
 
+	// Flip the last character so authenticated decryption rejects it.
+	tampered := []byte(valid)
+	last := len(tampered) - 1
+	if tampered[last] == 'A' {
+		tampered[last] = 'B'
+	} else {
+		tampered[last] = 'A'
+	}
+
 	cases := map[string]string{
 		"empty":     "",
 		"garbage":   "not-a-token",
-		"tampered":  valid[:len(valid)-1] + "X",
-		"wrong-key": deferredtoken.Sign([]byte("some-entirely-different-key-value!!"), "group", g.ID, `[property path="Name"]`),
+		"tampered":  string(tampered),
+		"wrong-key": deferredtoken.Seal([]byte("some-entirely-different-key-value!!"), "group", g.ID, `[property path="Name"]`),
 	}
 	for name, tok := range cases {
 		t.Run(name, func(t *testing.T) {
