@@ -48,6 +48,8 @@ const config: Config = {
     ],
   ],
 
+  plugins: ['./plugins/local-search'],
+
   themeConfig: {
     colorMode: {
       respectPrefersColorScheme: true,
