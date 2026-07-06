@@ -79,10 +79,6 @@ func TestTemplateGeneratorSlotSuccess(t *testing.T) {
 	}
 }
 
-// seenUserDocsSentinel returns a fragment of the DocsBlock that must survive
-// into the prompt.
-func (f *fakeTemplateDraftProvider) seenUserDocsSentinel() string { return "renders a Meta value" }
-
 func TestTemplateGeneratorMissingKey(t *testing.T) {
 	gen := NewTemplateGenerator(&fakeTemplateDraftProvider{}, TemplateGenerationConfig{Model: "m", Timeout: time.Second})
 	_, err := gen.GenerateTemplate(context.Background(), slotInput(), "anything")
