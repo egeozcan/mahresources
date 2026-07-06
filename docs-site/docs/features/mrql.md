@@ -138,6 +138,7 @@ Omit the `type` selector entirely to search all entity types at once (cross-enti
 | Field | Type | Description |
 |-------|------|-------------|
 | `category` | string | Group category ID |
+| `url` | string | Associated URL |
 | `parent` | relation | Parent group (match by name) |
 | `children` | relation | Child groups (match by name) |
 | `resources` | relation | Related resources (match by name) |

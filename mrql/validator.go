@@ -1027,7 +1027,7 @@ func validateTraversalChain(f *FieldExpr, entityType EntityType) error {
 	subFd, ok := LookupField(EntityGroup, leaf)
 	if !ok && !IsCommonField(leaf) {
 		return &ValidationError{
-			Message: fmt.Sprintf("unknown field %q for traversal; valid fields: name, description, tags, category, id, created, updated", leaf),
+			Message: fmt.Sprintf("unknown field %q for traversal; valid fields: name, description, tags, category, url, id, created, updated", leaf),
 			Pos:     f.Parts[len(f.Parts)-1].Pos,
 			Length:  len(leaf),
 		}
@@ -1103,7 +1103,7 @@ func validateRecursiveChain(f *FieldExpr, entityType EntityType) error {
 	subFd, ok := LookupField(EntityGroup, leaf)
 	if !ok {
 		return &ValidationError{
-			Message: fmt.Sprintf("unknown field %q for %s; valid fields: name, description, tags, category, id, created, updated, meta.<key>", leaf, root),
+			Message: fmt.Sprintf("unknown field %q for %s; valid fields: name, description, tags, category, url, id, created, updated, meta.<key>", leaf, root),
 			Pos:     f.Parts[1].Pos,
 			Length:  len(leaf),
 		}

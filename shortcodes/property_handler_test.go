@@ -1,9 +1,14 @@
 package shortcodes
 
 import (
+	"context"
 	"encoding/json"
+	"net/url"
 	"testing"
 	"time"
+
+	"mahresources/models"
+	"mahresources/models/types"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -125,6 +130,7 @@ type traversalEntity struct {
 	CreatedAt time.Time
 	FileSize  int64
 	Count     int
+	URL       *types.URL
 }
 
 func TestPropertyShortcodeDotPath(t *testing.T) {
@@ -234,4 +240,32 @@ func TestPropertyShortcodeFormatDateOnNonTimePassesThrough(t *testing.T) {
 	ctx := MetaShortcodeContext{Entity: traversalEntity{Name: "Hello"}}
 	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "Name", "format": "date"}}
 	assert.Equal(t, "Hello", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeURLStringer(t *testing.T) {
+	parsed, err := url.Parse("https://example.com/profile?tab=social#links")
+	assert.NoError(t, err)
+	u := types.URL(*parsed)
+
+	ctx := MetaShortcodeContext{Entity: traversalEntity{URL: &u}}
+	sc := Shortcode{Name: "property", Attrs: map[string]string{"path": "URL"}}
+	assert.Equal(t, "https://example.com/profile?tab=social#links", RenderPropertyShortcode(sc, ctx))
+}
+
+func TestPropertyShortcodeProcessRealGroupURL(t *testing.T) {
+	parsed, err := url.Parse("https://example.com/profile?tab=social#links")
+	assert.NoError(t, err)
+	u := types.URL(*parsed)
+	group := models.Group{ID: 7, URL: &u}
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 7, Entity: group}
+
+	result := Process(
+		context.Background(),
+		`<a href="[property path="URL"]">[property path="URL"]</a>`,
+		ctx,
+		nil,
+		nil,
+	)
+
+	assert.Equal(t, `<a href="https://example.com/profile?tab=social#links">https://example.com/profile?tab=social#links</a>`, result)
 }

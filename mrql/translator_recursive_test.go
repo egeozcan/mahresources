@@ -76,6 +76,7 @@ func TestRecursiveAncestorsGroups(t *testing.T) {
 		{"ancestors tags photo", `type = "group" AND ancestors.tags = "photo"`, []uint{2, 4, 5}},
 		{"ancestors tags document", `type = "group" AND ancestors.tags = "document"`, []uint{4}},
 		{"ancestors meta.region", `type = "group" AND ancestors.meta.region = "europe"`, []uint{2, 4, 5}},
+		{"ancestors url", `type = "group" AND ancestors.url = "https://example.com/vacation?tab=overview#top"`, []uint{2, 4, 5}},
 		{"ancestors id", `type = "group" AND ancestors.id = 2`, []uint{4}},
 	}
 	for _, tc := range cases {

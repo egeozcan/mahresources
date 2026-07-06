@@ -192,6 +192,8 @@ func formatFieldValue(v reflect.Value) string {
 		return val.Format(time.RFC3339)
 	case json.RawMessage:
 		return string(val)
+	case fmt.Stringer:
+		return val.String()
 	}
 
 	switch v.Kind() {

@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"testing"
+
+	"mahresources/models/types"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -78,6 +81,26 @@ func TestConditionalEqFalse(t *testing.T) {
 	ctx := MetaShortcodeContext{Meta: makeMetaJSON(t, map[string]any{"status": "inactive"})}
 	result := RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0)
 	assert.Equal(t, "", result)
+}
+
+func TestConditionalFieldURLNotEmpty(t *testing.T) {
+	parsed, err := url.Parse("https://example.com/profile?tab=social#links")
+	require.NoError(t, err)
+	u := types.URL(*parsed)
+
+	entity := struct {
+		URL *types.URL
+	}{URL: &u}
+	sc := Shortcode{
+		Name:         "conditional",
+		Attrs:        map[string]string{"field": "URL", "not-empty": "true"},
+		InnerContent: "has url",
+		IsBlock:      true,
+	}
+	ctx := MetaShortcodeContext{Entity: entity}
+
+	result := RenderConditionalShortcode(context.Background(), sc, ctx, nil, nil, 0)
+	assert.Equal(t, "has url", result)
 }
 
 func TestConditionalNeq(t *testing.T) {

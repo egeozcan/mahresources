@@ -15,14 +15,14 @@ import (
 // without requiring an actual database connection.
 type mockPostgresDialector struct{}
 
-func (mockPostgresDialector) Name() string                                                  { return "postgres" }
-func (mockPostgresDialector) Initialize(*gorm.DB) error                                     { return nil }
-func (mockPostgresDialector) Migrator(*gorm.DB) gorm.Migrator                               { return nil }
-func (mockPostgresDialector) DataTypeOf(*schema.Field) string                                { return "" }
-func (mockPostgresDialector) DefaultValueOf(*schema.Field) clause.Expression                 { return nil }
-func (mockPostgresDialector) BindVarTo(clause.Writer, *gorm.Statement, interface{})          {}
-func (mockPostgresDialector) QuoteTo(clause.Writer, string)                                  {}
-func (mockPostgresDialector) Explain(string, ...interface{}) string                          { return "" }
+func (mockPostgresDialector) Name() string                                          { return "postgres" }
+func (mockPostgresDialector) Initialize(*gorm.DB) error                             { return nil }
+func (mockPostgresDialector) Migrator(*gorm.DB) gorm.Migrator                       { return nil }
+func (mockPostgresDialector) DataTypeOf(*schema.Field) string                       { return "" }
+func (mockPostgresDialector) DefaultValueOf(*schema.Field) clause.Expression        { return nil }
+func (mockPostgresDialector) BindVarTo(clause.Writer, *gorm.Statement, interface{}) {}
+func (mockPostgresDialector) QuoteTo(clause.Writer, string)                         {}
+func (mockPostgresDialector) Explain(string, ...interface{}) string                 { return "" }
 
 // ---- Minimal model structs for test DB (mirrors models/ but avoids import cycles) ----
 
@@ -41,6 +41,7 @@ type testGroup struct {
 	UpdatedAt   time.Time `gorm:"index"`
 	Name        string    `gorm:"index"`
 	Description string
+	URL         string `gorm:"index"`
 	Meta        string `gorm:"type:JSON"`
 	CategoryID  *uint  `gorm:"index"`
 	OwnerID     *uint  `gorm:"index"`
@@ -129,7 +130,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	parentGroupID := uint(1)
 	workGroupID := uint(2)
 	groups := []testGroup{
-		{ID: 1, Name: "Vacation", Meta: `{"region":"europe","priority":3,"settings":{"visibility":"public","nested":{"deep":"value"}}}`},
+		{ID: 1, Name: "Vacation", URL: "https://example.com/vacation?tab=overview#top", Meta: `{"region":"europe","priority":3,"settings":{"visibility":"public","nested":{"deep":"value"}}}`},
 		{ID: 2, Name: "Work", OwnerID: &parentGroupID, Meta: `{}`},
 		{ID: 3, Name: "Archive", Meta: `{}`},
 		{ID: 4, Name: "Sub-Work", OwnerID: &workGroupID, Meta: `{}`},
@@ -386,6 +387,61 @@ func TestTranslateGroupNameFilter(t *testing.T) {
 	}
 	if resources[0].Name != "sunset.jpg" {
 		t.Errorf("expected 'sunset.jpg', got %q", resources[0].Name)
+	}
+}
+
+func TestTranslateGroupURLFilter(t *testing.T) {
+	db := setupTestDB(t)
+
+	result := parseAndTranslate(t, `type = "group" AND url = "https://example.com/vacation?tab=overview#top"`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 group with URL, got %d", len(groups))
+	}
+	if groups[0].Name != "Vacation" {
+		t.Errorf("expected 'Vacation', got %q", groups[0].Name)
+	}
+}
+
+func TestTranslateGroupURLIsNotEmpty(t *testing.T) {
+	db := setupTestDB(t)
+
+	result := parseAndTranslate(t, `type = "group" AND url IS NOT EMPTY`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 group with non-empty URL, got %d", len(groups))
+	}
+	if groups[0].Name != "Vacation" {
+		t.Errorf("expected 'Vacation', got %q", groups[0].Name)
+	}
+}
+
+func TestTranslateGroupParentURLFilter(t *testing.T) {
+	db := setupTestDB(t)
+
+	result := parseAndTranslate(t, `type = "group" AND parent.url = "https://example.com/vacation?tab=overview#top"`, EntityGroup, db)
+
+	var groups []testGroup
+	if err := result.Find(&groups).Error; err != nil {
+		t.Fatalf("query error: %v", err)
+	}
+
+	got := map[uint]bool{}
+	for _, group := range groups {
+		got[group.ID] = true
+	}
+	if len(got) != 2 || !got[2] || !got[5] {
+		t.Fatalf("expected groups 2 and 5 with parent URL, got %#v", got)
 	}
 }
 

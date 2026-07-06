@@ -870,6 +870,25 @@ func TestLookupField_GUID(t *testing.T) {
 	}
 }
 
+func TestLookupField_GroupURL(t *testing.T) {
+	fd, ok := LookupField(EntityGroup, "url")
+	if !ok {
+		t.Fatal("url not found for group entity type")
+	}
+	if fd.Type != FieldString {
+		t.Fatalf("url should be FieldString, got %v", fd.Type)
+	}
+	if fd.Column != "url" {
+		t.Fatalf("url column should be 'url', got %q", fd.Column)
+	}
+
+	for _, et := range []EntityType{EntityResource, EntityNote} {
+		if _, ok := LookupField(et, "url"); ok {
+			t.Fatalf("url should not be exposed for entity type %v", et)
+		}
+	}
+}
+
 func TestValidate_MetaSubpathFields(t *testing.T) {
 	valid := []struct {
 		name  string

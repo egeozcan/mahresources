@@ -38,3 +38,8 @@ func (u URL) Value() (driver.Value, error) {
 	urlObj := url.URL(u)
 	return urlObj.String(), nil
 }
+
+func (u URL) String() string {
+	urlObj := url.URL(u)
+	return urlObj.String()
+}

@@ -121,6 +121,7 @@ Renders a struct field value from the entity object itself (not metadata). Uses 
 - `time.Time` values are formatted as RFC3339 unless `format`/`layout` is set
 - `json.RawMessage` values are returned as-is
 - Slices are joined with ", "
+- Types with a `String()` method, such as group `URL`, render through that method
 - Other types fall back to JSON encoding
 
 ### Dot-path Traversal
@@ -152,7 +153,7 @@ The shortcode never triggers database loads by design (list pages render many ca
 
 ### Available Fields by Entity Type
 
-**Group:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `CategoryId`, `OwnerId`, `Meta`
+**Group:** `ID`, `Name`, `Description`, `URL`, `CreatedAt`, `UpdatedAt`, `CategoryId`, `OwnerId`, `Meta`
 
 **Resource:** `ID`, `Name`, `Description`, `CreatedAt`, `UpdatedAt`, `ContentType`, `OriginalName`, `FileSize`, `Width`, `Height`, `Meta`
 
