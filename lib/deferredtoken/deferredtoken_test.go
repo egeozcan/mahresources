@@ -65,16 +65,16 @@ func TestOpenWrongKeyFails(t *testing.T) {
 
 func TestOpenTamperedTokenFails(t *testing.T) {
 	token := Seal(testKey, "group", 1, `[mrql query='type = "resource"']`)
+	sealed, err := b64.DecodeString(token)
+	if err != nil {
+		t.Fatalf("token is not valid base64url: %v", err)
+	}
 
-	// Flip a byte anywhere in the token: AES-GCM authentication must reject it.
-	for _, at := range []int{0, len(token) / 2, len(token) - 1} {
-		b := []byte(token)
-		if b[at] == 'A' {
-			b[at] = 'B'
-		} else {
-			b[at] = 'A'
-		}
-		if _, _, _, ok := Open(testKey, string(b)); ok {
+	// Flip bytes in the sealed payload: AES-GCM authentication must reject it.
+	for _, at := range []int{0, len(sealed) / 2, len(sealed) - 1} {
+		b := append([]byte(nil), sealed...)
+		b[at] ^= 0x01
+		if _, _, _, ok := Open(testKey, b64.EncodeToString(b)); ok {
 			t.Fatalf("Open accepted a token tampered at index %d", at)
 		}
 	}

@@ -19,7 +19,7 @@ import (
 // pipeline: a traced connection with a tiny threshold, the sink wired into the
 // application log, and a query that must surface as a warning LogEntry.
 func TestSlowQueryLogSink_WritesWarningEntries(t *testing.T) {
-	dsn := fmt.Sprintf("file:%s?mode=memory&cache=private", t.Name())
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
 	db, slowLogger, err := models.CreateDatabaseConnection(constants.DbTypeSqlite, dsn, "", time.Nanosecond)
 	if err != nil {
 		t.Fatalf("CreateDatabaseConnection: %v", err)
