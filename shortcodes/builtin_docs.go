@@ -38,7 +38,7 @@ type DocExample struct {
 }
 
 // BuiltinDoc documents one built-in shortcode (meta, property, mrql,
-// conditional, link, each, item, partial).
+// conditional, link, each, item, partial, lazy, details).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
 	Syntax      string          `json:"syntax"`
@@ -48,7 +48,7 @@ type BuiltinDoc struct {
 	Examples    []DocExample    `json:"examples"`
 }
 
-// BuiltinDocs returns machine-readable documentation for the eight built-in
+// BuiltinDocs returns machine-readable documentation for the built-in
 // shortcodes. It is the single source of truth for both the docs endpoint and
 // the linter's KnownShortcodes, so lint rules stay in sync with the docs.
 func BuiltinDocs() []BuiltinDoc {

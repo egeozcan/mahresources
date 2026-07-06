@@ -15,10 +15,27 @@ Shortcodes are bracket-delimited expressions embedded in custom template fields 
 
 The parser recognizes these patterns:
 
-- **Built-in:** `[meta ...]`, `[property ...]`, `[mrql ...]`, `[conditional ...]...[/conditional]`, `[link ...]`, `[each ...]...[/each]`, `[item ...]`, `[partial ...]`
+- **Built-in inline:** `[meta ...]`, `[property ...]`, `[item ...]`, `[partial ...]`
+- **Built-in block:** `[conditional ...]...[/conditional]`, `[each ...]...[/each]`, `[lazy]...[/lazy]`, `[details ...]...[/details]`
+- **Built-in inline or block:** `[mrql ...]` or `[mrql ...]...[/mrql]`, `[link ...]` or `[link ...]...[/link]`
 - **Plugin:** `[plugin:plugin-name:shortcode-name ...]`
 
 Attribute values can be double-quoted, single-quoted, or unquoted. When a key appears more than once, the last value wins.
+
+### Built-in Shortcodes
+
+| Shortcode | Form | Use |
+|-----------|------|-----|
+| `[meta]` | Inline | Render a value from the current entity's Meta JSON |
+| `[property]` | Inline | Render a scalar field or dot-path from the current entity |
+| `[mrql]` | Inline or block | Run an MRQL query and render results, a scalar value, or a custom item template |
+| `[conditional]` | Block | Render the first matching branch from a meta, field, or MRQL condition |
+| `[link]` | Inline or block | Resolve a detail-page URL or wrap content in a link |
+| `[each]` | Block | Iterate an array in Meta |
+| `[item]` | Inline | Render the current element inside an `[each]` block |
+| `[partial]` | Inline | Expand a named Template Partial |
+| `[lazy]` | Block | Defer server rendering until the block scrolls into view |
+| `[details]` | Block | Defer server rendering until a disclosure is opened |
 
 ### Block Syntax
 

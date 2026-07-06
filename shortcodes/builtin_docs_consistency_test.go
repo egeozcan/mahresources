@@ -62,3 +62,18 @@ func TestReferencePanelsCoverAllBuiltins(t *testing.T) {
 		}
 	}
 }
+
+func TestDocsSiteShortcodesPageCoversAllBuiltins(t *testing.T) {
+	body, err := os.ReadFile("../docs-site/docs/features/shortcodes.md")
+	if err != nil {
+		t.Fatalf("read docs-site shortcode page: %v", err)
+	}
+	text := string(body)
+	for _, d := range shortcodes.BuiltinDocs() {
+		token := "| `[" + d.Name + "]` |"
+		if !strings.Contains(text, token) {
+			t.Errorf("docs-site shortcode page does not list built-in shortcode %q in the Built-in Shortcodes table (looked for %q)",
+				d.Name, token)
+		}
+	}
+}
