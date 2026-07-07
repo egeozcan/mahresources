@@ -95,6 +95,7 @@ import { templateBundle } from './components/templateBundle.js';
 // Import utility modules
 import { renderMentions } from './utils/renderMentions.js';
 import { createLiveRegion } from './utils/ariaLiveRegion.js';
+import { morphOptionsWithDeferredShortcodes } from './utils/deferredShortcodeMorph.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -246,7 +247,7 @@ window.addEventListener('download-completed', async (e) => {
       // Morph: Alpine copies _x_dataStack across elements, then
       // patchAttributes updates the x-data *attribute*, but Alpine never
       // re-reads the attribute — the stale _x_dataStack persists.
-      Alpine.morph(listContainer, newListContainer);
+      Alpine.morph(listContainer, newListContainer, morphOptionsWithDeferredShortcodes());
 
       // Destroy + re-init any element whose x-data attribute changed.
       xDataBefore.forEach((oldVal, el) => {

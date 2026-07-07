@@ -75,19 +75,62 @@ function renderError(el, onRetry) {
 }
 
 class LazyShortcode extends HTMLElement {
+  static get observedAttributes() {
+    return ['data-token'];
+  }
+
   connectedCallback() {
     if (this._init) return;
     this._init = true;
     this._token = this.getAttribute('data-token') || '';
+    this._loaded = false;
+    this._loading = false;
+    this._revealed = false;
+    this._requestId = 0;
 
     // JS is present, so drop the <noscript> fallback and build our own region.
     this.innerHTML = '';
     this._content = document.createElement('div');
     this._content.className = 'lazy-content';
     this.appendChild(this._content);
-    this.setAttribute('aria-busy', 'true');
-    renderLoading(this._content);
+    this._resetContent();
+    this._observeOrReveal();
+  }
 
+  attributeChangedCallback(name, oldValue, newValue) {
+    if (name !== 'data-token' || oldValue === newValue || !this._init) return;
+    this._token = newValue || '';
+    this._resetContent();
+    if (this._revealed) this._reveal();
+    else this._observeOrReveal();
+  }
+
+  disconnectedCallback() {
+    this._unobserve();
+  }
+
+  refreshFromMorph(toEl) {
+    if (!this._init) return;
+
+    const nextToken = toEl?.getAttribute('data-token') || this.getAttribute('data-token') || '';
+    if (nextToken !== this._token) {
+      this._token = nextToken;
+      this._resetContent();
+      if (this._revealed) this._reveal();
+      else this._observeOrReveal();
+      return;
+    }
+
+    if (this._revealed || this._loaded || this._loading) {
+      this._resetContent();
+      this._reveal();
+    } else {
+      this._observeOrReveal();
+    }
+  }
+
+  _observeOrReveal() {
+    if (this._loaded || this._loading || !this._token) return;
     const obs = lazyObserver();
     if (obs) {
       obs.observe(this);
@@ -97,15 +140,29 @@ class LazyShortcode extends HTMLElement {
     }
   }
 
-  disconnectedCallback() {
+  _unobserve() {
     if (sharedObserver) sharedObserver.unobserve(this);
+  }
+
+  _resetContent() {
+    this._requestId++;
+    this._loaded = false;
+    this._loading = false;
+    this.setAttribute('aria-busy', 'true');
+    if (this._content) renderLoading(this._content);
   }
 
   _reveal() {
     if (this._loading || this._loaded || !this._token) return;
+    this._revealed = true;
+    this._unobserve();
     this._loading = true;
-    fetchDeferred(this._token)
+    this.setAttribute('aria-busy', 'true');
+    const token = this._token;
+    const reqId = ++this._requestId;
+    fetchDeferred(token)
       .then((html) => {
+        if (reqId !== this._requestId || token !== this._token || !this.isConnected) return;
         this._loaded = true;
         this._loading = false;
         this._content.innerHTML = html;
@@ -113,6 +170,7 @@ class LazyShortcode extends HTMLElement {
         this.removeAttribute('aria-busy');
       })
       .catch(() => {
+        if (reqId !== this._requestId || token !== this._token || !this.isConnected) return;
         this._loading = false;
         this.removeAttribute('aria-busy');
         renderError(this._content, () => {
@@ -124,21 +182,28 @@ class LazyShortcode extends HTMLElement {
 }
 
 class DetailsShortcode extends HTMLElement {
+  static get observedAttributes() {
+    return ['data-token', 'data-summary'];
+  }
+
   connectedCallback() {
     if (this._init) return;
     this._init = true;
     this._token = this.getAttribute('data-token') || '';
     const summaryText = this.getAttribute('data-summary') || 'Details';
     const startOpen = this.getAttribute('data-open') === 'true';
+    this._loaded = false;
+    this._loading = false;
+    this._requestId = 0;
 
     this.innerHTML = '';
     this._details = document.createElement('details');
     this._details.className = 'details-shortcode';
-    const summary = document.createElement('summary');
-    summary.textContent = summaryText;
+    this._summary = document.createElement('summary');
+    this._summary.textContent = summaryText;
     this._content = document.createElement('div');
     this._content.className = 'details-content';
-    this._details.append(summary, this._content);
+    this._details.append(this._summary, this._content);
     this.appendChild(this._details);
 
     // Native <details> gives keyboard + screen-reader semantics for free; we only
@@ -152,13 +217,62 @@ class DetailsShortcode extends HTMLElement {
     }
   }
 
-  _load() {
-    if (this._loading || this._loaded || !this._token) return;
+  attributeChangedCallback(name, oldValue, newValue) {
+    if (oldValue === newValue || !this._init) return;
+    if (name === 'data-summary' && this._summary) {
+      this._summary.textContent = newValue || 'Details';
+      return;
+    }
+    if (name === 'data-token') {
+      this._token = newValue || '';
+      this._resetContent();
+      if (this._details?.open) this._load(true);
+    }
+  }
+
+  refreshFromMorph(toEl) {
+    if (!this._init) return;
+
+    const nextSummary = toEl?.getAttribute('data-summary') || this.getAttribute('data-summary') || 'Details';
+    if (this._summary) this._summary.textContent = nextSummary;
+
+    const nextToken = toEl?.getAttribute('data-token') || this.getAttribute('data-token') || '';
+    if (nextToken !== this._token) {
+      this._token = nextToken;
+      this._resetContent();
+      if (this._details?.open) this._load(true);
+      return;
+    }
+
+    if (this._details?.open) {
+      if (this._loading || this._loaded) this._resetContent();
+      this._load(true);
+    } else if (this._loaded || this._loading) {
+      this._resetContent();
+    }
+  }
+
+  _resetContent() {
+    this._requestId++;
+    this._loaded = false;
+    this._loading = false;
+    if (this._content) {
+      this._content.innerHTML = '';
+      this._content.removeAttribute('aria-busy');
+    }
+  }
+
+  _load(force = false) {
+    if (this._loading || (!force && this._loaded) || !this._token) return;
     this._loading = true;
+    this._loaded = false;
     this._content.setAttribute('aria-busy', 'true');
     renderLoading(this._content);
-    fetchDeferred(this._token)
+    const token = this._token;
+    const reqId = ++this._requestId;
+    fetchDeferred(token)
       .then((html) => {
+        if (reqId !== this._requestId || token !== this._token || !this.isConnected) return;
         this._loaded = true;
         this._loading = false;
         this._content.innerHTML = html;
@@ -166,6 +280,7 @@ class DetailsShortcode extends HTMLElement {
         this._content.removeAttribute('aria-busy');
       })
       .catch(() => {
+        if (reqId !== this._requestId || token !== this._token || !this.isConnected) return;
         this._loading = false;
         this._content.removeAttribute('aria-busy');
         renderError(this._content, () => {

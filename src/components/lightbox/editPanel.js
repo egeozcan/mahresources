@@ -1,4 +1,5 @@
 import { abortableFetch } from '../../index.js';
+import { morphOptionsWithDeferredShortcodes } from '../../utils/deferredShortcodeMorph.js';
 
 /**
  * Edit panel state/methods for the lightbox store.
@@ -118,13 +119,13 @@ export const editPanelMethods = {
         const scrollX = window.scrollX;
         const scrollY = window.scrollY;
 
-        window.Alpine.morph(listContainer, newListContainer, {
+        window.Alpine.morph(listContainer, newListContainer, morphOptionsWithDeferredShortcodes({
           updating(el, toEl, childrenOnly, skip) {
             if (el._x_dataStack) {
               toEl._x_dataStack = el._x_dataStack;
             }
           }
-        });
+        }));
 
         window.scrollTo(scrollX, scrollY);
         this.updateItemsFromDOM();

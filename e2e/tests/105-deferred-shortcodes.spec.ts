@@ -6,6 +6,7 @@
  * time its native <details> is opened (keyboard/screen-reader accessible).
  */
 import { test, expect } from '../fixtures/base.fixture';
+import path from 'path';
 
 test.describe('Deferred shortcodes ([lazy] / [details])', () => {
   test('[lazy] loads on view and [details] loads on open', async ({ apiClient, page }) => {
@@ -106,5 +107,65 @@ test.describe('Deferred shortcodes ([lazy] / [details])', () => {
 
     await apiClient.deleteGroup(group.ID);
     await apiClient.deleteCategory(cat.ID);
+  });
+
+  test('[lazy] custom resource summary survives lightbox refresh morph', async ({ apiClient, page }) => {
+    const stamp = Date.now();
+    let resourceId: number | undefined;
+    let categoryId: number | undefined;
+
+    try {
+      const category = await apiClient.createResourceCategory(`Defer Morph RC ${stamp}`, 'defermorph', {
+        CustomSummary: `<div class="morph-lazy-wrap">[lazy]<span class="morph-lazy-payload">Lazy name: [property path="Name"]</span>[/lazy]</div>`,
+      });
+      categoryId = category.ID;
+
+      const resource = await apiClient.createResource({
+        filePath: path.join(__dirname, '../test-assets/sample-image-21.png'),
+        name: `Defer Morph Resource ${stamp}`,
+        resourceCategoryId: category.ID,
+      });
+      resourceId = resource.ID;
+
+      await page.goto(`/resources?ResourceCategoryId=${category.ID}`);
+      await page.waitForLoadState('load');
+
+      await expect(page.locator('lazy-shortcode')).toHaveCount(1);
+      await page.locator('lazy-shortcode').scrollIntoViewIfNeeded();
+      await expect(page.locator('.morph-lazy-payload')).toContainText(`Defer Morph Resource ${stamp}`, {
+        timeout: 8000,
+      });
+
+      await page.locator(`[data-lightbox-item][data-resource-id="${resource.ID}"]`).click();
+      const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])');
+      await expect(lightbox).toBeVisible();
+
+      await lightbox.locator('button[title="Resource info"]').click();
+      const editPanel = lightbox.locator('[data-edit-panel]');
+      await expect(editPanel).toBeVisible();
+
+      const nameInput = editPanel.locator('#lightbox-edit-name');
+      await expect(nameInput).toBeVisible();
+      const nextName = `Defer Morph Renamed ${stamp}`;
+      const saveResponse = page.waitForResponse(
+        (r) => r.url().includes('/v1/resource/editName') && r.request().method() === 'POST',
+      );
+      await nameInput.fill(nextName);
+      await nameInput.blur();
+      await saveResponse;
+
+      const refreshResponse = page.waitForResponse(
+        (r) => r.url().includes('/resources.body') && r.request().method() === 'GET',
+      );
+      await page.keyboard.press('e');
+      await refreshResponse;
+      await expect(editPanel).toBeHidden();
+
+      await expect(page.locator('.morph-lazy-payload')).toContainText(nextName, { timeout: 8000 });
+      await expect(page.locator('lazy-shortcode noscript')).toHaveCount(0);
+    } finally {
+      if (resourceId) await apiClient.deleteResource(resourceId).catch(() => {});
+      if (categoryId) await apiClient.deleteResourceCategory(categoryId).catch(() => {});
+    }
   });
 });
