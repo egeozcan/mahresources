@@ -316,6 +316,29 @@ Plugins can also register custom shortcodes via `mah.shortcode()`.
 
 See the [Shortcodes](./shortcodes.md) page for full syntax, attributes, and examples.
 
+### Editable meta inside styled wrappers
+
+Editable `[meta]` fields can be wrapped in custom HTML for card-like layouts. The app treats the emitted shortcode element as component-owned during background morph refreshes: wrapper HTML and shortcode attributes update from the server, while the shortcode's generated controls re-render themselves.
+
+```html
+<div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-start;">
+  <div style="flex: 1 1 200px;">
+    <label style="font-weight: 600; display: block; margin-bottom: 0.25rem;">URL</label>
+    <div style="border: 1px solid #d1d5db; border-radius: 0.375rem; padding: 0.5rem; background: #f9fafb;">
+      [meta path="url" editable="true"]
+    </div>
+  </div>
+  <div style="flex: 1 1 200px;">
+    <label style="font-weight: 600; display: block; margin-bottom: 0.25rem;">Active Status</label>
+    <div style="border: 1px solid #d1d5db; border-radius: 0.375rem; padding: 0.5rem; background: #f9fafb;">
+      [meta path="active" editable="true"]
+    </div>
+  </div>
+</div>
+```
+
+Do not add `x-ignore` to these shortcode wrappers; it can prevent useful server-side updates from reaching the editable field.
+
 ## Section Configuration
 
 Categories, Resource Categories, and Note Types can define a `sectionConfig` JSON field that controls which sections appear on entity detail pages.

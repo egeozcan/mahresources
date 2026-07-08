@@ -5,7 +5,7 @@
  * items, the user can review/tag/remove them, and then upload.
  */
 
-import { morphOptionsWithDeferredShortcodes } from '../utils/deferredShortcodeMorph.js';
+import { morphOptionsWithShortcodeElements } from '../utils/shortcodeElementMorph.js';
 
 // ---------------------------------------------------------------------------
 // Helpers (module-private)
@@ -541,7 +541,7 @@ export function registerPasteUploadStore(Alpine) {
         const main = document.querySelector('.main');
 
         if (main && newMain) {
-          window.Alpine.morph(main, newMain, morphOptionsWithDeferredShortcodes({
+          window.Alpine.morph(main, newMain, morphOptionsWithShortcodeElements({
             updating(el, toEl, childrenOnly, skip) {
               if (el._x_dataStack) {
                 toEl._x_dataStack = el._x_dataStack;

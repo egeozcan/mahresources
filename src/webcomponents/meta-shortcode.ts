@@ -58,15 +58,41 @@ export class MetaShortcode extends LitElement {
     return this;
   }
 
-  // When valueStr changes externally (e.g. Alpine morph updates the attribute
-  // after a download-completed resource swap), clear cached display state so
-  // _value() falls through to the new valueStr and plugin renders refresh.
+  // When shortcode data changes externally (e.g. Alpine morph patches data-*
+  // attributes after a background refresh), clear cached display state so the
+  // next render uses the fresh attributes and plugin displays refetch.
   override willUpdate(changedProperties: PropertyValues) {
-    if (changedProperties.has('valueStr') && !changedProperties.has('_currentValue')) {
+    const identityChanged =
+      changedProperties.has('path') ||
+      changedProperties.has('entityType') ||
+      changedProperties.has('entityId');
+
+    if (identityChanged) {
+      this._editing = false;
+      this._editValue = undefined;
+    }
+
+    if (
+      changedProperties.has('valueStr') ||
+      changedProperties.has('schemaStr') ||
+      changedProperties.has('path') ||
+      changedProperties.has('defaultValue') ||
+      changedProperties.has('editable') ||
+      changedProperties.has('hideEmpty')
+    ) {
       this._currentValue = undefined;
       this._pluginHtml = null;
       this._pluginError = false;
+      this._pluginFetchVersion++;
     }
+  }
+
+  refreshFromMorph(_toEl?: Element) {
+    this._currentValue = undefined;
+    this._pluginHtml = null;
+    this._pluginError = false;
+    this._pluginFetchVersion++;
+    this.requestUpdate();
   }
 
   private get _schema(): JSONSchema | null {
@@ -267,7 +293,7 @@ export class MetaShortcode extends LitElement {
 
   private _renderEditMode(): TemplateResult {
     const schema = this._schema;
-    const value = this._value;
+    const value = this._editValue !== undefined ? this._editValue : this._value;
 
     return html`
       <div class="meta-shortcode-edit border border-stone-300 rounded p-2 my-1">

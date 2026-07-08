@@ -1,6 +1,6 @@
 import { setCheckBox } from '../index.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
-import { morphOptionsWithDeferredShortcodes } from '../utils/deferredShortcodeMorph.js';
+import { morphOptionsWithShortcodeElements } from '../utils/shortcodeElementMorph.js';
 
 const btnClasses = `bulk-action-btn inline-flex justify-center
       py-1.5 px-3 mt-3
@@ -185,7 +185,7 @@ export function registerBulkSelectionStore(Alpine) {
           Alpine.morph(
             document.querySelector(".list-container, .items-container"),
             newHtml,
-            morphOptionsWithDeferredShortcodes(),
+            morphOptionsWithShortcodeElements(),
           );
           this.announce('Bulk operation completed successfully');
         } catch (err) {

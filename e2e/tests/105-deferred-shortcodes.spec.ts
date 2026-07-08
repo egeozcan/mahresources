@@ -109,14 +109,24 @@ test.describe('Deferred shortcodes ([lazy] / [details])', () => {
     await apiClient.deleteCategory(cat.ID);
   });
 
-  test('[lazy] custom resource summary survives lightbox refresh morph', async ({ apiClient, page }) => {
+  test('[lazy] and editable [meta] custom resource summary survive lightbox refresh morph', async ({ apiClient, page }) => {
     const stamp = Date.now();
     let resourceId: number | undefined;
     let categoryId: number | undefined;
+    const initialStatus = `pending-${stamp}`;
+    const nextStatus = `active-${stamp}`;
 
     try {
       const category = await apiClient.createResourceCategory(`Defer Morph RC ${stamp}`, 'defermorph', {
-        CustomSummary: `<div class="morph-lazy-wrap">[lazy]<span class="morph-lazy-payload">Lazy name: [property path="Name"]</span>[/lazy]</div>`,
+        CustomSummary: [
+          `<div class="morph-lazy-wrap">[lazy]<span class="morph-lazy-payload">Lazy name: [property path="Name"]</span>[/lazy]</div>`,
+          `<div class="morph-meta-wrap" style="display: flex; gap: 1rem;">`,
+          `  <div style="flex: 1 1 200px;">`,
+          `    <label>Status</label>`,
+          `    <div style="border: 1px solid #d1d5db; border-radius: 0.375rem; padding: 0.5rem; background: #f9fafb;">[meta path="status" editable="true"]</div>`,
+          `  </div>`,
+          `</div>`,
+        ].join('\n'),
       });
       categoryId = category.ID;
 
@@ -124,6 +134,7 @@ test.describe('Deferred shortcodes ([lazy] / [details])', () => {
         filePath: path.join(__dirname, '../test-assets/sample-image-21.png'),
         name: `Defer Morph Resource ${stamp}`,
         resourceCategoryId: category.ID,
+        meta: JSON.stringify({ status: initialStatus }),
       });
       resourceId = resource.ID;
 
@@ -135,6 +146,9 @@ test.describe('Deferred shortcodes ([lazy] / [details])', () => {
       await expect(page.locator('.morph-lazy-payload')).toContainText(`Defer Morph Resource ${stamp}`, {
         timeout: 8000,
       });
+      const metaWrap = page.locator('.morph-meta-wrap');
+      await expect(metaWrap.locator('meta-shortcode')).toContainText(initialStatus);
+      await expect(metaWrap.getByRole('button', { name: 'Edit Status' })).toBeVisible();
 
       await page.locator(`[data-lightbox-item][data-resource-id="${resource.ID}"]`).click();
       const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])');
@@ -153,6 +167,7 @@ test.describe('Deferred shortcodes ([lazy] / [details])', () => {
       await nameInput.fill(nextName);
       await nameInput.blur();
       await saveResponse;
+      await apiClient.editMeta('resource', resource.ID, 'status', JSON.stringify(nextStatus));
 
       const refreshResponse = page.waitForResponse(
         (r) => r.url().includes('/resources.body') && r.request().method() === 'GET',
@@ -163,6 +178,8 @@ test.describe('Deferred shortcodes ([lazy] / [details])', () => {
 
       await expect(page.locator('.morph-lazy-payload')).toContainText(nextName, { timeout: 8000 });
       await expect(page.locator('lazy-shortcode noscript')).toHaveCount(0);
+      await expect(metaWrap.locator('meta-shortcode')).toContainText(nextStatus);
+      await expect(metaWrap.getByRole('button', { name: 'Edit Status' })).toBeVisible();
     } finally {
       if (resourceId) await apiClient.deleteResource(resourceId).catch(() => {});
       if (categoryId) await apiClient.deleteResourceCategory(categoryId).catch(() => {});
