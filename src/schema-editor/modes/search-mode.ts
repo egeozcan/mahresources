@@ -199,23 +199,30 @@ export class SchemaSearchMode extends LitElement {
 
     this._fields = merged.map(field => {
       const op = defaultOperator(field);
+      const rawMatches = this._existingMeta.filter(m => m.name === field.path);
       // Prefer in-progress values (from current session), fall back to URL state
       const current = currentValues.get(field.path);
+      const currentHasValue = !!current && (field.enum
+        ? current.enumValues.length > 0
+        : field.type === 'boolean'
+          ? current.boolValue !== 'any'
+          : current.value !== '');
       let existing: ExistingValue | null = current
         ? { ...current }
         : this._findExistingValue(field.path);
 
       // Non-enum fields with multiple URL matches can't be represented in a single input.
+      // Check the source entries directly: a same-schema rebuild may have an
+      // empty in-progress snapshot that otherwise masks the repeated values.
       // Leave them for freeFields.
-      if (!field.enum && existing && existing.enumValues.length > 0) {
+      if (!currentHasValue && !field.enum && rawMatches.length > 1) {
         existing = null;
         unclaimable.add(field.path);
       }
 
       // Enum and boolean schema fields only support EQ semantics.
       // If any URL entry for this path uses a non-EQ operator, leave it for freeFields.
-      if (!current && (field.enum || field.type === 'boolean')) {
-        const rawMatches = this._existingMeta.filter(m => m.name === field.path);
+      if (!currentHasValue && (field.enum || field.type === 'boolean')) {
         if (rawMatches.some(m => m.operation && m.operation !== 'EQ')) {
           existing = null;
           unclaimable.add(field.path);

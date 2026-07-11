@@ -45,6 +45,16 @@ const AUXILIARY_FORM_FIELDS = {
     ],
 };
 
+// These selectors determine which JSON schema the server embeds in the filter
+// form. MRQL remains the filter source of truth, but the raw selector must also
+// survive navigation so schema-driven metadata controls can be reconstructed
+// before the client-side MRQL synchronizer starts.
+const SCHEMA_BOOTSTRAP_FORM_FIELDS = {
+    resource: ['ResourceCategoryId'],
+    note: ['NoteTypeId'],
+    group: ['categories'],
+};
+
 const SORT_TO_MRQL = {
     created_at: 'created', updated_at: 'updated', name: 'name', file_size: 'fileSize',
 };
@@ -619,9 +629,11 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
             this._formSubmitHandler = () => {
                 this.updateHiddenMRQL();
                 // The canonical MRQL already contains these predicates. Keep
-                // list-only controls (notably SortBy) but avoid double filters.
+                // list-only controls (notably SortBy) and schema bootstrap
+                // selectors, while avoiding duplicate legacy predicates.
                 for (const name of this.synchronizedFormFields()) {
-                    if (name === 'SortBy') continue;
+                    if (name === 'SortBy' ||
+                        (SCHEMA_BOOTSTRAP_FORM_FIELDS[this.entity] || []).includes(name)) continue;
                     for (const control of this.filterForm.querySelectorAll(`[name="${CSS.escape(name)}"]`)) {
                         control.disabled = true;
                     }
@@ -681,8 +693,9 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
             const name = anchor.dataset.filterTagName;
             this.query = toggleQuickTagInMRQL(this.entity, this.query.trim(), name);
             this.updateHiddenMRQL();
-            this.scheduleValidate();
-            this.syncFormFromMRQL();
+            // Quick tags are actions, not merely form edits: apply the new
+            // canonical query immediately so the result list changes too.
+            this.submit();
         },
 
         synchronizedFormFields() {
@@ -772,7 +785,15 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
                                 selected.push(match);
                             }
                         } else {
-                            selected = rawValues.map(Number).map((ID) => ({ ID, Name: `#${ID}` }));
+                            // Preserve server-rendered entity details (especially
+                            // MetaSchema on category selectors) when MRQL uses an
+                            // ID. Replacing these with a bare #ID placeholder
+                            // clears schema-driven controls during initialization.
+                            const existingById = new Map(
+                                (data.selectedResults || []).map((item) => [Number(item.ID), item]),
+                            );
+                            selected = rawValues.map(Number).map((ID) =>
+                                existingById.get(ID) || { ID, Name: `#${ID}` });
                         }
                         data.resetSelectedResults(selected);
                         continue;
@@ -973,6 +994,13 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
             const params = new URLSearchParams(window.location.search);
             const queryParts = splitOrderBy(this.query.trim());
             const val = queryParts.filter;
+            const translated = mrqlToFormValues(this.entity, this.query.trim());
+            const schemaBootstrap = new Map(
+                (SCHEMA_BOOTSTRAP_FORM_FIELDS[this.entity] || [])
+                    .map((name) => [name, translated.compatible && !translated.nameLookups.has(name)
+                        ? (translated.values.get(name) || []).filter((value) => /^\d+$/.test(value))
+                        : []]),
+            );
             // MRQL is now the single filter source of truth. Remove sidebar
             // predicates so the same filter is not applied twice on navigation.
             for (const name of this.synchronizedFormFields()) params.delete(name);
@@ -980,6 +1008,12 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
                 if (name === 'MetaQuery' || name.startsWith('MetaQuery.')) params.delete(name);
             }
             params.delete('Untagged');
+            // The server needs these IDs to render the matching schema-driven
+            // controls on the destination page. They mirror MRQL; they are not
+            // an additional source of filter state.
+            for (const [name, values] of schemaBootstrap) {
+                for (const value of values) params.append(name, value);
+            }
             const sort = parseMRQLSort(this.entity, queryParts.order);
             if (sort.compatible) for (const value of sort.values) params.append('SortBy', value);
             if (val) {

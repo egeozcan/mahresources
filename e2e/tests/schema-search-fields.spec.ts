@@ -4,7 +4,7 @@
  * Tests that the schemaSearchFields Alpine.js component renders the correct
  * filter inputs when a category (or resource category) with a MetaSchema is
  * selected in the list-view sidebar, and that form submission produces the
- * expected MetaQuery URL parameters.
+ * expected canonical MRQL metadata predicates.
  */
 import { test, expect } from '../fixtures/base.fixture';
 import {
@@ -412,9 +412,9 @@ test.describe('Schema-Driven Search Fields', () => {
     await expect(numberInputs).not.toHaveCount(0);
   });
 
-  // ── 6. Submitting schema fields produces correct MetaQuery URL params ──────
+  // ── 6. Submitting schema fields produces canonical MRQL predicates ─────────
 
-  test('filling a number field and submitting produces MetaQuery param in URL', async ({
+  test('filling a number field and submitting produces MRQL metadata in URL', async ({
     groupPage,
     page,
   }) => {
@@ -430,13 +430,11 @@ test.describe('Schema-Driven Search Fields', () => {
     // Submit the search form (targets the sidebar form specifically)
     await submitFilterForm(page, 'Filter groups');
 
-    const url = page.url();
-    // MetaQuery should contain the encoded param for weight:EQ:42
-    expect(url).toContain('MetaQuery=');
-    expect(decodeURIComponent(url)).toContain('weight:EQ:42');
+    const query = new URL(page.url()).searchParams.get('mrql');
+    expect(query).toContain('meta.weight = 42');
   });
 
-  test('checking an enum checkbox and submitting produces MetaQuery param in URL', async ({
+  test('checking an enum checkbox and submitting produces MRQL metadata in URL', async ({
     groupPage,
     page,
   }) => {
@@ -451,12 +449,11 @@ test.describe('Schema-Driven Search Fields', () => {
     // Submit
     await submitFilterForm(page, 'Filter groups');
 
-    const url = page.url();
-    expect(url).toContain('MetaQuery=');
-    expect(decodeURIComponent(url)).toContain('color:EQ:"red"');
+    const query = new URL(page.url()).searchParams.get('mrql');
+    expect(query).toContain('meta.color = "red"');
   });
 
-  test('setting boolean radio to Yes and submitting produces MetaQuery param in URL', async ({
+  test('setting boolean radio to Yes and submitting produces MRQL metadata in URL', async ({
     groupPage,
     page,
   }) => {
@@ -471,9 +468,8 @@ test.describe('Schema-Driven Search Fields', () => {
     // Submit
     await submitFilterForm(page, 'Filter groups');
 
-    const url = page.url();
-    expect(url).toContain('MetaQuery=');
-    expect(decodeURIComponent(url)).toContain('active:EQ:true');
+    const query = new URL(page.url()).searchParams.get('mrql');
+    expect(query).toContain('meta.active = true');
   });
 
   // ── 7. Multi-category intersection — only common fields shown ─────────────
@@ -563,8 +559,8 @@ test.describe('Schema-Driven Search Fields', () => {
     // Submit
     await submitFilterForm(page, 'Filter groups');
 
-    const url = page.url();
-    expect(decodeURIComponent(url)).toContain('weight:GT:10');
+    const query = new URL(page.url()).searchParams.get('mrql');
+    expect(query).toContain('meta.weight > 10');
   });
 
   // ── 10. Resources list view: schema fields from resource category ──────────
@@ -592,7 +588,7 @@ test.describe('Schema-Driven Search Fields', () => {
     await expect(container.locator('input[type="number"]')).not.toHaveCount(0);
   });
 
-  // ── 11. URL state restoration (pre-fill from MetaQuery params) ─────────────
+  // ── 11. URL state restoration (pre-fill from canonical MRQL) ───────────────
 
   test('schema fields are pre-filled after form submit and page reload', async ({
     groupPage,
@@ -607,7 +603,7 @@ test.describe('Schema-Driven Search Fields', () => {
     const weightInput = container.locator('input[type="number"]').first();
     await weightInput.fill('42');
 
-    // Submit — page reloads with MetaQuery params in URL
+    // Submit — page reloads with canonical MRQL in the URL
     await submitFilterForm(page, 'Filter groups');
 
     // After reload, the category autocompleter should restore from URL params,
@@ -667,9 +663,9 @@ test.describe('Schema-Driven Search Fields', () => {
     await expect(container.locator('input, select')).toHaveCount(0);
   });
 
-  // ── 14. Multiple enum checkboxes → multiple MetaQuery entries (OR logic) ───
+  // ── 14. Multiple enum checkboxes → an MRQL OR group ────────────────────────
 
-  test('checking multiple enum checkboxes produces multiple MetaQuery entries', async ({
+  test('checking multiple enum checkboxes produces an MRQL OR group', async ({
     groupPage,
     page,
   }) => {
@@ -685,9 +681,8 @@ test.describe('Schema-Driven Search Fields', () => {
     // Submit
     await submitFilterForm(page, 'Filter groups');
 
-    const decoded = decodeURIComponent(page.url());
-    expect(decoded).toContain('color:EQ:"red"');
-    expect(decoded).toContain('color:EQ:"green"');
+    const query = new URL(page.url()).searchParams.get('mrql');
+    expect(query).toContain('(meta.color = "red" OR meta.color = "green")');
   });
 
   // ── 15. Keyboard focus management for operator toggle ─────────────────────
@@ -876,6 +871,33 @@ test.describe('Schema-Driven Search Fields', () => {
     expect(weightCount, 'freeFields should keep both weight range entries').toBe(2);
   });
 
+  test('schema rebuild preserves a new value after clearing unsupported range metadata', async ({
+    page,
+  }) => {
+    await page.goto(`/groups?categories=${categoryWithSchemaId}` +
+      `&MetaQuery.0=${encodeURIComponent('weight:GT:5')}` +
+      `&MetaQuery.1=${encodeURIComponent('weight:LT:10')}`);
+
+    const freeFieldsGroup = page.locator('[role="group"][aria-label="Meta"]');
+    const freeTextInputs = freeFieldsGroup.locator('input[type="text"]');
+    const weightNames = [];
+    for (let i = 0; i < await freeTextInputs.count(); i++) {
+      if (await freeTextInputs.nth(i).inputValue() === 'weight') weightNames.push(freeTextInputs.nth(i));
+    }
+    expect(weightNames).toHaveLength(2);
+    // Clearing the free-field names removes the unsupported predicates.
+    await weightNames[1].fill('');
+    await weightNames[0].fill('');
+
+    const weightInput = schemaFieldsGroup(page).locator('input[type="number"]').first();
+    await weightInput.fill('7');
+
+    // Adding the overlapping category rebuilds the schema. The original URL
+    // snapshot must not erase the new representable in-progress value.
+    await selectGroupCategory(page, `Schema Cat B ${runId}`);
+    await expect(schemaFieldsGroup(page).locator('input[type="number"]').first()).toHaveValue('7');
+  });
+
   // ── 19. User-added freeFields rows survive schema selection changes ──────────
 
   test('user-added freeFields rows are not erased by schema category changes', async ({
@@ -1033,9 +1055,9 @@ test.describe('Schema-Driven Search Fields', () => {
     // Submit
     await submitFilterForm(page, 'Filter groups');
 
-    // The URL should contain label:LI:"007" (quoted string), not label:LI:7 (number)
-    const decoded = decodeURIComponent(page.url());
-    expect(decoded).toContain('label:LI:"007"');
+    // The numeric-looking value remains a quoted string in canonical MRQL.
+    const query = new URL(page.url()).searchParams.get('mrql');
+    expect(query).toContain('meta.label ~ "*007*"');
   });
 
   // ── 24. integer/number intersection stays numeric ───────────────────────────
@@ -1060,9 +1082,9 @@ test.describe('Schema-Driven Search Fields', () => {
     await numberInputs.first().fill('42');
     await submitFilterForm(page, 'Filter groups');
 
-    const decoded = decodeURIComponent(page.url());
-    expect(decoded).toContain('weight:EQ:42');
-    expect(decoded).not.toContain('weight:LI:');
+    const query = new URL(page.url()).searchParams.get('mrql');
+    expect(query).toContain('meta.weight = 42');
+    expect(query).not.toContain('meta.weight ~');
   });
 
   // ── 25. Enum values with coercible strings are quoted ───────────────────────
@@ -1081,9 +1103,9 @@ test.describe('Schema-Driven Search Fields', () => {
 
     await submitFilterForm(page, 'Filter groups');
 
-    const decoded = decodeURIComponent(page.url());
-    // Should be code:EQ:"007" (quoted string), not code:EQ:7
-    expect(decoded).toContain('code:EQ:"007"');
+    const query = new URL(page.url()).searchParams.get('mrql');
+    // The coercible enum value must remain a quoted MRQL string.
+    expect(query).toContain('meta.code = "007"');
   });
 
   // ── 26. Numeric enum values are not quoted ──────────────────────────────────
@@ -1100,10 +1122,9 @@ test.describe('Schema-Driven Search Fields', () => {
 
     await submitFilterForm(page, 'Filter groups');
 
-    const decoded = decodeURIComponent(page.url());
-    // Should be rating:EQ:3 (unquoted number), not rating:EQ:"3"
-    expect(decoded).toContain('rating:EQ:3');
-    expect(decoded).not.toContain('rating:EQ:"3"');
+    const query = new URL(page.url()).searchParams.get('mrql');
+    expect(query).toContain('meta.rating = 3');
+    expect(query).not.toContain('meta.rating = "3"');
   });
 
   // ── 27b. schema-fields-claimed only affects MetaQuery freeFields ─────────────

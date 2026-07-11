@@ -76,9 +76,13 @@ test.describe('Text view groups filter form parity with List view', () => {
     await page.getByRole('button', { name: 'Apply Filters' }).click();
     await page.waitForLoadState('load');
 
-    // The URL should still contain SearchParentsForName
+    // The toggle is preserved semantically in canonical MRQL rather than as a
+    // second, legacy query-string source of truth.
     const url = new URL(page.url());
-    expect(url.searchParams.get('SearchParentsForName')).toBe('1');
+    expect(url.searchParams.get('SearchParentsForName')).toBeNull();
+    expect(url.searchParams.get('mrql')).toBe(
+      '(name ~ "*TextViewFilter*" OR parent.name ~ "*TextViewFilter*")',
+    );
   });
 
   test.afterAll(async ({ apiClient }) => {

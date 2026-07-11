@@ -7,6 +7,8 @@ test.describe('MRQL list-page filter bar', () => {
   let vacTag: number;
   let workTag: number;
   let groupId: number;
+  let groupCategoryId: number;
+  let alternateGroupCategoryId: number;
   let vacName: string;
   let workName: string;
 
@@ -15,6 +17,11 @@ test.describe('MRQL list-page filter bar', () => {
     vacTag = (await apiClient.createTag(`barvac-${runId}`)).ID;
     workTag = (await apiClient.createTag(`barwork-${runId}`)).ID;
     const cat = await apiClient.createCategory(`bar-cat-${runId}`, 'bar test category');
+    const alternateCat = await apiClient.createCategory(
+      `bar-alt-cat-${runId}`, 'alternate bar test category',
+    );
+    groupCategoryId = cat.ID;
+    alternateGroupCategoryId = alternateCat.ID;
     groupId = (await apiClient.createGroup({ name: `bar-group-${runId}`, categoryId: cat.ID })).ID;
 
     vacName = `bar-vac-${runId}`;
@@ -60,6 +67,25 @@ test.describe('MRQL list-page filter bar', () => {
 
     await name.fill('autumn');
     await expect(bar).toHaveValue('name ~ "*autumn*" AND width >= 900');
+  });
+
+  test('immediate MRQL submit replaces a stale schema bootstrap category', async ({ page }) => {
+    await page.goto(
+      `/groups?categories=${groupCategoryId}&mrql=${encodeURIComponent(`category = ${groupCategoryId}`)}`,
+    );
+    const bar = page.locator('.mrql-bar input[role="combobox"]');
+    const expected = `category = ${alternateGroupCategoryId}`;
+
+    // Submit before the debounced MRQL-to-form synchronization can replace the
+    // sidebar chip. Navigation must derive its bootstrap ID from MRQL itself.
+    await bar.fill(expected);
+    await Promise.all([
+      page.waitForURL((url) => url.searchParams.get('mrql') === expected),
+      bar.press('Enter'),
+    ]);
+
+    const url = new URL(page.url());
+    expect(url.searchParams.getAll('categories')).toEqual([String(alternateGroupCategoryId)]);
   });
 
   test('round-trips resource original location', async ({ page }) => {
@@ -131,11 +157,15 @@ test.describe('MRQL list-page filter bar', () => {
     // the stale href generated when the page first rendered.
     await bar.fill('name ~ "*bar-*"');
 
-    await page
-      .locator('form[aria-label="Filter resources"] .tags a', { hasText: `barvac-${runId}` })
-      .click();
+    const expected = `name ~ "*bar-*" AND tags = "barvac-${runId}"`;
+    await Promise.all([
+      page.waitForURL((url) => url.searchParams.get('mrql') === expected),
+      page
+        .locator('form[aria-label="Filter resources"] .tags a', { hasText: `barvac-${runId}` })
+        .click(),
+    ]);
 
-    await expect(bar).toHaveValue(`name ~ "*bar-*" AND tags = "barvac-${runId}"`);
+    await expect(bar).toHaveValue(expected);
     const tagsField = page.locator('form[aria-label="Filter resources"] label', { hasText: 'Tags' }).locator('..');
     await expect(tagsField.locator(`button[aria-label="Remove barvac-${runId}"]`)).toBeVisible();
   });
@@ -146,7 +176,10 @@ test.describe('MRQL list-page filter bar', () => {
     const form = page.locator('form[aria-label="Filter resources"]');
     const bar = page.locator('.mrql-bar input[role="combobox"]');
 
-    await form.locator('.tags a', { hasText: tag }).click();
+    await Promise.all([
+      page.waitForURL((url) => !url.searchParams.has('mrql')),
+      form.locator('.tags a', { hasText: tag }).click(),
+    ]);
     await expect(bar).toHaveValue('');
     await expect(form.locator(`button[aria-label="Remove ${tag}"]`)).toHaveCount(0);
   });

@@ -240,8 +240,8 @@ test.describe('Shared Notes Filter', () => {
     // Submit the form (use exact match and type=submit to avoid hitting global search button)
     await page.getByRole('button', { name: 'Apply Filters', exact: true }).click();
 
-    // Wait for page to reload with filter
-    await page.waitForURL(/Shared=1/);
+    // The list bar canonicalizes the sidebar toggle into MRQL.
+    await page.waitForURL((url) => url.searchParams.get('mrql') === 'shared = true');
 
     // Only shared note should be visible
     await expect(page.getByRole('link', { name: 'Shared Filter Test Note', exact: true })).toBeVisible();
