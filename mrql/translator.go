@@ -869,6 +869,22 @@ func (tc *translateContext) translateNotExpr(db *gorm.DB, expr *NotExpr) (*gorm.
 func (tc *translateContext) translateComparisonExpr(db *gorm.DB, expr *ComparisonExpr) (*gorm.DB, error) {
 	fieldName := expr.Field.Name()
 
+	// `shared` is a note-only derived boolean backed by share_token presence.
+	if fieldName == "shared" && tc.entityType == EntityNote {
+		lit, ok := expr.Value.(*BooleanLiteral)
+		if !ok || (expr.Operator.Type != TokenEq && expr.Operator.Type != TokenNeq) {
+			return nil, &TranslateError{Message: "shared only supports = or != with true or false", Pos: expr.Pos()}
+		}
+		isShared := lit.Value
+		if expr.Operator.Type == TokenNeq {
+			isShared = !isShared
+		}
+		if isShared {
+			return db.Where(tc.qualifiedColumn("share_token") + " IS NOT NULL"), nil
+		}
+		return db.Where(tc.qualifiedColumn("share_token") + " IS NULL"), nil
+	}
+
 	// Regex match (~* / !~*) is PostgreSQL-only. SQLite has no native regex, so
 	// reject here as defense-in-depth for direct Translate callers. The primary
 	// guard is the up-front ContainsRegexOperator scan in application_context,

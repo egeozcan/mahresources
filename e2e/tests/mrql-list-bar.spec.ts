@@ -62,6 +62,55 @@ test.describe('MRQL list-page filter bar', () => {
     await expect(bar).toHaveValue('name ~ "*autumn*" AND width >= 900');
   });
 
+  test('round-trips resource original location', async ({ page }) => {
+    await page.goto('/resources');
+    const bar = page.locator('.mrql-bar input[role="combobox"]');
+    const originalLocation = page.locator(
+      'form[aria-label="Filter resources"] input[name="OriginalLocation"]',
+    );
+
+    await originalLocation.fill('/archive/2026');
+    await expect(bar).toHaveValue('originalLocation ~ "*/archive/2026*"');
+
+    await bar.fill('originalLocation ~ "*camera*"');
+    await expect(originalLocation).toHaveValue('camera');
+  });
+
+  test('round-trips note schedule and shared-only controls', async ({ page }) => {
+    await page.goto('/notes');
+    const form = page.locator('form[aria-label="Filter notes"]');
+    const bar = page.locator('.mrql-bar input[role="combobox"]');
+
+    await form.locator('input[name="StartDateAfter"]').fill('2026-07-01');
+    await form.locator('input[name="EndDateBefore"]').fill('2026-08-31');
+    await form.locator('input[name="Shared"]').check();
+    await expect(bar).toHaveValue(
+      'startDate >= "2026-07-01" AND endDate <= "2026-08-31" AND shared = true',
+    );
+
+    await bar.fill(
+      'startDate <= "2026-07-31" AND endDate >= "2026-08-01" AND shared = true ' +
+      'ORDER BY meta.rating DESC, name ASC',
+    );
+    await expect(form.locator('input[name="StartDateBefore"]')).toHaveValue('2026-07-31');
+    await expect(form.locator('input[name="EndDateAfter"]')).toHaveValue('2026-08-01');
+    await expect(form.locator('input[name="Shared"]')).toBeChecked();
+    await expect(form.getByLabel('Sort column 1')).toHaveValue('__meta__');
+    await expect(form.getByLabel('Custom property name for sort 1')).toHaveValue('rating');
+    await expect(form.getByLabel('Sort column 2')).toHaveValue('name');
+  });
+
+  test('preserves null metadata when another metadata row changes', async ({ page }) => {
+    await page.goto('/resources');
+    const bar = page.locator('.mrql-bar input[role="combobox"]');
+    await bar.fill('meta.rating < 5 AND meta.missing IS NULL');
+
+    const form = page.locator('form[aria-label="Filter resources"]');
+    await expect(form.getByLabel('Field 2 value')).toHaveValue('null');
+    await form.getByLabel('Field 1 value').fill('4');
+    await expect(bar).toHaveValue('meta.rating < 4 AND meta.missing IS NULL');
+  });
+
   test('uses tag names when the sidebar autocompleter changes', async ({ page }) => {
     await page.goto('/resources');
     const bar = page.locator('.mrql-bar input[role="combobox"]');
@@ -76,14 +125,30 @@ test.describe('MRQL list-page filter bar', () => {
   });
 
   test('merges a quick tag into the current MRQL and form', async ({ page }) => {
-    await page.goto('/resources?mrql=' + encodeURIComponent('name ~ "*bar-*"'));
+    await page.goto('/resources');
     const bar = page.locator('.mrql-bar input[role="combobox"]');
+    // Keep this state live/unsaved: the quick-tag click must not fall back to
+    // the stale href generated when the page first rendered.
+    await bar.fill('name ~ "*bar-*"');
 
-    await page.locator('.tags a', { hasText: `barvac-${runId}` }).click();
+    await page
+      .locator('form[aria-label="Filter resources"] .tags a', { hasText: `barvac-${runId}` })
+      .click();
 
     await expect(bar).toHaveValue(`name ~ "*bar-*" AND tags = "barvac-${runId}"`);
     const tagsField = page.locator('form[aria-label="Filter resources"] label', { hasText: 'Tags' }).locator('..');
     await expect(tagsField.locator(`button[aria-label="Remove barvac-${runId}"]`)).toBeVisible();
+  });
+
+  test('an active quick tag toggles off in MRQL and the form', async ({ page }) => {
+    const tag = `barvac-${runId}`;
+    await page.goto('/resources?mrql=' + encodeURIComponent(`tags = "${tag}"`));
+    const form = page.locator('form[aria-label="Filter resources"]');
+    const bar = page.locator('.mrql-bar input[role="combobox"]');
+
+    await form.locator('.tags a', { hasText: tag }).click();
+    await expect(bar).toHaveValue('');
+    await expect(form.locator(`button[aria-label="Remove ${tag}"]`)).toHaveCount(0);
   });
 
   test('locks the form for richer MRQL and offers the lossy form reset', async ({ page }) => {
@@ -95,10 +160,37 @@ test.describe('MRQL list-page filter bar', () => {
     await expect(sidebar.locator('input[name="Name"]')).toBeDisabled();
     await expect(page.locator('.mrql-bar [role="status"]')).toContainText('cannot represent');
     await expect(page.locator('.mrql-bar button', { hasText: 'Use form values' })).toBeVisible();
+    await expect(sidebar.locator('input[name="Name"]')).toHaveCSS('background-color', 'rgb(245, 245, 244)');
 
     await page.locator('.mrql-bar button', { hasText: 'Use form values' }).click();
     await expect(sidebar.locator('input[name="Name"]')).toBeEnabled();
     await expect(bar).toHaveValue('name ~ "*keep-me*"');
+  });
+
+  test('lossy reset clears partially applied relation controls', async ({ page }) => {
+    await page.goto('/notes?SortBy=' + encodeURIComponent("meta->>'priority' asc"));
+    const bar = page.locator('.mrql-bar input[role="combobox"]');
+    const sidebar = page.locator('form[aria-label="Filter notes"]');
+
+    await bar.fill('groups = "does-not-exist" AND noteType = 1');
+    await expect(sidebar).toHaveAttribute('aria-disabled', 'true');
+    await page.locator('.mrql-bar button', { hasText: 'Use form values' }).click();
+
+    await expect(bar).toHaveValue('ORDER BY meta.priority ASC');
+    const noteType = sidebar.locator('label', { hasText: 'Note Type' }).locator('..');
+    await expect(noteType.locator('button[aria-label^="Remove"]')).toHaveCount(0);
+    await expect(sidebar.locator('input[name="NoteTypeId"]')).toHaveValue('');
+  });
+
+  test('invalid metadata keys fail visibly instead of silently disappearing', async ({ page }) => {
+    await page.goto('/groups');
+    const form = page.locator('form[aria-label="Filter groups"]');
+    await form.getByRole('button', { name: 'Add new field' }).click();
+    await form.getByLabel('Field 1 name').fill('project status');
+    await form.getByLabel('Field 1 value').fill('active');
+
+    await expect(form).toHaveAttribute('aria-disabled', 'true');
+    await expect(page.locator('.mrql-bar [role="status"]')).toContainText('cannot represent');
   });
 
   test('display-option and sidebar links preserve the mrql parameter', async ({ page }) => {

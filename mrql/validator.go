@@ -501,13 +501,18 @@ func validateNode(node Node, entityType EntityType) error {
 					Length:  n.Operator.Length,
 				}
 			}
-			if sl, ok := n.Value.(*StringLiteral); ok {
-				if _, valid := ValidEntityTypes[strings.ToLower(sl.Value)]; !valid {
-					return &ValidationError{
-						Message: fmt.Sprintf("invalid entity type value %q: must be one of resource, note, group", sl.Value),
-						Pos:     sl.Pos(),
-						Length:  len(sl.Value),
-					}
+			sl, ok := n.Value.(*StringLiteral)
+			if !ok {
+				return &ValidationError{
+					Message: "type field requires resource, note, or group",
+					Pos: n.Value.Pos(),
+				}
+			}
+			if _, valid := ValidEntityTypes[strings.ToLower(sl.Value)]; !valid {
+				return &ValidationError{
+					Message: fmt.Sprintf("invalid entity type value %q: must be one of resource, note, group", sl.Value),
+					Pos:     sl.Pos(),
+					Length:  len(sl.Value),
 				}
 			}
 		}

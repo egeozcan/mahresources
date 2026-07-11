@@ -10,7 +10,7 @@
         class="mb-2 flex flex-wrap items-center justify-between gap-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
         role="status"
     >
-        <span>This MRQL includes filters the sidebar form cannot represent. The form is disabled.</span>
+        <span>The MRQL editor and sidebar form cannot represent the same filters. The form is disabled.</span>
         <button type="button" @click="useFormValues()" class="rounded bg-amber-700 px-3 py-1.5 text-white hover:bg-amber-800">
             Use form values
         </button>

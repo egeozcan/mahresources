@@ -3,6 +3,9 @@ import {
     expandGroupMRQLFromParams,
     expandResourceMRQLFromParams,
     formValuesToMRQL,
+    formMetadataIsRepresentable,
+    metadataRowsForFreeForm,
+    toggleQuickTagInMRQL,
     mrqlToFormValues,
 } from './mrqlBar.js';
 
@@ -18,6 +21,37 @@ describe('MRQL list form synchronization', () => {
         expect(formValuesToMRQL('resource', values, relations)).toBe(
             'name ~ "*summer \\"trip\\"*" AND width >= 800 AND tags = "vacation" AND tags = "favorite"',
         );
+    });
+
+    test('round-trips the resource original-location form field', () => {
+        const values = new FormData();
+        values.set('OriginalLocation', '/archive/2026');
+        const query = formValuesToMRQL('resource', values);
+        expect(query).toBe('originalLocation ~ "*/archive/2026*"');
+        expect(mrqlToFormValues('resource', query).values.get('OriginalLocation'))
+            .toEqual(['/archive/2026']);
+    });
+
+    test('round-trips note schedule dates and shared-only toggle', () => {
+        const values = new FormData();
+        values.set('StartDateAfter', '2026-07-01');
+        values.set('StartDateBefore', '2026-07-31');
+        values.set('EndDateAfter', '2026-08-01');
+        values.set('EndDateBefore', '2026-08-31');
+        values.set('Shared', '1');
+        const query = formValuesToMRQL('note', values);
+        expect(query).toBe(
+            'startDate <= "2026-07-31" AND startDate >= "2026-07-01" AND ' +
+            'endDate <= "2026-08-31" AND endDate >= "2026-08-01" AND shared = true',
+        );
+        const translated = mrqlToFormValues('note', query);
+        expect(translated.compatible).toBe(true);
+        expect(translated.values.get('StartDateBefore')).toEqual(['2026-07-31']);
+        expect(translated.values.get('StartDateAfter')).toEqual(['2026-07-01']);
+        expect(translated.values.get('EndDateBefore')).toEqual(['2026-08-31']);
+        expect(translated.values.get('EndDateAfter')).toEqual(['2026-08-01']);
+        expect(translated.values.get('Shared')).toEqual(['1']);
+        expect(mrqlToFormValues('note', 'shared = false').compatible).toBe(false);
     });
 
     test('translates the canonical subset back to form values', () => {
@@ -44,6 +78,18 @@ describe('MRQL list form synchronization', () => {
         values.set('tags', '42');
         expect(formValuesToMRQL('resource', values, new Map([['tags', ['2026']]])))
             .toBe('tags = "2026"');
+    });
+
+    test('quick tags merge into live MRQL and toggle back out', () => {
+        const added = toggleQuickTagInMRQL('group', 'description ~ "*photos*"', 'vacation');
+        expect(added).toBe('description ~ "*photos*" AND tags = "vacation"');
+        expect(toggleQuickTagInMRQL('group', added, 'vacation'))
+            .toBe('description ~ "*photos*"');
+        expect(toggleQuickTagInMRQL(
+            'group',
+            '(tags = "vacation" OR parent.tags = "vacation" OR children.tags = "vacation") ORDER BY name ASC',
+            'vacation',
+        )).toBe('ORDER BY name ASC');
     });
 
     test('represents group parent and child search switches in MRQL', () => {
@@ -216,6 +262,31 @@ describe('MRQL list form synchronization', () => {
             { name: 'reviewed', operation: 'EQ', value: null },
             { name: 'deleted', operation: 'NE', value: null },
         ]);
+    });
+
+    test('keeps null metadata as an editable free-field literal', () => {
+        expect(metadataRowsForFreeForm([
+            { name: 'missing', operation: 'EQ', value: null },
+            { name: 'flag', operation: 'EQ', value: false },
+        ])).toEqual([
+            { name: 'missing', operation: 'EQ', value: 'null' },
+            { name: 'flag', operation: 'EQ', value: 'false' },
+        ]);
+        expect(metadataRowsForFreeForm([
+            { name: 'zero', operation: 'EQ', value: 0 },
+            { name: 'code', operation: 'EQ', value: '007' },
+        ])).toEqual([
+            { name: 'zero', operation: 'EQ', value: '0' },
+            { name: 'code', operation: 'EQ', value: '"007"' },
+        ]);
+    });
+
+    test('rejects metadata form keys MRQL cannot encode', () => {
+        const values = new FormData();
+        values.append('MetaQuery.0', 'project status:EQ:"active"');
+        expect(formMetadataIsRepresentable('group', values)).toBe(false);
+        values.set('MetaQuery.0', 'project_status:EQ:"active"');
+        expect(formMetadataIsRepresentable('group', values)).toBe(true);
     });
 
     test('rejects richer MRQL instead of partially changing the form', () => {

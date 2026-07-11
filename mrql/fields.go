@@ -41,6 +41,7 @@ var resourceFields = []FieldDef{
 	{Name: "width", Type: FieldNumber, Column: "width"},
 	{Name: "height", Type: FieldNumber, Column: "height"},
 	{Name: "originalName", Type: FieldString, Column: "original_name"},
+	{Name: "originalLocation", Type: FieldString, Column: "original_location"},
 	{Name: "hash", Type: FieldString, Column: "hash"},
 	{Name: "notes", Type: FieldRelation, Column: "notes"},
 	// similarImages is a derived relation over resources sharing an exact DHash.
@@ -54,6 +55,9 @@ var noteFields = []FieldDef{
 	{Name: "group", Type: FieldRelation, Column: "groups"}, // alias
 	{Name: "owner", Type: FieldRelation, Column: "owner_id"},
 	{Name: "noteType", Type: FieldNumber, Column: "note_type_id"},
+	{Name: "startDate", Type: FieldDateTime, Column: "start_date"},
+	{Name: "endDate", Type: FieldDateTime, Column: "end_date"},
+	{Name: "shared", Type: FieldString, Column: "share_token"},
 	{Name: "resources", Type: FieldRelation, Column: "resources"},
 }
 

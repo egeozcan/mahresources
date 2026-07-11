@@ -9,7 +9,8 @@ const FORM_FIELDS = {
     resource: {
         Name: ['name', 'contains'], Description: ['description', 'contains'],
         OriginalName: ['originalName', 'contains'], Hash: ['hash', 'equals'],
-        ContentType: ['contentType', 'contains'], ResourceCategoryId: ['category', 'number'],
+        ContentType: ['contentType', 'contains'], OriginalLocation: ['originalLocation', 'contains'],
+        ResourceCategoryId: ['category', 'number'],
         CreatedBefore: ['created', '<='], CreatedAfter: ['created', '>='],
         MinWidth: ['width', '>=number'], MaxWidth: ['width', '<=number'],
         MinHeight: ['height', '>=number'], MaxHeight: ['height', '<=number'],
@@ -19,6 +20,9 @@ const FORM_FIELDS = {
     note: {
         Name: ['name', 'contains'], Description: ['description', 'contains'],
         NoteTypeId: ['noteType', 'number'],
+        StartDateBefore: ['startDate', '<='], StartDateAfter: ['startDate', '>='],
+        EndDateBefore: ['endDate', '<='], EndDateAfter: ['endDate', '>='],
+        Shared: ['shared', 'boolean'],
         tags: ['tags', 'relation'], groups: ['groups', 'relation'],
         ownerId: ['owner', 'relation'],
     },
@@ -91,6 +95,22 @@ function mrqlMetaLiteral(value) {
     return quoteMRQL(value);
 }
 
+// freeFields uses a text model and derives JSON scalar types from its text.
+// Keep falsy typed values visible, and quote coercible strings so editing an
+// unrelated row cannot change or discard their type.
+export function metadataRowsForFreeForm(metadata) {
+    return metadata.map((entry) => {
+        let value;
+        if (entry.value === null) value = 'null';
+        else if (typeof entry.value === 'string') {
+            value = /^(?:true|false|null|-?\d+(?:\.\d+)?)$/i.test(entry.value)
+                ? JSON.stringify(entry.value)
+                : entry.value;
+        } else value = String(entry.value);
+        return { ...entry, value };
+    });
+}
+
 function metadataValuesToMRQL(entity, formData) {
     const entries = [];
     for (const [name, raw] of formData.entries()) {
@@ -133,6 +153,18 @@ function metadataValuesToMRQL(entity, formData) {
     return clauses;
 }
 
+export function formMetadataIsRepresentable(entity, formData) {
+    for (const [name, raw] of formData.entries()) {
+        if (name !== 'MetaQuery' && !/^MetaQuery\.\d+$/.test(name)) continue;
+        const entry = parseMetaParam(raw);
+        if (!entry) return false;
+        const field = metaFieldToMRQL(entity, entry.name);
+        if (!/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(field)) return false;
+        if (entry.value === null && !['EQ', 'NE'].includes(entry.operation)) return false;
+    }
+    return true;
+}
+
 export function formValuesToMRQL(entity, formData, relationValues = new Map()) {
     const fields = FORM_FIELDS[entity] || {};
     const clauses = [];
@@ -167,6 +199,7 @@ export function formValuesToMRQL(entity, formData, relationValues = new Map()) {
             } else if (kind === 'contains') clauses.push(`${field} ~ ${quoteMRQL(`*${value}*`)}`);
             else if (kind === 'equals') clauses.push(`${field} = ${quoteMRQL(value)}`);
             else if (kind === 'number') clauses.push(`${field} = ${Number(value)}`);
+            else if (kind === 'boolean') clauses.push(`${field} = true`);
             else if (kind === 'relation') {
                 clauses.push(!hasRelationNames && /^\d+$/.test(value)
                     ? `${field} = ${Number(value)}`
@@ -249,6 +282,33 @@ function combineMRQL(query, formQuery) {
         : [...new Set([...queryClauses, ...formClauses])].join(' AND ');
     const order = formParts.order || queryParts.order;
     return filter + (order ? `${filter ? ' ' : ''}ORDER BY ${order}` : '');
+}
+
+function removeTagFromMRQL(query, name) {
+    const queryParts = splitOrderBy(query);
+    const clauses = queryParts.filter ? splitAnd(queryParts.filter) : [];
+    if (!clauses) return query;
+    const literal = quoteMRQL(name);
+    const kept = clauses.filter((clause) => {
+        if (clause.trim() === `tags = ${literal}`) return false;
+        const expanded = splitLogical(unwrapParens(clause), 'OR');
+        if (!expanded || expanded.length < 2) return true;
+        return !expanded.every((part) =>
+            /^(?:tags|parent\.tags|children\.tags)\s*=\s*/.test(part) &&
+            part.replace(/^[^=]+\s*=\s*/, '').trim() === literal);
+    });
+    const filter = kept.join(' AND ');
+    return filter + (queryParts.order ? `${filter ? ' ' : ''}ORDER BY ${queryParts.order}` : '');
+}
+
+export function toggleQuickTagInMRQL(entity, query, name) {
+    const translated = mrqlToFormValues(entity, query);
+    if (!translated.compatible) return query;
+    const active = (translated.values.get('tags') || [])
+        .some((value) => String(value).toLowerCase() === String(name).toLowerCase());
+    return active
+        ? removeTagFromMRQL(query, name)
+        : combineMRQL(query, `tags = ${quoteMRQL(name)}`);
 }
 
 function splitAnd(query) {
@@ -465,6 +525,9 @@ export function mrqlToFormValues(entity, query) {
         } else if (/^-?\d+(?:\.\d+)?$/.test(literal.trim())) {
             value = literal.trim();
             kind = op === '=' ? 'number' : `${op}number`;
+        } else if (/^(true|false)$/i.test(literal.trim())) {
+            value = literal.trim().toLowerCase();
+            kind = 'boolean';
         } else {
             value = unquoteMRQL(literal.trim());
             if (value === null) return { compatible: false, values };
@@ -477,6 +540,11 @@ export function mrqlToFormValues(entity, query) {
         if (!name && kind === 'equals') {
             name = reverse.get(`${field}|relation`);
             if (name) nameLookups.add(name);
+        }
+        if (name === 'Shared') {
+            const selectsShared = (op === '=' && value === 'true') || (op === '!=' && value === 'false');
+            if (!selectsShared) return { compatible: false, values, nameLookups, metadata };
+            value = '1';
         }
         if (!name) return { compatible: false, values };
         values.set(name, [...(values.get(name) || []), String(value)]);
@@ -523,6 +591,7 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
                 this.filterForm.removeEventListener('input', this._formChangeHandler);
                 this.filterForm.removeEventListener('change', this._formChangeHandler);
                 this.filterForm.removeEventListener('click', this._formChangeHandler);
+                this.filterForm.removeEventListener('click', this._quickTagClickHandler);
                 this.filterForm.removeEventListener('submit', this._formSubmitHandler);
             }
         },
@@ -542,6 +611,8 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
                 clearTimeout(this._formSyncTimer);
                 this._formSyncTimer = setTimeout(() => this.syncMRQLFromForm(), 0);
             };
+            this._quickTagClickHandler = (event) => this.onQuickTagClick(event);
+            this.filterForm.addEventListener('click', this._quickTagClickHandler);
             this.filterForm.addEventListener('input', this._formChangeHandler);
             this.filterForm.addEventListener('change', this._formChangeHandler);
             this.filterForm.addEventListener('click', this._formChangeHandler);
@@ -566,6 +637,13 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
             const formQuery = formValuesToMRQL(
                 this.entity, new FormData(this.filterForm), this.relationFormValues());
             this._formQuerySnapshot = formQuery;
+            if (!formMetadataIsRepresentable(this.entity, new FormData(this.filterForm))) {
+                this.query = formQuery;
+                this.formCompatible = false;
+                this.setFormDisabled(true);
+                this.updateHiddenMRQL();
+                return;
+            }
             const explicitQuery = this.entity === 'group'
                 ? expandGroupMRQLFromParams(this.query.trim(), new FormData(this.filterForm))
                 : this.entity === 'resource'
@@ -595,6 +673,18 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
             return values;
         },
 
+        onQuickTagClick(event) {
+            const anchor = event.target.closest?.('[data-filter-tag-name]');
+            if (!anchor || !this.filterForm?.contains(anchor)) return;
+            event.preventDefault();
+            if (!this.formCompatible) return;
+            const name = anchor.dataset.filterTagName;
+            this.query = toggleQuickTagInMRQL(this.entity, this.query.trim(), name);
+            this.updateHiddenMRQL();
+            this.scheduleValidate();
+            this.syncFormFromMRQL();
+        },
+
         synchronizedFormFields() {
             return [
                 ...Object.keys(FORM_FIELDS[this.entity] || {}),
@@ -609,7 +699,7 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
                 .find((root) => window.Alpine.$data(root).name === 'MetaQuery');
             if (freeRoot) {
                 const data = window.Alpine.$data(freeRoot);
-                data.fields = metadata.map((entry) => ({ ...entry, value: entry.value }));
+                data.fields = metadataRowsForFreeForm(metadata);
             }
             const schema = this.filterForm.querySelector('schema-search-mode');
             schema?.setMetaQueryEntries?.(metadata);
@@ -617,6 +707,11 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
 
         syncMRQLFromForm() {
             if (!this.filterForm || this._applyingMRQL) return;
+            if (!formMetadataIsRepresentable(this.entity, new FormData(this.filterForm))) {
+                this.formCompatible = false;
+                this.setFormDisabled(true);
+                return;
+            }
             const query = formValuesToMRQL(
                 this.entity, new FormData(this.filterForm), this.relationFormValues());
             this.query = query;
@@ -649,7 +744,8 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
                     // Autocompleters own dynamically-created hidden controls. If
                     // the requested IDs differ, update their Alpine state too.
                     const root = controls[0]?.closest('[x-data^="autocompleter"]');
-                    const sortRoot = controls[0]?.closest('[x-data^="multiSort"]');
+                    const sortRoot = controls[0]?.closest('[x-data^="multiSort"]') ||
+                        (name === 'SortBy' ? this.filterForm.querySelector('[x-data^="multiSort"]') : null);
                     if (name === 'SortBy' && sortRoot && window.Alpine?.$data) {
                         const data = window.Alpine.$data(sortRoot);
                         const rawValues = translated.values.get(name) || [];
@@ -715,8 +811,12 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
             this.setFormDisabled(false);
             this.updateHiddenMRQL();
             this.scheduleValidate();
-            this.broadcastQuickTags();
-            this.$nextTick(() => this.$refs.input?.focus());
+            // A failed async relation lookup may have partially updated earlier
+            // controls. Re-apply the preserved canonical snapshot atomically.
+            this.$nextTick(async () => {
+                await this.syncFormFromMRQL();
+                this.$refs.input?.focus();
+            });
         },
 
         updateHiddenMRQL() {

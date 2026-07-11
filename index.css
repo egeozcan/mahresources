@@ -54,6 +54,46 @@
 /* Reduce left padding on deeply nested schema form containers to prevent
    content from becoming too narrow at 3+ levels of nesting. */
 @layer components {
+  /* MRQL expressions can be richer than the list sidebar. When that happens,
+     make the inert state unmistakable for controls and link-like quick tags. */
+  form[aria-label^='Filter '][aria-disabled='true']::before {
+    content: 'Disabled by the current MRQL filter';
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d6d3d1;
+    border-radius: 0.375rem;
+    background: #f5f5f4;
+    color: #78716c;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1rem;
+  }
+
+  form[aria-label^='Filter '][aria-disabled='true'] .sidebar-group {
+    opacity: 0.48;
+    filter: grayscale(0.8);
+  }
+
+  form[aria-label^='Filter '][aria-disabled='true'] :is(input, select, textarea) {
+    border-color: #d6d3d1 !important;
+    background-color: #f5f5f4 !important;
+    color: #a8a29e !important;
+    box-shadow: none !important;
+  }
+
+  form[aria-label^='Filter '][aria-disabled='true']
+    :is(input, select, textarea, button, a, label, [role='combobox']) {
+    cursor: not-allowed !important;
+  }
+
+  form[aria-label^='Filter '][aria-disabled='true'] [data-filter-tag-name] {
+    opacity: 0.55;
+    filter: grayscale(1);
+  }
+
   .schema-nesting .schema-nesting {
     padding-left: 0.5rem;
   }
