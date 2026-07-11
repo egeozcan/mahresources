@@ -179,12 +179,28 @@ export function registerBulkSelectionStore(Alpine) {
           }
           const url = new URL(window.location);
           url.pathname = url.pathname + ".body";
-          const newHtml = await fetch(url.toString()).then(x => x.text());
+          const refreshResponse = await fetch(url.toString());
+          if (!refreshResponse.ok) {
+            throw new Error(`Could not refresh list: ${refreshResponse.status}`);
+          }
+          const newHtml = await refreshResponse.text();
+          const parser = new DOMParser();
+          const refreshedDocument = parser.parseFromString(newHtml, 'text/html');
+          const listContainer = document.querySelector(".list-container, .items-container");
+          const listSelector = listContainer?.classList.contains('list-container')
+            ? '.list-container'
+            : '.items-container';
+          const refreshedListContainer = refreshedDocument.querySelector(listSelector);
+
+          if (!listContainer || !refreshedListContainer) {
+            throw new Error('Could not find refreshed list');
+          }
+
           form.reset();
           this.deselectAll();
           Alpine.morph(
-            document.querySelector(".list-container, .items-container"),
-            newHtml,
+            listContainer,
+            refreshedListContainer,
             morphOptionsWithShortcodeElements(),
           );
           this.announce('Bulk operation completed successfully');

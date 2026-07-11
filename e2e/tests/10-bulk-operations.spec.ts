@@ -46,22 +46,31 @@ test.describe('Bulk Operations on Groups', () => {
     await expect(page.locator('button:has-text("Deselect All"), button:has-text("Deselect")')).toBeVisible();
   });
 
-  test('should bulk add tags to groups', async ({ groupPage, apiClient, page }) => {
+  test('should bulk add tags to groups without corrupting the list', async ({ groupPage, page }) => {
     await groupPage.gotoList();
 
     // Select first 2 groups
     await groupPage.selectGroupCheckbox(groupIds[0]);
     await groupPage.selectGroupCheckbox(groupIds[1]);
 
-    // Add tag via API (UI interaction for bulk is complex)
-    await apiClient.addTagsToGroups([groupIds[0], groupIds[1]], [tagId]);
+    await page.getByRole('button', { name: 'Toggle Add Tag editor' }).click();
+    const addTagsForm = page.locator('form[action*="/v1/groups/addTags"]');
+    const tagInput = addTagsForm.getByRole('combobox', { name: 'Add Tag' });
+    await tagInput.fill(`Bulk Tag 1 ${testRunId}`);
+    await page.locator('[role="option"]')
+      .filter({ hasText: `Bulk Tag 1 ${testRunId}` })
+      .click();
+    await addTagsForm.getByRole('button', { name: 'Add', exact: true }).click();
 
-    // Verify tags were added by checking group pages
-    await groupPage.gotoDisplay(groupIds[0]);
-    await expect(page.locator(`a:has-text("Bulk Tag 1 ${testRunId}")`).first()).toBeVisible();
-
-    await groupPage.gotoDisplay(groupIds[1]);
-    await expect(page.locator(`a:has-text("Bulk Tag 1 ${testRunId}")`).first()).toBeVisible();
+    // The body-only refresh contains the header and MRQL bar as siblings of the
+    // item container. Only the item container should be morphed into the page.
+    await expect(page.locator('.mrql-bar')).toHaveCount(1);
+    await expect(page.locator('.items-container')).toHaveCount(1);
+    for (const groupId of groupIds.slice(0, 2)) {
+      const groupCard = page.locator(`[x-data*="itemId: ${groupId}"]`);
+      await expect(groupCard).toBeVisible();
+      await expect(groupCard.getByRole('link', { name: `Bulk Tag 1 ${testRunId}`, exact: true })).toBeVisible();
+    }
   });
 
   test('should bulk remove tags from groups', async ({ groupPage, apiClient, page }) => {
