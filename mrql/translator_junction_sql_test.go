@@ -134,6 +134,10 @@ func TestJunctionSQLShapes(t *testing.T) {
 			want: `NOT EXISTS (SELECT 1 FROM groups_related_resources jt WHERE jt.resource_id = resources.id)`,
 		},
 		{
+			name: "resource similar images IS NOT EMPTY", query: `similarImages IS NOT EMPTY`, entityType: EntityResource,
+			want: `EXISTS (SELECT 1 FROM image_hashes ih WHERE ih.resource_id = resources.id AND EXISTS (SELECT 1 FROM image_hashes i WHERE ih.d_hash = i.d_hash AND ih.id <> i.id))`,
+		},
+		{
 			name: "note groups IS NOT EMPTY", query: `groups IS NOT EMPTY`, entityType: EntityNote,
 			want: `EXISTS (SELECT 1 FROM groups_related_notes jt WHERE jt.note_id = notes.id)`,
 		},

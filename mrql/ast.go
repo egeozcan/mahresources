@@ -118,6 +118,16 @@ type NumberLiteral struct {
 func (n *NumberLiteral) nodeType() string { return "NumberLiteral" }
 func (n *NumberLiteral) Pos() int         { return n.Token.Pos }
 
+// BooleanLiteral is an unquoted true or false value. Quoted values remain
+// strings, which matters for JSON metadata whose scalar type is significant.
+type BooleanLiteral struct {
+	Token Token
+	Value bool
+}
+
+func (b *BooleanLiteral) nodeType() string { return "BooleanLiteral" }
+func (b *BooleanLiteral) Pos() int         { return b.Token.Pos }
+
 // RelDateLiteral is a relative date like -7d, -3m, -1y.
 type RelDateLiteral struct {
 	Token  Token

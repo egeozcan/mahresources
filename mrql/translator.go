@@ -1546,6 +1546,15 @@ func (tc *translateContext) translateRelationIsEmpty(db *gorm.DB, fd FieldDef, n
 			existsOp, tc.tableName,
 		)
 		db = db.Where(subquery)
+
+	case "similar_images":
+		// Match ResourceQuery.ShowWithSimilar exactly: the resource must have an
+		// image hash and another image_hashes row with the same DHash.
+		subquery := fmt.Sprintf(
+			"%s (SELECT 1 FROM image_hashes ih WHERE ih.resource_id = %s.id AND EXISTS (SELECT 1 FROM image_hashes i WHERE ih.d_hash = i.d_hash AND ih.id <> i.id))",
+			existsOp, tc.tableName,
+		)
+		db = db.Where(subquery)
 	}
 
 	return db, nil
@@ -1627,6 +1636,8 @@ func (tc *translateContext) resolveValue(node Node, fd FieldDef) (interface{}, e
 		if v.Value == float64(int64(v.Value)) {
 			return int64(v.Value), nil
 		}
+		return v.Value, nil
+	case *BooleanLiteral:
 		return v.Value, nil
 	case *RelDateLiteral:
 		return resolveRelativeDate(v), nil

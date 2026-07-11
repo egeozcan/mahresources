@@ -43,6 +43,9 @@ var resourceFields = []FieldDef{
 	{Name: "originalName", Type: FieldString, Column: "original_name"},
 	{Name: "hash", Type: FieldString, Column: "hash"},
 	{Name: "notes", Type: FieldRelation, Column: "notes"},
+	// similarImages is a derived relation over resources sharing an exact DHash.
+	// It is primarily queried as `similarImages IS [NOT] EMPTY`.
+	{Name: "similarImages", Type: FieldRelation, Column: "similar_images"},
 }
 
 // noteFields are fields only available on the Note entity.

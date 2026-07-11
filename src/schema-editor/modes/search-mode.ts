@@ -91,6 +91,16 @@ export class SchemaSearchMode extends LitElement {
 
   private _existingMeta: MetaQueryEntry[] = [];
 
+  /** Replace URL/form metadata after an MRQL edit and rebuild visible schema controls. */
+  setMetaQueryEntries(entries: MetaQueryEntry[]) {
+    this._existingMeta = entries.map(entry => ({ ...entry }));
+    this.metaQuery = JSON.stringify(this._existingMeta);
+    // Discard in-progress values: MRQL is now the source of truth.
+    this._fields = [];
+    this._rebuildFields();
+    this.requestUpdate();
+  }
+
   // Light DOM for form submission and Tailwind inheritance
   override createRenderRoot() { return this; }
 

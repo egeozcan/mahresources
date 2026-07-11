@@ -675,6 +675,9 @@ func (p *parser) parseValue() (Node, error) {
 		// Bare identifier: treat as string value. TokenHaving keeps the word
 		// "having" usable as a bare value (e.g. name = having).
 		p.lexer.Next()
+		if strings.EqualFold(tok.Value, "true") || strings.EqualFold(tok.Value, "false") {
+			return &BooleanLiteral{Token: tok, Value: strings.EqualFold(tok.Value, "true")}, nil
+		}
 		return &StringLiteral{Token: tok, Value: tok.Value}, nil
 
 	default:
