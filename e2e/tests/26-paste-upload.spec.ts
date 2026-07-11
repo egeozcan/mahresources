@@ -239,6 +239,36 @@ test.describe.serial('Paste Upload', () => {
     await expect(modal).not.toBeVisible();
   });
 
+  test('should not open modal when pasting into the group name inline editor', async ({
+    page,
+    groupPage,
+  }) => {
+    await groupPage.gotoDisplay(groupId);
+
+    const inlineEdit = page.locator('inline-edit[name="name"]');
+    await inlineEdit.locator('button[aria-label^="Edit"]').click();
+
+    await inlineEdit.evaluate((host) => {
+      const input = host.shadowRoot?.querySelector('input');
+      if (!(input instanceof HTMLInputElement)) {
+        throw new Error('Group name inline-edit input was not found');
+      }
+
+      const clipboardData = {
+        files: [] as File[],
+        items: [] as DataTransferItem[],
+        types: ['text/plain'] as string[],
+        getData: (type: string) => type === 'text/plain' ? 'pasted group name' : '',
+      };
+      const event = new Event('paste', { bubbles: true, composed: true, cancelable: true });
+      Object.defineProperty(event, 'clipboardData', { value: clipboardData });
+      input.dispatchEvent(event);
+    });
+
+    await expect(page.locator(MODAL_SELECTOR)).not.toBeVisible();
+    await expect(inlineEdit.locator('input')).toBeFocused();
+  });
+
   // 5. Paste text content on group detail -- modal shows with text snippet
   test('should open modal with text snippet when pasting text on group detail', async ({
     page,

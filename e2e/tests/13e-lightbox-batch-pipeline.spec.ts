@@ -351,6 +351,13 @@ test.describe('Lightbox batch tagging pipeline', () => {
     await expect.poll(() => resourceHasTag(apiClient, image1, tagA.Name)).toBe(true);
     await expect(panel.getByRole('button', { name: `Remove ${tagA.Name}` })).toBeFocused();
 
+    // The API can expose the committed tag just before the click handler resumes and
+    // records its undo entry. Wait for that browser-side completion point so Ctrl+Z is
+    // testing a completed user action rather than racing its promise continuation.
+    await expect
+      .poll(() => page.evaluate(() => (window as any).Alpine.store('lightbox')._undoRing.length))
+      .toBe(1);
+
     // Ctrl+Z must still undo even though focus never left the quick-tag panel.
     await page.keyboard.press('Control+z');
 

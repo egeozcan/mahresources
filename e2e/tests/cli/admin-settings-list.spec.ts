@@ -8,11 +8,11 @@ test.describe('mr admin settings list', () => {
     expect(result.stdout).toContain('share_public_url');
   });
 
-  test('--json emits parseable JSON with 13 entries', async ({ cli }) => {
+  test('--json emits parseable JSON with 15 entries', async ({ cli }) => {
     const result = cli.runOrFail('admin', 'settings', 'list', '--json');
     const parsed = JSON.parse(result.stdout);
     expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed).toHaveLength(13);
+    expect(parsed).toHaveLength(15);
     const keys = parsed.map((v: any) => v.key);
     expect(keys).toContain('max_upload_size');
     expect(keys).toContain('hash_similarity_threshold');

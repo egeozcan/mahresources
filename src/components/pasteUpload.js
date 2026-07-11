@@ -202,12 +202,36 @@ let _infoTimer = null;
 let _autoCloseTimer = null;
 
 /**
+ * Return true when paste should be handled by the currently focused editor.
+ *
+ * Shadow DOM retargets events and makes document.activeElement point at the
+ * custom-element host, so check both the composed event path and activeElement
+ * at every open shadow root boundary.
+ */
+function isEditablePasteTarget(event) {
+  const isEditable = (element) => {
+    if (!(element instanceof Element)) return false;
+    return element.matches('input, textarea, [contenteditable]:not([contenteditable="false"])')
+      || element.isContentEditable;
+  };
+
+  if (event.composedPath().some(isEditable)) return true;
+
+  let active = document.activeElement;
+  while (active) {
+    if (isEditable(active)) return true;
+    active = active.shadowRoot?.activeElement || null;
+  }
+  return false;
+}
+
+/**
  * Set up the global paste event listener.
  *
  * The handler runs three guard checks before opening the paste-upload modal:
- *  1. If a file input exists AND the clipboard has files, reproduce the legacy
+ *  1. If focus is inside an input / textarea / contentEditable, bail.
+ *  2. If a file input exists AND the clipboard has files, reproduce the legacy
  *     paste-into-file-input behaviour (merge files, flash ring).
- *  2. If the active element is a text input / textarea / contentEditable, bail.
  *  3. If no useful clipboard content can be extracted, bail.
  *
  * When all guards pass the handler tries to determine an upload context from the
@@ -216,7 +240,10 @@ let _autoCloseTimer = null;
  */
 export function setupPasteListener() {
   window.addEventListener('paste', async (e) => {
-    // --- Guard 1: file input on page + clipboard has files → legacy behaviour -
+    // --- Guard 1: let focused editing controls handle paste natively ---------
+    if (isEditablePasteTarget(e)) return;
+
+    // --- Guard 2: file input on page + clipboard has files → legacy behaviour -
     // Skipped when the page advertises an explicit paste-upload context (detail
     // and owner-filtered list pages carry a [data-paste-context]). On those the
     // paste-upload modal always wins, so an *unrelated* file input — e.g. one
@@ -239,15 +266,6 @@ export function setupPasteListener() {
       fileInput.closest('.flex')?.classList.add('ring-2', 'ring-indigo-500', 'rounded-md');
       setTimeout(() => fileInput.closest('.flex')?.classList.remove('ring-2', 'ring-indigo-500', 'rounded-md'), 1500);
       return;
-    }
-
-    // --- Guard 2: focus is inside a text input / textarea / contentEditable ----
-    const active = document.activeElement;
-    if (active) {
-      const tag = active.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || active.isContentEditable) {
-        return;
-      }
     }
 
     // --- Guard 3: extract paste content; bail if empty -------------------------
