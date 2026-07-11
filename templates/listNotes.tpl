@@ -25,10 +25,10 @@
         {% if popularTags %}
         <div class="sidebar-group">
             {% include "/partials/sideTitle.tpl" with title="Tags" %}
-            <div class="tags mb-2 gap-1 flex flex-wrap">
+            <div class="tags mb-2 gap-1 flex flex-wrap" x-data="{ activeFilterTags: [] }" @mrql-tags-change.window="activeFilterTags = $event.detail.names || []">
                 {% for tag in popularTags %}
                 <a class="no-underline" href='{{ withQuery("tags", stringId(tag.Id), true) }}'>
-                    {% include "partials/tag.tpl" with name=tag.Name count=tag.Count active=hasQuery("tags", stringId(tag.Id)) %}
+                    {% include "partials/tag.tpl" with name=tag.Name count=tag.Count active=hasQuery("tags", stringId(tag.Id)) reactiveActive=true %}
                 </a>
                 {% endfor %}
             </div>

@@ -50,6 +50,10 @@ func TestJunctionSQLShapes(t *testing.T) {
 			want: `resources.id IN (SELECT jt.resource_id FROM resource_tags jt JOIN tags t ON t.id = jt.tag_id WHERE LOWER(t.name) = LOWER(?))`,
 		},
 		{
+			name: "resource tags numeric ID", query: `tags = 42`, entityType: EntityResource,
+			want: `resources.id IN (SELECT jt.resource_id FROM resource_tags jt JOIN tags t ON t.id = jt.tag_id WHERE t.id = ?)`,
+		},
+		{
 			name: "resource tags negation", query: `tags != "photo"`, entityType: EntityResource,
 			want: `resources.id NOT IN (SELECT jt.resource_id FROM resource_tags jt JOIN tags t ON t.id = jt.tag_id WHERE LOWER(t.name) = LOWER(?))`,
 		},

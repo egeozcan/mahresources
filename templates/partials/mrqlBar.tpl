@@ -4,6 +4,18 @@
     x-id="['mrql-bar']"
     x-data="mrqlBar({ entity: '{{ entity }}', value: '{{ parsedQuery.MRQL|escapejs }}', error: '{{ mrqlError|escapejs }}' })"
 >
+    <div
+        x-show="!formCompatible"
+        x-cloak
+        class="mb-2 flex flex-wrap items-center justify-between gap-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+        role="status"
+    >
+        <span>This MRQL includes filters the sidebar form cannot represent. The form is disabled.</span>
+        <button type="button" @click="useFormValues()" class="rounded bg-amber-700 px-3 py-1.5 text-white hover:bg-amber-800">
+            Use form values
+        </button>
+        <span class="w-full text-xs">Using the form values will remove the MRQL-only filters.</span>
+    </div>
     <form role="search" class="flex flex-wrap items-start gap-2" @submit.prevent="submit()">
         <div class="relative flex-1 min-w-0">
             <label class="sr-only" :for="$id('mrql-bar') + '-input'">Filter these {{ entity }}s with an MRQL expression</label>

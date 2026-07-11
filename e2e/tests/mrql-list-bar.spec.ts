@@ -48,6 +48,59 @@ test.describe('MRQL list-page filter bar', () => {
     await expect(page.locator(`a[title="${workName}"]`)).toHaveCount(0);
   });
 
+  test('keeps representable sidebar filters and MRQL in sync', async ({ page }) => {
+    await page.goto('/resources?Name=summer');
+    const bar = page.locator('.mrql-bar input[role="combobox"]');
+    const name = page.locator('form[aria-label="Filter resources"] input[name="Name"]');
+
+    await expect(bar).toHaveValue('name ~ "*summer*"');
+    await bar.fill('name ~ "*winter*" AND width >= 900');
+    await expect(name).toHaveValue('winter');
+    await expect(page.locator('form[aria-label="Filter resources"] input[name="MinWidth"]')).toHaveValue('900');
+
+    await name.fill('autumn');
+    await expect(bar).toHaveValue('name ~ "*autumn*" AND width >= 900');
+  });
+
+  test('uses tag names when the sidebar autocompleter changes', async ({ page }) => {
+    await page.goto('/resources');
+    const bar = page.locator('.mrql-bar input[role="combobox"]');
+    const tagsField = page.locator('form[aria-label="Filter resources"] label', { hasText: 'Tags' }).locator('..');
+    const tagsInput = tagsField.locator('input[role="combobox"]');
+
+    await tagsInput.fill(`barvac-${runId}`);
+    await tagsField.locator('[role="option"]', { hasText: `barvac-${runId}` }).click();
+
+    await expect(bar).toHaveValue(`tags = "barvac-${runId}"`);
+    await expect(tagsField.locator(`button[aria-label="Remove barvac-${runId}"]`)).toBeVisible();
+  });
+
+  test('merges a quick tag into the current MRQL and form', async ({ page }) => {
+    await page.goto('/resources?mrql=' + encodeURIComponent('name ~ "*bar-*"'));
+    const bar = page.locator('.mrql-bar input[role="combobox"]');
+
+    await page.locator('.tags a', { hasText: `barvac-${runId}` }).click();
+
+    await expect(bar).toHaveValue(`name ~ "*bar-*" AND tags = "barvac-${runId}"`);
+    const tagsField = page.locator('form[aria-label="Filter resources"] label', { hasText: 'Tags' }).locator('..');
+    await expect(tagsField.locator(`button[aria-label="Remove barvac-${runId}"]`)).toBeVisible();
+  });
+
+  test('locks the form for richer MRQL and offers the lossy form reset', async ({ page }) => {
+    await page.goto('/resources?Name=keep-me');
+    const bar = page.locator('.mrql-bar input[role="combobox"]');
+    const sidebar = page.locator('form[aria-label="Filter resources"]');
+
+    await bar.fill('name ~ "*keep-me*" OR tags = "special"');
+    await expect(sidebar.locator('input[name="Name"]')).toBeDisabled();
+    await expect(page.locator('.mrql-bar [role="status"]')).toContainText('cannot represent');
+    await expect(page.locator('.mrql-bar button', { hasText: 'Use form values' })).toBeVisible();
+
+    await page.locator('.mrql-bar button', { hasText: 'Use form values' }).click();
+    await expect(sidebar.locator('input[name="Name"]')).toBeEnabled();
+    await expect(bar).toHaveValue('name ~ "*keep-me*"');
+  });
+
   test('display-option and sidebar links preserve the mrql parameter', async ({ page }) => {
     const expr = `tags = "barvac-${runId}"`;
     await page.goto('/resources?mrql=' + encodeURIComponent(expr));

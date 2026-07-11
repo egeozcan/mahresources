@@ -1038,16 +1038,27 @@ func (tc *translateContext) translateRelationComparison(db *gorm.DB, fd FieldDef
 		return tc.translateJunctionComparison(db, rel, op, val)
 	}
 	nameFd := FieldDef{Name: "name", Type: FieldString, Column: "name"}
+	idFd := FieldDef{Name: "id", Type: FieldNumber, Column: "id"}
 	switch fd.Column {
 	case "owner_id":
+		if isNumericValue(val) {
+			return db.Where(tc.qualifiedColumn("owner_id")+" "+tc.sqlOperator(op)+" ?", val), nil
+		}
 		// owner = "name" → find entities whose owner group has the given name
 		steps := tc.buildTraversalChain([]Token{{Value: "owner"}, {Value: "name"}})
 		return tc.translateFKChainScalar(db, steps, "name", op, val, nameFd)
 	case "parent_id":
+		if isNumericValue(val) {
+			return db.Where(tc.qualifiedColumn("owner_id")+" "+tc.sqlOperator(op)+" ?", val), nil
+		}
 		// parent = "name" → find groups whose parent has the given name
 		steps := tc.buildTraversalChain([]Token{{Value: "parent"}, {Value: "name"}})
 		return tc.translateFKChainScalar(db, steps, "name", op, val, nameFd)
 	case "children":
+		if isNumericValue(val) {
+			steps := tc.buildTraversalChain([]Token{{Value: "children"}, {Value: "id"}})
+			return tc.translateFKChainScalar(db, steps, "id", op, val, idFd)
+		}
 		// children = "name" → find groups that have a child with the given name
 		steps := tc.buildTraversalChain([]Token{{Value: "children"}, {Value: "name"}})
 		return tc.translateFKChainScalar(db, steps, "name", op, val, nameFd)
@@ -1070,7 +1081,10 @@ func (tc *translateContext) translateJunctionComparison(db *gorm.DB, rel junctio
 	var matchClause string
 	var matchVal interface{}
 
-	if isLike {
+	if isNumericValue(val) && !isLike {
+		matchClause = a + ".id = ?"
+		matchVal = val
+	} else if isLike {
 		likePattern := convertMRQLWildcards(fmt.Sprint(val))
 		likeOp := tc.likeOperator()
 		matchClause = "LOWER(" + a + ".name) " + likeOp + " LOWER(?) ESCAPE '\\'"
@@ -2449,4 +2463,3 @@ func (tc *translateContext) resolveAggregateColumn(fieldName string, numericCast
 	}
 	return tc.qualifiedColumn(fd.Column)
 }
-
