@@ -468,7 +468,7 @@ export class SchemaDisplayMode extends LitElement {
     const parts = field.xDisplay.split(':');
     if (parts.length < 3) {
       // Malformed x-display (e.g., "plugin:name" missing type) — fall back to value rendering
-      return this._renderValue({ ...field, xDisplay: '' });
+      return html`${this._renderValue({ ...field, xDisplay: '' })}`;
     }
     const pluginName = parts[1];
     const typeName = parts[2];
