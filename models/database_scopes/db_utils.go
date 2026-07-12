@@ -79,6 +79,24 @@ func convertMetaSortForSQLite(sort, tablePrefix string) string {
 	return result
 }
 
+// convertMetaSortForPostgres changes the public/meta-sort syntax from text
+// extraction (->>) to type-preserving JSONB extraction (->). Keeping the JSON
+// scalar type is important for schema-defined numeric fields: ->> would sort
+// values such as 9 and 10 as strings.
+func convertMetaSortForPostgres(sort, tablePrefix string) string {
+	matches := metaSortMatcher.FindStringSubmatch(sort)
+	if matches == nil {
+		return sort
+	}
+	key := matches[1]
+	direction := strings.TrimSpace(matches[2])
+	result := tablePrefix + "meta->'" + key + "'"
+	if direction != "" {
+		result += " " + direction
+	}
+	return result
+}
+
 // LikePattern builds a LIKE pattern with proper escaping of wildcard characters.
 // Returns the escaped pattern and the ESCAPE clause suffix to append to the LIKE expression.
 func LikePattern(term string) (pattern string, escapeClause string) {
@@ -282,12 +300,12 @@ func ApplySortColumns(db *gorm.DB, sortBy []string, tablePrefix, defaultSort str
 		}
 
 		if strings.HasPrefix(sort, "meta") {
-			// Meta sort: convert for SQLite and add table prefix to disambiguate
+			// Meta sort: preserve the JSON scalar type so schema-defined numbers
+			// are ordered numerically rather than lexicographically.
 			if isSQLite {
 				sort = convertMetaSortForSQLite(sort, tablePrefix)
-			} else if tablePrefix != "" {
-				// Postgres: prefix meta column directly (e.g., groups.meta->>'key')
-				sort = tablePrefix + sort
+			} else {
+				sort = convertMetaSortForPostgres(sort, tablePrefix)
 			}
 			db = db.Order(sort)
 		} else if tablePrefix != "" {

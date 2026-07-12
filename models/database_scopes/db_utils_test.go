@@ -60,6 +60,28 @@ func TestConvertMetaSortForSQLite(t *testing.T) {
 	}
 }
 
+func TestConvertMetaSortForPostgresPreservesJSONType(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		tablePrefix string
+		expected    string
+	}{
+		{"text extraction becomes JSONB extraction", "meta->>'score' asc", "", "meta->'score' asc"},
+		{"table prefix is applied", "meta->>'score' desc", "resources.", "resources.meta->'score' desc"},
+		{"single arrow remains type preserving", "meta->'score'", "groups.", "groups.meta->'score'"},
+		{"non-meta sort is unchanged", "created_at desc", "resources.", "created_at desc"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := convertMetaSortForPostgres(tt.input, tt.tablePrefix); got != tt.expected {
+				t.Errorf("convertMetaSortForPostgres(%q, %q) = %q, want %q", tt.input, tt.tablePrefix, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestValidateSortColumn(t *testing.T) {
 	tests := []struct {
 		input string

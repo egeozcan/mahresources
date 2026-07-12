@@ -1223,6 +1223,18 @@ func (tc *translateContext) metaJsonExprOn(alias string, segments []string) stri
 	return sqliteJsonPath(alias, segments)
 }
 
+// metaJsonOrderExpr builds a type-preserving JSON extraction expression for
+// ORDER BY. PostgreSQL's ->> operator coerces every value to text, which makes
+// JSON numbers sort lexicographically (for example, 9 after 10 in ascending
+// order). The -> operator keeps the JSONB scalar's native type, matching
+// SQLite's json_extract behavior.
+func (tc *translateContext) metaJsonOrderExpr(segments []string) string {
+	if tc.isPostgres() {
+		return pgJsonPath(tc.tableName, segments)
+	}
+	return sqliteJsonPath(tc.tableName, segments)
+}
+
 // metaJsonTextExpr returns a text-typed JSON extraction expression.
 func (tc *translateContext) metaJsonTextExpr(segments []string) string {
 	return tc.metaJsonExpr(segments)
@@ -1257,6 +1269,18 @@ func (tc *translateContext) metaTypeFilterOn(alias string, segments []string) st
 	}
 	path := "$." + strings.Join(segments, ".")
 	return fmt.Sprintf("json_type(%s.meta, '%s') IN ('integer', 'real')", alias, path)
+}
+
+// pgJsonPath builds a type-preserving Postgres JSON path:
+// table.meta->'a'->'b'->'c'.
+func pgJsonPath(alias string, segments []string) string {
+	var b strings.Builder
+	b.WriteString(alias)
+	b.WriteString(".meta")
+	for _, seg := range segments {
+		b.WriteString("->'" + seg + "'")
+	}
+	return b.String()
 }
 
 // pgJsonTextPath builds Postgres chained arrow JSON path: table.meta->'a'->'b'->>'c'
@@ -1818,14 +1842,13 @@ func (tc *translateContext) resolveOrderByColumn(f *FieldExpr) (string, error) {
 		}
 	}
 
-	// Handle meta.key → JSON extraction per dialect.
-	// ORDER BY cannot know the runtime type of meta values, so we use
-	// text ordering on Postgres (meta->>'key') and native JSON type on
-	// SQLite (json_extract preserves numbers). This matches the existing
-	// codebase's meta sort behavior in database_scopes/db_utils.go.
+	// Handle meta.key → type-preserving JSON extraction per dialect. Schema
+	// forms store number/integer fields as JSON numbers, so retaining the JSONB
+	// scalar type on Postgres makes numeric metadata sort numerically instead of
+	// as text. SQLite's json_extract already preserves scalar types.
 	if strings.HasPrefix(fieldName, "meta.") {
 		segments := metaSubpathSegments(fieldName)
-		return tc.metaJsonExpr(segments), nil
+		return tc.metaJsonOrderExpr(segments), nil
 	}
 
 	fd, ok := LookupField(tc.entityType, fieldName)

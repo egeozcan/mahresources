@@ -1572,6 +1572,34 @@ func TestMetaJsonExpr(t *testing.T) {
 	}
 }
 
+func TestMetaJsonOrderExprPreservesNumericType(t *testing.T) {
+	tests := []struct {
+		name      string
+		segments  []string
+		tableName string
+		postgres  bool
+		want      string
+	}{
+		{"postgres single key", []string{"score"}, "resources", true, "resources.meta->'score'"},
+		{"postgres nested key", []string{"stats", "score"}, "notes", true, "notes.meta->'stats'->'score'"},
+		{"sqlite keeps native scalar", []string{"score"}, "groups", false, "json_extract(groups.meta, '$.score')"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var tc *translateContext
+			if tt.postgres {
+				tc = newMockPostgresTC(tt.tableName)
+			} else {
+				tc = newSQLiteTC(tt.tableName)
+			}
+			if got := tc.metaJsonOrderExpr(tt.segments); got != tt.want {
+				t.Errorf("metaJsonOrderExpr() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateMetaSegments(t *testing.T) {
 	tests := []struct {
 		name     string
