@@ -45,7 +45,7 @@
                                data-content-type="{{ entity.ContentType }}"
                                data-resource-name="{{ entity.Name }}"
                                data-resource-hash="{{ entity.Hash }}">
-                                <img height="32" src="/v1/resource/preview?id={{ entity.ID }}&height=32&v={{ entity.Hash }}" alt="Preview of {{ entity.Name }}">
+                                <img height="32" src="/v1/resource/preview?id={{ entity.ID }}&height=32&v={{ entity.Hash }}" alt="Preview of {{ entity.Name }}" loading="lazy">
                             </a>
                         </td>
                         <td class="detail-table-secondary">{{ entity.FileSize | humanReadableSize }}</td>

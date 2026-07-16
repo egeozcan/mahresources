@@ -287,7 +287,7 @@
     {% if sc.PreviewImage %}
     <div class="sidebar-group">
         <a href="/v1/resource/view?id={{ resource.ID }}&v={{ resource.Hash }}#{{ resource.ContentType }}">
-            <img height="300" src="/v1/resource/preview?id={{ resource.ID }}&height=300&v={{ resource.Hash }}" alt="Preview of {{ resource.Name }}">
+            <img height="300" src="/v1/resource/preview?id={{ resource.ID }}&height=300&v={{ resource.Hash }}" alt="Preview of {{ resource.Name }}" loading="lazy">
         </a>
     </div>
     <div class="sidebar-group" x-data='customThumbnail({"resourceId": {{ resource.ID }}})' @paste.window="onPaste">

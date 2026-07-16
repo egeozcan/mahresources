@@ -10,7 +10,7 @@
                 {% process_shortcodes hoverEntity.NoteType.CustomAvatar hoverEntity %}
                 {% if not hoverEntity.NoteType.CustomAvatar %}{% include "partials/avatar.tpl" with initials=hoverEntity.Initials() %}{% endif %}
             {% elif hoverType == "resource" %}
-                <img class="hovercard-thumb w-14 h-14 rounded object-cover bg-stone-100" height="56" width="56" src="/v1/resource/preview?id={{ hoverEntity.ID }}&height=120&v={{ hoverEntity.Hash }}" alt="">
+                <img class="hovercard-thumb w-14 h-14 rounded object-cover bg-stone-100" height="56" width="56" src="/v1/resource/preview?id={{ hoverEntity.ID }}&height=120&v={{ hoverEntity.Hash }}" alt="" loading="lazy">
             {% endif %}
         </div>
         <div class="min-w-0 flex-1">

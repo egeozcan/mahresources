@@ -10,7 +10,7 @@
             <div class="p-4">
                 {% if comparison.Version1.Width > 0 %}
                 <img src="/v1/resource/preview?id={{ resource1.ID }}&maxX=200&maxY=200"
-                     class="mx-auto mb-3 max-h-32" alt="Thumbnail">
+                     class="mx-auto mb-3 max-h-32" alt="Thumbnail" loading="lazy">
                 {% else %}
                 <div class="w-24 h-24 bg-stone-100 mx-auto mb-3 flex items-center justify-center rounded">
                     <span class="text-stone-500 text-xs">{{ comparison.Version1.ContentType }}</span>
@@ -28,7 +28,7 @@
             <div class="p-4">
                 {% if comparison.Version2.Width > 0 %}
                 <img src="/v1/resource/preview?id={{ resource2.ID }}&maxX=200&maxY=200"
-                     class="mx-auto mb-3 max-h-32" alt="Thumbnail">
+                     class="mx-auto mb-3 max-h-32" alt="Thumbnail" loading="lazy">
                 {% else %}
                 <div class="w-24 h-24 bg-stone-100 mx-auto mb-3 flex items-center justify-center rounded">
                     <span class="text-stone-500 text-xs">{{ comparison.Version2.ContentType }}</span>

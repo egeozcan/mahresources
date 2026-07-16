@@ -37,11 +37,11 @@ export function renderMentions(text) {
         if (lowerType === 'resource') {
             if (isMentionStandaloneAt(text, offset, match)) {
                 return `<a href="${path}?id=${numId}" class="mention-card">` +
-                    `<img src="/v1/resource/preview?id=${numId}" alt="${escapedName}" class="mention-card-thumb">` +
+                    `<img src="/v1/resource/preview?id=${numId}" alt="${escapedName}" class="mention-card-thumb" loading="lazy">` +
                     `<span class="mention-card-name">${escapedName}</span></a>`;
             } else {
                 return `<a href="${path}?id=${numId}" class="mention-inline">` +
-                    `<img src="/v1/resource/preview?id=${numId}" alt="" class="mention-inline-thumb">` +
+                    `<img src="/v1/resource/preview?id=${numId}" alt="" class="mention-inline-thumb" loading="lazy">` +
                     `${escapedName}</a>`;
             }
         } else {

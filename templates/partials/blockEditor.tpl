@@ -224,7 +224,7 @@
                                                 <div class="relative group aspect-square bg-stone-100 rounded overflow-hidden">
                                                     <img :src="'/v1/resource/preview?id=' + resId"
                                                          :alt="(resourceMeta[resId]?.name) || ('Resource ' + resId)"
-                                                         class="w-full h-full object-cover">
+                                                         class="w-full h-full object-cover" loading="lazy">
                                                     <button
                                                         @click="removeResource(resId)"
                                                         class="absolute top-1 right-1 w-5 h-5 bg-red-700 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"

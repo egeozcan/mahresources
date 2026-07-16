@@ -76,7 +76,7 @@
                         {# Preview column #}
                         <div class="w-16 h-16 flex-shrink-0 bg-stone-100 rounded overflow-hidden flex items-center justify-center">
                             <template x-if="item.type === 'image'">
-                                <img :src="item.previewUrl" :alt="item.name" class="w-full h-full object-cover">
+                                <img :src="item.previewUrl" :alt="item.name" class="w-full h-full object-cover" loading="lazy">
                             </template>
                             <template x-if="item.type === 'file'">
                                 <svg class="w-8 h-8 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
