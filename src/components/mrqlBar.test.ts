@@ -107,6 +107,32 @@ describe('MRQL list form synchronization', () => {
         );
     });
 
+    test('preserves quoted group names as exact matches when searching children', () => {
+        const values = new FormData();
+        values.set('Name', '"sincerelyvitam"');
+        values.set('SearchChildrenForName', '1');
+
+        const query = formValuesToMRQL('group', values);
+        expect(query).toBe(
+            '(name = "sincerelyvitam" OR children.name = "sincerelyvitam")',
+        );
+
+        const translated = mrqlToFormValues('group', query);
+        expect(translated.compatible).toBe(true);
+        expect(translated.values.get('Name')).toEqual(['"sincerelyvitam"']);
+        expect(translated.values.get('SearchChildrenForName')).toEqual(['1']);
+    });
+
+    test('round-trips a quoted exact group name without hierarchy switches', () => {
+        const values = new FormData();
+        values.set('Name', '"say \\"hello\\""');
+
+        const query = formValuesToMRQL('group', values);
+        expect(query).toBe('name = "say \\"hello\\""');
+        expect(mrqlToFormValues('group', query).values.get('Name'))
+            .toEqual(['"say \\"hello\\""']);
+    });
+
     test('translates expanded group searches back to their switches', () => {
         const result = mrqlToFormValues(
             'group',

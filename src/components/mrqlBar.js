@@ -69,6 +69,20 @@ function unquoteMRQL(value) {
     try { return JSON.parse(value); } catch (_) { return null; }
 }
 
+// Group name filters predate MRQL and give a value wrapped in double quotes
+// exact-match semantics. Preserve that URL/form contract when building MRQL.
+function groupNamePredicate(value) {
+    if (value.startsWith('"') && value.endsWith('"')) {
+        const exact = value.slice(1, -1).replace(/\\"/g, '"');
+        return { operator: '=', literal: quoteMRQL(exact) };
+    }
+    return { operator: '~', literal: quoteMRQL(`*${value}*`) };
+}
+
+function exactGroupNameFormValue(value) {
+    return `"${value.replace(/"/g, '\\"')}"`;
+}
+
 // Build the canonical MRQL subset represented by a sidebar form. Exported so
 // the conversion contract can be covered without mounting Alpine.
 const META_TO_MRQL_OPERATOR = {
@@ -190,7 +204,8 @@ export function formValuesToMRQL(entity, formData, relationValues = new Map()) {
                 const fieldsForName = ['name'];
                 if (formData.get('SearchParentsForName')) fieldsForName.push('parent.name');
                 if (formData.get('SearchChildrenForName')) fieldsForName.push('children.name');
-                const expanded = fieldsForName.map((f) => `${f} ~ ${quoteMRQL(`*${value}*`)}`);
+                const { operator, literal } = groupNamePredicate(value);
+                const expanded = fieldsForName.map((f) => `${f} ${operator} ${literal}`);
                 clauses.push(expanded.length > 1 ? `(${expanded.join(' OR ')})` : expanded[0]);
             } else if (entity === 'group' && name === 'tags') {
                 const fieldsForTag = ['tags'];
@@ -369,10 +384,16 @@ function parseGroupExpansion(clause, values, nameLookups) {
     if (operators.size !== 1 || literals.size !== 1) return false;
 
     const literal = matches[0][3].trim();
-    if (fields.every((field) => ['name', 'parent.name', 'children.name'].includes(field)) && matches[0][2] === '~') {
+    if (fields.every((field) => ['name', 'parent.name', 'children.name'].includes(field)) &&
+        ['=', '~'].includes(matches[0][2])) {
         const parsed = unquoteMRQL(literal);
-        if (parsed === null || !parsed.startsWith('*') || !parsed.endsWith('*') || !fields.includes('name')) return false;
-        values.set('Name', [parsed.slice(1, -1)]);
+        if (parsed === null || !fields.includes('name')) return false;
+        if (matches[0][2] === '~') {
+            if (!parsed.startsWith('*') || !parsed.endsWith('*')) return false;
+            values.set('Name', [parsed.slice(1, -1)]);
+        } else {
+            values.set('Name', [exactGroupNameFormValue(parsed)]);
+        }
         if (fields.includes('parent.name')) values.set('SearchParentsForName', ['1']);
         if (fields.includes('children.name')) values.set('SearchChildrenForName', ['1']);
         return true;
@@ -542,6 +563,10 @@ export function mrqlToFormValues(entity, query) {
             value = unquoteMRQL(literal.trim());
             if (value === null) return { compatible: false, values };
             kind = op === '=' ? 'equals' : op;
+        }
+        if (entity === 'group' && field === 'name' && kind === 'equals') {
+            values.set('Name', [exactGroupNameFormValue(value)]);
+            continue;
         }
         let name = reverse.get(`${field}|${kind}`);
         if (!name && kind === 'number') name = reverse.get(`${field}|relation`);
