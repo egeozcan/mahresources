@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	stdlog "log"
 	"math/rand/v2"
 	"sort"
 	"strings"
@@ -15,6 +16,79 @@ import (
 	"mahresources/models"
 	"mahresources/mrql"
 )
+
+const mrqlDiagnosticTextLimit = 4000
+
+// mrqlSQL renders the SQL GORM is about to execute without issuing it. Values
+// are interpolated using the active dialect so the timeout log can be copied
+// directly into a database console.
+func mrqlSQL(db *gorm.DB, operation func(*gorm.DB) *gorm.DB) string {
+	dryRun := operation(db.Session(&gorm.Session{DryRun: true}))
+	if dryRun == nil || dryRun.Statement == nil {
+		return ""
+	}
+	return db.Dialector.Explain(dryRun.Statement.SQL.String(), dryRun.Statement.Vars...)
+}
+
+// logMRQLTimeout records enough context to reproduce a timed-out statement.
+// Successful and ordinary failed queries remain covered by the normal and
+// slow-query logging paths.
+func (ctx *MahresourcesContext) logMRQLTimeout(db *gorm.DB, parsed *mrql.Query, phase, sql string, started time.Time, err error) {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
+
+	timeout := ctx.mrqlQueryTimeout()
+	elapsed := time.Since(started)
+	mrqlText := truncateString(parsed.Source, mrqlDiagnosticTextLimit)
+	sqlText := truncateString(sql, mrqlDiagnosticTextLimit)
+	details := map[string]interface{}{
+		"mrql":              mrqlText,
+		"sql":               sqlText,
+		"phase":             phase,
+		"entityType":        parsed.EntityType.String(),
+		"database":          ctx.db.Config.Dialector.Name(),
+		"configuredTimeout": timeout.String(),
+		"timeoutMs":         timeout.Milliseconds(),
+		"elapsedMs":         elapsed.Milliseconds(),
+		"error":             err.Error(),
+	}
+	if db != nil && db.Statement != nil && db.Statement.Context != nil {
+		if deadline, ok := db.Statement.Context.Deadline(); ok {
+			details["deadline"] = deadline.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	// The application logger below persists the warning for /logs. Emit the same
+	// core diagnostics to the process log as well so container/service logs still
+	// capture the failure if the database is unhealthy enough to reject the log row.
+	stdlog.Printf("MRQL TIMEOUT phase=%q entity=%q database=%q configured_timeout=%q elapsed=%q mrql=%q sql=%q error=%q",
+		phase, parsed.EntityType.String(), ctx.db.Config.Dialector.Name(), timeout, elapsed.Round(time.Millisecond), mrqlText, sqlText, err)
+
+	ctx.Logger().Warning(
+		models.LogActionSystem,
+		"mrql",
+		nil,
+		parsed.EntityType.String(),
+		fmt.Sprintf("MRQL query timed out during %s after %s", phase, elapsed.Round(time.Millisecond)),
+		details,
+	)
+}
+
+func (ctx *MahresourcesContext) executeMRQLFind(db *gorm.DB, dest any, parsed *mrql.Query, phase string) error {
+	sql := mrqlSQL(db, func(tx *gorm.DB) *gorm.DB { return tx.Find(dest) })
+	started := time.Now()
+	err := db.Find(dest).Error
+	ctx.logMRQLTimeout(db, parsed, phase, sql, started, err)
+	return err
+}
+
+func (ctx *MahresourcesContext) executeMRQLCount(db *gorm.DB, dest *int64, parsed *mrql.Query, phase string) error {
+	sql := mrqlSQL(db, func(tx *gorm.DB) *gorm.DB { return tx.Count(dest) })
+	started := time.Now()
+	err := db.Count(dest).Error
+	ctx.logMRQLTimeout(db, parsed, phase, sql, started, err)
+	return err
+}
 
 // MRQLFilterError wraps an error produced while parsing, validating, or
 // translating a list-page MRQL filter expression (the package 5 filter bar). It
@@ -362,19 +436,19 @@ func (ctx *MahresourcesContext) executeSingleEntity(reqCtx context.Context, pars
 	switch entityType {
 	case mrql.EntityResource:
 		var resources []models.Resource
-		if err := db.Find(&resources).Error; err != nil {
+		if err := ctx.executeMRQLFind(db, &resources, parsed, "flat resource select"); err != nil {
 			return nil, err
 		}
 		result.Resources = resources
 	case mrql.EntityNote:
 		var notes []models.Note
-		if err := db.Find(&notes).Error; err != nil {
+		if err := ctx.executeMRQLFind(db, &notes, parsed, "flat note select"); err != nil {
 			return nil, err
 		}
 		result.Notes = notes
 	case mrql.EntityGroup:
 		var groups []models.Group
-		if err := db.Find(&groups).Error; err != nil {
+		if err := ctx.executeMRQLFind(db, &groups, parsed, "flat group select"); err != nil {
 			return nil, err
 		}
 		result.Groups = groups
@@ -434,28 +508,36 @@ func (ctx *MahresourcesContext) ExecuteMRQLGrouped(reqCtx context.Context, parse
 
 func (ctx *MahresourcesContext) executeAggregatedQuery(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLGroupedResult, error) {
 	db := ctx.db.WithContext(reqCtx)
-	gbResult, err := mrql.TranslateGroupBy(parsed, db, opts)
+	built, err := mrql.BuildAggregatedGroupBy(parsed, db, opts)
 	if err != nil {
+		return nil, err
+	}
+	var rows []map[string]any
+	if err := ctx.executeMRQLFind(built, &rows, parsed, "aggregated group select"); err != nil {
 		return nil, err
 	}
 
 	// Ensure Rows is never nil for consistent JSON
-	if gbResult.Rows == nil {
-		gbResult.Rows = []map[string]any{}
+	if rows == nil {
+		rows = []map[string]any{}
 	}
 
 	return &MRQLGroupedResult{
 		EntityType: parsed.EntityType.String(),
-		Mode:       gbResult.Mode,
-		Rows:       gbResult.Rows,
+		Mode:       "aggregated",
+		Rows:       rows,
 	}, nil
 }
 
 func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLGroupedResult, error) {
 	db := ctx.db.WithContext(reqCtx)
 
-	allKeys, err := mrql.TranslateGroupByKeys(parsed, db, opts)
+	keysDB, err := mrql.BuildGroupByKeys(parsed, db, opts)
 	if err != nil {
+		return nil, err
+	}
+	var allKeys []map[string]any
+	if err := ctx.executeMRQLFind(keysDB, &allKeys, parsed, "bucket key discovery"); err != nil {
 		return nil, err
 	}
 
@@ -520,21 +602,21 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 		switch parsed.EntityType {
 		case mrql.EntityResource:
 			var resources []models.Resource
-			if err := bucketDB.Find(&resources).Error; err != nil {
+			if err := ctx.executeMRQLFind(bucketDB, &resources, parsed, "bucket resource select"); err != nil {
 				return nil, err
 			}
 			bucket.Items = resources
 			totalItems += len(resources)
 		case mrql.EntityNote:
 			var notes []models.Note
-			if err := bucketDB.Find(&notes).Error; err != nil {
+			if err := ctx.executeMRQLFind(bucketDB, &notes, parsed, "bucket note select"); err != nil {
 				return nil, err
 			}
 			bucket.Items = notes
 			totalItems += len(notes)
 		case mrql.EntityGroup:
 			var groups []models.Group
-			if err := bucketDB.Find(&groups).Error; err != nil {
+			if err := ctx.executeMRQLFind(bucketDB, &groups, parsed, "bucket group select"); err != nil {
 				return nil, err
 			}
 			bucket.Items = groups
@@ -654,7 +736,7 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 			switch et {
 			case mrql.EntityResource:
 				var resources []models.Resource
-				if err := db.Find(&resources).Error; err != nil {
+				if err := ctx.executeMRQLFind(db, &resources, &clone, "cross-entity resource select"); err != nil {
 					errs[idx] = fmt.Errorf("resource query failed: %w", err)
 					return
 				}
@@ -663,7 +745,7 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 				mu.Unlock()
 			case mrql.EntityNote:
 				var notes []models.Note
-				if err := db.Find(&notes).Error; err != nil {
+				if err := ctx.executeMRQLFind(db, &notes, &clone, "cross-entity note select"); err != nil {
 					errs[idx] = fmt.Errorf("note query failed: %w", err)
 					return
 				}
@@ -672,7 +754,7 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 				mu.Unlock()
 			case mrql.EntityGroup:
 				var groups []models.Group
-				if err := db.Find(&groups).Error; err != nil {
+				if err := ctx.executeMRQLFind(db, &groups, &clone, "cross-entity group select"); err != nil {
 					errs[idx] = fmt.Errorf("group query failed: %w", err)
 					return
 				}
@@ -916,7 +998,7 @@ func (ctx *MahresourcesContext) countCrossEntity(reqCtx context.Context, parsed 
 		return 0, err
 	}
 	var n int64
-	if err := db.Count(&n).Error; err != nil {
+	if err := ctx.executeMRQLCount(db, &n, &clone, "cross-entity population count"); err != nil {
 		return 0, err
 	}
 	return n, nil
@@ -1336,19 +1418,19 @@ func (ctx *MahresourcesContext) ExecuteSingleEntityWithScope(reqCtx context.Cont
 	switch entityType {
 	case mrql.EntityResource:
 		var resources []models.Resource
-		if err := db.Find(&resources).Error; err != nil {
+		if err := ctx.executeMRQLFind(db, &resources, q, "scoped resource select"); err != nil {
 			return nil, err
 		}
 		result.Resources = resources
 	case mrql.EntityNote:
 		var notes []models.Note
-		if err := db.Find(&notes).Error; err != nil {
+		if err := ctx.executeMRQLFind(db, &notes, q, "scoped note select"); err != nil {
 			return nil, err
 		}
 		result.Notes = notes
 	case mrql.EntityGroup:
 		var groups []models.Group
-		if err := db.Find(&groups).Error; err != nil {
+		if err := ctx.executeMRQLFind(db, &groups, q, "scoped group select"); err != nil {
 			return nil, err
 		}
 		result.Groups = groups
@@ -1397,19 +1479,23 @@ func (ctx *MahresourcesContext) executeAggregatedQueryScoped(reqCtx context.Cont
 	db := ctx.db.WithContext(reqCtx)
 	opts := ctx.mrqlTranslateOptions()
 	opts.ScopeGroupID = scopeID
-	gbResult, err := mrql.TranslateGroupBy(parsed, db, opts)
+	built, err := mrql.BuildAggregatedGroupBy(parsed, db, opts)
 	if err != nil {
 		return nil, err
 	}
+	var rows []map[string]any
+	if err := ctx.executeMRQLFind(built, &rows, parsed, "scoped aggregated group select"); err != nil {
+		return nil, err
+	}
 
-	if gbResult.Rows == nil {
-		gbResult.Rows = []map[string]any{}
+	if rows == nil {
+		rows = []map[string]any{}
 	}
 
 	return &MRQLGroupedResult{
 		EntityType: parsed.EntityType.String(),
-		Mode:       gbResult.Mode,
-		Rows:       gbResult.Rows,
+		Mode:       "aggregated",
+		Rows:       rows,
 	}, nil
 }
 
@@ -1421,8 +1507,12 @@ func (ctx *MahresourcesContext) executeBucketedQueryScoped(reqCtx context.Contex
 	scopeOpts.ScopeGroupID = scopeID
 	db := ctx.db.WithContext(reqCtx)
 
-	allKeys, err := mrql.TranslateGroupByKeys(parsed, db, scopeOpts)
+	keysDB, err := mrql.BuildGroupByKeys(parsed, db, scopeOpts)
 	if err != nil {
+		return nil, err
+	}
+	var allKeys []map[string]any
+	if err := ctx.executeMRQLFind(keysDB, &allKeys, parsed, "scoped bucket key discovery"); err != nil {
 		return nil, err
 	}
 
@@ -1477,21 +1567,21 @@ func (ctx *MahresourcesContext) executeBucketedQueryScoped(reqCtx context.Contex
 		switch parsed.EntityType {
 		case mrql.EntityResource:
 			var resources []models.Resource
-			if err := bucketDB.Find(&resources).Error; err != nil {
+			if err := ctx.executeMRQLFind(bucketDB, &resources, parsed, "scoped bucket resource select"); err != nil {
 				return nil, err
 			}
 			bucket.Items = resources
 			totalItems += len(resources)
 		case mrql.EntityNote:
 			var notes []models.Note
-			if err := bucketDB.Find(&notes).Error; err != nil {
+			if err := ctx.executeMRQLFind(bucketDB, &notes, parsed, "scoped bucket note select"); err != nil {
 				return nil, err
 			}
 			bucket.Items = notes
 			totalItems += len(notes)
 		case mrql.EntityGroup:
 			var groups []models.Group
-			if err := bucketDB.Find(&groups).Error; err != nil {
+			if err := ctx.executeMRQLFind(bucketDB, &groups, parsed, "scoped bucket group select"); err != nil {
 				return nil, err
 			}
 			bucket.Items = groups

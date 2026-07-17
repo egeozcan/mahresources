@@ -29,7 +29,11 @@ type parser struct {
 // Returns *ParseError for parse errors.
 func Parse(input string) (*Query, error) {
 	p := &parser{lexer: NewLexer(input)}
-	return p.parseQuery()
+	q, err := p.parseQuery()
+	if q != nil {
+		q.Source = input
+	}
+	return q, err
 }
 
 // parseQuery = [expression] [orderBy] [limit] [offset]
@@ -180,6 +184,7 @@ func ParseFilter(entity EntityType, input string) (*Query, error) {
 	}
 
 	return &Query{
+		Source:      input,
 		Where:       expr,
 		Limit:       -1,
 		Offset:      -1,
