@@ -18,6 +18,25 @@ A compact syntax reference for the Mahresources Query Language (MRQL). For the f
   [LIMIT <n>] [OFFSET <n>]
 ```
 
+## Guardrails
+
+MRQL applies fixed safety limits before translation or execution:
+
+| Guardrail | Maximum |
+|---|---:|
+| Query text | 32,768 bytes |
+| Lexer tokens | 2,048 |
+| Nested `NOT` / boolean parentheses | 64 |
+| Values in one `IN` / `NOT IN` list | 500 |
+| Interactive `LIMIT` | 10,000 |
+| Interactive `OFFSET` | 10,000 |
+| Export `LIMIT` | 10,000 |
+| Export `OFFSET` | 10,000 |
+
+Queries exactly at a limit are accepted. Larger explicit execution limits are
+rejected rather than silently truncated. A query without `LIMIT` continues to
+use the runtime-configurable MRQL default limit.
+
 ## Operators
 
 | Operator | Meaning | Example |

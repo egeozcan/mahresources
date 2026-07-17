@@ -72,6 +72,9 @@ func SetupPostgresTestEnv(t *testing.T) *TestContext {
 		t.Fatalf("Failed to migrate database: %v", err)
 	}
 
+	if err := models.EnsureSupplementalIndexes(db); err != nil {
+		t.Fatalf("Failed to create supplemental indexes: %v", err)
+	}
 	util.AddInitialData(db)
 
 	config := &application_context.MahresourcesConfig{

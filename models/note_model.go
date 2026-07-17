@@ -14,19 +14,19 @@ type Note struct {
 	UpdatedAt       time.Time `gorm:"index"`
 	CreatedByUserId *uint     `gorm:"index" json:"createdByUserId,omitempty"`
 	GUID            *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
-	Name            string    `gorm:"index"`
+	Name            string    `gorm:"index;index:idx_notes_lower_name,expression:LOWER(name)"`
 	Description     string
 	Meta            types.JSON
 	Tags            []*Tag      `gorm:"many2many:note_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Resources       []*Resource `gorm:"many2many:resource_notes;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Groups          []*Group    `gorm:"many2many:groups_related_notes;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
 	Owner           *Group      `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
-	OwnerId         *uint
-	StartDate       *time.Time
-	EndDate         *time.Time
-	NoteType        *NoteType `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
-	NoteTypeId      *uint
-	ShareToken      *string `gorm:"uniqueIndex;size:32" json:"shareToken,omitempty"`
+	OwnerId         *uint       `gorm:"index"`
+	StartDate       *time.Time  `gorm:"index"`
+	EndDate         *time.Time  `gorm:"index"`
+	NoteType        *NoteType   `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
+	NoteTypeId      *uint       `gorm:"index"`
+	ShareToken      *string     `gorm:"uniqueIndex;size:32" json:"shareToken,omitempty"`
 	// ShareCreatedAt records when the current ShareToken was minted. Nullable:
 	// existing rows (minted before BH-035) remain NULL; the /admin/shares UI
 	// renders "(unknown)" for them rather than back-filling with an inaccurate

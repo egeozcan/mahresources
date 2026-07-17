@@ -444,16 +444,20 @@ test.describe('Plugin Actions UI - Detail Pages', () => {
 });
 
 test.describe('Plugin Actions UI - Card Menu', () => {
+  let resourceId: number;
+
   test.beforeAll(async () => {
     const baseURL = getWorkerBaseUrl();
     await ensurePluginEnabled(baseURL, 'test-actions');
+    const entities = await createTestEntities(baseURL);
+    resourceId = entities.resourceId;
   });
 
   test('card kebab menu appears on resources list page', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?Ids=${resourceId}&pageSize=100`);
     await page.waitForLoadState('load');
 
-    const kebabButton = page.locator('button[aria-label="More actions"]').first();
+    const kebabButton = page.getByRole('button', { name: /^Plugin actions for / }).first();
     await expect(kebabButton).toBeVisible();
 
     await kebabButton.click();
@@ -463,10 +467,10 @@ test.describe('Plugin Actions UI - Card Menu', () => {
   });
 
   test('card kebab menu triggers action modal', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(`/resources?Ids=${resourceId}&pageSize=100`);
     await page.waitForLoadState('load');
 
-    const kebabButton = page.locator('button[aria-label="More actions"]').first();
+    const kebabButton = page.getByRole('button', { name: /^Plugin actions for / }).first();
     await kebabButton.click();
 
     await page.getByRole('menuitem', { name: 'Greet Resource' }).click();

@@ -80,6 +80,9 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
 	}
+	if err := models.EnsureSupplementalIndexes(db); err != nil {
+		t.Fatalf("Failed to create supplemental indexes: %v", err)
+	}
 
 	util.AddInitialData(db)
 

@@ -23,13 +23,20 @@ func (e *ParseError) Error() string {
 // parser is the internal recursive-descent parser state.
 type parser struct {
 	lexer *Lexer
+	depth int
 }
 
 // Parse parses the given input string as an MRQL query and returns the AST.
 // Returns *ParseError for parse errors.
 func Parse(input string) (*Query, error) {
-	p := &parser{lexer: NewLexer(input)}
+	if len(input) > MaxQueryBytes {
+		return nil, querySizeError()
+	}
+	p := &parser{lexer: newBoundedLexer(input)}
 	q, err := p.parseQuery()
+	if p.lexer.limitErr != nil {
+		return nil, p.lexer.limitErr
+	}
 	if q != nil {
 		q.Source = input
 	}
@@ -159,7 +166,10 @@ func (p *parser) parseQuery() (*Query, error) {
 // SIMILAR TO resource(N) (whose resource-only requirement is enforced by
 // Validate once EntityType is set).
 func ParseFilter(entity EntityType, input string) (*Query, error) {
-	p := &parser{lexer: NewLexer(input)}
+	if len(input) > MaxQueryBytes {
+		return nil, querySizeError()
+	}
+	p := &parser{lexer: newBoundedLexer(input)}
 
 	// An empty expression has nothing to filter on — surface a clear error
 	// rather than a bare "unexpected EOF".
@@ -168,6 +178,9 @@ func ParseFilter(entity EntityType, input string) (*Query, error) {
 	}
 
 	expr, err := p.parseExpression()
+	if p.lexer.limitErr != nil {
+		return nil, p.lexer.limitErr
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -256,11 +269,23 @@ func (p *parser) parseAndExpr() (Node, error) {
 	return left, nil
 }
 
+func (p *parser) enterExpression(tok Token) error {
+	if p.depth >= MaxExpressionDepth {
+		return depthLimitError(tok)
+	}
+	p.depth++
+	return nil
+}
+
 // notExpr = "NOT" notExpr | primary
 func (p *parser) parseNotExpr() (Node, error) {
 	if p.lexer.Peek().Type == TokenNot {
 		notTok := p.lexer.Next() // consume NOT
+		if err := p.enterExpression(notTok); err != nil {
+			return nil, err
+		}
 		expr, err := p.parseNotExpr()
+		p.depth--
 		if err != nil {
 			return nil, err
 		}
@@ -275,8 +300,12 @@ func (p *parser) parsePrimary() (Node, error) {
 
 	switch tok.Type {
 	case TokenLParen:
-		p.lexer.Next() // consume '('
+		lp := p.lexer.Next() // consume '('
+		if err := p.enterExpression(lp); err != nil {
+			return nil, err
+		}
 		expr, err := p.parseExpression()
+		p.depth--
 		if err != nil {
 			return nil, err
 		}
@@ -583,9 +612,9 @@ func (p *parser) parseInExpr(field *FieldExpr, negated bool) (Node, error) {
 		}
 	}
 
-	var values []Node
+	values := make([]Node, 0, 8)
 
-	// Must have at least one value
+	// Must have at least one value.
 	val, err := p.parseValue()
 	if err != nil {
 		return nil, err
@@ -594,6 +623,9 @@ func (p *parser) parseInExpr(field *FieldExpr, negated bool) (Node, error) {
 
 	for p.lexer.Peek().Type == TokenComma {
 		p.lexer.Next() // consume ','
+		if len(values) >= MaxINListValues {
+			return nil, inListLimitError(p.lexer.Peek())
+		}
 		val, err := p.parseValue()
 		if err != nil {
 			return nil, err
@@ -899,7 +931,11 @@ func (p *parser) parseHavingAnd() (Node, error) {
 func (p *parser) parseHavingUnary() (Node, error) {
 	if p.lexer.Peek().Type == TokenNot {
 		notTok := p.lexer.Next()
+		if err := p.enterExpression(notTok); err != nil {
+			return nil, err
+		}
 		expr, err := p.parseHavingUnary()
+		p.depth--
 		if err != nil {
 			return nil, err
 		}
@@ -913,8 +949,12 @@ func (p *parser) parseHavingPrimary() (Node, error) {
 	tok := p.lexer.Peek()
 
 	if tok.Type == TokenLParen {
-		p.lexer.Next() // consume '('
+		lp := p.lexer.Next() // consume '('
+		if err := p.enterExpression(lp); err != nil {
+			return nil, err
+		}
 		expr, err := p.parseHavingOr()
+		p.depth--
 		if err != nil {
 			return nil, err
 		}

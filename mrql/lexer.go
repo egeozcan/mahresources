@@ -11,11 +11,19 @@ type Lexer struct {
 	pos     int  // current byte position
 	peeked  bool // whether we have a peeked token
 	peekTok Token
+
+	maxTokens  int
+	tokenCount int
+	limitErr   *ParseError
 }
 
 // NewLexer creates a new Lexer for the given input string.
 func NewLexer(input string) *Lexer {
 	return &Lexer{input: input}
+}
+
+func newBoundedLexer(input string) *Lexer {
+	return &Lexer{input: input, maxTokens: MaxQueryTokens}
 }
 
 // Position returns the current byte offset in the source string.
@@ -42,8 +50,24 @@ func (l *Lexer) Next() Token {
 	return l.next()
 }
 
-// next is the internal token scanner.
+// next is the budget-aware token scanner.
 func (l *Lexer) next() Token {
+	tok := l.scan()
+	if tok.Type == TokenEOF || l.maxTokens <= 0 {
+		return tok
+	}
+	l.tokenCount++
+	if l.tokenCount > l.maxTokens {
+		if l.limitErr == nil {
+			l.limitErr = tokenLimitError(tok)
+		}
+		return Token{Type: TokenIllegal, Value: tok.Value, Pos: tok.Pos, Length: tok.Length}
+	}
+	return tok
+}
+
+// scan is the internal unbounded token scanner.
+func (l *Lexer) scan() Token {
 	l.skipWhitespace()
 
 	if l.pos >= len(l.input) {

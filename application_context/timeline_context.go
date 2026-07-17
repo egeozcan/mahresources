@@ -134,9 +134,8 @@ func (ctx *MahresourcesContext) GetResourceTimelineCounts(
 ) ([]models.TimelineBucket, error) {
 	buckets := fillBuckets(boundaries)
 
-	// Package 5 filter bar: narrow the counts by the same MRQL predicate as the
-	// list. Built once and reused across every bucket query.
-	mrqlSub, mrqlCol, err := ctx.mrqlFilterSubquery(mrql.EntityResource, query.MRQL)
+	// Parse once, then compose the predicate directly into each bucket query.
+	mrqlFilter, err := ctx.prepareMRQLFilter(mrql.EntityResource, query.MRQL)
 	if err != nil {
 		return nil, err
 	}
@@ -146,8 +145,11 @@ func (ctx *MahresourcesContext) GetResourceTimelineCounts(
 		created := ctx.db.Scopes(database_scopes.ResourceQuery(query, true, ctx.db)).
 			Model(&models.Resource{}).
 			Where("resources.created_at >= ? AND resources.created_at < ?", b.Start, b.End)
-		if mrqlSub != nil {
-			created = created.Where(mrqlCol+" IN (?)", mrqlSub)
+		if mrqlFilter != nil {
+			created, err = ctx.applyPreparedMRQLFilter(created, mrqlFilter)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if err := created.Count(&createdCount).Error; err != nil {
 			return nil, fmt.Errorf("counting created resources for bucket %q: %w", b.Label, err)
@@ -159,8 +161,11 @@ func (ctx *MahresourcesContext) GetResourceTimelineCounts(
 			Model(&models.Resource{}).
 			Where("resources.updated_at >= ? AND resources.updated_at < ?", b.Start, b.End).
 			Where("resources.updated_at > resources.created_at")
-		if mrqlSub != nil {
-			updated = updated.Where(mrqlCol+" IN (?)", mrqlSub)
+		if mrqlFilter != nil {
+			updated, err = ctx.applyPreparedMRQLFilter(updated, mrqlFilter)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if err := updated.Count(&updatedCount).Error; err != nil {
 			return nil, fmt.Errorf("counting updated resources for bucket %q: %w", b.Label, err)
@@ -178,7 +183,7 @@ func (ctx *MahresourcesContext) GetNoteTimelineCounts(
 ) ([]models.TimelineBucket, error) {
 	buckets := fillBuckets(boundaries)
 
-	mrqlSub, mrqlCol, err := ctx.mrqlFilterSubquery(mrql.EntityNote, query.MRQL)
+	mrqlFilter, err := ctx.prepareMRQLFilter(mrql.EntityNote, query.MRQL)
 	if err != nil {
 		return nil, err
 	}
@@ -188,8 +193,11 @@ func (ctx *MahresourcesContext) GetNoteTimelineCounts(
 		created := ctx.db.Scopes(database_scopes.NoteQuery(query, true, ctx.db)).
 			Model(&models.Note{}).
 			Where("notes.created_at >= ? AND notes.created_at < ?", b.Start, b.End)
-		if mrqlSub != nil {
-			created = created.Where(mrqlCol+" IN (?)", mrqlSub)
+		if mrqlFilter != nil {
+			created, err = ctx.applyPreparedMRQLFilter(created, mrqlFilter)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if err := created.Count(&createdCount).Error; err != nil {
 			return nil, fmt.Errorf("counting created notes for bucket %q: %w", b.Label, err)
@@ -201,8 +209,11 @@ func (ctx *MahresourcesContext) GetNoteTimelineCounts(
 			Model(&models.Note{}).
 			Where("notes.updated_at >= ? AND notes.updated_at < ?", b.Start, b.End).
 			Where("notes.updated_at > notes.created_at")
-		if mrqlSub != nil {
-			updated = updated.Where(mrqlCol+" IN (?)", mrqlSub)
+		if mrqlFilter != nil {
+			updated, err = ctx.applyPreparedMRQLFilter(updated, mrqlFilter)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if err := updated.Count(&updatedCount).Error; err != nil {
 			return nil, fmt.Errorf("counting updated notes for bucket %q: %w", b.Label, err)
@@ -220,7 +231,7 @@ func (ctx *MahresourcesContext) GetGroupTimelineCounts(
 ) ([]models.TimelineBucket, error) {
 	buckets := fillBuckets(boundaries)
 
-	mrqlSub, mrqlCol, err := ctx.mrqlFilterSubquery(mrql.EntityGroup, query.MRQL)
+	mrqlFilter, err := ctx.prepareMRQLFilter(mrql.EntityGroup, query.MRQL)
 	if err != nil {
 		return nil, err
 	}
@@ -230,8 +241,11 @@ func (ctx *MahresourcesContext) GetGroupTimelineCounts(
 		created := ctx.db.Scopes(database_scopes.GroupQuery(query, true, ctx.db)).
 			Model(&models.Group{}).
 			Where("groups.created_at >= ? AND groups.created_at < ?", b.Start, b.End)
-		if mrqlSub != nil {
-			created = created.Where(mrqlCol+" IN (?)", mrqlSub)
+		if mrqlFilter != nil {
+			created, err = ctx.applyPreparedMRQLFilter(created, mrqlFilter)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if err := created.Count(&createdCount).Error; err != nil {
 			return nil, fmt.Errorf("counting created groups for bucket %q: %w", b.Label, err)
@@ -243,8 +257,11 @@ func (ctx *MahresourcesContext) GetGroupTimelineCounts(
 			Model(&models.Group{}).
 			Where("groups.updated_at >= ? AND groups.updated_at < ?", b.Start, b.End).
 			Where("groups.updated_at > groups.created_at")
-		if mrqlSub != nil {
-			updated = updated.Where(mrqlCol+" IN (?)", mrqlSub)
+		if mrqlFilter != nil {
+			updated, err = ctx.applyPreparedMRQLFilter(updated, mrqlFilter)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if err := updated.Count(&updatedCount).Error; err != nil {
 			return nil, fmt.Errorf("counting updated groups for bucket %q: %w", b.Label, err)

@@ -8,7 +8,6 @@ import (
 	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/lib/deferredtoken"
-	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/template_filters"
 	"mahresources/shortcodes"
@@ -71,15 +70,10 @@ func GetDeferredRenderHandler(ctx *application_context.MahresourcesContext) func
 			return
 		}
 
-		// Rebuild the same request context the display page uses so a nested
-		// [mrql]/[partial]/[lazy]/[details] behaves identically — including a signer
-		// so a nested deferred block emits its own placeholder for a further round-trip.
-		reqCtx := plugin_system.WithMRQLCache(request.Context())
-		reqCtx = shortcodes.WithPartialResolver(reqCtx, template_filters.BuildPartialResolver(ctx))
-		reqCtx = shortcodes.WithQueryBudget(reqCtx, ctx.MRQLPageQueryBudget())
-		reqCtx = shortcodes.WithDeferredSigner(reqCtx, func(t string, id uint, b string) string {
-			return deferredtoken.Seal(ctx.DeferredSigningKey(), t, id, b)
-		})
+		// Rebuild the same bounded render context the display page uses. The
+		// signer keeps nested deferred blocks lazy on subsequent round trips.
+		reqCtx, cancel := buildMRQLAPIRenderContext(request.Context(), ctx, true)
+		defer cancel()
 
 		var renderer shortcodes.PluginRenderer
 		if pm := ctx.PluginManager(); pm != nil {

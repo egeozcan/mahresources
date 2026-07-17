@@ -820,7 +820,7 @@ func TestMRQLExecuteGroupByNextOffsetAccountsTruncation(t *testing.T) {
 
 // Aggregated GROUP BY with a large limit must not have its page size clamped
 // by the bucketed item cap. limit=N&page=2 must skip exactly N rows.
-func TestMRQLExecuteAggregatedLargeLimitPageNotClamped(t *testing.T) {
+func TestMRQLExecuteAggregatedPaginationAndLimitGuard(t *testing.T) {
 	tc := setupMRQLTest(t)
 
 	// Seed 3 distinct content types
@@ -862,18 +862,13 @@ func TestMRQLExecuteAggregatedLargeLimitPageNotClamped(t *testing.T) {
 		assert.NotEqual(t, ct1, ct2, "page 1 and page 2 should not overlap")
 	}
 
-	// Now test with a very large limit — the bucketed item cap (10000) must NOT
-	// clamp this. With limit=20000&page=2, offset should be 20000, not 10000.
-	// Since we only have 3 rows, page 2 should be empty (offset 20000 > 3 rows).
+	// Explicit interactive limits above the safety ceiling are rejected rather
+	// than materialized or silently clamped. Export has a separate larger bound.
 	resp3 := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{
 		"query": `type = "resource" GROUP BY contentType COUNT()`,
 		"limit": 20000,
 		"page":  2,
 	})
-	assert.Equal(t, http.StatusOK, resp3.Code)
-
-	var result3 map[string]any
-	json.Unmarshal(resp3.Body.Bytes(), &result3)
-	rows3, _ := result3["rows"].([]any)
-	assert.Empty(t, rows3, "limit=20000&page=2 should skip past all 3 rows (offset=20000)")
+	assert.Equal(t, http.StatusBadRequest, resp3.Code)
+	assert.Contains(t, resp3.Body.String(), "exceeds maximum")
 }

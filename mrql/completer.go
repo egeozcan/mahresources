@@ -5,7 +5,7 @@ import "strings"
 // Suggestion is a single autocompletion candidate returned by Complete.
 type Suggestion struct {
 	Value string `json:"value"`
-	Type  string `json:"type"`  // "field", "operator", "keyword", "entity_type", "value", "function", "rel_date"
+	Type  string `json:"type"`            // "field", "operator", "keyword", "entity_type", "value", "function", "rel_date"
 	Label string `json:"label,omitempty"` // human-readable label
 }
 
@@ -184,10 +184,16 @@ func Complete(query string, cursor int) []Suggestion {
 		cursor = len(query)
 	}
 
+	if len(query) > MaxQueryBytes {
+		return []Suggestion{}
+	}
 	prefix := query[:cursor]
 
 	// Tokenise the prefix.
-	tokens := tokeniseAll(prefix)
+	tokens, limitErr := tokeniseAll(prefix)
+	if limitErr != nil {
+		return []Suggestion{}
+	}
 
 	// Determine the entity type from the prefix so we can narrow field lists.
 	entityType := detectEntityType(tokens)
@@ -198,17 +204,20 @@ func Complete(query string, cursor int) []Suggestion {
 
 // tokeniseAll runs the lexer over input until EOF and returns all tokens
 // (excluding the final EOF token).
-func tokeniseAll(input string) []Token {
-	l := NewLexer(input)
-	var tokens []Token
+func tokeniseAll(input string) ([]Token, *ParseError) {
+	l := newBoundedLexer(input)
+	tokens := make([]Token, 0, 32)
 	for {
 		tok := l.Next()
+		if l.limitErr != nil {
+			return nil, l.limitErr
+		}
 		if tok.Type == TokenEOF {
 			break
 		}
 		tokens = append(tokens, tok)
 	}
-	return tokens
+	return tokens, nil
 }
 
 // detectEntityType scans tokens for a pattern like:

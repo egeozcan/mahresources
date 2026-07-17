@@ -625,9 +625,9 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/query/editDescription").HandlerFunc(api_handlers.GetEditEntityDescriptionHandler[models.Query](basicQueryWriter, "query"))
 
 	// MRQL routes
-	router.Methods(http.MethodPost).Path("/v1/mrql").HandlerFunc(scopedAPI(appContext, api_handlers.GetExecuteMRQLHandler))
-	router.Methods(http.MethodPost).Path("/v1/mrql/explain").HandlerFunc(scopedAPI(appContext, api_handlers.GetExplainMRQLHandler))
-	router.Methods(http.MethodGet, http.MethodPost).Path("/v1/mrql/export").HandlerFunc(scopedAPI(appContext, api_handlers.GetExportMRQLHandler))
+	router.Methods(http.MethodPost).Path("/v1/mrql").HandlerFunc(scopedMRQLAPI(appContext, api_handlers.GetExecuteMRQLHandler))
+	router.Methods(http.MethodPost).Path("/v1/mrql/explain").HandlerFunc(scopedMRQLAPI(appContext, api_handlers.GetExplainMRQLHandler))
+	router.Methods(http.MethodGet, http.MethodPost).Path("/v1/mrql/export").HandlerFunc(scopedMRQLAPI(appContext, api_handlers.GetExportMRQLHandler))
 	router.Methods(http.MethodPost).Path("/v1/mrql/validate").HandlerFunc(api_handlers.GetValidateMRQLHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/mrql/complete").HandlerFunc(api_handlers.GetCompleteMRQLHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/mrql/generate").HandlerFunc(api_handlers.GetGenerateMRQLHandler(appContext))
@@ -635,7 +635,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/mrql/saved").HandlerFunc(api_handlers.GetCreateSavedMRQLQueryHandler(appContext))
 	router.Methods(http.MethodPut).Path("/v1/mrql/saved").HandlerFunc(api_handlers.GetUpdateSavedMRQLQueryHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/mrql/saved/delete").HandlerFunc(api_handlers.GetDeleteSavedMRQLQueryHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/mrql/saved/run").HandlerFunc(scopedAPI(appContext, api_handlers.GetRunSavedMRQLQueryHandler))
+	router.Methods(http.MethodPost).Path("/v1/mrql/saved/run").HandlerFunc(scopedMRQLAPI(appContext, api_handlers.GetRunSavedMRQLQueryHandler))
 
 	// Shortcode editor tooling (docs registry powers lint + autocomplete)
 	router.Methods(http.MethodGet).Path("/v1/shortcodes/docs").HandlerFunc(api_handlers.GetShortcodeDocsHandler(appContext))

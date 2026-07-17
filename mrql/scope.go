@@ -12,8 +12,24 @@ import (
 // For numeric scope: verifies group exists (error if not).
 // For string scope: case-insensitive lookup (error if not found or ambiguous).
 func ResolveScope(q *Query, db *gorm.DB) (uint, error) {
+	return resolveScope(q, db, 0)
+}
+
+// ResolveScopeWithin resolves a scope while hiding groups outside allowedRoot's
+// ownership subtree. An out-of-subtree ID/name is indistinguishable from a
+// nonexistent group, preventing scoped principals from enumerating global group
+// metadata through SCOPE diagnostics.
+func ResolveScopeWithin(q *Query, db *gorm.DB, allowedRoot uint) (uint, error) {
+	return resolveScope(q, db, allowedRoot)
+}
+
+func resolveScope(q *Query, db *gorm.DB, allowedRoot uint) (uint, error) {
 	if q.Scope == nil {
 		return 0, nil
+	}
+	groups := db.Table("groups")
+	if allowedRoot > 0 {
+		groups = ApplyScopeCTE(groups, EntityGroup, allowedRoot)
 	}
 
 	switch v := q.Scope.Value.(type) {
@@ -37,7 +53,7 @@ func ResolveScope(q *Query, db *gorm.DB) (uint, error) {
 			return 0, nil
 		}
 		var count int64
-		if err := db.Table("groups").Where("id = ?", id).Count(&count).Error; err != nil {
+		if err := groups.Where("groups.id = ?", id).Count(&count).Error; err != nil {
 			return 0, fmt.Errorf("scope resolution failed: %w", err)
 		}
 		if count == 0 {
@@ -50,14 +66,27 @@ func ResolveScope(q *Query, db *gorm.DB) (uint, error) {
 		return id, nil
 
 	case *StringLiteral:
-		return resolveScopeByName(v, db)
+		return resolveScopeByName(v, groups)
 
 	default:
 		return 0, fmt.Errorf("unexpected scope value type: %T", q.Scope.Value)
 	}
 }
 
-func resolveScopeByName(v *StringLiteral, db *gorm.DB) (uint, error) {
+// ScopeContains reports whether candidate is allowedRoot or one of its
+// descendants using the same bounded recursive CTE as query scoping.
+func ScopeContains(db *gorm.DB, allowedRoot, candidate uint) (bool, error) {
+	if allowedRoot == 0 || candidate == 0 {
+		return false, nil
+	}
+	var count int64
+	err := ApplyScopeCTE(db.Table("groups"), EntityGroup, allowedRoot).
+		Where("groups.id = ?", candidate).
+		Count(&count).Error
+	return count > 0, err
+}
+
+func resolveScopeByName(v *StringLiteral, groups *gorm.DB) (uint, error) {
 	type scopeMatch struct {
 		ID         uint
 		Name       string
@@ -66,9 +95,9 @@ func resolveScopeByName(v *StringLiteral, db *gorm.DB) (uint, error) {
 	}
 
 	var matches []scopeMatch
-	err := db.Table("groups").
-		Select("id, name, category_id, owner_id").
-		Where("LOWER(name) = LOWER(?)", v.Value).
+	err := groups.
+		Select("groups.id, groups.name, groups.category_id, groups.owner_id").
+		Where("LOWER(groups.name) = LOWER(?)", v.Value).
 		Find(&matches).Error
 	if err != nil {
 		return 0, fmt.Errorf("scope resolution failed: %w", err)

@@ -15,7 +15,7 @@ type Group struct {
 	CreatedByUserId *uint     `gorm:"index" json:"createdByUserId,omitempty"`
 	GUID            *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
 
-	Name        string `gorm:"index"`
+	Name        string `gorm:"index;index:idx_groups_lower_name,expression:LOWER(name)"`
 	Description string
 	URL         *types.URL `gorm:"index"`
 
@@ -35,8 +35,8 @@ type Group struct {
 	Relationships []*GroupRelation `gorm:"foreignKey:FromGroupId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
 	BackRelations []*GroupRelation `gorm:"foreignKey:ToGroupId;constraint:OnUpdate:CASCADE,OnDelete:CASCADE"`
 
-	Tags       []*Tag `gorm:"many2many:group_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
-	CategoryId *uint
+	Tags       []*Tag    `gorm:"many2many:group_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`
+	CategoryId *uint     `gorm:"index"`
 	Category   *Category `gorm:"foreignKey:CategoryId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;"`
 
 	// RenderedHTML is a transient field populated by the API when render=1 is set.

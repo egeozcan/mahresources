@@ -34,6 +34,11 @@ type TranslateOptions struct {
 	// runtime setting's own convention). Legacy pairs with NULL a_distance
 	// always pass.
 	AHashThreshold uint64
+
+	// FTSAvailable is the application context's authoritative FTS capability.
+	// Nil preserves standalone translator behavior by probing the schema once per
+	// translation; non-nil avoids catalog I/O on every MRQL request.
+	FTSAvailable *bool
 }
 
 // defaultSimilarityThreshold mirrors similarityThresholds()'s fallback in
@@ -52,6 +57,25 @@ const MaxSimilarityDistance = 11
 // from a `type = "..."` comparison in the WHERE clause).
 func Translate(q *Query, db *gorm.DB) (*gorm.DB, error) {
 	return TranslateWithOptions(q, db, TranslateOptions{})
+}
+
+// ApplyFilterWithOptions applies only q's validated WHERE expression to an
+// existing query. It preserves the caller's table/model, joins, ordering,
+// pagination, and authorization scopes. ParseFilter callers use this to compose
+// list filters directly instead of materializing a self-IN subquery.
+func ApplyFilterWithOptions(q *Query, db *gorm.DB, opts TranslateOptions) (*gorm.DB, error) {
+	entityType := q.EntityType
+	if entityType == EntityUnspecified {
+		entityType = ExtractEntityType(q)
+	}
+	if entityType == EntityUnspecified {
+		return nil, &TranslateError{Message: "entity type is required for filter translation", Pos: 0}
+	}
+	if q.Where == nil {
+		return db, nil
+	}
+	tc := newTranslateContext(db, entityType, q, opts)
+	return tc.translateNode(db, q.Where)
 }
 
 // TranslateWithOptions is like Translate but accepts configuration options.
@@ -140,13 +164,16 @@ type translateContext struct {
 	// exactly one exists — the validator guarantees this before ORDER BY RANK is
 	// accepted. It defines the relevance the rank key orders by.
 	textSearchTarget *TextSearchExpr
+
+	ftsKnown     bool
+	ftsAvailable bool
 }
 
 // newTranslateContext builds a translateContext for a resolved entity type,
 // carrying the option-derived SIMILAR TO state. Shared by the flat and
 // GROUP BY translation entry points.
 func newTranslateContext(db *gorm.DB, entityType EntityType, q *Query, opts TranslateOptions) *translateContext {
-	return &translateContext{
+	tc := &translateContext{
 		db:                  db,
 		entityType:          entityType,
 		tableName:           entityTableName(entityType),
@@ -155,6 +182,28 @@ func newTranslateContext(db *gorm.DB, entityType EntityType, q *Query, opts Tran
 		similarTarget:       findSimilarTarget(q.Where),
 		textSearchTarget:    findTextSearchTarget(q.Where),
 	}
+	if opts.FTSAvailable != nil {
+		tc.ftsKnown, tc.ftsAvailable = true, *opts.FTSAvailable
+	}
+	return tc
+}
+
+func (tc *translateContext) hasFTS() bool {
+	if tc.ftsKnown {
+		return tc.ftsAvailable
+	}
+	tc.ftsKnown = true
+	if tc.isPostgres() {
+		var count int
+		err := tc.db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = 'search_vector'", tc.tableName).Scan(&count).Error
+		tc.ftsAvailable = err == nil && count > 0
+		return tc.ftsAvailable
+	}
+	var count int
+	ftsTable := tc.tableName + "_fts"
+	err := tc.db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", ftsTable).Scan(&count).Error
+	tc.ftsAvailable = err == nil && count > 0
+	return tc.ftsAvailable
 }
 
 // findTextSearchTarget returns the single TextSearchExpr in a WHERE tree when
@@ -1102,8 +1151,13 @@ func (tc *translateContext) translateJunctionComparison(db *gorm.DB, rel junctio
 		matchVal = val
 	} else if isLike {
 		likePattern := convertMRQLWildcards(fmt.Sprint(val))
-		likeOp := tc.likeOperator()
-		matchClause = "LOWER(" + a + ".name) " + likeOp + " LOWER(?) ESCAPE '\\'"
+		if tc.isPostgres() {
+			// ILIKE is already case-insensitive; keep the indexed column bare so
+			// PostgreSQL's name trigram index remains eligible.
+			matchClause = a + ".name ILIKE ? ESCAPE '\\'"
+		} else {
+			matchClause = "LOWER(" + a + ".name) LIKE LOWER(?) ESCAPE '\\'"
+		}
 		matchVal = likePattern
 	} else {
 		matchClause = "LOWER(" + a + ".name) = LOWER(?)"
@@ -1123,7 +1177,6 @@ func (tc *translateContext) translateJunctionComparison(db *gorm.DB, rel junctio
 	db = db.Where(subquery, matchVal)
 	return db, nil
 }
-
 
 // translateTraversalIsNull handles traversal.X IS [NOT] NULL (e.g. parent.name IS NULL,
 // owner.description IS NOT NULL, children.category IS NULL).
@@ -1608,14 +1661,7 @@ func (tc *translateContext) translateTextSearch(db *gorm.DB, expr *TextSearchExp
 	}
 
 	if tc.isPostgres() {
-		// PostgreSQL: check if search_vector column exists (handles -skip-fts)
-		var colExists int
-		tc.db.Raw(
-			"SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = 'search_vector'",
-			tc.tableName,
-		).Scan(&colExists)
-
-		if colExists > 0 {
+		if tc.hasFTS() {
 			subquery := fmt.Sprintf(
 				"%s.search_vector @@ plainto_tsquery('english', ?)",
 				tc.tableName,
@@ -1631,18 +1677,14 @@ func (tc *translateContext) translateTextSearch(db *gorm.DB, expr *TextSearchExp
 			)
 		}
 	} else {
-		// SQLite: try FTS5 MATCH, fall back to LIKE if FTS tables don't exist
+		// SQLite: use FTS5 MATCH when initialized, otherwise fall back to LIKE.
 		sanitized := sanitizeFTS5(searchTerm)
 		if sanitized == "" {
 			return db, nil
 		}
 		ftsTable := tc.tableName + "_fts"
 
-		// Check if the FTS table exists (handles -skip-fts and FTS init failures)
-		var tableExists int
-		tc.db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", ftsTable).Scan(&tableExists)
-
-		if tableExists > 0 {
+		if tc.hasFTS() {
 			subquery := fmt.Sprintf(
 				"%s.id IN (SELECT rowid FROM %s WHERE %s MATCH ?)",
 				tc.tableName, ftsTable, ftsTable,
@@ -1872,12 +1914,7 @@ func (tc *translateContext) rankOrderExpr() (string, error) {
 	}
 
 	if tc.isPostgres() {
-		var colExists int
-		tc.db.Raw(
-			"SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = 'search_vector'",
-			tc.tableName,
-		).Scan(&colExists)
-		if colExists == 0 {
+		if !tc.hasFTS() {
 			return "", &TranslateError{
 				Message: "ORDER BY RANK requires the full-text index (server started with FTS disabled)",
 				Pos:     0,
@@ -1902,9 +1939,7 @@ func (tc *translateContext) rankOrderExpr() (string, error) {
 		return "", nil
 	}
 	ftsTable := tc.tableName + "_fts"
-	var tableExists int
-	tc.db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", ftsTable).Scan(&tableExists)
-	if tableExists == 0 {
+	if !tc.hasFTS() {
 		return "", &TranslateError{
 			Message: "ORDER BY RANK requires the full-text index (server started with FTS disabled)",
 			Pos:     0,
@@ -1924,15 +1959,18 @@ func (tc *translateContext) rankOrderExpr() (string, error) {
 // translateLikeComparison handles ~ and !~ operators with MRQL wildcard conversion.
 func (tc *translateContext) translateLikeComparison(db *gorm.DB, column string, op Token, val interface{}) (*gorm.DB, error) {
 	pattern := convertMRQLWildcards(fmt.Sprint(val))
-	likeOp := tc.likeOperator()
 	escapeClause := " ESCAPE '\\'"
-
-	if op.Type == TokenNotLike {
-		db = db.Where("LOWER("+column+") NOT "+likeOp+" LOWER(?)"+escapeClause, pattern)
-	} else {
-		db = db.Where("LOWER("+column+") "+likeOp+" LOWER(?)"+escapeClause, pattern)
+	if tc.isPostgres() {
+		if op.Type == TokenNotLike {
+			return db.Where(column+" NOT ILIKE ?"+escapeClause, pattern), nil
+		}
+		return db.Where(column+" ILIKE ?"+escapeClause, pattern), nil
 	}
-
+	if op.Type == TokenNotLike {
+		db = db.Where("LOWER("+column+") NOT LIKE LOWER(?)"+escapeClause, pattern)
+	} else {
+		db = db.Where("LOWER("+column+") LIKE LOWER(?)"+escapeClause, pattern)
+	}
 	return db, nil
 }
 
@@ -1968,7 +2006,7 @@ func sanitizeFTS5(input string) string {
 			sb.WriteRune(' ')
 		case r == '.' || r == ',':
 			sb.WriteRune(r)
-		// Skip: *, +, ^, :, (, ), ", !, ~, etc.
+			// Skip: *, +, ^, :, (, ), ", !, ~, etc.
 		}
 	}
 	return strings.TrimSpace(sb.String())

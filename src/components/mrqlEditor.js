@@ -63,6 +63,12 @@ export function mrqlEditor() {
 
     // Validation debounce timer
     _validateTimer: null,
+    _validateController: null,
+    _validateRequestId: 0,
+    _executeController: null,
+    _executeRequestId: 0,
+    _explainController: null,
+    _explainRequestId: 0,
     _generationRequestId: 0,
     _generationEditorSnapshot: '',
 
@@ -188,14 +194,18 @@ export function mrqlEditor() {
         const word = context.matchBefore(/[a-zA-Z_.]*/);
         if (!word && !context.explicit) return null;
 
+        const controller = new AbortController();
+        context.addEventListener('abort', () => controller.abort());
         try {
           const resp = await fetch('/v1/mrql/complete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query: doc, cursor: pos }),
+            signal: controller.signal,
           });
-          if (!resp.ok) return null;
+          if (controller.signal.aborted || !resp.ok) return null;
           const data = await resp.json();
+          if (controller.signal.aborted) return null;
           if (!data.suggestions || data.suggestions.length === 0) return null;
 
           return {
@@ -210,7 +220,8 @@ export function mrqlEditor() {
                 : 'text',
             })),
           };
-        } catch (_) {
+        } catch (err) {
+          if (err?.name !== 'AbortError') return null;
           return null;
         }
       };
@@ -268,6 +279,7 @@ export function mrqlEditor() {
         this.langCompartment.of(mrqlLang),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
+            self.cancelStaleQueryRequests();
             self.scheduleValidation();
           }
         }),
@@ -311,6 +323,9 @@ export function mrqlEditor() {
           this.setQuery(q);
           this.execute({ pushState: false });
         } else {
+          this._executeController?.abort();
+          this._executeRequestId++;
+          this.executing = false;
           this.setQuery('');
           this.result = null;
           this.error = '';
@@ -330,29 +345,49 @@ export function mrqlEditor() {
       });
     },
 
+    cancelStaleQueryRequests() {
+      this._executeController?.abort();
+      this._executeController = null;
+      this._executeRequestId++;
+      this.executing = false;
+      this._explainController?.abort();
+      this._explainController = null;
+      this._explainRequestId++;
+      this.explaining = false;
+    },
+
     scheduleValidation() {
       if (this._validateTimer) clearTimeout(this._validateTimer);
+      this._validateController?.abort();
       this._validateTimer = setTimeout(() => this.validate(), 500);
     },
 
     async validate() {
       const query = this.getQuery().trim();
       if (!query) {
+        this._validateController?.abort();
         this.validationError = '';
         return;
       }
 
+      this._validateController?.abort();
+      const controller = new AbortController();
+      const requestId = ++this._validateRequestId;
+      this._validateController = controller;
       try {
         const resp = await fetch('/v1/mrql/validate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query }),
+          signal: controller.signal,
         });
+        if (requestId !== this._validateRequestId || controller.signal.aborted) return;
         if (!resp.ok) {
           this.validationError = 'Validation request failed';
           return;
         }
         const data = await resp.json();
+        if (requestId !== this._validateRequestId || controller.signal.aborted) return;
         this.syncParams(data.params || []);
         if (data.valid) {
           this.validationError = '';
@@ -361,8 +396,12 @@ export function mrqlEditor() {
         } else {
           this.validationError = 'Invalid query';
         }
-      } catch (_) {
-        // Network error — silently ignore
+      } catch (err) {
+        if (err?.name !== 'AbortError') {
+          // Network error — leave the last known validation state untouched.
+        }
+      } finally {
+        if (requestId === this._validateRequestId) this._validateController = null;
       }
     },
 
@@ -484,6 +523,10 @@ export function mrqlEditor() {
       const query = this.getQuery().trim();
       if (!query) return;
 
+      this._executeController?.abort();
+      const controller = new AbortController();
+      const requestId = ++this._executeRequestId;
+      this._executeController = controller;
       this.executing = true;
       this.error = '';
       this.result = null;
@@ -496,15 +539,20 @@ export function mrqlEditor() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query, params: this.paramsPayload() }),
+          signal: controller.signal,
         });
+        if (requestId !== this._executeRequestId || controller.signal.aborted) return;
 
         if (!resp.ok) {
           const errData = await resp.json().catch(() => null);
+          if (requestId !== this._executeRequestId || controller.signal.aborted) return;
           this.error = errData?.error || errData?.Error || `Request failed (${resp.status})`;
           return;
         }
 
-        this.result = await resp.json();
+        const result = await resp.json();
+        if (requestId !== this._executeRequestId || controller.signal.aborted) return;
+        this.result = result;
         // BH-013: capture the default-limit signal from the response payload.
         this.defaultLimitApplied = !!(this.result && this.result.default_limit_applied);
         this.appliedLimit = (this.result && this.result.applied_limit) || 0;
@@ -526,9 +574,14 @@ export function mrqlEditor() {
           }
         }
       } catch (err) {
-        this.error = err.message || 'Network error';
+        if (err?.name !== 'AbortError' && requestId === this._executeRequestId) {
+          this.error = err.message || 'Network error';
+        }
       } finally {
-        this.executing = false;
+        if (requestId === this._executeRequestId) {
+          this.executing = false;
+          this._executeController = null;
+        }
       }
     },
 
@@ -538,6 +591,10 @@ export function mrqlEditor() {
       const query = this.getQuery().trim();
       if (!query) return;
 
+      this._explainController?.abort();
+      const controller = new AbortController();
+      const requestId = ++this._explainRequestId;
+      this._explainController = controller;
       this.explaining = true;
       this.error = '';
       try {
@@ -545,55 +602,100 @@ export function mrqlEditor() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query, params: this.paramsPayload() }),
+          signal: controller.signal,
         });
+        if (requestId !== this._explainRequestId || controller.signal.aborted) return;
         if (!resp.ok) {
           const errData = await resp.json().catch(() => null);
+          if (requestId !== this._explainRequestId || controller.signal.aborted) return;
           this.error = errData?.error || errData?.Error || `Explain failed (${resp.status})`;
           return;
         }
-        this.explainResult = await resp.json();
+        const explainResult = await resp.json();
+        if (requestId !== this._explainRequestId || controller.signal.aborted) return;
+        this.explainResult = explainResult;
         this.showExplain = true;
       } catch (err) {
-        this.error = err.message || 'Network error';
+        if (err?.name !== 'AbortError' && requestId === this._explainRequestId) {
+          this.error = err.message || 'Network error';
+        }
       } finally {
-        this.explaining = false;
+        if (requestId === this._explainRequestId) {
+          this.explaining = false;
+          this._explainController = null;
+        }
       }
     },
 
-    // exportResults re-submits the current query + params to /v1/mrql/export and
-    // triggers a file download via a blob URL.
+    // Validate first so client-visible limit/parse errors are not hidden inside
+    // the download frame, then use the browser's native streaming download path
+    // instead of duplicating the whole export in a JavaScript Blob.
     async exportResults(format) {
       const query = this.getQuery().trim();
       if (!query) return;
 
       this.exporting = true;
       this.error = '';
+      const params = this.paramsPayload();
       try {
-        const resp = await fetch('/v1/mrql/export?format=' + encodeURIComponent(format), {
+        const preflight = await fetch('/v1/mrql/export?format=' + encodeURIComponent(format) + '&preflight=1', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query, params: this.paramsPayload() }),
+          body: JSON.stringify({ query, params }),
         });
-        if (!resp.ok) {
-          const errData = await resp.json().catch(() => null);
-          this.error = errData?.error || errData?.Error || `Export failed (${resp.status})`;
+        if (!preflight.ok) {
+          const data = await preflight.json().catch(() => null);
+          this.error = data?.error || data?.Error || `Export failed (${preflight.status})`;
           return;
         }
-        const blob = await resp.blob();
-        let filename = 'mrql-export.' + format;
-        const cd = resp.headers.get('Content-Disposition') || '';
-        const m = /filename="?([^";]+)"?/.exec(cd);
-        if (m) filename = m[1];
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+        if (this.getQuery().trim() !== query) return;
+
+        const frame = document.createElement('iframe');
+        frame.name = 'mrql-export-' + Date.now();
+        frame.style.display = 'none';
+        let submitted = false;
+        const cleanupTimer = window.setTimeout(() => frame.remove(), 10 * 60_000);
+        frame.addEventListener('load', () => {
+          if (!submitted) return;
+          // Successful attachment responses do not create a readable document.
+          // A same-origin JSON error does, so surface it if execution failed
+          // after the successful preflight (for example, a database error).
+          try {
+            const text = frame.contentDocument?.body?.innerText?.trim();
+            if (text) {
+              const data = JSON.parse(text);
+              this.error = data?.error || data?.Error || 'Export failed';
+              window.clearTimeout(cleanupTimer);
+              frame.remove();
+            }
+          } catch (_) { /* attachment or non-JSON response */ }
+        });
+        document.body.appendChild(frame);
+
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.target = frame.name;
+        form.action = '/v1/mrql/export?format=' + encodeURIComponent(format);
+        form.style.display = 'none';
+        const add = (name, value) => {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = name;
+          input.value = value;
+          form.appendChild(input);
+        };
+        add('query', query);
+        const csrf = document.querySelector('meta[name="csrf-token"]')?.content;
+        if (csrf) add('csrf_token', csrf);
+        for (const [name, value] of Object.entries(params)) {
+          add('param.' + name, String(value));
+        }
+        document.body.appendChild(form);
+        submitted = true;
+        form.submit();
+        form.remove();
       } catch (err) {
-        this.error = err.message || 'Network error';
+        this.error = err?.message || 'Export failed';
       } finally {
         this.exporting = false;
       }
@@ -762,6 +864,12 @@ export function mrqlEditor() {
 
     destroy() {
       if (this._validateTimer) clearTimeout(this._validateTimer);
+      this._validateController?.abort();
+      this._executeController?.abort();
+      this._explainController?.abort();
+      this._validateRequestId++;
+      this._executeRequestId++;
+      this._explainRequestId++;
       if (this._popstateHandler) {
         window.removeEventListener('popstate', this._popstateHandler);
       }

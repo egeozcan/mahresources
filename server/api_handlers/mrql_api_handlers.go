@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/constants"
+	"mahresources/lib/deferredtoken"
 	"mahresources/models"
 	"mahresources/mrql"
 	"mahresources/plugin_system"
@@ -61,6 +63,17 @@ type mrqlExplainRequest struct {
 // applyGroupedPagination applies request pagination to a parsed GROUP BY query.
 // Aggregated mode: limit/page are standard row pagination. Bucketed mode:
 // limit = items per bucket, buckets = groups per page, page/offset paginate groups.
+func groupedPageOffset(page, pageSize int) int {
+	if page < 1 || pageSize <= 0 {
+		return 0
+	}
+	multiplier := page - 1
+	if multiplier > math.MaxInt/pageSize {
+		return math.MaxInt
+	}
+	return multiplier * pageSize
+}
+
 func applyGroupedPagination(parsed *mrql.Query, limit, buckets, page, directOffset int) {
 	if limit > 0 {
 		parsed.Limit = limit
@@ -73,7 +86,7 @@ func applyGroupedPagination(parsed *mrql.Query, limit, buckets, page, directOffs
 			if effectiveLimit < 0 {
 				effectiveLimit = 1000
 			}
-			parsed.Offset = (page - 1) * effectiveLimit
+			parsed.Offset = groupedPageOffset(page, effectiveLimit)
 		}
 		return
 	}
@@ -97,7 +110,7 @@ func applyGroupedPagination(parsed *mrql.Query, limit, buckets, page, directOffs
 		if effectiveBuckets < 0 {
 			effectiveBuckets = mrql.MaxBuckets
 		}
-		parsed.Offset = (page - 1) * effectiveBuckets
+		parsed.Offset = groupedPageOffset(page, effectiveBuckets)
 	}
 }
 
@@ -108,6 +121,14 @@ func collectMRQLParams(request *http.Request, jsonParams map[string]any) map[str
 	out := map[string]any{}
 	for k, v := range jsonParams {
 		out[k] = v
+	}
+	// Native export forms use param.<name> fields so the browser can stream the
+	// attachment without first buffering a fetch Blob.
+	_ = request.ParseForm()
+	for key, vals := range request.PostForm {
+		if name, ok := strings.CutPrefix(key, "param."); ok && name != "" && len(vals) > 0 {
+			out[name] = vals[0]
+		}
 	}
 	for key, vals := range request.URL.Query() {
 		if name, ok := strings.CutPrefix(key, "param."); ok && name != "" && len(vals) > 0 {
@@ -159,29 +180,102 @@ func buildPluginRenderer(appCtx *application_context.MahresourcesContext, reqCtx
 	}
 }
 
-// resolveAPIScopeFields computes scope, parent, and root group IDs for an entity
-// when rendering custom MRQL templates via the API.
-func resolveAPIScopeFields(appCtx *application_context.MahresourcesContext, entityType string, ownerID *uint, entityID uint) (scopeID, parentID, rootID uint) {
+// resolveAPIScopeFields computes scope, parent, and root group IDs from the
+// request's batch-loaded hierarchy data.
+func resolveAPIScopeFields(data *application_context.MRQLRenderData, entityType string, ownerID *uint, entityID uint) (scopeID, parentID, rootID uint) {
+	sentinel := mrql.UnresolvedScopeSentinel
 	if entityType == "group" {
-		scopeID = entityID
+		scopeID, parentID, rootID = entityID, sentinel, sentinel
 		if ownerID != nil && *ownerID > 0 {
 			parentID = *ownerID
-		} else {
-			parentID = mrql.UnresolvedScopeSentinel
 		}
-		rootID = appCtx.ResolveRootScopeID(entityID)
+		if scope, ok := data.Scopes[entityID]; ok {
+			rootID = scope.RootGroupID
+		}
 		return
 	}
+	scopeID, parentID, rootID = sentinel, sentinel, sentinel
 	if ownerID != nil && *ownerID > 0 {
 		scopeID = *ownerID
-		parentID = appCtx.ResolveParentScopeID(*ownerID)
-		rootID = appCtx.ResolveRootScopeID(*ownerID)
-	} else {
-		scopeID = mrql.UnresolvedScopeSentinel
-		parentID = mrql.UnresolvedScopeSentinel
-		rootID = mrql.UnresolvedScopeSentinel
+		if scope, ok := data.Scopes[*ownerID]; ok {
+			parentID, rootID = scope.ParentGroupID, scope.RootGroupID
+		}
 	}
 	return
+}
+
+func buildMRQLAPIRenderContext(parent context.Context, appCtx *application_context.MahresourcesContext, deferredSigner bool) (context.Context, context.CancelFunc) {
+	reqCtx, cancel := context.WithTimeout(parent, appCtx.MRQLQueryTimeout())
+	reqCtx = plugin_system.WithMRQLCache(reqCtx)
+	reqCtx = application_context.WithMRQLRenderDataCache(reqCtx)
+	reqCtx = shortcodes.WithPartialResolver(reqCtx, template_filters.BuildPartialResolver(appCtx))
+	reqCtx = shortcodes.WithQueryBudget(reqCtx, appCtx.MRQLPageQueryBudget())
+	if deferredSigner {
+		reqCtx = shortcodes.WithDeferredSigner(reqCtx, func(entityType string, entityID uint, body string) string {
+			return deferredtoken.Seal(appCtx.DeferredSigningKey(), entityType, entityID, body)
+		})
+	}
+	return reqCtx, cancel
+}
+
+type apiRenderIDs struct {
+	resourceCategories []uint
+	noteTypes          []uint
+	categories         []uint
+	scopes             []uint
+}
+
+func collectAPIRenderIDs(result *application_context.MRQLResult, ids *apiRenderIDs) {
+	for i := range result.Resources {
+		r := &result.Resources[i]
+		if r.ResourceCategory == nil {
+			ids.resourceCategories = append(ids.resourceCategories, r.ResourceCategoryId)
+		}
+		if r.OwnerId != nil {
+			ids.scopes = append(ids.scopes, *r.OwnerId)
+		}
+	}
+	for i := range result.Notes {
+		n := &result.Notes[i]
+		if n.NoteType == nil && n.NoteTypeId != nil {
+			ids.noteTypes = append(ids.noteTypes, *n.NoteTypeId)
+		}
+		if n.OwnerId != nil {
+			ids.scopes = append(ids.scopes, *n.OwnerId)
+		}
+	}
+	for i := range result.Groups {
+		g := &result.Groups[i]
+		if g.Category == nil && g.CategoryId != nil {
+			ids.categories = append(ids.categories, *g.CategoryId)
+		}
+		ids.scopes = append(ids.scopes, g.ID)
+	}
+}
+
+func loadAPIRenderIDs(reqCtx context.Context, appCtx *application_context.MahresourcesContext, ids apiRenderIDs) (*application_context.MRQLRenderData, error) {
+	return appCtx.LoadMRQLRenderData(reqCtx, ids.resourceCategories, ids.noteTypes, ids.categories, ids.scopes)
+}
+
+func loadFlatAPIRenderData(reqCtx context.Context, appCtx *application_context.MahresourcesContext, result *application_context.MRQLResult) (*application_context.MRQLRenderData, error) {
+	var ids apiRenderIDs
+	collectAPIRenderIDs(result, &ids)
+	return loadAPIRenderIDs(reqCtx, appCtx, ids)
+}
+
+func loadGroupedAPIRenderData(reqCtx context.Context, appCtx *application_context.MahresourcesContext, result *application_context.MRQLGroupedResult) (*application_context.MRQLRenderData, error) {
+	var ids apiRenderIDs
+	for i := range result.Groups {
+		switch items := result.Groups[i].Items.(type) {
+		case []models.Resource:
+			collectAPIRenderIDs(&application_context.MRQLResult{Resources: items}, &ids)
+		case []models.Note:
+			collectAPIRenderIDs(&application_context.MRQLResult{Notes: items}, &ids)
+		case []models.Group:
+			collectAPIRenderIDs(&application_context.MRQLResult{Groups: items}, &ids)
+		}
+	}
+	return loadAPIRenderIDs(reqCtx, appCtx, ids)
 }
 
 // mrqlCategoryCSS returns a deduped <style> block carrying a category's CustomCSS the first
@@ -206,23 +300,27 @@ func mrqlCategoryCSS(reqCtx context.Context, seen map[string]bool, entityType st
 
 // renderMRQLCustomTemplates processes CustomMRQLResult templates for each result entity
 // and populates the RenderedHTML field when a template is configured.
-func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, result *application_context.MRQLResult, reqCtx context.Context) {
-	reqCtx = plugin_system.WithMRQLCache(reqCtx)
-	reqCtx = shortcodes.WithPartialResolver(reqCtx, template_filters.BuildPartialResolver(appCtx))
+func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, result *application_context.MRQLResult, parent context.Context) error {
+	reqCtx, cancel := buildMRQLAPIRenderContext(parent, appCtx, false)
+	defer cancel()
+	data, err := loadFlatAPIRenderData(reqCtx, appCtx, result)
+	if err != nil {
+		return err
+	}
 	executor := template_filters.BuildQueryExecutor(appCtx)
 	pluginRenderer := buildPluginRenderer(appCtx, reqCtx)
 	cssSeen := map[string]bool{}
 
 	for i := range result.Resources {
+		if err := reqCtx.Err(); err != nil {
+			return err
+		}
 		r := &result.Resources[i]
-		if r.ResourceCategory == nil && r.ResourceCategoryId > 0 {
-			cat, _ := appCtx.GetResourceCategory(r.ResourceCategoryId)
-			if cat != nil {
-				r.ResourceCategory = cat
-			}
+		if r.ResourceCategory == nil {
+			r.ResourceCategory = data.ResourceCategories[r.ResourceCategoryId]
 		}
 		if r.ResourceCategory != nil && r.ResourceCategory.CustomMRQLResult != "" {
-			scopeID, parentID, rootID := resolveAPIScopeFields(appCtx, "resource", r.OwnerId, r.ID)
+			scopeID, parentID, rootID := resolveAPIScopeFields(data, "resource", r.OwnerId, r.ID)
 			mctx := shortcodes.MetaShortcodeContext{
 				EntityType: "resource", EntityID: r.ID,
 				Meta: json.RawMessage(r.Meta), MetaSchema: r.ResourceCategory.MetaSchema,
@@ -234,15 +332,15 @@ func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, 
 	}
 
 	for i := range result.Notes {
+		if err := reqCtx.Err(); err != nil {
+			return err
+		}
 		n := &result.Notes[i]
-		if n.NoteType == nil && n.NoteTypeId != nil && *n.NoteTypeId > 0 {
-			nt, _ := appCtx.GetNoteType(*n.NoteTypeId)
-			if nt != nil {
-				n.NoteType = nt
-			}
+		if n.NoteType == nil && n.NoteTypeId != nil {
+			n.NoteType = data.NoteTypes[*n.NoteTypeId]
 		}
 		if n.NoteType != nil && n.NoteType.CustomMRQLResult != "" {
-			scopeID, parentID, rootID := resolveAPIScopeFields(appCtx, "note", n.OwnerId, n.ID)
+			scopeID, parentID, rootID := resolveAPIScopeFields(data, "note", n.OwnerId, n.ID)
 			mctx := shortcodes.MetaShortcodeContext{
 				EntityType: "note", EntityID: n.ID,
 				Meta: json.RawMessage(n.Meta), MetaSchema: n.NoteType.MetaSchema,
@@ -254,15 +352,15 @@ func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, 
 	}
 
 	for i := range result.Groups {
+		if err := reqCtx.Err(); err != nil {
+			return err
+		}
 		g := &result.Groups[i]
-		if g.Category == nil && g.CategoryId != nil && *g.CategoryId > 0 {
-			cat, _ := appCtx.GetCategory(*g.CategoryId)
-			if cat != nil {
-				g.Category = cat
-			}
+		if g.Category == nil && g.CategoryId != nil {
+			g.Category = data.Categories[*g.CategoryId]
 		}
 		if g.Category != nil && g.Category.CustomMRQLResult != "" {
-			scopeID, parentID, rootID := resolveAPIScopeFields(appCtx, "group", g.OwnerId, g.ID)
+			scopeID, parentID, rootID := resolveAPIScopeFields(data, "group", g.OwnerId, g.ID)
 			mctx := shortcodes.MetaShortcodeContext{
 				EntityType: "group", EntityID: g.ID,
 				Meta: json.RawMessage(g.Meta), MetaSchema: g.Category.MetaSchema,
@@ -272,21 +370,21 @@ func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, 
 				shortcodes.Process(reqCtx, g.Category.CustomMRQLResult, mctx, pluginRenderer, executor)
 		}
 	}
+	return nil
 }
 
 // renderMRQLGroupedCustomTemplates processes CustomMRQLResult templates for bucketed
 // GROUP BY results. Aggregated results have no entities so they're skipped.
-func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesContext, result *application_context.MRQLGroupedResult, reqCtx context.Context) {
+func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesContext, result *application_context.MRQLGroupedResult, parent context.Context) error {
 	if result.Mode != "bucketed" {
-		return // aggregated results are summary rows, not entities
+		return nil // aggregated results are summary rows, not entities
 	}
-
-	// Mirror the flat path (renderMRQLCustomTemplates): attach the per-render
-	// MRQL cache and partial resolver before building the plugin renderer, so
-	// bucketed CustomMRQLResult/CustomCSS templates can expand [partial name=…].
-	reqCtx = plugin_system.WithMRQLCache(reqCtx)
-	reqCtx = shortcodes.WithPartialResolver(reqCtx, template_filters.BuildPartialResolver(appCtx))
-
+	reqCtx, cancel := buildMRQLAPIRenderContext(parent, appCtx, false)
+	defer cancel()
+	data, err := loadGroupedAPIRenderData(reqCtx, appCtx, result)
+	if err != nil {
+		return err
+	}
 	executor := template_filters.BuildQueryExecutor(appCtx)
 	pluginRenderer := buildPluginRenderer(appCtx, reqCtx)
 	cssSeen := map[string]bool{}
@@ -296,15 +394,15 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 		switch items := bucket.Items.(type) {
 		case []models.Resource:
 			for i := range items {
+				if err := reqCtx.Err(); err != nil {
+					return err
+				}
 				r := &items[i]
-				if r.ResourceCategory == nil && r.ResourceCategoryId > 0 {
-					cat, _ := appCtx.GetResourceCategory(r.ResourceCategoryId)
-					if cat != nil {
-						r.ResourceCategory = cat
-					}
+				if r.ResourceCategory == nil {
+					r.ResourceCategory = data.ResourceCategories[r.ResourceCategoryId]
 				}
 				if r.ResourceCategory != nil && r.ResourceCategory.CustomMRQLResult != "" {
-					scopeID, parentID, rootID := resolveAPIScopeFields(appCtx, "resource", r.OwnerId, r.ID)
+					scopeID, parentID, rootID := resolveAPIScopeFields(data, "resource", r.OwnerId, r.ID)
 					mctx := shortcodes.MetaShortcodeContext{
 						EntityType: "resource", EntityID: r.ID,
 						Meta: json.RawMessage(r.Meta), MetaSchema: r.ResourceCategory.MetaSchema,
@@ -317,15 +415,15 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 			bucket.Items = items
 		case []models.Note:
 			for i := range items {
+				if err := reqCtx.Err(); err != nil {
+					return err
+				}
 				n := &items[i]
-				if n.NoteType == nil && n.NoteTypeId != nil && *n.NoteTypeId > 0 {
-					nt, _ := appCtx.GetNoteType(*n.NoteTypeId)
-					if nt != nil {
-						n.NoteType = nt
-					}
+				if n.NoteType == nil && n.NoteTypeId != nil {
+					n.NoteType = data.NoteTypes[*n.NoteTypeId]
 				}
 				if n.NoteType != nil && n.NoteType.CustomMRQLResult != "" {
-					scopeID, parentID, rootID := resolveAPIScopeFields(appCtx, "note", n.OwnerId, n.ID)
+					scopeID, parentID, rootID := resolveAPIScopeFields(data, "note", n.OwnerId, n.ID)
 					mctx := shortcodes.MetaShortcodeContext{
 						EntityType: "note", EntityID: n.ID,
 						Meta: json.RawMessage(n.Meta), MetaSchema: n.NoteType.MetaSchema,
@@ -338,15 +436,15 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 			bucket.Items = items
 		case []models.Group:
 			for i := range items {
+				if err := reqCtx.Err(); err != nil {
+					return err
+				}
 				g := &items[i]
-				if g.Category == nil && g.CategoryId != nil && *g.CategoryId > 0 {
-					cat, _ := appCtx.GetCategory(*g.CategoryId)
-					if cat != nil {
-						g.Category = cat
-					}
+				if g.Category == nil && g.CategoryId != nil {
+					g.Category = data.Categories[*g.CategoryId]
 				}
 				if g.Category != nil && g.Category.CustomMRQLResult != "" {
-					scopeID, parentID, rootID := resolveAPIScopeFields(appCtx, "group", g.OwnerId, g.ID)
+					scopeID, parentID, rootID := resolveAPIScopeFields(data, "group", g.OwnerId, g.ID)
 					mctx := shortcodes.MetaShortcodeContext{
 						EntityType: "group", EntityID: g.ID,
 						Meta: json.RawMessage(g.Meta), MetaSchema: g.Category.MetaSchema,
@@ -359,6 +457,7 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 			bucket.Items = items
 		}
 	}
+	return nil
 }
 
 // GetExecuteMRQLHandler handles POST /v1/mrql — execute an MRQL query.
@@ -410,7 +509,10 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 
 			render := request.URL.Query().Get("render") == "1"
 			if render {
-				renderMRQLGroupedCustomTemplates(ctx, grouped, request.Context())
+				if err := renderMRQLGroupedCustomTemplates(ctx, grouped, request.Context()); err != nil {
+					http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+					return
+				}
 			}
 
 			writer.Header().Set("Content-Type", constants.JSON)
@@ -427,7 +529,10 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 
 		render := request.URL.Query().Get("render") == "1"
 		if render {
-			renderMRQLCustomTemplates(ctx, result, request.Context())
+			if err := renderMRQLCustomTemplates(ctx, result, request.Context()); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+				return
+			}
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
@@ -451,13 +556,13 @@ func GetValidateMRQLHandler(ctx *application_context.MahresourcesContext) func(h
 			return
 		}
 
-		valid, errs := ctx.ValidateMRQL(req.Query)
+		valid, errs, params := ctx.ValidateMRQLWithParams(req.Query)
 
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(mrqlValidateResponse{
 			Valid:  valid,
 			Errors: errs,
-			Params: ctx.MRQLParams(req.Query),
+			Params: params,
 		})
 	}
 }
@@ -796,7 +901,10 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 
 			render := request.URL.Query().Get("render") == "1"
 			if render {
-				renderMRQLGroupedCustomTemplates(ctx, grouped, request.Context())
+				if err := renderMRQLGroupedCustomTemplates(ctx, grouped, request.Context()); err != nil {
+					http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+					return
+				}
 			}
 
 			writer.Header().Set("Content-Type", constants.JSON)
@@ -812,7 +920,10 @@ func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) f
 
 		render := request.URL.Query().Get("render") == "1"
 		if render {
-			renderMRQLCustomTemplates(ctx, result, request.Context())
+			if err := renderMRQLCustomTemplates(ctx, result, request.Context()); err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
+				return
+			}
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)

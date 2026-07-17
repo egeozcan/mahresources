@@ -23,7 +23,17 @@ const mrqlDiagnosticTextLimit = 4000
 // are interpolated using the active dialect so the timeout log can be copied
 // directly into a database console.
 func mrqlSQL(db *gorm.DB, operation func(*gorm.DB) *gorm.DB) string {
-	dryRun := operation(db.Session(&gorm.Session{DryRun: true}))
+	// The live context is already canceled on a timeout. Use a background
+	// context for DryRun only; no database I/O occurs and the built clauses are
+	// retained, allowing diagnostics to be generated lazily after failure.
+	dryDB := db.Session(&gorm.Session{DryRun: true}).WithContext(context.Background())
+	// GORM stores the live execution error on the returned DB object. Clear it
+	// on this isolated DryRun clone so statement construction is not short-circuited.
+	dryDB.Error = nil
+	if dryDB.Statement != nil {
+		dryDB.Statement.Error = nil
+	}
+	dryRun := operation(dryDB)
 	if dryRun == nil || dryRun.Statement == nil {
 		return ""
 	}
@@ -75,18 +85,22 @@ func (ctx *MahresourcesContext) logMRQLTimeout(db *gorm.DB, parsed *mrql.Query, 
 }
 
 func (ctx *MahresourcesContext) executeMRQLFind(db *gorm.DB, dest any, parsed *mrql.Query, phase string) error {
-	sql := mrqlSQL(db, func(tx *gorm.DB) *gorm.DB { return tx.Find(dest) })
 	started := time.Now()
 	err := db.Find(dest).Error
-	ctx.logMRQLTimeout(db, parsed, phase, sql, started, err)
+	if errors.Is(err, context.DeadlineExceeded) {
+		sql := mrqlSQL(db, func(tx *gorm.DB) *gorm.DB { return tx.Find(dest) })
+		ctx.logMRQLTimeout(db, parsed, phase, sql, started, err)
+	}
 	return err
 }
 
 func (ctx *MahresourcesContext) executeMRQLCount(db *gorm.DB, dest *int64, parsed *mrql.Query, phase string) error {
-	sql := mrqlSQL(db, func(tx *gorm.DB) *gorm.DB { return tx.Count(dest) })
 	started := time.Now()
 	err := db.Count(dest).Error
-	ctx.logMRQLTimeout(db, parsed, phase, sql, started, err)
+	if errors.Is(err, context.DeadlineExceeded) {
+		sql := mrqlSQL(db, func(tx *gorm.DB) *gorm.DB { return tx.Count(dest) })
+		ctx.logMRQLTimeout(db, parsed, phase, sql, started, err)
+	}
 	return err
 }
 
@@ -124,20 +138,6 @@ func newMRQLFilterError(err error) *MRQLFilterError {
 	return fe
 }
 
-// mrqlEntityIDColumn returns the qualified id column for a list entity, used to
-// compose the filter subquery as `<table>.id IN (?)`.
-func mrqlEntityIDColumn(entity mrql.EntityType) string {
-	switch entity {
-	case mrql.EntityResource:
-		return "resources.id"
-	case mrql.EntityNote:
-		return "notes.id"
-	case mrql.EntityGroup:
-		return "groups.id"
-	}
-	return ""
-}
-
 // CheckMRQLFilter parses, validates, and translates a list-page MRQL filter
 // expression without composing it onto a query, returning a *MRQLFilterError
 // (with the offending token's position) when it is invalid, or nil when it is
@@ -162,57 +162,43 @@ func (ctx *MahresourcesContext) CheckMRQLFilter(entity mrql.EntityType, expr str
 	return nil
 }
 
-// applyMRQLFilter composes an optional MRQL filter expression onto a list query
-// as an id-membership predicate. The expression is parsed with mrql.ParseFilter
-// (WHERE-clause grammar only, entity type implied by the page), validated, and
-// translated to a `SELECT <table>.id FROM <table> WHERE ...` subquery carrying no
-// LIMIT (a predicate must match every row; the list's own pagination bounds the
-// output). It ANDs with all existing filters, sort, and pagination by
-// construction, and — because the outer list query already carries a scoped
-// principal's forced subtree filter — intersecting with it can only narrow, so a
-// confined user cannot widen scope through the bar.
-//
-// An empty expression returns db unchanged. A bad expression returns a
-// *MRQLFilterError so callers can render fail-closed / respond 400.
+// applyMRQLFilter composes an optional MRQL filter expression directly onto an
+// existing list query. ParseFilter rejects sorting/pagination/scope clauses, so
+// applying only its WHERE AST preserves the outer query's authorization scopes,
+// joins, ordering, and LIMIT and allows ordered indexes to stop at the page size.
+// A bad expression returns *MRQLFilterError so callers remain fail closed.
 func (ctx *MahresourcesContext) applyMRQLFilter(db *gorm.DB, entity mrql.EntityType, expr string) (*gorm.DB, error) {
-	sub, idCol, err := ctx.mrqlFilterSubquery(entity, expr)
+	parsed, err := ctx.prepareMRQLFilter(entity, expr)
 	if err != nil {
 		return nil, err
 	}
-	if sub == nil {
+	if parsed == nil {
 		return db, nil
 	}
-	return db.Where(idCol+" IN (?)", sub), nil
+	return ctx.applyPreparedMRQLFilter(db, parsed)
 }
 
-// mrqlFilterSubquery parses, validates, and translates a filter expression into
-// a `SELECT <table>.id FROM <table> WHERE ...` subquery (no LIMIT) plus the
-// qualified id column, for composition as `<idCol> IN (?)`. It returns
-// (nil, "", nil) for an empty expression and a *MRQLFilterError for a bad one.
-// Callers that apply the same predicate to many outer queries (e.g. timeline
-// bucket counts) build it once and reuse it — the subquery is never executed on
-// its own, only embedded.
-func (ctx *MahresourcesContext) mrqlFilterSubquery(entity mrql.EntityType, expr string) (*gorm.DB, string, error) {
+func (ctx *MahresourcesContext) prepareMRQLFilter(entity mrql.EntityType, expr string) (*mrql.Query, error) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
-		return nil, "", nil
+		return nil, nil
 	}
-
 	parsed, err := mrql.ParseFilter(entity, expr)
 	if err != nil {
-		return nil, "", newMRQLFilterError(err)
+		return nil, newMRQLFilterError(err)
 	}
 	if err := mrql.Validate(parsed); err != nil {
-		return nil, "", newMRQLFilterError(err)
+		return nil, newMRQLFilterError(err)
 	}
+	return parsed, nil
+}
 
-	sub, err := mrql.TranslateWithOptions(parsed, ctx.db, ctx.mrqlTranslateOptions())
+func (ctx *MahresourcesContext) applyPreparedMRQLFilter(db *gorm.DB, parsed *mrql.Query) (*gorm.DB, error) {
+	filtered, err := mrql.ApplyFilterWithOptions(parsed, db, ctx.mrqlTranslateOptions())
 	if err != nil {
-		return nil, "", newMRQLFilterError(err)
+		return nil, newMRQLFilterError(err)
 	}
-
-	idCol := mrqlEntityIDColumn(entity)
-	return sub.Select(idCol), idCol, nil
+	return filtered, nil
 }
 
 // MRQLResult holds the results of executing an MRQL query, organized by entity type.
@@ -283,9 +269,20 @@ func (ctx *MahresourcesContext) ExecuteMRQL(reqCtx context.Context, queryStr str
 }
 
 // ExecuteMRQLParsed executes an already-parsed, bound, and validated flat MRQL
-// query. Callers that have a *mrql.Query in hand (e.g. handlers that parsed to
-// inspect GROUP BY) use this to avoid re-parsing.
+// query under the interactive result-size policy.
 func (ctx *MahresourcesContext) ExecuteMRQLParsed(reqCtx context.Context, parsed *mrql.Query, limit, page int) (*MRQLResult, error) {
+	return ctx.executeMRQLParsed(reqCtx, parsed, limit, page, interactiveMRQLPolicy)
+}
+
+// ExecuteMRQLParsedExport executes a flat query under the larger, still-bounded
+// export policy.
+func (ctx *MahresourcesContext) ExecuteMRQLParsedExport(reqCtx context.Context, parsed *mrql.Query, limit, page int) (*MRQLResult, error) {
+	return ctx.executeMRQLParsed(reqCtx, parsed, limit, page, exportMRQLPolicy)
+}
+
+func (ctx *MahresourcesContext) executeMRQLParsed(reqCtx context.Context, parsed *mrql.Query, limit, page int, policy mrqlExecutionPolicy) (*MRQLResult, error) {
+	clone := *parsed
+	parsed = &clone
 	var err error
 	// Override parsed LIMIT/OFFSET with request parameters if provided.
 	// limit=0 and page=0 mean "not provided" — use the query's own values.
@@ -297,44 +294,43 @@ func (ctx *MahresourcesContext) ExecuteMRQLParsed(reqCtx context.Context, parsed
 		// which also clears any OFFSET baked into the query itself.
 		effectiveLimit := parsed.Limit
 		if effectiveLimit < 0 {
-			effectiveLimit = ctx.defaultMRQLLimit()
+			effectiveLimit = min(ctx.defaultMRQLLimit(), policy.maxLimit)
 		}
-		parsed.Offset = (page - 1) * effectiveLimit
+		offset, offsetErr := checkedPageOffset(page, effectiveLimit, policy.maxOffset)
+		if offsetErr != nil {
+			return nil, offsetErr
+		}
+		parsed.Offset = offset
 	}
 
-	// BH-013: compute default-limit flag + applied limit before translation.
-	// parsed.Limit < 0 means "no explicit LIMIT" after request-param overrides.
+	// Compute default-limit signaling before replacing the absent limit with its
+	// bounded effective value.
 	defaultApplied := parsed.Limit < 0
 	appliedLimit := parsed.Limit
 	if defaultApplied {
-		appliedLimit = ctx.defaultMRQLLimit()
+		appliedLimit = min(ctx.defaultMRQLLimit(), policy.maxLimit)
+		parsed.Limit = appliedLimit
+	}
+	if err := validateMRQLExecutionBounds(parsed, policy); err != nil {
+		return nil, err
 	}
 
 	entityType := mrql.ExtractEntityType(parsed)
 
-	opts := ctx.mrqlTranslateOptions()
-	if parsed.Scope != nil {
-		scopeID, err := mrql.ResolveScope(parsed, ctx.db)
-		if err != nil {
-			return nil, err
-		}
-		opts.ScopeGroupID = scopeID
+	opts, deny, err := ctx.mrqlQueryTranslateOptions(parsed)
+	if err != nil {
+		return nil, err
 	}
-	// RBAC: a group-limited principal's queries are force-scoped to their subtree
-	// regardless of any user-supplied SCOPE, and a principal that must be scoped
-	// but has no subtree is denied (empty result).
-	if scopeID, forced, deny := ctx.principalForcedScope(); deny {
+	if deny {
 		return &MRQLResult{EntityType: entityType.String()}, nil
-	} else if forced {
-		opts.ScopeGroupID = scopeID
 	}
 
 	var result *MRQLResult
 	if entityType != mrql.EntityUnspecified {
-		result, err = ctx.executeSingleEntity(reqCtx, parsed, entityType, opts)
+		result, err = ctx.executeSingleEntity(reqCtx, parsed, entityType, opts, policy)
 	} else {
 		// Cross-entity: fan out to all three entity types
-		result, err = ctx.executeCrossEntity(reqCtx, parsed, opts)
+		result, err = ctx.executeCrossEntity(reqCtx, parsed, opts, policy)
 	}
 	if err != nil {
 		return nil, err
@@ -393,10 +389,34 @@ func (ctx *MahresourcesContext) rejectSQLiteRegex(q *mrql.Query) error {
 // similarity sidebar (same read path, same live-tunable thresholds).
 func (ctx *MahresourcesContext) mrqlTranslateOptions() mrql.TranslateOptions {
 	pThreshold, aThreshold := ctx.similarityThresholds()
+	ftsAvailable := ctx.ftsEnabled
 	return mrql.TranslateOptions{
 		SimilarityThreshold: &pThreshold,
 		AHashThreshold:      aThreshold,
+		FTSAvailable:        &ftsAvailable,
 	}
+}
+
+// mrqlQueryTranslateOptions resolves effective query scope without leaking
+// out-of-subtree SCOPE metadata. Principal scope is checked first: it overrides
+// user text for group-limited principals, while unscoped principals retain
+// normal explicit SCOPE behavior.
+func (ctx *MahresourcesContext) mrqlQueryTranslateOptions(parsed *mrql.Query) (mrql.TranslateOptions, bool, error) {
+	opts := ctx.mrqlTranslateOptions()
+	if scopeID, forced, deny := ctx.principalForcedScope(); deny {
+		return opts, true, nil
+	} else if forced {
+		opts.ScopeGroupID = scopeID
+		return opts, false, nil
+	}
+	if parsed.Scope != nil {
+		scopeID, err := mrql.ResolveScope(parsed, ctx.db)
+		if err != nil {
+			return opts, false, err
+		}
+		opts.ScopeGroupID = scopeID
+	}
+	return opts, false, nil
 }
 
 // mrqlQueryTimeout returns the current MRQL query timeout from runtime settings,
@@ -408,14 +428,30 @@ func (ctx *MahresourcesContext) mrqlQueryTimeout() time.Duration {
 	return 10 * time.Second
 }
 
+// MRQLQueryTimeout exposes the runtime-aware timeout to render surfaces that
+// must bound the entire post-query rendering phase, including nested MRQL.
+func (ctx *MahresourcesContext) MRQLQueryTimeout() time.Duration {
+	return ctx.mrqlQueryTimeout()
+}
+
 // maxBucketedTotalItems caps the total number of entity items materialized
 // across all buckets, preventing a single bucketed query from loading
 // maxBuckets × defaultMRQLLimit entities into memory.
 const maxBucketedTotalItems = 10000
 
+// maxBucketQueries bounds SQL fan-out until bucket materialization is replaced
+// by a set-based window query. Continuation remains available through NextOffset.
+const maxBucketQueries = 200
+
 // executeSingleEntity runs the query against a single entity table.
-func (ctx *MahresourcesContext) executeSingleEntity(reqCtx context.Context, parsed *mrql.Query, entityType mrql.EntityType, opts mrql.TranslateOptions) (*MRQLResult, error) {
+func (ctx *MahresourcesContext) executeSingleEntity(reqCtx context.Context, parsed *mrql.Query, entityType mrql.EntityType, opts mrql.TranslateOptions, policy mrqlExecutionPolicy) (*MRQLResult, error) {
 	parsed.EntityType = entityType
+	if parsed.Limit < 0 {
+		parsed.Limit = min(ctx.defaultMRQLLimit(), policy.maxLimit)
+	}
+	if err := validateMRQLExecutionBounds(parsed, policy); err != nil {
+		return nil, err
+	}
 
 	// Derive timeout from the request context so client disconnects cancel the query.
 	queryCtx, cancel := context.WithTimeout(reqCtx, ctx.mrqlQueryTimeout())
@@ -457,37 +493,42 @@ func (ctx *MahresourcesContext) executeSingleEntity(reqCtx context.Context, pars
 	return result, nil
 }
 
-// ExecuteMRQLGrouped executes a GROUP BY MRQL query and returns grouped results.
-// The parsed query must have GroupBy set and EntityType populated.
+// ExecuteMRQLGrouped executes a GROUP BY query under the interactive policy.
 func (ctx *MahresourcesContext) ExecuteMRQLGrouped(reqCtx context.Context, parsed *mrql.Query) (*MRQLGroupedResult, error) {
+	return ctx.executeMRQLGrouped(reqCtx, parsed, interactiveMRQLPolicy)
+}
+
+// ExecuteMRQLGroupedExport executes a GROUP BY query under the export policy.
+func (ctx *MahresourcesContext) ExecuteMRQLGroupedExport(reqCtx context.Context, parsed *mrql.Query) (*MRQLGroupedResult, error) {
+	return ctx.executeMRQLGrouped(reqCtx, parsed, exportMRQLPolicy)
+}
+
+func (ctx *MahresourcesContext) executeMRQLGrouped(reqCtx context.Context, parsed *mrql.Query, policy mrqlExecutionPolicy) (*MRQLGroupedResult, error) {
+	clone := *parsed
+	parsed = &clone
 	queryCtx, cancel := context.WithTimeout(reqCtx, ctx.mrqlQueryTimeout())
 	defer cancel()
 
 	// BH-013: record whether the default kicked in before mutating parsed.Limit.
 	defaultApplied := parsed.Limit < 0
 
-	// Apply default limit when no explicit LIMIT was specified.
+	// Apply a bounded default limit when no explicit LIMIT was specified.
 	if parsed.Limit < 0 {
-		parsed.Limit = ctx.defaultMRQLLimit()
+		parsed.Limit = min(ctx.defaultMRQLLimit(), policy.maxLimit)
+	}
+	if err := validateMRQLExecutionBounds(parsed, policy); err != nil {
+		return nil, err
 	}
 
-	opts := ctx.mrqlTranslateOptions()
-	if parsed.Scope != nil {
-		scopeID, err := mrql.ResolveScope(parsed, ctx.db)
-		if err != nil {
-			return nil, err
-		}
-		opts.ScopeGroupID = scopeID
+	opts, deny, err := ctx.mrqlQueryTranslateOptions(parsed)
+	if err != nil {
+		return nil, err
 	}
-	// RBAC force-scope (see ExecuteMRQL). A denied principal gets an empty result.
-	if scopeID, forced, deny := ctx.principalForcedScope(); deny {
+	if deny {
 		return &MRQLGroupedResult{}, nil
-	} else if forced {
-		opts.ScopeGroupID = scopeID
 	}
 
 	var result *MRQLGroupedResult
-	var err error
 	if len(parsed.GroupBy.Aggregates) > 0 {
 		// Aggregated: Limit is standard row pagination — no clamping
 		result, err = ctx.executeAggregatedQuery(queryCtx, parsed, opts)
@@ -569,10 +610,16 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 		pageSize = parsed.BucketLimit
 	}
 	keys = keys[:pageSize]
+	requestedKeys := len(keys)
+	if len(keys) > maxBucketQueries {
+		keys = keys[:maxBucketQueries]
+		warnings = append(warnings, fmt.Sprintf("This page is limited to %d bucket queries; continue at the next offset for remaining groups.", maxBucketQueries))
+	}
 
 	var buckets []MRQLBucket
 	totalItems := 0
-	totalKeys := len(keys)
+	totalKeys := requestedKeys
+	capOverflow := false
 	for _, key := range keys {
 		// Stop adding buckets once we've exceeded the global item cap.
 		// Each bucket gets its full per-bucket LIMIT — we never truncate a
@@ -598,6 +645,13 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 			}
 		}
 		bucket := MRQLBucket{Key: publicKey}
+		remaining := maxBucketedTotalItems - totalItems
+		probeLimit := remaining + 1
+		if parsed.Limit >= 0 && parsed.Limit < probeLimit {
+			probeLimit = parsed.Limit
+		}
+		bucketDB = bucketDB.Limit(probeLimit)
+		bucketItems := 0
 
 		switch parsed.EntityType {
 		case mrql.EntityResource:
@@ -605,24 +659,25 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 			if err := ctx.executeMRQLFind(bucketDB, &resources, parsed, "bucket resource select"); err != nil {
 				return nil, err
 			}
-			bucket.Items = resources
-			totalItems += len(resources)
+			bucket.Items, bucketItems = resources, len(resources)
 		case mrql.EntityNote:
 			var notes []models.Note
 			if err := ctx.executeMRQLFind(bucketDB, &notes, parsed, "bucket note select"); err != nil {
 				return nil, err
 			}
-			bucket.Items = notes
-			totalItems += len(notes)
+			bucket.Items, bucketItems = notes, len(notes)
 		case mrql.EntityGroup:
 			var groups []models.Group
 			if err := ctx.executeMRQLFind(bucketDB, &groups, parsed, "bucket group select"); err != nil {
 				return nil, err
 			}
-			bucket.Items = groups
-			totalItems += len(groups)
+			bucket.Items, bucketItems = groups, len(groups)
 		}
-
+		if bucketItems > remaining {
+			capOverflow = true
+			break
+		}
+		totalItems += bucketItems
 		buckets = append(buckets, bucket)
 	}
 
@@ -630,7 +685,7 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 		buckets = []MRQLBucket{}
 	}
 
-	if totalItems >= maxBucketedTotalItems && len(buckets) < totalKeys {
+	if (capOverflow || totalItems >= maxBucketedTotalItems) && len(buckets) < totalKeys {
 		droppedGroups := totalKeys - len(buckets)
 		warnings = append(warnings, fmt.Sprintf(
 			"Results truncated at %d items (%d of %d groups shown, %d groups omitted). Narrow your query or add a filter.",
@@ -673,7 +728,7 @@ type crossEntityItem struct {
 // Each entity query gets its own timeout so a slow table doesn't block the
 // others. If an entity times out, its results are omitted and a warning is
 // included in the response.
-func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions) (*MRQLResult, error) {
+func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parsed *mrql.Query, opts mrql.TranslateOptions, policy mrqlExecutionPolicy) (*MRQLResult, error) {
 	// Up-front regex/dialect gate: this path swallows per-entity TranslateErrors
 	// (a non-resolvable entity is skipped), so a SQLite regex query without a
 	// `type =` filter would otherwise return silent empty results instead of a
@@ -685,7 +740,7 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 
 	result := &MRQLResult{EntityType: "all"}
 
-	globalLimit := ctx.defaultMRQLLimit()
+	globalLimit := min(ctx.defaultMRQLLimit(), policy.maxLimit)
 	if parsed.Limit >= 0 {
 		globalLimit = parsed.Limit
 	}
@@ -693,8 +748,14 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 	if parsed.Offset >= 0 {
 		globalOffset = parsed.Offset
 	}
+	if err := validateMRQLExecutionBounds(parsed, policy); err != nil {
+		return nil, err
+	}
+	if globalOffset > int(^uint(0)>>1)-globalLimit {
+		return nil, &MRQLExecutionLimitError{Field: "offset + limit", Value: globalOffset, Max: policy.maxOffset + policy.maxLimit}
+	}
 
-	// Per-entity cap: fetch enough for offset+limit since we sort globally.
+	// Per-entity cap is bounded by maxOffset+maxLimit.
 	perEntityCap := globalOffset + globalLimit
 
 	var (
@@ -1047,32 +1108,29 @@ func explainTableLabel(et mrql.EntityType) string {
 // validated MRQL query without executing it. It honours SCOPE, RBAC forced
 // scope, and the default LIMIT so the reported SQL matches what would run.
 func (ctx *MahresourcesContext) ExplainMRQL(reqCtx context.Context, parsed *mrql.Query) (*MRQLExplainResult, error) {
+	clone := *parsed
+	parsed = &clone
 	entityType := mrql.ExtractEntityType(parsed)
-	result := &MRQLExplainResult{EntityType: entityType.String()}
-
-	opts := ctx.mrqlTranslateOptions()
-	if parsed.Scope != nil {
-		scopeID, err := mrql.ResolveScope(parsed, ctx.db)
-		if err != nil {
-			return nil, err
-		}
-		opts.ScopeGroupID = scopeID
+	defaultApplied := parsed.Limit < 0
+	if defaultApplied {
+		parsed.Limit = min(ctx.defaultMRQLLimit(), interactiveMRQLPolicy.maxLimit)
 	}
-	// RBAC: a group-limited principal sees the force-scoped SQL that would run;
-	// a principal that must be scoped but has no subtree is denied (no SQL).
-	if scopeID, forced, deny := ctx.principalForcedScope(); deny {
+	if err := validateMRQLExecutionBounds(parsed, interactiveMRQLPolicy); err != nil {
+		return nil, err
+	}
+	result := &MRQLExplainResult{
+		EntityType:          entityType.String(),
+		DefaultLimitApplied: defaultApplied,
+		AppliedLimit:        parsed.Limit,
+	}
+
+	opts, deny, err := ctx.mrqlQueryTranslateOptions(parsed)
+	if err != nil {
+		return nil, err
+	}
+	if deny {
 		result.Warnings = append(result.Warnings, "access is scoped to no groups; this query would return no rows")
 		return result, nil
-	} else if forced {
-		opts.ScopeGroupID = scopeID
-	}
-
-	defaultApplied := parsed.Limit < 0
-	result.DefaultLimitApplied = defaultApplied
-	if defaultApplied {
-		result.AppliedLimit = ctx.defaultMRQLLimit()
-	} else {
-		result.AppliedLimit = parsed.Limit
 	}
 
 	db := ctx.db.WithContext(reqCtx)
@@ -1083,9 +1141,6 @@ func (ctx *MahresourcesContext) ExplainMRQL(reqCtx context.Context, parsed *mrql
 			return nil, errors.New("GROUP BY requires an explicit entity type")
 		}
 		parsed.EntityType = entityType
-		if parsed.Limit < 0 {
-			parsed.Limit = ctx.defaultMRQLLimit()
-		}
 		if len(parsed.GroupBy.Aggregates) > 0 {
 			built, err := mrql.BuildAggregatedGroupBy(parsed, db, opts)
 			if err != nil {
@@ -1099,6 +1154,7 @@ func (ctx *MahresourcesContext) ExplainMRQL(reqCtx context.Context, parsed *mrql
 		// query to enumerate. Show the keys query and note the fan-out.
 		if parsed.Limit > maxBucketedTotalItems {
 			parsed.Limit = maxBucketedTotalItems
+			result.AppliedLimit = parsed.Limit
 		}
 		keysDB, err := mrql.BuildGroupByKeys(parsed, db, opts)
 		if err != nil {
@@ -1115,9 +1171,6 @@ func (ctx *MahresourcesContext) ExplainMRQL(reqCtx context.Context, parsed *mrql
 		built, err := mrql.TranslateWithOptions(parsed, db, opts)
 		if err != nil {
 			return nil, err
-		}
-		if parsed.Limit < 0 {
-			built = built.Limit(ctx.defaultMRQLLimit())
 		}
 		result.Statements = append(result.Statements, mrql.ExplainDB(built, entityType.String(), explainDest(entityType)))
 		return result, nil
@@ -1136,34 +1189,35 @@ func (ctx *MahresourcesContext) ExplainMRQL(reqCtx context.Context, parsed *mrql
 			}
 			return nil, err
 		}
-		if clone.Limit < 0 {
-			built = built.Limit(ctx.defaultMRQLLimit())
-		}
 		result.Statements = append(result.Statements, mrql.ExplainDB(built, explainTableLabel(et), explainDest(et)))
 	}
 	return result, nil
 }
 
-// ValidateMRQL parses and validates an MRQL query string, returning whether it
-// is valid and any errors with position information.
+// ValidateMRQL parses and validates an MRQL query string.
 func (ctx *MahresourcesContext) ValidateMRQL(queryStr string) (bool, []map[string]any) {
+	valid, errs, _ := ctx.ValidateMRQLWithParams(queryStr)
+	return valid, errs
+}
+
+// ValidateMRQLWithParams returns validation and placeholder names from one AST,
+// avoiding the validation endpoint's historical second full parse.
+func (ctx *MahresourcesContext) ValidateMRQLWithParams(queryStr string) (bool, []map[string]any, []string) {
 	queryStr = strings.TrimSpace(queryStr)
 	if queryStr == "" {
 		return false, []map[string]any{
 			{"message": "query string must not be empty", "pos": 0, "length": 0},
-		}
+		}, nil
 	}
-
 	parsed, err := mrql.Parse(queryStr)
 	if err != nil {
-		return false, mrqlErrorPayload(err)
+		return false, mrqlErrorPayload(err), nil
 	}
-
+	params := mrql.ListParams(parsed)
 	if err := mrql.Validate(parsed); err != nil {
-		return false, mrqlErrorPayload(err)
+		return false, mrqlErrorPayload(err), params
 	}
-
-	return true, nil
+	return true, nil, params
 }
 
 // MRQLParams returns the parameter placeholder names ($name, without the '$')
@@ -1394,7 +1448,15 @@ func (ctx *MahresourcesContext) DeleteSavedMRQLQuery(id uint) error {
 // optional scope filter applied via the translator's recursive CTE mechanism.
 // When scopeID is 0, no scope filter is applied (equivalent to global scope).
 func (ctx *MahresourcesContext) ExecuteSingleEntityWithScope(reqCtx context.Context, q *mrql.Query, entityType mrql.EntityType, opts mrql.TranslateOptions, scopeID uint) (*MRQLResult, error) {
+	clone := *q
+	q = &clone
 	q.EntityType = entityType
+	if q.Limit < 0 {
+		q.Limit = min(ctx.defaultMRQLLimit(), interactiveMRQLPolicy.maxLimit)
+	}
+	if err := validateMRQLExecutionBounds(q, interactiveMRQLPolicy); err != nil {
+		return nil, err
+	}
 
 	queryCtx, cancel := context.WithTimeout(reqCtx, ctx.mrqlQueryTimeout())
 	defer cancel()
@@ -1443,20 +1505,29 @@ func (ctx *MahresourcesContext) ExecuteSingleEntityWithScope(reqCtx context.Cont
 // owner_id scope filter applied at the GORM level before aggregation/bucketing.
 // When scopeID is 0, delegates to the unscoped ExecuteMRQLGrouped.
 func (ctx *MahresourcesContext) ExecuteMRQLGroupedWithScope(reqCtx context.Context, parsed *mrql.Query, scopeID uint) (*MRQLGroupedResult, error) {
+	var err error
+	scopeID, err = ctx.effectiveMRQLRequestedScope(scopeID)
+	if err != nil {
+		return nil, err
+	}
 	if scopeID == 0 {
 		return ctx.ExecuteMRQLGrouped(reqCtx, parsed)
 	}
+	clone := *parsed
+	parsed = &clone
 
 	queryCtx, cancel := context.WithTimeout(reqCtx, ctx.mrqlQueryTimeout())
 	defer cancel()
 
 	defaultApplied := parsed.Limit < 0
 	if defaultApplied {
-		parsed.Limit = ctx.defaultMRQLLimit()
+		parsed.Limit = min(ctx.defaultMRQLLimit(), interactiveMRQLPolicy.maxLimit)
+	}
+	if err := validateMRQLExecutionBounds(parsed, interactiveMRQLPolicy); err != nil {
+		return nil, err
 	}
 
 	var result *MRQLGroupedResult
-	var err error
 	if len(parsed.GroupBy.Aggregates) > 0 {
 		result, err = ctx.executeAggregatedQueryScoped(queryCtx, parsed, scopeID)
 	} else {
@@ -1539,10 +1610,16 @@ func (ctx *MahresourcesContext) executeBucketedQueryScoped(reqCtx context.Contex
 		pageSize = parsed.BucketLimit
 	}
 	keys = keys[:pageSize]
+	requestedKeys := len(keys)
+	if len(keys) > maxBucketQueries {
+		keys = keys[:maxBucketQueries]
+		warnings = append(warnings, fmt.Sprintf("This page is limited to %d bucket queries; continue at the next offset for remaining groups.", maxBucketQueries))
+	}
 
 	var buckets []MRQLBucket
 	totalItems := 0
-	totalKeys := len(keys)
+	totalKeys := requestedKeys
+	capOverflow := false
 	for _, key := range keys {
 		if totalItems >= maxBucketedTotalItems {
 			break
@@ -1563,6 +1640,13 @@ func (ctx *MahresourcesContext) executeBucketedQueryScoped(reqCtx context.Contex
 			}
 		}
 		bucket := MRQLBucket{Key: publicKey}
+		remaining := maxBucketedTotalItems - totalItems
+		probeLimit := remaining + 1
+		if parsed.Limit >= 0 && parsed.Limit < probeLimit {
+			probeLimit = parsed.Limit
+		}
+		bucketDB = bucketDB.Limit(probeLimit)
+		bucketItems := 0
 
 		switch parsed.EntityType {
 		case mrql.EntityResource:
@@ -1570,24 +1654,25 @@ func (ctx *MahresourcesContext) executeBucketedQueryScoped(reqCtx context.Contex
 			if err := ctx.executeMRQLFind(bucketDB, &resources, parsed, "scoped bucket resource select"); err != nil {
 				return nil, err
 			}
-			bucket.Items = resources
-			totalItems += len(resources)
+			bucket.Items, bucketItems = resources, len(resources)
 		case mrql.EntityNote:
 			var notes []models.Note
 			if err := ctx.executeMRQLFind(bucketDB, &notes, parsed, "scoped bucket note select"); err != nil {
 				return nil, err
 			}
-			bucket.Items = notes
-			totalItems += len(notes)
+			bucket.Items, bucketItems = notes, len(notes)
 		case mrql.EntityGroup:
 			var groups []models.Group
 			if err := ctx.executeMRQLFind(bucketDB, &groups, parsed, "scoped bucket group select"); err != nil {
 				return nil, err
 			}
-			bucket.Items = groups
-			totalItems += len(groups)
+			bucket.Items, bucketItems = groups, len(groups)
 		}
-
+		if bucketItems > remaining {
+			capOverflow = true
+			break
+		}
+		totalItems += bucketItems
 		buckets = append(buckets, bucket)
 	}
 
@@ -1595,7 +1680,7 @@ func (ctx *MahresourcesContext) executeBucketedQueryScoped(reqCtx context.Contex
 		buckets = []MRQLBucket{}
 	}
 
-	if totalItems >= maxBucketedTotalItems && len(buckets) < totalKeys {
+	if (capOverflow || totalItems >= maxBucketedTotalItems) && len(buckets) < totalKeys {
 		droppedGroups := totalKeys - len(buckets)
 		warnings = append(warnings, fmt.Sprintf(
 			"Results truncated at %d items (%d of %d groups shown, %d groups omitted). Narrow your query or add a filter.",
@@ -1622,21 +1707,61 @@ func (ctx *MahresourcesContext) executeBucketedQueryScoped(reqCtx context.Contex
 	}, nil
 }
 
-// ResolveMRQLScope resolves a parsed query's SCOPE clause to a group ID.
+// effectiveMRQLRequestedScope intersects a shortcode/deferred requested scope
+// with the principal's forced subtree. Out-of-subtree requests become the
+// unresolved sentinel so nested MRQL fails closed without exposing sibling data.
+func (ctx *MahresourcesContext) effectiveMRQLRequestedScope(requested uint) (uint, error) {
+	forcedRoot, forced, deny := ctx.principalForcedScope()
+	if deny {
+		return mrql.UnresolvedScopeSentinel, nil
+	}
+	if !forced {
+		return requested, nil
+	}
+	if requested == 0 {
+		return forcedRoot, nil
+	}
+	if requested == mrql.UnresolvedScopeSentinel {
+		return requested, nil
+	}
+	allowed, err := mrql.ScopeContains(ctx.db, forcedRoot, requested)
+	if err != nil {
+		return 0, err
+	}
+	if !allowed {
+		return mrql.UnresolvedScopeSentinel, nil
+	}
+	return requested, nil
+}
+
+// ResolveMRQLScope resolves a parsed query's SCOPE clause to a group ID without
+// allowing scoped principals to probe names or IDs outside their subtree.
 func (ctx *MahresourcesContext) ResolveMRQLScope(q *mrql.Query) (uint, error) {
+	forcedRoot, forced, deny := ctx.principalForcedScope()
+	if deny {
+		return mrql.UnresolvedScopeSentinel, nil
+	}
+	if forced {
+		return mrql.ResolveScopeWithin(q, ctx.db, forcedRoot)
+	}
 	return mrql.ResolveScope(q, ctx.db)
 }
 
 // ExecuteMRQLScoped executes a pre-parsed MRQL query with scope filtering.
 // Supports cross-entity queries.
 func (ctx *MahresourcesContext) ExecuteMRQLScoped(reqCtx context.Context, parsed *mrql.Query, scopeGroupID uint) (*MRQLResult, error) {
+	effectiveScope, err := ctx.effectiveMRQLRequestedScope(scopeGroupID)
+	if err != nil {
+		return nil, err
+	}
 	entityType := mrql.ExtractEntityType(parsed)
 	opts := ctx.mrqlTranslateOptions()
+	scopeGroupID = effectiveScope
 	opts.ScopeGroupID = scopeGroupID
 	if entityType != mrql.EntityUnspecified {
-		return ctx.executeSingleEntity(reqCtx, parsed, entityType, opts)
+		return ctx.executeSingleEntity(reqCtx, parsed, entityType, opts, interactiveMRQLPolicy)
 	}
-	return ctx.executeCrossEntity(reqCtx, parsed, opts)
+	return ctx.executeCrossEntity(reqCtx, parsed, opts, interactiveMRQLPolicy)
 }
 
 // CountMRQLScoped returns the true number of rows a non-grouped MRQL query
@@ -1646,7 +1771,12 @@ func (ctx *MahresourcesContext) ExecuteMRQLScoped(reqCtx context.Context, parsed
 // sum the per-entity counts. GROUP BY queries are not counted here — the
 // [mrql] handler only requests a total for the flat path.
 func (ctx *MahresourcesContext) CountMRQLScoped(reqCtx context.Context, parsed *mrql.Query, scopeGroupID uint) (int64, error) {
+	effectiveScope, err := ctx.effectiveMRQLRequestedScope(scopeGroupID)
+	if err != nil {
+		return 0, err
+	}
 	opts := ctx.mrqlTranslateOptions()
+	scopeGroupID = effectiveScope
 	opts.ScopeGroupID = scopeGroupID
 	entityType := mrql.ExtractEntityType(parsed)
 	if entityType != mrql.EntityUnspecified {

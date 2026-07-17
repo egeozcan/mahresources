@@ -603,6 +603,10 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
         open: false,
         _completeTimer: null,
         _validateTimer: null,
+        _completeController: null,
+        _completeRequestId: 0,
+        _validateController: null,
+        _validateRequestId: 0,
         _formSyncTimer: null,
         _liveRegion: null,
         filterForm: null,
@@ -620,6 +624,10 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
             this._liveRegion?.destroy();
             clearTimeout(this._completeTimer);
             clearTimeout(this._validateTimer);
+            this._completeController?.abort();
+            this._validateController?.abort();
+            this._completeRequestId++;
+            this._validateRequestId++;
             clearTimeout(this._formSyncTimer);
             this._formMutationObserver?.disconnect();
             if (this.filterForm) {
@@ -879,11 +887,13 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
 
         scheduleComplete() {
             clearTimeout(this._completeTimer);
+            this._completeController?.abort();
             this._completeTimer = setTimeout(() => this.fetchSuggestions(), 150);
         },
 
         scheduleValidate() {
             clearTimeout(this._validateTimer);
+            this._validateController?.abort();
             this._validateTimer = setTimeout(() => this.validate(), 500);
         },
 
@@ -898,14 +908,22 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
 
         async fetchSuggestions() {
             const cursor = this.cursorPos();
+            const querySnapshot = this.query;
+            this._completeController?.abort();
+            const controller = new AbortController();
+            const requestId = ++this._completeRequestId;
+            this._completeController = controller;
             try {
                 const resp = await fetch('/v1/mrql/complete', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: this.query, cursor, entityType: this.entity, filter: true }),
+                    body: JSON.stringify({ query: querySnapshot, cursor, entityType: this.entity, filter: true }),
+                    signal: controller.signal,
                 });
+                if (requestId !== this._completeRequestId || controller.signal.aborted) return;
                 if (!resp.ok) { this.closeSuggestions(); return; }
                 const data = await resp.json();
+                if (requestId !== this._completeRequestId || controller.signal.aborted || this.query !== querySnapshot) return;
                 let sugg = data.suggestions || [];
                 // Narrow to the token currently being typed (the server returns
                 // the full candidate list; the client filters, as /mrql does).
@@ -921,22 +939,35 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
                     this._liveRegion?.announce(
                         `${this.suggestions.length} suggestion${this.suggestions.length === 1 ? '' : 's'} available.`);
                 }
-            } catch (_) {
-                this.closeSuggestions();
+            } catch (err) {
+                if (err?.name !== 'AbortError' && requestId === this._completeRequestId) this.closeSuggestions();
+            } finally {
+                if (requestId === this._completeRequestId) this._completeController = null;
             }
         },
 
         async validate() {
             const query = splitOrderBy(this.query.trim()).filter;
-            if (!query) { this.error = ''; return; }
+            if (!query) {
+                this._validateController?.abort();
+                this.error = '';
+                return;
+            }
+            this._validateController?.abort();
+            const controller = new AbortController();
+            const requestId = ++this._validateRequestId;
+            this._validateController = controller;
             try {
                 const resp = await fetch('/v1/mrql/validate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query, entityType: this.entity, filter: true }),
+                    signal: controller.signal,
                 });
+                if (requestId !== this._validateRequestId || controller.signal.aborted) return;
                 if (!resp.ok) return;
                 const data = await resp.json();
+                if (requestId !== this._validateRequestId || controller.signal.aborted) return;
                 if (data.valid) {
                     this.error = '';
                 } else if (data.errors && data.errors.length > 0) {
@@ -944,8 +975,12 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
                 } else {
                     this.error = 'Invalid filter';
                 }
-            } catch (_) {
-                // Network error — leave the last known state untouched.
+            } catch (err) {
+                if (err?.name !== 'AbortError') {
+                    // Network error — leave the last known state untouched.
+                }
+            } finally {
+                if (requestId === this._validateRequestId) this._validateController = null;
             }
         },
 

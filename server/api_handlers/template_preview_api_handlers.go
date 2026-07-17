@@ -9,7 +9,6 @@ import (
 	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/mrql"
-	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/template_filters"
 	"mahresources/shortcodes"
@@ -82,10 +81,10 @@ func GetPreviewTemplateHandler(ctx *application_context.MahresourcesContext, ent
 			return
 		}
 
-		// Request context with a per-render MRQL cache and partial resolver
-		// (mirrors the tag path).
-		reqCtx := plugin_system.WithMRQLCache(request.Context())
-		reqCtx = shortcodes.WithPartialResolver(reqCtx, template_filters.BuildPartialResolver(ctx))
+		// HTML and CSS share one MRQL cache, query budget, render-data cache,
+		// and overall deadline.
+		reqCtx, cancel := buildMRQLAPIRenderContext(request.Context(), ctx, false)
+		defer cancel()
 
 		var renderer shortcodes.PluginRenderer
 		if pm := ctx.PluginManager(); pm != nil {

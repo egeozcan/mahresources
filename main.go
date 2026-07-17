@@ -516,48 +516,8 @@ func main() {
 		}
 	}
 
-	indexQueries := [...]string{
-		"CREATE INDEX IF NOT EXISTS idx__resource_notes__note_id ON resource_notes(note_id)",
-		"CREATE INDEX IF NOT EXISTS idx__resource_notes__resource_id ON resource_notes(resource_id)",
-		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id ON groups_related_resources(resource_id)",
-		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id___hash ON groups_related_resources USING HASH (resource_id);",
-		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__group_id ON groups_related_resources(group_id)",
-		"CREATE INDEX IF NOT EXISTS idx__log_entries__entity_type_entity_id ON log_entries(entity_type, entity_id)",
-		// tag_id is the second column of each junction's composite PK, so it cannot
-		// serve the most_used_<entity> correlated-count subquery (WHERE jt.tag_id = ?)
-		// nor tag-by-resource lookups. Index it explicitly on all three junctions.
-		"CREATE INDEX IF NOT EXISTS idx__resource_tags__tag_id ON resource_tags(tag_id)",
-		"CREATE INDEX IF NOT EXISTS idx__note_tags__tag_id ON note_tags(tag_id)",
-		"CREATE INDEX IF NOT EXISTS idx__group_tags__tag_id ON group_tags(tag_id)",
-	}
-
-	indexQueriesSqlite := [...]string{
-		"CREATE INDEX IF NOT EXISTS idx__resource_notes__note_id ON resource_notes(note_id)",
-		"CREATE INDEX IF NOT EXISTS idx__resource_notes__resource_id ON resource_notes(resource_id)",
-		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id ON groups_related_resources(resource_id)",
-		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__resource_id___hash ON groups_related_resources(resource_id);",
-		"CREATE INDEX IF NOT EXISTS idx__groups_related_resources__group_id ON groups_related_resources(group_id)",
-		"CREATE INDEX IF NOT EXISTS idx__log_entries__entity_type_entity_id ON log_entries(entity_type, entity_id)",
-		// tag_id is the second column of each junction's composite PK, so it cannot
-		// serve the most_used_<entity> correlated-count subquery (WHERE jt.tag_id = ?)
-		// nor tag-by-resource lookups. Index it explicitly on all three junctions.
-		"CREATE INDEX IF NOT EXISTS idx__resource_tags__tag_id ON resource_tags(tag_id)",
-		"CREATE INDEX IF NOT EXISTS idx__note_tags__tag_id ON note_tags(tag_id)",
-		"CREATE INDEX IF NOT EXISTS idx__group_tags__tag_id ON group_tags(tag_id)",
-	}
-
-	if context.Config.DbType == constants.DbTypePosgres {
-		for _, query := range indexQueries {
-			if err := db.Exec(query).Error; err != nil {
-				log.Fatalf("Error when creating index: %v", err)
-			}
-		}
-	} else {
-		for _, query := range indexQueriesSqlite {
-			if err := db.Exec(query).Error; err != nil {
-				log.Fatalf("Error when creating index: %v", err)
-			}
-		}
+	if err := models.EnsureSupplementalIndexes(db); err != nil {
+		log.Fatalf("Error when creating supplemental indexes: %v", err)
 	}
 
 	// Migrate existing resources to versioning system in background (skip with -skip-version-migration flag)

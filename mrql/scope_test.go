@@ -104,6 +104,33 @@ func TestResolveScopeAmbiguousName(t *testing.T) {
 	}
 }
 
+func TestResolveScopeWithinSubtree(t *testing.T) {
+	db := setupTestDB(t)
+	inside := &Query{Scope: &ScopeClause{Value: &StringLiteral{Value: "Work"}}}
+	id, err := ResolveScopeWithin(inside, db, 1)
+	if err != nil || id != 2 {
+		t.Fatalf("resolve in-scope group = %d, %v; want 2", id, err)
+	}
+
+	for _, outside := range []Node{
+		&NumberLiteral{Value: 3},
+		&StringLiteral{Value: "Archive"},
+	} {
+		q := &Query{Scope: &ScopeClause{Value: outside}}
+		if _, err := ResolveScopeWithin(q, db, 1); err == nil {
+			t.Fatalf("expected out-of-scope value %#v to be hidden", outside)
+		}
+	}
+	allowed, err := ScopeContains(db, 1, 4)
+	if err != nil || !allowed {
+		t.Fatalf("nested group should be in scope: allowed=%v err=%v", allowed, err)
+	}
+	allowed, err = ScopeContains(db, 1, 3)
+	if err != nil || allowed {
+		t.Fatalf("sibling root should be out of scope: allowed=%v err=%v", allowed, err)
+	}
+}
+
 func TestResolveScopeZero(t *testing.T) {
 	db := setupTestDB(t)
 	q := &Query{

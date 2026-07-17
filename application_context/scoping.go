@@ -116,6 +116,24 @@ func (ctx *MahresourcesContext) WithPrincipal(p *auth.Principal) *MahresourcesCo
 	return &cp
 }
 
+// WithMRQLPrincipal binds request cancellation and actor identity without
+// flattening a scoped principal's entire group subtree into a Go allow-list.
+// MRQL enforces the same principal scope directly in SQL through its recursive
+// scope CTE, so materializing the generic ORM scope here would duplicate work.
+// Use this only for MRQL-only route handlers.
+func (ctx *MahresourcesContext) WithMRQLPrincipal(parent context.Context, p *auth.Principal) *MahresourcesContext {
+	cp := *ctx
+	cp.principal = p
+	if parent == nil {
+		parent = context.Background()
+	}
+	if p != nil && p.UserID != 0 {
+		parent = context.WithValue(parent, actingUserCtxKey{}, p.UserID)
+	}
+	cp.db = ctx.db.WithContext(parent)
+	return &cp
+}
+
 // applyPrincipalScope mutates dst.db so that ORM operations carry the request
 // actor (for CreatedByUserId stamping) and, when p is a group-limited principal,
 // are also confined to p's subtree. base is the unscoped source context used to

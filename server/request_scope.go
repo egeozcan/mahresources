@@ -100,3 +100,18 @@ func scopedAPI[T any](appCtx *application_context.MahresourcesContext, make func
 		make(typed)(w, r)
 	}
 }
+
+// scopedMRQLAPI avoids the generic ORM subtree allow-list for MRQL-only
+// handlers. MRQL applies the principal's subtree as a recursive SQL CTE and the
+// request context still carries cancellation and actor identity.
+func scopedMRQLAPI[T any](appCtx *application_context.MahresourcesContext, make func(T) func(http.ResponseWriter, *http.Request)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p := auth.PrincipalFromContext(r.Context())
+		typed, ok := any(appCtx.WithMRQLPrincipal(r.Context(), p)).(T)
+		if !ok {
+			http.Error(w, "internal scoping error", http.StatusInternalServerError)
+			return
+		}
+		make(typed)(w, r)
+	}
+}

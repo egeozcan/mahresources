@@ -84,6 +84,29 @@ func GetExportMRQLHandler(ctx *application_context.MahresourcesContext) func(htt
 		}
 
 		entityType := mrql.ExtractEntityType(parsed)
+		if request.URL.Query().Get("preflight") == "1" {
+			if format == "csv" && parsed.GroupBy == nil && entityType == mrql.EntityUnspecified {
+				http_utils.HandleError(errors.New("CSV export requires a single entity type (add type = \"resource|note|group\"); use format=json for cross-entity results"), writer, request, http.StatusBadRequest)
+				return
+			}
+			if parsed.GroupBy != nil {
+				if entityType == mrql.EntityUnspecified {
+					http_utils.HandleError(errors.New("GROUP BY requires an explicit entity type"), writer, request, http.StatusBadRequest)
+					return
+				}
+				clone := *parsed
+				applyGroupedPagination(&clone, req.Limit, req.Buckets, req.Page, req.Offset)
+				err = ctx.ValidateMRQLGroupedExportBounds(&clone)
+			} else {
+				err = ctx.ValidateMRQLFlatExportBounds(parsed, req.Limit, req.Page)
+			}
+			if err != nil {
+				http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+				return
+			}
+			writer.WriteHeader(http.StatusNoContent)
+			return
+		}
 		filename := fmt.Sprintf("%s-%s.%s", filenameBase, time.Now().Format("2006-01-02"), format)
 
 		if parsed.GroupBy != nil {
@@ -102,7 +125,7 @@ func exportFlat(ctx *application_context.MahresourcesContext, writer http.Respon
 		return
 	}
 
-	result, err := ctx.ExecuteMRQLParsed(request.Context(), parsed, req.Limit, req.Page)
+	result, err := ctx.ExecuteMRQLParsedExport(request.Context(), parsed, req.Limit, req.Page)
 	if err != nil {
 		http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 		return
@@ -145,7 +168,7 @@ func exportGrouped(ctx *application_context.MahresourcesContext, writer http.Res
 	parsed.EntityType = entityType
 	applyGroupedPagination(parsed, req.Limit, req.Buckets, req.Page, req.Offset)
 
-	grouped, err := ctx.ExecuteMRQLGrouped(request.Context(), parsed)
+	grouped, err := ctx.ExecuteMRQLGroupedExport(request.Context(), parsed)
 	if err != nil {
 		http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
 		return

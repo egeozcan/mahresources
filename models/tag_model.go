@@ -13,7 +13,7 @@ type Tag struct {
 	UpdatedAt       time.Time `gorm:"index"`
 	CreatedByUserId *uint     `gorm:"index" json:"createdByUserId,omitempty"`
 	GUID            *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
-	Name            string    `gorm:"uniqueIndex:unique_tag_name"`
+	Name            string    `gorm:"uniqueIndex:unique_tag_name;index:idx_tags_lower_name,expression:LOWER(name)"`
 	Description     string    `gorm:"index"`
 	Meta            types.JSON
 	Resources       []*Resource `gorm:"many2many:resource_tags;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;"`

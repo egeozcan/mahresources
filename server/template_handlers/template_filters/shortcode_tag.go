@@ -105,6 +105,7 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 // reuse a context missing the signer and deferral silently degrades to inline.
 func buildPageRenderContext(reqCtx context.Context, appCtx *application_context.MahresourcesContext) context.Context {
 	reqCtx = plugin_system.WithMRQLCache(reqCtx)
+	reqCtx = application_context.WithMRQLRenderDataCache(reqCtx)
 	reqCtx = shortcodes.WithPartialResolver(reqCtx, BuildPartialResolver(appCtx))
 	reqCtx = shortcodes.WithQueryBudget(reqCtx, pageQueryBudget(appCtx))
 	if appCtx != nil {

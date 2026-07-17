@@ -15,7 +15,7 @@ type Resource struct {
 	UpdatedAt          time.Time `gorm:"index"`
 	CreatedByUserId    *uint     `gorm:"index" json:"createdByUserId,omitempty"`
 	GUID               *string   `gorm:"uniqueIndex;size:36" json:"guid,omitempty"`
-	Name               string    `gorm:"index"`
+	Name               string    `gorm:"index;index:idx_resources_lower_name,expression:LOWER(name)"`
 	OriginalName       string    `gorm:"index"`
 	OriginalLocation   string    `gorm:"index"`
 	Hash               string    `gorm:"index"`
@@ -24,9 +24,9 @@ type Resource struct {
 	StorageLocation    *string
 	Description        string
 	Meta               types.JSON
-	Width              uint
-	Height             uint
-	FileSize           int64
+	Width              uint              `gorm:"index"`
+	Height             uint              `gorm:"index"`
+	FileSize           int64             `gorm:"index"`
 	Category           string            `gorm:"index"`
 	ContentType        string            `gorm:"index"`
 	ContentCategory    string            `gorm:"index"`

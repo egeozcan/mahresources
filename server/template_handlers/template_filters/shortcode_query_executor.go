@@ -130,7 +130,10 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context
 		if err != nil {
 			return nil, err
 		}
-		qr := convertGroupedResultItems(grouped, appCtx)
+		qr, err := convertGroupedResultItems(reqCtx, grouped, appCtx)
+		if err != nil {
+			return nil, err
+		}
 		qr.EffectiveQuery = linkQuery
 		qr.SavedID = linkSavedID
 		return qr, nil
@@ -148,7 +151,10 @@ func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context
 		EffectiveQuery: linkQuery,
 		SavedID:        linkSavedID,
 	}
-	qr.Items = convertResultItems(result, appCtx)
+	qr.Items, err = convertResultItems(reqCtx, result, appCtx)
+	if err != nil {
+		return nil, err
+	}
 
 	// A true total (ignoring limit) is only needed when the template references
 	// {total}; it runs a second COUNT query over the same WHERE/scope.
@@ -176,223 +182,182 @@ func shortcodeParamsToAny(params map[string]string) map[string]any {
 	return out
 }
 
-// convertResultItems converts MRQLResult entities into QueryResultItems with
-// category information preloaded for CustomMRQLResult templates.
-func convertResultItems(result *application_context.MRQLResult, appCtx *application_context.MahresourcesContext) []shortcodes.QueryResultItem {
-	var items []shortcodes.QueryResultItem
+type mrqlRenderIDs struct {
+	resourceCategories []uint
+	noteTypes          []uint
+	categories         []uint
+	scopeGroups        []uint
+}
 
+func collectResultRenderIDs(result *application_context.MRQLResult, ids *mrqlRenderIDs) {
 	for i := range result.Resources {
 		r := &result.Resources[i]
-		// Preload category if not already loaded
-		if r.ResourceCategory == nil && r.ResourceCategoryId > 0 {
-			cat, err := appCtx.GetResourceCategory(r.ResourceCategoryId)
-			if err == nil {
-				r.ResourceCategory = cat
-			}
+		if r.ResourceCategory == nil {
+			ids.resourceCategories = append(ids.resourceCategories, r.ResourceCategoryId)
 		}
-		item := shortcodes.QueryResultItem{
-			EntityType: "resource",
-			EntityID:   r.ID,
-			Entity:     r,
-			Meta:       json.RawMessage(r.Meta),
+		if r.OwnerId != nil {
+			ids.scopeGroups = append(ids.scopeGroups, *r.OwnerId)
 		}
+	}
+	for i := range result.Notes {
+		n := &result.Notes[i]
+		if n.NoteType == nil && n.NoteTypeId != nil {
+			ids.noteTypes = append(ids.noteTypes, *n.NoteTypeId)
+		}
+		if n.OwnerId != nil {
+			ids.scopeGroups = append(ids.scopeGroups, *n.OwnerId)
+		}
+	}
+	for i := range result.Groups {
+		g := &result.Groups[i]
+		if g.Category == nil && g.CategoryId != nil {
+			ids.categories = append(ids.categories, *g.CategoryId)
+		}
+		ids.scopeGroups = append(ids.scopeGroups, g.ID)
+	}
+}
+
+func loadResultRenderData(reqCtx context.Context, appCtx *application_context.MahresourcesContext, ids mrqlRenderIDs) (*application_context.MRQLRenderData, error) {
+	return appCtx.LoadMRQLRenderData(reqCtx, ids.resourceCategories, ids.noteTypes, ids.categories, ids.scopeGroups)
+}
+
+// convertResultItems converts MRQLResult entities into QueryResultItems using
+// batch-loaded scalar carriers and hierarchy data.
+func convertResultItems(reqCtx context.Context, result *application_context.MRQLResult, appCtx *application_context.MahresourcesContext) ([]shortcodes.QueryResultItem, error) {
+	var ids mrqlRenderIDs
+	collectResultRenderIDs(result, &ids)
+	data, err := loadResultRenderData(reqCtx, appCtx, ids)
+	if err != nil {
+		return nil, err
+	}
+	return convertResultItemsWithData(reqCtx, result, data)
+}
+
+func convertResultItemsWithData(reqCtx context.Context, result *application_context.MRQLResult, data *application_context.MRQLRenderData) ([]shortcodes.QueryResultItem, error) {
+	items := make([]shortcodes.QueryResultItem, 0, len(result.Resources)+len(result.Notes)+len(result.Groups))
+	sentinel := mrql.UnresolvedScopeSentinel
+
+	for i := range result.Resources {
+		if err := reqCtx.Err(); err != nil {
+			return nil, err
+		}
+		r := &result.Resources[i]
+		if r.ResourceCategory == nil {
+			r.ResourceCategory = data.ResourceCategories[r.ResourceCategoryId]
+		}
+		item := shortcodes.QueryResultItem{EntityType: "resource", EntityID: r.ID, Entity: r, Meta: json.RawMessage(r.Meta)}
 		if r.ResourceCategory != nil {
 			item.MetaSchema = r.ResourceCategory.MetaSchema
 			item.CustomMRQLResult = r.ResourceCategory.CustomMRQLResult
 			item.CustomCSS = r.ResourceCategory.CustomCSS
 			item.CategoryID = r.ResourceCategory.ID
 		}
-		// Populate scope fields
+		item.ScopeGroupID, item.ParentGroupID, item.RootGroupID = sentinel, sentinel, sentinel
 		if r.OwnerId != nil && *r.OwnerId > 0 {
 			item.ScopeGroupID = *r.OwnerId
-			item.ParentGroupID = appCtx.ResolveParentScopeID(*r.OwnerId)
-			item.RootGroupID = appCtx.ResolveRootScopeID(*r.OwnerId)
-		} else {
-			item.ScopeGroupID = mrql.UnresolvedScopeSentinel
-			item.ParentGroupID = mrql.UnresolvedScopeSentinel
-			item.RootGroupID = mrql.UnresolvedScopeSentinel
+			if scope, ok := data.Scopes[*r.OwnerId]; ok {
+				item.ParentGroupID, item.RootGroupID = scope.ParentGroupID, scope.RootGroupID
+			}
 		}
 		items = append(items, item)
 	}
 
 	for i := range result.Notes {
+		if err := reqCtx.Err(); err != nil {
+			return nil, err
+		}
 		n := &result.Notes[i]
-		if n.NoteType == nil && n.NoteTypeId != nil && *n.NoteTypeId > 0 {
-			nt, err := appCtx.GetNoteType(*n.NoteTypeId)
-			if err == nil {
-				n.NoteType = nt
-			}
+		if n.NoteType == nil && n.NoteTypeId != nil {
+			n.NoteType = data.NoteTypes[*n.NoteTypeId]
 		}
-		item := shortcodes.QueryResultItem{
-			EntityType: "note",
-			EntityID:   n.ID,
-			Entity:     n,
-			Meta:       json.RawMessage(n.Meta),
-		}
+		item := shortcodes.QueryResultItem{EntityType: "note", EntityID: n.ID, Entity: n, Meta: json.RawMessage(n.Meta)}
 		if n.NoteType != nil {
 			item.MetaSchema = n.NoteType.MetaSchema
 			item.CustomMRQLResult = n.NoteType.CustomMRQLResult
 			item.CustomCSS = n.NoteType.CustomCSS
 			item.CategoryID = n.NoteType.ID
 		}
-		// Populate scope fields
+		item.ScopeGroupID, item.ParentGroupID, item.RootGroupID = sentinel, sentinel, sentinel
 		if n.OwnerId != nil && *n.OwnerId > 0 {
 			item.ScopeGroupID = *n.OwnerId
-			item.ParentGroupID = appCtx.ResolveParentScopeID(*n.OwnerId)
-			item.RootGroupID = appCtx.ResolveRootScopeID(*n.OwnerId)
-		} else {
-			item.ScopeGroupID = mrql.UnresolvedScopeSentinel
-			item.ParentGroupID = mrql.UnresolvedScopeSentinel
-			item.RootGroupID = mrql.UnresolvedScopeSentinel
+			if scope, ok := data.Scopes[*n.OwnerId]; ok {
+				item.ParentGroupID, item.RootGroupID = scope.ParentGroupID, scope.RootGroupID
+			}
 		}
 		items = append(items, item)
 	}
 
 	for i := range result.Groups {
+		if err := reqCtx.Err(); err != nil {
+			return nil, err
+		}
 		g := &result.Groups[i]
-		if g.Category == nil && g.CategoryId != nil && *g.CategoryId > 0 {
-			cat, err := appCtx.GetCategory(*g.CategoryId)
-			if err == nil {
-				g.Category = cat
-			}
+		if g.Category == nil && g.CategoryId != nil {
+			g.Category = data.Categories[*g.CategoryId]
 		}
-		item := shortcodes.QueryResultItem{
-			EntityType: "group",
-			EntityID:   g.ID,
-			Entity:     g,
-			Meta:       json.RawMessage(g.Meta),
-		}
+		item := shortcodes.QueryResultItem{EntityType: "group", EntityID: g.ID, Entity: g, Meta: json.RawMessage(g.Meta), ScopeGroupID: g.ID, ParentGroupID: sentinel, RootGroupID: sentinel}
 		if g.Category != nil {
 			item.MetaSchema = g.Category.MetaSchema
 			item.CustomMRQLResult = g.Category.CustomMRQLResult
 			item.CustomCSS = g.Category.CustomCSS
 			item.CategoryID = g.Category.ID
 		}
-		// Groups are their own scope
-		item.ScopeGroupID = g.ID
 		if g.OwnerId != nil && *g.OwnerId > 0 {
 			item.ParentGroupID = *g.OwnerId
-		} else {
-			item.ParentGroupID = mrql.UnresolvedScopeSentinel
 		}
-		item.RootGroupID = appCtx.ResolveRootScopeID(g.ID)
+		if scope, ok := data.Scopes[g.ID]; ok {
+			item.RootGroupID = scope.RootGroupID
+		}
 		items = append(items, item)
 	}
-
-	return items
+	return items, nil
 }
 
 // convertGroupedResultItems converts MRQLGroupedResult into QueryResult.
-func convertGroupedResultItems(result *application_context.MRQLGroupedResult, appCtx *application_context.MahresourcesContext) *shortcodes.QueryResult {
-	qr := &shortcodes.QueryResult{
-		EntityType: result.EntityType,
-	}
-
+func convertGroupedResultItems(reqCtx context.Context, result *application_context.MRQLGroupedResult, appCtx *application_context.MahresourcesContext) (*shortcodes.QueryResult, error) {
+	qr := &shortcodes.QueryResult{EntityType: result.EntityType}
 	if result.Mode == "aggregated" {
-		qr.Mode = "aggregated"
-		qr.Rows = result.Rows
-		return qr
+		qr.Mode, qr.Rows = "aggregated", result.Rows
+		return qr, nil
 	}
 
-	// Bucketed mode
-	qr.Mode = "bucketed"
-	for _, bucket := range result.Groups {
-		group := shortcodes.QueryResultGroup{
-			Key: bucket.Key,
+	var ids mrqlRenderIDs
+	for i := range result.Groups {
+		switch items := result.Groups[i].Items.(type) {
+		case []models.Resource:
+			collectResultRenderIDs(&application_context.MRQLResult{Resources: items}, &ids)
+		case []models.Note:
+			collectResultRenderIDs(&application_context.MRQLResult{Notes: items}, &ids)
+		case []models.Group:
+			collectResultRenderIDs(&application_context.MRQLResult{Groups: items}, &ids)
 		}
-		// Convert bucket items — they are typed entities
+	}
+	data, err := loadResultRenderData(reqCtx, appCtx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	qr.Mode = "bucketed"
+	for i := range result.Groups {
+		if err := reqCtx.Err(); err != nil {
+			return nil, err
+		}
+		bucket := &result.Groups[i]
+		group := shortcodes.QueryResultGroup{Key: bucket.Key}
+		var flat application_context.MRQLResult
 		switch items := bucket.Items.(type) {
 		case []models.Resource:
-			for i := range items {
-				r := &items[i]
-				if r.ResourceCategory == nil && r.ResourceCategoryId > 0 {
-					cat, _ := appCtx.GetResourceCategory(r.ResourceCategoryId)
-					if cat != nil {
-						r.ResourceCategory = cat
-					}
-				}
-				item := shortcodes.QueryResultItem{
-					EntityType: "resource",
-					EntityID:   r.ID,
-					Entity:     r,
-					Meta:       json.RawMessage(r.Meta),
-				}
-				if r.ResourceCategory != nil {
-					item.MetaSchema = r.ResourceCategory.MetaSchema
-					item.CustomMRQLResult = r.ResourceCategory.CustomMRQLResult
-				}
-				if r.OwnerId != nil && *r.OwnerId > 0 {
-					item.ScopeGroupID = *r.OwnerId
-					item.ParentGroupID = appCtx.ResolveParentScopeID(*r.OwnerId)
-					item.RootGroupID = appCtx.ResolveRootScopeID(*r.OwnerId)
-				} else {
-					item.ScopeGroupID = mrql.UnresolvedScopeSentinel
-					item.ParentGroupID = mrql.UnresolvedScopeSentinel
-					item.RootGroupID = mrql.UnresolvedScopeSentinel
-				}
-				group.Items = append(group.Items, item)
-			}
+			flat.Resources = items
 		case []models.Note:
-			for i := range items {
-				n := &items[i]
-				if n.NoteType == nil && n.NoteTypeId != nil && *n.NoteTypeId > 0 {
-					nt, _ := appCtx.GetNoteType(*n.NoteTypeId)
-					if nt != nil {
-						n.NoteType = nt
-					}
-				}
-				item := shortcodes.QueryResultItem{
-					EntityType: "note",
-					EntityID:   n.ID,
-					Entity:     n,
-					Meta:       json.RawMessage(n.Meta),
-				}
-				if n.NoteType != nil {
-					item.MetaSchema = n.NoteType.MetaSchema
-					item.CustomMRQLResult = n.NoteType.CustomMRQLResult
-				}
-				if n.OwnerId != nil && *n.OwnerId > 0 {
-					item.ScopeGroupID = *n.OwnerId
-					item.ParentGroupID = appCtx.ResolveParentScopeID(*n.OwnerId)
-					item.RootGroupID = appCtx.ResolveRootScopeID(*n.OwnerId)
-				} else {
-					item.ScopeGroupID = mrql.UnresolvedScopeSentinel
-					item.ParentGroupID = mrql.UnresolvedScopeSentinel
-					item.RootGroupID = mrql.UnresolvedScopeSentinel
-				}
-				group.Items = append(group.Items, item)
-			}
+			flat.Notes = items
 		case []models.Group:
-			for i := range items {
-				g := &items[i]
-				if g.Category == nil && g.CategoryId != nil && *g.CategoryId > 0 {
-					cat, _ := appCtx.GetCategory(*g.CategoryId)
-					if cat != nil {
-						g.Category = cat
-					}
-				}
-				item := shortcodes.QueryResultItem{
-					EntityType: "group",
-					EntityID:   g.ID,
-					Entity:     g,
-					Meta:       json.RawMessage(g.Meta),
-				}
-				if g.Category != nil {
-					item.MetaSchema = g.Category.MetaSchema
-					item.CustomMRQLResult = g.Category.CustomMRQLResult
-				}
-				item.ScopeGroupID = g.ID
-				if g.OwnerId != nil && *g.OwnerId > 0 {
-					item.ParentGroupID = *g.OwnerId
-				} else {
-					item.ParentGroupID = mrql.UnresolvedScopeSentinel
-				}
-				item.RootGroupID = appCtx.ResolveRootScopeID(g.ID)
-				group.Items = append(group.Items, item)
-			}
+			flat.Groups = items
+		}
+		group.Items, err = convertResultItemsWithData(reqCtx, &flat, data)
+		if err != nil {
+			return nil, err
 		}
 		qr.Groups = append(qr.Groups, group)
 	}
-
-	return qr
+	return qr, nil
 }
