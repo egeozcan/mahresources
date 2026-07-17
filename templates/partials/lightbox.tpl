@@ -134,7 +134,7 @@
                     tabindex="-1"
                     class="max-h-[90vh] object-contain"
                     :class="[$store.lightbox._mediaMaxWidthClass(), $store.lightbox.animationsDisabled ? '' : 'transition-all duration-300']"
-                    :style="{ transform: `scale(${$store.lightbox.zoomLevel}) translate(${$store.lightbox.panX}px, ${$store.lightbox.panY}px)`, transformOrigin: 'center center' }"
+                    :style="{ imageOrientation: 'from-image', transform: `scale(${$store.lightbox.zoomLevel}) translate(${$store.lightbox.panX}px, ${$store.lightbox.panY}px)`, transformOrigin: 'center center' }"
                     x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
                     @load="$store.lightbox.onMediaLoaded()"
                     @error="$store.lightbox.onMediaError()"

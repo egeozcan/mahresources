@@ -76,6 +76,7 @@ test.describe('Lightbox Functionality', () => {
     // Verify image is displayed
     const lightboxImage = lightbox.locator('img');
     await expect(lightboxImage).toBeVisible();
+    await expect(lightboxImage).toHaveCSS('image-orientation', 'from-image');
   });
 
   test('should hide loading spinner after image loads (cached media fix)', async ({ page }) => {
