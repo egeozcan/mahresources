@@ -545,12 +545,6 @@ func resourceOwner(id uint, groupCount int) uint {
 	return deepStart + id%deepWidth
 }
 
-func ownerValue(owner *uint) uint {
-	if owner == nil {
-		return 0
-	}
-	return *owner
-}
 func deterministicGUID(kind string, id uint, seed int64) string {
 	sum := sha256.Sum256([]byte(kind + ":" + strconv.FormatUint(uint64(id), 10) + ":" + strconv.FormatInt(seed, 10)))
 	hexValue := hex.EncodeToString(sum[:16])
