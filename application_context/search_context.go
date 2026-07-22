@@ -48,13 +48,24 @@ var allEntityTypes = []string{
 	EntityTypeMRQLQuery,
 }
 
-// InitFTS initializes the FTS provider based on the database type
-func (ctx *MahresourcesContext) InitFTS() error {
+func (ctx *MahresourcesContext) selectFTSProvider() {
 	if ctx.Config.DbType == constants.DbTypePosgres {
 		ctx.ftsProvider = fts.NewPostgresFTS()
 	} else {
 		ctx.ftsProvider = fts.NewSQLiteFTS()
 	}
+}
+
+// UseExistingFTS enables reads against an FTS schema that was initialized and
+// validated earlier. Unlike InitFTS it performs no DDL or index rebuild.
+func (ctx *MahresourcesContext) UseExistingFTS() {
+	ctx.selectFTSProvider()
+	ctx.ftsEnabled = true
+}
+
+// InitFTS initializes the FTS provider based on the database type.
+func (ctx *MahresourcesContext) InitFTS() error {
+	ctx.selectFTSProvider()
 
 	if err := ctx.ftsProvider.Setup(ctx.db); err != nil {
 		ctx.ftsProvider = nil

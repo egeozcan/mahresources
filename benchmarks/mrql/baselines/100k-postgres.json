@@ -1,0 +1,2662 @@
+{
+  "schemaVersion": 5,
+  "catalogVersion": "mrql-bench-scenarios-v3",
+  "status": "reference",
+  "startedAt": "2026-07-21T22:48:25.735776Z",
+  "environment": {
+    "gitRevision": "211afc0eecbc-dirty",
+    "goVersion": "go1.26.4",
+    "os": "darwin",
+    "arch": "arm64",
+    "cpuModel": "Apple M4 Pro",
+    "cpuCount": 14,
+    "memoryBytes": 51539607552,
+    "database": "postgres",
+    "databaseVersion": "16.13",
+    "poolSize": 4,
+    "concurrency": 1
+  },
+  "configuration": {
+    "scenarioIds": [
+      "scalar-selective",
+      "relation-common-tag",
+      "scope-shallow",
+      "scope-deep",
+      "scope-empty",
+      "hierarchy-descendants",
+      "metadata-numeric",
+      "fts-common",
+      "similarity",
+      "page-first",
+      "page-middle",
+      "page-deep",
+      "aggregate-content-type",
+      "bucket-content-type",
+      "cross-entity-top-n",
+      "cross-entity-random",
+      "raw-json",
+      "compact-render",
+      "table-render",
+      "custom-render",
+      "nested-mrql"
+    ],
+    "warmups": 5,
+    "samples": 100,
+    "timeoutNanos": 1800000000000,
+    "poolSize": 4,
+    "concurrency": 1
+  },
+  "fixture": {
+    "schemaVersion": 5,
+    "generatorVersion": "mrql-bench-fixture-v7",
+    "profile": {
+      "id": "100k",
+      "resources": 100000,
+      "notes": 25000,
+      "groups": 200,
+      "tags": 64,
+      "seed": 1
+    },
+    "dialect": "postgres",
+    "databaseVersion": "16.13",
+    "schemaRevision": "211afc0eecbc-dirty",
+    "fixedEpoch": "2024-01-01T00:00:00Z",
+    "batchSize": 500,
+    "features": {
+      "fts": true,
+      "hierarchy": true,
+      "metadata": true,
+      "similarity": true
+    },
+    "counts": {
+      "groupNotes": 25000,
+      "groupResources": 50000,
+      "groupTags": 200,
+      "groups": 200,
+      "imageHashes": 100000,
+      "noteTags": 16667,
+      "notes": 25000,
+      "resourceNotes": 25000,
+      "resourceSimilarities": 99999,
+      "resourceTags": 85000,
+      "resources": 100000,
+      "tags": 64
+    },
+    "ftsChecks": {
+      "resourceIndexes": 1,
+      "resourceMatches": 20000
+    },
+    "ftsDigest": "d42c8b7c739685c37d6d169a80151a1f5a8070902a5a663d8134f3aa055b53c9",
+    "anchors": {
+      "commonTagId": 1,
+      "deepRootGroupId": 2,
+      "emptyGroupId": 3,
+      "ftsTerm": "benchmarkneedle",
+      "rootGroupId": 1,
+      "similarityTargetResourceId": 1
+    },
+    "logicalChecksum": "c9501861b6512e29c5c6e48bb08a10363cd42ddad3e4cb4d40e69bcd5adc7912",
+    "preparedAt": "2026-07-21T22:48:25.687907Z",
+    "preparationNanos": 8081698875,
+    "marker": "mahresources-mrql-benchmark"
+  },
+  "warmups": 5,
+  "measuredSamples": 100,
+  "results": [
+    {
+      "scenarioId": "scalar-selective",
+      "queryFingerprint": "mrql-shape-v1:3c57fe02b33fbb53c9218908431e79416446f2ff6425c3553f8ce43cb251926c",
+      "firstRunNanos": 2385333,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 753042,
+        "p95Nanos": 1099916,
+        "p99Nanos": 1187208
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 36860,
+        "maximum": 36860,
+        "p50": 36860
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:dd7f528664447db8aa0ce88203230c88bf8c23943670e99602f64ffb91306efd",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Async Capable": false,
+                    "Node Type": "Sort",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 802,
+                    "Plan Width": 533,
+                    "Plans": [
+                      {
+                        "Alias": "resources",
+                        "Async Capable": false,
+                        "Index Cond": "(file_size \u003e '10000000'::bigint)",
+                        "Index Name": "idx_resources_file_size",
+                        "Node Type": "Index Scan",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Outer",
+                        "Plan Rows": 802,
+                        "Plan Width": 533,
+                        "Relation Name": "resources",
+                        "Scan Direction": "Forward",
+                        "Startup Cost": 0.29,
+                        "Total Cost": 193.15
+                      }
+                    ],
+                    "Sort Key": [
+                      "created_at DESC"
+                    ],
+                    "Startup Cost": 219.79,
+                    "Total Cost": 221.8
+                  }
+                ],
+                "Startup Cost": 219.79,
+                "Total Cost": 219.92
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx_resources_file_size",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Node Type=Sort",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "relation-common-tag",
+      "queryFingerprint": "mrql-shape-v1:b24fec3172f91ded93ba86266471e08f06c4a4f023e28f38a8808a4f1b4dce2c",
+      "firstRunNanos": 95730375,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 95222416,
+        "p95Nanos": 113411000,
+        "p99Nanos": 125833417
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 36221,
+        "maximum": 36221,
+        "p50": 36221
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:ddce7cc73914fec12761727c8c4423e66c2f5877719555ff38069529073c416b",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Async Capable": false,
+                    "Node Type": "Sort",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 1328,
+                    "Plan Width": 533,
+                    "Plans": [
+                      {
+                        "Async Capable": false,
+                        "Inner Unique": true,
+                        "Join Type": "Inner",
+                        "Node Type": "Nested Loop",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Outer",
+                        "Plan Rows": 1328,
+                        "Plan Width": 533,
+                        "Plans": [
+                          {
+                            "Async Capable": false,
+                            "Group Key": [
+                              "jt.resource_id"
+                            ],
+                            "Node Type": "Aggregate",
+                            "Parallel Aware": false,
+                            "Parent Relationship": "Outer",
+                            "Partial Mode": "Simple",
+                            "Plan Rows": 1328,
+                            "Plan Width": 8,
+                            "Planned Partitions": 0,
+                            "Plans": [
+                              {
+                                "Async Capable": false,
+                                "Inner Unique": false,
+                                "Join Type": "Inner",
+                                "Node Type": "Nested Loop",
+                                "Parallel Aware": false,
+                                "Parent Relationship": "Outer",
+                                "Plan Rows": 1328,
+                                "Plan Width": 8,
+                                "Plans": [
+                                  {
+                                    "Alias": "t",
+                                    "Async Capable": false,
+                                    "Filter": "(lower(name) = 'common'::text)",
+                                    "Node Type": "Seq Scan",
+                                    "Parallel Aware": false,
+                                    "Parent Relationship": "Outer",
+                                    "Plan Rows": 1,
+                                    "Plan Width": 8,
+                                    "Relation Name": "tags",
+                                    "Startup Cost": 0,
+                                    "Total Cost": 2.96
+                                  },
+                                  {
+                                    "Alias": "jt",
+                                    "Async Capable": false,
+                                    "Node Type": "Bitmap Heap Scan",
+                                    "Parallel Aware": false,
+                                    "Parent Relationship": "Inner",
+                                    "Plan Rows": 1328,
+                                    "Plan Width": 16,
+                                    "Plans": [
+                                      {
+                                        "Async Capable": false,
+                                        "Index Cond": "(tag_id = t.id)",
+                                        "Index Name": "idx__resource_tags__tag_id",
+                                        "Node Type": "Bitmap Index Scan",
+                                        "Parallel Aware": false,
+                                        "Parent Relationship": "Outer",
+                                        "Plan Rows": 1328,
+                                        "Plan Width": 0,
+                                        "Startup Cost": 0,
+                                        "Total Cost": 18.25
+                                      }
+                                    ],
+                                    "Recheck Cond": "(tag_id = t.id)",
+                                    "Relation Name": "resource_tags",
+                                    "Startup Cost": 18.58,
+                                    "Total Cost": 495.18
+                                  }
+                                ],
+                                "Startup Cost": 18.58,
+                                "Total Cost": 511.42
+                              }
+                            ],
+                            "Startup Cost": 514.74,
+                            "Strategy": "Hashed",
+                            "Total Cost": 528.02
+                          },
+                          {
+                            "Alias": "resources",
+                            "Async Capable": false,
+                            "Index Cond": "(id = jt.resource_id)",
+                            "Index Name": "resources_pkey",
+                            "Node Type": "Index Scan",
+                            "Parallel Aware": false,
+                            "Parent Relationship": "Inner",
+                            "Plan Rows": 1,
+                            "Plan Width": 533,
+                            "Relation Name": "resources",
+                            "Scan Direction": "Forward",
+                            "Startup Cost": 0.29,
+                            "Total Cost": 0.67
+                          }
+                        ],
+                        "Startup Cost": 515.04,
+                        "Total Cost": 1415.71
+                      }
+                    ],
+                    "Sort Key": [
+                      "resources.created_at DESC"
+                    ],
+                    "Startup Cost": 1459.82,
+                    "Total Cost": 1463.14
+                  }
+                ],
+                "Startup Cost": 1459.82,
+                "Total Cost": 1459.95
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx__resource_tags__tag_id",
+            "Index Name=resources_pkey",
+            "Join Type=Inner",
+            "Node Type=Aggregate",
+            "Node Type=Bitmap Heap Scan",
+            "Node Type=Bitmap Index Scan",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Node Type=Nested Loop",
+            "Node Type=Seq Scan",
+            "Node Type=Sort",
+            "Relation Name=resource_tags",
+            "Relation Name=resources",
+            "Relation Name=tags"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "scope-shallow",
+      "queryFingerprint": "mrql-shape-v1:88f9c97e4da61568912f7773e4f0bec189e0b0360259d95c08ad20b299a8b692",
+      "firstRunNanos": 1747834,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 944916,
+        "p95Nanos": 1251750,
+        "p99Nanos": 1609333
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 36110,
+        "maximum": 36110,
+        "p50": 36110
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:1737379da765fd135662ee6acead2de1a4ad2d756a9ffeb68326e070c786bcc7",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Async Capable": false,
+                    "Inner Unique": false,
+                    "Join Filter": "(resources.owner_id = scope_tree.id)",
+                    "Join Type": "Semi",
+                    "Node Type": "Nested Loop",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 60396,
+                    "Plan Width": 533,
+                    "Plans": [
+                      {
+                        "Alias": "resources",
+                        "Async Capable": false,
+                        "Index Name": "idx_resources_created_at",
+                        "Node Type": "Index Scan",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Outer",
+                        "Plan Rows": 100000,
+                        "Plan Width": 533,
+                        "Relation Name": "resources",
+                        "Scan Direction": "Backward",
+                        "Startup Cost": 0.29,
+                        "Total Cost": 9327.29
+                      },
+                      {
+                        "Async Capable": false,
+                        "Node Type": "Materialize",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Inner",
+                        "Plan Rows": 61,
+                        "Plan Width": 8,
+                        "Plans": [
+                          {
+                            "Alias": "scope_tree",
+                            "Async Capable": false,
+                            "CTE Name": "scope_tree",
+                            "Node Type": "CTE Scan",
+                            "Parallel Aware": false,
+                            "Parent Relationship": "Outer",
+                            "Plan Rows": 61,
+                            "Plan Width": 8,
+                            "Plans": [
+                              {
+                                "Async Capable": false,
+                                "Node Type": "Recursive Union",
+                                "Parallel Aware": false,
+                                "Parent Relationship": "InitPlan",
+                                "Plan Rows": 61,
+                                "Plan Width": 12,
+                                "Plans": [
+                                  {
+                                    "Alias": "groups",
+                                    "Async Capable": false,
+                                    "Index Cond": "(id = '1'::bigint)",
+                                    "Index Name": "groups_pkey",
+                                    "Node Type": "Index Only Scan",
+                                    "Parallel Aware": false,
+                                    "Parent Relationship": "Outer",
+                                    "Plan Rows": 1,
+                                    "Plan Width": 12,
+                                    "Relation Name": "groups",
+                                    "Scan Direction": "Forward",
+                                    "Startup Cost": 0.14,
+                                    "Total Cost": 8.16
+                                  },
+                                  {
+                                    "Async Capable": false,
+                                    "Hash Cond": "(g.owner_id = st.id)",
+                                    "Inner Unique": false,
+                                    "Join Type": "Inner",
+                                    "Node Type": "Hash Join",
+                                    "Parallel Aware": false,
+                                    "Parent Relationship": "Inner",
+                                    "Plan Rows": 6,
+                                    "Plan Width": 12,
+                                    "Plans": [
+                                      {
+                                        "Alias": "g",
+                                        "Async Capable": false,
+                                        "Node Type": "Seq Scan",
+                                        "Parallel Aware": false,
+                                        "Parent Relationship": "Outer",
+                                        "Plan Rows": 200,
+                                        "Plan Width": 16,
+                                        "Relation Name": "groups",
+                                        "Startup Cost": 0,
+                                        "Total Cost": 10
+                                      },
+                                      {
+                                        "Async Capable": false,
+                                        "Node Type": "Hash",
+                                        "Parallel Aware": false,
+                                        "Parent Relationship": "Inner",
+                                        "Plan Rows": 3,
+                                        "Plan Width": 12,
+                                        "Plans": [
+                                          {
+                                            "Alias": "st",
+                                            "Async Capable": false,
+                                            "CTE Name": "scope_tree",
+                                            "Filter": "(depth \u003c 50)",
+                                            "Node Type": "WorkTable Scan",
+                                            "Parallel Aware": false,
+                                            "Parent Relationship": "Outer",
+                                            "Plan Rows": 3,
+                                            "Plan Width": 12,
+                                            "Startup Cost": 0,
+                                            "Total Cost": 0.22
+                                          }
+                                        ],
+                                        "Startup Cost": 0.22,
+                                        "Total Cost": 0.22
+                                      }
+                                    ],
+                                    "Startup Cost": 0.26,
+                                    "Total Cost": 11.09
+                                  }
+                                ],
+                                "Startup Cost": 0.14,
+                                "Subplan Name": "CTE scope_tree",
+                                "Total Cost": 119.65
+                              }
+                            ],
+                            "Startup Cost": 119.65,
+                            "Total Cost": 120.87
+                          }
+                        ],
+                        "Startup Cost": 119.65,
+                        "Total Cost": 121.17
+                      }
+                    ],
+                    "Startup Cost": 119.94,
+                    "Total Cost": 100948.31
+                  }
+                ],
+                "Startup Cost": 119.94,
+                "Total Cost": 203.41
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=groups_pkey",
+            "Index Name=idx_resources_created_at",
+            "Join Type=Inner",
+            "Join Type=Semi",
+            "Node Type=CTE Scan",
+            "Node Type=Hash",
+            "Node Type=Hash Join",
+            "Node Type=Index Only Scan",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Node Type=Materialize",
+            "Node Type=Nested Loop",
+            "Node Type=Recursive Union",
+            "Node Type=Seq Scan",
+            "Node Type=WorkTable Scan",
+            "Relation Name=groups",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "scope-deep",
+      "queryFingerprint": "mrql-shape-v1:88f9c97e4da61568912f7773e4f0bec189e0b0360259d95c08ad20b299a8b692",
+      "firstRunNanos": 1190125,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 1303750,
+        "p95Nanos": 1637500,
+        "p99Nanos": 1712416
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 36217,
+        "maximum": 36217,
+        "p50": 36217
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:1737379da765fd135662ee6acead2de1a4ad2d756a9ffeb68326e070c786bcc7",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Async Capable": false,
+                    "Inner Unique": false,
+                    "Join Filter": "(resources.owner_id = scope_tree.id)",
+                    "Join Type": "Semi",
+                    "Node Type": "Nested Loop",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 60396,
+                    "Plan Width": 533,
+                    "Plans": [
+                      {
+                        "Alias": "resources",
+                        "Async Capable": false,
+                        "Index Name": "idx_resources_created_at",
+                        "Node Type": "Index Scan",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Outer",
+                        "Plan Rows": 100000,
+                        "Plan Width": 533,
+                        "Relation Name": "resources",
+                        "Scan Direction": "Backward",
+                        "Startup Cost": 0.29,
+                        "Total Cost": 9327.29
+                      },
+                      {
+                        "Async Capable": false,
+                        "Node Type": "Materialize",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Inner",
+                        "Plan Rows": 61,
+                        "Plan Width": 8,
+                        "Plans": [
+                          {
+                            "Alias": "scope_tree",
+                            "Async Capable": false,
+                            "CTE Name": "scope_tree",
+                            "Node Type": "CTE Scan",
+                            "Parallel Aware": false,
+                            "Parent Relationship": "Outer",
+                            "Plan Rows": 61,
+                            "Plan Width": 8,
+                            "Plans": [
+                              {
+                                "Async Capable": false,
+                                "Node Type": "Recursive Union",
+                                "Parallel Aware": false,
+                                "Parent Relationship": "InitPlan",
+                                "Plan Rows": 61,
+                                "Plan Width": 12,
+                                "Plans": [
+                                  {
+                                    "Alias": "groups",
+                                    "Async Capable": false,
+                                    "Index Cond": "(id = '2'::bigint)",
+                                    "Index Name": "groups_pkey",
+                                    "Node Type": "Index Only Scan",
+                                    "Parallel Aware": false,
+                                    "Parent Relationship": "Outer",
+                                    "Plan Rows": 1,
+                                    "Plan Width": 12,
+                                    "Relation Name": "groups",
+                                    "Scan Direction": "Forward",
+                                    "Startup Cost": 0.14,
+                                    "Total Cost": 8.16
+                                  },
+                                  {
+                                    "Async Capable": false,
+                                    "Hash Cond": "(g.owner_id = st.id)",
+                                    "Inner Unique": false,
+                                    "Join Type": "Inner",
+                                    "Node Type": "Hash Join",
+                                    "Parallel Aware": false,
+                                    "Parent Relationship": "Inner",
+                                    "Plan Rows": 6,
+                                    "Plan Width": 12,
+                                    "Plans": [
+                                      {
+                                        "Alias": "g",
+                                        "Async Capable": false,
+                                        "Node Type": "Seq Scan",
+                                        "Parallel Aware": false,
+                                        "Parent Relationship": "Outer",
+                                        "Plan Rows": 200,
+                                        "Plan Width": 16,
+                                        "Relation Name": "groups",
+                                        "Startup Cost": 0,
+                                        "Total Cost": 10
+                                      },
+                                      {
+                                        "Async Capable": false,
+                                        "Node Type": "Hash",
+                                        "Parallel Aware": false,
+                                        "Parent Relationship": "Inner",
+                                        "Plan Rows": 3,
+                                        "Plan Width": 12,
+                                        "Plans": [
+                                          {
+                                            "Alias": "st",
+                                            "Async Capable": false,
+                                            "CTE Name": "scope_tree",
+                                            "Filter": "(depth \u003c 50)",
+                                            "Node Type": "WorkTable Scan",
+                                            "Parallel Aware": false,
+                                            "Parent Relationship": "Outer",
+                                            "Plan Rows": 3,
+                                            "Plan Width": 12,
+                                            "Startup Cost": 0,
+                                            "Total Cost": 0.22
+                                          }
+                                        ],
+                                        "Startup Cost": 0.22,
+                                        "Total Cost": 0.22
+                                      }
+                                    ],
+                                    "Startup Cost": 0.26,
+                                    "Total Cost": 11.09
+                                  }
+                                ],
+                                "Startup Cost": 0.14,
+                                "Subplan Name": "CTE scope_tree",
+                                "Total Cost": 119.65
+                              }
+                            ],
+                            "Startup Cost": 119.65,
+                            "Total Cost": 120.87
+                          }
+                        ],
+                        "Startup Cost": 119.65,
+                        "Total Cost": 121.17
+                      }
+                    ],
+                    "Startup Cost": 119.94,
+                    "Total Cost": 100948.31
+                  }
+                ],
+                "Startup Cost": 119.94,
+                "Total Cost": 203.41
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=groups_pkey",
+            "Index Name=idx_resources_created_at",
+            "Join Type=Inner",
+            "Join Type=Semi",
+            "Node Type=CTE Scan",
+            "Node Type=Hash",
+            "Node Type=Hash Join",
+            "Node Type=Index Only Scan",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Node Type=Materialize",
+            "Node Type=Nested Loop",
+            "Node Type=Recursive Union",
+            "Node Type=Seq Scan",
+            "Node Type=WorkTable Scan",
+            "Relation Name=groups",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "scope-empty",
+      "queryFingerprint": "mrql-shape-v1:d1ec4fdca7510d4d113c0c130bdb575377922d53044aeeaf507afb79f6fa11d0",
+      "firstRunNanos": 12643250,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 12289292,
+        "p95Nanos": 13641458,
+        "p99Nanos": 17196583
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 0,
+        "maximum": 0,
+        "p50": 0
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 74,
+        "maximum": 74,
+        "p50": 74
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:0d056824b175477de5fe94b77e6ce4a6cf70812016816e2e8fa555e41192e21e",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Async Capable": false,
+                    "Hash Cond": "(resources.owner_id = scope_tree.id)",
+                    "Inner Unique": false,
+                    "Join Type": "Semi",
+                    "Node Type": "Hash Join",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 60396,
+                    "Plan Width": 533,
+                    "Plans": [
+                      {
+                        "Alias": "resources",
+                        "Async Capable": false,
+                        "Node Type": "Seq Scan",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Outer",
+                        "Plan Rows": 100000,
+                        "Plan Width": 533,
+                        "Relation Name": "resources",
+                        "Startup Cost": 0,
+                        "Total Cost": 7720
+                      },
+                      {
+                        "Async Capable": false,
+                        "Node Type": "Hash",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Inner",
+                        "Plan Rows": 61,
+                        "Plan Width": 8,
+                        "Plans": [
+                          {
+                            "Alias": "scope_tree",
+                            "Async Capable": false,
+                            "CTE Name": "scope_tree",
+                            "Node Type": "CTE Scan",
+                            "Parallel Aware": false,
+                            "Parent Relationship": "Outer",
+                            "Plan Rows": 61,
+                            "Plan Width": 8,
+                            "Plans": [
+                              {
+                                "Async Capable": false,
+                                "Node Type": "Recursive Union",
+                                "Parallel Aware": false,
+                                "Parent Relationship": "InitPlan",
+                                "Plan Rows": 61,
+                                "Plan Width": 12,
+                                "Plans": [
+                                  {
+                                    "Alias": "groups",
+                                    "Async Capable": false,
+                                    "Index Cond": "(id = '3'::bigint)",
+                                    "Index Name": "groups_pkey",
+                                    "Node Type": "Index Only Scan",
+                                    "Parallel Aware": false,
+                                    "Parent Relationship": "Outer",
+                                    "Plan Rows": 1,
+                                    "Plan Width": 12,
+                                    "Relation Name": "groups",
+                                    "Scan Direction": "Forward",
+                                    "Startup Cost": 0.14,
+                                    "Total Cost": 8.16
+                                  },
+                                  {
+                                    "Async Capable": false,
+                                    "Hash Cond": "(g.owner_id = st.id)",
+                                    "Inner Unique": false,
+                                    "Join Type": "Inner",
+                                    "Node Type": "Hash Join",
+                                    "Parallel Aware": false,
+                                    "Parent Relationship": "Inner",
+                                    "Plan Rows": 6,
+                                    "Plan Width": 12,
+                                    "Plans": [
+                                      {
+                                        "Alias": "g",
+                                        "Async Capable": false,
+                                        "Node Type": "Seq Scan",
+                                        "Parallel Aware": false,
+                                        "Parent Relationship": "Outer",
+                                        "Plan Rows": 200,
+                                        "Plan Width": 16,
+                                        "Relation Name": "groups",
+                                        "Startup Cost": 0,
+                                        "Total Cost": 10
+                                      },
+                                      {
+                                        "Async Capable": false,
+                                        "Node Type": "Hash",
+                                        "Parallel Aware": false,
+                                        "Parent Relationship": "Inner",
+                                        "Plan Rows": 3,
+                                        "Plan Width": 12,
+                                        "Plans": [
+                                          {
+                                            "Alias": "st",
+                                            "Async Capable": false,
+                                            "CTE Name": "scope_tree",
+                                            "Filter": "(depth \u003c 50)",
+                                            "Node Type": "WorkTable Scan",
+                                            "Parallel Aware": false,
+                                            "Parent Relationship": "Outer",
+                                            "Plan Rows": 3,
+                                            "Plan Width": 12,
+                                            "Startup Cost": 0,
+                                            "Total Cost": 0.22
+                                          }
+                                        ],
+                                        "Startup Cost": 0.22,
+                                        "Total Cost": 0.22
+                                      }
+                                    ],
+                                    "Startup Cost": 0.26,
+                                    "Total Cost": 11.09
+                                  }
+                                ],
+                                "Startup Cost": 0.14,
+                                "Subplan Name": "CTE scope_tree",
+                                "Total Cost": 119.65
+                              }
+                            ],
+                            "Startup Cost": 119.65,
+                            "Total Cost": 120.87
+                          }
+                        ],
+                        "Startup Cost": 120.87,
+                        "Total Cost": 120.87
+                      }
+                    ],
+                    "Startup Cost": 121.63,
+                    "Total Cost": 8776.04
+                  }
+                ],
+                "Startup Cost": 121.63,
+                "Total Cost": 128.79
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=groups_pkey",
+            "Join Type=Inner",
+            "Join Type=Semi",
+            "Node Type=CTE Scan",
+            "Node Type=Hash",
+            "Node Type=Hash Join",
+            "Node Type=Index Only Scan",
+            "Node Type=Limit",
+            "Node Type=Recursive Union",
+            "Node Type=Seq Scan",
+            "Node Type=WorkTable Scan",
+            "Relation Name=groups",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "hierarchy-descendants",
+      "queryFingerprint": "mrql-shape-v1:d9873605afabd9df8708d8cf8dafcb9a1efce3c1bd71f675d8837ca4c3b11343",
+      "firstRunNanos": 927041,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 315500,
+        "p95Nanos": 414000,
+        "p99Nanos": 497208
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 4,
+        "maximum": 4,
+        "p50": 4
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 1935,
+        "maximum": 1935,
+        "p50": 1935
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:edf7f3e1cf84316ea5ef3e727932d065b8f531010d524f03829b0ba0fede7389",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 31,
+                "Plan Width": 278,
+                "Plans": [
+                  {
+                    "Async Capable": false,
+                    "Hash Cond": "(groups.id = _mrql_desc.id)",
+                    "Inner Unique": false,
+                    "Join Type": "Semi",
+                    "Node Type": "Hash Join",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 31,
+                    "Plan Width": 278,
+                    "Plans": [
+                      {
+                        "Alias": "groups",
+                        "Async Capable": false,
+                        "Node Type": "Seq Scan",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Outer",
+                        "Plan Rows": 200,
+                        "Plan Width": 278,
+                        "Relation Name": "groups",
+                        "Startup Cost": 0,
+                        "Total Cost": 10
+                      },
+                      {
+                        "Async Capable": false,
+                        "Node Type": "Hash",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Inner",
+                        "Plan Rows": 31,
+                        "Plan Width": 8,
+                        "Plans": [
+                          {
+                            "Alias": "_mrql_desc",
+                            "Async Capable": false,
+                            "CTE Name": "_mrql_desc",
+                            "Node Type": "CTE Scan",
+                            "Parallel Aware": false,
+                            "Parent Relationship": "Outer",
+                            "Plan Rows": 31,
+                            "Plan Width": 8,
+                            "Plans": [
+                              {
+                                "Async Capable": false,
+                                "Node Type": "Recursive Union",
+                                "Parallel Aware": false,
+                                "Parent Relationship": "InitPlan",
+                                "Plan Rows": 31,
+                                "Plan Width": 12,
+                                "Plans": [
+                                  {
+                                    "Async Capable": false,
+                                    "Inner Unique": true,
+                                    "Join Type": "Inner",
+                                    "Node Type": "Nested Loop",
+                                    "Parallel Aware": false,
+                                    "Parent Relationship": "Outer",
+                                    "Plan Rows": 1,
+                                    "Plan Width": 12,
+                                    "Plans": [
+                                      {
+                                        "Alias": "gm",
+                                        "Async Capable": false,
+                                        "Index Cond": "(lower(name) = 'benchmark-leaf'::text)",
+                                        "Index Name": "idx_groups_lower_name",
+                                        "Node Type": "Index Scan",
+                                        "Parallel Aware": false,
+                                        "Parent Relationship": "Outer",
+                                        "Plan Rows": 1,
+                                        "Plan Width": 8,
+                                        "Relation Name": "groups",
+                                        "Scan Direction": "Forward",
+                                        "Startup Cost": 0.14,
+                                        "Total Cost": 8.16
+                                      },
+                                      {
+                                        "Alias": "g",
+                                        "Async Capable": false,
+                                        "Filter": "(owner_id IS NOT NULL)",
+                                        "Index Cond": "(id = gm.id)",
+                                        "Index Name": "groups_pkey",
+                                        "Node Type": "Index Scan",
+                                        "Parallel Aware": false,
+                                        "Parent Relationship": "Inner",
+                                        "Plan Rows": 1,
+                                        "Plan Width": 16,
+                                        "Relation Name": "groups",
+                                        "Scan Direction": "Forward",
+                                        "Startup Cost": 0.14,
+                                        "Total Cost": 8.16
+                                      }
+                                    ],
+                                    "Startup Cost": 0.29,
+                                    "Total Cost": 16.41
+                                  },
+                                  {
+                                    "Async Capable": false,
+                                    "Hash Cond": "(p.id = d.id)",
+                                    "Inner Unique": false,
+                                    "Join Type": "Inner",
+                                    "Node Type": "Hash Join",
+                                    "Parallel Aware": false,
+                                    "Parent Relationship": "Inner",
+                                    "Plan Rows": 3,
+                                    "Plan Width": 12,
+                                    "Plans": [
+                                      {
+                                        "Alias": "p",
+                                        "Async Capable": false,
+                                        "Filter": "(owner_id IS NOT NULL)",
+                                        "Node Type": "Seq Scan",
+                                        "Parallel Aware": false,
+                                        "Parent Relationship": "Outer",
+                                        "Plan Rows": 197,
+                                        "Plan Width": 16,
+                                        "Relation Name": "groups",
+                                        "Startup Cost": 0,
+                                        "Total Cost": 10
+                                      },
+                                      {
+                                        "Async Capable": false,
+                                        "Node Type": "Hash",
+                                        "Parallel Aware": false,
+                                        "Parent Relationship": "Inner",
+                                        "Plan Rows": 3,
+                                        "Plan Width": 12,
+                                        "Plans": [
+                                          {
+                                            "Alias": "d",
+                                            "Async Capable": false,
+                                            "CTE Name": "_mrql_desc",
+                                            "Filter": "(depth \u003c 50)",
+                                            "Node Type": "WorkTable Scan",
+                                            "Parallel Aware": false,
+                                            "Parent Relationship": "Outer",
+                                            "Plan Rows": 3,
+                                            "Plan Width": 12,
+                                            "Startup Cost": 0,
+                                            "Total Cost": 0.22
+                                          }
+                                        ],
+                                        "Startup Cost": 0.22,
+                                        "Total Cost": 0.22
+                                      }
+                                    ],
+                                    "Startup Cost": 0.26,
+                                    "Total Cost": 11.04
+                                  }
+                                ],
+                                "Startup Cost": 0.29,
+                                "Subplan Name": "CTE _mrql_desc",
+                                "Total Cost": 127.1
+                              }
+                            ],
+                            "Startup Cost": 127.1,
+                            "Total Cost": 127.72
+                          }
+                        ],
+                        "Startup Cost": 127.72,
+                        "Total Cost": 127.72
+                      }
+                    ],
+                    "Startup Cost": 128.11,
+                    "Total Cost": 138.98
+                  }
+                ],
+                "Startup Cost": 128.11,
+                "Total Cost": 138.98
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=groups_pkey",
+            "Index Name=idx_groups_lower_name",
+            "Join Type=Inner",
+            "Join Type=Semi",
+            "Node Type=CTE Scan",
+            "Node Type=Hash",
+            "Node Type=Hash Join",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Node Type=Nested Loop",
+            "Node Type=Recursive Union",
+            "Node Type=Seq Scan",
+            "Node Type=WorkTable Scan",
+            "Relation Name=groups"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "metadata-numeric",
+      "queryFingerprint": "mrql-shape-v1:d15c22de91886f8d7b4a27c3e50cffccb2c63d0d1c01139605b6550db0a8cbfb",
+      "firstRunNanos": 1012458,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 486667,
+        "p95Nanos": 730583,
+        "p99Nanos": 906042
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 35454,
+        "maximum": 35454,
+        "p50": 35454
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:4afd7e9d2d266a74846c76e845793d36defd9148f0d214bc098b751f08e691b3",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Alias": "resources",
+                    "Async Capable": false,
+                    "Filter": "(CASE WHEN ((meta -\u003e\u003e 'rating'::text) ~ '^-{0,1}[0-9]+(\\.[0-9]+){0,1}$'::text) THEN ((meta -\u003e\u003e 'rating'::text))::numeric ELSE NULL::numeric END \u003e= '3'::numeric)",
+                    "Node Type": "Seq Scan",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 33333,
+                    "Plan Width": 533,
+                    "Relation Name": "resources",
+                    "Startup Cost": 0,
+                    "Total Cost": 9220
+                  }
+                ],
+                "Startup Cost": 0,
+                "Total Cost": 13.83
+              }
+            }
+          ],
+          "signature": [
+            "Node Type=Limit",
+            "Node Type=Seq Scan",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "fts-common",
+      "queryFingerprint": "mrql-shape-v1:2b47b194773fbcb28e91557376361aa04961c449ca025cf49a28e8e0d3e68344",
+      "firstRunNanos": 12803584,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 11632416,
+        "p95Nanos": 12919708,
+        "p99Nanos": 13248708
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 36368,
+        "maximum": 36368,
+        "p50": 36368
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:824d0e8a63739b981215618a0ef50837cc2d637bddd48361a2932ecbc39a0dad",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 537,
+                "Plans": [
+                  {
+                    "Async Capable": false,
+                    "Node Type": "Sort",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 20073,
+                    "Plan Width": 537,
+                    "Plans": [
+                      {
+                        "Alias": "resources",
+                        "Async Capable": false,
+                        "Node Type": "Bitmap Heap Scan",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Outer",
+                        "Plan Rows": 20073,
+                        "Plan Width": 537,
+                        "Plans": [
+                          {
+                            "Async Capable": false,
+                            "Index Cond": "(search_vector @@ '''benchmarkneedl'''::tsquery)",
+                            "Index Name": "idx_resources_fts",
+                            "Node Type": "Bitmap Index Scan",
+                            "Parallel Aware": false,
+                            "Parent Relationship": "Outer",
+                            "Plan Rows": 20073,
+                            "Plan Width": 0,
+                            "Startup Cost": 0,
+                            "Total Cost": 146.33
+                          }
+                        ],
+                        "Recheck Cond": "(search_vector @@ '''benchmarkneedl'''::tsquery)",
+                        "Relation Name": "resources",
+                        "Startup Cost": 151.35,
+                        "Total Cost": 7222.62
+                      }
+                    ],
+                    "Sort Key": [
+                      "(COALESCE((- ts_rank(search_vector, '''benchmarkneedl'''::tsquery)), '0'::real))"
+                    ],
+                    "Startup Cost": 7889.44,
+                    "Total Cost": 7939.62
+                  }
+                ],
+                "Startup Cost": 7889.44,
+                "Total Cost": 7889.56
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx_resources_fts",
+            "Node Type=Bitmap Heap Scan",
+            "Node Type=Bitmap Index Scan",
+            "Node Type=Limit",
+            "Node Type=Sort",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "similarity",
+      "queryFingerprint": "mrql-shape-v1:46c24a184ee3237cf7f38a7ed1ea9294883b7549e725dff7ddee6ff6498ab268",
+      "firstRunNanos": 12708750,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 10941542,
+        "p95Nanos": 11876000,
+        "p99Nanos": 12310834
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 36237,
+        "maximum": 36237,
+        "p50": 36237
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:6732e2ac2ef9ec261c0e6520f8ff9405a18dfb4bf660e2293b0675382393b035",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Async Capable": false,
+                    "Inner Unique": true,
+                    "Join Type": "Inner",
+                    "Node Type": "Nested Loop",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 33334,
+                    "Plan Width": 533,
+                    "Plans": [
+                      {
+                        "Async Capable": false,
+                        "Group Key": [
+                          "rs.resource_id2"
+                        ],
+                        "Node Type": "Aggregate",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Outer",
+                        "Partial Mode": "Simple",
+                        "Plan Rows": 200,
+                        "Plan Width": 8,
+                        "Planned Partitions": 0,
+                        "Plans": [
+                          {
+                            "Async Capable": false,
+                            "Node Type": "Append",
+                            "Parallel Aware": false,
+                            "Parent Relationship": "Outer",
+                            "Plan Rows": 33334,
+                            "Plan Width": 8,
+                            "Plans": [
+                              {
+                                "Alias": "rs",
+                                "Async Capable": false,
+                                "Filter": "((COALESCE(p_distance, hamming_distance) \u003c= 10) AND (resource_id1 = 1))",
+                                "Node Type": "Seq Scan",
+                                "Parallel Aware": false,
+                                "Parent Relationship": "Member",
+                                "Plan Rows": 33333,
+                                "Plan Width": 8,
+                                "Relation Name": "resource_similarities",
+                                "Startup Cost": 0,
+                                "Total Cost": 2235.98
+                              },
+                              {
+                                "Alias": "rs_1",
+                                "Async Capable": false,
+                                "Filter": "(COALESCE(p_distance, hamming_distance) \u003c= 10)",
+                                "Index Cond": "(resource_id2 = 1)",
+                                "Index Name": "idx_sim_r2",
+                                "Node Type": "Index Scan",
+                                "Parallel Aware": false,
+                                "Parent Relationship": "Member",
+                                "Plan Rows": 1,
+                                "Plan Width": 8,
+                                "Relation Name": "resource_similarities",
+                                "Scan Direction": "Forward",
+                                "Startup Cost": 0.29,
+                                "Total Cost": 8.31
+                              }
+                            ],
+                            "Startup Cost": 0,
+                            "Subplans Removed": 0,
+                            "Total Cost": 2410.97
+                          }
+                        ],
+                        "Startup Cost": 2494.3,
+                        "Strategy": "Hashed",
+                        "Total Cost": 2496.3
+                      },
+                      {
+                        "Alias": "resources",
+                        "Async Capable": false,
+                        "Index Cond": "(id = rs.resource_id2)",
+                        "Index Name": "resources_pkey",
+                        "Node Type": "Index Scan",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Inner",
+                        "Plan Rows": 1,
+                        "Plan Width": 533,
+                        "Relation Name": "resources",
+                        "Scan Direction": "Forward",
+                        "Startup Cost": 0.29,
+                        "Total Cost": 7.21
+                      }
+                    ],
+                    "Startup Cost": 2494.59,
+                    "Total Cost": 3706.9
+                  }
+                ],
+                "Startup Cost": 2494.59,
+                "Total Cost": 2496.41
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx_sim_r2",
+            "Index Name=resources_pkey",
+            "Join Type=Inner",
+            "Node Type=Aggregate",
+            "Node Type=Append",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Node Type=Nested Loop",
+            "Node Type=Seq Scan",
+            "Relation Name=resource_similarities",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "page-first",
+      "queryFingerprint": "mrql-shape-v1:34736c3c0336f03c7fbc5d9bcc6b9350ea0e085fb652ea9d99d044dd20b30e39",
+      "firstRunNanos": 776333,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 447792,
+        "p95Nanos": 656834,
+        "p99Nanos": 913083
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 36179,
+        "maximum": 36179,
+        "p50": 36179
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:f28d7ca41a0347c0411e34b5df4bbf5169b563f1d21670d8bd7f25d512a7b338",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Alias": "resources",
+                    "Async Capable": false,
+                    "Index Name": "idx_resources_created_at",
+                    "Node Type": "Index Scan",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 100000,
+                    "Plan Width": 533,
+                    "Relation Name": "resources",
+                    "Scan Direction": "Backward",
+                    "Startup Cost": 0.29,
+                    "Total Cost": 9327.29
+                  }
+                ],
+                "Startup Cost": 0.29,
+                "Total Cost": 4.96
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx_resources_created_at",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "page-middle",
+      "queryFingerprint": "mrql-shape-v1:ac85e75965b2891147b2e21f9f038cbc8a0c043637855cd089fc5fbb3642b414",
+      "firstRunNanos": 647416,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 461750,
+        "p95Nanos": 648250,
+        "p99Nanos": 910625
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 36184,
+        "maximum": 36184,
+        "p50": 36184
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:542b4fb976a4e1758b84be840aa7c1bd85af49f760be6438276c3cc7a5f7ab94",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Alias": "resources",
+                    "Async Capable": false,
+                    "Index Name": "idx_resources_created_at",
+                    "Node Type": "Index Scan",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 100000,
+                    "Plan Width": 533,
+                    "Relation Name": "resources",
+                    "Scan Direction": "Backward",
+                    "Startup Cost": 0.29,
+                    "Total Cost": 9327.29
+                  }
+                ],
+                "Startup Cost": 42.26,
+                "Total Cost": 46.93
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx_resources_created_at",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "page-deep",
+      "queryFingerprint": "mrql-shape-v1:abd9ec2ed17bd904c7b1bc6bbf0239c4ad92ceeabf2712280b1a5cfeb71733c1",
+      "firstRunNanos": 834750,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 660333,
+        "p95Nanos": 839583,
+        "p99Nanos": 942416
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 36144,
+        "maximum": 36144,
+        "p50": 36144
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:542b4fb976a4e1758b84be840aa7c1bd85af49f760be6438276c3cc7a5f7ab94",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Alias": "resources",
+                    "Async Capable": false,
+                    "Index Name": "idx_resources_created_at",
+                    "Node Type": "Index Scan",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 100000,
+                    "Plan Width": 533,
+                    "Relation Name": "resources",
+                    "Scan Direction": "Backward",
+                    "Startup Cost": 0.29,
+                    "Total Cost": 9327.29
+                  }
+                ],
+                "Startup Cost": 461.98,
+                "Total Cost": 466.64
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx_resources_created_at",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "aggregate-content-type",
+      "queryFingerprint": "mrql-shape-v1:5ada87120c5da9c4ad7753343e4e1fe84511dfc900a77ef0d8bc575a8a86f347",
+      "firstRunNanos": 16057125,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 15640625,
+        "p95Nanos": 16960000,
+        "p99Nanos": 17048083
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 8,
+        "maximum": 8,
+        "p50": 8
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 461,
+        "maximum": 461,
+        "p50": 461
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:9d3d162c53360e774f1f51362f8adee8e440bbfd4f16312cba0d16e9a7e80756",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 8,
+                "Plan Width": 20,
+                "Plans": [
+                  {
+                    "Async Capable": false,
+                    "Node Type": "Sort",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 8,
+                    "Plan Width": 20,
+                    "Plans": [
+                      {
+                        "Async Capable": false,
+                        "Group Key": [
+                          "content_type"
+                        ],
+                        "Node Type": "Aggregate",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Outer",
+                        "Partial Mode": "Simple",
+                        "Plan Rows": 8,
+                        "Plan Width": 20,
+                        "Planned Partitions": 0,
+                        "Plans": [
+                          {
+                            "Alias": "resources",
+                            "Async Capable": false,
+                            "Node Type": "Seq Scan",
+                            "Parallel Aware": false,
+                            "Parent Relationship": "Outer",
+                            "Plan Rows": 100000,
+                            "Plan Width": 12,
+                            "Relation Name": "resources",
+                            "Startup Cost": 0,
+                            "Total Cost": 7720
+                          }
+                        ],
+                        "Startup Cost": 8220,
+                        "Strategy": "Hashed",
+                        "Total Cost": 8220.08
+                      }
+                    ],
+                    "Sort Key": [
+                      "(count(*)) DESC"
+                    ],
+                    "Startup Cost": 8220.2,
+                    "Total Cost": 8220.22
+                  }
+                ],
+                "Startup Cost": 8220.2,
+                "Total Cost": 8220.22
+              }
+            }
+          ],
+          "signature": [
+            "Node Type=Aggregate",
+            "Node Type=Limit",
+            "Node Type=Seq Scan",
+            "Node Type=Sort",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "bucket-content-type",
+      "queryFingerprint": "mrql-shape-v1:46c175cef57ebdd784278d19eb2cde126a4d8f945b720ff30f74659018130c4d",
+      "firstRunNanos": 17203750,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 27549750,
+        "p95Nanos": 33360375,
+        "p99Nanos": 35968500
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 9,
+        "maximum": 9,
+        "p50": 9
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 88,
+        "maximum": 88,
+        "p50": 88
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 57254,
+        "maximum": 57254,
+        "p50": 57254
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:cd6f7568deb8b3ffd45ab8d9295cb5bc5ed0b349e6854f3a4504c3ed4768f949",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 8,
+                "Plan Width": 12,
+                "Plans": [
+                  {
+                    "Async Capable": false,
+                    "Node Type": "Sort",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 8,
+                    "Plan Width": 12,
+                    "Plans": [
+                      {
+                        "Async Capable": false,
+                        "Group Key": [
+                          "content_type"
+                        ],
+                        "Node Type": "Aggregate",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Outer",
+                        "Partial Mode": "Simple",
+                        "Plan Rows": 8,
+                        "Plan Width": 12,
+                        "Planned Partitions": 0,
+                        "Plans": [
+                          {
+                            "Alias": "resources",
+                            "Async Capable": false,
+                            "Node Type": "Seq Scan",
+                            "Parallel Aware": false,
+                            "Parent Relationship": "Outer",
+                            "Plan Rows": 100000,
+                            "Plan Width": 12,
+                            "Relation Name": "resources",
+                            "Startup Cost": 0,
+                            "Total Cost": 7720
+                          }
+                        ],
+                        "Startup Cost": 7970,
+                        "Strategy": "Hashed",
+                        "Total Cost": 7970.08
+                      }
+                    ],
+                    "Sort Key": [
+                      "content_type"
+                    ],
+                    "Startup Cost": 7970.2,
+                    "Total Cost": 7970.22
+                  }
+                ],
+                "Startup Cost": 7970.2,
+                "Total Cost": 7970.22
+              }
+            }
+          ],
+          "signature": [
+            "Node Type=Aggregate",
+            "Node Type=Limit",
+            "Node Type=Seq Scan",
+            "Node Type=Sort",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "cross-entity-top-n",
+      "queryFingerprint": "mrql-shape-v1:fab33f892341e7d68b08c959862aec73ef9b8c2e7efef465ba94de6e82b9d1ce",
+      "firstRunNanos": 8065292,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 585583,
+        "p95Nanos": 943083,
+        "p99Nanos": 1063083
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 3,
+        "maximum": 3,
+        "p50": 3
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 150,
+        "maximum": 150,
+        "p50": 150
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 18629,
+        "maximum": 18629,
+        "p50": 18629
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:b993c88b69c3eaecad89672d60cc003e31bc305399d0e4a33f7db40221680873",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Alias": "resources",
+                    "Async Capable": false,
+                    "Filter": "(name ~~* '%benchmark%'::text)",
+                    "Index Name": "idx_resources_created_at",
+                    "Node Type": "Index Scan",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 99990,
+                    "Plan Width": 533,
+                    "Relation Name": "resources",
+                    "Scan Direction": "Backward",
+                    "Startup Cost": 0.29,
+                    "Total Cost": 9577.29
+                  }
+                ],
+                "Startup Cost": 0.29,
+                "Total Cost": 5.08
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx_resources_created_at",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Relation Name=resources"
+          ]
+        },
+        {
+          "sqlFingerprint": "sql-shape-v1:a182cd064227ad83629c4a1f992994458fb3f1aa3f9fb4388e539492fa82c887",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 376,
+                "Plans": [
+                  {
+                    "Alias": "notes",
+                    "Async Capable": false,
+                    "Filter": "(name ~~* '%benchmark%'::text)",
+                    "Index Name": "idx_notes_created_at",
+                    "Node Type": "Index Scan",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 24998,
+                    "Plan Width": 376,
+                    "Relation Name": "notes",
+                    "Scan Direction": "Backward",
+                    "Startup Cost": 0.29,
+                    "Total Cost": 1748.79
+                  }
+                ],
+                "Startup Cost": 0.29,
+                "Total Cost": 3.78
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx_notes_created_at",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Relation Name=notes"
+          ]
+        },
+        {
+          "sqlFingerprint": "sql-shape-v1:8f991d41551202148f0b5dab67ebb3896f64d2f1e4431644dfc38422f61b6eb9",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 278,
+                "Plans": [
+                  {
+                    "Alias": "groups",
+                    "Async Capable": false,
+                    "Filter": "(name ~~* '%benchmark%'::text)",
+                    "Index Name": "idx_groups_created_at",
+                    "Node Type": "Index Scan",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 200,
+                    "Plan Width": 278,
+                    "Relation Name": "groups",
+                    "Scan Direction": "Backward",
+                    "Startup Cost": 0.14,
+                    "Total Cost": 22.64
+                  }
+                ],
+                "Startup Cost": 0.14,
+                "Total Cost": 5.77
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx_groups_created_at",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Relation Name=groups"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "cross-entity-random",
+      "queryFingerprint": "mrql-shape-v1:765ccad0db6d9c8f1cb078d9c5855df8c4232c413847542f69b69977fb6ff046",
+      "firstRunNanos": 97344250,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 122758625,
+        "p95Nanos": 132642833,
+        "p99Nanos": 133489375
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 6,
+        "maximum": 6,
+        "p50": 6
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 153,
+        "maximum": 153,
+        "p50": 153
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 29861,
+        "maximum": 35048,
+        "p50": 32692
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:2a02fcaf21affc6fbb114365c1af14d5e8fece97c27f8fa74cd4c0151f7cbf74",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 541,
+                "Plans": [
+                  {
+                    "Async Capable": false,
+                    "Node Type": "Sort",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 99990,
+                    "Plan Width": 541,
+                    "Plans": [
+                      {
+                        "Alias": "resources",
+                        "Async Capable": false,
+                        "Filter": "(name ~~* '%benchmark%'::text)",
+                        "Node Type": "Seq Scan",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Outer",
+                        "Plan Rows": 99990,
+                        "Plan Width": 541,
+                        "Relation Name": "resources",
+                        "Startup Cost": 0,
+                        "Total Cost": 8219.98
+                      }
+                    ],
+                    "Sort Key": [
+                      "(random())"
+                    ],
+                    "Startup Cost": 11541.57,
+                    "Total Cost": 11791.55
+                  }
+                ],
+                "Startup Cost": 11541.57,
+                "Total Cost": 11541.7
+              }
+            }
+          ],
+          "signature": [
+            "Node Type=Limit",
+            "Node Type=Seq Scan",
+            "Node Type=Sort",
+            "Relation Name=resources"
+          ]
+        },
+        {
+          "sqlFingerprint": "sql-shape-v1:02d6478ff112d6e74bdf6669d228639b81a81ac2184c2225266cc42061292f08",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 384,
+                "Plans": [
+                  {
+                    "Async Capable": false,
+                    "Node Type": "Sort",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 24998,
+                    "Plan Width": 384,
+                    "Plans": [
+                      {
+                        "Alias": "notes",
+                        "Async Capable": false,
+                        "Filter": "(name ~~* '%benchmark%'::text)",
+                        "Node Type": "Seq Scan",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Outer",
+                        "Plan Rows": 24998,
+                        "Plan Width": 384,
+                        "Relation Name": "notes",
+                        "Startup Cost": 0,
+                        "Total Cost": 1398.99
+                      }
+                    ],
+                    "Sort Key": [
+                      "(random())"
+                    ],
+                    "Startup Cost": 2229.41,
+                    "Total Cost": 2291.91
+                  }
+                ],
+                "Startup Cost": 2229.41,
+                "Total Cost": 2229.54
+              }
+            }
+          ],
+          "signature": [
+            "Node Type=Limit",
+            "Node Type=Seq Scan",
+            "Node Type=Sort",
+            "Relation Name=notes"
+          ]
+        },
+        {
+          "sqlFingerprint": "sql-shape-v1:f48c50cd3a39d45445a44d75a6bcc756845e1373dbb863936fd52b1810cbd0e5",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 50,
+                "Plan Width": 286,
+                "Plans": [
+                  {
+                    "Async Capable": false,
+                    "Node Type": "Sort",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 200,
+                    "Plan Width": 286,
+                    "Plans": [
+                      {
+                        "Alias": "groups",
+                        "Async Capable": false,
+                        "Filter": "(name ~~* '%benchmark%'::text)",
+                        "Node Type": "Seq Scan",
+                        "Parallel Aware": false,
+                        "Parent Relationship": "Outer",
+                        "Plan Rows": 200,
+                        "Plan Width": 286,
+                        "Relation Name": "groups",
+                        "Startup Cost": 0,
+                        "Total Cost": 11
+                      }
+                    ],
+                    "Sort Key": [
+                      "(random())"
+                    ],
+                    "Startup Cost": 17.64,
+                    "Total Cost": 18.14
+                  }
+                ],
+                "Startup Cost": 17.64,
+                "Total Cost": 17.77
+              }
+            }
+          ],
+          "signature": [
+            "Node Type=Limit",
+            "Node Type=Seq Scan",
+            "Node Type=Sort",
+            "Relation Name=groups"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "raw-json",
+      "queryFingerprint": "mrql-shape-v1:d31246ad4f3ca34ad1690f61e50871772cc039fb3c626d7750a8d093be309017",
+      "firstRunNanos": 611583,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 285250,
+        "p95Nanos": 350792,
+        "p99Nanos": 710750
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 20,
+        "maximum": 20,
+        "p50": 20
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 14534,
+        "maximum": 14534,
+        "p50": 14534
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:f28d7ca41a0347c0411e34b5df4bbf5169b563f1d21670d8bd7f25d512a7b338",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 20,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Alias": "resources",
+                    "Async Capable": false,
+                    "Index Name": "idx_resources_created_at",
+                    "Node Type": "Index Scan",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 100000,
+                    "Plan Width": 533,
+                    "Relation Name": "resources",
+                    "Scan Direction": "Backward",
+                    "Startup Cost": 0.29,
+                    "Total Cost": 9327.29
+                  }
+                ],
+                "Startup Cost": 0.29,
+                "Total Cost": 2.16
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx_resources_created_at",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "compact-render",
+      "queryFingerprint": "mrql-shape-v1:d31246ad4f3ca34ad1690f61e50871772cc039fb3c626d7750a8d093be309017",
+      "firstRunNanos": 2592125,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 1197459,
+        "p95Nanos": 1414791,
+        "p99Nanos": 1490708
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 3,
+        "maximum": 3,
+        "p50": 3
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 296,
+        "maximum": 296,
+        "p50": 296
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 2430,
+        "maximum": 2430,
+        "p50": 2430
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:f28d7ca41a0347c0411e34b5df4bbf5169b563f1d21670d8bd7f25d512a7b338",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 20,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Alias": "resources",
+                    "Async Capable": false,
+                    "Index Name": "idx_resources_created_at",
+                    "Node Type": "Index Scan",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 100000,
+                    "Plan Width": 533,
+                    "Relation Name": "resources",
+                    "Scan Direction": "Backward",
+                    "Startup Cost": 0.29,
+                    "Total Cost": 9327.29
+                  }
+                ],
+                "Startup Cost": 0.29,
+                "Total Cost": 2.16
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx_resources_created_at",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "table-render",
+      "queryFingerprint": "mrql-shape-v1:d31246ad4f3ca34ad1690f61e50871772cc039fb3c626d7750a8d093be309017",
+      "firstRunNanos": 1385708,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 1267125,
+        "p95Nanos": 1668500,
+        "p99Nanos": 2217208
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 3,
+        "maximum": 3,
+        "p50": 3
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 296,
+        "maximum": 296,
+        "p50": 296
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 7031,
+        "maximum": 7031,
+        "p50": 7031
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:f28d7ca41a0347c0411e34b5df4bbf5169b563f1d21670d8bd7f25d512a7b338",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 20,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Alias": "resources",
+                    "Async Capable": false,
+                    "Index Name": "idx_resources_created_at",
+                    "Node Type": "Index Scan",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 100000,
+                    "Plan Width": 533,
+                    "Relation Name": "resources",
+                    "Scan Direction": "Backward",
+                    "Startup Cost": 0.29,
+                    "Total Cost": 9327.29
+                  }
+                ],
+                "Startup Cost": 0.29,
+                "Total Cost": 2.16
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx_resources_created_at",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "custom-render",
+      "queryFingerprint": "mrql-shape-v1:d31246ad4f3ca34ad1690f61e50871772cc039fb3c626d7750a8d093be309017",
+      "firstRunNanos": 1229458,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 1263292,
+        "p95Nanos": 1391542,
+        "p99Nanos": 1506250
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 3,
+        "maximum": 3,
+        "p50": 3
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 296,
+        "maximum": 296,
+        "p50": 296
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 1031,
+        "maximum": 1031,
+        "p50": 1031
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:f28d7ca41a0347c0411e34b5df4bbf5169b563f1d21670d8bd7f25d512a7b338",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 20,
+                "Plan Width": 533,
+                "Plans": [
+                  {
+                    "Alias": "resources",
+                    "Async Capable": false,
+                    "Index Name": "idx_resources_created_at",
+                    "Node Type": "Index Scan",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 100000,
+                    "Plan Width": 533,
+                    "Relation Name": "resources",
+                    "Scan Direction": "Backward",
+                    "Startup Cost": 0.29,
+                    "Total Cost": 9327.29
+                  }
+                ],
+                "Startup Cost": 0.29,
+                "Total Cost": 2.16
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx_resources_created_at",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Relation Name=resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "nested-mrql",
+      "queryFingerprint": "mrql-shape-v1:f439b97ad32af5a817854e84710da519043257fa24eead0e47d24812ff4c318d",
+      "firstRunNanos": 16079375,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 14179541,
+        "p95Nanos": 16564375,
+        "p99Nanos": 22498666
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 24,
+        "maximum": 24,
+        "p50": 24
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 844,
+        "maximum": 844,
+        "p50": 844
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 48583,
+        "maximum": 48583,
+        "p50": 48583
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:20cce91bbf6c4907847a9adc5c2a52b8b222d9637f416533ab5b8ca76af19037",
+          "dialect": "postgres",
+          "format": "json",
+          "plan": [
+            {
+              "Plan": {
+                "Async Capable": false,
+                "Node Type": "Limit",
+                "Parallel Aware": false,
+                "Plan Rows": 20,
+                "Plan Width": 278,
+                "Plans": [
+                  {
+                    "Alias": "groups",
+                    "Async Capable": false,
+                    "Index Name": "idx_groups_created_at",
+                    "Node Type": "Index Scan",
+                    "Parallel Aware": false,
+                    "Parent Relationship": "Outer",
+                    "Plan Rows": 200,
+                    "Plan Width": 278,
+                    "Relation Name": "groups",
+                    "Scan Direction": "Backward",
+                    "Startup Cost": 0.14,
+                    "Total Cost": 22.14
+                  }
+                ],
+                "Startup Cost": 0.14,
+                "Total Cost": 2.35
+              }
+            }
+          ],
+          "signature": [
+            "Index Name=idx_groups_created_at",
+            "Node Type=Index Scan",
+            "Node Type=Limit",
+            "Relation Name=groups"
+          ]
+        }
+      ]
+    }
+  ]
+}

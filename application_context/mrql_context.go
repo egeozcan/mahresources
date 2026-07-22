@@ -723,6 +723,16 @@ type crossEntityItem struct {
 	rand       int // random sort key for ORDER BY RANDOM() (unique via rand.Perm)
 }
 
+var crossEntityTypes = []mrql.EntityType{mrql.EntityResource, mrql.EntityNote, mrql.EntityGroup}
+
+func crossEntitySelectQuery(parsed *mrql.Query, entityType mrql.EntityType, perEntityCap int) mrql.Query {
+	branch := *parsed
+	branch.EntityType = entityType
+	branch.Limit = perEntityCap
+	branch.Offset = -1
+	return branch
+}
+
 // executeCrossEntity runs the query against resources, notes, and groups
 // concurrently, then globally sorts and paginates the merged result set.
 // Each entity query gets its own timeout so a slow table doesn't block the
@@ -740,23 +750,10 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 
 	result := &MRQLResult{EntityType: "all"}
 
-	globalLimit := min(ctx.defaultMRQLLimit(), policy.maxLimit)
-	if parsed.Limit >= 0 {
-		globalLimit = parsed.Limit
-	}
-	globalOffset := 0
-	if parsed.Offset >= 0 {
-		globalOffset = parsed.Offset
-	}
-	if err := validateMRQLExecutionBounds(parsed, policy); err != nil {
+	globalLimit, globalOffset, perEntityCap, err := crossEntityWindow(parsed, ctx.defaultMRQLLimit(), policy)
+	if err != nil {
 		return nil, err
 	}
-	if globalOffset > int(^uint(0)>>1)-globalLimit {
-		return nil, &MRQLExecutionLimitError{Field: "offset + limit", Value: globalOffset, Max: policy.maxOffset + policy.maxLimit}
-	}
-
-	// Per-entity cap is bounded by maxOffset+maxLimit.
-	perEntityCap := globalOffset + globalLimit
 
 	var (
 		allResources []models.Resource
@@ -767,19 +764,15 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 	)
 
 	var wg sync.WaitGroup
-	entityTypes := []mrql.EntityType{mrql.EntityResource, mrql.EntityNote, mrql.EntityGroup}
-	errs := make([]error, len(entityTypes))
+	errs := make([]error, len(crossEntityTypes))
 
-	for i, et := range entityTypes {
-		clone := *parsed
-		clone.EntityType = et
-		clone.Limit = perEntityCap
-		clone.Offset = -1
+	for i, et := range crossEntityTypes {
+		branch := crossEntitySelectQuery(parsed, et, perEntityCap)
 
 		// Each entity gets its own timeout derived from the request context.
 		entityCtx, cancel := context.WithTimeout(reqCtx, ctx.mrqlQueryTimeout())
 
-		db, err := mrql.TranslateWithOptions(&clone, ctx.db.WithContext(entityCtx), opts)
+		db, err := mrql.TranslateWithOptions(&branch, ctx.db.WithContext(entityCtx), opts)
 		if err != nil {
 			cancel()
 			var translateErr *mrql.TranslateError
@@ -790,14 +783,14 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 		}
 
 		wg.Add(1)
-		go func(idx int, et mrql.EntityType, cancel context.CancelFunc) {
+		go func(idx int, et mrql.EntityType, cancel context.CancelFunc, db *gorm.DB, branch mrql.Query) {
 			defer wg.Done()
 			defer cancel()
 
 			switch et {
 			case mrql.EntityResource:
 				var resources []models.Resource
-				if err := ctx.executeMRQLFind(db, &resources, &clone, "cross-entity resource select"); err != nil {
+				if err := ctx.executeMRQLFind(db, &resources, &branch, "cross-entity resource select"); err != nil {
 					errs[idx] = fmt.Errorf("resource query failed: %w", err)
 					return
 				}
@@ -806,7 +799,7 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 				mu.Unlock()
 			case mrql.EntityNote:
 				var notes []models.Note
-				if err := ctx.executeMRQLFind(db, &notes, &clone, "cross-entity note select"); err != nil {
+				if err := ctx.executeMRQLFind(db, &notes, &branch, "cross-entity note select"); err != nil {
 					errs[idx] = fmt.Errorf("note query failed: %w", err)
 					return
 				}
@@ -815,7 +808,7 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 				mu.Unlock()
 			case mrql.EntityGroup:
 				var groups []models.Group
-				if err := ctx.executeMRQLFind(db, &groups, &clone, "cross-entity group select"); err != nil {
+				if err := ctx.executeMRQLFind(db, &groups, &branch, "cross-entity group select"); err != nil {
 					errs[idx] = fmt.Errorf("group query failed: %w", err)
 					return
 				}
@@ -823,7 +816,7 @@ func (ctx *MahresourcesContext) executeCrossEntity(reqCtx context.Context, parse
 				allGroups = groups
 				mu.Unlock()
 			}
-		}(i, et, cancel)
+		}(i, et, cancel, db, branch)
 	}
 
 	wg.Wait()
@@ -1065,11 +1058,40 @@ func (ctx *MahresourcesContext) countCrossEntity(reqCtx context.Context, parsed 
 	return n, nil
 }
 
+// MRQLExecutionShape describes the SQL fan-out of an Effective MRQL Query
+// without executing data-dependent discovery.
+type MRQLExecutionShape struct {
+	Strategy          string `json:"strategy"`
+	PlannedStatements int    `json:"plannedStatements"`
+	MinimumStatements int    `json:"minimumStatements"`
+	MaximumStatements int    `json:"maximumStatements"`
+	DataDependent     bool   `json:"dataDependent"`
+	Description       string `json:"description,omitempty"`
+}
+
+// MRQLExplainOptions selects optional database work. NativePlan is deliberately
+// opt-in because it contacts the optimizer; the HTTP boundary restricts it to
+// administrators.
+type MRQLExplainOptions struct {
+	NativePlan bool
+}
+
+// MRQLNativePlanError distinguishes optimizer failures from parse, scope, or
+// execution-policy errors that happen before native planning begins.
+type MRQLNativePlanError struct {
+	Err error
+}
+
+func (e *MRQLNativePlanError) Error() string { return e.Err.Error() }
+func (e *MRQLNativePlanError) Unwrap() error { return e.Err }
+
 // MRQLExplainResult describes the SQL statement(s) that a query would run,
-// without executing the query. Mirrors execution semantics: default LIMIT,
-// resolved SCOPE, and RBAC forced scope are all reflected in the emitted SQL.
+// without executing the underlying query. Mirrors execution semantics: default
+// LIMIT, resolved SCOPE, and RBAC forced scope are reflected in emitted SQL.
 type MRQLExplainResult struct {
 	EntityType          string                  `json:"entityType"`
+	QueryFingerprint    string                  `json:"queryFingerprint"`
+	ExecutionShape      MRQLExecutionShape      `json:"executionShape"`
 	Statements          []mrql.ExplainStatement `json:"statements"`
 	Warnings            []string                `json:"warnings,omitempty"`
 	DefaultLimitApplied bool                    `json:"default_limit_applied"`
@@ -1104,10 +1126,15 @@ func explainTableLabel(et mrql.EntityType) string {
 	return et.String()
 }
 
-// ExplainMRQL builds the SQL statement(s) for an already-parsed, bound, and
-// validated MRQL query without executing it. It honours SCOPE, RBAC forced
-// scope, and the default LIMIT so the reported SQL matches what would run.
+// ExplainMRQL builds generated SQL without contacting the database optimizer.
 func (ctx *MahresourcesContext) ExplainMRQL(reqCtx context.Context, parsed *mrql.Query) (*MRQLExplainResult, error) {
+	return ctx.ExplainMRQLWithOptions(reqCtx, parsed, MRQLExplainOptions{})
+}
+
+// ExplainMRQLWithOptions describes an already-parsed, bound, and validated
+// Effective MRQL Query. Native plans contact only the optimizer and share one
+// deadline across every generated statement.
+func (ctx *MahresourcesContext) ExplainMRQLWithOptions(reqCtx context.Context, parsed *mrql.Query, explainOptions MRQLExplainOptions) (*MRQLExplainResult, error) {
 	clone := *parsed
 	parsed = &clone
 	entityType := mrql.ExtractEntityType(parsed)
@@ -1120,23 +1147,40 @@ func (ctx *MahresourcesContext) ExplainMRQL(reqCtx context.Context, parsed *mrql
 	}
 	result := &MRQLExplainResult{
 		EntityType:          entityType.String(),
+		Statements:          make([]mrql.ExplainStatement, 0),
 		DefaultLimitApplied: defaultApplied,
 		AppliedLimit:        parsed.Limit,
 	}
 
-	opts, deny, err := ctx.mrqlQueryTranslateOptions(parsed)
+	queryCtx := reqCtx
+	workingCtx := ctx
+	if explainOptions.NativePlan {
+		var cancel context.CancelFunc
+		queryCtx, cancel = context.WithTimeout(reqCtx, ctx.mrqlQueryTimeout())
+		defer cancel()
+		copyWithDeadline := *ctx
+		copyWithDeadline.db = ctx.db.WithContext(queryCtx)
+		workingCtx = &copyWithDeadline
+	}
+
+	opts, deny, err := workingCtx.mrqlQueryTranslateOptions(parsed)
 	if err != nil {
 		return nil, err
 	}
+	scopeShape := workingCtx.mrqlExplainScopeShape(parsed, opts, deny)
 	if deny {
+		result.QueryFingerprint = workingCtx.mrqlQueryFingerprint(parsed, scopeShape, opts)
+		result.ExecutionShape = MRQLExecutionShape{Strategy: "denied"}
 		result.Warnings = append(result.Warnings, "access is scoped to no groups; this query would return no rows")
 		return result, nil
 	}
+	if err := workingCtx.rejectSQLiteRegex(parsed); err != nil {
+		return nil, err
+	}
+	db := workingCtx.db.WithContext(queryCtx)
 
-	db := ctx.db.WithContext(reqCtx)
-
-	// GROUP BY paths
-	if parsed.GroupBy != nil {
+	switch {
+	case parsed.GroupBy != nil:
 		if entityType == mrql.EntityUnspecified {
 			return nil, errors.New("GROUP BY requires an explicit entity type")
 		}
@@ -1147,11 +1191,12 @@ func (ctx *MahresourcesContext) ExplainMRQL(reqCtx context.Context, parsed *mrql
 				return nil, err
 			}
 			result.Statements = append(result.Statements, mrql.ExplainDB(built, entityType.String(), &[]map[string]any{}))
-			return result, nil
+			result.ExecutionShape = fixedExecutionShape("aggregate", len(result.Statements))
+			break
 		}
-		// Bucketed: only the key-discovery query is statically known; per-bucket
-		// item queries repeat once per key and would require executing the keys
-		// query to enumerate. Show the keys query and note the fan-out.
+
+		// Bucket item statements depend on discovered keys. Do not execute key
+		// discovery or fabricate a representative bucket merely for explain.
 		if parsed.Limit > maxBucketedTotalItems {
 			parsed.Limit = maxBucketedTotalItems
 			result.AppliedLimit = parsed.Limit
@@ -1161,37 +1206,101 @@ func (ctx *MahresourcesContext) ExplainMRQL(reqCtx context.Context, parsed *mrql
 			return nil, err
 		}
 		result.Statements = append(result.Statements, mrql.ExplainDB(keysDB, "bucket keys", &[]map[string]any{}))
+		result.ExecutionShape = MRQLExecutionShape{
+			Strategy:          "bucket_fanout",
+			PlannedStatements: 1,
+			MinimumStatements: 1,
+			MaximumStatements: 1 + maxBucketQueries,
+			DataDependent:     true,
+			Description:       "one key-discovery statement plus one item statement per discovered bucket",
+		}
 		result.Warnings = append(result.Warnings, "Bucketed GROUP BY runs one item query per group key; only the key-discovery query is shown here.")
-		return result, nil
-	}
 
-	// Flat single-entity
-	if entityType != mrql.EntityUnspecified {
+	case entityType != mrql.EntityUnspecified:
 		parsed.EntityType = entityType
 		built, err := mrql.TranslateWithOptions(parsed, db, opts)
 		if err != nil {
 			return nil, err
 		}
 		result.Statements = append(result.Statements, mrql.ExplainDB(built, entityType.String(), explainDest(entityType)))
-		return result, nil
-	}
+		result.ExecutionShape = fixedExecutionShape("flat", len(result.Statements))
 
-	// Cross-entity: one statement per entity table (skipping type-guarded
-	// branches that don't apply to a given entity).
-	for _, et := range []mrql.EntityType{mrql.EntityResource, mrql.EntityNote, mrql.EntityGroup} {
-		clone := *parsed
-		clone.EntityType = et
-		built, err := mrql.TranslateWithOptions(&clone, db, opts)
+	default:
+		_, _, perEntityCap, err := crossEntityWindow(parsed, ctx.defaultMRQLLimit(), interactiveMRQLPolicy)
 		if err != nil {
-			var translateErr *mrql.TranslateError
-			if errors.As(err, &translateErr) {
-				continue
-			}
 			return nil, err
 		}
-		result.Statements = append(result.Statements, mrql.ExplainDB(built, explainTableLabel(et), explainDest(et)))
+		for _, et := range crossEntityTypes {
+			branch := crossEntitySelectQuery(parsed, et, perEntityCap)
+			built, err := mrql.TranslateWithOptions(&branch, db, opts)
+			if err != nil {
+				var translateErr *mrql.TranslateError
+				if errors.As(err, &translateErr) {
+					continue
+				}
+				return nil, err
+			}
+			result.Statements = append(result.Statements, mrql.ExplainDB(built, explainTableLabel(et), explainDest(et)))
+		}
+		result.ExecutionShape = fixedExecutionShape("cross_entity", len(result.Statements))
+		if len(parsed.OrderBy) > 0 && parsed.OrderBy[0].Random {
+			result.ExecutionShape.DataDependent = true
+			result.ExecutionShape.MaximumStatements += len(crossEntityTypes)
+			result.ExecutionShape.Description = "entity selects plus up to one population count per capped entity branch"
+		}
+	}
+
+	result.QueryFingerprint = ctx.mrqlQueryFingerprint(parsed, scopeShape, opts)
+	if explainOptions.NativePlan {
+		plans := make([]*mrql.NativePlan, len(result.Statements))
+		for i, statement := range result.Statements {
+			if err := queryCtx.Err(); err != nil {
+				return nil, err
+			}
+			plan, err := mrql.NativeExplain(queryCtx, db, statement)
+			if err != nil {
+				return nil, &MRQLNativePlanError{Err: err}
+			}
+			plans[i] = plan
+		}
+		for i := range result.Statements {
+			result.Statements[i].NativePlan = plans[i]
+		}
 	}
 	return result, nil
+}
+
+func (ctx *MahresourcesContext) mrqlQueryFingerprint(parsed *mrql.Query, scopeShape mrql.ScopeShape, opts mrql.TranslateOptions) string {
+	policy := mrql.QueryShapePolicy{Dialect: ctx.db.Dialector.Name(), AHashThreshold: opts.AHashThreshold}
+	if opts.SimilarityThreshold != nil {
+		policy.SimilarityThreshold = *opts.SimilarityThreshold
+	}
+	if opts.FTSAvailable != nil {
+		policy.FTSAvailable = *opts.FTSAvailable
+	}
+	return mrql.QueryShapeFingerprintWithPolicy(parsed, scopeShape, policy)
+}
+
+func fixedExecutionShape(strategy string, statements int) MRQLExecutionShape {
+	return MRQLExecutionShape{
+		Strategy:          strategy,
+		PlannedStatements: statements,
+		MinimumStatements: statements,
+		MaximumStatements: statements,
+	}
+}
+
+func (ctx *MahresourcesContext) mrqlExplainScopeShape(parsed *mrql.Query, opts mrql.TranslateOptions, deny bool) mrql.ScopeShape {
+	if deny {
+		return mrql.ScopeShapeDenied
+	}
+	if _, forced, _ := ctx.principalForcedScope(); forced {
+		return mrql.ScopeShapeForced
+	}
+	if parsed.Scope != nil && opts.ScopeGroupID > 0 {
+		return mrql.ScopeShapeExplicit
+	}
+	return mrql.ScopeShapeNone
 }
 
 // ValidateMRQL parses and validates an MRQL query string.

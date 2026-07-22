@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MRQL Performance Improvement Roadmap</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --surface-alt: #f8fafc;
+      --text: #172033;
+      --muted: #5f6b7a;
+      --line: #d8dee8;
+      --accent: #265fce;
+      --accent-soft: #eaf1ff;
+      --success: #1d7a46;
+      --success-soft: #e7f6ed;
+      --warning: #9a5b00;
+      --warning-soft: #fff3d6;
+      --danger: #a93434;
+      --danger-soft: #fdecec;
+      --shadow: 0 10px 28px rgba(35, 50, 75, 0.08);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #11151c;
+        --surface: #191f29;
+        --surface-alt: #202734;
+        --text: #eef2f7;
+        --muted: #aeb8c6;
+        --line: #354052;
+        --accent: #8db4ff;
+        --accent-soft: #223252;
+        --success: #76d49d;
+        --success-soft: #193827;
+        --warning: #f0bd69;
+        --warning-soft: #423117;
+        --danger: #ff9d9d;
+        --danger-soft: #452327;
+        --shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+    a { color: var(--accent); }
+    code {
+      padding: 0.1rem 0.35rem;
+      border: 1px solid var(--line);
+      border-radius: 0.35rem;
+      background: var(--surface-alt);
+      font-size: 0.9em;
+    }
+    pre {
+      overflow: auto;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 0.65rem;
+      background: var(--surface-alt);
+    }
+    pre code { padding: 0; border: 0; background: transparent; }
+
+    .hero {
+      color: #fff;
+      background: linear-gradient(125deg, #173c79, #235ebd 55%, #3b7bdc);
+      padding: 3rem 1.5rem 2.6rem;
+    }
+    .hero-inner, main { max-width: 1120px; margin: 0 auto; }
+    .hero h1 { margin: 0 0 0.6rem; font-size: clamp(2rem, 5vw, 3.45rem); line-height: 1.08; }
+    .hero p { max-width: 820px; margin: 0.4rem 0; font-size: 1.08rem; color: #e8f0ff; }
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 1.4rem; }
+    .hero-meta span {
+      padding: 0.35rem 0.7rem;
+      border: 1px solid rgba(255,255,255,0.35);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.1);
+      font-size: 0.88rem;
+    }
+
+    main { padding: 1.5rem; }
+    .panel, details.task {
+      margin: 1rem 0;
+      border: 1px solid var(--line);
+      border-radius: 0.85rem;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .panel { padding: 1.25rem; }
+    .panel h2, .panel h3 { margin-top: 0; }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+    }
+    .warning { border-left-color: var(--warning); background: var(--warning-soft); }
+
+    .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); }
+    .metric {
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 0.65rem;
+      background: var(--surface-alt);
+    }
+    .metric strong { display: block; color: var(--accent); font-size: 1.55rem; line-height: 1.2; }
+    .metric span { color: var(--muted); font-size: 0.92rem; }
+
+    nav ol { columns: 2; padding-left: 1.5rem; }
+    nav li { margin: 0.35rem 0; break-inside: avoid; }
+    @media (max-width: 720px) { nav ol { columns: 1; } }
+
+    details.task { overflow: clip; }
+    details.task > summary {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 0.85rem;
+      padding: 1rem 1.15rem;
+      cursor: pointer;
+      list-style: none;
+      background: var(--surface);
+    }
+    details.task > summary::-webkit-details-marker { display: none; }
+    details.task > summary::after {
+      content: "＋";
+      color: var(--accent);
+      font-size: 1.25rem;
+      font-weight: 700;
+    }
+    details.task[open] > summary::after { content: "−"; }
+    details.task[open] > summary { border-bottom: 1px solid var(--line); }
+    details.task > summary:hover { background: var(--surface-alt); }
+
+    .order {
+      display: inline-grid;
+      place-items: center;
+      width: 2.3rem;
+      height: 2.3rem;
+      border-radius: 50%;
+      color: #fff;
+      background: var(--accent);
+      font-weight: 800;
+    }
+    .summary-title { display: block; font-size: 1.08rem; font-weight: 760; }
+    .summary-subtitle { display: block; color: var(--muted); font-size: 0.88rem; font-weight: 450; }
+    .badges { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
+    .badge {
+      display: inline-block;
+      padding: 0.18rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .badge.high { color: var(--success); background: var(--success-soft); }
+    .badge.medium { color: var(--warning); background: var(--warning-soft); }
+    .badge.large { color: var(--danger); background: var(--danger-soft); }
+
+    .task-body { padding: 1.2rem 1.3rem 1.4rem; }
+    .task-body h3 { margin: 1.3rem 0 0.45rem; font-size: 1rem; }
+    .task-body h3:first-child { margin-top: 0; }
+    .task-body ul, .task-body ol { margin-top: 0.35rem; }
+    .task-body li { margin: 0.28rem 0; }
+    .task-body table, .matrix { width: 100%; border-collapse: collapse; }
+    .task-body th, .task-body td, .matrix th, .matrix td {
+      padding: 0.65rem;
+      border: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: var(--surface-alt); }
+    .checklist { list-style: none; padding: 0; }
+    .checklist li { position: relative; padding-left: 1.7rem; }
+    .checklist li::before {
+      content: "□";
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      font-weight: 800;
+    }
+    .files { color: var(--muted); }
+    .decision { padding: 0.75rem 0.9rem; border-radius: 0.55rem; background: var(--surface-alt); }
+    footer { max-width: 1120px; margin: 0 auto; padding: 0 1.5rem 3rem; color: var(--muted); }
+
+    @media print {
+      :root { color-scheme: light; }
+      body { background: #fff; }
+      .hero { padding: 1.5rem; background: #173c79 !important; print-color-adjust: exact; }
+      main { max-width: none; }
+      details.task { break-inside: avoid; box-shadow: none; }
+      details.task > summary::after { display: none; }
+      details.task:not([open]) > .task-body { display: block; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <h1>MRQL Performance Improvement Roadmap</h1>
+      <p>A sequenced implementation report for improving MRQL from low-risk measurement and indexing through set-based grouping, batched rendering, and optional specialized read models.</p>
+      <div class="hero-meta">
+        <span>8 ordered workstreams</span>
+        <span>SQLite + PostgreSQL</span>
+        <span>Auth scope must remain fail-closed</span>
+        <span>Target: million-resource deployments</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel callout" aria-labelledby="executive-summary">
+      <h2 id="executive-summary">Executive summary</h2>
+      <p>The dominant opportunities are not in the MRQL parser. They are in generated SQL, pagination, repeated bucket execution, wide model materialization, and nested template queries. The highest-confidence sequence is to establish measurements, take low-risk index and projection wins, fix deep pagination, then replace bucketed <code>GROUP BY</code>'s one-query-per-bucket algorithm.</p>
+      <p>The most important confirmed hotspot is <code>executeBucketedQuery</code>: it performs key discovery and then executes a full entity query per bucket, with a safety ceiling of 200 bucket queries and 10,000 materialized items. The most important architectural opportunity is therefore a set-based window query that preserves the existing limits and continuation semantics.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="snapshot">
+      <h2 id="snapshot">Current-state snapshot</h2>
+      <div class="grid">
+        <div class="metric"><strong>201</strong><span>Potential SQL statements for one bucketed page: key discovery plus up to 200 bucket queries.</span></div>
+        <div class="metric"><strong>10,000</strong><span>Maximum materialized items across bucketed results.</span></div>
+        <div class="metric"><strong>4</strong><span>Potential sequential render-data hydration queries per uncached mixed result.</span></div>
+        <div class="metric"><strong>3×</strong><span>Cross-entity queries fetch separate resource, note, and group candidate sets before sorting in Go.</span></div>
+      </div>
+      <p><strong>Existing safeguards to preserve:</strong> default limits, interactive/export caps, query timeout and cancellation, forced principal scope, page query budgets, request-local result caching, bucket warnings, and continuation behavior.</p>
+    </section>
+
+    <nav class="panel" aria-labelledby="contents">
+      <h2 id="contents">Recommended order</h2>
+      <ol>
+        <li><a href="#task-1">Benchmark and expose query counts/plans</a></li>
+        <li><a href="#task-2">Audit indexes and reduce hydration/model width</a></li>
+        <li><a href="#task-3">Add stable ordering and cursor pagination</a></li>
+        <li><a href="#task-4">Rewrite bucketed grouping as a window query</a></li>
+        <li><a href="#task-5">Batch nested template query patterns</a></li>
+        <li><a href="#task-6">Optimize cross-entity top-N execution</a></li>
+        <li><a href="#task-7">Add targeted hierarchy or metadata read models</a></li>
+        <li><a href="#task-8">Evaluate an external read/search store</a></li>
+      </ol>
+      <p>Open each task below for implementation details, acceptance criteria, risks, and verification guidance.</p>
+    </nav>
+
+    <section aria-label="Ordered performance tasks">
+      <details class="task" id="task-1" open>
+        <summary>
+          <span class="order">1</span>
+          <span>
+            <span class="summary-title">Benchmark and expose query counts/plans</span>
+            <span class="summary-subtitle">Create the evidence base needed for every subsequent optimization.</span>
+            <span class="badges"><span class="badge high">Essential payoff</span><span class="badge">Low complexity</span><span class="badge">No semantic change</span></span>
+          </span>
+        </summary>
+        <div class="task-body">
+          <h3>Goal</h3>
+          <p>Establish reproducible MRQL performance baselines for both supported databases. A change should not be considered a performance improvement until it is demonstrated against representative data distributions and query shapes.</p>
+
+          <h3>Implementation details</h3>
+          <ul>
+            <li>Create deterministic fixture generators for approximately 100k, 1m, and multi-million entity datasets, with realistic relation density, hierarchy depth, duplicate names, metadata cardinality, and similarity rows.</li>
+            <li>Build benchmark cases for scalar filters, relation filters, subtree scope, hierarchy traversal, JSON metadata, FTS, similarity, flat pagination, aggregates, bucketed grouping, cross-entity sorting, and nested <code>[mrql]</code>.</li>
+            <li>Record parse/bind/validate time separately from translation, SQL execution, model decoding, hydration, and template rendering.</li>
+            <li>Count actual SQL statements, returned rows, result bytes, cache hits/misses, count queries, and bucket fan-out.</li>
+            <li>Extend the explain surface to optionally run database-native <code>EXPLAIN</code>. The current endpoint returns generated SQL through GORM DryRun, not the optimizer's plan.</li>
+            <li>Fingerprint normalized queries so p50/p95/p99 can be grouped by shape without logging sensitive bound values.</li>
+          </ul>
+
+          <h3>Suggested benchmark matrix</h3>
+          <table>
+            <thead><tr><th>Dimension</th><th>Values</th><th>Why it matters</th></tr></thead>
+            <tbody>
+              <tr><td>Database</td><td>SQLite, PostgreSQL</td><td>CTEs, JSON expressions, joins, FTS, and window plans differ materially.</td></tr>
+              <tr><td>Cardinality</td><td>100k, 1m, several million</td><td>Offset, random ordering, grouping, and scans often become nonlinear.</td></tr>
+              <tr><td>Scope</td><td>Global, shallow subtree, deep subtree, empty scope</td><td>Forced authorization scope is part of every relevant physical plan.</td></tr>
+              <tr><td>Result depth</td><td>First page, middle page, deep page</td><td>Separates top-N performance from offset degradation.</td></tr>
+              <tr><td>Rendering</td><td>Raw JSON, compact, table, custom template, nested MRQL</td><td>Distinguishes database latency from hydration and rendering costs.</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Acceptance criteria</h3>
+          <ul class="checklist">
+            <li>Benchmarks run reproducibly for SQLite and PostgreSQL.</li>
+            <li>Each benchmark reports wall time, SQL count, rows, allocations or result bytes, and query plan.</li>
+            <li>A stored baseline exists for the current implementation.</li>
+            <li>Performance regressions can be detected without relying on developer intuition.</li>
+            <li>Instrumentation does not expose query parameter secrets in logs.</li>
+          </ul>
+
+          <h3>Relevant code</h3>
+          <p class="files"><code>application_context/mrql_context.go</code>, <code>mrql/explain.go</code>, <code>models/slow_query_logger.go</code>, <code>server/api_handlers/mrql_api_handlers.go</code></p>
+        </div>
+      </details>
+
+      <details class="task" id="task-2" open>
+        <summary>
+          <span class="order">2</span>
+          <span>
+            <span class="summary-title">Audit indexes and reduce unnecessary hydration/model width</span>
+            <span class="summary-subtitle">Take predictable, low-risk wins before changing query semantics or interfaces.</span>
+            <span class="badges"><span class="badge high">High likely payoff</span><span class="badge">Low–medium complexity</span></span>
+          </span>
+        </summary>
+        <div class="task-body">
+          <h3>Goal</h3>
+          <p>Make common relation filters and top-N reads use appropriate indexes, while reducing bytes read and decoded for result formats that do not need complete entities or rendering carriers.</p>
+
+          <h3>Index audit</h3>
+          <ul>
+            <li>Inspect actual SQLite and PostgreSQL catalogs before adding migrations; GORM-generated join tables may already contain composite keys that are not obvious from model tags.</li>
+            <li>Verify both traversal orientations for tag, resource-note, group-resource, group-note, and group-group junction tables.</li>
+            <li>Prefer composites such as <code>(entity_id, related_id)</code> and <code>(related_id, entity_id)</code> where both directions are queried.</li>
+            <li>Check whether the PostgreSQL hash index on <code>groups_related_resources(resource_id)</code> receives scans. Remove it if the btree covers the workload.</li>
+            <li>Use measured workload data to evaluate top-N composites such as <code>(owner_id, created_at DESC, id)</code> and <code>(resource_category_id, created_at DESC, id)</code>.</li>
+            <li>Evaluate expression or persisted effective-distance indexes for <code>COALESCE(p_distance, hamming_distance)</code>.</li>
+          </ul>
+
+          <h3>Projection and hydration work</h3>
+          <ul>
+            <li>Define the minimum fields needed for raw IDs, compact lists, tables, and custom rendering.</li>
+            <li>Use narrow projections for count, existence, compact, and top-N candidate queries instead of scanning complete GORM models.</li>
+            <li>Skip category/type/custom-CSS/scope ancestry hydration when the requested format cannot consume it.</li>
+            <li>When hydration is needed, select only template and carrier fields required by rendering rather than entire rows.</li>
+            <li>Shorten the render-cache critical section: do not hold its mutex across slow database I/O. Reserve missing IDs, load outside the lock, and merge safely.</li>
+          </ul>
+
+          <h3>Important tradeoffs</h3>
+          <ul>
+            <li>Every added index consumes storage and slows relation writes, imports, and deletes.</li>
+            <li>Projection DTOs must not accidentally omit fields available to custom templates.</li>
+            <li>PostgreSQL trigram indexes are useful for proven substring workloads but can be large and write-expensive.</li>
+            <li>Arbitrary JSON keys should not receive blanket expression indexes; index only measured hot keys.</li>
+          </ul>
+
+          <h3>Acceptance criteria</h3>
+          <ul class="checklist">
+            <li>Catalog inspection documents existing indexes on every MRQL junction table.</li>
+            <li>New indexes demonstrate improved plans on representative data.</li>
+            <li>Redundant indexes are identified, with safe removal handled separately if appropriate.</li>
+            <li>Compact/table paths avoid full render hydration where possible.</li>
+            <li>Response semantics and custom-template behavior remain unchanged.</li>
+            <li>Import and write benchmarks quantify index write amplification.</li>
+          </ul>
+
+          <h3>Relevant code</h3>
+          <p class="files"><code>models/supplemental_indexes.go</code>, <code>models/resource_model.go</code>, <code>models/resource_similarity_model.go</code>, <code>application_context/mrql_render_data.go</code>, <code>server/template_handlers/template_filters/shortcode_query_executor.go</code></p>
+        </div>
+      </details>
+
+      <details class="task" id="task-3" open>
+        <summary>
+          <span class="order">3</span>
+          <span>
+            <span class="summary-title">Add stable ordering and cursor/keyset pagination</span>
+            <span class="summary-subtitle">Prevent deep-page scans while retaining offset compatibility.</span>
+            <span class="badges"><span class="badge high">Very high deep-page payoff</span><span class="badge medium">Medium complexity</span></span>
+          </span>
+        </summary>
+        <div class="task-body">
+          <h3>Goal</h3>
+          <p>Provide an efficient continuation mechanism for large result sets. Existing page requests are converted into SQL <code>OFFSET</code>, which forces databases to find and discard preceding rows and can drift when ordering values tie.</p>
+
+          <h3>Implementation details</h3>
+          <ul>
+            <li>Always append entity ID as the final tie-breaker for deterministic non-random ordering.</li>
+            <li>Define an opaque continuation token containing the effective order values, ID, entity type where needed, direction, and a version marker.</li>
+            <li>Translate the cursor to lexicographic predicates. For example, descending creation order becomes <code>created_at &lt; last_created OR (created_at = last_created AND id &lt; last_id)</code>.</li>
+            <li>Handle null ordering explicitly and identically on SQLite and PostgreSQL.</li>
+            <li>Retain existing page/offset behavior for compatibility; add cursor mode alongside it.</li>
+            <li>Reject or specialize cursors for unstable orderings such as <code>RANDOM()</code>.</li>
+            <li>Include effective query shape in the signed or validated cursor so it cannot be reused against an incompatible query.</li>
+          </ul>
+
+          <h3>Interface questions</h3>
+          <div class="decision">
+            <strong>Decision needed:</strong> whether cursor pagination is exposed only through JSON/CLI first or also replaces interactive list-page navigation. Starting as an opt-in JSON capability minimizes compatibility risk.
+          </div>
+
+          <h3>Verification</h3>
+          <ul>
+            <li>Differential tests should compare cursor and offset pages on an unchanged dataset.</li>
+            <li>Mutation tests should document expected behavior when rows are inserted or removed between page requests.</li>
+            <li>Benchmark first, middle, and very deep pages.</li>
+            <li>Cover ascending/descending fields, duplicate values, nulls, scoped principals, and all three entity types.</li>
+          </ul>
+
+          <h3>Acceptance criteria</h3>
+          <ul class="checklist">
+            <li>Deterministic queries include a unique final ordering key.</li>
+            <li>Cursor pages do not use deep SQL offsets.</li>
+            <li>Existing offset clients continue to work.</li>
+            <li>Tokens fail safely when malformed or applied to another query shape.</li>
+            <li>SQLite and PostgreSQL return equivalent page sequences.</li>
+          </ul>
+
+          <h3>Relevant code</h3>
+          <p class="files"><code>application_context/mrql_context.go:288-302</code>, <code>mrql/translator.go:108-145</code>, <code>server/api_handlers/mrql_api_handlers.go</code>, MRQL CLI response and help surfaces</p>
+        </div>
+      </details>
+
+      <details class="task" id="task-4" open>
+        <summary>
+          <span class="order">4</span>
+          <span>
+            <span class="summary-title">Rewrite bucketed grouping as a set-based window query</span>
+            <span class="summary-subtitle">Replace the confirmed one-query-per-bucket hotspot.</span>
+            <span class="badges"><span class="badge high">Largest likely payoff</span><span class="badge large">High complexity</span><span class="badge medium">Semantic risk</span></span>
+          </span>
+        </summary>
+        <div class="task-body">
+          <h3>Goal</h3>
+          <p>Reduce bucketed grouping from one discovery query plus up to 200 repeated item queries to one or a small constant number of SQL statements.</p>
+
+          <h3>Proposed physical shape</h3>
+          <pre><code>WITH filtered AS (
+  SELECT entity columns, bucket columns
+  FROM ...
+  WHERE original_predicates AND forced_scope
+), ranked AS (
+  SELECT *,
+         ROW_NUMBER() OVER (
+           PARTITION BY bucket_columns
+           ORDER BY requested_order, id
+         ) AS bucket_row
+  FROM filtered
+)
+SELECT *
+FROM ranked
+WHERE bucket_row &lt;= per_bucket_limit
+ORDER BY bucket_columns, bucket_row;</code></pre>
+          <p>The implementation may still use a second narrow statement for bucket continuation or totals, but it should not execute one statement per bucket.</p>
+
+          <h3>Required semantic preservation</h3>
+          <ul>
+            <li>Relation buckets must retain identity keys even when display names collide.</li>
+            <li>Null bucket keys and multi-valued relations must match current behavior.</li>
+            <li>Each emitted bucket receives its full per-bucket limit; the global cap must not cut a bucket midway and make remaining items unreachable.</li>
+            <li><code>MaxBuckets</code>, <code>maxBucketedTotalItems</code>, warnings, <code>TotalGroups</code>, and <code>NextOffset</code> remain meaningful.</li>
+            <li>Forced principal scope must be part of the filtered relation before ranking.</li>
+            <li>Duplicate elimination caused by many-to-many joins must remain correct.</li>
+          </ul>
+
+          <h3>Delivery strategy</h3>
+          <ol>
+            <li>Capture the existing behavior with a large differential test matrix.</li>
+            <li>Add an internal execution strategy seam without changing callers.</li>
+            <li>Implement the window strategy for simple scalar buckets first.</li>
+            <li>Expand to relation and computed/date buckets.</li>
+            <li>Run old and new strategies against identical fixtures and compare normalized results.</li>
+            <li>Remove or retain the old implementation as a temporary fallback only after both databases pass parity and performance gates.</li>
+          </ol>
+
+          <h3>Acceptance criteria</h3>
+          <ul class="checklist">
+            <li>Bucketed execution uses a constant number of SQL statements relative to bucket count.</li>
+            <li>Old/new differential tests cover nulls, relations, ordering, limits, caps, continuation, and scoped users.</li>
+            <li>Both databases show a substantial win on high-bucket benchmarks.</li>
+            <li>No bucket is silently truncated in a way that makes items unreachable.</li>
+            <li>Timeout, cancellation, and explain diagnostics still identify the execution phase.</li>
+          </ul>
+
+          <h3>Relevant code</h3>
+          <p class="files"><code>application_context/mrql_context.go:577-685</code>, scoped counterpart later in the same file, <code>mrql/translator_groupby.go:34-203</code>, grouped API and export tests</p>
+        </div>
+      </details>
+
+      <details class="task" id="task-5">
+        <summary>
+          <span class="order">5</span>
+          <span>
+            <span class="summary-title">Batch common nested-template MRQL patterns</span>
+            <span class="summary-subtitle">Eliminate per-card query fan-out incrementally before building a general render planner.</span>
+            <span class="badges"><span class="badge high">High dashboard payoff</span><span class="badge large">Medium–high complexity</span></span>
+          </span>
+        </summary>
+        <div class="task-body">
+          <h3>Goal</h3>
+          <p>Convert common entity-correlated queries from one execution per rendered card into one grouped execution per query pattern.</p>
+
+          <h3>Candidate patterns</h3>
+          <ul>
+            <li>Count resources, notes, or child groups for every displayed group.</li>
+            <li>Fetch the newest N owned entities for every displayed group.</li>
+            <li>Resolve the same saved query with only the scope/entity parameter changing.</li>
+            <li>Compute tag or category counts across the full displayed entity set.</li>
+          </ul>
+
+          <h3>Incremental design</h3>
+          <ol>
+            <li>Instrument query templates and identify the highest-frequency correlated shapes.</li>
+            <li>Canonicalize the query with the varying entity/scope value represented as a batch dimension.</li>
+            <li>Collect all dimension IDs before rendering cards.</li>
+            <li>Execute one grouped query and distribute results through a request-local data-loader map.</li>
+            <li>Fall back to the existing executor for patterns that cannot be safely batched.</li>
+          </ol>
+
+          <h3>Supporting cache improvements</h3>
+          <ul>
+            <li>Move request-local result caching below saved-query resolution and scope binding.</li>
+            <li>Use canonical AST-based keys rather than raw query strings.</li>
+            <li>Coalesce in-flight identical calls so concurrent rendering cannot stampede.</li>
+            <li>Bound entries, rows, and approximate bytes when the page query budget is disabled.</li>
+            <li>Count <code>{total}</code>'s second SQL query explicitly in diagnostics and budgets.</li>
+          </ul>
+
+          <h3>Acceptance criteria</h3>
+          <ul class="checklist">
+            <li>A representative N-card dashboard executes O(1) or a small constant number of SQL statements for supported patterns.</li>
+            <li>Unsupported query forms preserve current behavior.</li>
+            <li>Cache keys include resolved scope and execution policy, preventing authorization leakage.</li>
+            <li>Rendered output matches the non-batched executor.</li>
+            <li>Query budget reporting reflects actual SQL work.</li>
+          </ul>
+
+          <h3>Future extension</h3>
+          <p>If several narrow batchers prove valuable, generalize them into a render planner: discover dependencies, plan compatible batches, execute, hydrate, and only then render. Do not begin with a universal planner before measured patterns justify it.</p>
+
+          <h3>Relevant code</h3>
+          <p class="files"><code>shortcodes/query_budget.go</code>, <code>shortcodes/mrql_handler.go</code>, <code>server/template_handlers/template_filters/shortcode_query_executor.go</code>, <code>server/api_handlers/mrql_api_handlers.go</code>, <code>plugin_system/mrql_cache.go</code></p>
+        </div>
+      </details>
+
+      <details class="task" id="task-6">
+        <summary>
+          <span class="order">6</span>
+          <span>
+            <span class="summary-title">Optimize cross-entity top-N execution</span>
+            <span class="summary-subtitle">Move global candidate selection into SQL and hydrate only selected entities.</span>
+            <span class="badges"><span class="badge high">High for cross-entity use</span><span class="badge large">High complexity</span></span>
+          </span>
+        </summary>
+        <div class="task-body">
+          <h3>Goal</h3>
+          <p>Avoid fetching up to <code>offset + limit</code> complete rows from each of resources, notes, and groups, then globally sorting them in Go.</p>
+
+          <h3>Proposed design</h3>
+          <ol>
+            <li>Translate each applicable entity branch to a narrow projection: entity type, ID, and common sort fields.</li>
+            <li>Combine branches with <code>UNION ALL</code>.</li>
+            <li>Apply global deterministic ordering and cursor/limit in SQL.</li>
+            <li>Batch-fetch complete entities only for the selected IDs.</li>
+            <li>Reassemble output in the global selected order.</li>
+          </ol>
+
+          <h3>Challenges</h3>
+          <ul>
+            <li>Only fields common across entity types can participate in global ordering without a defined coercion.</li>
+            <li>Entity-specific predicates must continue to skip inapplicable branches safely.</li>
+            <li>Random cross-entity sampling currently contains population-proportional logic and may require a separate physical strategy.</li>
+            <li>Timeout behavior currently tolerates per-entity timeouts as warnings; a unified query changes that failure model.</li>
+            <li>Result hydration must preserve global ordering after typed rows are fetched.</li>
+          </ul>
+
+          <h3>Acceptance criteria</h3>
+          <ul class="checklist">
+            <li>Global top-N selection occurs before full-model hydration.</li>
+            <li>Deep continuation does not materialize all preceding candidates.</li>
+            <li>Supported sort orders match current results with ID tie-breaking.</li>
+            <li>Scoped authorization is enforced independently in every union branch.</li>
+            <li>Random semantics are either preserved through a specialized strategy or explicitly excluded.</li>
+          </ul>
+
+          <h3>Relevant code</h3>
+          <p class="files"><code>application_context/mrql_context.go:732+</code>, <code>mrql/translator.go</code>, cross-entity sorting/random/count tests</p>
+        </div>
+      </details>
+
+      <details class="task" id="task-7">
+        <summary>
+          <span class="order">7</span>
+          <span>
+            <span class="summary-title">Add targeted hierarchy or metadata read models</span>
+            <span class="summary-subtitle">Use denormalization only where measured recursive or JSON workloads justify it.</span>
+            <span class="badges"><span class="badge high">Potentially high payoff</span><span class="badge large">High migration cost</span><span class="badge medium">Write consistency risk</span></span>
+          </span>
+        </summary>
+        <div class="task-body">
+          <h3>Decision gate</h3>
+          <p>This task should begin only if benchmark and production evidence shows hierarchy traversal or arbitrary metadata to be a sustained bottleneck after earlier work. These are separate optional modules and need not ship together.</p>
+
+          <h3>Option A: hierarchy closure or materialized path</h3>
+          <p>Maintain ancestry data such as <code>(ancestor_id, descendant_id, depth)</code>, or a materialized path/root/depth representation. It could serve MRQL scope, ancestor/descendant predicates, root resolution, and render ancestry.</p>
+          <ul>
+            <li>Design group moves as transactional updates of hierarchy data.</li>
+            <li>Backfill existing trees and detect cycles or depth violations.</li>
+            <li>Keep authorization fail-closed if hierarchy projection is stale or inconsistent.</li>
+            <li>Benchmark read improvements against move and import write amplification.</li>
+          </ul>
+
+          <h3>Option B: indexed metadata projection</h3>
+          <p>Maintain a typed read model such as:</p>
+          <pre><code>(entity_type, entity_id, key, text_value, numeric_value, date_value)</code></pre>
+          <p>Candidate indexes include <code>(entity_type, key, text_value, entity_id)</code> and numeric/date equivalents.</p>
+          <ul>
+            <li>Update the projection transactionally or through a reliable queue with reconciliation.</li>
+            <li>Define type coercion exactly so projected comparisons match existing JSON semantics.</li>
+            <li>Continue using direct JSON extraction for keys not present in the projection.</li>
+            <li>Provide consistency checks and rebuild tooling.</li>
+          </ul>
+
+          <h3>Acceptance criteria</h3>
+          <ul class="checklist">
+            <li>A measured workload justifies the additional read model.</li>
+            <li>Backfill and rebuild procedures are documented and tested.</li>
+            <li>Writes cannot leave authorization hierarchy silently stale.</li>
+            <li>Projection consistency is observable and repairable.</li>
+            <li>Query semantics are differential-tested against the canonical tables/JSON.</li>
+          </ul>
+
+          <h3>Relevant code</h3>
+          <p class="files"><code>mrql/scope.go</code>, hierarchy translation in <code>mrql/translator.go</code>, <code>application_context/mrql_render_data.go</code>, JSON extraction helpers in <code>mrql/translator.go</code></p>
+        </div>
+      </details>
+
+      <details class="task" id="task-8">
+        <summary>
+          <span class="order">8</span>
+          <span>
+            <span class="summary-title">Evaluate an external read/search store</span>
+            <span class="summary-subtitle">Reserve specialized infrastructure for search, faceting, or analytics workloads the primary databases cannot satisfy economically.</span>
+            <span class="badges"><span class="badge high">Potentially transformative</span><span class="badge large">Very high complexity</span><span class="badge medium">Operational risk</span></span>
+          </span>
+        </summary>
+        <div class="task-body">
+          <h3>Goal</h3>
+          <p>Determine whether an optional search or reporting adapter—such as OpenSearch, Meilisearch, or a PostgreSQL reporting schema—is warranted for richer ranking, faceting, typo tolerance, or large analytical workloads.</p>
+
+          <h3>Preconditions</h3>
+          <ul>
+            <li>Native PostgreSQL FTS/trigrams or SQLite FTS5 have been measured and found insufficient.</li>
+            <li>The target workload is clearly separated from transactional CRUD.</li>
+            <li>The product can tolerate defined eventual-consistency windows.</li>
+            <li>Operators accept another service, index lifecycle, monitoring, backups, and recovery procedures.</li>
+          </ul>
+
+          <h3>Safety architecture</h3>
+          <ul>
+            <li>The external store must not become the authoritative source of subtree authorization.</li>
+            <li>Either encode and update scope membership reliably in the index or re-check selected IDs against the primary database before returning results.</li>
+            <li>Use an outbox/indexing queue with replay and reconciliation rather than best-effort hooks.</li>
+            <li>Version index schemas and support zero-downtime rebuilds.</li>
+            <li>Define behavior when the external store is unavailable: fail clearly or fall back only for supported query classes.</li>
+          </ul>
+
+          <h3>Evaluation criteria</h3>
+          <table>
+            <thead><tr><th>Area</th><th>Questions</th></tr></thead>
+            <tbody>
+              <tr><td>Latency</td><td>Does it materially beat tuned native FTS and indexed SQL at target cardinality?</td></tr>
+              <tr><td>Freshness</td><td>What lag is acceptable for creates, edits, moves, and permission changes?</td></tr>
+              <tr><td>Authorization</td><td>How are group-subtree moves invalidated, and how is fail-closed behavior proven?</td></tr>
+              <tr><td>Operations</td><td>Who runs, upgrades, backs up, and monitors the service?</td></tr>
+              <tr><td>Semantics</td><td>Which MRQL predicates can execute externally without changing results?</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Acceptance criteria</h3>
+          <ul class="checklist">
+            <li>A written benchmark demonstrates value over native alternatives.</li>
+            <li>The adapter is optional and the primary database remains authoritative.</li>
+            <li>Index lag, failures, and reconciliation are observable.</li>
+            <li>Authorization tests prove no out-of-scope IDs can leak.</li>
+            <li>Operational cost and deployment support are explicitly accepted.</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <section class="panel warning" aria-labelledby="avoid">
+      <h2 id="avoid">Avoid premature optimization</h2>
+      <ul>
+        <li>Do not prioritize parser caching over measured SQL and rendering costs.</li>
+        <li>Do not add every possible composite or JSON expression index.</li>
+        <li>Do not introduce a global result cache without complete invalidation and principal-scope keys.</li>
+        <li>Do not apply <code>COUNT(*) OVER()</code> universally; it may make selective limited queries scan more rows.</li>
+        <li>Do not replace recursive authorization scope with denormalized data until consistency and fail-closed behavior are proven.</li>
+        <li>Do not remove offset pagination abruptly; ship keyset continuation alongside it.</li>
+        <li>Do not make an external search engine authoritative for access control.</li>
+      </ul>
+    </section>
+
+    <section class="panel" aria-labelledby="program-gates">
+      <h2 id="program-gates">Program-level completion gates</h2>
+      <ul class="checklist">
+        <li>All changes preserve forced principal subtree scoping.</li>
+        <li>SQLite and PostgreSQL result equivalence is covered by integration tests.</li>
+        <li>Interactive and export policies remain independently bounded.</li>
+        <li>Request cancellation and runtime query timeout remain effective.</li>
+        <li>Performance claims include before/after data on representative cardinalities.</li>
+        <li>Write and import regressions from new indexes or projections are measured.</li>
+        <li>The full Go, browser E2E, CLI E2E, and PostgreSQL suites pass for implementation phases.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <p><strong>Basis:</strong> static review of the current MRQL translator, execution, rendering, cache, hierarchy, and index paths. Exact planner behavior and expected gains must be validated against representative production-like datasets.</p>
+    <p>Report location: <code>tasks/mrql-performance-report.html</code></p>
+  </footer>
+</body>
+</html>

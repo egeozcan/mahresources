@@ -1,0 +1,1543 @@
+{
+  "schemaVersion": 5,
+  "catalogVersion": "mrql-bench-scenarios-v3",
+  "status": "reference",
+  "startedAt": "2026-07-21T22:48:22.305542Z",
+  "environment": {
+    "gitRevision": "211afc0eecbc-dirty",
+    "goVersion": "go1.26.4",
+    "os": "darwin",
+    "arch": "arm64",
+    "cpuModel": "Apple M4 Pro",
+    "cpuCount": 14,
+    "memoryBytes": 51539607552,
+    "database": "sqlite",
+    "databaseVersion": "3.53.2",
+    "poolSize": 4,
+    "concurrency": 1
+  },
+  "configuration": {
+    "scenarioIds": [
+      "scalar-selective",
+      "relation-common-tag",
+      "scope-shallow",
+      "scope-deep",
+      "scope-empty",
+      "hierarchy-descendants",
+      "metadata-numeric",
+      "fts-common",
+      "similarity",
+      "page-first",
+      "page-middle",
+      "page-deep",
+      "aggregate-content-type",
+      "bucket-content-type",
+      "cross-entity-top-n",
+      "cross-entity-random",
+      "raw-json",
+      "compact-render",
+      "table-render",
+      "custom-render",
+      "nested-mrql"
+    ],
+    "warmups": 5,
+    "samples": 100,
+    "timeoutNanos": 1800000000000,
+    "poolSize": 4,
+    "concurrency": 1
+  },
+  "fixture": {
+    "schemaVersion": 5,
+    "generatorVersion": "mrql-bench-fixture-v7",
+    "profile": {
+      "id": "100k",
+      "resources": 100000,
+      "notes": 25000,
+      "groups": 200,
+      "tags": 64,
+      "seed": 1
+    },
+    "dialect": "sqlite",
+    "databaseVersion": "3.53.2",
+    "schemaRevision": "production-schema-v1",
+    "fixedEpoch": "2024-01-01T00:00:00Z",
+    "batchSize": 500,
+    "features": {
+      "fts": true,
+      "hierarchy": true,
+      "metadata": true,
+      "similarity": true
+    },
+    "counts": {
+      "groupNotes": 25000,
+      "groupResources": 50000,
+      "groupTags": 200,
+      "groups": 200,
+      "imageHashes": 100000,
+      "noteTags": 16667,
+      "notes": 25000,
+      "resourceNotes": 25000,
+      "resourceSimilarities": 99999,
+      "resourceTags": 85000,
+      "resources": 100000,
+      "tags": 64
+    },
+    "ftsChecks": {
+      "resourceMatches": 20000,
+      "resourceTables": 1
+    },
+    "ftsDigest": "d42c8b7c739685c37d6d169a80151a1f5a8070902a5a663d8134f3aa055b53c9",
+    "anchors": {
+      "commonTagId": 1,
+      "deepRootGroupId": 2,
+      "emptyGroupId": 3,
+      "ftsTerm": "benchmarkneedle",
+      "rootGroupId": 1,
+      "similarityTargetResourceId": 1
+    },
+    "logicalChecksum": "c9501861b6512e29c5c6e48bb08a10363cd42ddad3e4cb4d40e69bcd5adc7912",
+    "preparedAt": "2026-07-21T22:48:21.703586Z",
+    "preparationNanos": 6779181666,
+    "marker": "mahresources-mrql-benchmark"
+  },
+  "warmups": 5,
+  "measuredSamples": 100,
+  "results": [
+    {
+      "scenarioId": "scalar-selective",
+      "queryFingerprint": "mrql-shape-v1:bfe32741e2ed58570f1d015629d189935ec9da8a05321d652340cfb766b325a5",
+      "firstRunNanos": 2749833,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 1027083,
+        "p95Nanos": 1367875,
+        "p99Nanos": 1512375
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 36360,
+        "maximum": 36360,
+        "p50": 36360
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:0cb9e17ae5d20310e4dfaf08daf0d772c665457223cbf3dc345a404ee71c3bba",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN resources USING INDEX idx_resources_created_at",
+              "id": 6,
+              "notused": 187,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN resources USING INDEX idx_resources_created_at"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "relation-common-tag",
+      "queryFingerprint": "mrql-shape-v1:17172b12527c6ad27cb6e599ce390526ac440f76c356c65f962e8bd2b6ac7629",
+      "firstRunNanos": 84715166,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 82956625,
+        "p95Nanos": 86401209,
+        "p99Nanos": 87058417
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 35721,
+        "maximum": 35721,
+        "p50": 35721
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:5602097f8c0c64b5edfe49b8ac5a7fd5dc1ef4acb63dae319dabb58680ff873c",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SEARCH resources USING INTEGER PRIMARY KEY (rowid=?)",
+              "id": 5,
+              "notused": 89,
+              "parent": 0
+            },
+            {
+              "detail": "LIST SUBQUERY 1",
+              "id": 9,
+              "notused": 0,
+              "parent": 0
+            },
+            {
+              "detail": "SEARCH t USING COVERING INDEX idx_tags_lower_name (\u003cexpr\u003e=?)",
+              "id": 14,
+              "notused": 30,
+              "parent": 9
+            },
+            {
+              "detail": "SEARCH jt USING INDEX idx__resource_tags__tag_id (tag_id=?)",
+              "id": 22,
+              "notused": 128,
+              "parent": 9
+            },
+            {
+              "detail": "USE TEMP B-TREE FOR ORDER BY",
+              "id": 71,
+              "notused": 0,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=LIST SUBQUERY 1",
+            "detail=SEARCH jt USING INDEX idx__resource_tags__tag_id (tag_id=?)",
+            "detail=SEARCH resources USING INTEGER PRIMARY KEY (rowid=?)",
+            "detail=SEARCH t USING COVERING INDEX idx_tags_lower_name (\u003cexpr\u003e=?)",
+            "detail=USE TEMP B-TREE FOR ORDER BY"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "scope-shallow",
+      "queryFingerprint": "mrql-shape-v1:4ee8f6dda0717d09984daa1ba0b67805b2d948b51e180cc98e9a2fe691585e4e",
+      "firstRunNanos": 42590667,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 39912750,
+        "p95Nanos": 41850000,
+        "p99Nanos": 44550208
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 35610,
+        "maximum": 35610,
+        "p50": 35610
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:369f522f80d8d12f336dcfff5a50fbadc8d6f744385afcaff11818e51492ba9b",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SEARCH resources USING INDEX idx_resources_owner_id (owner_id=?)",
+              "id": 6,
+              "notused": 167,
+              "parent": 0
+            },
+            {
+              "detail": "LIST SUBQUERY 3",
+              "id": 10,
+              "notused": 0,
+              "parent": 0
+            },
+            {
+              "detail": "MATERIALIZE scope_tree",
+              "id": 13,
+              "notused": 0,
+              "parent": 10
+            },
+            {
+              "detail": "SETUP",
+              "id": 17,
+              "notused": 0,
+              "parent": 13
+            },
+            {
+              "detail": "SEARCH groups USING INTEGER PRIMARY KEY (rowid=?)",
+              "id": 19,
+              "notused": 33,
+              "parent": 17
+            },
+            {
+              "detail": "RECURSIVE STEP",
+              "id": 36,
+              "notused": 0,
+              "parent": 13
+            },
+            {
+              "detail": "SCAN st",
+              "id": 38,
+              "notused": 216,
+              "parent": 36
+            },
+            {
+              "detail": "SEARCH g USING COVERING INDEX idx_groups_owner_id (owner_id=?)",
+              "id": 41,
+              "notused": 36,
+              "parent": 36
+            },
+            {
+              "detail": "SCAN scope_tree",
+              "id": 58,
+              "notused": 231,
+              "parent": 10
+            },
+            {
+              "detail": "USE TEMP B-TREE FOR ORDER BY",
+              "id": 106,
+              "notused": 0,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=LIST SUBQUERY 3",
+            "detail=MATERIALIZE scope_tree",
+            "detail=RECURSIVE STEP",
+            "detail=SCAN scope_tree",
+            "detail=SCAN st",
+            "detail=SEARCH g USING COVERING INDEX idx_groups_owner_id (owner_id=?)",
+            "detail=SEARCH groups USING INTEGER PRIMARY KEY (rowid=?)",
+            "detail=SEARCH resources USING INDEX idx_resources_owner_id (owner_id=?)",
+            "detail=SETUP",
+            "detail=USE TEMP B-TREE FOR ORDER BY"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "scope-deep",
+      "queryFingerprint": "mrql-shape-v1:4ee8f6dda0717d09984daa1ba0b67805b2d948b51e180cc98e9a2fe691585e4e",
+      "firstRunNanos": 49161667,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 50351583,
+        "p95Nanos": 55889500,
+        "p99Nanos": 60698541
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 35717,
+        "maximum": 35717,
+        "p50": 35717
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:369f522f80d8d12f336dcfff5a50fbadc8d6f744385afcaff11818e51492ba9b",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SEARCH resources USING INDEX idx_resources_owner_id (owner_id=?)",
+              "id": 6,
+              "notused": 167,
+              "parent": 0
+            },
+            {
+              "detail": "LIST SUBQUERY 3",
+              "id": 10,
+              "notused": 0,
+              "parent": 0
+            },
+            {
+              "detail": "MATERIALIZE scope_tree",
+              "id": 13,
+              "notused": 0,
+              "parent": 10
+            },
+            {
+              "detail": "SETUP",
+              "id": 17,
+              "notused": 0,
+              "parent": 13
+            },
+            {
+              "detail": "SEARCH groups USING INTEGER PRIMARY KEY (rowid=?)",
+              "id": 19,
+              "notused": 33,
+              "parent": 17
+            },
+            {
+              "detail": "RECURSIVE STEP",
+              "id": 36,
+              "notused": 0,
+              "parent": 13
+            },
+            {
+              "detail": "SCAN st",
+              "id": 38,
+              "notused": 216,
+              "parent": 36
+            },
+            {
+              "detail": "SEARCH g USING COVERING INDEX idx_groups_owner_id (owner_id=?)",
+              "id": 41,
+              "notused": 36,
+              "parent": 36
+            },
+            {
+              "detail": "SCAN scope_tree",
+              "id": 58,
+              "notused": 231,
+              "parent": 10
+            },
+            {
+              "detail": "USE TEMP B-TREE FOR ORDER BY",
+              "id": 106,
+              "notused": 0,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=LIST SUBQUERY 3",
+            "detail=MATERIALIZE scope_tree",
+            "detail=RECURSIVE STEP",
+            "detail=SCAN scope_tree",
+            "detail=SCAN st",
+            "detail=SEARCH g USING COVERING INDEX idx_groups_owner_id (owner_id=?)",
+            "detail=SEARCH groups USING INTEGER PRIMARY KEY (rowid=?)",
+            "detail=SEARCH resources USING INDEX idx_resources_owner_id (owner_id=?)",
+            "detail=SETUP",
+            "detail=USE TEMP B-TREE FOR ORDER BY"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "scope-empty",
+      "queryFingerprint": "mrql-shape-v1:68b210e78ad7cf91b3aad806f866a1a5587b02e64fdf8a7ce9591ff2a3ca15d0",
+      "firstRunNanos": 95250,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 56500,
+        "p95Nanos": 87917,
+        "p99Nanos": 200083
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 0,
+        "maximum": 0,
+        "p50": 0
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 74,
+        "maximum": 74,
+        "p50": 74
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:b5c89236b81b184df02af351195d2f833825f5e3d8a1b30025545506e89aac5a",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SEARCH resources USING INDEX idx_resources_owner_id (owner_id=?)",
+              "id": 5,
+              "notused": 167,
+              "parent": 0
+            },
+            {
+              "detail": "LIST SUBQUERY 3",
+              "id": 9,
+              "notused": 0,
+              "parent": 0
+            },
+            {
+              "detail": "MATERIALIZE scope_tree",
+              "id": 12,
+              "notused": 0,
+              "parent": 9
+            },
+            {
+              "detail": "SETUP",
+              "id": 16,
+              "notused": 0,
+              "parent": 12
+            },
+            {
+              "detail": "SEARCH groups USING INTEGER PRIMARY KEY (rowid=?)",
+              "id": 18,
+              "notused": 33,
+              "parent": 16
+            },
+            {
+              "detail": "RECURSIVE STEP",
+              "id": 35,
+              "notused": 0,
+              "parent": 12
+            },
+            {
+              "detail": "SCAN st",
+              "id": 37,
+              "notused": 216,
+              "parent": 35
+            },
+            {
+              "detail": "SEARCH g USING COVERING INDEX idx_groups_owner_id (owner_id=?)",
+              "id": 40,
+              "notused": 36,
+              "parent": 35
+            },
+            {
+              "detail": "SCAN scope_tree",
+              "id": 57,
+              "notused": 231,
+              "parent": 9
+            }
+          ],
+          "signature": [
+            "detail=LIST SUBQUERY 3",
+            "detail=MATERIALIZE scope_tree",
+            "detail=RECURSIVE STEP",
+            "detail=SCAN scope_tree",
+            "detail=SCAN st",
+            "detail=SEARCH g USING COVERING INDEX idx_groups_owner_id (owner_id=?)",
+            "detail=SEARCH groups USING INTEGER PRIMARY KEY (rowid=?)",
+            "detail=SEARCH resources USING INDEX idx_resources_owner_id (owner_id=?)",
+            "detail=SETUP"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "hierarchy-descendants",
+      "queryFingerprint": "mrql-shape-v1:0de8b6a4ad480607c9e8d6b7b522c4bcf74f55fe1845eb0f26d8eecf3f0f0898",
+      "firstRunNanos": 177750,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 82958,
+        "p95Nanos": 124791,
+        "p99Nanos": 258959
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 4,
+        "maximum": 4,
+        "p50": 4
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 1895,
+        "maximum": 1895,
+        "p50": 1895
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:1ac2c4bed1e7c5e9078bf58dc8178908cb67931ed52892e5ce2ee9b78b8d0f33",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SEARCH groups USING INTEGER PRIMARY KEY (rowid=?)",
+              "id": 4,
+              "notused": 80,
+              "parent": 0
+            },
+            {
+              "detail": "LIST SUBQUERY 4",
+              "id": 8,
+              "notused": 0,
+              "parent": 0
+            },
+            {
+              "detail": "MATERIALIZE _mrql_desc",
+              "id": 11,
+              "notused": 0,
+              "parent": 8
+            },
+            {
+              "detail": "SETUP",
+              "id": 15,
+              "notused": 0,
+              "parent": 11
+            },
+            {
+              "detail": "SEARCH g USING INTEGER PRIMARY KEY (rowid=?)",
+              "id": 17,
+              "notused": 80,
+              "parent": 15
+            },
+            {
+              "detail": "LIST SUBQUERY 1",
+              "id": 21,
+              "notused": 0,
+              "parent": 15
+            },
+            {
+              "detail": "SEARCH gm USING COVERING INDEX idx_groups_lower_name (\u003cexpr\u003e=?)",
+              "id": 24,
+              "notused": 32,
+              "parent": 21
+            },
+            {
+              "detail": "RECURSIVE STEP",
+              "id": 59,
+              "notused": 0,
+              "parent": 11
+            },
+            {
+              "detail": "SCAN d",
+              "id": 61,
+              "notused": 216,
+              "parent": 59
+            },
+            {
+              "detail": "SEARCH p USING INTEGER PRIMARY KEY (rowid=?)",
+              "id": 64,
+              "notused": 34,
+              "parent": 59
+            },
+            {
+              "detail": "SCAN _mrql_desc",
+              "id": 79,
+              "notused": 214,
+              "parent": 8
+            }
+          ],
+          "signature": [
+            "detail=LIST SUBQUERY 1",
+            "detail=LIST SUBQUERY 4",
+            "detail=MATERIALIZE _mrql_desc",
+            "detail=RECURSIVE STEP",
+            "detail=SCAN _mrql_desc",
+            "detail=SCAN d",
+            "detail=SEARCH g USING INTEGER PRIMARY KEY (rowid=?)",
+            "detail=SEARCH gm USING COVERING INDEX idx_groups_lower_name (\u003cexpr\u003e=?)",
+            "detail=SEARCH groups USING INTEGER PRIMARY KEY (rowid=?)",
+            "detail=SEARCH p USING INTEGER PRIMARY KEY (rowid=?)",
+            "detail=SETUP"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "metadata-numeric",
+      "queryFingerprint": "mrql-shape-v1:380b164498cb4b1fd14eb1eeb3a395b85e30cdc09432bbfc7d79290b5967499c",
+      "firstRunNanos": 581750,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 425292,
+        "p95Nanos": 735459,
+        "p99Nanos": 844459
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 34954,
+        "maximum": 34954,
+        "p50": 34954
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:fa752877cf0fd59fedbfd8e064c12b99fb3b5026b3a7492536047acfb91933e7",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN resources",
+              "id": 4,
+              "notused": 182,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN resources"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "fts-common",
+      "queryFingerprint": "mrql-shape-v1:fc4496c389d0652e695fc1660502c9bea39d16d675b7a3d13340ada4d0cdd6d1",
+      "firstRunNanos": 4802404167,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 4742275958,
+        "p95Nanos": 5124929333,
+        "p99Nanos": 5264684292
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 35868,
+        "maximum": 35868,
+        "p50": 35868
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:7e89f340cf98e6b930f209637fe11530d36f642e5f478d634ff71960fbee5217",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SEARCH resources USING INTEGER PRIMARY KEY (rowid=?)",
+              "id": 5,
+              "notused": 89,
+              "parent": 0
+            },
+            {
+              "detail": "LIST SUBQUERY 1",
+              "id": 9,
+              "notused": 0,
+              "parent": 0
+            },
+            {
+              "detail": "SCAN resources_fts VIRTUAL TABLE INDEX 0:M3",
+              "id": 11,
+              "notused": 156,
+              "parent": 9
+            },
+            {
+              "detail": "CORRELATED SCALAR SUBQUERY 2",
+              "id": 27,
+              "notused": 0,
+              "parent": 0
+            },
+            {
+              "detail": "SCAN resources_fts VIRTUAL TABLE INDEX 0:=M3",
+              "id": 31,
+              "notused": 146,
+              "parent": 27
+            },
+            {
+              "detail": "USE TEMP B-TREE FOR ORDER BY",
+              "id": 78,
+              "notused": 0,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=CORRELATED SCALAR SUBQUERY 2",
+            "detail=LIST SUBQUERY 1",
+            "detail=SCAN resources_fts VIRTUAL TABLE INDEX 0:=M3",
+            "detail=SCAN resources_fts VIRTUAL TABLE INDEX 0:M3",
+            "detail=SEARCH resources USING INTEGER PRIMARY KEY (rowid=?)",
+            "detail=USE TEMP B-TREE FOR ORDER BY"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "similarity",
+      "queryFingerprint": "mrql-shape-v1:e9cdb8097ad646b45a2e29dac8c83ffb76d9a4d0d8ee6e03da2f63c44ec28b40",
+      "firstRunNanos": 15186250,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 6702333,
+        "p95Nanos": 7041042,
+        "p99Nanos": 7285958
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 35043,
+        "maximum": 35043,
+        "p50": 35043
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:2d51c91b57cee0e9265c570d159687433f43ce923ea7a167165cd8483330e767",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SEARCH resources USING INTEGER PRIMARY KEY (rowid=?)",
+              "id": 4,
+              "notused": 89,
+              "parent": 0
+            },
+            {
+              "detail": "LIST SUBQUERY 2",
+              "id": 8,
+              "notused": 0,
+              "parent": 0
+            },
+            {
+              "detail": "COMPOUND QUERY",
+              "id": 9,
+              "notused": 0,
+              "parent": 8
+            },
+            {
+              "detail": "LEFT-MOST SUBQUERY",
+              "id": 10,
+              "notused": 0,
+              "parent": 9
+            },
+            {
+              "detail": "SCAN rs",
+              "id": 12,
+              "notused": 182,
+              "parent": 10
+            },
+            {
+              "detail": "UNION ALL",
+              "id": 24,
+              "notused": 0,
+              "parent": 9
+            },
+            {
+              "detail": "SEARCH rs USING INDEX idx_sim_r2 (resource_id2=?)",
+              "id": 27,
+              "notused": 44,
+              "parent": 24
+            }
+          ],
+          "signature": [
+            "detail=COMPOUND QUERY",
+            "detail=LEFT-MOST SUBQUERY",
+            "detail=LIST SUBQUERY 2",
+            "detail=SCAN rs",
+            "detail=SEARCH resources USING INTEGER PRIMARY KEY (rowid=?)",
+            "detail=SEARCH rs USING INDEX idx_sim_r2 (resource_id2=?)",
+            "detail=UNION ALL"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "page-first",
+      "queryFingerprint": "mrql-shape-v1:5331f48780447dbcf84443fc20cf3835e668fa09ee9e4b0c367f9f54a84e87f1",
+      "firstRunNanos": 428083,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 403000,
+        "p95Nanos": 612208,
+        "p99Nanos": 777875
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 35679,
+        "maximum": 35679,
+        "p50": 35679
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:1919b21ac90b62b73aa2f1327dfae11a74e8c47d9c44f2ab6d4ae33ae3bf7aad",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN resources USING INDEX idx_resources_created_at",
+              "id": 6,
+              "notused": 187,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN resources USING INDEX idx_resources_created_at"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "page-middle",
+      "queryFingerprint": "mrql-shape-v1:86d767416441c8b084959b0c14f613463e54a9f86ac454877afded1bed372293",
+      "firstRunNanos": 437583,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 395958,
+        "p95Nanos": 642916,
+        "p99Nanos": 750458
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 35684,
+        "maximum": 35684,
+        "p50": 35684
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:10afc498463d7b6c24916b539a53d9a682a6c73342ec548b0310c2b27939ff0d",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN resources USING INDEX idx_resources_created_at",
+              "id": 9,
+              "notused": 187,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN resources USING INDEX idx_resources_created_at"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "page-deep",
+      "queryFingerprint": "mrql-shape-v1:d54078ee8d45a624968a6312d70bea9aa9d44a5be50a1c37dcd5b73c8e4e84f3",
+      "firstRunNanos": 521250,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 445334,
+        "p95Nanos": 732584,
+        "p99Nanos": 822667
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 50,
+        "maximum": 50,
+        "p50": 50
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 35644,
+        "maximum": 35644,
+        "p50": 35644
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:10afc498463d7b6c24916b539a53d9a682a6c73342ec548b0310c2b27939ff0d",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN resources USING INDEX idx_resources_created_at",
+              "id": 9,
+              "notused": 187,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN resources USING INDEX idx_resources_created_at"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "aggregate-content-type",
+      "queryFingerprint": "mrql-shape-v1:3c60a82c5e135b759a47da356660d87cbedbd01fc66d31ad7e54f1746d1c596c",
+      "firstRunNanos": 2904916,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 2489333,
+        "p95Nanos": 2705708,
+        "p99Nanos": 2759292
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 8,
+        "maximum": 8,
+        "p50": 8
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 461,
+        "maximum": 461,
+        "p50": 461
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:ee8582c035efd94998a13d95ee0b5d920b7d8903a92164f7c057c22bbd561116",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN resources USING COVERING INDEX idx_resources_content_type",
+              "id": 9,
+              "notused": 175,
+              "parent": 0
+            },
+            {
+              "detail": "USE TEMP B-TREE FOR ORDER BY",
+              "id": 43,
+              "notused": 0,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN resources USING COVERING INDEX idx_resources_content_type",
+            "detail=USE TEMP B-TREE FOR ORDER BY"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "bucket-content-type",
+      "queryFingerprint": "mrql-shape-v1:44b0e3571e29174919bdf87da446347f94d8cb668bf1186c71ceb411a742cb49",
+      "firstRunNanos": 3165541,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 3078458,
+        "p95Nanos": 3428458,
+        "p99Nanos": 3512250
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 9,
+        "maximum": 9,
+        "p50": 9
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 88,
+        "maximum": 88,
+        "p50": 88
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 56454,
+        "maximum": 56454,
+        "p50": 56454
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:a951b74678ec6bdab56417fae7a397c6d9d12cbf061f6da2e061015339592f60",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN resources USING COVERING INDEX idx_resources_content_type",
+              "id": 9,
+              "notused": 175,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN resources USING COVERING INDEX idx_resources_content_type"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "cross-entity-top-n",
+      "queryFingerprint": "mrql-shape-v1:31aa458a06a5d2caebced572e607aa8ccc06ff6602f7f35aa8e3253638b4414b",
+      "firstRunNanos": 3105542,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 389625,
+        "p95Nanos": 868000,
+        "p99Nanos": 949500
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 3,
+        "maximum": 3,
+        "p50": 3
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 150,
+        "maximum": 150,
+        "p50": 150
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 18129,
+        "maximum": 18129,
+        "p50": 18129
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:7913faad11c9ca6564a2650b6dd6358f0e82f6986dd80c9f20393afb74f1521c",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN resources USING INDEX idx_resources_created_at",
+              "id": 5,
+              "notused": 188,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN resources USING INDEX idx_resources_created_at"
+          ]
+        },
+        {
+          "sqlFingerprint": "sql-shape-v1:3fe36c7177379fb5fb6518dbb4904881d560a9536c58f9f38586a3ddd48fef51",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN notes USING INDEX idx_notes_created_at",
+              "id": 5,
+              "notused": 168,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN notes USING INDEX idx_notes_created_at"
+          ]
+        },
+        {
+          "sqlFingerprint": "sql-shape-v1:ec9b07cd5d962b7ad801149b83c3f96699371b0f0103056c3fe4638320e0bf3a",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN groups USING INDEX idx_groups_created_at",
+              "id": 5,
+              "notused": 98,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN groups USING INDEX idx_groups_created_at"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "cross-entity-random",
+      "queryFingerprint": "mrql-shape-v1:0810ace6126a9eab7d36ad88b84c62a29ccaf2218ff933a47ae3ec622b5471fe",
+      "firstRunNanos": 32517458,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 32682875,
+        "p95Nanos": 34445292,
+        "p99Nanos": 34932500
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 6,
+        "maximum": 6,
+        "p50": 6
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 153,
+        "maximum": 153,
+        "p50": 153
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 30082,
+        "maximum": 35036,
+        "p50": 32177
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:3e88413d8654b1660bc663cac0f5142bb63736f5da6d7b7f45d1ba4a6fb0c702",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN resources",
+              "id": 4,
+              "notused": 182,
+              "parent": 0
+            },
+            {
+              "detail": "USE TEMP B-TREE FOR ORDER BY",
+              "id": 47,
+              "notused": 0,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN resources",
+            "detail=USE TEMP B-TREE FOR ORDER BY"
+          ]
+        },
+        {
+          "sqlFingerprint": "sql-shape-v1:75b35fd3b77b4cc858a530115bc58a63156898dc6df473d23ee6ea19dbccc8c4",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN notes",
+              "id": 4,
+              "notused": 162,
+              "parent": 0
+            },
+            {
+              "detail": "USE TEMP B-TREE FOR ORDER BY",
+              "id": 36,
+              "notused": 0,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN notes",
+            "detail=USE TEMP B-TREE FOR ORDER BY"
+          ]
+        },
+        {
+          "sqlFingerprint": "sql-shape-v1:4775bbab392b4941cd3b2e5cddf73a15610880a4153f8c0c464581abfa437354",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN groups",
+              "id": 4,
+              "notused": 92,
+              "parent": 0
+            },
+            {
+              "detail": "USE TEMP B-TREE FOR ORDER BY",
+              "id": 33,
+              "notused": 0,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN groups",
+            "detail=USE TEMP B-TREE FOR ORDER BY"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "raw-json",
+      "queryFingerprint": "mrql-shape-v1:ac23b3f28dfb4bea3cb2ef093d53f517cbd1525e91b074743091813a4d631044",
+      "firstRunNanos": 340625,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 179375,
+        "p95Nanos": 192458,
+        "p99Nanos": 454083
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 1,
+        "maximum": 1,
+        "p50": 1
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 20,
+        "maximum": 20,
+        "p50": 20
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 14334,
+        "maximum": 14334,
+        "p50": 14334
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:1919b21ac90b62b73aa2f1327dfae11a74e8c47d9c44f2ab6d4ae33ae3bf7aad",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN resources USING INDEX idx_resources_created_at",
+              "id": 6,
+              "notused": 187,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN resources USING INDEX idx_resources_created_at"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "compact-render",
+      "queryFingerprint": "mrql-shape-v1:ac23b3f28dfb4bea3cb2ef093d53f517cbd1525e91b074743091813a4d631044",
+      "firstRunNanos": 861791,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 651542,
+        "p95Nanos": 796958,
+        "p99Nanos": 986000
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 3,
+        "maximum": 3,
+        "p50": 3
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 296,
+        "maximum": 296,
+        "p50": 296
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 2430,
+        "maximum": 2430,
+        "p50": 2430
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:1919b21ac90b62b73aa2f1327dfae11a74e8c47d9c44f2ab6d4ae33ae3bf7aad",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN resources USING INDEX idx_resources_created_at",
+              "id": 6,
+              "notused": 187,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN resources USING INDEX idx_resources_created_at"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "table-render",
+      "queryFingerprint": "mrql-shape-v1:ac23b3f28dfb4bea3cb2ef093d53f517cbd1525e91b074743091813a4d631044",
+      "firstRunNanos": 741750,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 663583,
+        "p95Nanos": 994708,
+        "p99Nanos": 1037166
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 3,
+        "maximum": 3,
+        "p50": 3
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 296,
+        "maximum": 296,
+        "p50": 296
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 7031,
+        "maximum": 7031,
+        "p50": 7031
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:1919b21ac90b62b73aa2f1327dfae11a74e8c47d9c44f2ab6d4ae33ae3bf7aad",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN resources USING INDEX idx_resources_created_at",
+              "id": 6,
+              "notused": 187,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN resources USING INDEX idx_resources_created_at"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "custom-render",
+      "queryFingerprint": "mrql-shape-v1:ac23b3f28dfb4bea3cb2ef093d53f517cbd1525e91b074743091813a4d631044",
+      "firstRunNanos": 660042,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 661583,
+        "p95Nanos": 905542,
+        "p99Nanos": 1166875
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 3,
+        "maximum": 3,
+        "p50": 3
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 296,
+        "maximum": 296,
+        "p50": 296
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 1031,
+        "maximum": 1031,
+        "p50": 1031
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:1919b21ac90b62b73aa2f1327dfae11a74e8c47d9c44f2ab6d4ae33ae3bf7aad",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN resources USING INDEX idx_resources_created_at",
+              "id": 6,
+              "notused": 187,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN resources USING INDEX idx_resources_created_at"
+          ]
+        }
+      ]
+    },
+    {
+      "scenarioId": "nested-mrql",
+      "queryFingerprint": "mrql-shape-v1:59c106975b2c1bd619edd13c375c0a70eb9846e586f0245ddf8d57f44beda44c",
+      "firstRunNanos": 5919208,
+      "latency": {
+        "samples": 100,
+        "p50Nanos": 5663875,
+        "p95Nanos": 6216417,
+        "p99Nanos": 6451333
+      },
+      "sqlStatements": {
+        "samples": 100,
+        "minimum": 24,
+        "maximum": 24,
+        "p50": 24
+      },
+      "rows": {
+        "samples": 100,
+        "minimum": 844,
+        "maximum": 844,
+        "p50": 844
+      },
+      "outputBytes": {
+        "samples": 100,
+        "minimum": 48583,
+        "maximum": 48583,
+        "p50": 48583
+      },
+      "plans": [
+        {
+          "sqlFingerprint": "sql-shape-v1:3a8fb9fdcf9188c8bcaab982b95ea88d999d4f3e7235234fd94cfc8e7b3c6593",
+          "dialect": "sqlite",
+          "format": "query-plan",
+          "plan": [
+            {
+              "detail": "SCAN groups USING INDEX idx_groups_created_at",
+              "id": 6,
+              "notused": 98,
+              "parent": 0
+            }
+          ],
+          "signature": [
+            "detail=SCAN groups USING INDEX idx_groups_created_at"
+          ]
+        }
+      ]
+    }
+  ]
+}

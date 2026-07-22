@@ -1,9 +1,13 @@
 package mrql
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -97,5 +101,50 @@ func TestExplainDB_ForcedScopeAppears(t *testing.T) {
 	up := strings.ToUpper(st.SQL)
 	if !strings.Contains(up, "RECURSIVE") && !strings.Contains(up, "WITH ") {
 		t.Errorf("expected scope CTE in scoped explain SQL: %s", st.SQL)
+	}
+}
+
+func TestNativeExplainSQLiteReturnsDialectPlan(t *testing.T) {
+	db := setupTestDB(t)
+	st := explainFlat(t, db, `type = "resource" AND name = "Vacation.jpg"`, EntityResource, TranslateOptions{})
+	plan, err := NativeExplain(context.Background(), db, st)
+	if err != nil {
+		t.Fatalf("native explain: %v", err)
+	}
+	if plan.Dialect != "sqlite" || plan.Format != "query-plan" {
+		t.Fatalf("unexpected envelope: %#v", plan)
+	}
+	var rows []SQLitePlanRow
+	if err := json.Unmarshal(plan.Plan, &rows); err != nil {
+		t.Fatalf("decode plan: %v", err)
+	}
+	if len(rows) == 0 || !strings.Contains(strings.ToLower(rows[0].Detail), "resources") {
+		t.Fatalf("unexpected SQLite plan rows: %#v", rows)
+	}
+}
+
+type unsupportedExplainDialector struct{ gorm.Dialector }
+
+func (unsupportedExplainDialector) Name() string { return "unsupported" }
+
+func TestNativeExplainRejectsUnsupportedDialect(t *testing.T) {
+	db, err := gorm.Open(unsupportedExplainDialector{Dialector: sqlite.Open(":memory:")}, &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = NativeExplain(context.Background(), db, ExplainStatement{Label: "x", SQL: "SELECT 1"})
+	if !errors.Is(err, ErrNativeExplainUnsupportedDialect) {
+		t.Fatalf("expected unsupported dialect error, got %v", err)
+	}
+}
+
+func TestNativeExplainHonorsCancelledContext(t *testing.T) {
+	db := setupTestDB(t)
+	st := explainFlat(t, db, `type = "resource"`, EntityResource, TranslateOptions{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := NativeExplain(ctx, db, st)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
 	}
 }

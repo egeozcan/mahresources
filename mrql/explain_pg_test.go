@@ -3,6 +3,8 @@
 package mrql
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -73,5 +75,27 @@ func TestExplainDB_ForcedScopeAppearsPG(t *testing.T) {
 	st := explainFlatPG(t, db, `type = "resource"`, EntityResource, TranslateOptions{ScopeGroupID: 1})
 	if !strings.Contains(strings.ToUpper(st.SQL), "RECURSIVE") {
 		t.Errorf("expected scope CTE in scoped explain SQL: %s", st.SQL)
+	}
+}
+
+func TestNativeExplainPostgresReturnsJSONPlan(t *testing.T) {
+	db := setupPostgresTestDB(t)
+	st := explainFlatPG(t, db, `type = "resource" AND name = "Vacation.jpg"`, EntityResource, TranslateOptions{})
+	plan, err := NativeExplain(context.Background(), db, st)
+	if err != nil {
+		t.Fatalf("native explain: %v", err)
+	}
+	if plan.Dialect != "postgres" || plan.Format != "json" {
+		t.Fatalf("unexpected envelope: %#v", plan)
+	}
+	var decoded []map[string]any
+	if err := json.Unmarshal(plan.Plan, &decoded); err != nil {
+		t.Fatalf("decode native plan: %v", err)
+	}
+	if len(decoded) == 0 || decoded[0]["Plan"] == nil {
+		t.Fatalf("unexpected PostgreSQL plan: %s", plan.Plan)
+	}
+	if strings.Contains(strings.ToUpper(string(plan.Plan)), "ANALYZE") {
+		t.Fatalf("native plan unexpectedly used ANALYZE: %s", plan.Plan)
 	}
 }

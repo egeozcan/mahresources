@@ -1804,21 +1804,32 @@ Response: {"valid": bool, "errors": [...]}`,
 		Method:      http.MethodPost,
 		Path:        "/v1/mrql/explain",
 		OperationID: "explainMRQL",
-		Summary:     "Explain the SQL an MRQL query would run",
+		Summary:     "Explain the effective SQL and optimizer plans for MRQL",
 		Description: `Parses, binds parameters, validates, and translates an MRQL query, then
-returns the SQL statement(s) that would run — without executing the query.
+returns the generated SQL statement(s) without executing the underlying query. The
+explanation describes the Effective MRQL Query after default limits, safety bounds,
+resolved SCOPE, and any RBAC-forced scope have been applied.
 
 Request body fields (provide one of query / id / name):
-  - query  (string) — inline MRQL source
-  - id     (integer) — saved query id
-  - name   (string) — saved query name
-  - params (object) — $name placeholder bindings
+  - query       (string) — inline MRQL source
+  - id          (integer) — saved query id
+  - name        (string) — saved query name
+  - params      (object) — $name placeholder bindings
+  - nativePlan  (boolean) — admin-only; ask the active database optimizer for a non-executing plan
 
 Query parameters:
   - param.<name>=<value> — alternative to the params object (always strings)
 
-Response: {"entityType", "statements": [{"label","sql","vars","interpolated"}], "warnings", "default_limit_applied", "applied_limit"}.
-Reported SQL reflects the default LIMIT, resolved SCOPE, and any RBAC forced scope.`,
+The additive response includes queryFingerprint, executionShape, and statements.
+Each statement retains label/sql/vars/interpolated and optionally includes nativePlan:
+{"dialect","format","plan"}. SQLite uses EXPLAIN QUERY PLAN rows; PostgreSQL
+uses EXPLAIN (FORMAT JSON). EXPLAIN ANALYZE is never used. All native statements
+share one MRQL timeout and the request fails atomically if any plan fails.
+
+Bucketed grouping reports key discovery plus data-dependent fan-out bounds rather
+than executing discovery. A principal scoped to no groups receives statements: []
+and zero-statement bounds. Non-admins retain generated-SQL explain access but receive
+403 when nativePlan=true.`,
 		Tags:                 mrqlTag,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},

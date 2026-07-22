@@ -117,6 +117,30 @@ func TestCloneQueryResultIsolatesItemMutation(t *testing.T) {
 	assert.Equal(t, "orig", r2.Items[0].CustomMRQLResult)
 }
 
+func TestQueryBudgetStatsSnapshot(t *testing.T) {
+	ctx := WithQueryBudget(context.Background(), 2)
+	budget := QueryBudgetFrom(ctx)
+	baseCalls := 0
+	exec := BudgetedExecutor(func(context.Context, string, QueryOptions) (*QueryResult, error) {
+		baseCalls++
+		return &QueryResult{}, nil
+	}, nil)
+
+	if _, err := exec(ctx, "same", QueryOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exec(ctx, "same", QueryOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	stats := budget.Stats()
+	if stats.Executions != 1 || stats.CacheHits != 1 || stats.CacheMisses != 1 || stats.Exceeded {
+		t.Fatalf("unexpected stats: %#v", stats)
+	}
+	if baseCalls != 1 {
+		t.Fatalf("base calls = %d", baseCalls)
+	}
+}
+
 func TestBudgetCacheKeyDistinguishesParamsAndScope(t *testing.T) {
 	base := WithQueryBudget(context.Background(), 10)
 	b := QueryBudgetFrom(base)

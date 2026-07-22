@@ -54,10 +54,11 @@ func filterEntityType(entityType string, filter bool) (mrql.EntityType, bool) {
 }
 
 type mrqlExplainRequest struct {
-	Query  string         `json:"query" schema:"query"`
-	ID     uint           `json:"id" schema:"id"`
-	Name   string         `json:"name" schema:"name"`
-	Params map[string]any `json:"params" schema:"-"`
+	Query      string         `json:"query" schema:"query"`
+	ID         uint           `json:"id" schema:"id"`
+	Name       string         `json:"name" schema:"name"`
+	Params     map[string]any `json:"params" schema:"-"`
+	NativePlan bool           `json:"nativePlan" schema:"nativePlan"`
 }
 
 // applyGroupedPagination applies request pagination to a parsed GROUP BY query.
@@ -592,6 +593,10 @@ func GetExplainMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
 			return
 		}
+		if req.NativePlan && !ctx.Principal().IsAdmin() {
+			http_utils.HandleError(errors.New("native query plans require administrator access"), writer, request, http.StatusForbidden)
+			return
+		}
 
 		// Resolve the query text: inline query, or a saved query by id/name.
 		queryText := req.Query
@@ -618,9 +623,21 @@ func GetExplainMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 			return
 		}
 
-		explain, err := ctx.ExplainMRQL(request.Context(), parsed)
+		explain, err := ctx.ExplainMRQLWithOptions(request.Context(), parsed, application_context.MRQLExplainOptions{NativePlan: req.NativePlan})
 		if err != nil {
-			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			status := statusCodeForError(err, http.StatusBadRequest)
+			var nativePlanErr *application_context.MRQLNativePlanError
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				status = http.StatusGatewayTimeout
+			case errors.Is(err, context.Canceled):
+				status = http.StatusRequestTimeout
+			case errors.Is(err, mrql.ErrNativeExplainUnsupportedDialect):
+				status = http.StatusBadRequest
+			case errors.As(err, &nativePlanErr):
+				status = http.StatusInternalServerError
+			}
+			http_utils.HandleError(err, writer, request, status)
 			return
 		}
 

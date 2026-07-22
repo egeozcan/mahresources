@@ -21,11 +21,23 @@ import (
 // A limit of 0 disables the budget entirely (unlimited queries) while still
 // deduping via the cache, matching the historical unbounded behaviour.
 type QueryBudget struct {
-	mu       sync.Mutex
-	limit    int
-	count    int
-	cache    map[string]*QueryResult
-	exceeded bool
+	mu          sync.Mutex
+	limit       int
+	count       int
+	cache       map[string]*QueryResult
+	exceeded    bool
+	cacheHits   int
+	cacheMisses int
+	executions  int
+}
+
+// QueryBudgetStats is a read-only snapshot for diagnostics and benchmarks.
+type QueryBudgetStats struct {
+	Limit       int  `json:"limit"`
+	Executions  int  `json:"executions"`
+	CacheHits   int  `json:"cacheHits"`
+	CacheMisses int  `json:"cacheMisses"`
+	Exceeded    bool `json:"exceeded"`
 }
 
 type queryBudgetKey struct{}
@@ -52,19 +64,29 @@ func QueryBudgetFrom(ctx context.Context) *QueryBudget {
 // Limit returns the configured budget (0 = disabled).
 func (b *QueryBudget) Limit() int { return b.limit }
 
+// Stats returns a concurrency-safe snapshot without exposing cached results.
+func (b *QueryBudget) Stats() QueryBudgetStats {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return QueryBudgetStats{
+		Limit: b.limit, Executions: b.executions, CacheHits: b.cacheHits,
+		CacheMisses: b.cacheMisses, Exceeded: b.exceeded,
+	}
+}
+
 // Allow records one cache-miss execution against the budget. It returns false
 // when the budget is already spent (a limit>0 that count has reached), in which
 // case the caller must not execute the query. A limit of 0 always allows.
 func (b *QueryBudget) Allow() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.limit <= 0 {
-		return true
+	if b.limit > 0 {
+		if b.count >= b.limit {
+			return false
+		}
+		b.count++
 	}
-	if b.count >= b.limit {
-		return false
-	}
-	b.count++
+	b.executions++
 	return true
 }
 
@@ -87,8 +109,10 @@ func (b *QueryBudget) Lookup(query string, opts QueryOptions) (*QueryResult, boo
 	defer b.mu.Unlock()
 	r, ok := b.cache[key]
 	if !ok {
+		b.cacheMisses++
 		return nil, false
 	}
+	b.cacheHits++
 	return cloneQueryResult(r), true
 }
 

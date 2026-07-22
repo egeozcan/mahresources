@@ -48,6 +48,25 @@ func validateMRQLExecutionBounds(q *mrql.Query, policy mrqlExecutionPolicy) erro
 	return nil
 }
 
+// crossEntityWindow returns the global pagination window and the per-entity
+// fetch cap used before results are merged and globally paginated in Go.
+func crossEntityWindow(q *mrql.Query, defaultLimit int, policy mrqlExecutionPolicy) (globalLimit, globalOffset, perEntityCap int, err error) {
+	if err = validateMRQLExecutionBounds(q, policy); err != nil {
+		return 0, 0, 0, err
+	}
+	globalLimit = min(defaultLimit, policy.maxLimit)
+	if q.Limit >= 0 {
+		globalLimit = q.Limit
+	}
+	if q.Offset >= 0 {
+		globalOffset = q.Offset
+	}
+	if globalOffset > math.MaxInt-globalLimit {
+		return 0, 0, 0, &MRQLExecutionLimitError{Field: "offset + limit", Value: math.MaxInt, Max: policy.maxOffset + policy.maxLimit}
+	}
+	return globalLimit, globalOffset, globalOffset + globalLimit, nil
+}
+
 // ValidateMRQLFlatExportBounds validates export pagination without executing the
 // query. It is used by the browser download preflight so limit errors remain
 // visible before switching to the native streaming download path.

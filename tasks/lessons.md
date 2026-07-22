@@ -2,6 +2,9 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## Proofread interactive questions and remove stray generation artifacts before sending
+During a one-question-at-a-time design interview, I accidentally appended meaningless text (`bloop`) to an otherwise valid question. This distracts the user and undermines confidence in a session that depends on precise terminology. Fix: reread each short question before sending, especially its final line, and remove any unexplained token or accidental suffix.
+
 ## `gofmt -w <dir>/*.go` reformats unrelated files — scope the format to files you actually edited
 Phase 1 of the root-admin change added a field to 14 model structs, then ran `gofmt -w models/*.go` to
 realign. That silently reformatted 3 files I never touched (`image_hash_model.go`, `log_entry_model.go`,

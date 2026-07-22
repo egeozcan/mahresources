@@ -21,6 +21,10 @@
 /server.log
 .aider*
 
+# MRQL benchmark artifacts (reviewed baselines remain tracked)
+/benchmarks/mrql/fixtures/
+/benchmarks/mrql/results/
+
 # E2E test artifacts
 /e2e/node_modules/
 /e2e/playwright-report/
