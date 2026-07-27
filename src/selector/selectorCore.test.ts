@@ -463,6 +463,38 @@ describe('selector search orchestration', () => {
     });
 });
 
+describe('selector creation queue foundation', () => {
+    test('queues a creatable typed token and consumes the visible query before creation resolves', async () => {
+        const source = new InMemorySelectorSource<RawValue>();
+        const creation = source.deferCreate('New tag');
+        const selector = createSelector({ source });
+        const changes: unknown[] = [];
+        selector.subscribe((_snapshot, change) => changes.push(change));
+
+        selector.dispatch({ type: 'set-query', query: 'New tag' });
+        await flushMicrotasks();
+        const result = selector.dispatch({ type: 'commit-token', token: 'New tag' });
+
+        expect(result).toEqual({ ok: true, consumed: true });
+        expect(selector.getSnapshot()).toMatchObject({
+            query: '',
+            creationStatus: 'loading',
+            selected: [],
+        });
+
+        creation.resolve(option(1, 'New tag'));
+        await flushMicrotasks();
+
+        expect(selector.getSnapshot()).toMatchObject({
+            creationStatus: 'idle',
+            selected: [option(1, 'New tag')],
+            error: null,
+        });
+        expect(changes).toHaveLength(4);
+        expect(changes[3]).toMatchObject({ reason: 'create' });
+    });
+});
+
 describe('selector open state and navigation', () => {
     test('opens and closes explicitly while clearing the active option on close', () => {
         const selector = createSelector({

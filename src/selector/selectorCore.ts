@@ -115,6 +115,8 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
     private readonly source: SelectorSource<TRaw>;
     private searchController: AbortController | null = null;
     private searchGeneration = 0;
+    private creationController: AbortController | null = null;
+    private readonly creationQueue: string[] = [];
 
     constructor(config: SelectorConfig<TRaw>) {
         this.source = config.source;
@@ -158,6 +160,8 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
                 return this.close();
             case 'move-active':
                 return this.moveActive(command.direction);
+            case 'commit-token':
+                return this.commitToken(command.token);
             case 'select-option':
                 return this.select(command.option);
             case 'remove-option':
@@ -184,7 +188,15 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
         this.searchGeneration += 1;
         this.searchController?.abort();
         this.searchController = null;
-        this.publish(withState(this.snapshot, { destroyed: true }));
+        this.creationController?.abort();
+        this.creationController = null;
+        this.creationQueue.length = 0;
+        this.publish(withState(this.snapshot, {
+            destroyed: true,
+            creationStatus: 'idle',
+            createCandidate: null,
+            createConfirmationCandidate: null,
+        }));
         this.subscribers.clear();
     }
 
@@ -267,6 +279,122 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
             && this.searchController === controller;
     }
 
+    private commitToken(token: string): SelectorCommandResult<TRaw> {
+        const label = token.trim();
+        if (!label || !this.source.create) return { ok: true, consumed: false };
+        return this.enqueueCreation(label);
+    }
+
+    private enqueueCreation(label: string): SelectorCommandResult<TRaw> {
+        const canonical = label.trim();
+        if (!canonical || !this.source.create) return { ok: true, consumed: false };
+        if (this.snapshot.selected.some((option) => option.label.trim() === canonical)
+            || this.creationQueue.some((queued) => queued === canonical)
+            || (this.creationController !== null && this.snapshot.creationStatus === 'loading'
+                && this.currentCreationLabel === canonical)) {
+            return { ok: true, consumed: true };
+        }
+
+        this.creationQueue.push(canonical);
+        this.consumeQueryForCreation();
+        this.processCreationQueue();
+        return { ok: true, consumed: true };
+    }
+
+    private currentCreationLabel: string | null = null;
+
+    private consumeQueryForCreation(): void {
+        this.searchGeneration += 1;
+        this.searchController?.abort();
+        this.searchController = null;
+        this.publish(withState(this.snapshot, {
+            query: '',
+            activeOptionIndex: null,
+            searchStatus: 'idle',
+            creationStatus: 'loading',
+            createCandidate: null,
+            error: null,
+        }));
+    }
+
+    private processCreationQueue(): void {
+        if (this.creationController || this.snapshot.destroyed) return;
+        const label = this.creationQueue.shift();
+        if (!label || !this.source.create) {
+            if (!this.snapshot.destroyed && this.snapshot.creationStatus === 'loading') {
+                this.publish(withState(this.snapshot, { creationStatus: 'idle' }));
+            }
+            return;
+        }
+
+        const controller = new AbortController();
+        this.creationController = controller;
+        this.currentCreationLabel = label;
+        let pending: Promise<SelectorOption<TRaw>>;
+        try {
+            pending = this.source.create(label, controller.signal);
+        } catch (error) {
+            pending = Promise.reject(error);
+        }
+        void pending.then(
+            (option) => this.applyCreateSuccess(label, controller, option),
+            (error: unknown) => this.applyCreateFailure(label, controller, error),
+        );
+    }
+
+    private applyCreateSuccess(
+        label: string,
+        controller: AbortController,
+        option: SelectorOption<TRaw>,
+    ): void {
+        if (!this.isCurrentCreation(label, controller)) return;
+        this.creationController = null;
+        this.currentCreationLabel = null;
+        const current = normalizeSelection(
+            [...this.snapshot.selected, option],
+            this.selectionLimit,
+        );
+        const hasSelectionChange = !sameOptions(this.snapshot.selected, current);
+        if (hasSelectionChange) {
+            this.transitionSelection(current, 'create', false, {
+                creationStatus: this.creationQueue.length ? 'loading' : 'idle',
+                error: null,
+            });
+        } else {
+            this.publish(withState(this.snapshot, {
+                creationStatus: this.creationQueue.length ? 'loading' : 'idle',
+                error: null,
+            }));
+        }
+        this.processCreationQueue();
+    }
+
+    private applyCreateFailure(
+        label: string,
+        controller: AbortController,
+        error: unknown,
+    ): void {
+        if (!this.isCurrentCreation(label, controller)) return;
+        this.creationController = null;
+        this.currentCreationLabel = null;
+        if (controller.signal.aborted || isAbortError(error)) return;
+        this.publish(withState(this.snapshot, {
+            creationStatus: this.creationQueue.length ? 'loading' : 'error',
+            error: Object.freeze({
+                operation: 'create',
+                message: errorMessage(error, 'Creation failed'),
+                cause: error,
+            }),
+        }));
+        this.processCreationQueue();
+    }
+
+    private isCurrentCreation(label: string, controller: AbortController): boolean {
+        return !this.snapshot.destroyed
+            && this.creationController === controller
+            && this.currentCreationLabel === label;
+    }
+
     private open(): SelectorCommandResult<TRaw> {
         if (this.snapshot.isOpen) return { ok: true };
         this.publish(withState(this.snapshot, { isOpen: true }));
@@ -340,10 +468,11 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
         current: readonly SelectorOption<TRaw>[],
         reason: SelectorChangeReason,
         silent = false,
+        state: Partial<SelectorState<TRaw>> = {},
     ): SelectorCommandResult<TRaw> {
         const previous = this.snapshot.selected;
         if (sameOptions(previous, current)) return { ok: true };
-        const nextSnapshot = withState(this.snapshot, { selected: current });
+        const nextSnapshot = withState(this.snapshot, { ...state, selected: current });
         if (silent) {
             this.publish(nextSnapshot);
             return { ok: true };

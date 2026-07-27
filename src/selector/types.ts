@@ -68,7 +68,12 @@ export interface SelectorCommandError {
 }
 
 export type SelectorCommandResult<TRaw = unknown> =
-    | { readonly ok: true; readonly change?: SelectorChange<TRaw> }
+    | {
+        readonly ok: true;
+        readonly change?: SelectorChange<TRaw>;
+        /** Whether a token or create request was consumed by the selector. */
+        readonly consumed?: boolean;
+    }
     | { readonly ok: false; readonly error: SelectorCommandError };
 
 export interface SelectorSource<TRaw = unknown> {
