@@ -160,6 +160,8 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
                 return this.close();
             case 'move-active':
                 return this.moveActive(command.direction);
+            case 'commit-active':
+                return this.commitActive();
             case 'commit-token':
                 return this.commitToken(command.token);
             case 'select-option':
@@ -210,6 +212,7 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
             query,
             activeOptionIndex: null,
             searchStatus: 'loading',
+            createCandidate: null,
             error: null,
         }));
 
@@ -239,10 +242,17 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
         const options = freezeOptions(
             results.filter((option) => !selectedKeys.has(canonicalKey(option.key))),
         );
+        const trimmedQuery = query.trim();
+        const hasExactMatch = results.some((option) => option.label === trimmedQuery)
+            || this.snapshot.selected.some((option) => option.label === trimmedQuery);
+        const createCandidate = this.source.create && trimmedQuery && !hasExactMatch
+            ? Object.freeze({ label: trimmedQuery })
+            : null;
         this.publish(withState(this.snapshot, {
             options,
             activeOptionIndex: null,
             searchStatus: 'success',
+            createCandidate,
             error: null,
         }));
     }
@@ -281,7 +291,16 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
 
     private commitToken(token: string): SelectorCommandResult<TRaw> {
         const label = token.trim();
-        if (!label || !this.source.create) return { ok: true, consumed: false };
+        if (!label) return { ok: true, consumed: false };
+        if (this.snapshot.selected.some((option) => option.label === label)) {
+            return { ok: true, consumed: true };
+        }
+        const available = this.snapshot.options.find((option) => option.label === label);
+        if (available) {
+            const result = this.select(available);
+            return result.ok ? { ...result, consumed: true } : result;
+        }
+        if (!this.source.create) return { ok: true, consumed: false };
         return this.enqueueCreation(label);
     }
 
@@ -410,8 +429,22 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
         return { ok: true };
     }
 
+    private commitActive(): SelectorCommandResult<TRaw> {
+        const active = this.snapshot.activeOptionIndex;
+        if (active === null) return { ok: true, consumed: false };
+        const option = this.snapshot.options[active];
+        if (option) {
+            const result = this.select(option);
+            return result.ok ? { ...result, consumed: true } : result;
+        }
+        if (active === this.snapshot.options.length && this.snapshot.createCandidate) {
+            return this.enqueueCreation(this.snapshot.createCandidate.label);
+        }
+        return { ok: true, consumed: false };
+    }
+
     private moveActive(direction: 'next' | 'previous'): SelectorCommandResult<TRaw> {
-        const optionCount = this.snapshot.options.length;
+        const optionCount = this.snapshot.options.length + (this.snapshot.createCandidate ? 1 : 0);
         let activeOptionIndex: number | null = null;
         if (optionCount > 0) {
             const current = this.snapshot.activeOptionIndex;

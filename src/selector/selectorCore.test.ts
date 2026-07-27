@@ -495,6 +495,82 @@ describe('selector creation queue foundation', () => {
     });
 });
 
+describe('selector create candidates and token precedence', () => {
+    test('exposes a trimmed create candidate only after its exact query completes without an exact match', async () => {
+        const source = new InMemorySelectorSource<RawValue>();
+        const pending = source.deferSearch(' New tag ');
+        const selector = createSelector({ source });
+
+        selector.dispatch({ type: 'set-query', query: ' New tag ' });
+        expect(selector.getSnapshot().createCandidate).toBeNull();
+
+        pending.resolve([]);
+        await flushMicrotasks();
+        expect(selector.getSnapshot().createCandidate).toEqual({ label: 'New tag' });
+
+        source.setSearchResult('Existing', [option(1, 'Existing')]);
+        selector.dispatch({ type: 'set-query', query: 'Existing' });
+        await flushMicrotasks();
+        expect(selector.getSnapshot().createCandidate).toBeNull();
+    });
+
+    test('applies selected, available, creatable, and non-creatable token precedence', async () => {
+        const selected = option(1, 'Selected');
+        const available = option(2, 'Available');
+        const created = option(3, 'Created');
+        const source = new InMemorySelectorSource<RawValue>();
+        source.setCreateResult('Created', created);
+        const selector = createSelector({ source, selected: [selected], options: [available] });
+        const changes: unknown[] = [];
+        selector.subscribe((_snapshot, change) => changes.push(change));
+
+        expect(selector.dispatch({ type: 'commit-token', token: 'Selected' })).toEqual({
+            ok: true,
+            consumed: true,
+        });
+        expect(selector.dispatch({ type: 'commit-token', token: 'Available' })).toMatchObject({
+            ok: true,
+            consumed: true,
+            change: { reason: 'select', added: [available] },
+        });
+        expect(selector.dispatch({ type: 'commit-token', token: 'Created' })).toEqual({
+            ok: true,
+            consumed: true,
+        });
+        await flushMicrotasks();
+        expect(selector.getSnapshot().selected).toEqual([selected, available, created]);
+        expect(changes.filter(Boolean)).toHaveLength(2);
+
+        const plain = createSelector<RawValue>({
+            source: { search: async () => [] },
+        });
+        expect(plain.dispatch({ type: 'commit-token', token: 'Unknown' })).toEqual({
+            ok: true,
+            consumed: false,
+        });
+    });
+
+    test('navigates to and commits the virtual create row', async () => {
+        const source = new InMemorySelectorSource<RawValue>();
+        source.setSearchResult('Virtual', []);
+        source.setCreateResult('Virtual', option(1, 'Virtual'));
+        const selector = createSelector({ source });
+
+        selector.dispatch({ type: 'set-query', query: 'Virtual' });
+        await flushMicrotasks();
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+
+        expect(selector.getSnapshot()).toMatchObject({
+            createCandidate: { label: 'Virtual' },
+            activeOptionIndex: 0,
+        });
+        expect(selector.dispatch({ type: 'commit-active' })).toEqual({ ok: true, consumed: true });
+        expect(selector.getSnapshot().query).toBe('');
+        await flushMicrotasks();
+        expect(selector.getSnapshot().selected).toEqual([option(1, 'Virtual')]);
+    });
+});
+
 describe('selector open state and navigation', () => {
     test('opens and closes explicitly while clearing the active option on close', () => {
         const selector = createSelector({
