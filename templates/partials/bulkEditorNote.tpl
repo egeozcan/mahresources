@@ -28,7 +28,7 @@
     <form class="px-4" method="post" :action="'/v1/notes/addGroups?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)">
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
         <div class="flex gap-2 items-start">
-            {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='editedId' title='Add Groups' id=getNextId("autocompleter") extraInfo="Category" %}
+            {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='group' categoryDecoration=true elName='editedId' title='Add Groups' id=getNextId("autocompleter") %}
             <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Add" %}</div>
         </div>
     </form>

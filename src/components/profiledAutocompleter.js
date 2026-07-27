@@ -12,6 +12,15 @@ function mapTagOption(raw) {
     return { key: raw.ID, label: raw.Name, raw };
 }
 
+/**
+ * The shared form templates spell "no limit" as `max=0`, while the core reads `maxSelected: 0`
+ * literally as "nothing may be selected". Reconcile the two vocabularies here so no template or
+ * call site has to know the difference.
+ */
+function unlimitedWhenZero(maximum) {
+    return maximum || undefined;
+}
+
 function createProfiledAutocompleter(profile, onChange, { creatable, maximum }) {
     return legacyAutocompleterAdapter({
         _profileBridge: {
@@ -36,10 +45,11 @@ export function singleEntitySelector(arguments_) {
 /** Alpine rendering bridge for the explicit non-creatable multi-entity field profile. */
 export function multiEntitySelector(arguments_) {
     const { onChange = null, ...profileOptions } = arguments_;
+    const maximum = unlimitedWhenZero(profileOptions.maximum);
     return createProfiledAutocompleter(
-        createMultiEntityFieldProfile(profileOptions),
+        createMultiEntityFieldProfile({ ...profileOptions, maximum }),
         onChange,
-        { creatable: false, maximum: profileOptions.maximum ?? 0 },
+        { creatable: false, maximum: maximum ?? 0 },
     );
 }
 
@@ -56,20 +66,22 @@ export function creatableEntitySelector(arguments_) {
 /** Alpine rendering bridge for the runtime-configured dynamic entity selector profile. */
 export function dynamicEntitySelector(arguments_) {
     const { onChange = null, ...profileOptions } = arguments_;
+    const maximum = unlimitedWhenZero(profileOptions.maximum);
     return createProfiledAutocompleter(
-        createDynamicEntitySelectorProfile(profileOptions),
+        createDynamicEntitySelectorProfile({ ...profileOptions, maximum }),
         onChange,
-        { creatable: false, maximum: profileOptions.multiple ? (profileOptions.maximum ?? 0) : 1 },
+        { creatable: false, maximum: profileOptions.multiple ? (maximum ?? 0) : 1 },
     );
 }
 
 /** Alpine rendering bridge for the explicit creatable tag field profile. */
 export function tagFieldSelector(arguments_) {
     const { onChange = null, ...profileOptions } = arguments_;
+    const maximum = unlimitedWhenZero(profileOptions.maximum);
     return createProfiledAutocompleter(
-        createTagFieldProfile(profileOptions),
+        createTagFieldProfile({ ...profileOptions, maximum }),
         onChange,
-        { creatable: true, maximum: 0 },
+        { creatable: true, maximum: maximum ?? 0 },
     );
 }
 

@@ -43,7 +43,7 @@
             {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
             {% include "/partials/form/textInput.tpl" with name='Description' label='Text' value=queryValues.Description.0 %}
             {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=tags id=getNextId("autocompleter") %}
-            {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=groups id=getNextId("autocompleter") extraInfo="Category" %}
+            {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='group' categoryDecoration=true elName='groups' title='Groups' selectedItems=groups id=getNextId("autocompleter") %}
             {% include "/partials/form/autocompleter.tpl" with profile='single' entity='group' categoryDecoration=true max=1 elName='ownerId' title='Owner' selectedItems=owners id=getNextId("autocompleter") %}
             {% include "/partials/form/autocompleter.tpl" with profile='single' entity='noteType' elName='NoteTypeId' title='Note Type' selectedItems=noteTypes max=1 id=getNextId("autocompleter") %}
             {% include "/partials/form/schemaSearchFields.tpl" with elName='NoteTypeId' existingMetaQuery=parsedQuery.MetaQuery initialCategories=noteTypes id=getNextId("schemaSearch") %}

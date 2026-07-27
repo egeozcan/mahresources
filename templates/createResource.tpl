@@ -141,10 +141,10 @@
                                 {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' addUrl='/v1/tag' elName='tags' title='Tags' selectedItems=tags id=getNextId("autocompleter") %}
                             </div>
                             <div class="flex-1">
-                                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=groups id=getNextId("autocompleter") extraInfo="Category" %}
+                                {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='group' categoryDecoration=true elName='groups' title='Groups' selectedItems=groups id=getNextId("autocompleter") %}
                             </div>
                             <div class="flex-1">
-                                {% include "/partials/form/autocompleter.tpl" with url='/v1/notes' elName='notes' title='Notes' selectedItems=notes id=getNextId("autocompleter") %}
+                                {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='note' elName='notes' title='Notes' selectedItems=notes id=getNextId("autocompleter") %}
                             </div>
                         </div>
                     </div>

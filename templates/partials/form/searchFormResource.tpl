@@ -26,8 +26,8 @@
         {% include "/partials/form/textInput.tpl" with name='ContentType' label='Content Type' value=queryValues.ContentType.0 %}
         {% include "/partials/form/textInput.tpl" with name='OriginalLocation' label='Original Location' value=queryValues.OriginalLocation.0 %}
         {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=tags id=getNextId("autocompleter") %}
-        {% include "/partials/form/autocompleter.tpl" with url='/v1/notes' elName='notes' title='Notes' selectedItems=notes id=getNextId("autocompleter") %}
-        {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=groups id=getNextId("autocompleter") extraInfo="Category" %}
+        {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='note' elName='notes' title='Notes' selectedItems=notes id=getNextId("autocompleter") %}
+        {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='group' categoryDecoration=true elName='groups' title='Groups' selectedItems=groups id=getNextId("autocompleter") %}
         {% include "/partials/form/autocompleter.tpl" with profile='single' entity='group' categoryDecoration=true max=1 elName='ownerId' title='Owner' selectedItems=owner id=getNextId("autocompleter") %}
         {% include "/partials/form/checkboxInput.tpl" with name='IncludeSubgroups' label='Include subgroups' value=queryValues.IncludeSubgroups.0 id=getNextId("IncludeSubgroups") %}
         {% include "/partials/form/autocompleter.tpl" with profile='single' entity='resourceCategory' max=1 elName='ResourceCategoryId' title='Resource Category' selectedItems=selectedResourceCategory id=getNextId("autocompleter") %}

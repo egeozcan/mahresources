@@ -106,6 +106,7 @@ export interface DynamicEntitySelectorProfileOptions<TRaw extends SelectorEntity
 export interface TagFieldProfileOptions<TRaw extends SelectorEntityValue>
     extends Omit<EntityFieldProfileOptions<TRaw>, 'entity' | 'categoryDecoration'> {
     readonly usage: TagUsageEntity;
+    readonly maximum?: number;
 }
 
 function mapEntityOption<TRaw extends SelectorEntityValue>(raw: TRaw): SelectorOption<TRaw> {

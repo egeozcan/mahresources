@@ -34,11 +34,11 @@
         {% include "/partials/form/checkboxInput.tpl" with name='SearchParentsForTags' label='Search Parents For Tags' value=queryValues.SearchParentsForTags.0 id=getNextId("SearchParentsForTags") %}
         {% include "/partials/form/checkboxInput.tpl" with name='SearchChildrenForTags' label='Search Children For Tags' value=queryValues.SearchChildrenForTags.0 id=getNextId("SearchChildrenForTags") %}
 
-        {% include "/partials/form/autocompleter.tpl" with url='/v1/categories' elName='categories' title='Categories' selectedItems=categories id=getNextId("autocompleter") %}
+        {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='category' elName='categories' title='Categories' selectedItems=categories id=getNextId("autocompleter") %}
         {% include "/partials/form/schemaSearchFields.tpl" with elName='categories' existingMetaQuery=parsedQuery.MetaQuery initialCategories=categories id=getNextId("schemaSearch") %}
-        {% include "/partials/form/autocompleter.tpl" with url='/v1/notes' elName='notes' title='Notes' selectedItems=notes id=getNextId("autocompleter") %}
-        {% include "/partials/form/autocompleter.tpl" with url='/v1/resources' elName='resources' title='Resources' selectedItems=resources id=getNextId("autocompleter") %}
-        {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='groups' title='Groups' selectedItems=groupsSelection id=getNextId("autocompleter") extraInfo="Category" %}
+        {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='note' elName='notes' title='Notes' selectedItems=notes id=getNextId("autocompleter") %}
+        {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='resource' elName='resources' title='Resources' selectedItems=resources id=getNextId("autocompleter") %}
+        {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='group' categoryDecoration=true elName='groups' title='Groups' selectedItems=groupsSelection id=getNextId("autocompleter") %}
         {% include "/partials/form/autocompleter.tpl" with profile='single' entity='group' categoryDecoration=true max=1 elName='ownerId' title='Owner' selectedItems=owners id=getNextId("autocompleter") %}
         {% include "/partials/form/freeFields.tpl" with name="MetaQuery" url='/v1/groups/meta/keys' fields=parsedQuery.MetaQuery id=getNextId("freeField") %}
         {% include "/partials/form/dateInput.tpl" with name='CreatedBefore' label='Created Before' value=queryValues.CreatedBefore.0 %}

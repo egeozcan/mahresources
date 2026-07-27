@@ -4,6 +4,7 @@ import { selectorRegistry } from '../selector/selectorRegistry';
 import {
     creatableEntitySelector,
     dynamicEntitySelector,
+    multiEntitySelector,
     singleEntitySelector,
     tagEditorSelector,
     tagFieldSelector,
@@ -304,6 +305,33 @@ describe('profiled autocompleter bridge', () => {
         expect(add).not.toHaveBeenCalled();
         void resolveAdd;
         selector.destroy();
+    });
+
+    test('a zero maximum keeps a multi-value field unlimited rather than blocking selection', () => {
+        const alpha = { ID: 1, Name: 'Alpha' };
+        const beta = { ID: 2, Name: 'Beta' };
+        for (const selector of [
+            mount(multiEntitySelector({
+                entity: 'group',
+                maximum: 0,
+                form: { name: 'groups' },
+            }) as ProfiledSelector),
+            mount(tagFieldSelector({
+                usage: 'group',
+                maximum: 0,
+                form: { name: 'tags' },
+            }) as ProfiledSelector),
+        ]) {
+            for (const raw of [alpha, beta]) {
+                selector._core.dispatch({
+                    type: 'select-option',
+                    option: { key: raw.ID, label: raw.Name, raw },
+                });
+            }
+
+            expect(selector.selectedResults).toEqual([alpha, beta]);
+            selector.destroy();
+        }
     });
 
     test('a profiled form field resolves exact labels against its own catalog endpoint', async () => {
