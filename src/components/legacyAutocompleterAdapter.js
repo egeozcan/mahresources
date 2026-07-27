@@ -65,11 +65,18 @@ export function legacyAutocompleterAdapter(arguments_) {
         pendingIds: new Set(),
         failedIds: new Set(),
         _unregisterSelector: null,
+        _destroyed: false,
+        _popover: null,
+        _popoverMouseDownHandler: null,
+        _form: null,
+        _formSubmitHandler: null,
+        _formResetHandler: null,
 
         // Retained for legacy template consumers; silent core resets need no suppression flag.
         _suppressNextAnnounce: false,
 
         init() {
+            this._destroyed = false;
             // Alpine calls init with the raw data object. Core subscriptions run later, so use
             // its public reactive data proxy to keep DOM bindings current.
             const reactive = globalThis.Alpine?.$data?.(this.$el) || this;
@@ -102,16 +109,18 @@ export function legacyAutocompleterAdapter(arguments_) {
             // mousedown.preventDefault() stops the browser from moving focus
             // away from the input, so the blur handler never fires.
             this.$nextTick(() => {
+                if (this._destroyed) return;
                 const popover = this.$refs?.dropdown;
-                if (popover) {
-                    popover.addEventListener('mousedown', (e) => {
-                        // Only prevent default for clicks on the popover itself (scrollbar),
-                        // not on option items (which have their own mousedown.prevent)
-                        if (e.target === popover) {
-                            e.preventDefault();
-                        }
-                    });
-                }
+                if (!popover) return;
+                this._popover = popover;
+                this._popoverMouseDownHandler = (e) => {
+                    // Only prevent default for clicks on the popover itself (scrollbar),
+                    // not on option items (which have their own mousedown.prevent)
+                    if (e.target === popover) {
+                        e.preventDefault();
+                    }
+                };
+                popover.addEventListener('mousedown', this._popoverMouseDownHandler);
             });
 
             this._repositionHandler = () => {
@@ -168,20 +177,23 @@ export function legacyAutocompleterAdapter(arguments_) {
 
             // Form handling only when not in standalone mode
             if (form && !standalone) {
-                form.addEventListener('submit', (e) => {
+                this._form = form;
+                this._formSubmitHandler = (e) => {
                     if (this.selectedResults.length < this.min) {
                         e.preventDefault();
                         this.errorMessage = 'Please select at least ' + this.min + ' ' + (this.min === 1 ? 'value' : 'values');
                     }
-                });
-
-                form.addEventListener('reset', () => {
+                };
+                this._formResetHandler = () => {
                     this.resetSelectedResults([], { silent: false });
-                });
+                };
+                form.addEventListener('submit', this._formSubmitHandler);
+                form.addEventListener('reset', this._formResetHandler);
             }
         },
 
         _syncCoreSnapshot(snapshot, change) {
+            if (this._destroyed) return;
             const searchCompleted = snapshot.searchStatus === 'success'
                 && this._lastSearchStatus !== 'success';
             this._lastSearchStatus = snapshot.searchStatus;
@@ -239,17 +251,29 @@ export function legacyAutocompleterAdapter(arguments_) {
         },
 
         destroy() {
+            if (this._destroyed) return;
+            this._destroyed = true;
             this._unsubscribeCore?.();
             this._unsubscribeCore = null;
             this._core?.destroy();
             this._core = null;
             this._unregisterSelector?.();
             this._unregisterSelector = null;
+            this._popover?.removeEventListener('mousedown', this._popoverMouseDownHandler);
+            this._popover = null;
+            this._popoverMouseDownHandler = null;
+            this._form?.removeEventListener('submit', this._formSubmitHandler);
+            this._form?.removeEventListener('reset', this._formResetHandler);
+            this._form = null;
+            this._formSubmitHandler = null;
+            this._formResetHandler = null;
             if (this._repositionHandler) {
                 window.removeEventListener('scroll', this._repositionHandler, true);
                 window.removeEventListener('resize', this._repositionHandler);
+                this._repositionHandler = null;
             }
             this._liveRegion?.destroy();
+            this._liveRegion = null;
         },
 
         async updatePopover() {

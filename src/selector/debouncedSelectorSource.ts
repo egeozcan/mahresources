@@ -19,6 +19,7 @@ export function createDebouncedSelectorSource<TRaw>(
     delayMs: number,
 ): SelectorSource<TRaw> {
     let scheduled: ScheduledSearch<TRaw> | null = null;
+    let destroyed = false;
 
     const cancelScheduled = (candidate: ScheduledSearch<TRaw>) => {
         clearTimeout(candidate.timer);
@@ -28,6 +29,7 @@ export function createDebouncedSelectorSource<TRaw>(
     };
 
     const search = (query: string, signal: AbortSignal): Promise<readonly SelectorOption<TRaw>[]> => {
+        if (destroyed) return Promise.reject(abortError());
         if (scheduled) cancelScheduled(scheduled);
 
         return new Promise((resolve, reject) => {
@@ -53,7 +55,15 @@ export function createDebouncedSelectorSource<TRaw>(
         });
     };
 
-    const debounced: SelectorSource<TRaw> = { search };
+    const debounced: SelectorSource<TRaw> = {
+        search,
+        destroy: () => {
+            if (destroyed) return;
+            destroyed = true;
+            if (scheduled) cancelScheduled(scheduled);
+            source.destroy?.();
+        },
+    };
     if (source.create) {
         const create = source.create;
         debounced.create = (label, signal) => create.call(source, label, signal);

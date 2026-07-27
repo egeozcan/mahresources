@@ -105,6 +105,8 @@ export type SelectorCommandResult<TRaw = unknown> =
 export interface SelectorSource<TRaw = unknown> {
     search(query: string, signal: AbortSignal): Promise<readonly SelectorOption<TRaw>[]>;
     create?(label: string, signal: AbortSignal): Promise<SelectorOption<TRaw>>;
+    /** Releases decorator-owned timers/listeners once the selector is destroyed. */
+    destroy?(): void;
 }
 
 export interface SelectorConfig<TRaw = unknown> {

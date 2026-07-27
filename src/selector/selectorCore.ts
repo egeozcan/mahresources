@@ -222,6 +222,7 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
         this.searchGeneration += 1;
         this.searchController?.abort();
         this.searchController = null;
+        this.source.destroy?.();
 
         const activeCreation = this.currentCreationEntry;
         const discardedCreations = this.creationQueue.splice(0);

@@ -28,6 +28,7 @@ function createNode() {
 function createForm() {
     return {
         addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
     } as unknown as HTMLFormElement;
 }
 
@@ -517,6 +518,65 @@ describe('legacy autocompleter selector registry integration', () => {
         selector.destroy();
     });
 
+    test('cleans core, registry, and DOM listeners so remount handles each event once', () => {
+        const formListeners = new Map<string, Set<EventListener>>();
+        const popoverListeners = new Map<string, Set<EventListener>>();
+        const listenerTarget = (listeners: Map<string, Set<EventListener>>) => ({
+            addEventListener: vi.fn((event: string, listener: EventListener) => {
+                const registered = listeners.get(event) ?? new Set<EventListener>();
+                registered.add(listener);
+                listeners.set(event, registered);
+            }),
+            removeEventListener: vi.fn((event: string, listener: EventListener) => {
+                listeners.get(event)?.delete(listener);
+            }),
+        });
+        const form = listenerTarget(formListeners) as unknown as HTMLFormElement;
+        const popover = {
+            ...listenerTarget(popoverListeners),
+            matches: vi.fn(() => false),
+            hidePopover: vi.fn(),
+            showPopover: vi.fn(),
+            style: {},
+        } as unknown as HTMLElement;
+        const makeMounted = () => {
+            const mounted = mountSelector(autocompleter({
+                selectedResults: [{ ID: 1, Name: 'Alpha' }],
+                max: 0,
+                min: 0,
+                ownerId: 0,
+                url: '/v1/tags',
+                elName: 'tags',
+            }) as LegacySelector, form);
+            mounted.selector.$refs = { dropdown: popover };
+            return mounted.selector;
+        };
+        const first = makeMounted();
+        first.init();
+        first.destroy();
+
+        expect(formListeners.get('submit')).toHaveLength(0);
+        expect(formListeners.get('reset')).toHaveLength(0);
+        expect(popoverListeners.get('mousedown')).toHaveLength(0);
+        expect(window.removeEventListener).toHaveBeenCalledWith(
+            'scroll', expect.any(Function), true,
+        );
+        expect(window.removeEventListener).toHaveBeenCalledWith(
+            'resize', expect.any(Function),
+        );
+        expect(selectorRegistry.get(form, 'tags')).toBeUndefined();
+
+        const remounted = makeMounted();
+        remounted.init();
+        expect(formListeners.get('submit')).toHaveLength(1);
+        expect(formListeners.get('reset')).toHaveLength(1);
+        expect(popoverListeners.get('mousedown')).toHaveLength(1);
+
+        for (const listener of formListeners.get('reset') ?? []) listener(new Event('reset'));
+        expect(remounted.$dispatch).toHaveBeenCalledTimes(1);
+        remounted.destroy();
+    });
+
     test('registers by owning form and field name, then unregisters on destruction', () => {
         const { form, selector } = createSelector();
 
@@ -568,6 +628,7 @@ describe('legacy autocompleter selector registry integration', () => {
             addEventListener: vi.fn((event: string, callback: () => void) => {
                 if (event === 'reset') reset = callback;
             }),
+            removeEventListener: vi.fn(),
         } as unknown as HTMLFormElement;
         const { selector } = createSelector({ form });
         selector.init();

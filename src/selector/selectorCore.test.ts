@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import {
     InMemorySelectorSource,
     createSelector,
@@ -91,6 +91,21 @@ describe('selector lifecycle', () => {
         selector.destroy();
 
         expect(calls).toEqual(['kept']);
+    });
+
+    test('destroys its source exactly once after aborting owned work', () => {
+        const destroy = vi.fn();
+        const selector = createSelector({
+            source: {
+                search: async () => [],
+                destroy,
+            },
+        });
+
+        selector.destroy();
+        selector.destroy();
+
+        expect(destroy).toHaveBeenCalledTimes(1);
     });
 
     test('destroys idempotently and rejects later commands with a typed result', () => {

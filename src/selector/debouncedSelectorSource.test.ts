@@ -74,6 +74,26 @@ describe('createDebouncedSelectorSource', () => {
         expect(source.search).not.toHaveBeenCalled();
     });
 
+    test('cancels scheduled work and destroys its wrapped source exactly once', async () => {
+        vi.useFakeTimers();
+        const destroy = vi.fn();
+        const source: SelectorSource<RawValue> = {
+            search: vi.fn().mockResolvedValue(emptyResults),
+            destroy,
+        };
+        const debounced = createDebouncedSelectorSource(source, 250);
+        const pending = debounced.search('alpha', new AbortController().signal);
+        const rejection = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+
+        debounced.destroy?.();
+        debounced.destroy?.();
+        await rejection;
+        await vi.advanceTimersByTimeAsync(250);
+
+        expect(source.search).not.toHaveBeenCalled();
+        expect(destroy).toHaveBeenCalledTimes(1);
+    });
+
     test('preserves the wrapped source receiver for creation passthrough', async () => {
         const created: SelectorOption<RawValue> = {
             key: 1,
