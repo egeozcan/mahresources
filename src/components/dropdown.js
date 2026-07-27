@@ -639,6 +639,9 @@ export function autocompleter({
                             this._liveRegion.announce('No results found.');
                         }
                     }).catch(err => {
+                        if (err?.name === 'AbortError') {
+                            return;
+                        }
                         this.errorMessage = err.toString();
                     });
 

@@ -30,6 +30,48 @@ test.describe('Autocompleter behavior contract', () => {
     await expect(serializedSelections).toHaveValue(String(replacement.ID));
   });
 
+  test('rapid queries render only the latest results and cancellation is not an error', async ({ page }) => {
+    const firstQuery = `Delayed ${runId}`;
+    const latestQuery = `Latest ${runId}`;
+    let signalFirstRequest!: () => void;
+    let releaseFirstResponse!: () => void;
+    const firstRequestStarted = new Promise<void>((resolve) => { signalFirstRequest = resolve; });
+    const firstResponseGate = new Promise<void>((resolve) => { releaseFirstResponse = resolve; });
+
+    await page.goto('/group/new');
+    await page.route('**/v1/categories?*', async (route) => {
+      const query = new URL(route.request().url()).searchParams.get('name');
+      if (query === firstQuery) {
+        signalFirstRequest();
+        await firstResponseGate;
+        try {
+          await route.fulfill({ json: [{ ID: 301, Name: firstQuery }] });
+        } catch {
+          // The browser is allowed to close the deliberately aborted request.
+        }
+        return;
+      }
+      if (query === latestQuery) {
+        await route.fulfill({ json: [{ ID: 302, Name: latestQuery }] });
+        return;
+      }
+      await route.continue();
+    });
+
+    const input = page.getByRole('combobox', { name: 'Category' });
+    await input.fill(firstQuery);
+    await firstRequestStarted;
+    await input.fill(latestQuery);
+
+    await expect(page.getByRole('option', { name: latestQuery, exact: true })).toBeVisible();
+    releaseFirstResponse();
+
+    await expect(page.getByRole('option', { name: firstQuery, exact: true })).toHaveCount(0);
+    const selector = input.locator('xpath=../..');
+    const errorAlert = selector.locator('[role="alert"]');
+    await expect(errorAlert).toBeHidden();
+  });
+
   test('maximum-one replacement currently calls onSelect for both values without onRemove', async ({ page }) => {
     await page.goto('/group/new');
 
