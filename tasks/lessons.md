@@ -2,6 +2,22 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## A UI-only assertion cannot tell a successful write from one that posted nothing
+The inline tag editor serializes its own form and POSTs it. When the change notification moved from
+Alpine's `$watch('selectedResults')` (which runs *after* the DOM flush) into the selector core's
+synchronous publication (which runs *before* it), `new FormData(form)` started reading the field's
+hidden controls one render behind — so every save posted only the empty clearing control and
+`replaceTags` dutifully removed every tag. Nothing looked wrong: the chip appeared, the request
+returned 200, and the loss only showed on the next page load. Three E2E tests covered this editor
+and all three passed, because each asserted that the tag *pill* appeared.
+Two rules. First: when a test covers a write, assert the persisted state through the API, not the
+optimistic UI — the UI is exactly the thing that lies in this failure mode. Second: when moving a
+notification between Alpine's scheduler and a synchronous publish, check every consumer for a DOM
+read; "same call site, same timing" is true of the call site and false of the DOM.
+Corollary that bit immediately after the fix: making a write actually persist can break sibling
+tests that shared an entity, because a selector stops offering a value the entity already has.
+Tests covering a real write should own their entity.
+
 ## A "prove it's gone" grep must use `grep -rE` — plain `grep -r` reports "none" for an alternation that would have matched
 The Commit 46 completion criteria are static searches proving removed options have no callers left.
 Four of five ran as `grep -rn 'addUrl|extraInfo|resetSelectedResults|...'` and all printed "none" —
