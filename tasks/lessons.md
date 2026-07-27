@@ -2,6 +2,18 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## A "prove it's gone" grep must use `grep -rE` — plain `grep -r` reports "none" for an alternation that would have matched
+The Commit 46 completion criteria are static searches proving removed options have no callers left.
+Four of five ran as `grep -rn 'addUrl|extraInfo|resetSelectedResults|...'` and all printed "none" —
+including one that should have matched five live hits, because without `-E` the `|` is a literal
+character, not alternation. A second failure mode in the same command: an unquoted `$S` holding a
+space-separated path list expanded as one argument, so the search covered nothing and only a
+`No such file or directory` warning distinguished it from a real clean result. Both produce the
+*shape* of a passing verification. Fix: use `grep -rE` for any alternation, quote/expand path lists
+correctly, and sanity-check a "no matches" claim by running the same pattern against a term you know
+exists. Same family as the pipe-exit-code lesson: a verification that cannot fail is not a
+verification.
+
 ## Proofread interactive questions and remove stray generation artifacts before sending
 During a one-question-at-a-time design interview, I accidentally appended meaningless text (`bloop`) to an otherwise valid question. This distracts the user and undermines confidence in a session that depends on precise terminology. Fix: reread each short question before sending, especially its final line, and remove any unexplained token or accidental suffix.
 
