@@ -128,6 +128,70 @@ describe('legacy autocompleter selector registry integration', () => {
         selector.destroy();
     });
 
+    test('mirrors normalized search options, status, and errors from the core', async () => {
+        vi.useFakeTimers();
+        vi.mocked(fetch)
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => [{ ID: 1, Name: 'Alpha' }],
+            } as Response)
+            .mockRejectedValueOnce(new Error('lookup unavailable'));
+        const { selector } = createSelector({ selectedResults: [] });
+        selector.init();
+
+        selector._core.dispatch({ type: 'set-query', query: 'alpha' });
+        expect(selector).toMatchObject({
+            query: 'alpha',
+            searchStatus: 'loading',
+            searchError: null,
+            results: [],
+        });
+        await vi.advanceTimersByTimeAsync(200);
+        await Promise.resolve();
+        expect(selector).toMatchObject({
+            searchStatus: 'success',
+            searchError: null,
+            results: [{ ID: 1, Name: 'Alpha' }],
+        });
+
+        selector._core.dispatch({ type: 'set-query', query: 'broken' });
+        await vi.advanceTimersByTimeAsync(200);
+        await Promise.resolve();
+        expect(selector).toMatchObject({
+            searchStatus: 'error',
+            searchError: expect.objectContaining({ message: 'lookup unavailable' }),
+        });
+        selector.destroy();
+        vi.useRealTimers();
+    });
+
+    test('reevaluates dynamic adapter parameters for every core-owned HTTP search', async () => {
+        vi.useFakeTimers();
+        vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => [] } as Response);
+        const { selector } = createSelector({ selectedResults: [], url: '/v1/tags' });
+        selector.init();
+
+        selector.ownerId = 7;
+        selector._core.dispatch({ type: 'set-query', query: 'first' });
+        await vi.advanceTimersByTimeAsync(200);
+        selector.ownerId = 8;
+        selector._core.dispatch({ type: 'set-query', query: 'second' });
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(fetch).toHaveBeenNthCalledWith(
+            1,
+            '/v1/tags?ownerId=7&name=first',
+            expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        );
+        expect(fetch).toHaveBeenNthCalledWith(
+            2,
+            '/v1/tags?ownerId=8&name=second',
+            expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        );
+        selector.destroy();
+        vi.useRealTimers();
+    });
+
     test('does not bypass core candidate validity when Enter arrives during search', () => {
         const { selector } = mountSelector(autocompleter({
             selectedResults: [],

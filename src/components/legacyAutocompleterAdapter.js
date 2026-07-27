@@ -53,6 +53,9 @@ export function legacyAutocompleterAdapter(arguments_) {
         _core: null,
         _unsubscribeCore: null,
         _lastSearchStatus: 'idle',
+        // Search state is a read-only compatibility mirror of the core.
+        searchStatus: 'idle',
+        searchError: null,
         loading: false,
         _selecting: false,
         // Read-only rendering mirror of the core query.
@@ -188,6 +191,8 @@ export function legacyAutocompleterAdapter(arguments_) {
             this.dropdownActive = snapshot.isOpen;
             this.selectedIndex = snapshot.activeOptionIndex ?? -1;
             this.query = snapshot.query;
+            this.searchStatus = snapshot.searchStatus;
+            this.searchError = snapshot.searchError;
             this.createCandidate = snapshot.createCandidate?.label || '';
             this.addModeForTag = snapshot.createConfirmationCandidate?.label || '';
             this.loading = snapshot.creationStatus === 'loading';
