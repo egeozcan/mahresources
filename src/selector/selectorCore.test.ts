@@ -264,6 +264,89 @@ describe('selector selection', () => {
         expect(changes).toHaveLength(1);
     });
 
+    test('emits one atomic change when replacement only reorders selected options', () => {
+        const alpha = option(1, 'Alpha');
+        const beta = option(2, 'Beta');
+        const selector = createSelector({
+            source: new InMemorySelectorSource<RawValue>(),
+            selected: [alpha, beta],
+        });
+        const changes: unknown[] = [];
+        selector.subscribe((_snapshot, change) => changes.push(change));
+
+        const result = selector.dispatch({
+            type: 'replace-selection',
+            options: [beta, alpha],
+            reason: 'reset',
+        });
+
+        expect(selector.getSnapshot().selected).toEqual([beta, alpha]);
+        expect(result).toEqual({
+            ok: true,
+            change: {
+                previous: [alpha, beta],
+                current: [beta, alpha],
+                added: [],
+                removed: [],
+                reason: 'reset',
+            },
+        });
+        expect(changes).toEqual([result.ok ? result.change : undefined]);
+    });
+
+    test('emits one atomic change when replacement refreshes same-key option data', () => {
+        const originalRaw = { id: 1, name: 'Alpha' };
+        const refreshedRaw = { id: 1, name: 'Alpha refreshed' };
+        const original: SelectorOption<RawValue> = { key: 1, label: 'Alpha', raw: originalRaw };
+        const refreshed: SelectorOption<RawValue> = {
+            key: '1',
+            label: 'Alpha refreshed',
+            raw: refreshedRaw,
+        };
+        const selector = createSelector({
+            source: new InMemorySelectorSource<RawValue>(),
+            selected: [original],
+        });
+        const changes: unknown[] = [];
+        selector.subscribe((_snapshot, change) => changes.push(change));
+
+        const result = selector.dispatch({
+            type: 'replace-selection',
+            options: [refreshed],
+            reason: 'replace',
+        });
+
+        expect(selector.getSnapshot().selected).toEqual([refreshed]);
+        expect(result).toEqual({
+            ok: true,
+            change: {
+                previous: [original],
+                current: [refreshed],
+                added: [],
+                removed: [],
+                reason: 'replace',
+            },
+        });
+        expect(changes).toEqual([result.ok ? result.change : undefined]);
+    });
+
+    test('does not transition or notify when maxSelected is zero', () => {
+        const selector = createSelector({
+            source: new InMemorySelectorSource<RawValue>(),
+            maxSelected: 0,
+        });
+        const initialSnapshot = selector.getSnapshot();
+        let notifications = 0;
+        selector.subscribe(() => notifications += 1);
+
+        const result = selector.dispatch({ type: 'select-option', option: option(1, 'Alpha') });
+
+        expect(result).toEqual({ ok: true });
+        expect(selector.getSnapshot()).toBe(initialSnapshot);
+        expect(selector.getSnapshot().selected).toEqual([]);
+        expect(notifications).toBe(0);
+    });
+
     test('updates subscribers but emits no change for silent replacement', () => {
         const alpha = option(1, 'Alpha');
         const beta = option(2, 'Beta');

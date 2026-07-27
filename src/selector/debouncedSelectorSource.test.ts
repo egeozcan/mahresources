@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
+    InMemorySelectorSource,
     createDebouncedSelectorSource,
     type SelectorOption,
     type SelectorSource,
@@ -71,6 +72,21 @@ describe('createDebouncedSelectorSource', () => {
         await vi.advanceTimersByTimeAsync(250);
 
         expect(source.search).not.toHaveBeenCalled();
+    });
+
+    test('preserves the wrapped source receiver for creation passthrough', async () => {
+        const created: SelectorOption<RawValue> = {
+            key: 1,
+            label: 'Alpha',
+            raw: { id: 1 },
+        };
+        const source = new InMemorySelectorSource<RawValue>();
+        source.setCreateResult('Alpha', created);
+        const debounced = createDebouncedSelectorSource(source, 250);
+
+        await expect(
+            debounced.create?.('Alpha', new AbortController().signal),
+        ).resolves.toEqual(created);
     });
 
     test('propagates underlying errors after the delay', async () => {

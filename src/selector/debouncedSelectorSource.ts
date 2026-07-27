@@ -56,7 +56,7 @@ export function createDebouncedSelectorSource<TRaw>(
     const debounced: SelectorSource<TRaw> = { search };
     if (source.create) {
         const create = source.create;
-        debounced.create = (label, signal) => create(label, signal);
+        debounced.create = (label, signal) => create.call(source, label, signal);
     }
     return debounced;
 }

@@ -79,7 +79,7 @@ function sameOptions<TRaw>(
 ): boolean {
     return left.length === right.length && left.every((option, index) => {
         const candidate = right[index];
-        return canonicalKey(option.key) === canonicalKey(candidate.key)
+        return Object.is(option.key, candidate.key)
             && option.label === candidate.label
             && option.raw === candidate.raw;
     });
@@ -100,12 +100,11 @@ function selectionChange<TRaw>(
     previous: readonly SelectorOption<TRaw>[],
     current: readonly SelectorOption<TRaw>[],
     reason: SelectorChangeReason,
-): SelectorChange<TRaw> | undefined {
+): SelectorChange<TRaw> {
     const previousKeys = new Set(previous.map((option) => canonicalKey(option.key)));
     const currentKeys = new Set(current.map((option) => canonicalKey(option.key)));
     const added = Object.freeze(current.filter((option) => !previousKeys.has(canonicalKey(option.key))));
     const removed = Object.freeze(previous.filter((option) => !currentKeys.has(canonicalKey(option.key))));
-    if (added.length === 0 && removed.length === 0) return undefined;
     return Object.freeze({ previous, current, added, removed, reason });
 }
 
@@ -343,6 +342,7 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
         silent = false,
     ): SelectorCommandResult<TRaw> {
         const previous = this.snapshot.selected;
+        if (sameOptions(previous, current)) return { ok: true };
         const nextSnapshot = withState(this.snapshot, { selected: current });
         if (silent) {
             this.publish(nextSnapshot);
@@ -350,7 +350,7 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
         }
         const change = selectionChange(previous, current, reason);
         this.publish(nextSnapshot, change);
-        return change ? { ok: true, change } : { ok: true };
+        return { ok: true, change };
     }
 
     private publish(snapshot: SelectorState<TRaw>, change?: SelectorChange<TRaw>): void {
