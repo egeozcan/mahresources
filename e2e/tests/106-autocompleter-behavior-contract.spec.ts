@@ -91,6 +91,29 @@ test.describe('Autocompleter behavior contract', () => {
     categoryIds.push(Number(await selected.inputValue()));
   });
 
+  test('clicking legacy Add confirmation creates and selects the current query', async ({ page, apiClient }) => {
+    const newName = `Clicked Category ${runId}`;
+    await page.goto('/group/new');
+
+    const input = page.getByRole('combobox', { name: 'Category' });
+    await input.fill(newName);
+    await expect(page.getByRole('option', { name: `Create "${newName}"`, exact: true })).toBeVisible();
+
+    await input.press('Escape');
+    await input.press('Enter');
+    const confirmButton = page.getByRole('button', { name: `Add ${newName}?`, exact: true });
+    await confirmButton.click();
+
+    const selected = page.locator('input[type="hidden"][name="categoryId"]:not([value=""])');
+    await expect(selected).toHaveCount(1);
+    await expect(confirmButton).toHaveCount(0);
+    const selectedId = Number(await selected.inputValue());
+    await expect.poll(async () => (await apiClient.getCategories()).some(
+      (category) => category.ID === selectedId && category.Name === newName,
+    )).toBe(true);
+    categoryIds.push(selectedId);
+  });
+
   test('create UI waits for the current query search and cancel restores the input focus path', async ({ page }) => {
     const newName = `Cancelled Category ${runId}`;
     let signalRequest!: () => void;

@@ -50,6 +50,7 @@
                     inline-flex justify-center items-center py-1 px-2"
                     x-text="'Add ' + addModeForTag + '?'"
                     x-init="setTimeout(() => $el.focus(), 1)"
+                    @click="addVal"
                     @keydown.escape.prevent="exitAdd"
                     @keydown.enter.prevent="addVal"
                     @keyup.prevent=""
