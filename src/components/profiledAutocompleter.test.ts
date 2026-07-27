@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { singleEntitySelector } from './dropdown.js';
+import {
+    creatableEntitySelector,
+    singleEntitySelector,
+    tagFieldSelector,
+} from './dropdown.js';
 
 type ProfiledSelector = ReturnType<typeof singleEntitySelector> & {
     $el: HTMLElement;
@@ -100,6 +104,29 @@ describe('profiled autocompleter bridge', () => {
         expect(markup).not.toContain('onSelect: (q)');
         expect(markup).not.toContain('onRemove: ()');
         expect(markup).not.toContain("url: '/v1/queries'");
+        expect(markup).not.toContain('standalone: true');
+    });
+
+    test('paste upload uses explicit profiles and derives store values from atomic changes', () => {
+        const markup = readFileSync(
+            new URL('../../templates/partials/pasteUpload.tpl', import.meta.url),
+            'utf8',
+        );
+
+        expect(tagFieldSelector).toBeTypeOf('function');
+        expect(creatableEntitySelector).toBeTypeOf('function');
+        expect(markup).toContain('tagFieldSelector({');
+        expect(markup).toContain("usage: 'resource'");
+        expect(markup).toContain('singleEntitySelector({');
+        expect(markup).toContain("entity: 'resourceCategory'");
+        expect(markup).toContain('creatableEntitySelector({');
+        expect(markup).toContain("entity: 'series'");
+        expect(markup.match(/onChange: \(change\) =>/g)).toHaveLength(3);
+        expect(markup).toContain('$store.pasteUpload.tags = change.current.map');
+        expect(markup).toContain('$store.pasteUpload.categoryId = change.current[0]?.raw.ID || null');
+        expect(markup).toContain('$store.pasteUpload.seriesId = change.current[0]?.raw.ID || null');
+        expect(markup).not.toContain('x-effect="$store.pasteUpload');
+        expect(markup).not.toContain('selectedResults: []');
         expect(markup).not.toContain('standalone: true');
     });
 

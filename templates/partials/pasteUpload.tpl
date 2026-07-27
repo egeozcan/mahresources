@@ -130,13 +130,10 @@
                     <p class="text-sm font-medium text-stone-700">Shared metadata</p>
 
                     {# Tags autocompleter #}
-                    <div x-data="autocompleter({
-                             selectedResults: [],
-                             url: '/v1/tags',
-                             addUrl: '/v1/tag',
-                             standalone: true,
+                    <div x-data="tagFieldSelector({
+                             usage: 'resource',
+                             onChange: (change) => $store.pasteUpload.tags = change.current.map(option => option.raw.ID),
                          })"
-                         x-effect="$store.pasteUpload.tags = selectedResults.map(r => r.ID)"
                          class="relative w-full">
                         <label class="block text-xs text-stone-500 font-mono mb-1">Tags</label>
                         <div class="relative">
@@ -169,13 +166,10 @@
                     </div>
 
                     {# Category autocompleter #}
-                    <div x-data="autocompleter({
-                             selectedResults: [],
-                             url: '/v1/resourceCategories',
-                             max: 1,
-                             standalone: true,
+                    <div x-data="singleEntitySelector({
+                             entity: 'resourceCategory',
+                             onChange: (change) => $store.pasteUpload.categoryId = change.current[0]?.raw.ID || null,
                          })"
-                         x-effect="$store.pasteUpload.categoryId = selectedResults[0]?.ID || null"
                          class="relative w-full">
                         <label class="block text-xs text-stone-500 font-mono mb-1">Category</label>
                         <div class="relative">
@@ -192,14 +186,10 @@
                     </div>
 
                     {# Series autocompleter #}
-                    <div x-data="autocompleter({
-                             selectedResults: [],
-                             url: '/v1/seriesList',
-                             addUrl: '/v1/series/create',
-                             max: 1,
-                             standalone: true,
+                    <div x-data="creatableEntitySelector({
+                             entity: 'series',
+                             onChange: (change) => $store.pasteUpload.seriesId = change.current[0]?.raw.ID || null,
                          })"
-                         x-effect="$store.pasteUpload.seriesId = selectedResults[0]?.ID || null"
                          class="relative w-full">
                         <label class="block text-xs text-stone-500 font-mono mb-1">Series</label>
                         <div class="relative">

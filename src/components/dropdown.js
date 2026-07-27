@@ -1,2 +1,6 @@
 export { legacyAutocompleterAdapter as autocompleter } from './legacyAutocompleterAdapter.js';
-export { singleEntitySelector } from './profiledAutocompleter.js';
+export {
+    creatableEntitySelector,
+    singleEntitySelector,
+    tagFieldSelector,
+} from './profiledAutocompleter.js';

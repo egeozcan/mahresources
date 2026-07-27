@@ -90,6 +90,10 @@ test.describe.serial('Paste Upload', () => {
   let groupName: string;
   let noteId: number;
   let noteName: string;
+  let tagId: number;
+  let tagName: string;
+  let resourceCategoryId: number;
+  let resourceCategoryName: string;
   // Track resources created by paste-upload so we can clean up
   const createdResourceIds: number[] = [];
 
@@ -112,6 +116,14 @@ test.describe.serial('Paste Upload', () => {
       ownerId: groupId,
     });
     noteId = note.ID;
+
+    tagName = `PasteTest Tag ${uid}`;
+    const tag = await apiClient.createTag(tagName);
+    tagId = tag.ID;
+
+    resourceCategoryName = `PasteTest Resource Category ${uid}`;
+    const resourceCategory = await apiClient.createResourceCategory(resourceCategoryName);
+    resourceCategoryId = resourceCategory.ID;
   });
 
   // 1. Paste image on group detail -- modal appears with group name + preview
@@ -146,6 +158,52 @@ test.describe.serial('Paste Upload', () => {
     // Close modal for next test
     await modal.locator('button:has-text("Cancel")').click();
     await expect(modal).not.toBeVisible();
+  });
+
+  test('should update metadata store values from selector changes', async ({ page, groupPage }) => {
+    await groupPage.gotoDisplay(groupId);
+    await page.locator('body').click();
+    await pasteImage(page);
+
+    const modal = page.locator(MODAL_SELECTOR);
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    const tagInput = modal.getByLabel('Search tags');
+    await tagInput.fill(tagName);
+    const tagOption = modal.locator('#paste-upload-tags-listbox [role="option"]', { hasText: tagName });
+    await expect(tagOption).toBeVisible({ timeout: 10000 });
+    await tagOption.click();
+
+    const categoryInput = modal.getByLabel('Search categories');
+    await categoryInput.fill(resourceCategoryName);
+    const categoryOption = modal.locator('#paste-upload-category-listbox [role="option"]', { hasText: resourceCategoryName });
+    await expect(categoryOption).toBeVisible({ timeout: 10000 });
+    await categoryOption.click();
+
+    const seriesName = `PasteTest Series ${uid}`;
+    const seriesInput = modal.getByLabel('Search or create series');
+    await seriesInput.fill(seriesName);
+    const createSeriesOption = modal.locator('#paste-upload-series-listbox [role="option"]', { hasText: `Create "${seriesName}"` });
+    await expect(createSeriesOption).toBeVisible({ timeout: 10000 });
+    await createSeriesOption.click();
+
+    await expect.poll(() => page.evaluate(() => {
+      const store = (window as any).Alpine.store('pasteUpload');
+      return {
+        tags: [...store.tags],
+        categoryId: store.categoryId,
+        seriesId: store.seriesId,
+      };
+    })).toEqual({
+      tags: [tagId],
+      categoryId: resourceCategoryId,
+      seriesId: expect.any(Number),
+    });
+
+    await expect(modal.getByText(tagName, { exact: true })).toBeVisible();
+    await expect(modal.getByText(resourceCategoryName, { exact: true })).toBeVisible();
+    await expect(modal.getByText(seriesName, { exact: true })).toBeVisible();
+    await modal.locator('button:has-text("Cancel")').click();
   });
 
   // 2. Upload via modal -- resource created and owned by group
@@ -456,6 +514,20 @@ test.describe.serial('Paste Upload', () => {
     if (groupId) {
       try {
         await apiClient.deleteGroup(groupId);
+      } catch {
+        // ignore
+      }
+    }
+    if (tagId) {
+      try {
+        await apiClient.deleteTag(tagId);
+      } catch {
+        // ignore
+      }
+    }
+    if (resourceCategoryId) {
+      try {
+        await apiClient.deleteResourceCategory(resourceCategoryId);
       } catch {
         // ignore
       }
