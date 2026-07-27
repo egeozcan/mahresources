@@ -103,7 +103,9 @@ describe('legacy autocompleter selector registry integration', () => {
         );
 
         expect(markup).toContain('@mouseover="setActiveIndex(index)"');
-        expect(markup).toContain('@mousedown="startSelecting(); setActiveIndex(index); {{ action }}($event)"');
+        // A result row commits the row it names, so the click survives a newer in-flight
+        // search; the virtual create row stays on the index-based action.
+        expect(markup).toContain('@mousedown="startSelecting(); setActiveIndex(index); selectResult(result)"');
         expect(markup).toContain('@mousedown="startSelecting(); setActiveIndex(results.length); {{ action }}($event)"');
         expect(markup).not.toContain('selectedIndex = index');
     });

@@ -452,7 +452,7 @@
                              role="listbox">
                             <template x-for="(tag, rIndex) in results" :key="tag.ID">
                                 <div
-                                    @mousedown.prevent="setActiveIndex(rIndex); pushVal($event)"
+                                    @mousedown.prevent="setActiveIndex(rIndex); selectResult(tag)"
                                     @mouseover="setActiveIndex(rIndex)"
                                     :id="'lightbox-tag-result-' + rIndex"
                                     role="option"
@@ -670,7 +670,7 @@
                                              role="listbox">
                                             <template x-for="(tag, rIndex) in results" :key="tag.ID">
                                                 <div
-                                                    @mousedown.prevent="setActiveIndex(rIndex); pushVal($event)"
+                                                    @mousedown.prevent="setActiveIndex(rIndex); selectResult(tag)"
                                                     @mouseover="setActiveIndex(rIndex)"
                                                     role="option"
                                                     :aria-selected="rIndex === selectedIndex"

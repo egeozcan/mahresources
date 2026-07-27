@@ -20,7 +20,8 @@
                         :aria-selected="index === selectedIndex"
                         class="cursor-pointer p-2 flex block w-full rounded text-stone-900"
                         :class="{'bg-amber-700 !text-white': index === selectedIndex}"
-                        @mousedown="startSelecting(); setActiveIndex(index); {{ action }}($event)"
+                        {# A click names one rendered row, so it commits by identity; the index-based action would drop it while a newer search is in flight. #}
+                        @mousedown="startSelecting(); setActiveIndex(index); selectResult(result)"
                         @mouseover="setActiveIndex(index)"
                         tabindex="-1"
                     >

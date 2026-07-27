@@ -120,6 +120,52 @@ test.describe('Autocompleter behavior contract', () => {
     await expect(selected).toHaveCount(0);
   });
 
+  test('clicking a rendered option commits it even while a newer search is pending', async ({ page }) => {
+    // Enter is index-based and must not commit a stale roving option mid-search. A mouse
+    // click names one specific rendered row, so it must always commit that row -- otherwise
+    // the click is silently swallowed whenever the user out-types the debounce.
+    const renderedQuery = `Rendered ${runId}`;
+    const pendingQuery = `Rendered pending ${runId}`;
+    let pendingRequestStarted!: () => void;
+    let releasePendingResponse!: () => void;
+    const pendingRequest = new Promise<void>((resolve) => { pendingRequestStarted = resolve; });
+    const pendingResponse = new Promise<void>((resolve) => { releasePendingResponse = resolve; });
+
+    await page.goto('/group/new');
+    await page.route('**/v1/categories?*', async (route) => {
+      const query = new URL(route.request().url()).searchParams.get('name');
+      if (query === renderedQuery) {
+        await route.fulfill({ json: [{ ID: 601, Name: renderedQuery }] });
+        return;
+      }
+      if (query === pendingQuery) {
+        pendingRequestStarted();
+        await pendingResponse;
+        await route.fulfill({ json: [{ ID: 602, Name: pendingQuery }] });
+        return;
+      }
+      await route.continue();
+    });
+
+    const input = page.getByRole('combobox', { name: 'Category' });
+    const selected = page.locator('input[type="hidden"][name="categoryId"]:not([value=""])');
+
+    await input.fill(renderedQuery);
+    const renderedOption = page.getByRole('option', { name: renderedQuery, exact: true });
+    await expect(renderedOption).toBeVisible();
+
+    // A newer search is now in flight while the previous query's row is still on screen.
+    await input.fill(pendingQuery);
+    await pendingRequest;
+    await expect(renderedOption).toBeVisible();
+
+    await renderedOption.click();
+
+    await expect(selected).toHaveCount(1);
+    await expect(selected).toHaveValue('601');
+    releasePendingResponse();
+  });
+
   test('a completed search stays closed when Escape wins the response race', async ({ page }) => {
     const query = `Close race ${runId}`;
     let requestStarted!: () => void;
