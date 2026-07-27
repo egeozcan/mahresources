@@ -157,7 +157,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "/partials/form/autocompleter.tpl" with url='/v1/groups' elName='ownerId' title='Owner' selectedItems=owner max=1 id=getNextId("autocompleter") extraInfo="Category" %}
+                                {% include "/partials/form/autocompleter.tpl" with profile='single' entity='group' categoryDecoration=true elName='ownerId' title='Owner' selectedItems=owner max=1 id=getNextId("autocompleter") %}
                             </div>
                         </div>
                     </div>
@@ -170,7 +170,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "/partials/form/autocompleter.tpl" with url='/v1/resourceCategories' elName='ResourceCategoryId' title='Resource Category' selectedItems=resourceCategories min=0 max=1 id=getNextId("autocompleter") %}
+                                {% include "/partials/form/autocompleter.tpl" with profile='single' entity='resourceCategory' elName='ResourceCategoryId' title='Resource Category' selectedItems=resourceCategories min=0 max=1 id=getNextId("autocompleter") %}
                             </div>
                         </div>
                     </div>
@@ -184,7 +184,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "/partials/form/autocompleter.tpl" with url='/v1/seriesList' addUrl='/v1/series/create' elName='SeriesId' title='Series' selectedItems=series min=0 max=1 id=getNextId("autocompleter") %}
+                                {% include "/partials/form/autocompleter.tpl" with profile='creatable' entity='series' elName='SeriesId' title='Series' selectedItems=series min=0 max=1 id=getNextId("autocompleter") %}
                             </div>
                         </div>
                     </div>

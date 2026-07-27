@@ -25,8 +25,8 @@
         <form class="flex gap-2 items-start flex-col w-full" aria-label="Filter relation types">
             {% include "/partials/form/textInput.tpl" with name='Name' label='Name' value=queryValues.Name.0 %}
             {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
-            {% include "/partials/form/autocompleter.tpl" with url='/v1/categories' elName='FromCategory' title='From Category' max=1 selectedItems=fromCategories id=getNextId("autocompleter") %}
-            {% include "/partials/form/autocompleter.tpl" with url='/v1/categories' elName='ToCategory' title='To Category' max=1 selectedItems=toCategories id=getNextId("autocompleter") %}
+            {% include "/partials/form/autocompleter.tpl" with profile='single' entity='category' elName='FromCategory' title='From Category' max=1 selectedItems=fromCategories id=getNextId("autocompleter") %}
+            {% include "/partials/form/autocompleter.tpl" with profile='single' entity='category' elName='ToCategory' title='To Category' max=1 selectedItems=toCategories id=getNextId("autocompleter") %}
             {% include "/partials/form/searchButton.tpl" %}
         </form>
     </div>

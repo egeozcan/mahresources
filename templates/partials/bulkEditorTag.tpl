@@ -15,7 +15,7 @@
             <input type="hidden" name="losers" :value="id">
         </template>
         <div class="flex gap-2 items-start">
-            {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' max=1 elName='winner' title='Merge Winner' id=getNextId("tag_autocompleter") %}
+            {% include "/partials/form/autocompleter.tpl" with profile='single' entity='tag' max=1 elName='winner' title='Merge Winner' id=getNextId("tag_autocompleter") %}
             <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Merge" %}</div>
         </div>
     </form>
