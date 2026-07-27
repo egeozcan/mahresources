@@ -192,6 +192,85 @@ describe('legacy autocompleter selector registry integration', () => {
         vi.useRealTimers();
     });
 
+    test('clears token input before core creation starts and queues a virtual row while creation is loading', async () => {
+        vi.useFakeTimers();
+        const postedInputValues: string[] = [];
+        let resolveFirstCreate!: (response: Response) => void;
+        vi.mocked(fetch).mockImplementation((request, init) => {
+            if (init?.method === 'POST') {
+                postedInputValues.push((input as HTMLInputElement).value);
+                return new Promise<Response>((resolve) => {
+                    resolveFirstCreate = resolve;
+                });
+            }
+            return Promise.resolve({ ok: true, json: async () => [] } as Response);
+        });
+        const { selector } = mountSelector(autocompleter({
+            selectedResults: [],
+            max: 0,
+            min: 0,
+            ownerId: 0,
+            url: '/v1/tags',
+            addUrl: '/v1/tag',
+        }) as LegacySelector, createForm());
+        const input = { value: 'First', dispatchEvent: vi.fn() };
+        selector.$refs = { autocompleter: input as unknown as HTMLInputElement };
+        selector.init();
+
+        selector.commitToken('First');
+        expect(postedInputValues).toEqual(['']);
+
+        input.value = 'Virtual';
+        selector._core.dispatch({ type: 'set-query', query: 'Virtual' });
+        await vi.advanceTimersByTimeAsync(200);
+        await Promise.resolve();
+        selector._core.dispatch({ type: 'open' });
+        selector._core.dispatch({ type: 'move-active', direction: 'next' });
+        selector.pushVal();
+
+        expect(selector._core.getSnapshot()).toMatchObject({
+            query: '',
+            creationStatus: 'loading',
+        });
+        resolveFirstCreate({
+            ok: true,
+            json: async () => ({ ID: 1, Name: 'First' }),
+        } as Response);
+        selector.destroy();
+        vi.useRealTimers();
+    });
+
+    test('clears confirmation input before its core queue request starts', () => {
+        const postedInputValues: string[] = [];
+        vi.mocked(fetch).mockImplementation((_request, init) => {
+            if (init?.method === 'POST') {
+                postedInputValues.push((input as HTMLInputElement).value);
+                return new Promise<Response>(() => undefined);
+            }
+            return Promise.resolve({ ok: true, json: async () => [] } as Response);
+        });
+        const { selector } = mountSelector(autocompleter({
+            selectedResults: [],
+            max: 0,
+            min: 0,
+            ownerId: 0,
+            url: '/v1/tags',
+            addUrl: '/v1/tag',
+        }) as LegacySelector, createForm());
+        const input = { value: 'Confirmed', dispatchEvent: vi.fn() };
+        selector.$refs = { autocompleter: input as unknown as HTMLInputElement };
+        selector.init();
+        selector._core.dispatch({
+            type: 'request-create-confirmation',
+            label: 'Confirmed',
+        });
+
+        selector.addVal();
+
+        expect(postedInputValues).toEqual(['']);
+        selector.destroy();
+    });
+
     test('does not bypass core candidate validity when Enter arrives during search', () => {
         const { selector } = mountSelector(autocompleter({
             selectedResults: [],

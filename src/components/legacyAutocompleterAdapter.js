@@ -297,20 +297,21 @@ export function legacyAutocompleterAdapter(arguments_) {
         },
 
         addVal() {
+            if (this._core?.getSnapshot().createConfirmationCandidate) this._clearInput();
             this._core?.dispatch({ type: 'confirm-create' });
         },
 
         createAndSelectNow(name) {
-            this._clearInput();
-            this._core?.dispatch({ type: 'commit-token', token: name });
+            this.commitToken(name);
         },
 
-        // Clear the input buffer synchronously; query/search state remains core-owned.
-        _clearInput() {
+        // Clear the DOM buffer before creation can re-render it. Creation commands own query
+        // consumption themselves, so do not send an input event that invalidates their candidate.
+        _clearInput({ notify = true } = {}) {
             const inputEl = this.$refs?.autocompleter;
             if (inputEl) {
                 inputEl.value = '';
-                inputEl.dispatchEvent(new Event('input'));
+                if (notify) inputEl.dispatchEvent(new Event('input'));
             }
         },
 
@@ -329,8 +330,17 @@ export function legacyAutocompleterAdapter(arguments_) {
         },
 
         commitToken(token) {
+            const label = token.trim();
+            const snapshot = this._core?.getSnapshot();
+            const matchesAvailable = snapshot?.options.some((option) => option.label === label);
+            const matchesSelected = snapshot?.selected.some((option) => option.label === label);
+            const creates = Boolean(label && this.addUrl && !matchesAvailable && !matchesSelected);
+            // The DOM must clear before a core creation synchronously publishes state and
+            // Alpine removes/re-renders this input. Existing-option selection clears afterward
+            // so its active option is not invalidated before the command reads it.
+            if (creates) this._clearInput({ notify: false });
             const result = this._core?.dispatch({ type: 'commit-token', token });
-            if (result?.ok && result.consumed) this._clearInput();
+            if (!creates && result?.ok && result.consumed) this._clearInput();
         },
 
         exitAdd() {
@@ -352,7 +362,6 @@ export function legacyAutocompleterAdapter(arguments_) {
         },
 
         pushVal() {
-            if (this.loading) return;
             const snapshot = this._core?.getSnapshot();
             if (!snapshot) return;
             if (snapshot.isOpen && snapshot.searchStatus === 'success'
@@ -370,13 +379,16 @@ export function legacyAutocompleterAdapter(arguments_) {
                 if (active) {
                     this._liveRegion?.announce(`${this.getItemDisplayName(active.raw)} selected. Use arrow keys to navigate and enter to confirm.`);
                 }
+                const isVirtualCreateRow = !active;
+                if (isVirtualCreateRow) this._clearInput({ notify: false });
                 const result = this._core.dispatch({ type: 'commit-active' });
-                if (result.ok && result.consumed) this._clearInput();
+                if (!isVirtualCreateRow && result.ok && result.consumed) this._clearInput();
                 return;
             }
             // Confirmation is only valid for the candidate produced by the completed core search.
             // Never manufacture one from the input while search is still loading.
-            if (snapshot.searchStatus !== 'loading') {
+            if (snapshot.searchStatus !== 'loading' && snapshot.createCandidate) {
+                this._clearInput({ notify: false });
                 this._core.dispatch({ type: 'request-create-confirmation' });
             }
         },
