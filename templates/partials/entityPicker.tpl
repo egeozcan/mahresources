@@ -82,7 +82,7 @@
                                          ? $store.entityPicker.removeFromFilter(filter.key, item.ID)
                                          : $store.entityPicker.setFilter(filter.key, null)
                                  })"
-                                 @entity-picker-closed.window="selectedResults = []">
+                                 @entity-picker-closed.window="resetSelectedResults([])">
                                 <label class="block text-xs text-stone-500 font-mono mb-1" x-text="filter.label"></label>
                                 <div class="relative">
                                     <input x-ref="autocompleter"

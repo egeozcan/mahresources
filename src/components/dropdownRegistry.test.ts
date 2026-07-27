@@ -137,6 +137,40 @@ describe('legacy autocompleter selector registry integration', () => {
         withoutName.selector.destroy();
     });
 
+    test('uses the reset command for external selector synchronization', () => {
+        const entityPickerMarkup = readFileSync(
+            new URL('../../templates/partials/entityPicker.tpl', import.meta.url),
+            'utf8',
+        );
+        const lightboxMarkup = readFileSync(
+            new URL('../../templates/partials/lightbox.tpl', import.meta.url),
+            'utf8',
+        );
+
+        expect(entityPickerMarkup).toContain('@entity-picker-closed.window="resetSelectedResults([])"');
+        expect(entityPickerMarkup).not.toContain('@entity-picker-closed.window="selectedResults = []"');
+        expect(lightboxMarkup).toContain(
+            'x-effect="resetSelectedResults($store.lightbox.resourceDetails?.Tags || [])"',
+        );
+    });
+
+    test('keeps user-triggered form resets non-silent', () => {
+        let reset: (() => void) | undefined;
+        const form = {
+            addEventListener: vi.fn((event: string, callback: () => void) => {
+                if (event === 'reset') reset = callback;
+            }),
+        } as unknown as HTMLFormElement;
+        const { selector } = createSelector({ form });
+        selector.init();
+
+        reset?.();
+
+        expect(selector.selectedResults).toEqual([]);
+        expect(selector._suppressNextAnnounce).toBe(false);
+        selector.destroy();
+    });
+
     test('adapts non-silent replacement and the legacy silent reset behavior', () => {
         const { form, selector } = createSelector();
         selector.init();

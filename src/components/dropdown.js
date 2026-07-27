@@ -200,8 +200,8 @@ export function autocompleter({
                     }
                 });
 
-                form.addEventListener('reset', (e) => {
-                    this.selectedResults = [];
+                form.addEventListener('reset', () => {
+                    this.resetSelectedResults([], { silent: false });
                 });
             }
         },

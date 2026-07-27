@@ -17,13 +17,13 @@ Source: `docs/plans/2026-07-26-headless-selector-core-refactor.md`
   - [x] Rapid-query stale-result handling
   - [x] Create confirmation/current-query gating
   - [x] Dynamic relation-selector parameters
-- [ ] Batch 2 — implicit integrations (Commits 5–10)
-  - [ ] Scoped selector registry
-  - [ ] Legacy registration
-  - [ ] MRQL read migration
-  - [ ] MRQL write migration
-  - [ ] Chip removals through commands
-  - [ ] External replacement through reset commands
+- [x] Batch 2 — implicit integrations (Commits 5–10)
+  - [x] Scoped selector registry
+  - [x] Legacy registration
+  - [x] MRQL read migration
+  - [x] MRQL write migration
+  - [x] Chip removals through commands
+  - [x] External replacement through reset commands
 - [ ] Batch 3 — headless foundations (Commits 11–17)
   - [ ] Types/source/in-memory adapter
   - [ ] Lifecycle/snapshots/subscriptions
