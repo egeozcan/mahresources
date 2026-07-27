@@ -57,6 +57,7 @@ import {
   dynamicEntitySelector,
   multiEntitySelector,
   singleEntitySelector,
+  tagEditorSelector,
   tagFieldSelector,
 } from './components/dropdown.js';
 import { confirmAction } from './components/confirmAction.js';
@@ -164,6 +165,7 @@ Alpine.data('creatableEntitySelector', creatableEntitySelector);
 Alpine.data('dynamicEntitySelector', dynamicEntitySelector);
 Alpine.data('multiEntitySelector', multiEntitySelector);
 Alpine.data('tagFieldSelector', tagFieldSelector);
+Alpine.data('tagEditorSelector', tagEditorSelector);
 Alpine.data('confirmAction', confirmAction);
 Alpine.data('confirmGroupDelete', confirmGroupDelete);
 Alpine.data('freeFields', freeFields);

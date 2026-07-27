@@ -416,17 +416,12 @@
             <!-- Tag editor (autocompleter) -->
             <template x-if="$store.lightbox.resourceDetails">
                 <div
-                    x-data="autocompleter({
-                        selectedResults: [...($store.lightbox.resourceDetails?.Tags || [])],
-                        url: '/v1/tags/suggest',
-                        addUrl: '/v1/tag',
-                        standalone: true,
-                        sortBy: 'most_used_resource',
-                        onSelect: (tag) => $store.lightbox.saveTagAddition(tag),
-                        onRemove: (tag) => $store.lightbox.saveTagRemoval(tag)
+                    x-data="tagEditorSelector({
+                        usage: 'resource',
+                        selected: [...($store.lightbox.resourceDetails?.Tags || [])],
+                        association: $store.lightbox.tagAssociationAdapter()
                     })"
-                    :key="$store.lightbox.resourceDetails?.ID"
-                    x-effect="resetSelectedResults($store.lightbox.resourceDetails?.Tags || [])"
+                    x-effect="syncEntityTags($store.lightbox.resourceDetails?.ID, $store.lightbox.resourceDetails?.Tags)"
                     class="relative"
                 >
                 <label class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Tags</label>
@@ -521,8 +516,8 @@
                     <template x-for="tag in selectedResults" :key="tag.ID">
                         <span
                             class="tag-pop inline-flex items-center gap-1 px-2.5 py-1 bg-amber-700 text-white text-sm rounded-full font-mono"
-                            :class="{ 'opacity-60 tag-pending': pendingIds.has(tag.ID), 'tag-shake': failedIds.has(tag.ID) }"
-                            :data-tag-pending="pendingIds.has(tag.ID) ? 'true' : 'false'"
+                            :class="{ 'opacity-60 tag-pending': pendingIds.has(String(tag.ID)), 'tag-shake': failedIds.has(String(tag.ID)) }"
+                            :data-tag-pending="pendingIds.has(String(tag.ID)) ? 'true' : 'false'"
                         >
                             <span x-text="tag.Name"></span>
                             <button

@@ -4,6 +4,7 @@ import {
     creatableEntitySelector,
     dynamicEntitySelector,
     singleEntitySelector,
+    tagEditorSelector,
     tagFieldSelector,
 } from './dropdown.js';
 
@@ -223,6 +224,78 @@ describe('profiled autocompleter bridge', () => {
         expect(markup).toContain('change.added.forEach(option => $store.lightbox.addTagToSlot(idx, option.raw))');
         expect(markup).not.toContain('onSelect: (tag) => { $store.lightbox.addTagToSlot(idx, tag); }');
         expect(markup).not.toContain('selectedResults: tags.map');
+    });
+
+    test('lightbox tag editor uses the tag-editor profile and its association adapter', () => {
+        const markup = readFileSync(
+            new URL('../../templates/partials/lightbox.tpl', import.meta.url),
+            'utf8',
+        );
+
+        expect(markup).toContain('tagEditorSelector({');
+        expect(markup).toContain("usage: 'resource'");
+        expect(markup).toContain('association: $store.lightbox.tagAssociationAdapter()');
+        expect(markup).toContain('pendingIds.has(String(tag.ID))');
+        expect(markup).toContain('failedIds.has(String(tag.ID))');
+        expect(markup).not.toContain('$store.lightbox.saveTagAddition(tag)');
+        expect(markup).not.toContain('$store.lightbox.saveTagRemoval(tag)');
+        expect(markup).not.toContain("addUrl: '/v1/tag'");
+        expect(markup).not.toContain('standalone: true');
+    });
+
+    test('tag editor selection persists through the association adapter and exposes pending keys', async () => {
+        const alpha = { ID: 1, Name: 'Alpha' };
+        let resolveAdd: () => void = () => undefined;
+        const add = vi.fn(() => new Promise<void>((resolve) => { resolveAdd = resolve; }));
+        const remove = vi.fn(() => Promise.resolve());
+        const selector = mount(tagEditorSelector({
+            usage: 'resource',
+            association: { add, remove },
+        }) as ProfiledSelector);
+
+        selector._core.dispatch({
+            type: 'select-option',
+            option: { key: alpha.ID, label: alpha.Name, raw: alpha },
+        });
+
+        expect(add).toHaveBeenCalledWith(alpha, expect.any(AbortSignal));
+        expect([...selector.pendingIds]).toEqual(['1']);
+        // The adapter's accessors must survive the bridge composition.
+        expect(Object.getOwnPropertyDescriptor(selector, 'optionCount')?.get).toBeTypeOf('function');
+
+        resolveAdd();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect([...selector.pendingIds]).toEqual([]);
+        selector.destroy();
+    });
+
+    test('tag editor syncEntityTags resets across resources and reconciles within one', () => {
+        const alpha = { ID: 1, Name: 'Alpha' };
+        const beta = { ID: 2, Name: 'Beta' };
+        let resolveAdd: () => void = () => undefined;
+        const add = vi.fn(() => new Promise<void>((resolve) => { resolveAdd = resolve; }));
+        const selector = mount(tagEditorSelector({
+            usage: 'resource',
+            selected: [alpha],
+            association: { add, remove: vi.fn(() => Promise.resolve()) },
+        }) as ProfiledSelector);
+
+        // First effect run adopts the current resource without discarding its seeded tags.
+        selector.syncEntityTags(10, [alpha]);
+        expect(selector.selectedResults).toEqual([alpha]);
+
+        // Another surface applied Beta to the same resource: reconciled, and the untouched
+        // in-flight write for a different key would survive.
+        selector.syncEntityTags(10, [alpha, beta]);
+        expect(selector.selectedResults).toEqual([alpha, beta]);
+
+        // Navigating to another resource replaces the whole selection.
+        selector.syncEntityTags(11, [beta]);
+        expect(selector.selectedResults).toEqual([beta]);
+        expect(add).not.toHaveBeenCalled();
+        void resolveAdd;
+        selector.destroy();
     });
 
     test('compare templates use single-entity profiles and local atomic listeners', () => {

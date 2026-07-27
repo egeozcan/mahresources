@@ -87,10 +87,6 @@ export function legacyAutocompleterAdapter(arguments_) {
         _selecting: false,
         // Read-only rendering mirror of the core query.
         query: '',
-        // Optimistic-write tracking for chips whose onSelect callback is async (lightbox).
-        // Reactive Sets so chip :class / :data-tag-pending bindings update on add/delete.
-        pendingIds: new Set(),
-        failedIds: new Set(),
         _unregisterSelector: null,
         _destroyed: false,
         _popover: null,
@@ -261,9 +257,7 @@ export function legacyAutocompleterAdapter(arguments_) {
                 profileBridge.onChange?.(change);
             } else {
                 for (const option of change.removed) onRemove?.(option.raw);
-                for (const option of change.added) {
-                    this._trackPending(option.raw, onSelect?.(option.raw));
-                }
+                for (const option of change.added) onSelect?.(option.raw);
             }
             if (!standalone) {
                 this.$dispatch('multiple-input', { value: this.selectedResults, name: elName });
@@ -362,20 +356,6 @@ export function legacyAutocompleterAdapter(arguments_) {
                 inputEl.value = '';
                 if (notify) inputEl.dispatchEvent(new Event('input'));
             }
-        },
-
-        // Pending chip presentation remains at the compatibility edge until its dedicated migration.
-        _trackPending(item, ret) {
-            if (!ret || typeof ret.then !== 'function') return;
-            const id = Number(item.ID);
-            this.pendingIds.add(id);
-            ret.then(() => {
-                this.pendingIds.delete(id);
-            }).catch(() => {
-                this.pendingIds.delete(id);
-                this.failedIds.add(id);
-                setTimeout(() => this.failedIds.delete(id), 400);
-            });
         },
 
         commitToken(token) {

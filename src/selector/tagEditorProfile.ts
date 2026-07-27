@@ -49,6 +49,14 @@ export interface TagEditorProfile<TRaw extends SelectorEntityValue>
     extends EntityFieldProfile<TRaw> {
     getSnapshot(): TagEditorProfileState;
     subscribe(subscriber: TagEditorProfileSubscriber): () => void;
+    /**
+     * Reconciles the selection with associations the owning domain changed elsewhere on the
+     * SAME entity (another panel applied a tag, an optimistic cache write landed). Unlike a
+     * `replace-selection` reset, which assumes the underlying entity changed and therefore
+     * invalidates every in-flight write, this only invalidates the keys it actually moves —
+     * so a concurrent write to an untouched key keeps its pending presentation and rollback.
+     */
+    syncAssociations(options: readonly SelectorOption<TRaw>[]): void;
     /** Aborts profile-owned writes, clears transient presentation state, and destroys the selector. */
     destroy(): void;
 }
@@ -129,6 +137,19 @@ class TagEditorProfileImpl<TRaw extends SelectorEntityValue> implements TagEdito
 
     destroy(): void {
         this.dispose(true);
+    }
+
+    syncAssociations(options: readonly SelectorOption<TRaw>[]): void {
+        if (this.destroyed) return;
+        // Bypasses dispatchSelectorCommand deliberately: the per-key membership diff in
+        // handleSelectorSnapshot invalidates exactly the keys this moves, and a silent
+        // transition carries no change, so nothing is persisted back.
+        this.coreSelector.dispatch({
+            type: 'replace-selection',
+            options,
+            reason: 'reset',
+            silent: true,
+        });
     }
 
     private dispatchSelectorCommand(

@@ -203,6 +203,62 @@ describe('tag editor profile', () => {
         expect(profile.getSnapshot()).toEqual({ pendingKeys: [], failedKeys: [], destroyed: false });
     });
 
+    test('syncAssociations keeps an untouched key\'s in-flight write pending and able to roll back', async () => {
+        const alpha = tag(1, 'Alpha');
+        const beta = tag(2, 'Beta');
+        const writes = persistence();
+        const add = deferred<void>();
+        writes.add.mockReturnValue(add.promise);
+        const profile = createTagEditorProfile({ usage: 'resource', association: writes.adapter });
+
+        profile.selector.dispatch({
+            type: 'select-option',
+            option: { key: beta.ID, label: beta.Name, raw: beta },
+        });
+        expect(profile.getSnapshot().pendingKeys).toEqual(['2']);
+
+        // Another surface applied Alpha to the same resource. Beta is untouched, so its
+        // write stays live rather than being invalidated like a navigation reset would.
+        profile.syncAssociations([
+            { key: beta.ID, label: beta.Name, raw: beta },
+            { key: alpha.ID, label: alpha.Name, raw: alpha },
+        ]);
+        expect(profile.selector.getSnapshot().selected.map((option) => option.key)).toEqual([2, 1]);
+        expect(profile.getSnapshot().pendingKeys).toEqual(['2']);
+        expect(writes.add).toHaveBeenCalledTimes(1);
+
+        add.reject(new Error('add failed'));
+        await flush();
+
+        expect(profile.selector.getSnapshot().selected.map((option) => option.key)).toEqual([1]);
+        expect(profile.getSnapshot().failedKeys).toEqual(['2']);
+    });
+
+    test('syncAssociations invalidates only the keys it moves', async () => {
+        const beta = tag(2, 'Beta');
+        const writes = persistence();
+        const add = deferred<void>();
+        writes.add.mockReturnValue(add.promise);
+        const profile = createTagEditorProfile({ usage: 'resource', association: writes.adapter });
+
+        profile.selector.dispatch({
+            type: 'select-option',
+            option: { key: beta.ID, label: beta.Name, raw: beta },
+        });
+        const signal = writes.add.mock.calls[0][1];
+
+        // Beta itself was dropped elsewhere, so its write is invalidated and cannot roll back.
+        profile.syncAssociations([]);
+        expect(signal.aborted).toBe(true);
+        expect(profile.getSnapshot().pendingKeys).toEqual([]);
+
+        add.reject(new Error('add failed'));
+        await flush();
+
+        expect(profile.selector.getSnapshot().selected).toEqual([]);
+        expect(profile.getSnapshot().failedKeys).toEqual([]);
+    });
+
     test('invalidates an in-flight write before an identical external reset that core would ignore', async () => {
         const beta = tag(2, 'Beta');
         const writes = persistence();

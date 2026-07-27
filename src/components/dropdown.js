@@ -4,5 +4,6 @@ export {
     dynamicEntitySelector,
     multiEntitySelector,
     singleEntitySelector,
+    tagEditorSelector,
     tagFieldSelector,
 } from './profiledAutocompleter.js';

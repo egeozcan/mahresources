@@ -361,6 +361,17 @@ export const editPanelMethods = {
 
   // ==================== Tag API Methods ====================
 
+  // Association persistence for the lightbox tag-editor profile. The profile owns optimistic
+  // selection state; the domain keeps the detail cache, suggested-tag invalidation, recent-tag
+  // tracking and announcements below. The abort signal is deliberately unused: each write
+  // captures its resource id up front, so a write started before navigation must still land.
+  tagAssociationAdapter() {
+    return {
+      add: (tag) => this.saveTagAddition(tag),
+      remove: (tag) => this.saveTagRemoval(tag),
+    };
+  },
+
   async saveTagAddition(tag) {
     const resourceId = this.getCurrentItem()?.id;
     if (!resourceId || this._savingTagIds.has(tag.ID)) return;

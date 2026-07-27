@@ -131,6 +131,13 @@ test.describe('Lightbox suggested tags', () => {
     // The chip is optimistically removed from the suggested row.
     await expect(alphaChip).toHaveCount(0, { timeout: 5000 });
 
+    // An association applied outside the tag editor still reaches its chip list: the
+    // editor reconciles same-resource changes rather than only resetting on navigation.
+    await expect(
+      lightbox.locator('[data-quick-tag-panel] .flex.flex-wrap.gap-2 span.tag-pop')
+        .filter({ hasText: tagNames.alpha }),
+    ).toBeVisible({ timeout: 5000 });
+
     // Verified server-side: the resource now carries alpha.
     await expect
       .poll(async () => {

@@ -617,9 +617,12 @@ describe('legacy autocompleter selector registry integration', () => {
 
         expect(entityPickerMarkup).toContain('@entity-picker-closed.window="resetSelectedResults([])"');
         expect(entityPickerMarkup).not.toContain('@entity-picker-closed.window="selectedResults = []"');
+        // The lightbox tag editor routes its external synchronization through the tag-editor
+        // profile, which resets on navigation and reconciles same-resource changes per key.
         expect(lightboxMarkup).toContain(
-            'x-effect="resetSelectedResults($store.lightbox.resourceDetails?.Tags || [])"',
+            'x-effect="syncEntityTags($store.lightbox.resourceDetails?.ID, $store.lightbox.resourceDetails?.Tags)"',
         );
+        expect(lightboxMarkup).not.toContain('selectedResults = ');
     });
 
     test('keeps user-triggered form resets non-silent', () => {
