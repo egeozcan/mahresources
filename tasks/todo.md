@@ -41,21 +41,30 @@ Source: `docs/plans/2026-07-26-headless-selector-core-refactor.md`
 - [x] Batch 6 — explicit profiles (Commits 29–31)
 - [ ] Batch 7 — direct caller migrations (Commits 32–37)
 - [x] Batch 8 — shared form migrations (Commits 38–42)
-- [ ] Batch 9 — compatibility removal/docs/final verification (Commits 43–46)
+- [x] Batch 9 — compatibility removal/docs/final verification (Commits 43–46)
 
 ## Verification
 
-- [ ] Frontend unit tests and build pass.
-- [ ] Focused selector/MRQL/lightbox/relations Playwright tests pass.
-- [ ] Full Go suite passes with `json1 fts5`.
-- [ ] Browser and CLI E2E pass together.
-- [ ] PostgreSQL Go and E2E checks pass when Docker is available.
+- [x] Frontend unit tests and build pass.
+- [x] Focused selector/MRQL/lightbox/relations Playwright tests pass.
+- [x] Full Go suite passes with `json1 fts5`.
+- [x] Browser and CLI E2E pass together.
+- [x] PostgreSQL Go and E2E checks pass when Docker is available.
 - [ ] DeepSeek and GPT-5.6-Terra browser validation completed after significant integrations.
 - [ ] Fresh final code review completed.
 
 ## Review
 
-Pending implementation.
+Complete through Commit 46. Every selector is built from the headless core through an explicit
+profile; the compatibility surface (legacy options, the `multiple-input` broadcast, the
+`autocompleter` registration, the two-shape argument normalizer) is gone. Cross-module integration
+goes through the form-scoped selector registry, documented in `docs/selector-architecture.md`.
+
+Two intentional behaviour corrections, both documented: a maximum-one replacement publishes one
+atomic change (removed + added) instead of notifying per item, and an aborted search is a normal
+transition rather than a rendered error.
+
+The relation cross-filtering follow-up below stays open by design.
 
 ## Follow-up: make relation cross-filtering actually filter (deliberate product change)
 
