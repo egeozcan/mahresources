@@ -38,7 +38,7 @@ Source: `docs/plans/2026-07-26-headless-selector-core-refactor.md`
   - [x] Confirmation
   - [x] Unified queue and contract flows
 - [ ] Batch 5 — Alpine compatibility delegation (Commits 22–28)
-- [ ] Batch 6 — explicit profiles (Commits 29–31)
+- [x] Batch 6 — explicit profiles (Commits 29–31)
 - [ ] Batch 7 — direct caller migrations (Commits 32–37)
 - [ ] Batch 8 — shared form migrations (Commits 38–42)
 - [ ] Batch 9 — compatibility removal/docs/final verification (Commits 43–46)
