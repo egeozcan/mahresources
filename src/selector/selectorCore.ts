@@ -164,6 +164,12 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
                 return this.commitActive();
             case 'commit-token':
                 return this.commitToken(command.token);
+            case 'request-create-confirmation':
+                return this.requestCreateConfirmation(command.label);
+            case 'confirm-create':
+                return this.confirmCreate();
+            case 'cancel-create-confirmation':
+                return this.cancelCreateConfirmation();
             case 'select-option':
                 return this.select(command.option);
             case 'remove-option':
@@ -377,11 +383,13 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
         if (hasSelectionChange) {
             this.transitionSelection(current, 'create', false, {
                 creationStatus: this.creationQueue.length ? 'loading' : 'idle',
+                createConfirmationCandidate: null,
                 error: null,
             });
         } else {
             this.publish(withState(this.snapshot, {
                 creationStatus: this.creationQueue.length ? 'loading' : 'idle',
+                createConfirmationCandidate: null,
                 error: null,
             }));
         }
@@ -427,6 +435,30 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
             activeOptionIndex: null,
         }));
         return { ok: true };
+    }
+
+    private requestCreateConfirmation(label?: string): SelectorCommandResult<TRaw> {
+        if (!this.source.create) return { ok: true, consumed: false };
+        const candidate = label === undefined
+            ? this.snapshot.createCandidate?.label
+            : label.trim();
+        if (!candidate) return { ok: true, consumed: false };
+        this.publish(withState(this.snapshot, {
+            createConfirmationCandidate: Object.freeze({ label: candidate }),
+        }));
+        return { ok: true, consumed: true };
+    }
+
+    private confirmCreate(): SelectorCommandResult<TRaw> {
+        const candidate = this.snapshot.createConfirmationCandidate;
+        if (!candidate) return { ok: true, consumed: false };
+        return this.enqueueCreation(candidate.label);
+    }
+
+    private cancelCreateConfirmation(): SelectorCommandResult<TRaw> {
+        if (!this.snapshot.createConfirmationCandidate) return { ok: true, consumed: false };
+        this.publish(withState(this.snapshot, { createConfirmationCandidate: null }));
+        return { ok: true, consumed: true };
     }
 
     private commitActive(): SelectorCommandResult<TRaw> {
@@ -493,8 +525,16 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
         silent: boolean,
     ): SelectorCommandResult<TRaw> {
         const current = normalizeSelection(options, this.selectionLimit);
-        if (sameOptions(this.snapshot.selected, current)) return { ok: true };
-        return this.transitionSelection(current, reason, silent);
+        const state = this.snapshot.createConfirmationCandidate
+            ? { createConfirmationCandidate: null }
+            : {};
+        if (sameOptions(this.snapshot.selected, current)) {
+            if (this.snapshot.createConfirmationCandidate) {
+                this.publish(withState(this.snapshot, state));
+            }
+            return { ok: true };
+        }
+        return this.transitionSelection(current, reason, silent, state);
     }
 
     private transitionSelection(

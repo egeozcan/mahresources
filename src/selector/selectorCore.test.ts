@@ -571,6 +571,102 @@ describe('selector create candidates and token precedence', () => {
     });
 });
 
+describe('selector confirmation and unified creation queue', () => {
+    test('keeps confirmation in core and clears it on cancellation, replacement, and successful creation', async () => {
+        const source = new InMemorySelectorSource<RawValue>();
+        source.setSearchResult('Confirm me', []);
+        const creation = source.deferCreate('Confirm me');
+        const selector = createSelector({ source });
+
+        selector.dispatch({ type: 'set-query', query: 'Confirm me' });
+        await flushMicrotasks();
+        expect(selector.dispatch({ type: 'request-create-confirmation' })).toEqual({
+            ok: true,
+            consumed: true,
+        });
+        expect(selector.getSnapshot().createConfirmationCandidate).toEqual({ label: 'Confirm me' });
+
+        selector.dispatch({
+            type: 'replace-selection',
+            options: [option(9, 'External')],
+            silent: true,
+        });
+        expect(selector.getSnapshot().createConfirmationCandidate).toBeNull();
+
+        expect(selector.dispatch({
+            type: 'request-create-confirmation',
+            label: 'Confirm me',
+        })).toEqual({ ok: true, consumed: true });
+        expect(selector.dispatch({ type: 'cancel-create-confirmation' })).toEqual({
+            ok: true,
+            consumed: true,
+        });
+        expect(selector.getSnapshot().createConfirmationCandidate).toBeNull();
+
+        selector.dispatch({ type: 'request-create-confirmation', label: 'Confirm me' });
+        expect(selector.dispatch({ type: 'confirm-create' })).toEqual({ ok: true, consumed: true });
+        creation.resolve(option(1, 'Confirm me'));
+        await flushMicrotasks();
+        expect(selector.getSnapshot()).toMatchObject({
+            createConfirmationCandidate: null,
+            selected: [option(9, 'External'), option(1, 'Confirm me')],
+        });
+    });
+
+    test('processes queued entry paths in order, recovers from failures, and deduplicates labels', async () => {
+        const source = new InMemorySelectorSource<RawValue>();
+        const first = source.deferCreate('First');
+        source.setCreateFailure('Broken', new Error('cannot create'));
+        const last = source.deferCreate('Last');
+        const selector = createSelector({ source });
+        const observed = [] as Array<{ status: string; error: string | null }>;
+        selector.subscribe((snapshot) => observed.push({
+            status: snapshot.creationStatus,
+            error: snapshot.error?.message ?? null,
+        }));
+
+        selector.dispatch({ type: 'commit-token', token: 'First' });
+        selector.dispatch({ type: 'commit-token', token: 'First' });
+        selector.dispatch({ type: 'commit-token', token: 'Broken' });
+        selector.dispatch({ type: 'commit-token', token: 'Last' });
+        first.resolve(option(1, 'First'));
+        await flushMicrotasks();
+        expect(selector.getSnapshot().selected).toEqual([option(1, 'First')]);
+        expect(observed).toContainEqual({ status: 'loading', error: 'cannot create' });
+
+        last.resolve(option(2, 'Last'));
+        await flushMicrotasks();
+        expect(selector.getSnapshot()).toMatchObject({
+            selected: [option(1, 'First'), option(2, 'Last')],
+            creationStatus: 'idle',
+            error: null,
+        });
+    });
+
+    test('aborts creation and discards queued work on destruction without adding options', async () => {
+        const source = new InMemorySelectorSource<RawValue>();
+        const first = source.deferCreate('First');
+        source.setCreateResult('Second', option(2, 'Second'));
+        const selector = createSelector({ source });
+
+        selector.dispatch({ type: 'commit-token', token: 'First' });
+        selector.dispatch({ type: 'commit-token', token: 'Second' });
+        selector.destroy();
+        first.resolve(option(1, 'First'));
+        await flushMicrotasks();
+
+        expect(selector.getSnapshot()).toMatchObject({
+            destroyed: true,
+            selected: [],
+            creationStatus: 'idle',
+        });
+        expect(selector.dispatch({ type: 'commit-token', token: 'Later' })).toEqual({
+            ok: false,
+            error: { code: 'destroyed', message: 'Selector has been destroyed' },
+        });
+    });
+});
+
 describe('selector open state and navigation', () => {
     test('opens and closes explicitly while clearing the active option on close', () => {
         const selector = createSelector({
