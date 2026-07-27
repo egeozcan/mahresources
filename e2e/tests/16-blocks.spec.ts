@@ -219,6 +219,7 @@ test.describe('Block Editor UI', () => {
   let categoryId: number;
   let ownerGroupId: number;
   let noteId: number;
+  let queryId: number;
 
   test.beforeAll(async ({ apiClient }) => {
     // Create prerequisite data
@@ -340,6 +341,32 @@ test.describe('Block Editor UI', () => {
     await textarea.blur(); // Trigger save on blur
   });
 
+  test('should select and clear a table query data source', async ({ page, baseURL, apiClient }) => {
+    const queryName = `Block table query ${Date.now()}`;
+    const query = await apiClient.createQuery({ name: queryName, text: 'resources' });
+    queryId = query.ID;
+    await apiClient.createBlock(noteId, 'table', 'v', { columns: [], rows: [] });
+
+    await page.goto(`${baseURL}/note?id=${noteId}`);
+    await page.waitForLoadState('load');
+    await page.locator('button:has-text("Edit Blocks")').click();
+
+    const tableBlock = page.locator('.block-card').filter({ hasText: 'Data Source:' }).last();
+    const queryInput = tableBlock.locator('input[placeholder="Search queries..."]');
+    await expect(queryInput).toBeVisible();
+    await queryInput.fill(queryName);
+
+    const queryOption = tableBlock.locator('div.cursor-pointer', { hasText: queryName });
+    await expect(queryOption).toBeVisible({ timeout: 10000 });
+    await queryOption.click();
+
+    const selectedChip = tableBlock.locator('span.inline-flex', { hasText: queryName });
+    await expect(selectedChip).toBeVisible();
+    await selectedChip.locator('button').click();
+    await expect(selectedChip).not.toBeVisible();
+    await expect(tableBlock.locator('input[placeholder="Search queries..."]')).toBeVisible();
+  });
+
   test('should delete a block via UI', async ({ page, baseURL, apiClient }) => {
     // Create a block to delete
     await apiClient.createBlock(noteId, 'text', 'w', { text: 'Block to delete' });
@@ -388,6 +415,9 @@ test.describe('Block Editor UI', () => {
 
   test.afterAll(async ({ apiClient }) => {
     // Clean up
+    if (queryId) {
+      await apiClient.deleteQuery(queryId);
+    }
     if (noteId) {
       await apiClient.deleteNote(noteId);
     }

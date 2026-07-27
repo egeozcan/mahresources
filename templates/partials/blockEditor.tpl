@@ -410,13 +410,16 @@
                                             <label class="text-sm font-medium text-stone-700">Data Source:</label>
                                             {# Query autocomplete or Manual indicator #}
                                             <div class="w-48"
-                                                 x-data="autocompleter({
-                                                     selectedResults: queryId ? [{ ID: queryId, Name: selectedQueryName || ('Query #' + queryId) }] : [],
-                                                     url: '/v1/queries',
-                                                     max: 1,
-                                                     standalone: true,
-                                                     onSelect: (q) => $dispatch('table-query-selected', q),
-                                                     onRemove: () => $dispatch('table-query-cleared')
+                                                 x-data="singleEntitySelector({
+                                                     entity: 'query',
+                                                     selected: queryId ? [{ ID: queryId, Name: selectedQueryName || ('Query #' + queryId) }] : [],
+                                                     onChange: (change) => {
+                                                         if (change.added[0]) {
+                                                             $dispatch('table-query-selected', change.added[0].raw);
+                                                         } else if (change.removed.length && !change.current.length) {
+                                                             $dispatch('table-query-cleared');
+                                                         }
+                                                     }
                                                  })"
                                                  class="relative">
                                                 <template x-if="!addModeForTag">

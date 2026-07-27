@@ -86,6 +86,23 @@ describe('profiled autocompleter bridge', () => {
         selector.destroy();
     });
 
+    test('block editor query selector translates one atomic change into selected or cleared events', () => {
+        const markup = readFileSync(
+            new URL('../../templates/partials/blockEditor.tpl', import.meta.url),
+            'utf8',
+        );
+
+        expect(markup).toContain('singleEntitySelector({');
+        expect(markup).toContain("entity: 'query'");
+        expect(markup).toContain('onChange: (change) =>');
+        expect(markup).toContain("$dispatch('table-query-selected', change.added[0].raw)");
+        expect(markup).toContain("$dispatch('table-query-cleared')");
+        expect(markup).not.toContain('onSelect: (q)');
+        expect(markup).not.toContain('onRemove: ()');
+        expect(markup).not.toContain("url: '/v1/queries'");
+        expect(markup).not.toContain('standalone: true');
+    });
+
     test('compare templates use single-entity profiles and local atomic listeners', () => {
         const resourceCompare = readFileSync(
             new URL('../../templates/compare.tpl', import.meta.url),
