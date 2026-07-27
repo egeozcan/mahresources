@@ -9,6 +9,7 @@ import type {
     SelectorOption,
     SelectorState,
     SelectorSubscriber,
+    SelectorSource,
 } from './types';
 
 function canonicalKey(key: SelectorKey): string {
@@ -84,6 +85,17 @@ function sameOptions<TRaw>(
     });
 }
 
+function isAbortError(error: unknown): boolean {
+    return typeof error === 'object'
+        && error !== null
+        && 'name' in error
+        && error.name === 'AbortError';
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+    return error instanceof Error && error.message ? error.message : fallback;
+}
+
 function selectionChange<TRaw>(
     previous: readonly SelectorOption<TRaw>[],
     current: readonly SelectorOption<TRaw>[],
@@ -101,8 +113,12 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
     private snapshot: SelectorState<TRaw>;
     private readonly subscribers = new Set<SelectorSubscriber<TRaw>>();
     private readonly selectionLimit: number | null;
+    private readonly source: SelectorSource<TRaw>;
+    private searchController: AbortController | null = null;
+    private searchGeneration = 0;
 
     constructor(config: SelectorConfig<TRaw>) {
+        this.source = config.source;
         this.selectionLimit = config.multiple === false
             ? 1
             : config.maxSelected === undefined
@@ -135,6 +151,8 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
         }
 
         switch (command.type) {
+            case 'set-query':
+                return this.setQuery(command.query);
             case 'open':
                 return this.open();
             case 'close':
@@ -164,8 +182,90 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
 
     destroy(): void {
         if (this.snapshot.destroyed) return;
+        this.searchGeneration += 1;
+        this.searchController?.abort();
+        this.searchController = null;
         this.publish(withState(this.snapshot, { destroyed: true }));
         this.subscribers.clear();
+    }
+
+    private setQuery(query: string): SelectorCommandResult<TRaw> {
+        this.searchGeneration += 1;
+        const generation = this.searchGeneration;
+        this.searchController?.abort();
+        const controller = new AbortController();
+        this.searchController = controller;
+        this.publish(withState(this.snapshot, {
+            query,
+            activeOptionIndex: null,
+            searchStatus: 'loading',
+            error: null,
+        }));
+
+        let pending: Promise<readonly SelectorOption<TRaw>[]>;
+        try {
+            pending = this.source.search(query, controller.signal);
+        } catch (error) {
+            pending = Promise.reject(error);
+        }
+        void pending.then(
+            (options) => this.applySearchSuccess(generation, query, controller, options),
+            (error: unknown) => this.applySearchFailure(generation, query, controller, error),
+        );
+        return { ok: true };
+    }
+
+    private applySearchSuccess(
+        generation: number,
+        query: string,
+        controller: AbortController,
+        results: readonly SelectorOption<TRaw>[],
+    ): void {
+        if (!this.isCurrentSearch(generation, query, controller)) return;
+        const selectedKeys = new Set(
+            this.snapshot.selected.map((option) => canonicalKey(option.key)),
+        );
+        const options = freezeOptions(
+            results.filter((option) => !selectedKeys.has(canonicalKey(option.key))),
+        );
+        this.publish(withState(this.snapshot, {
+            options,
+            activeOptionIndex: null,
+            searchStatus: 'success',
+            error: null,
+        }));
+    }
+
+    private applySearchFailure(
+        generation: number,
+        query: string,
+        controller: AbortController,
+        error: unknown,
+    ): void {
+        if (!this.isCurrentSearch(generation, query, controller)) return;
+        if (controller.signal.aborted || isAbortError(error)) {
+            this.publish(withState(this.snapshot, { searchStatus: 'idle', error: null }));
+            return;
+        }
+        this.publish(withState(this.snapshot, {
+            searchStatus: 'error',
+            error: Object.freeze({
+                operation: 'search',
+                message: errorMessage(error, 'Search failed'),
+                cause: error,
+            }),
+        }));
+    }
+
+    private isCurrentSearch(
+        generation: number,
+        query: string,
+        controller: AbortController,
+    ): boolean {
+        return !this.snapshot.destroyed
+            && this.searchGeneration === generation
+            && this.snapshot.query === query
+            && this.searchController === controller;
     }
 
     private open(): SelectorCommandResult<TRaw> {

@@ -3,6 +3,7 @@ import {
     InMemorySelectorSource,
     createSelector,
     type SelectorOption,
+    type SelectorSource,
 } from './index';
 
 interface RawValue {
@@ -12,6 +13,12 @@ interface RawValue {
 
 function option(key: string | number, label: string): SelectorOption<RawValue> {
     return { key, label, raw: { id: Number(key), name: label } };
+}
+
+async function flushMicrotasks(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
 }
 
 describe('selector lifecycle', () => {
@@ -277,6 +284,99 @@ describe('selector selection', () => {
         expect(selector.getSnapshot().selected).toEqual([beta]);
         expect(result).toEqual({ ok: true });
         expect(notifications).toEqual([undefined]);
+    });
+});
+
+class AbortIgnoringDeferredSource implements SelectorSource<RawValue> {
+    private readonly pending = new Map<string, {
+        promise: Promise<readonly SelectorOption<RawValue>[]>;
+        resolve: (options: readonly SelectorOption<RawValue>[]) => void;
+    }>();
+
+    defer(query: string): { resolve: (options: readonly SelectorOption<RawValue>[]) => void } {
+        let resolve!: (options: readonly SelectorOption<RawValue>[]) => void;
+        const promise = new Promise<readonly SelectorOption<RawValue>[]>((resolvePromise) => {
+            resolve = resolvePromise;
+        });
+        this.pending.set(query, { promise, resolve });
+        return { resolve };
+    }
+
+    search(query: string, _signal: AbortSignal): Promise<readonly SelectorOption<RawValue>[]> {
+        const deferred = this.pending.get(query);
+        return deferred?.promise ?? Promise.reject(new Error(`No deferred search for ${query}`));
+    }
+}
+
+describe('selector search orchestration', () => {
+    test('updates the query synchronously and only applies latest results when a source ignores abort', async () => {
+        const source = new AbortIgnoringDeferredSource();
+        const stale = source.defer('old');
+        const current = source.defer('new');
+        const selector = createSelector({ source });
+
+        expect(selector.dispatch({ type: 'set-query', query: 'old' })).toEqual({ ok: true });
+        expect(selector.getSnapshot()).toMatchObject({ query: 'old', searchStatus: 'loading' });
+        selector.dispatch({ type: 'set-query', query: 'new' });
+
+        current.resolve([option(2, 'Current')]);
+        await flushMicrotasks();
+        expect(selector.getSnapshot()).toMatchObject({
+            query: 'new',
+            options: [option(2, 'Current')],
+            searchStatus: 'success',
+            error: null,
+        });
+
+        stale.resolve([option(1, 'Stale')]);
+        await flushMicrotasks();
+        expect(selector.getSnapshot()).toMatchObject({
+            query: 'new',
+            options: [option(2, 'Current')],
+            searchStatus: 'success',
+            error: null,
+        });
+    });
+
+    test('filters selected options and treats aborted searches as a normal transition', async () => {
+        const source = new InMemorySelectorSource<RawValue>();
+        const alpha = option(1, 'Alpha');
+        const beta = option(2, 'Beta');
+        const first = source.deferSearch('first');
+        source.setSearchResult('second', [alpha, beta]);
+        const selector = createSelector({ source, selected: [alpha] });
+
+        selector.dispatch({ type: 'set-query', query: 'first' });
+        selector.dispatch({ type: 'set-query', query: 'second' });
+        first.resolve([option(3, 'Ignored')]);
+        await flushMicrotasks();
+
+        expect(selector.getSnapshot()).toMatchObject({
+            query: 'second',
+            options: [beta],
+            searchStatus: 'success',
+            error: null,
+        });
+    });
+
+    test('exposes a typed search error for a current non-abort failure', async () => {
+        const source = new InMemorySelectorSource<RawValue>();
+        const failure = new Error('lookup unavailable');
+        source.setSearchFailure('broken', failure);
+        const selector = createSelector({ source });
+
+        selector.dispatch({ type: 'set-query', query: 'broken' });
+        await flushMicrotasks();
+
+        expect(selector.getSnapshot()).toMatchObject({
+            query: 'broken',
+            searchStatus: 'error',
+            error: {
+                operation: 'search',
+                message: 'lookup unavailable',
+                cause: failure,
+            },
+        });
     });
 });
 
