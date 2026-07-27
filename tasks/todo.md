@@ -56,3 +56,32 @@ Source: `docs/plans/2026-07-26-headless-selector-core-refactor.md`
 ## Review
 
 Pending implementation.
+
+## Follow-up: make relation cross-filtering actually filter (deliberate product change)
+
+`createRelation.tpl` declares dynamic filters so the pickers narrow each other:
+
+| Field | Reads | Sends |
+|---|---|---|
+| Type | FromGroupId, ToGroupId | ForFromGroup, ForToGroup |
+| From Group | GroupRelationTypeId, RelationSideFrom | RelationTypeId, RelationSide |
+| To Group | GroupRelationTypeId, RelationSideTo | RelationTypeId, RelationSide |
+
+These have never actually filtered. A selector field renders its value input followed by an
+enabled-when-empty control of the same name; `getAdditionalParams` visits every matching control
+and the last wins, so the value sent is always empty. Measured on the current code:
+
+    FromGroupId controls: ["value=\"1\" disabled=false", "value=\"\" disabled=true"]
+    request:              /v1/relationTypes?ForFromGroup=&ForToGroup=&name=Addr
+
+Commit 73fab2df ("Characterize dynamic relation selector filters") silently changed the query to
+`input[name=X]:not(:disabled)`, which activates the filters, and asserted the new behaviour in a
+test. That was reverted on 2026-07-27: a characterization commit must not change behaviour, and
+the refactor plan does not list this among its intentional corrections.
+
+Activating it is worth doing deliberately, but it needs a UX decision first: with filtering live,
+two uncategorized groups produce an EMPTY relation-type list and the user gets a dead end, instead
+of the server's "both groups and the relation type must have categories assigned" message. Decide
+whether to show all types with a hint, surface the reason inline, or block earlier — then enable
+`:not(:disabled)` (or an equivalent read of the form's effective value) and update
+`106-autocompleter-behavior-contract.spec.ts` and `69-relation-error-preserves-name.spec.ts`.

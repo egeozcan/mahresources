@@ -76,6 +76,7 @@ export function legacyAutocompleterAdapter(arguments_) {
         filterEls,
         sortBy,
         addModeForTag: false,
+        _addModeShown: false,
         createCandidate: '',
         _core: null,
         _unsubscribeCore: null,
@@ -85,6 +86,7 @@ export function legacyAutocompleterAdapter(arguments_) {
         searchError: null,
         loading: false,
         _selecting: false,
+        _selectingTimer: null,
         // Read-only rendering mirror of the core query.
         query: '',
         _unregisterSelector: null,
@@ -229,7 +231,17 @@ export function legacyAutocompleterAdapter(arguments_) {
             this.searchStatus = snapshot.searchStatus;
             this.searchError = snapshot.searchError;
             this.createCandidate = snapshot.createCandidate?.label || '';
-            this.addModeForTag = snapshot.createConfirmationCandidate?.label || '';
+            // `false` is a sentinel, not just a falsy value: the shared field autofocuses on
+            // `addModeForTag !== false`. It must stay `false` until the "Add X?" confirmation has
+            // actually been shown -- otherwise every selector grabs focus during init and leaves
+            // an open dropdown over the page -- and become '' once that flow closes, which is
+            // what returns focus to the input after Cancel.
+            if (snapshot.createConfirmationCandidate) {
+                this.addModeForTag = snapshot.createConfirmationCandidate.label;
+                this._addModeShown = true;
+            } else {
+                this.addModeForTag = this._addModeShown ? '' : false;
+            }
             this.loading = snapshot.creationStatus === 'loading';
 
             if (!change) {
@@ -381,9 +393,20 @@ export function legacyAutocompleterAdapter(arguments_) {
             this._core?.dispatch({ type: 'cancel-create-confirmation' });
         },
 
+        // Suppresses the blur-close between an option's mousedown and its commit. The timeout is
+        // only a safety net for a mousedown that never commits (a scrollbar drag); a commit ends
+        // the suppression immediately, otherwise the popover outlives the blur that should have
+        // closed it and covers the next field on the form.
         startSelecting() {
             this._selecting = true;
-            setTimeout(() => { this._selecting = false; }, 200);
+            clearTimeout(this._selectingTimer);
+            this._selectingTimer = setTimeout(() => { this._selecting = false; }, 200);
+        },
+
+        _endSelecting() {
+            clearTimeout(this._selectingTimer);
+            this._selectingTimer = null;
+            this._selecting = false;
         },
 
         setActiveIndex(index) {
@@ -391,11 +414,13 @@ export function legacyAutocompleterAdapter(arguments_) {
         },
 
         selectResult(item) {
+            this._endSelecting();
             const result = this._core?.dispatch({ type: 'select-option', option: source.mapOption(item) });
             if (result?.ok) this._clearInput();
         },
 
         pushVal() {
+            this._endSelecting();
             const snapshot = this._core?.getSnapshot();
             if (!snapshot) return;
             if (snapshot.isOpen && snapshot.searchStatus === 'success'
@@ -580,7 +605,12 @@ export function legacyAutocompleterAdapter(arguments_) {
                     return;
                 }
                 setTimeout(() => {
-                    if (!this._selecting) this._core?.dispatch({ type: 'close' });
+                    if (this._selecting) return;
+                    // Focus can return before this fires -- committing an option blurs the
+                    // input and the caller (or the user) refocuses it right after. Closing
+                    // then would hide a dropdown that is being used again.
+                    if (document.activeElement === this.$refs?.autocompleter) return;
+                    this._core?.dispatch({ type: 'close' });
                 }, 150);
             },
 
@@ -608,7 +638,15 @@ export function legacyAutocompleterAdapter(arguments_) {
 
             if (this.filterEls && Array.isArray(this.filterEls)) {
                 for (const filter of this.filterEls) {
-                    document.querySelectorAll(`input[name=${filter.nameInput}]:not(:disabled)`).forEach((input) => {
+                    // Deliberately unfiltered, matching the pre-refactor selector: every
+                    // control with this name is visited and the last one wins. A field with a
+                    // selection renders its value input followed by the disabled empty control,
+                    // so the effective value is empty and the dependent search stays unfiltered.
+                    // Narrowing this to :not(:disabled) makes these filters bite for the first
+                    // time, which is a product change (it can empty the relation-type list for
+                    // uncategorized groups) and is out of scope for a behaviour-preserving
+                    // refactor.
+                    document.querySelectorAll(`input[name=${filter.nameInput}]`).forEach((input) => {
                         params[filter.nameGet] = input.value;
                     });
                 }

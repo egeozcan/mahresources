@@ -166,6 +166,51 @@ test.describe('Autocompleter behavior contract', () => {
     releasePendingResponse();
   });
 
+  test('a dropdown closes on blur after a mouse selection so it cannot cover the next field', async ({ page, apiClient }) => {
+    // startSelecting() suppresses the blur-close so the mousedown can commit. Once it has
+    // committed, the suppression must end -- otherwise the popover stays in the top layer and
+    // swallows clicks aimed at the next selector on the same form.
+    const category = await apiClient.createCategory(`Blur Close ${runId}`);
+    categoryIds.push(category.ID);
+
+    await page.goto('/group/new');
+
+    const categoryInput = page.getByRole('combobox', { name: 'Category' });
+    await categoryInput.fill(category.Name);
+    const option = page.getByRole('option', { name: category.Name, exact: true });
+    await expect(option).toBeVisible();
+
+    const listbox = page.locator(
+      `#${await option.evaluate(el => el.id.replace(/-result-\d+$/, ''))}-listbox`,
+    );
+    await expect(listbox).toBeVisible();
+    await option.click();
+    await expect(page.locator('input[type="hidden"][name="categoryId"]:not([value=""])')).toHaveCount(1);
+
+    // Move focus to another selector on the same form.
+    await page.getByRole('combobox', { name: 'Tags' }).click();
+
+    await expect(listbox).toBeHidden({ timeout: 5000 });
+  });
+
+  test('selectors neither steal focus nor open a dropdown on page load', async ({ page }) => {
+    // The shared field autofocuses only while the "Add X?" confirmation is showing, gated on
+    // addModeForTag !== false. If the adapter downgrades that sentinel to '' during init, every
+    // selector on the page grabs focus and runs an empty-query search, leaving an open popover
+    // in the top layer that swallows clicks meant for the page underneath.
+    await page.goto('/groups');
+    await page.waitForLoadState('load');
+    // Past the 1ms autofocus, the 200ms search debounce and its response.
+    await page.waitForTimeout(1000);
+
+    const focused = await page.evaluate(() => ({
+      role: document.activeElement?.getAttribute('role') ?? null,
+      id: document.activeElement?.id ?? null,
+    }));
+    expect(focused.role).not.toBe('combobox');
+    await expect(page.locator('[role="option"]:visible')).toHaveCount(0);
+  });
+
   test('a completed search stays closed when Escape wins the response race', async ({ page }) => {
     const query = `Close race ${runId}`;
     let requestStarted!: () => void;
@@ -307,15 +352,24 @@ test.describe('Autocompleter behavior contract', () => {
       return groupRequests.find((request) => request.name === query);
     };
 
+    // Every request re-reads the live form controls. RelationSide is a plain hidden input, so
+    // its current value is what gets sent.
+    //
+    // RelationTypeId comes from a selector field, which renders its value input followed by an
+    // enabled-when-empty control of the same name. The lookup visits every matching control and
+    // the last one wins, so a selected relation type is sent as an empty value and the dependent
+    // group search is NOT actually narrowed. That is the long-standing behaviour this refactor
+    // preserves; making these filters bite is a product change tracked separately in
+    // tasks/todo.md, because it leaves uncategorized groups with no selectable relation type.
     await selectType(typeA);
     expect(await searchGroups('baseline-groups')).toMatchObject({
-      RelationTypeId: String(typeA.ID),
+      RelationTypeId: '',
       RelationSide: '0',
     });
 
     await selectType(typeB);
     expect(await searchGroups('changed-type-groups')).toMatchObject({
-      RelationTypeId: String(typeB.ID),
+      RelationTypeId: '',
       RelationSide: '0',
     });
 
@@ -323,8 +377,17 @@ test.describe('Autocompleter behavior contract', () => {
       input.value = '1';
     });
     expect(await searchGroups('changed-side-groups')).toMatchObject({
-      RelationTypeId: String(typeB.ID),
+      RelationTypeId: '',
       RelationSide: '1',
+    });
+
+    // The guard Commit 42 needs: parameters are re-evaluated per request from the live DOM,
+    // not captured once at initialization.
+    await page.locator('input[name="RelationSideFrom"]').evaluate((input: HTMLInputElement) => {
+      input.value = '0';
+    });
+    expect(await searchGroups('reverted-side-groups')).toMatchObject({
+      RelationSide: '0',
     });
   });
 

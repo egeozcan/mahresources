@@ -5242,6 +5242,11 @@
       }
     }
   }
+  .\[role\=\"option\"\]\:visible {
+    &:is(role="option") {
+      visibility: visible;
+    }
+  }
 }
 @layer base {
   input[type='text'], input[type='email'], input[type='url'], input[type='password'], input[type='number'], input[type='date'], input[type='datetime-local'], input[type='month'], input[type='search'], input[type='tel'], input[type='time'], input[type='week'], input:not([type]), textarea, select {

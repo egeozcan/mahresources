@@ -296,6 +296,32 @@ describe('legacy autocompleter selector registry integration', () => {
             createCandidate: null,
             createConfirmationCandidate: null,
         });
+        // Still the untouched sentinel: the confirmation has never been shown, so the shared
+        // field's `addModeForTag !== false` autofocus guard must not fire.
+        expect(selector.addModeForTag).toBe(false);
+        selector.destroy();
+    });
+
+    test('keeps the add-mode sentinel false until the confirmation has been shown', () => {
+        const { selector } = mountSelector(autocompleter({
+            selectedResults: [],
+            max: 0,
+            min: 0,
+            ownerId: 0,
+            url: '/v1/tags',
+            addUrl: '/v1/tag',
+        }) as LegacySelector, createForm());
+        selector.$refs = { autocompleter: { value: '' } as HTMLInputElement };
+        selector.init();
+
+        expect(selector.addModeForTag).toBe(false);
+
+        selector._core.dispatch({ type: 'request-create-confirmation', label: 'brand new' });
+        expect(selector.addModeForTag).toBe('brand new');
+
+        // Once the flow has been entered, leaving it yields '' -- which is what re-focuses the
+        // input after Cancel.
+        selector._core.dispatch({ type: 'cancel-create-confirmation' });
         expect(selector.addModeForTag).toBe('');
         selector.destroy();
     });

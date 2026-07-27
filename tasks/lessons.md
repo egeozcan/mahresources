@@ -109,3 +109,29 @@ Blurring to `document.body` puts focus OUTSIDE the dialog's `x-trap`, so the tra
 focus back onto a panel element before the keypress lands → the shortcut no-ops. Focus the
 dialog root (`[role="dialog"][aria-modal="true"]…`, a `<div tabindex="-1">` INSIDE the trap)
 before pressing, so the shortcut fires deterministically and matches real keyboard usage.
+
+## Never read a test suite's result through a pipe
+`npm run test:with-server ... | tail -60` reports **tail's** exit status, not Playwright's, so a
+run with 115 hard failures looks like "exit code 0". `tail` also buffers, so a backgrounded
+piped run shows nothing until it ends. Redirect to a file instead (`> run.log 2>&1; echo $?`),
+and cross-check `e2e/test-results/.last-run.json` (`status`, `failedTests[]`) — the count of
+`*-retry2` directories under `test-results/` is the number that failed every attempt.
+
+## "Pre-existing" needs a baseline you actually chose
+Comparing a failure against HEAD~1 only exonerates HEAD~1. To claim a failure predates your
+work, check out the commit you started from — and if it fails there too, keep going to the
+branch base before concluding anything. `git bisect run` with a single fast spec as the
+predicate is cheap (~6 builds) and gives a real answer instead of a plausible story.
+
+## Focused test runs hide cross-cutting breakage in shared UI
+Batches 1–7A each verified with focused specs and stayed green while a shared-form regression
+(swallowed dropdown clicks) took out 115 tests across schema search, MRQL sync and a11y. When a
+batch touches a partial that ~67 call sites include, run the full browser suite at the phase
+boundary, not just the specs for the caller you migrated.
+
+## Mouse selection is identity-based; Enter is index-based
+A stale-search guard (`searchStatus === 'success'`) belongs on the keyboard path, where the
+roving active index may point at an option the user never aimed at. A click names one rendered
+row, so it must commit that row by identity (`selectResult(result)`), or the click is silently
+dropped whenever the user out-types the debounce. Applying one guard to both paths is what
+broke it.
