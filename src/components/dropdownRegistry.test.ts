@@ -31,6 +31,17 @@ function createForm() {
     } as unknown as HTMLFormElement;
 }
 
+function mountSelector(selector: LegacySelector, form: HTMLFormElement | null) {
+    const root = createNode() as unknown as HTMLElement & { closest: (selector: string) => HTMLFormElement | null };
+    root.closest = vi.fn(() => form);
+    selector.$el = root;
+    selector.$refs = {};
+    selector.$watch = vi.fn();
+    selector.$nextTick = (callback) => callback();
+    selector.$dispatch = vi.fn();
+    return { form, selector };
+}
+
 function createSelector({
     form = createForm(),
     elName = 'tags',
@@ -42,22 +53,14 @@ function createSelector({
     selectedResults?: Array<Record<string, unknown>>;
     url?: string;
 } = {}) {
-    const root = createNode() as unknown as HTMLElement & { closest: (selector: string) => HTMLFormElement | null };
-    root.closest = vi.fn(() => form);
-    const selector = autocompleter({
+    return mountSelector(autocompleter({
         selectedResults,
         max: 0,
         min: 0,
         ownerId: 0,
         url,
         elName,
-    }) as LegacySelector;
-    selector.$el = root;
-    selector.$refs = {};
-    selector.$watch = vi.fn();
-    selector.$nextTick = (callback) => callback();
-    selector.$dispatch = vi.fn();
-    return { form, selector };
+    }) as LegacySelector, form);
 }
 
 describe('legacy autocompleter selector registry integration', () => {
@@ -92,9 +95,9 @@ describe('legacy autocompleter selector registry integration', () => {
         expect(markup).not.toContain('selectedResults.splice');
     });
 
-    test('removeItem calls the compatibility callback exactly once', () => {
+    test('routes chip removal through the initialized core and calls the compatibility callback once', () => {
         const onRemove = vi.fn();
-        const selector = autocompleter({
+        const { selector } = mountSelector(autocompleter({
             selectedResults: [{ ID: 1, Name: 'Alpha' }],
             max: 0,
             min: 0,
@@ -102,13 +105,62 @@ describe('legacy autocompleter selector registry integration', () => {
             url: '/v1/tags',
             elName: 'tags',
             onRemove,
-        });
+        }) as LegacySelector, createForm());
+        selector.init();
 
         selector.removeItem({ ID: 1, Name: 'Alpha' });
 
         expect(selector.selectedResults).toEqual([]);
         expect(onRemove).toHaveBeenCalledTimes(1);
         expect(onRemove).toHaveBeenCalledWith({ ID: 1, Name: 'Alpha' });
+        selector.destroy();
+    });
+
+    test('translates maximum-one replacement atomically with removals before additions and one aggregate event', () => {
+        const calls: string[] = [];
+        const onRemove = vi.fn((item) => calls.push(`remove:${item.Name}`));
+        const onSelect = vi.fn((item) => calls.push(`select:${item.Name}`));
+        const { selector } = mountSelector(autocompleter({
+            selectedResults: [{ ID: 1, Name: 'Alpha' }],
+            max: 1,
+            min: 0,
+            ownerId: 0,
+            url: '/v1/tags',
+            onRemove,
+            onSelect,
+        }) as LegacySelector, createForm());
+        selector.init();
+
+        selector.selectResult({ ID: 2, Name: 'Beta' });
+
+        expect(selector.selectedResults).toEqual([{ ID: 2, Name: 'Beta' }]);
+        expect(calls).toEqual(['remove:Alpha', 'select:Beta']);
+        expect(selector.$dispatch).toHaveBeenCalledTimes(1);
+        expect(selector.$dispatch).toHaveBeenCalledWith('multiple-input', {
+            value: [{ ID: 2, Name: 'Beta' }],
+            name: undefined,
+        });
+        selector.destroy();
+    });
+
+    test('uses core replacement for nullable clear and keeps a silent reset callback/event-free', () => {
+        const onRemove = vi.fn();
+        const { selector } = mountSelector(autocompleter({
+            selectedResults: [{ ID: 1, Name: 'Alpha' }],
+            max: 0,
+            min: 0,
+            ownerId: 0,
+            url: '/v1/tags',
+            onRemove,
+        }) as LegacySelector, createForm());
+        selector.init();
+
+        selector.resetSelectedResults(null, { silent: true });
+
+        expect(selector.selectedResults).toEqual([]);
+        expect(onRemove).not.toHaveBeenCalled();
+        expect(selector.$dispatch).not.toHaveBeenCalled();
+        selector.destroy();
     });
 
     test('registers by owning form and field name, then unregisters on destruction', () => {
@@ -184,11 +236,11 @@ describe('legacy autocompleter selector registry integration', () => {
 
         selector.resetSelectedResults([{ ID: 3, Name: 'Gamma' }]);
         expect(selector.selectedResults).toEqual([{ ID: 3, Name: 'Gamma' }]);
-        expect(selector._suppressNextAnnounce).toBe(true);
+        expect(selector._suppressNextAnnounce).toBe(false);
 
         handle.replaceRawValues([{ ID: 4, Name: 'Delta' }], { silent: true });
         expect(selector.selectedResults).toEqual([{ ID: 4, Name: 'Delta' }]);
-        expect(selector._suppressNextAnnounce).toBe(true);
+        expect(selector._suppressNextAnnounce).toBe(false);
 
         selector.destroy();
     });
@@ -204,7 +256,7 @@ describe('legacy autocompleter selector registry integration', () => {
             { ID: 1, Name: 'Alpha', MetaSchema: 'hydrated' },
             { ID: 2, Name: '#2' },
         ]);
-        expect(selector._suppressNextAnnounce).toBe(true);
+        expect(selector._suppressNextAnnounce).toBe(false);
 
         selector.destroy();
     });
@@ -232,7 +284,7 @@ describe('legacy autocompleter selector registry integration', () => {
             { ID: 2, Name: 'Beta' },
             { ID: 3, Name: 'GAMMA' },
         ]);
-        expect(selector._suppressNextAnnounce).toBe(true);
+        expect(selector._suppressNextAnnounce).toBe(false);
 
         selector.destroy();
     });

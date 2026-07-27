@@ -1,4 +1,8 @@
-import { abortableFetch } from '../index.js';
+import {
+    createDebouncedSelectorSource,
+    createHttpSelectorSource,
+    createSelector,
+} from '../selector/index.ts';
 import { selectorRegistry } from '../selector/selectorRegistry.ts';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { normalizeLegacyAutocompleterConfig } from './legacyAutocompleterConfig.ts';
@@ -47,6 +51,9 @@ export function legacyAutocompleterAdapter(arguments_) {
         requestAborter: null,
         debounceTimer: null,
         addModeForTag: false,
+        createCandidate: '',
+        _core: null,
+        _unsubscribeCore: null,
         loading: false,
         _selecting: false,
         // Reactive mirror of the input's current value, so createCandidate() recomputes as
@@ -72,47 +79,24 @@ export function legacyAutocompleterAdapter(arguments_) {
         _createQueue: [],
         _processingCreateQueue: false,
 
-        // The trimmed buffer to offer as a brand-new tag: only when an addUrl exists, the
-        // buffer is non-empty, and it is not already an exact result or an applied chip.
-        get createCandidate() {
-            const token = (this.query || '').trim();
-            if (!this.addUrl || !token) return '';
-            // Only offer create once the search for THIS buffer has completed, so the row never
-            // appears during the debounce window (where it would be taken for a real result).
-            if ((this._searchedQuery || '').trim() !== token) return '';
-            if (this.results.some(x => x.Name === token)) return '';
-            if (this.selectedResults.some(x => x.Name === token)) return '';
-            return token;
-        },
-
         init() {
-            this.selectedResults.forEach(val => {
-                this.selectedIds.add(val.ID);
+            this._core = createSelector({
+                source: createDebouncedSelectorSource(createHttpSelectorSource({
+                    searchUrl: url,
+                    createUrl: addUrl || undefined,
+                    parameters: () => this.getAdditionalParams(),
+                    mapOption: source.mapOption,
+                }), 200),
+                selected: selectedResults.map(source.mapOption),
+                maxSelected: max === 0 ? undefined : max,
             });
+            this._unsubscribeCore = this._core.subscribe((snapshot, change) => {
+                this._syncCoreSnapshot(snapshot, change);
+            });
+            this._syncCoreSnapshot(this._core.getSnapshot());
 
             // Add ARIA live region for announcements
             this._liveRegion = createLiveRegion(this.$el);
-
-            this.$watch('selectedResults', (values, oldValues) => {
-                this.selectedIds.clear();
-                values.forEach(val => {
-                    this.selectedIds.add(val.ID);
-                });
-                if (!standalone) {
-                    this.$dispatch('multiple-input', { value: this.selectedResults, name: elName });
-                }
-
-                // Announce selection changes — but not when this change is an external
-                // wholesale swap (e.g. the lightbox displaying a different resource's tags)
-                // rather than a real user add/remove on the current selection.
-                if (this._suppressNextAnnounce) {
-                    this._suppressNextAnnounce = false;
-                } else if (values.length > oldValues.length) {
-                    this._liveRegion.announce(`Added ${values[values.length-1].Name}`);
-                } else if (values.length < oldValues.length) {
-                    this._liveRegion.announce(`Removed item, ${values.length} items remaining`);
-                }
-            });
 
             // Popover management: show/hide and reposition
             this.$watch('dropdownActive', () => this.updatePopover());
@@ -204,7 +188,61 @@ export function legacyAutocompleterAdapter(arguments_) {
             }
         },
 
+        _syncCoreSnapshot(snapshot, change) {
+            this.results = snapshot.options.map((option) => option.raw);
+            this.selectedResults = snapshot.selected.map((option) => option.raw);
+            this.selectedIds = new Set(this.selectedResults.map((value) => value.ID));
+            this.dropdownActive = snapshot.isOpen;
+            this.selectedIndex = snapshot.activeOptionIndex ?? -1;
+            this.query = snapshot.query;
+            this.createCandidate = snapshot.createCandidate?.label || '';
+            this.addModeForTag = snapshot.createConfirmationCandidate?.label || '';
+            this.loading = snapshot.creationStatus === 'loading';
+
+            if (!change) {
+                const input = this.$refs?.autocompleter;
+                if (snapshot.searchStatus === 'success' && input && document.activeElement === input) {
+                    if (this.optionCount && snapshot.activeOptionIndex === null) {
+                        this._core?.dispatch({ type: 'move-active', direction: 'next' });
+                    }
+                    if (this.results.length) {
+                        this._liveRegion?.announce(`${this.results.length} result${this.results.length === 1 ? '' : 's'} available. Use arrow keys to navigate.`);
+                    } else if (!this.createCandidate) {
+                        this._liveRegion?.announce('No results found.');
+                    }
+                }
+                if (snapshot.searchStatus === 'error') this.errorMessage = snapshot.searchError?.message || 'Search failed';
+                if (snapshot.creationStatus === 'error') {
+                    this.errorMessage = `Could not add ${snapshot.creationError?.message || 'item'}`;
+                    setTimeout(() => { this.errorMessage = '' }, 3000);
+                }
+                return;
+            }
+            for (const option of change.removed) onRemove?.(option.raw);
+            for (const option of change.added) {
+                this._trackPending(option.raw, onSelect?.(option.raw));
+                if (dispatchOnSelect) {
+                    window.dispatchEvent(new CustomEvent(dispatchOnSelect, {
+                        detail: { item: option.raw },
+                        bubbles: true,
+                    }));
+                }
+            }
+            if (!standalone) {
+                this.$dispatch('multiple-input', { value: this.selectedResults, name: elName });
+            }
+            if (change.added.length) {
+                this._liveRegion?.announce(`Added ${change.added[change.added.length - 1].raw.Name}`);
+            } else if (change.removed.length) {
+                this._liveRegion?.announce(`Removed item, ${this.selectedResults.length} items remaining`);
+            }
+        },
+
         destroy() {
+            this._unsubscribeCore?.();
+            this._unsubscribeCore = null;
+            this._core?.destroy();
+            this._core = null;
             this._unregisterSelector?.();
             this._unregisterSelector = null;
             if (this._repositionHandler) {
@@ -259,77 +297,16 @@ export function legacyAutocompleterAdapter(arguments_) {
             }
         },
 
-        // Confirm-button path ("Add X?"): create the tag named by addModeForTag, then leave
-        // add-mode (which re-renders an empty input). Called as a bare Alpine handler, so it
-        // takes no positional args.
-        async addVal() {
-            const name = this.addModeForTag;
-            await this._createAndSelect(name);
-            this.exitAdd();
+        addVal() {
+            this._core?.dispatch({ type: 'confirm-create' });
         },
 
-        // One-step create used by comma-commit and the "Create X" dropdown row: create the
-        // tag and clear the input without flashing the "Add X?" confirm UI (which would steal
-        // focus mid-typing). Queued so committing several brand-new tags back-to-back (e.g.
-        // typing "a,b,") doesn't silently drop a token whose create POST starts while an
-        // earlier one is still in flight — _createAndSelect's single `loading` guard would
-        // otherwise no-op it.
-        async createAndSelectNow(name) {
-            // Clear the buffer up front (optimistic, and while the input ref is still valid —
-            // it can go stale across the create await as the dropdown/templates re-render).
+        createAndSelectNow(name) {
             this._clearInput();
-            this._createQueue.push(name);
-            if (this._processingCreateQueue) return;
-            this._processingCreateQueue = true;
-            while (this._createQueue.length) {
-                const next = this._createQueue.shift();
-                // An earlier queued create (or a fast exact-match select) may have already
-                // applied this exact name while we waited — skip a redundant duplicate create.
-                if (this.selectedResults.some(x => x.Name === next)) continue;
-                await this._createAndSelect(next);
-            }
-            this._processingCreateQueue = false;
+            this._core?.dispatch({ type: 'commit-token', token: name });
         },
 
-        // Shared network add. POSTs to addUrl, applies the returned tag, and tracks the
-        // optimistic onSelect thenable (lightbox) for the pending/failure chip visuals.
-        async _createAndSelect(name) {
-            if (this.loading || !name) {
-                return;
-            }
-
-            this.loading = true;
-
-            try {
-                const response = await fetch(this.addUrl, {
-                    method: 'POST',
-                    body: JSON.stringify({ Name: name, ...this.getAdditionalParams() }),
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                });
-                if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({}));
-                    throw new Error(errorData.error || `Server error: ${response.status}`);
-                }
-                const newVal = await response.json();
-                this.selectedResults.push(newVal);
-                this.selectedIds.add(newVal.ID);
-                this.ensureMaxItems();
-
-                // Call onSelect callback if provided
-                if (onSelect) {
-                    this._trackPending(newVal, onSelect(newVal));
-                }
-            } catch (e) {
-                this.errorMessage = `Could not add ${name}`
-                setTimeout(() => { this.errorMessage = '' }, 3000);
-            } finally {
-                this.loading = false;
-            }
-        },
-
-        // Clear the input buffer and re-fire its input event so results/createCandidate reset.
+        // Clear the input buffer synchronously; query/search state remains core-owned.
         _clearInput() {
             const inputEl = this.$refs?.autocompleter;
             if (inputEl) {
@@ -338,8 +315,7 @@ export function legacyAutocompleterAdapter(arguments_) {
             }
         },
 
-        // Add the chip's id to pendingIds while an async onSelect is in flight; on rejection,
-        // briefly mark it failed (the lightbox store also rolls the chip back).
+        // Pending chip presentation remains at the compatibility edge until its dedicated migration.
         _trackPending(item, ret) {
             if (!ret || typeof ret.then !== 'function') return;
             const id = Number(item.ID);
@@ -353,131 +329,65 @@ export function legacyAutocompleterAdapter(arguments_) {
             });
         },
 
-        // Commit a typed token: select an exact-match result, else create it (when addUrl is
-        // set). No-op for an already-applied name. Used by comma/space commit.
         commitToken(token) {
-            if (!token) return;
-            if (this.selectedResults.some(x => x.Name === token)) {
-                this._clearInput();
-                return;
-            }
-            const matchIndex = this.results.findIndex(x => x.Name === token);
-            if (matchIndex !== -1) {
-                this.selectedIndex = matchIndex;
-                this.dropdownActive = true;
-                this.pushVal();
-                return;
-            }
-            if (this.addUrl) {
-                this.createAndSelectNow(token);
-            }
+            const result = this._core?.dispatch({ type: 'commit-token', token });
+            if (result?.ok && result.consumed) this._clearInput();
         },
 
         exitAdd() {
-            if (this.loading) {
-                return;
-            }
-
-            this.addModeForTag = '';
+            this._core?.dispatch({ type: 'cancel-create-confirmation' });
         },
 
         startSelecting() {
             this._selecting = true;
         },
 
-        pushVal($event) {
-            if (this.loading) {
-                return;
-            }
-            this._selecting = false;
-
-            // Activating the virtual "Create X" row (roving index just past the results) →
-            // one-step create, no "Add X?" confirm flash.
-            if (this.dropdownActive && this.createCandidate && this.selectedIndex >= this.results.length) {
-                this.createAndSelectNow(this.createCandidate);
-                return;
-            }
-
-            // Announce selection
-            if (this.results[this.selectedIndex]) {
-                const selectedName = this.getItemDisplayName(this.results[this.selectedIndex]);
-                this._liveRegion.announce(`${selectedName} selected. Use arrow keys to navigate and enter to confirm.`);
-            }
-
-            /*
-                The dropdown is not open and/or there are no selected results
-            */
-            if (!this.results[this.selectedIndex] || !this.dropdownActive) {
-                if (!this.addUrl) {
-                    return;
-                }
-
-                const value = this.$refs?.autocompleter?.value;
-
-                /*
-                    We have an add url, so maybe try adding the option if it wasn't in the list already
-                */
-                if (!this.results.find(x => x.Name === value)) {
-                    this.addModeForTag = value;
-                } else {
-                    this.addModeForTag = "";
-                    this.dropdownActive = true;
-                }
-
-                return;
-            }
-
-            const selectedItem = this.results[this.selectedIndex];
-            this.selectedResults.push(selectedItem);
-            this.selectedIds.add(selectedItem.ID);
-            this.ensureMaxItems();
-
-            // Call onSelect callback if provided
-            if (onSelect) {
-                this._trackPending(selectedItem, onSelect(selectedItem));
-            }
-
-            // Dispatch custom event if specified (for compare view integration)
-            // Use window.dispatchEvent so it can be caught with .window modifier
-            if (dispatchOnSelect) {
-                window.dispatchEvent(new CustomEvent(dispatchOnSelect, {
-                    detail: { item: selectedItem },
-                    bubbles: true
-                }));
-            }
-
-            // Clear the input and trigger a refresh of results
-            // Always use the autocompleter ref since $event.target might be a dropdown item (mousedown)
-            const inputEl = this.$refs?.autocompleter;
-            if (inputEl) {
-                inputEl.value = '';
-                inputEl.dispatchEvent(new Event('input'));
-            }
+        setActiveIndex(index) {
+            this._core?.dispatch({ type: 'set-active', index });
         },
 
-        // Wholesale-replace selectedResults from an external source (the lightbox swapping
-        // to a different resource's tags) without the selectedResults $watch announcing it
-        // as a user add/remove.
+        selectResult(item) {
+            const result = this._core?.dispatch({ type: 'select-option', option: source.mapOption(item) });
+            if (result?.ok) this._clearInput();
+        },
+
+        pushVal() {
+            if (this.loading) return;
+            this._selecting = false;
+            const snapshot = this._core?.getSnapshot();
+            if (!snapshot) return;
+            if (snapshot.activeOptionIndex !== null) {
+                const active = snapshot.options[snapshot.activeOptionIndex];
+                if (active) {
+                    this._liveRegion?.announce(`${this.getItemDisplayName(active.raw)} selected. Use arrow keys to navigate and enter to confirm.`);
+                }
+                const result = this._core.dispatch({ type: 'commit-active' });
+                if (result.ok && result.consumed) this._clearInput();
+                return;
+            }
+            const value = this.$refs?.autocompleter?.value || '';
+            if (value.trim()) this._core.dispatch({ type: 'request-create-confirmation', label: value });
+        },
+
         resetSelectedResults(tags, { silent = true } = {}) {
-            this._suppressNextAnnounce = silent;
-            this.selectedResults = [...tags];
+            this._core?.dispatch({
+                type: 'replace-selection',
+                options: (tags || []).map(source.mapOption),
+                reason: 'reset',
+                silent,
+            });
         },
 
         ensureMaxItems() {
-            while (this.max !== 0 && this.selectedResults.length > Math.max(this.max, 0)) {
-                this.selectedResults.splice(0, 1);
-            }
+            this._core?.dispatch({
+                type: 'replace-selection',
+                options: this._core.getSnapshot().selected,
+                reason: 'replace',
+            });
         },
 
         removeItem(item) {
-            const index = this.selectedResults.findIndex(r => r.ID === item.ID);
-            if (index !== -1) {
-                this.selectedResults.splice(index, 1);
-                // Call onRemove callback if provided
-                if (onRemove) {
-                    onRemove(item);
-                }
-            }
+            this._core?.dispatch({ type: 'remove-option', key: item.ID });
         },
 
         getItemDisplayName(item) {
@@ -563,9 +473,7 @@ export function legacyAutocompleterAdapter(arguments_) {
                 e.preventDefault();
                 e.stopPropagation();
 
-                if (this.dropdownActive) {
-                    this.dropdownActive = false;
-                }
+                this._core?.dispatch({ type: 'close' });
 
                 // In standalone mode (lightbox), always blur on Escape
                 // so focus returns to the lightbox for keyboard navigation
@@ -575,23 +483,13 @@ export function legacyAutocompleterAdapter(arguments_) {
             },
 
             ['@keydown.arrow-up.prevent']() {
-                const total = this.optionCount;
-                if (!this.dropdownActive && total > 0) {
-                    this.dropdownActive = true;
-                }
-                if (total === 0) return;
-                this.selectedIndex = this.selectedIndex <= 0 ? total - 1 : this.selectedIndex - 1;
+                this._core?.dispatch({ type: 'move-active', direction: 'previous' });
                 this.announceSelectedItem();
                 this.showSelected();
             },
 
             ['@keydown.arrow-down.prevent']() {
-                const total = this.optionCount;
-                if (!this.dropdownActive && total > 0) {
-                    this.dropdownActive = true;
-                }
-                if (total === 0) return;
-                this.selectedIndex = (this.selectedIndex + 1) % total;
+                this._core?.dispatch({ type: 'move-active', direction: 'next' });
                 this.announceSelectedItem();
                 this.showSelected();
             },
@@ -610,14 +508,12 @@ export function legacyAutocompleterAdapter(arguments_) {
                 this.pushVal(e);
 
                 if (this.selectedResults.length === this.max) {
-                    setTimeout(() => {
-                        this.dropdownActive = false;
-                    }, 100);
+                    setTimeout(() => this._core?.dispatch({ type: 'close' }), 100);
                 }
             },
 
             ['@keydown.tab']() {
-                this.dropdownActive = false;
+                this._core?.dispatch({ type: 'close' });
             },
 
             ['@blur'](e) {
@@ -625,73 +521,18 @@ export function legacyAutocompleterAdapter(arguments_) {
                     return;
                 }
                 setTimeout(() => {
-                    if (!this._selecting) {
-                        this.dropdownActive = false;
-                    }
+                    if (!this._selecting) this._core?.dispatch({ type: 'close' });
                 }, 150);
             },
 
             ['@focus']() {
-                this.dropdownActive = true;
+                this._core?.dispatch({ type: 'open' });
                 this.$event.target.dispatchEvent(new Event('input'));
             },
 
             ['@input']() {
-                const target = this.$event.target;
-                const value = target.value;
-
-                // Mirror the buffer into reactive state so createCandidate() recomputes.
-                this.query = value;
-
-                this.results = this.results.filter(val => !this.selectedIds.has(val.ID));
-
-                if (this.debounceTimer) {
-                    clearTimeout(this.debounceTimer);
-                }
-
-                if (this.requestAborter) {
-                    this.requestAborter();
-                    this.requestAborter = null;
-                }
-
-                this.debounceTimer = setTimeout(() => {
-                    const params = new URLSearchParams({ name: target.value, ...this.getAdditionalParams() })
-
-                    const {
-                        abort,
-                        ready
-                    } = abortableFetch(url + '?' + params.toString(), {})
-
-                    ready.then(x => x.json()).then(values => {
-                        if (value !== target.value) {
-                            return;
-                        }
-                        this.results = values.filter(val => !this.selectedIds.has(val.ID));
-                        // Mark the search as completed for this buffer so createCandidate may show.
-                        this._searchedQuery = value;
-
-                        if (this.results.length && document.activeElement === target) {
-                            this.dropdownActive = true;
-                            this.selectedIndex = 0;
-                            // Announce results for screen readers
-                            this._liveRegion.announce(`${this.results.length} result${this.results.length === 1 ? '' : 's'} available. Use arrow keys to navigate.`);
-                        } else if (this.createCandidate && document.activeElement === target) {
-                            // No matches, but the buffer can be created: open the popover with the
-                            // "Create X" row pre-highlighted at the virtual index.
-                            this.dropdownActive = true;
-                            this.selectedIndex = this.results.length;
-                        } else if (this.results.length === 0) {
-                            this._liveRegion.announce('No results found.');
-                        }
-                    }).catch(err => {
-                        if (err?.name === 'AbortError') {
-                            return;
-                        }
-                        this.errorMessage = err.toString();
-                    });
-
-                    this.requestAborter = abort;
-                }, 200);
+                const value = this.$event.target.value;
+                this._core?.dispatch({ type: 'set-query', query: value });
             }
         },
 

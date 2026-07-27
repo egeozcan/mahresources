@@ -184,6 +184,8 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
                 return this.close();
             case 'move-active':
                 return this.moveActive(command.direction);
+            case 'set-active':
+                return this.setActive(command.index);
             case 'commit-active':
                 return this.commitActive();
             case 'commit-token':
@@ -547,7 +549,7 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
     }
 
     private moveActive(direction: 'next' | 'previous'): SelectorCommandResult<TRaw> {
-        const optionCount = this.snapshot.options.length + (this.snapshot.createCandidate ? 1 : 0);
+        const optionCount = this.optionCount();
         let activeOptionIndex: number | null = null;
         if (optionCount > 0) {
             const current = this.snapshot.activeOptionIndex;
@@ -559,12 +561,23 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
                 activeOptionIndex = (current - 1 + optionCount) % optionCount;
             }
         }
+        return this.setActive(activeOptionIndex);
+    }
 
+    private setActive(index: number | null): SelectorCommandResult<TRaw> {
+        const optionCount = this.optionCount();
+        const activeOptionIndex = index !== null && index >= 0 && index < optionCount
+            ? index
+            : null;
         if (this.snapshot.isOpen && this.snapshot.activeOptionIndex === activeOptionIndex) {
             return { ok: true };
         }
         this.publish(withState(this.snapshot, { isOpen: true, activeOptionIndex }));
         return { ok: true };
+    }
+
+    private optionCount(): number {
+        return this.snapshot.options.length + (this.snapshot.createCandidate ? 1 : 0);
     }
 
     private select(option: SelectorOption<TRaw>): SelectorCommandResult<TRaw> {

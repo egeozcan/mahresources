@@ -52,6 +52,7 @@ export type SelectorCommand<TRaw = unknown> =
     | { readonly type: 'open' }
     | { readonly type: 'close' }
     | { readonly type: 'move-active'; readonly direction: 'next' | 'previous' }
+    | { readonly type: 'set-active'; readonly index: number | null }
     | { readonly type: 'commit-active' }
     | { readonly type: 'commit-token'; readonly token: string }
     | { readonly type: 'select-option'; readonly option: SelectorOption<TRaw> }
