@@ -117,6 +117,7 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
     private searchGeneration = 0;
     private creationController: AbortController | null = null;
     private readonly creationQueue: string[] = [];
+    private readonly completedCreationLabels = new Set<string>();
 
     constructor(config: SelectorConfig<TRaw>) {
         this.source = config.source;
@@ -314,6 +315,7 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
         const canonical = label.trim();
         if (!canonical || !this.source.create) return { ok: true, consumed: false };
         if (this.snapshot.selected.some((option) => option.label.trim() === canonical)
+            || this.completedCreationLabels.has(canonical)
             || this.creationQueue.some((queued) => queued === canonical)
             || (this.creationController !== null && this.snapshot.creationStatus === 'loading'
                 && this.currentCreationLabel === canonical)) {
@@ -375,6 +377,7 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
         if (!this.isCurrentCreation(label, controller)) return;
         this.creationController = null;
         this.currentCreationLabel = null;
+        this.completedCreationLabels.add(label);
         const current = normalizeSelection(
             [...this.snapshot.selected, option],
             this.selectionLimit,
@@ -545,7 +548,15 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
     ): SelectorCommandResult<TRaw> {
         const previous = this.snapshot.selected;
         if (sameOptions(previous, current)) return { ok: true };
-        const nextSnapshot = withState(this.snapshot, { ...state, selected: current });
+        const candidateWasSelected = this.snapshot.createCandidate
+            && current.some((option) => option.label === this.snapshot.createCandidate?.label);
+        const nextSnapshot = withState(this.snapshot, {
+            ...state,
+            ...(candidateWasSelected && !('createCandidate' in state)
+                ? { createCandidate: null }
+                : {}),
+            selected: current,
+        });
         if (silent) {
             this.publish(nextSnapshot);
             return { ok: true };

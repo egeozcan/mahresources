@@ -32,11 +32,11 @@ Source: `docs/plans/2026-07-26-headless-selector-core-refactor.md`
   - [x] Search orchestration
   - [x] Debounced source
   - [x] HTTP source
-- [ ] Batch 4 — creation and contract completion (Commits 18–21)
-  - [ ] Creation queue foundation
-  - [ ] Create candidates/token precedence
-  - [ ] Confirmation
-  - [ ] Unified queue and contract flows
+- [x] Batch 4 — creation and contract completion (Commits 18–21)
+  - [x] Creation queue foundation
+  - [x] Create candidates/token precedence
+  - [x] Confirmation
+  - [x] Unified queue and contract flows
 - [ ] Batch 5 — Alpine compatibility delegation (Commits 22–28)
 - [ ] Batch 6 — explicit profiles (Commits 29–31)
 - [ ] Batch 7 — direct caller migrations (Commits 32–37)

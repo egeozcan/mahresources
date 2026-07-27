@@ -507,6 +507,8 @@ describe('selector create candidates and token precedence', () => {
         pending.resolve([]);
         await flushMicrotasks();
         expect(selector.getSnapshot().createCandidate).toEqual({ label: 'New tag' });
+        selector.dispatch({ type: 'select-option', option: option(9, 'New tag') });
+        expect(selector.getSnapshot().createCandidate).toBeNull();
 
         source.setSearchResult('Existing', [option(1, 'Existing')]);
         selector.dispatch({ type: 'set-query', query: 'Existing' });
@@ -643,6 +645,61 @@ describe('selector confirmation and unified creation queue', () => {
         });
     });
 
+    test('serializes token, virtual-row, and confirmed creations through one public queue', async () => {
+        const source = new InMemorySelectorSource<RawValue>();
+        const token = source.deferCreate('Token');
+        const virtual = source.deferCreate('Virtual');
+        const confirmed = source.deferCreate('Confirmed');
+        source.setSearchResult('Virtual', []);
+        const selector = createSelector({ source });
+
+        selector.dispatch({ type: 'commit-token', token: 'Token' });
+        selector.dispatch({ type: 'set-query', query: 'Virtual' });
+        await flushMicrotasks();
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+        selector.dispatch({ type: 'commit-active' });
+        selector.dispatch({ type: 'request-create-confirmation', label: 'Confirmed' });
+        selector.dispatch({ type: 'confirm-create' });
+
+        token.resolve(option(1, 'Token'));
+        await flushMicrotasks();
+        virtual.resolve(option(2, 'Virtual'));
+        await flushMicrotasks();
+        confirmed.resolve(option(3, 'Confirmed'));
+        await flushMicrotasks();
+
+        expect(selector.getSnapshot()).toMatchObject({
+            selected: [option(1, 'Token'), option(2, 'Virtual'), option(3, 'Confirmed')],
+            creationStatus: 'idle',
+            error: null,
+        });
+    });
+
+    test('does not recreate a completed label after selection limits later evict it', async () => {
+        const source = new InMemorySelectorSource<RawValue>();
+        source.setCreateResult('First', option(1, 'First'));
+        source.setCreateResult('Second', option(2, 'Second'));
+        const selector = createSelector({ source, multiple: false });
+
+        selector.dispatch({ type: 'commit-token', token: 'First' });
+        await flushMicrotasks();
+        selector.dispatch({ type: 'commit-token', token: 'Second' });
+        await flushMicrotasks();
+        expect(selector.getSnapshot().selected).toEqual([option(2, 'Second')]);
+
+        selector.dispatch({ type: 'set-query', query: 'First' });
+        await flushMicrotasks();
+        expect(selector.dispatch({ type: 'commit-token', token: 'First' })).toEqual({
+            ok: true,
+            consumed: true,
+        });
+        expect(selector.getSnapshot()).toMatchObject({
+            query: 'First',
+            creationStatus: 'idle',
+            selected: [option(2, 'Second')],
+        });
+    });
+
     test('aborts creation and discards queued work on destruction without adding options', async () => {
         const source = new InMemorySelectorSource<RawValue>();
         const first = source.deferCreate('First');
@@ -664,6 +721,129 @@ describe('selector confirmation and unified creation queue', () => {
             ok: false,
             error: { code: 'destroyed', message: 'Selector has been destroyed' },
         });
+    });
+});
+
+describe('selector end-to-end public contract flows', () => {
+    test('drives a single selector from search through atomic active-option replacement', async () => {
+        const alpha = option(1, 'Alpha');
+        const beta = option(2, 'Beta');
+        const source = new InMemorySelectorSource<RawValue>();
+        source.setSearchResult('Alpha', [alpha]);
+        source.setSearchResult('Beta', [beta]);
+        const selector = createSelector({ source, multiple: false });
+        const changes: unknown[] = [];
+        selector.subscribe((_snapshot, change) => {
+            if (change) changes.push(change);
+        });
+
+        selector.dispatch({ type: 'set-query', query: 'Alpha' });
+        await flushMicrotasks();
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+        selector.dispatch({ type: 'commit-active' });
+        selector.dispatch({ type: 'set-query', query: 'Beta' });
+        await flushMicrotasks();
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+        selector.dispatch({ type: 'commit-active' });
+
+        expect(selector.getSnapshot().selected).toEqual([beta]);
+        expect(changes).toEqual([
+            expect.objectContaining({ added: [alpha], removed: [], reason: 'select' }),
+            expect.objectContaining({ added: [beta], removed: [alpha], reason: 'select' }),
+        ]);
+    });
+
+    test('drives multi-selection limits and removals through public commands', () => {
+        const alpha = option(1, 'Alpha');
+        const beta = option(2, 'Beta');
+        const gamma = option(3, 'Gamma');
+        const selector = createSelector({
+            source: new InMemorySelectorSource<RawValue>(),
+            selected: [alpha],
+            maxSelected: 2,
+        });
+        const changes: unknown[] = [];
+        selector.subscribe((_snapshot, change) => {
+            if (change) changes.push(change);
+        });
+
+        selector.dispatch({ type: 'select-option', option: beta });
+        selector.dispatch({ type: 'select-option', option: gamma });
+        selector.dispatch({ type: 'remove-option', key: gamma.key });
+
+        expect(selector.getSnapshot().selected).toEqual([beta]);
+        expect(changes).toEqual([
+            expect.objectContaining({ added: [beta], removed: [], reason: 'select' }),
+            expect.objectContaining({ added: [gamma], removed: [alpha], reason: 'select' }),
+            expect.objectContaining({ added: [], removed: [gamma], reason: 'remove' }),
+        ]);
+    });
+
+    test('recovers a creatable selector from a creation error through its virtual row', async () => {
+        const source = new InMemorySelectorSource<RawValue>();
+        source.setSearchResult('New', []);
+        source.setCreateFailure('New', new Error('creation unavailable'));
+        const selector = createSelector({ source });
+
+        selector.dispatch({ type: 'set-query', query: 'New' });
+        await flushMicrotasks();
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+        selector.dispatch({ type: 'commit-active' });
+        await flushMicrotasks();
+        expect(selector.getSnapshot()).toMatchObject({
+            creationStatus: 'error',
+            error: { operation: 'create', message: 'creation unavailable' },
+            selected: [],
+        });
+
+        source.setCreateResult('New', option(1, 'New'));
+        selector.dispatch({ type: 'set-query', query: 'New' });
+        await flushMicrotasks();
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+        selector.dispatch({ type: 'commit-active' });
+        await flushMicrotasks();
+        expect(selector.getSnapshot()).toMatchObject({
+            selected: [option(1, 'New')],
+            creationStatus: 'idle',
+            error: null,
+        });
+    });
+
+    test('applies silent external reset without a change and recovers search state', async () => {
+        const alpha = option(1, 'Alpha');
+        const beta = option(2, 'Beta');
+        const source = new InMemorySelectorSource<RawValue>();
+        source.setSearchFailure('broken', new Error('search unavailable'));
+        source.setSearchResult('recovered', [beta]);
+        const selector = createSelector({ source, selected: [alpha] });
+        const changes: unknown[] = [];
+        selector.subscribe((_snapshot, change) => {
+            if (change) changes.push(change);
+        });
+
+        selector.dispatch({
+            type: 'replace-selection',
+            options: [beta],
+            reason: 'reset',
+            silent: true,
+        });
+        selector.dispatch({ type: 'set-query', query: 'broken' });
+        await flushMicrotasks();
+        expect(selector.getSnapshot()).toMatchObject({
+            selected: [beta],
+            searchStatus: 'error',
+            error: { operation: 'search', message: 'search unavailable' },
+        });
+
+        selector.dispatch({ type: 'set-query', query: 'recovered' });
+        await flushMicrotasks();
+        expect(selector.getSnapshot()).toMatchObject({
+            selected: [beta],
+            options: [],
+            searchStatus: 'success',
+            error: null,
+        });
+        expect(changes).toEqual([]);
     });
 });
 
