@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { selectorRegistry } from '../selector/selectorRegistry';
 import { autocompleter } from './dropdown.js';
@@ -76,6 +77,36 @@ describe('legacy autocompleter selector registry integration', () => {
     afterEach(() => {
         vi.restoreAllMocks();
         vi.unstubAllGlobals();
+    });
+
+    test('routes shared chip removal through the legacy command and restores combobox focus', () => {
+        const markup = readFileSync(
+            new URL('../../templates/partials/form/formParts/dropDownSelectedResults.tpl', import.meta.url),
+            'utf8',
+        );
+
+        expect(markup).toContain('@click="removeItem(result)"');
+        expect(markup).toContain('removeItem(result); $nextTick(() => $refs.autocompleter?.focus())');
+        expect(markup).not.toContain('selectedResults.splice');
+    });
+
+    test('removeItem calls the compatibility callback exactly once', () => {
+        const onRemove = vi.fn();
+        const selector = autocompleter({
+            selectedResults: [{ ID: 1, Name: 'Alpha' }],
+            max: 0,
+            min: 0,
+            ownerId: 0,
+            url: '/v1/tags',
+            elName: 'tags',
+            onRemove,
+        });
+
+        selector.removeItem({ ID: 1, Name: 'Alpha' });
+
+        expect(selector.selectedResults).toEqual([]);
+        expect(onRemove).toHaveBeenCalledTimes(1);
+        expect(onRemove).toHaveBeenCalledWith({ ID: 1, Name: 'Alpha' });
     });
 
     test('registers by owning form and field name, then unregisters on destruction', () => {
