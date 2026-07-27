@@ -349,6 +349,64 @@ test.describe.serial('Version Compare UI', () => {
     await expect(dropdown.locator(`text=${suggestionText}`)).toBeVisible({ timeout: 5000 });
   });
 
+  test('profile callbacks update each resource while preserving the opposite side', async ({ page }) => {
+    await page.goto(`/resource/compare?r1=${resource1Id}&v1=2&r2=${resource2Id}&v2=1`);
+    await page.waitForLoadState('load');
+    await expect(page.locator('summary:has-text("Metadata")')).toBeVisible({ timeout: 10000 });
+
+    const firstVersionFor = async (resourceId: number) => {
+      const versions = await page.evaluate(async (id) => {
+        const response = await fetch(`/v1/resource/versions?resourceId=${id}`);
+        if (!response.ok) throw new Error(`Failed to load versions for resource ${id}`);
+        return response.json();
+      }, resourceId) as Array<{ versionNumber: number }>;
+      expect(versions.length).toBeGreaterThan(0);
+      return versions[0].versionNumber;
+    };
+
+    const resource1Name = `Compare Resource 1 ${testRunId}`;
+    const resource2Name = `Compare Resource 2 ${testRunId}`;
+    const leftFirstVersion = await firstVersionFor(resource2Id);
+
+    const leftInput = page.getByLabel('Search left resource');
+    await leftInput.fill(resource2Name);
+    const leftOption = leftInput.locator('..').locator('div.cursor-pointer').filter({ hasText: resource2Name }).first();
+    await expect(leftOption).toBeVisible({ timeout: 10000 });
+    await Promise.all([
+      page.waitForURL(url =>
+        url.searchParams.get('r1') === String(resource2Id)
+        && url.searchParams.get('v1') === String(leftFirstVersion)
+        && url.searchParams.get('r2') === String(resource2Id)
+      ),
+      leftOption.click(),
+    ]);
+
+    let currentUrl = new URL(page.url());
+    expect(currentUrl.searchParams.get('r1')).toBe(String(resource2Id));
+    expect(currentUrl.searchParams.get('v1')).toBe(String(leftFirstVersion));
+    expect(currentUrl.searchParams.get('r2')).toBe(String(resource2Id));
+
+    const rightFirstVersion = await firstVersionFor(resource1Id);
+    const rightInput = page.getByLabel('Search right resource');
+    await rightInput.fill(resource1Name);
+    const rightOption = rightInput.locator('..').locator('div.cursor-pointer').filter({ hasText: resource1Name }).first();
+    await expect(rightOption).toBeVisible({ timeout: 10000 });
+    await Promise.all([
+      page.waitForURL(url =>
+        url.searchParams.get('r1') === String(resource2Id)
+        && url.searchParams.get('r2') === String(resource1Id)
+        && url.searchParams.get('v2') === String(rightFirstVersion)
+      ),
+      rightOption.click(),
+    ]);
+
+    currentUrl = new URL(page.url());
+    expect(currentUrl.searchParams.get('r1')).toBe(String(resource2Id));
+    expect(currentUrl.searchParams.get('v1')).toBe(String(leftFirstVersion));
+    expect(currentUrl.searchParams.get('r2')).toBe(String(resource1Id));
+    expect(currentUrl.searchParams.get('v2')).toBe(String(rightFirstVersion));
+  });
+
   test('should update URL when changing left version via dropdown', async ({ page }) => {
     // Start on compare page with v1 vs v2 of same resource
     await page.goto(`/resource/compare?r1=${resource1Id}&v1=2&r2=${resource1Id}&v2=1`);
