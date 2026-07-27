@@ -74,7 +74,9 @@ Mahresources is a CRUD application for personal information management written i
 **src/** - Frontend JavaScript source files, bundled with Vite.
 - `main.js` - Entry point that imports all modules and initializes Alpine.js
 - `index.js` - Utility functions (abortableFetch, clipboard, etc.)
-- `components/` - Alpine.js data components (dropdown, globalSearch, bulkSelection, etc.)
+- `components/` - Alpine.js data components (globalSearch, bulkSelection, etc.)
+- `selector/` - Headless selector core, sources, and entity profiles. Every entity picker is built
+  from it; see `docs/selector-architecture.md` before adding or changing one.
 - `webcomponents/` - Custom elements (expandable-text, inline-edit)
 - `tableMaker.js` - JSON table rendering
 

@@ -32,7 +32,7 @@
                         ></span>
                     </div>
             </template>
-            <!-- "Create X" row for the no-match case (only when an addUrl is configured) -->
+            <!-- "Create X" row for the no-match case (only for a creatable profile) -->
             <template x-if="createCandidate">
                     <div
                         role="option"

@@ -217,8 +217,8 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
             }
             profileBridge.onChange?.(change);
             // Publish the atomic change to whoever named this field in this form. Registry
-            // delivery replaces the old document-wide `multiple-input` broadcast: it cannot
-            // reach an unrelated form that happens to reuse the field name.
+            // delivery is scoped to the owning form, so it cannot reach an unrelated form that
+            // happens to reuse the field name.
             if (this._registeredForm) {
                 selectorRegistry.notifyChange(this._registeredForm, elName, {
                     values: this.selectedResults,
@@ -495,8 +495,8 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
                 if (!isComma && !(isSpace && commitOnSpace)) return;
                 const token = (e.target.value || '').trim();
                 if (!token) return; // empty buffer: let the key type normally
-                // Only intercept when there is something to commit: an exact-match result or an
-                // addUrl to create with. Otherwise (e.g. a category picker) let the char type.
+                // Only intercept when there is something to commit: an exact-match result, or a
+                // creatable profile to create with. Otherwise (a category picker) let it type.
                 const canCommit = creatable || this.results.some(x => x.Name === token);
                 if (!canCommit) return;
                 e.preventDefault();

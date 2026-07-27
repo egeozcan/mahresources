@@ -55,7 +55,7 @@ test.describe('Group edit Owner shows category', () => {
     await expect(ownerPill).toBeVisible();
 
     // The pill's sibling text span should include the category name in parentheses.
-    // getItemDisplayName returns "Name (Category)" when extraInfo="Category" is set
+    // getItemDisplayName returns "Name (Category)" for a categoryDecoration profile
     // and the Category object is present on the item.
     const pillContainer = ownerPill.locator('..');
     const pillText = await pillContainer.locator('span').first().textContent();

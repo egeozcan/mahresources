@@ -248,7 +248,6 @@ describe('profiled autocompleter bridge', () => {
         expect(markup).toContain('failedIds.has(String(tag.ID))');
         expect(markup).not.toContain('$store.lightbox.saveTagAddition(tag)');
         expect(markup).not.toContain('$store.lightbox.saveTagRemoval(tag)');
-        expect(markup).not.toContain("addUrl: '/v1/tag'");
         expect(markup).not.toContain('standalone: true');
     });
 

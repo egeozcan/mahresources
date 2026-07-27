@@ -107,20 +107,20 @@ export const COMPONENT_SCENARIOS = [
   {
     name: 'Autocompleter - closed',
     pagePath: '/note/new',
-    selector: '[data-selector-field], [x-data*="dropdown"]',
-    waitFor: '[data-selector-field], [x-data*="dropdown"]',
+    selector: '[data-selector-field]',
+    waitFor: '[data-selector-field]',
   },
   {
     name: 'Autocompleter - open with options',
     pagePath: '/note/new',
     setup: async (page: import('@playwright/test').Page) => {
       // Find and focus an autocompleter input
-      const input = page.locator('[data-selector-field] input, [x-data*="dropdown"] input').first();
+      const input = page.locator('[data-selector-field] input').first();
       await input.focus();
       await input.click();
     },
-    selector: '[data-selector-field], [x-data*="dropdown"]',
-    waitFor: '[data-selector-field], [x-data*="dropdown"]',
+    selector: '[data-selector-field]',
+    waitFor: '[data-selector-field]',
   },
 
   // Bulk Selection
