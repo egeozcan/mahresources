@@ -1,6 +1,7 @@
 import {
     createCreatableEntityFieldProfile,
     createDynamicEntitySelectorProfile,
+    createMultiEntityFieldProfile,
     createSingleEntityFieldProfile,
     createTagFieldProfile,
 } from '../selector/index.ts';
@@ -24,6 +25,16 @@ export function singleEntitySelector(arguments_) {
         createSingleEntityFieldProfile(profileOptions),
         onChange,
         { creatable: false, maximum: 1 },
+    );
+}
+
+/** Alpine rendering bridge for the explicit non-creatable multi-entity field profile. */
+export function multiEntitySelector(arguments_) {
+    const { onChange = null, ...profileOptions } = arguments_;
+    return createProfiledAutocompleter(
+        createMultiEntityFieldProfile(profileOptions),
+        onChange,
+        { creatable: false, maximum: profileOptions.maximum ?? 0 },
     );
 }
 

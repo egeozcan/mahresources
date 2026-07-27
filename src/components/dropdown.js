@@ -2,6 +2,7 @@ export { legacyAutocompleterAdapter as autocompleter } from './legacyAutocomplet
 export {
     creatableEntitySelector,
     dynamicEntitySelector,
+    multiEntitySelector,
     singleEntitySelector,
     tagFieldSelector,
 } from './profiledAutocompleter.js';

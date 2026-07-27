@@ -649,13 +649,12 @@
                                     </template>
                                 </div>
                                 <!-- Autocomplete for adding more tags (seed with existing slot tags to exclude them) -->
-                                <div x-data="autocompleter({
-                                         selectedResults: tags.map(t => ({ID: t.id, Name: t.name})),
-                                         url: '/v1/tags/suggest',
-                                         standalone: true,
-                                         sortBy: 'most_used_resource',
-                                         max: 0,
-                                         onSelect: (tag) => { $store.lightbox.addTagToSlot(idx, tag); }
+                                <div x-data="multiEntitySelector({
+                                         entity: 'tag',
+                                         tagSuggestions: { usage: 'resource' },
+                                         selected: tags.map(t => ({ID: t.id, Name: t.name})),
+                                         onChange: (change) =>
+                                             change.added.forEach(option => $store.lightbox.addTagToSlot(idx, option.raw))
                                      })">
                                     <div class="relative">
                                         <input

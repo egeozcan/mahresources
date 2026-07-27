@@ -211,6 +211,20 @@ describe('profiled autocompleter bridge', () => {
         selector.destroy();
     });
 
+    test('lightbox quick slots use the non-creatable multi-tag profile', () => {
+        const markup = readFileSync(
+            new URL('../../templates/partials/lightbox.tpl', import.meta.url),
+            'utf8',
+        );
+
+        expect(markup).toContain('multiEntitySelector({');
+        expect(markup).toContain("tagSuggestions: { usage: 'resource' }");
+        expect(markup).toContain('selected: tags.map(t => ({ID: t.id, Name: t.name}))');
+        expect(markup).toContain('change.added.forEach(option => $store.lightbox.addTagToSlot(idx, option.raw))');
+        expect(markup).not.toContain('onSelect: (tag) => { $store.lightbox.addTagToSlot(idx, tag); }');
+        expect(markup).not.toContain('selectedResults: tags.map');
+    });
+
     test('compare templates use single-entity profiles and local atomic listeners', () => {
         const resourceCompare = readFileSync(
             new URL('../../templates/compare.tpl', import.meta.url),

@@ -55,6 +55,7 @@ import {
   autocompleter,
   creatableEntitySelector,
   dynamicEntitySelector,
+  multiEntitySelector,
   singleEntitySelector,
   tagFieldSelector,
 } from './components/dropdown.js';
@@ -161,6 +162,7 @@ Alpine.data('autocompleter', autocompleter);
 Alpine.data('singleEntitySelector', singleEntitySelector);
 Alpine.data('creatableEntitySelector', creatableEntitySelector);
 Alpine.data('dynamicEntitySelector', dynamicEntitySelector);
+Alpine.data('multiEntitySelector', multiEntitySelector);
 Alpine.data('tagFieldSelector', tagFieldSelector);
 Alpine.data('confirmAction', confirmAction);
 Alpine.data('confirmGroupDelete', confirmGroupDelete);

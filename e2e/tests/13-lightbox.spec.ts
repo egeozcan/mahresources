@@ -1584,6 +1584,74 @@ test.describe('Lightbox on Group Detail Page', () => {
     await expect(slotButton).toBeVisible();
   });
 
+  test('slot tag editor autofocuses and excludes tags already configured in the slot', async ({ page, apiClient }) => {
+    const configured = await apiClient.createTag(`SlotConfigured-${testRunId}`);
+    const available = await apiClient.createTag(`SlotAvailable-${testRunId}`);
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    // Seed slot 0 of QUICK 1 with the configured tag.
+    await page.evaluate(async (tag) => {
+      const data = {
+        version: 3,
+        quickSlots: [
+          [[{ id: tag.id, name: tag.name }], null, null, null, null, null, null, null, null],
+          Array(9).fill(null),
+          Array(9).fill(null),
+          Array(9).fill(null),
+        ],
+        recentTags: Array(9).fill(null),
+      };
+      await fetch('/v1/account/settings/quickTags', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: data }),
+      });
+    }, { id: configured.ID, name: configured.Name });
+
+    await page.goto(`/group?id=${ownerGroupId}`);
+    await page.waitForLoadState('load');
+
+    const firstImage = page.locator('[data-lightbox-item]').first();
+    await expect(firstImage).toBeVisible();
+    await firstImage.click();
+    const lightbox = page.locator('[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])');
+    await expect(lightbox).toBeVisible();
+
+    await page.keyboard.press('t');
+    const quickTagPanel = lightbox.locator('[data-quick-tag-panel]');
+    await expect(quickTagPanel).toBeVisible();
+    await expect(quickTagPanel.locator('[data-tag-editor-input]')).toBeVisible({ timeout: 10000 });
+
+    // Enter edit mode on the seeded slot via its "add another tag" control.
+    await quickTagPanel.locator('button[aria-label="Add tags to slot 1"]').first().click();
+    const slotInput = quickTagPanel.locator('input[placeholder="Add tag..."]');
+    await expect(slotInput).toBeVisible();
+    // The editor autofocuses so the tag can be typed without an extra click.
+    await expect(slotInput).toBeFocused();
+
+    // Both tags share this prefix, but the one already in the slot must not be offered.
+    await slotInput.fill(`Slot`);
+    const options = quickTagPanel.locator('div[role="option"]');
+    await expect(options.filter({ hasText: `SlotAvailable-${testRunId}` })).toBeVisible({ timeout: 10000 });
+    await expect(options.filter({ hasText: `SlotConfigured-${testRunId}` })).toHaveCount(0);
+
+    // Selecting the offered tag persists it into the same slot.
+    await options.filter({ hasText: `SlotAvailable-${testRunId}` }).click();
+    await expect(
+      quickTagPanel.locator(`[role="tabpanel"] span:has-text("SlotAvailable-${testRunId}")`).first(),
+    ).toBeVisible();
+
+    await expect
+      .poll(async () => {
+        const res = await page.request.get('/v1/account/settings');
+        const body = await res.json();
+        return (body?.quickTags?.quickSlots?.[0]?.[0] || []).map((t: { name: string }) => t.name);
+      })
+      .toEqual([configured.Name, available.Name]);
+  });
+
   test('should expand multi-tag slot on keyboard long-press and collapse on Escape', async ({ page, apiClient }) => {
     const tag1 = await apiClient.createTag(`ExpandTag1-${testRunId}`);
     const tag2 = await apiClient.createTag(`ExpandTag2-${testRunId}`);

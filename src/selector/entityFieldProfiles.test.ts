@@ -136,6 +136,38 @@ describe('entity field profiles', () => {
     });
 });
 
+describe('non-creatable multi-tag profiles', () => {
+    test('rank by usage and hide already configured tags without offering creation', async () => {
+        vi.useFakeTimers();
+        const configured: EntityValue = { ID: 1, Name: 'Landscape' };
+        const other: EntityValue = { ID: 2, Name: 'Landmark' };
+        const fetch = vi.fn().mockResolvedValue(response([configured, other]));
+        vi.stubGlobal('fetch', fetch);
+
+        const profile = createMultiEntityFieldProfile({
+            entity: 'tag',
+            tagSuggestions: { usage: 'resource' },
+            selected: [configured],
+        });
+
+        profile.selector.dispatch({ type: 'set-query', query: 'Land' });
+        await completeSearch();
+
+        expect(fetch).toHaveBeenCalledWith(
+            '/v1/tags/suggest?SortBy=most_used_resource&name=Land',
+            expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        );
+        // The seeded slot tag is already selected, so it is excluded from the offered options.
+        expect(profile.selector.getSnapshot().options).toEqual([
+            { key: 2, label: 'Landmark', raw: other },
+        ]);
+
+        profile.selector.dispatch({ type: 'set-query', query: 'Brand new' });
+        await completeSearch();
+        expect(profile.selector.getSnapshot().createCandidate).toBeNull();
+    });
+});
+
 describe('dynamic entity selector profile', () => {
     test('searches a runtime endpoint and keeps at most one selection when not multiple', async () => {
         vi.useFakeTimers();
