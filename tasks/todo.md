@@ -40,7 +40,7 @@ Source: `docs/plans/2026-07-26-headless-selector-core-refactor.md`
 - [ ] Batch 5 — Alpine compatibility delegation (Commits 22–28)
 - [x] Batch 6 — explicit profiles (Commits 29–31)
 - [ ] Batch 7 — direct caller migrations (Commits 32–37)
-- [ ] Batch 8 — shared form migrations (Commits 38–42)
+- [x] Batch 8 — shared form migrations (Commits 38–42)
 - [ ] Batch 9 — compatibility removal/docs/final verification (Commits 43–46)
 
 ## Verification
@@ -59,7 +59,7 @@ Pending implementation.
 
 ## Follow-up: make relation cross-filtering actually filter (deliberate product change)
 
-`createRelation.tpl` declares dynamic filters so the pickers narrow each other:
+`createRelation.tpl` declares dependent search parameters so the pickers narrow each other:
 
 | Field | Reads | Sends |
 |---|---|---|
@@ -68,8 +68,8 @@ Pending implementation.
 | To Group | GroupRelationTypeId, RelationSideTo | RelationTypeId, RelationSide |
 
 These have never actually filtered. A selector field renders its value input followed by an
-enabled-when-empty control of the same name; `getAdditionalParams` visits every matching control
-and the last wins, so the value sent is always empty. Measured on the current code:
+enabled-when-empty control of the same name; the lookup visits every matching control and the
+last wins, so the value sent is always empty. Measured on the current code:
 
     FromGroupId controls: ["value=\"1\" disabled=false", "value=\"\" disabled=true"]
     request:              /v1/relationTypes?ForFromGroup=&ForToGroup=&name=Addr
@@ -85,3 +85,8 @@ of the server's "both groups and the relation type must have categories assigned
 whether to show all types with a hint, surface the reason inline, or block earlier — then enable
 `:not(:disabled)` (or an equivalent read of the form's effective value) and update
 `106-autocompleter-behavior-contract.spec.ts` and `69-relation-error-preserves-name.spec.ts`.
+
+Commit 58a2f9e5 moved the lookup out of the adapter into `src/components/selectorFormParameters.js`,
+which each field now names from its `parameters` callback in `createRelation.tpl`. The behaviour was
+ported verbatim, so this follow-up is unchanged — it is now a one-function change plus the UX
+decision above.
