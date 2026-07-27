@@ -1,4 +1,5 @@
 export { InMemorySelectorSource } from './inMemorySelectorSource';
+export { createSelector } from './selectorCore';
 export type { InMemoryDeferred } from './inMemorySelectorSource';
 export type {
     SelectorChange,
