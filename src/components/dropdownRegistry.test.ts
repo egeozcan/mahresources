@@ -86,7 +86,9 @@ describe('legacy autocompleter selector registry integration', () => {
         );
 
         expect(markup).toContain('@click="removeItem(result)"');
-        expect(markup).toContain('removeItem(result); $nextTick(() => $refs.autocompleter?.focus())');
+        expect(markup).toContain(
+            "removeItem(result); $nextTick(() => root.querySelector('input[role=combobox]')?.focus())",
+        );
         expect(markup).not.toContain('selectedResults.splice');
     });
 

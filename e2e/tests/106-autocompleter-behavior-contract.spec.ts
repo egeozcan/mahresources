@@ -181,6 +181,102 @@ test.describe('Autocompleter behavior contract', () => {
     });
   });
 
+  test('shared chip click and keyboard removal dispatch exactly once and restore focus', async ({ page }) => {
+    await page.goto('/group/new');
+
+    await page.evaluate(() => {
+      const browserWindow = window as typeof window & {
+        Alpine: { initTree: (element: Element) => void };
+        __chipRemovalContract?: {
+          removed: number[];
+          aggregateEvents: Array<{ name: string; ids: number[] }>;
+        };
+      };
+      browserWindow.__chipRemovalContract = { removed: [], aggregateEvents: [] };
+
+      const harness = document.createElement('form');
+      harness.id = 'chip-removal-contract';
+      harness.innerHTML = `
+        <div x-data="autocompleter({
+               selectedResults: [
+                 { ID: 101, Name: 'Click chip' },
+                 { ID: 202, Name: 'Enter chip' },
+                 { ID: 303, Name: 'Space chip' }
+               ],
+               max: 0,
+               min: 0,
+               ownerId: 0,
+               url: '/v1/tags',
+               elName: 'contractTags',
+               onRemove: item => window.__chipRemovalContract.removed.push(item.ID)
+             })">
+          <input x-ref="autocompleter" role="combobox" aria-label="Contract tags">
+          <div x-ref="dropdown" popover="manual"></div>
+          <template x-for="(result, index) in selectedResults" :key="result.ID">
+            <p>
+              <button type="button"
+                      :aria-label="'Remove ' + result.Name"
+                      @click="removeItem(result)"
+                      @keydown.enter.prevent="let root = $el.closest('[x-data]'); removeItem(result); $nextTick(() => root.querySelector('input[role=combobox]')?.focus())"
+                      @keydown.space.prevent="let root = $el.closest('[x-data]'); removeItem(result); $nextTick(() => root.querySelector('input[role=combobox]')?.focus())">
+                <span x-text="result.Name"></span>
+              </button>
+            </p>
+          </template>
+        </div>`;
+      harness.addEventListener('multiple-input', ((event: CustomEvent) => {
+        browserWindow.__chipRemovalContract?.aggregateEvents.push({
+          name: event.detail.name,
+          ids: event.detail.value.map((item: { ID: number }) => item.ID),
+        });
+      }) as EventListener);
+      document.body.appendChild(harness);
+      browserWindow.Alpine.initTree(harness);
+    });
+
+    const contractState = () => page.evaluate(() => (
+      window as typeof window & {
+        __chipRemovalContract?: {
+          removed: number[];
+          aggregateEvents: Array<{ name: string; ids: number[] }>;
+        };
+      }
+    ).__chipRemovalContract);
+    const input = page.getByRole('combobox', { name: 'Contract tags' });
+
+    await page.getByRole('button', { name: 'Remove Click chip' }).click();
+    await expect.poll(contractState).toEqual({
+      removed: [101],
+      aggregateEvents: [{ name: 'contractTags', ids: [202, 303] }],
+    });
+
+    const enterButton = page.getByRole('button', { name: 'Remove Enter chip' });
+    await enterButton.focus();
+    await enterButton.press('Enter');
+    await expect(input).toBeFocused();
+    await expect.poll(contractState).toEqual({
+      removed: [101, 202],
+      aggregateEvents: [
+        { name: 'contractTags', ids: [202, 303] },
+        { name: 'contractTags', ids: [303] },
+      ],
+    });
+
+    const spaceButton = page.getByRole('button', { name: 'Remove Space chip' });
+    await spaceButton.focus();
+    await spaceButton.press('Space');
+    await expect(input).toBeFocused();
+    await expect.poll(contractState).toEqual({
+      removed: [101, 202, 303],
+      aggregateEvents: [
+        { name: 'contractTags', ids: [202, 303] },
+        { name: 'contractTags', ids: [303] },
+        { name: 'contractTags', ids: [] },
+      ],
+    });
+    await expect(page.locator('#chip-removal-contract button[aria-label^="Remove "]')).toHaveCount(0);
+  });
+
   test('maximum-one replacement currently calls onSelect for both values without onRemove', async ({ page }) => {
     await page.goto('/group/new');
 

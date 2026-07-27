@@ -65,6 +65,30 @@ describe('MRQL list form synchronization', () => {
         second();
     });
 
+    test('fails closed when any selected relation value lacks a usable label', () => {
+        const form = {
+            querySelector: vi.fn((selector: string) => selector.includes('tags') ? {} : null),
+        } as unknown as HTMLFormElement;
+        const unregister = selectorRegistry.register(form, 'tags', {
+            getRawValues: () => [
+                { ID: 1, Name: 'Usable tag' },
+                { ID: 2 },
+                { ID: 3, Name: '   ' },
+            ],
+            replaceRawValues: vi.fn(),
+            replaceByKeys: vi.fn(),
+            resolveExactLabels: vi.fn(),
+        });
+        const bar = mrqlBar({ entity: 'resource' });
+        bar.filterForm = form;
+
+        expect(bar.relationFormValues()).toEqual({
+            compatible: false,
+            values: new Map(),
+        });
+        unregister();
+    });
+
     test('fails closed when a rendered relation selector is not registered', () => {
         const form = {
             querySelector: vi.fn(() => ({})),

@@ -722,9 +722,12 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
                 // be faithfully represented. Do not fall back to DOM/Alpine
                 // inspection, which could read another form's selector.
                 if (!selector) return { compatible: false, values: new Map() };
-                values.set(name, selector.getRawValues()
-                    .map((item) => item.Name)
-                    .filter(Boolean));
+                const rawValues = selector.getRawValues();
+                if (rawValues.some((item) =>
+                    typeof item.Name !== 'string' || item.Name.trim() === '')) {
+                    return { compatible: false, values: new Map() };
+                }
+                values.set(name, rawValues.map((item) => item.Name));
             }
             return { compatible: true, values };
         },
