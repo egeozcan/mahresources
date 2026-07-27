@@ -98,6 +98,8 @@ import { adminImport } from './components/adminImport.js';
 import { adminOverview } from './components/adminOverview.js';
 import timeline from './components/timeline.js';
 import { schemaEditorModal } from './components/schemaEditorModal.ts';
+import { schemaMetaFields } from './components/schemaMetaFields.js';
+import { schemaSearchFields } from './components/schemaSearchFields.js';
 import { sectionConfigForm } from './components/sectionConfigForm.js';
 import { templateBundle } from './components/templateBundle.js';
 
@@ -211,6 +213,8 @@ Alpine.data('adminImport', adminImport);
 Alpine.data('adminOverview', adminOverview);
 Alpine.data('timeline', timeline);
 Alpine.data('schemaEditorModal', schemaEditorModal);
+Alpine.data('schemaMetaFields', schemaMetaFields);
+Alpine.data('schemaSearchFields', schemaSearchFields);
 Alpine.data('sectionConfigForm', sectionConfigForm);
 Alpine.data('templateBundle', templateBundle);
 

@@ -391,18 +391,15 @@ test.describe('Autocompleter behavior contract', () => {
     });
   });
 
-  test('shared chip click and keyboard removal dispatch exactly once and restore focus', async ({ page }) => {
+  test('shared chip click and keyboard removal notify exactly once and restore focus', async ({ page }) => {
     await page.goto('/group/new');
 
     await page.evaluate(() => {
       const browserWindow = window as typeof window & {
         Alpine: { initTree: (element: Element) => void };
-        __chipRemovalContract?: {
-          removed: number[];
-          aggregateEvents: Array<{ name: string; ids: number[] }>;
-        };
+        __chipRemovalContract?: { removed: number[] };
       };
-      browserWindow.__chipRemovalContract = { removed: [], aggregateEvents: [] };
+      browserWindow.__chipRemovalContract = { removed: [] };
 
       const harness = document.createElement('form');
       harness.id = 'chip-removal-contract';
@@ -433,57 +430,41 @@ test.describe('Autocompleter behavior contract', () => {
               </button>
             </p>
           </template>
+          <template x-for="result in selectedResults" :key="result.ID">
+            <input type="hidden" name="contractTags" :value="result.ID">
+          </template>
         </div>`;
-      harness.addEventListener('multiple-input', ((event: CustomEvent) => {
-        browserWindow.__chipRemovalContract?.aggregateEvents.push({
-          name: event.detail.name,
-          ids: event.detail.value.map((item: { ID: number }) => item.ID),
-        });
-      }) as EventListener);
       document.body.appendChild(harness);
       browserWindow.Alpine.initTree(harness);
     });
 
-    const contractState = () => page.evaluate(() => (
-      window as typeof window & {
-        __chipRemovalContract?: {
-          removed: number[];
-          aggregateEvents: Array<{ name: string; ids: number[] }>;
-        };
-      }
-    ).__chipRemovalContract);
+    const removedIds = () => page.evaluate(() => (
+      window as typeof window & { __chipRemovalContract?: { removed: number[] } }
+    ).__chipRemovalContract?.removed);
+    // The submitted value is the contract that matters: each removal must leave exactly the
+    // surviving chips as form values, with no duplicate or stale hidden control.
+    const submittedIds = () => page
+      .locator('#chip-removal-contract input[name="contractTags"]')
+      .evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value));
     const input = page.getByRole('combobox', { name: 'Contract tags' });
 
     await page.getByRole('button', { name: 'Remove Click chip' }).click();
-    await expect.poll(contractState).toEqual({
-      removed: [101],
-      aggregateEvents: [{ name: 'contractTags', ids: [202, 303] }],
-    });
+    await expect.poll(submittedIds).toEqual(['202', '303']);
+    await expect.poll(removedIds).toEqual([101]);
 
     const enterButton = page.getByRole('button', { name: 'Remove Enter chip' });
     await enterButton.focus();
     await enterButton.press('Enter');
     await expect(input).toBeFocused();
-    await expect.poll(contractState).toEqual({
-      removed: [101, 202],
-      aggregateEvents: [
-        { name: 'contractTags', ids: [202, 303] },
-        { name: 'contractTags', ids: [303] },
-      ],
-    });
+    await expect.poll(submittedIds).toEqual(['303']);
+    await expect.poll(removedIds).toEqual([101, 202]);
 
     const spaceButton = page.getByRole('button', { name: 'Remove Space chip' });
     await spaceButton.focus();
     await spaceButton.press('Space');
     await expect(input).toBeFocused();
-    await expect.poll(contractState).toEqual({
-      removed: [101, 202, 303],
-      aggregateEvents: [
-        { name: 'contractTags', ids: [202, 303] },
-        { name: 'contractTags', ids: [303] },
-        { name: 'contractTags', ids: [] },
-      ],
-    });
+    await expect.poll(submittedIds).toEqual([]);
+    await expect.poll(removedIds).toEqual([101, 202, 303]);
     await expect(page.locator('#chip-removal-contract button[aria-label^="Remove "]')).toHaveCount(0);
   });
 

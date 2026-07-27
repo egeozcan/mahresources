@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { selectorRegistry } from '../selector/selectorRegistry';
+import { selectorRegistry, type SelectorFieldChange } from '../selector/selectorRegistry';
 import { autocompleter } from './dropdown.js';
 
 type LegacySelector = ReturnType<typeof autocompleter> & {
@@ -499,50 +499,86 @@ describe('legacy autocompleter selector registry integration', () => {
         vi.useRealTimers();
     });
 
-    test('translates maximum-one replacement atomically with removals before additions and one aggregate event', () => {
+    test('translates maximum-one replacement atomically into one field change for its form', () => {
         const calls: string[] = [];
         const onRemove = vi.fn((item) => calls.push(`remove:${item.Name}`));
         const onSelect = vi.fn((item) => calls.push(`select:${item.Name}`));
+        const form = createForm();
+        const observed: SelectorFieldChange[] = [];
+        const stopObserving = selectorRegistry.observe(
+            form, 'callbackCategoryId', (change) => observed.push(change),
+        );
         const { selector } = mountSelector(autocompleter({
             selectedResults: [{ ID: 1, Name: 'Alpha' }],
             max: 1,
             min: 0,
             ownerId: 0,
             url: '/v1/tags',
+            elName: 'callbackCategoryId',
             onRemove,
             onSelect,
-        }) as LegacySelector, createForm());
+        }) as LegacySelector, form);
         selector.init();
 
         selector.selectResult({ ID: 2, Name: 'Beta' });
 
         expect(selector.selectedResults).toEqual([{ ID: 2, Name: 'Beta' }]);
         expect(calls).toEqual(['remove:Alpha', 'select:Beta']);
-        expect(selector.$dispatch).toHaveBeenCalledTimes(1);
-        expect(selector.$dispatch).toHaveBeenCalledWith('multiple-input', {
-            value: [{ ID: 2, Name: 'Beta' }],
-            name: undefined,
-        });
+        expect(observed).toEqual([{
+            values: [{ ID: 2, Name: 'Beta' }],
+            added: [{ ID: 2, Name: 'Beta' }],
+            removed: [{ ID: 1, Name: 'Alpha' }],
+        }]);
+        expect(selector.$dispatch).not.toHaveBeenCalled();
+        stopObserving();
         selector.destroy();
     });
 
-    test('uses core replacement for nullable clear and keeps a silent reset callback/event-free', () => {
+    test('a change to one form does not reach an identically named field in another form', () => {
+        const ownForm = createForm();
+        const otherForm = createForm();
+        const neighbour = vi.fn();
+        const stopObserving = selectorRegistry.observe(otherForm, 'tags', neighbour);
+        const { selector } = mountSelector(autocompleter({
+            selectedResults: [],
+            max: 0,
+            min: 0,
+            ownerId: 0,
+            url: '/v1/tags',
+            elName: 'tags',
+        }) as LegacySelector, ownForm);
+        selector.init();
+
+        selector.selectResult({ ID: 7, Name: 'Beta' });
+
+        expect(selector.selectedResults).toEqual([{ ID: 7, Name: 'Beta' }]);
+        expect(neighbour).not.toHaveBeenCalled();
+        stopObserving();
+        selector.destroy();
+    });
+
+    test('uses core replacement for nullable clear and keeps a silent reset callback/change-free', () => {
         const onRemove = vi.fn();
+        const form = createForm();
+        const observer = vi.fn();
+        const stopObserving = selectorRegistry.observe(form, 'tags', observer);
         const { selector } = mountSelector(autocompleter({
             selectedResults: [{ ID: 1, Name: 'Alpha' }],
             max: 0,
             min: 0,
             ownerId: 0,
             url: '/v1/tags',
+            elName: 'tags',
             onRemove,
-        }) as LegacySelector, createForm());
+        }) as LegacySelector, form);
         selector.init();
 
         selector.resetSelectedResults(null, { silent: true });
 
         expect(selector.selectedResults).toEqual([]);
         expect(onRemove).not.toHaveBeenCalled();
-        expect(selector.$dispatch).not.toHaveBeenCalled();
+        expect(observer).not.toHaveBeenCalled();
+        stopObserving();
         selector.destroy();
     });
 
@@ -600,8 +636,11 @@ describe('legacy autocompleter selector registry integration', () => {
         expect(formListeners.get('reset')).toHaveLength(1);
         expect(popoverListeners.get('mousedown')).toHaveLength(1);
 
+        const observer = vi.fn();
+        const stopObserving = selectorRegistry.observe(form, 'tags', observer);
         for (const listener of formListeners.get('reset') ?? []) listener(new Event('reset'));
-        expect(remounted.$dispatch).toHaveBeenCalledTimes(1);
+        expect(observer).toHaveBeenCalledTimes(1);
+        stopObserving();
         remounted.destroy();
     });
 

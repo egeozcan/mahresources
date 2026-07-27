@@ -92,6 +92,9 @@ export function legacyAutocompleterAdapter(arguments_) {
         _destroyed: false,
         _popover: null,
         _popoverMouseDownHandler: null,
+        // The form this field publishes atomic changes under. Set only when the field is
+        // registered, so an unnamed or form-less selector notifies nobody.
+        _registeredForm: null,
         _form: null,
         _formSubmitHandler: null,
         _formResetHandler: null,
@@ -197,6 +200,7 @@ export function legacyAutocompleterAdapter(arguments_) {
                     },
                 };
                 this._unregisterSelector = selectorRegistry.register(form, elName, handle);
+                this._registeredForm = form;
             }
 
             // Form handling only when not in standalone mode
@@ -270,8 +274,15 @@ export function legacyAutocompleterAdapter(arguments_) {
                 for (const option of change.removed) onRemove?.(option.raw);
                 for (const option of change.added) onSelect?.(option.raw);
             }
-            if (!standalone) {
-                this.$dispatch('multiple-input', { value: this.selectedResults, name: elName });
+            // Publish the atomic change to whoever named this field in this form. Registry
+            // delivery replaces the old document-wide `multiple-input` broadcast: it cannot
+            // reach an unrelated form that happens to reuse the field name.
+            if (this._registeredForm) {
+                selectorRegistry.notifyChange(this._registeredForm, elName, {
+                    values: this.selectedResults,
+                    added: change.added.map((option) => option.raw),
+                    removed: change.removed.map((option) => option.raw),
+                });
             }
             if (change.added.length) {
                 this._liveRegion?.announce(`Added ${change.added[change.added.length - 1].raw.Name}`);
@@ -289,6 +300,7 @@ export function legacyAutocompleterAdapter(arguments_) {
             this._core = null;
             this._unregisterSelector?.();
             this._unregisterSelector = null;
+            this._registeredForm = null;
             this._popover?.removeEventListener('mousedown', this._popoverMouseDownHandler);
             this._popover = null;
             this._popoverMouseDownHandler = null;

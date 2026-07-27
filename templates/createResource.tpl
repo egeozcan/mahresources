@@ -199,32 +199,7 @@
 
                 <div data-initial-schema="{{ initialResourceSchema }}"
                     data-initial-meta='{{ resource.Meta|json }}'
-                    x-data="{
-                         currentSchema: null,
-                         currentMeta: {},
-                         metaEdited: false,
-                         init() {
-                             const raw = this.$el.dataset.initialSchema;
-                             if (raw) {
-                                 try { const p = JSON.parse(raw); if (p && typeof p === 'object') this.currentSchema = raw; } catch {}
-                             }
-                             try { this.currentMeta = JSON.parse(this.$el.dataset.initialMeta || '{}'); } catch { this.currentMeta = {}; }
-                         },
-                         handleCategoryChange(e) {
-                             if (e.detail.value.length > 0) {
-                                 const ms = e.detail.value[0].MetaSchema;
-                                 if (ms) { try { const p = JSON.parse(ms); if (p && typeof p === 'object') { this.currentSchema = ms; return; } } catch {} }
-                             }
-                             this.currentSchema = null;
-                         },
-                         handleMetaChange(e) {
-                             if (e.detail && e.detail.value !== undefined) {
-                                 this.currentMeta = e.detail.value;
-                                 this.metaEdited = true;
-                             }
-                         }
-                    }"
-                    @multiple-input.window="if ($event.detail.name === 'ResourceCategoryId') handleCategoryChange($event)"
+                    x-data="schemaMetaFields({ field: 'ResourceCategoryId' })"
                     class="w-full"
                 >
                     <template x-if="currentSchema">

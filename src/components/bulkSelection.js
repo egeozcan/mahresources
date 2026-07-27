@@ -1,4 +1,5 @@
 import { setCheckBox } from '../index.js';
+import { observeSelectorField } from '../selector/selectorRegistry.ts';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { morphOptionsWithShortcodeElements } from '../utils/shortcodeElementMorph.js';
 
@@ -346,9 +347,12 @@ export function setupBulkSelectionListeners() {
       form.addEventListener("submit", e => {
         e.preventDefault();
       });
-      form.addEventListener("multiple-input", e => {
+      // The inline editor persists on every atomic change of its own tag field. Observing the
+      // named field rather than a document-wide event keeps one row's editor from reacting to
+      // another editor opened elsewhere on the same list.
+      observeSelectorField(form, "editedId", () => {
         fetch('/v1/' + entityType + 's/replaceTags', { method: "POST", body: new FormData(form) });
-      })
+      });
       form.className = "mb-6 p-4 active";
 
       const elInput = document.createElement("input");

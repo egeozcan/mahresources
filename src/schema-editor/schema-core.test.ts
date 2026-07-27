@@ -916,54 +916,9 @@ describe('scoreSchemaMatch', () => {
 
 // ─── Bug 1 (P1): Invalid MetaSchema shows empty box ──────────────────────────
 
-describe('Bug 1: templates validate MetaSchema JSON before setting currentSchema', () => {
-  const thisDir = fileURLToPath(new URL('.', import.meta.url));
-
-  it('createGroup.tpl init() validates JSON with JSON.parse', () => {
-    const tplSource = readFileSync(
-      resolve(thisDir, '../../templates/createGroup.tpl'),
-      'utf8',
-    );
-    // Extract the init() method body
-    const initStart = tplSource.indexOf('init()');
-    const initEnd = tplSource.indexOf('handleCategoryChange');
-    const initBody = tplSource.slice(initStart, initEnd);
-    expect(initBody).toContain('JSON.parse');
-  });
-
-  it('createResource.tpl init() validates JSON with JSON.parse', () => {
-    const tplSource = readFileSync(
-      resolve(thisDir, '../../templates/createResource.tpl'),
-      'utf8',
-    );
-    const initStart = tplSource.indexOf('init()');
-    const initEnd = tplSource.indexOf('handleCategoryChange');
-    const initBody = tplSource.slice(initStart, initEnd);
-    expect(initBody).toContain('JSON.parse');
-  });
-
-  it('createGroup.tpl handleCategoryChange validates MetaSchema JSON', () => {
-    const tplSource = readFileSync(
-      resolve(thisDir, '../../templates/createGroup.tpl'),
-      'utf8',
-    );
-    const handlerStart = tplSource.indexOf('handleCategoryChange');
-    const handlerEnd = tplSource.indexOf('handleMetaChange');
-    const handlerBody = tplSource.slice(handlerStart, handlerEnd);
-    expect(handlerBody).toContain('JSON.parse');
-  });
-
-  it('createResource.tpl handleCategoryChange validates MetaSchema JSON', () => {
-    const tplSource = readFileSync(
-      resolve(thisDir, '../../templates/createResource.tpl'),
-      'utf8',
-    );
-    const handlerStart = tplSource.indexOf('handleCategoryChange');
-    const handlerEnd = tplSource.indexOf('handleMetaChange');
-    const handlerBody = tplSource.slice(handlerStart, handlerEnd);
-    expect(handlerBody).toContain('JSON.parse');
-  });
-});
+// Bug 1 (templates must validate MetaSchema JSON before handing it to schema-form-mode) is
+// now owned by the `schemaMetaFields` component and covered behaviourally in
+// `src/components/schemaFollowers.test.ts`, rather than by scraping the template source.
 
 // ─── Bug 4 (P2): $ref paths not JSON Pointer-escaped ─────────────────────────
 

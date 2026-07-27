@@ -1,6 +1,9 @@
 import { describe, expect, test, vi } from 'vitest';
 import {
+    observeSelectorField,
     SelectorRegistry,
+    selectorRegistry,
+    type SelectorFieldChange,
     type SelectorIntegrationHandle,
     type SelectorReplacementOptions,
     type SelectorValue,
@@ -8,6 +11,10 @@ import {
 
 function form(): HTMLFormElement {
     return {} as HTMLFormElement;
+}
+
+function change(overrides: Partial<SelectorFieldChange> = {}): SelectorFieldChange {
+    return { values: [], added: [], removed: [], ...overrides };
 }
 
 function handle(values: SelectorValue[] = []): SelectorIntegrationHandle {
@@ -115,5 +122,101 @@ describe('SelectorRegistry', () => {
             { ID: 1, Name: 'Alpha', MetaSchema: 'hydrated' },
         ]);
         expect(replacements.at(-1)).toEqual({ silent: true });
+    });
+});
+
+describe('SelectorRegistry field observation', () => {
+    test('delivers a field change to observers of that form and field only', () => {
+        const registry = new SelectorRegistry();
+        const owner = form();
+        const other = form();
+        const observed: SelectorFieldChange[] = [];
+        const wrongField = vi.fn();
+        const wrongForm = vi.fn();
+
+        registry.observe(owner, 'categoryId', (next) => observed.push(next));
+        registry.observe(owner, 'tags', wrongField);
+        registry.observe(other, 'categoryId', wrongForm);
+
+        const emitted = change({
+            values: [{ ID: 2, Name: 'Beta' }],
+            added: [{ ID: 2, Name: 'Beta' }],
+            removed: [{ ID: 1, Name: 'Alpha' }],
+        });
+        registry.notifyChange(owner, 'categoryId', emitted);
+
+        expect(observed).toEqual([emitted]);
+        expect(wrongField).not.toHaveBeenCalled();
+        expect(wrongForm).not.toHaveBeenCalled();
+    });
+
+    test('observation does not depend on the selector registering first', () => {
+        const registry = new SelectorRegistry();
+        const owner = form();
+        const observer = vi.fn();
+
+        registry.observe(owner, 'categoryId', observer);
+        registry.register(owner, 'categoryId', handle());
+        registry.notifyChange(owner, 'categoryId', change());
+
+        expect(observer).toHaveBeenCalledTimes(1);
+    });
+
+    test('notifying a field nobody observes is a no-op', () => {
+        const registry = new SelectorRegistry();
+
+        expect(() => registry.notifyChange(form(), 'categoryId', change())).not.toThrow();
+    });
+
+    test('cleanup stops delivery and is idempotent', () => {
+        const registry = new SelectorRegistry();
+        const owner = form();
+        const first = vi.fn();
+        const second = vi.fn();
+        const stopFirst = registry.observe(owner, 'categoryId', first);
+        registry.observe(owner, 'categoryId', second);
+
+        stopFirst();
+        stopFirst();
+        registry.notifyChange(owner, 'categoryId', change());
+
+        expect(first).not.toHaveBeenCalled();
+        expect(second).toHaveBeenCalledTimes(1);
+    });
+
+    test('one failing observer does not starve the others', () => {
+        const registry = new SelectorRegistry();
+        const owner = form();
+        const survivor = vi.fn();
+        registry.observe(owner, 'categoryId', () => { throw new Error('observer blew up'); });
+        registry.observe(owner, 'categoryId', survivor);
+
+        expect(() => registry.notifyChange(owner, 'categoryId', change())).not.toThrow();
+        expect(survivor).toHaveBeenCalledTimes(1);
+    });
+
+    test('observeSelectorField resolves the owning form of a DOM consumer', () => {
+        const owner = form();
+        const element = { closest: vi.fn(() => owner) } as unknown as Element;
+        const observer = vi.fn();
+
+        const stop = observeSelectorField(element, 'categoryId', observer);
+        selectorRegistry.notifyChange(owner, 'categoryId', change());
+        stop();
+        selectorRegistry.notifyChange(owner, 'categoryId', change());
+
+        expect(element.closest).toHaveBeenCalledWith('form');
+        expect(observer).toHaveBeenCalledTimes(1);
+    });
+
+    test('observeSelectorField returns an inert cleanup when there is no owning form', () => {
+        const element = { closest: vi.fn(() => null) } as unknown as Element;
+        const observer = vi.fn();
+
+        const stop = observeSelectorField(element, 'categoryId', observer);
+
+        expect(stop).toBeTypeOf('function');
+        expect(() => stop()).not.toThrow();
+        expect(observer).not.toHaveBeenCalled();
     });
 });
