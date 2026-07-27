@@ -13,11 +13,14 @@ export interface SelectorCreateCandidate {
     readonly label: string;
 }
 
-export interface SelectorError {
-    readonly operation: 'search' | 'create';
+export interface SelectorOperationError<TOperation extends 'search' | 'create'> {
+    readonly operation: TOperation;
     readonly message: string;
     readonly cause?: unknown;
 }
+
+export type SelectorSearchError = SelectorOperationError<'search'>;
+export type SelectorCreationError = SelectorOperationError<'create'>;
 
 export interface SelectorState<TRaw = unknown> {
     readonly query: string;
@@ -29,7 +32,8 @@ export interface SelectorState<TRaw = unknown> {
     readonly creationStatus: SelectorCreationStatus;
     readonly createCandidate: SelectorCreateCandidate | null;
     readonly createConfirmationCandidate: SelectorCreateCandidate | null;
-    readonly error: SelectorError | null;
+    readonly searchError: SelectorSearchError | null;
+    readonly creationError: SelectorCreationError | null;
     readonly destroyed: boolean;
 }
 
@@ -67,12 +71,33 @@ export interface SelectorCommandError {
     readonly message: string;
 }
 
+export type SelectorCreationOutcome<TRaw = unknown> =
+    | {
+        readonly status: 'success';
+        readonly label: string;
+        readonly option: SelectorOption<TRaw>;
+    }
+    | {
+        readonly status: 'failure';
+        readonly label: string;
+        readonly error: SelectorCreationError;
+    }
+    | { readonly status: 'cancelled'; readonly label: string }
+    | { readonly status: 'discarded'; readonly label: string };
+
+export interface SelectorCreationRequest<TRaw = unknown> {
+    readonly label: string;
+    readonly outcome: Promise<SelectorCreationOutcome<TRaw>>;
+}
+
 export type SelectorCommandResult<TRaw = unknown> =
     | {
         readonly ok: true;
         readonly change?: SelectorChange<TRaw>;
         /** Whether a token or create request was consumed by the selector. */
         readonly consumed?: boolean;
+        /** Eventual outcome when this command queued or joined creation work. */
+        readonly creation?: SelectorCreationRequest<TRaw>;
     }
     | { readonly ok: false; readonly error: SelectorCommandError };
 

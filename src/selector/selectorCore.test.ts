@@ -41,7 +41,8 @@ describe('selector lifecycle', () => {
             creationStatus: 'idle',
             createCandidate: null,
             createConfirmationCandidate: null,
-            error: null,
+            searchError: null,
+            creationError: null,
             destroyed: false,
         });
     });
@@ -370,6 +371,88 @@ describe('selector selection', () => {
     });
 });
 
+class ObservingDeferredCreationSource implements SelectorSource<RawValue> {
+    readonly started: string[] = [];
+    private readonly creations = new Map<string, {
+        promise: Promise<SelectorOption<RawValue>>;
+        resolve: (value: SelectorOption<RawValue>) => void;
+        reject: (error: unknown) => void;
+    }>();
+    private readonly searches = new Map<string, {
+        promise: Promise<readonly SelectorOption<RawValue>[]>;
+        resolve: (value: readonly SelectorOption<RawValue>[]) => void;
+        reject: (error: unknown) => void;
+    }>();
+
+    deferCreate(label: string): void {
+        let resolve!: (value: SelectorOption<RawValue>) => void;
+        let reject!: (error: unknown) => void;
+        const promise = new Promise<SelectorOption<RawValue>>((resolvePromise, rejectPromise) => {
+            resolve = resolvePromise;
+            reject = rejectPromise;
+        });
+        this.creations.set(label, { promise, resolve, reject });
+    }
+
+    resolveCreate(label: string, value: SelectorOption<RawValue>): void {
+        this.creations.get(label)?.resolve(value);
+    }
+
+    rejectCreate(label: string, error: unknown): void {
+        this.creations.get(label)?.reject(error);
+    }
+
+    deferSearch(query: string): void {
+        let resolve!: (value: readonly SelectorOption<RawValue>[]) => void;
+        let reject!: (error: unknown) => void;
+        const promise = new Promise<readonly SelectorOption<RawValue>[]>((resolvePromise, rejectPromise) => {
+            resolve = resolvePromise;
+            reject = rejectPromise;
+        });
+        this.searches.set(query, { promise, resolve, reject });
+    }
+
+    resolveSearch(query: string, value: readonly SelectorOption<RawValue>[]): void {
+        this.searches.get(query)?.resolve(value);
+    }
+
+    rejectSearch(query: string, error: unknown): void {
+        this.searches.get(query)?.reject(error);
+    }
+
+    search(query: string, signal: AbortSignal): Promise<readonly SelectorOption<RawValue>[]> {
+        const deferred = this.searches.get(query);
+        const operation = deferred?.promise ?? Promise.resolve([]);
+        return this.abortable(operation, signal);
+    }
+
+    create(label: string, signal: AbortSignal): Promise<SelectorOption<RawValue>> {
+        this.started.push(label);
+        const deferred = this.creations.get(label);
+        if (!deferred) return Promise.reject(new Error(`No deferred creation for ${label}`));
+        return this.abortable(deferred.promise, signal);
+    }
+
+    private abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+        if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
+        return new Promise<T>((resolve, reject) => {
+            const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
+            const cleanup = () => signal.removeEventListener('abort', onAbort);
+            signal.addEventListener('abort', onAbort, { once: true });
+            operation.then(
+                (value) => {
+                    cleanup();
+                    resolve(value);
+                },
+                (error: unknown) => {
+                    cleanup();
+                    reject(error);
+                },
+            );
+        });
+    }
+}
+
 class AbortIgnoringDeferredSource implements SelectorSource<RawValue> {
     private readonly pending = new Map<string, {
         promise: Promise<readonly SelectorOption<RawValue>[]>;
@@ -408,7 +491,7 @@ describe('selector search orchestration', () => {
             query: 'new',
             options: [option(2, 'Current')],
             searchStatus: 'success',
-            error: null,
+            searchError: null,
         });
 
         stale.resolve([option(1, 'Stale')]);
@@ -417,7 +500,7 @@ describe('selector search orchestration', () => {
             query: 'new',
             options: [option(2, 'Current')],
             searchStatus: 'success',
-            error: null,
+            searchError: null,
         });
     });
 
@@ -438,7 +521,7 @@ describe('selector search orchestration', () => {
             query: 'second',
             options: [beta],
             searchStatus: 'success',
-            error: null,
+            searchError: null,
         });
     });
 
@@ -454,11 +537,110 @@ describe('selector search orchestration', () => {
         expect(selector.getSnapshot()).toMatchObject({
             query: 'broken',
             searchStatus: 'error',
-            error: {
+            searchError: {
                 operation: 'search',
                 message: 'lookup unavailable',
                 cause: failure,
             },
+        });
+    });
+});
+
+describe('selector search and creation lifecycle independence', () => {
+    test('retains a creation error while search runs and succeeds, then clears it on creation retry', async () => {
+        const source = new ObservingDeferredCreationSource();
+        source.deferCreate('Broken');
+        source.deferSearch('lookup');
+        const selector = createSelector({ source });
+
+        const failed = selector.dispatch({ type: 'commit-token', token: 'Broken' });
+        selector.dispatch({ type: 'set-query', query: 'lookup' });
+        source.rejectCreate('Broken', new Error('creation unavailable'));
+        await flushMicrotasks();
+
+        expect(selector.getSnapshot()).toMatchObject({
+            searchStatus: 'loading',
+            searchError: null,
+            creationStatus: 'error',
+            creationError: { operation: 'create', message: 'creation unavailable' },
+        });
+        if (!failed.ok || !failed.creation) throw new Error('missing creation outcome');
+        await expect(failed.creation.outcome).resolves.toMatchObject({
+            status: 'failure',
+            label: 'Broken',
+            error: { operation: 'create', message: 'creation unavailable' },
+        });
+
+        source.resolveSearch('lookup', [option(9, 'Result')]);
+        await flushMicrotasks();
+        expect(selector.getSnapshot()).toMatchObject({
+            searchStatus: 'success',
+            searchError: null,
+            creationStatus: 'error',
+            creationError: { message: 'creation unavailable' },
+        });
+
+        source.deferCreate('Broken');
+        const retry = selector.dispatch({ type: 'commit-token', token: 'Broken' });
+        expect(selector.getSnapshot()).toMatchObject({
+            searchStatus: 'success',
+            searchError: null,
+            creationStatus: 'loading',
+            creationError: null,
+        });
+        source.resolveCreate('Broken', option(1, 'Broken'));
+        if (!retry.ok || !retry.creation) throw new Error('missing retry outcome');
+        await expect(retry.creation.outcome).resolves.toMatchObject({ status: 'success' });
+        expect(selector.getSnapshot()).toMatchObject({
+            creationStatus: 'idle',
+            creationError: null,
+        });
+    });
+
+    test('retains a search error while creation runs and succeeds, then clears it on search retry', async () => {
+        const source = new ObservingDeferredCreationSource();
+        source.deferSearch('broken search');
+        source.deferCreate('Created');
+        const selector = createSelector({ source });
+
+        selector.dispatch({ type: 'set-query', query: 'broken search' });
+        source.rejectSearch('broken search', new Error('lookup unavailable'));
+        await flushMicrotasks();
+        expect(selector.getSnapshot()).toMatchObject({
+            searchStatus: 'error',
+            searchError: { operation: 'search', message: 'lookup unavailable' },
+        });
+
+        const creation = selector.dispatch({ type: 'commit-token', token: 'Created' });
+        expect(selector.getSnapshot()).toMatchObject({
+            searchStatus: 'error',
+            searchError: { message: 'lookup unavailable' },
+            creationStatus: 'loading',
+            creationError: null,
+        });
+        source.resolveCreate('Created', option(1, 'Created'));
+        if (!creation.ok || !creation.creation) throw new Error('missing creation outcome');
+        await expect(creation.creation.outcome).resolves.toMatchObject({ status: 'success' });
+        expect(selector.getSnapshot()).toMatchObject({
+            searchStatus: 'error',
+            searchError: { message: 'lookup unavailable' },
+            creationStatus: 'idle',
+            creationError: null,
+        });
+
+        source.deferSearch('recovered');
+        selector.dispatch({ type: 'set-query', query: 'recovered' });
+        expect(selector.getSnapshot()).toMatchObject({
+            searchStatus: 'loading',
+            searchError: null,
+            creationStatus: 'idle',
+            creationError: null,
+        });
+        source.resolveSearch('recovered', []);
+        await flushMicrotasks();
+        expect(selector.getSnapshot()).toMatchObject({
+            searchStatus: 'success',
+            searchError: null,
         });
     });
 });
@@ -475,7 +657,11 @@ describe('selector creation queue foundation', () => {
         await flushMicrotasks();
         const result = selector.dispatch({ type: 'commit-token', token: 'New tag' });
 
-        expect(result).toEqual({ ok: true, consumed: true });
+        expect(result).toMatchObject({
+            ok: true,
+            consumed: true,
+            creation: { label: 'New tag' },
+        });
         expect(selector.getSnapshot()).toMatchObject({
             query: '',
             creationStatus: 'loading',
@@ -488,10 +674,11 @@ describe('selector creation queue foundation', () => {
         expect(selector.getSnapshot()).toMatchObject({
             creationStatus: 'idle',
             selected: [option(1, 'New tag')],
-            error: null,
+            creationError: null,
         });
-        expect(changes).toHaveLength(4);
-        expect(changes[3]).toMatchObject({ reason: 'create' });
+        expect(changes.filter(Boolean)).toEqual([
+            expect.objectContaining({ reason: 'create' }),
+        ]);
     });
 });
 
@@ -535,9 +722,10 @@ describe('selector create candidates and token precedence', () => {
             consumed: true,
             change: { reason: 'select', added: [available] },
         });
-        expect(selector.dispatch({ type: 'commit-token', token: 'Created' })).toEqual({
+        expect(selector.dispatch({ type: 'commit-token', token: 'Created' })).toMatchObject({
             ok: true,
             consumed: true,
+            creation: { label: 'Created' },
         });
         await flushMicrotasks();
         expect(selector.getSnapshot().selected).toEqual([selected, available, created]);
@@ -566,7 +754,11 @@ describe('selector create candidates and token precedence', () => {
             createCandidate: { label: 'Virtual' },
             activeOptionIndex: 0,
         });
-        expect(selector.dispatch({ type: 'commit-active' })).toEqual({ ok: true, consumed: true });
+        expect(selector.dispatch({ type: 'commit-active' })).toMatchObject({
+            ok: true,
+            consumed: true,
+            creation: { label: 'Virtual' },
+        });
         expect(selector.getSnapshot().query).toBe('');
         await flushMicrotasks();
         expect(selector.getSnapshot().selected).toEqual([option(1, 'Virtual')]);
@@ -606,13 +798,60 @@ describe('selector confirmation and unified creation queue', () => {
         expect(selector.getSnapshot().createConfirmationCandidate).toBeNull();
 
         selector.dispatch({ type: 'request-create-confirmation', label: 'Confirm me' });
-        expect(selector.dispatch({ type: 'confirm-create' })).toEqual({ ok: true, consumed: true });
+        expect(selector.dispatch({ type: 'confirm-create' })).toMatchObject({
+            ok: true,
+            consumed: true,
+            creation: { label: 'Confirm me' },
+        });
         creation.resolve(option(1, 'Confirm me'));
         await flushMicrotasks();
         expect(selector.getSnapshot()).toMatchObject({
             createConfirmationCandidate: null,
             selected: [option(9, 'External'), option(1, 'Confirm me')],
         });
+    });
+
+    test('starts creation sources serially and exposes ordinary success and failure outcomes', async () => {
+        const source = new ObservingDeferredCreationSource();
+        source.deferCreate('First');
+        source.deferCreate('Second');
+        source.deferCreate('Third');
+        const selector = createSelector({ source });
+
+        const first = selector.dispatch({ type: 'commit-token', token: 'First' });
+        const second = selector.dispatch({ type: 'commit-token', token: 'Second' });
+        const third = selector.dispatch({ type: 'commit-token', token: 'Third' });
+        expect(source.started).toEqual(['First']);
+
+        source.rejectCreate('First', new Error('first failed'));
+        await flushMicrotasks();
+        expect(source.started).toEqual(['First', 'Second']);
+        source.resolveCreate('Second', option(2, 'Second'));
+        await flushMicrotasks();
+        expect(source.started).toEqual(['First', 'Second', 'Third']);
+        source.resolveCreate('Third', option(3, 'Third'));
+
+        if (!first.ok || !first.creation
+            || !second.ok || !second.creation
+            || !third.ok || !third.creation) {
+            throw new Error('missing creation outcomes');
+        }
+        await expect(first.creation.outcome).resolves.toMatchObject({
+            status: 'failure',
+            label: 'First',
+            error: { message: 'first failed' },
+        });
+        await expect(second.creation.outcome).resolves.toEqual({
+            status: 'success',
+            label: 'Second',
+            option: option(2, 'Second'),
+        });
+        await expect(third.creation.outcome).resolves.toEqual({
+            status: 'success',
+            label: 'Third',
+            option: option(3, 'Third'),
+        });
+        expect(selector.getSnapshot().selected).toEqual([option(2, 'Second'), option(3, 'Third')]);
     });
 
     test('processes queued entry paths in order, recovers from failures, and deduplicates labels', async () => {
@@ -624,7 +863,7 @@ describe('selector confirmation and unified creation queue', () => {
         const observed = [] as Array<{ status: string; error: string | null }>;
         selector.subscribe((snapshot) => observed.push({
             status: snapshot.creationStatus,
-            error: snapshot.error?.message ?? null,
+            error: snapshot.creationError?.message ?? null,
         }));
 
         selector.dispatch({ type: 'commit-token', token: 'First' });
@@ -634,14 +873,14 @@ describe('selector confirmation and unified creation queue', () => {
         first.resolve(option(1, 'First'));
         await flushMicrotasks();
         expect(selector.getSnapshot().selected).toEqual([option(1, 'First')]);
-        expect(observed).toContainEqual({ status: 'loading', error: 'cannot create' });
+        expect(observed).toContainEqual({ status: 'error', error: 'cannot create' });
 
         last.resolve(option(2, 'Last'));
         await flushMicrotasks();
         expect(selector.getSnapshot()).toMatchObject({
             selected: [option(1, 'First'), option(2, 'Last')],
             creationStatus: 'idle',
-            error: null,
+            creationError: null,
         });
     });
 
@@ -671,7 +910,7 @@ describe('selector confirmation and unified creation queue', () => {
         expect(selector.getSnapshot()).toMatchObject({
             selected: [option(1, 'Token'), option(2, 'Virtual'), option(3, 'Confirmed')],
             creationStatus: 'idle',
-            error: null,
+            creationError: null,
         });
     });
 
@@ -700,18 +939,30 @@ describe('selector confirmation and unified creation queue', () => {
         });
     });
 
-    test('aborts creation and discards queued work on destruction without adding options', async () => {
-        const source = new InMemorySelectorSource<RawValue>();
-        const first = source.deferCreate('First');
-        source.setCreateResult('Second', option(2, 'Second'));
+    test('reports active cancellation and queued discard on destruction without starting discarded work', async () => {
+        const source = new ObservingDeferredCreationSource();
+        source.deferCreate('First');
+        source.deferCreate('Second');
         const selector = createSelector({ source });
 
-        selector.dispatch({ type: 'commit-token', token: 'First' });
-        selector.dispatch({ type: 'commit-token', token: 'Second' });
-        selector.destroy();
-        first.resolve(option(1, 'First'));
-        await flushMicrotasks();
+        const first = selector.dispatch({ type: 'commit-token', token: 'First' });
+        const second = selector.dispatch({ type: 'commit-token', token: 'Second' });
+        expect(source.started).toEqual(['First']);
 
+        selector.destroy();
+        selector.destroy();
+        if (!first.ok || !first.creation || !second.ok || !second.creation) {
+            throw new Error('missing creation outcomes');
+        }
+        await expect(first.creation.outcome).resolves.toEqual({
+            status: 'cancelled',
+            label: 'First',
+        });
+        await expect(second.creation.outcome).resolves.toEqual({
+            status: 'discarded',
+            label: 'Second',
+        });
+        expect(source.started).toEqual(['First']);
         expect(selector.getSnapshot()).toMatchObject({
             destroyed: true,
             selected: [],
@@ -792,7 +1043,7 @@ describe('selector end-to-end public contract flows', () => {
         await flushMicrotasks();
         expect(selector.getSnapshot()).toMatchObject({
             creationStatus: 'error',
-            error: { operation: 'create', message: 'creation unavailable' },
+            creationError: { operation: 'create', message: 'creation unavailable' },
             selected: [],
         });
 
@@ -805,7 +1056,7 @@ describe('selector end-to-end public contract flows', () => {
         expect(selector.getSnapshot()).toMatchObject({
             selected: [option(1, 'New')],
             creationStatus: 'idle',
-            error: null,
+            creationError: null,
         });
     });
 
@@ -832,7 +1083,7 @@ describe('selector end-to-end public contract flows', () => {
         expect(selector.getSnapshot()).toMatchObject({
             selected: [beta],
             searchStatus: 'error',
-            error: { operation: 'search', message: 'search unavailable' },
+            searchError: { operation: 'search', message: 'search unavailable' },
         });
 
         selector.dispatch({ type: 'set-query', query: 'recovered' });
@@ -841,7 +1092,7 @@ describe('selector end-to-end public contract flows', () => {
             selected: [beta],
             options: [],
             searchStatus: 'success',
-            error: null,
+            searchError: null,
         });
         expect(changes).toEqual([]);
     });
