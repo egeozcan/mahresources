@@ -9,24 +9,25 @@ import type { SelectorHandle, SelectorKey, SelectorOption } from './types';
 const PROFILE_SEARCH_DELAY_MS = 200;
 
 const entityEndpointCatalog = {
-    category: '/v1/categories',
-    group: '/v1/groups',
-    note: '/v1/notes',
-    noteType: '/v1/note/noteTypes',
-    query: '/v1/queries',
-    relationType: '/v1/relationTypes',
-    resource: '/v1/resources',
-    resourceCategory: '/v1/resourceCategories',
-    series: '/v1/seriesList',
-    tag: '/v1/tags',
+    category: { search: '/v1/categories', create: '/v1/category' },
+    group: { search: '/v1/groups' },
+    note: { search: '/v1/notes' },
+    noteType: { search: '/v1/note/noteTypes' },
+    query: { search: '/v1/queries' },
+    relationType: { search: '/v1/relationTypes' },
+    resource: { search: '/v1/resources' },
+    resourceCategory: { search: '/v1/resourceCategories' },
+    series: { search: '/v1/seriesList', create: '/v1/series/create' },
+    tag: { search: '/v1/tags', create: '/v1/tag', suggestions: '/v1/tags/suggest' },
 } as const;
 
 export type EntityProfileName = keyof typeof entityEndpointCatalog;
+export type CreatableEntityProfileName = 'category' | 'series';
+export type TagUsageEntity = 'group' | 'note' | 'resource';
 
 export interface SelectorEntityValue {
     readonly ID: SelectorKey;
     readonly Name: string;
-    readonly [key: string]: unknown;
 }
 
 export interface EntityFieldFormInput {
@@ -66,9 +67,26 @@ export interface EntityFieldProfileOptions<TRaw extends SelectorEntityValue> {
     readonly categoryDecoration?: boolean;
 }
 
+export interface TagSuggestionSourceInput {
+    /** Rank the lean tag suggestions by associations with this owning entity type. */
+    readonly usage: TagUsageEntity;
+}
+
 export interface MultiEntityFieldProfileOptions<TRaw extends SelectorEntityValue>
     extends EntityFieldProfileOptions<TRaw> {
     readonly maximum?: number;
+    /** Selects the private lean tag source without enabling tag creation. */
+    readonly tagSuggestions?: TagSuggestionSourceInput;
+}
+
+export interface CreatableEntityFieldProfileOptions<TRaw extends SelectorEntityValue>
+    extends Omit<EntityFieldProfileOptions<TRaw>, 'entity'> {
+    readonly entity: CreatableEntityProfileName;
+}
+
+export interface TagFieldProfileOptions<TRaw extends SelectorEntityValue>
+    extends Omit<EntityFieldProfileOptions<TRaw>, 'entity' | 'categoryDecoration'> {
+    readonly usage: TagUsageEntity;
 }
 
 function mapEntityOption<TRaw extends SelectorEntityValue>(raw: TRaw): SelectorOption<TRaw> {
@@ -101,14 +119,36 @@ interface BuildEntityFieldProfileOptions<TRaw extends SelectorEntityValue>
     extends EntityFieldProfileOptions<TRaw> {
     readonly multiple: boolean;
     readonly maximum?: number;
+    readonly create?: boolean;
+    readonly tagSuggestions?: TagSuggestionSourceInput;
 }
 
 function buildEntityFieldProfile<TRaw extends SelectorEntityValue>(
     options: BuildEntityFieldProfileOptions<TRaw>,
 ): EntityFieldProfile<TRaw> {
+    if (options.tagSuggestions && options.entity !== 'tag') {
+        throw new Error('Lean tag suggestions can only be used with the tag entity profile');
+    }
+    const catalogEntry = entityEndpointCatalog[options.entity];
+    const tagCatalogEntry = options.entity === 'tag' ? entityEndpointCatalog.tag : null;
+    const searchUrl = options.tagSuggestions
+        ? tagCatalogEntry!.suggestions
+        : catalogEntry.search;
+    const createUrl = options.create && 'create' in catalogEntry
+        ? catalogEntry.create
+        : undefined;
+    const parameters = options.parameters || options.tagSuggestions
+        ? () => ({
+            ...options.parameters?.(),
+            ...(options.tagSuggestions
+                ? { SortBy: `most_used_${options.tagSuggestions.usage}` }
+                : {}),
+        })
+        : undefined;
     const source = createDebouncedSelectorSource(createHttpSelectorSource({
-        searchUrl: entityEndpointCatalog[options.entity],
-        parameters: options.parameters,
+        searchUrl,
+        createUrl,
+        parameters,
         mapOption: mapEntityOption<TRaw>,
     }), PROFILE_SEARCH_DELAY_MS);
     const selector = createSelector({
@@ -138,4 +178,25 @@ export function createMultiEntityFieldProfile<TRaw extends SelectorEntityValue>(
     options: MultiEntityFieldProfileOptions<TRaw>,
 ): EntityFieldProfile<TRaw> {
     return buildEntityFieldProfile({ ...options, multiple: true });
+}
+
+/** Creates a zero-or-one form field that may create an entity before selecting it. */
+export function createCreatableEntityFieldProfile<TRaw extends SelectorEntityValue>(
+    options: CreatableEntityFieldProfileOptions<TRaw>,
+): EntityFieldProfile<TRaw> {
+    return buildEntityFieldProfile({ ...options, multiple: false, create: true });
+}
+
+/** Creates the creatable multi-tag preset with lean, usage-ranked suggestions. */
+export function createTagFieldProfile<TRaw extends SelectorEntityValue>(
+    options: TagFieldProfileOptions<TRaw>,
+): EntityFieldProfile<TRaw> {
+    const { usage, ...fieldOptions } = options;
+    return buildEntityFieldProfile({
+        ...fieldOptions,
+        entity: 'tag',
+        multiple: true,
+        create: true,
+        tagSuggestions: { usage },
+    });
 }
