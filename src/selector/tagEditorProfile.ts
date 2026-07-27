@@ -4,7 +4,16 @@ import {
     type SelectorEntityValue,
     type TagFieldProfileOptions,
 } from './entityFieldProfiles';
-import type { SelectorChange, SelectorKey, SelectorOption, SelectorState } from './types';
+import type {
+    SelectorChange,
+    SelectorCommand,
+    SelectorCommandResult,
+    SelectorHandle,
+    SelectorKey,
+    SelectorOption,
+    SelectorState,
+    SelectorSubscriber,
+} from './types';
 
 const DEFAULT_FAILED_KEY_DURATION_MS = 400;
 
@@ -73,6 +82,7 @@ class TagEditorProfileImpl<TRaw extends SelectorEntityValue> implements TagEdito
     readonly interaction: EntityFieldProfile<TRaw>['interaction'];
     readonly presentation: EntityFieldProfile<TRaw>['presentation'];
 
+    private readonly coreSelector: SelectorHandle<TRaw>;
     private readonly association: TagAssociationPersistenceAdapter<TRaw>;
     private readonly failedKeyDurationMs: number;
     private readonly subscribers = new Set<TagEditorProfileSubscriber>();
@@ -88,14 +98,21 @@ class TagEditorProfileImpl<TRaw extends SelectorEntityValue> implements TagEdito
     constructor(options: TagEditorProfileOptions<TRaw>) {
         const { association, failedKeyDurationMs, ...tagFieldOptions } = options;
         const field = createTagFieldProfile(tagFieldOptions);
-        this.selector = field.selector;
+        this.coreSelector = field.selector;
+        this.selector = Object.freeze({
+            getSnapshot: () => this.coreSelector.getSnapshot(),
+            subscribe: (subscriber: SelectorSubscriber<TRaw>) =>
+                this.coreSelector.subscribe(subscriber),
+            dispatch: (command: SelectorCommand<TRaw>) => this.dispatchSelectorCommand(command),
+            destroy: () => this.coreSelector.destroy(),
+        });
         this.form = field.form;
         this.interaction = field.interaction;
         this.presentation = field.presentation;
         this.association = association;
         this.failedKeyDurationMs = failureDuration(failedKeyDurationMs);
-        this.selected = this.selector.getSnapshot().selected;
-        this.unsubscribeSelector = this.selector.subscribe((snapshot, change) => {
+        this.selected = this.coreSelector.getSnapshot().selected;
+        this.unsubscribeSelector = this.coreSelector.subscribe((snapshot, change) => {
             this.handleSelectorSnapshot(snapshot, change);
         });
     }
@@ -112,6 +129,18 @@ class TagEditorProfileImpl<TRaw extends SelectorEntityValue> implements TagEdito
 
     destroy(): void {
         this.dispose(true);
+    }
+
+    private dispatchSelectorCommand(
+        command: SelectorCommand<TRaw>,
+    ): SelectorCommandResult<TRaw> {
+        if (command.type === 'replace-selection') {
+            for (const key of [...this.operations.keys()]) {
+                this.advanceVersion(key);
+                this.invalidateOperation(key);
+            }
+        }
+        return this.coreSelector.dispatch(command);
     }
 
     private handleSelectorSnapshot(
@@ -185,7 +214,7 @@ class TagEditorProfileImpl<TRaw extends SelectorEntityValue> implements TagEdito
 
     private rollback(operation: AssociationOperation<TRaw>): void {
         if (this.destroyed || this.versions.get(operation.key) !== operation.version) return;
-        const current = this.selector.getSnapshot().selected;
+        const current = this.coreSelector.getSnapshot().selected;
         const hasKey = current.some((option) => canonicalKey(option.key) === operation.key);
         const options = operation.action === 'add'
             ? current.filter((option) => canonicalKey(option.key) !== operation.key)
@@ -195,7 +224,7 @@ class TagEditorProfileImpl<TRaw extends SelectorEntityValue> implements TagEdito
         if (options === current || (operation.action === 'add' && options.length === current.length)) {
             return;
         }
-        this.selector.dispatch({
+        this.coreSelector.dispatch({
             type: 'replace-selection',
             options,
             reason: 'replace',
@@ -274,7 +303,7 @@ class TagEditorProfileImpl<TRaw extends SelectorEntityValue> implements TagEdito
         this.failedKeys.clear();
         this.publish();
         this.subscribers.clear();
-        if (destroySelector) this.selector.destroy();
+        if (destroySelector) this.coreSelector.destroy();
     }
 }
 

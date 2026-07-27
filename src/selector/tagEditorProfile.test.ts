@@ -203,6 +203,71 @@ describe('tag editor profile', () => {
         expect(profile.getSnapshot()).toEqual({ pendingKeys: [], failedKeys: [], destroyed: false });
     });
 
+    test('invalidates an in-flight write before an identical external reset that core would ignore', async () => {
+        const beta = tag(2, 'Beta');
+        const writes = persistence();
+        const add = deferred<void>();
+        writes.add.mockReturnValue(add.promise);
+        const profile = createTagEditorProfile({ usage: 'resource', association: writes.adapter });
+
+        profile.selector.dispatch({
+            type: 'select-option',
+            option: { key: beta.ID, label: beta.Name, raw: beta },
+        });
+        const pendingOption = profile.selector.getSnapshot().selected[0];
+        const signal = writes.add.mock.calls[0][1];
+
+        profile.selector.dispatch({
+            type: 'replace-selection',
+            options: [pendingOption],
+            reason: 'reset',
+            silent: true,
+        });
+        expect(signal.aborted).toBe(true);
+        expect(profile.getSnapshot().pendingKeys).toEqual([]);
+
+        add.reject(new Error('old resource failed'));
+        await flush();
+
+        expect(profile.selector.getSnapshot().selected).toEqual([pendingOption]);
+        expect(profile.getSnapshot().failedKeys).toEqual([]);
+    });
+
+    test('invalidates an in-flight write before a same-key external reset with new tag data', async () => {
+        const beta = tag(2, 'Beta');
+        const replacement = tag(2, 'Beta from new resource');
+        const writes = persistence();
+        const add = deferred<void>();
+        writes.add.mockReturnValue(add.promise);
+        const profile = createTagEditorProfile({ usage: 'resource', association: writes.adapter });
+
+        profile.selector.dispatch({
+            type: 'select-option',
+            option: { key: beta.ID, label: beta.Name, raw: beta },
+        });
+        const signal = writes.add.mock.calls[0][1];
+        const replacementOption = {
+            key: String(replacement.ID),
+            label: replacement.Name,
+            raw: replacement,
+        };
+
+        profile.selector.dispatch({
+            type: 'replace-selection',
+            options: [replacementOption],
+            reason: 'reset',
+            silent: true,
+        });
+        expect(signal.aborted).toBe(true);
+        expect(profile.getSnapshot().pendingKeys).toEqual([]);
+
+        add.reject(new Error('old resource failed'));
+        await flush();
+
+        expect(profile.selector.getSnapshot().selected).toEqual([replacementOption]);
+        expect(profile.getSnapshot().failedKeys).toEqual([]);
+    });
+
     test('aborts profile-owned writes, clears presentation state, and ignores completions on destroy', async () => {
         const beta = tag(2, 'Beta');
         const writes = persistence();
