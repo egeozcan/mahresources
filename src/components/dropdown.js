@@ -1,4 +1,5 @@
 import { abortableFetch } from '../index.js';
+import { selectorRegistry } from '../selector/selectorRegistry.ts';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 
 export function autocompleter({
@@ -61,6 +62,7 @@ export function autocompleter({
         // Reactive Sets so chip :class / :data-tag-pending bindings update on add/delete.
         pendingIds: new Set(),
         failedIds: new Set(),
+        _unregisterSelector: null,
 
         // Set by resetSelectedResults() right before an external (non-user) wholesale
         // replacement of selectedResults — e.g. the lightbox swapping to a different
@@ -145,8 +147,51 @@ export function autocompleter({
             window.addEventListener('scroll', this._repositionHandler, true);
             window.addEventListener('resize', this._repositionHandler);
 
-            // Form handling only when not in standalone mode
             const form = this.$el.closest('form');
+            if (form && elName) {
+                this._unregisterSelector?.();
+                const handle = {
+                    getRawValues: () => this.selectedResults,
+                    replaceRawValues: (values, { silent = false } = {}) => {
+                        this.resetSelectedResults(values, { silent });
+                    },
+                    replaceByKeys: (keys, options = {}) => {
+                        const existingById = new Map(
+                            this.selectedResults.map((item) => [String(item.ID), item]),
+                        );
+                        const selected = keys.map((key) => {
+                            const existing = existingById.get(String(key));
+                            if (existing) return existing;
+                            const numericKey = Number(key);
+                            const ID = Number.isNaN(numericKey) ? key : numericKey;
+                            return { ID, Name: `#${key}` };
+                        });
+                        handle.replaceRawValues(selected, options);
+                    },
+                    resolveExactLabels: async (labels, options = {}) => {
+                        const selected = [];
+                        for (const label of labels) {
+                            const separator = url.includes('?') ? '&' : '?';
+                            const response = await fetch(
+                                `${url}${separator}Name=${encodeURIComponent(label)}`,
+                            );
+                            if (!response.ok) return false;
+                            const results = await response.json();
+                            const match = Array.isArray(results)
+                                ? results.find((item) =>
+                                    String(item.Name).toLowerCase() === label.toLowerCase())
+                                : null;
+                            if (!match) return false;
+                            selected.push(match);
+                        }
+                        handle.replaceRawValues(selected, options);
+                        return true;
+                    },
+                };
+                this._unregisterSelector = selectorRegistry.register(form, elName, handle);
+            }
+
+            // Form handling only when not in standalone mode
             if (form && !standalone) {
                 form.addEventListener('submit', (e) => {
                     if (this.selectedResults.length < this.min) {
@@ -162,6 +207,8 @@ export function autocompleter({
         },
 
         destroy() {
+            this._unregisterSelector?.();
+            this._unregisterSelector = null;
             if (this._repositionHandler) {
                 window.removeEventListener('scroll', this._repositionHandler, true);
                 window.removeEventListener('resize', this._repositionHandler);
@@ -413,8 +460,8 @@ export function autocompleter({
         // Wholesale-replace selectedResults from an external source (the lightbox swapping
         // to a different resource's tags) without the selectedResults $watch announcing it
         // as a user add/remove.
-        resetSelectedResults(tags) {
-            this._suppressNextAnnounce = true;
+        resetSelectedResults(tags, { silent = true } = {}) {
+            this._suppressNextAnnounce = silent;
             this.selectedResults = [...tags];
         },
 
