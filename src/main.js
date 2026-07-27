@@ -51,7 +51,7 @@ import {
 import { renderJsonTable } from './tableMaker.js';
 
 // Import Alpine components
-import { autocompleter } from './components/dropdown.js';
+import { autocompleter, singleEntitySelector } from './components/dropdown.js';
 import { confirmAction } from './components/confirmAction.js';
 import { confirmGroupDelete } from './components/confirmGroupDelete.js';
 import { freeFields, generateParamNameForMeta, getJSONValue, getJSONOrObjValue } from './components/freeFields.js';
@@ -152,6 +152,7 @@ registerPasteUploadStore(Alpine);
 
 // Register Alpine data components
 Alpine.data('autocompleter', autocompleter);
+Alpine.data('singleEntitySelector', singleEntitySelector);
 Alpine.data('confirmAction', confirmAction);
 Alpine.data('confirmGroupDelete', confirmGroupDelete);
 Alpine.data('freeFields', freeFields);

@@ -9,19 +9,16 @@
 <div class="max-w-7xl mx-auto" x-data="groupCompareView({
     g1: {{ query.Group1ID }},
     g2: {{ query.Group2ID }}
-})" @group1-selected.window="onGroup1Change($event.detail.item.ID)" @group2-selected.window="onGroup2Change($event.detail.item.ID)">
+})">
     <div class="bg-white shadow rounded-lg p-3 mb-4">
         <div class="flex flex-col md:flex-row items-stretch md:items-center gap-3">
             <div class="flex flex-wrap items-center gap-2 flex-1 min-w-0">
                 <span class="compare-side-label--old" aria-label="{{ label1 }}">{{ label1 }}</span>
-                <div x-data="autocompleter({
-                    url: '/v1/groups',
-                    selectedResults: [{{ group1Picker|json }}],
-                    elName: 'g1',
-                    max: 1,
-                    standalone: true,
-                    extraInfo: 'Category',
-                    dispatchOnSelect: 'group1-selected'
+                <div x-data="singleEntitySelector({
+                    entity: 'group',
+                    selected: [{{ group1Picker|json }}],
+                    categoryDecoration: true,
+                    onChange: (change) => change.added[0] && onGroup1Change(change.added[0].raw.ID)
                 })" class="relative flex-1 min-w-[180px]">
                     <input type="text" x-ref="autocompleter" x-bind="inputEvents"
                            role="combobox"
@@ -48,14 +45,11 @@
 
             <div class="flex flex-wrap items-center gap-2 flex-1 min-w-0">
                 <span class="compare-side-label--new" aria-label="{{ label2 }}">{{ label2 }}</span>
-                <div x-data="autocompleter({
-                    url: '/v1/groups',
-                    selectedResults: [{{ group2Picker|json }}],
-                    elName: 'g2',
-                    max: 1,
-                    standalone: true,
-                    extraInfo: 'Category',
-                    dispatchOnSelect: 'group2-selected'
+                <div x-data="singleEntitySelector({
+                    entity: 'group',
+                    selected: [{{ group2Picker|json }}],
+                    categoryDecoration: true,
+                    onChange: (change) => change.added[0] && onGroup2Change(change.added[0].raw.ID)
                 })" class="relative flex-1 min-w-[180px]">
                     <input type="text" x-ref="autocompleter" x-bind="inputEvents"
                            role="combobox"

@@ -27,7 +27,6 @@ export interface LegacyAutocompleterArguments<
     readonly onSelect?: ((item: TRaw) => unknown) | null;
     readonly onRemove?: ((item: TRaw) => unknown) | null;
     readonly standalone?: boolean;
-    readonly dispatchOnSelect?: string | null;
     readonly commitOnSpace?: boolean;
 }
 
@@ -56,7 +55,6 @@ export interface LegacySelectorRenderingConfiguration<
     readonly fieldName?: string;
     readonly extraInfo: string;
     readonly standalone: boolean;
-    readonly dispatchOnSelect: string | null;
     readonly commitOnSpace: boolean;
     readonly onSelect: ((item: TRaw) => unknown) | null;
     readonly onRemove: ((item: TRaw) => unknown) | null;
@@ -119,7 +117,6 @@ export function normalizeLegacyAutocompleterConfig<
         onSelect = null,
         onRemove = null,
         standalone = false,
-        dispatchOnSelect = null,
         commitOnSpace = false,
     } = arguments_;
 
@@ -141,7 +138,6 @@ export function normalizeLegacyAutocompleterConfig<
             fieldName: elName,
             extraInfo,
             standalone,
-            dispatchOnSelect,
             commitOnSpace,
             onSelect,
             onRemove,

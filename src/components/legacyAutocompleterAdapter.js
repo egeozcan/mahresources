@@ -8,7 +8,35 @@ import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { normalizeLegacyAutocompleterConfig } from './legacyAutocompleterConfig.ts';
 
 export function legacyAutocompleterAdapter(arguments_) {
-    const { source, selection, rendering } = normalizeLegacyAutocompleterConfig(arguments_);
+    const profileBridge = arguments_._profileBridge || null;
+    const profile = profileBridge?.profile || null;
+    const profileSnapshot = profile?.selector.getSnapshot();
+    const normalized = profile
+        ? {
+            source: {
+                searchUrl: '',
+                createUrl: '',
+                ownerId: 0,
+                sortBy: undefined,
+                dynamicFilters: [],
+                mapOption: (raw) => ({ key: raw.ID, label: raw.Name, raw }),
+            },
+            selection: {
+                initialValues: profileSnapshot.selected.map((option) => option.raw),
+                minimum: profile.form?.minimum ?? 0,
+                maximum: profileBridge.maximum,
+            },
+            rendering: {
+                fieldName: profile.form?.name,
+                extraInfo: profile.presentation.decoration === 'category-name' ? 'Category' : '',
+                standalone: profile.form === null,
+                commitOnSpace: profile.interaction.commitOnSpace,
+                onSelect: null,
+                onRemove: null,
+            },
+        }
+        : normalizeLegacyAutocompleterConfig(arguments_);
+    const { source, selection, rendering } = normalized;
     const {
         searchUrl: url,
         createUrl: addUrl,
@@ -27,7 +55,6 @@ export function legacyAutocompleterAdapter(arguments_) {
         onSelect,
         onRemove,
         standalone,
-        dispatchOnSelect,
         // Chip-input: when true, a space also commits the current token. Off by default so
         // multi-word tag names stay typeable in every existing form (comma always commits).
         commitOnSpace,
@@ -80,7 +107,7 @@ export function legacyAutocompleterAdapter(arguments_) {
             // Alpine calls init with the raw data object. Core subscriptions run later, so use
             // its public reactive data proxy to keep DOM bindings current.
             const reactive = globalThis.Alpine?.$data?.(this.$el) || this;
-            reactive._core = createSelector({
+            reactive._core = profile?.selector || createSelector({
                 source: createDebouncedSelectorSource(createHttpSelectorSource({
                     searchUrl: url,
                     createUrl: addUrl || undefined,
@@ -230,14 +257,12 @@ export function legacyAutocompleterAdapter(arguments_) {
                 }
                 return;
             }
-            for (const option of change.removed) onRemove?.(option.raw);
-            for (const option of change.added) {
-                this._trackPending(option.raw, onSelect?.(option.raw));
-                if (dispatchOnSelect) {
-                    window.dispatchEvent(new CustomEvent(dispatchOnSelect, {
-                        detail: { item: option.raw },
-                        bubbles: true,
-                    }));
+            if (profileBridge) {
+                profileBridge.onChange?.(change);
+            } else {
+                for (const option of change.removed) onRemove?.(option.raw);
+                for (const option of change.added) {
+                    this._trackPending(option.raw, onSelect?.(option.raw));
                 }
             }
             if (!standalone) {
@@ -358,7 +383,12 @@ export function legacyAutocompleterAdapter(arguments_) {
             const snapshot = this._core?.getSnapshot();
             const matchesAvailable = snapshot?.options.some((option) => option.label === label);
             const matchesSelected = snapshot?.selected.some((option) => option.label === label);
-            const creates = Boolean(label && this.addUrl && !matchesAvailable && !matchesSelected);
+            const creates = Boolean(
+                label
+                && (this.addUrl || profileBridge?.creatable)
+                && !matchesAvailable
+                && !matchesSelected
+            );
             // The DOM must clear before a core creation synchronously publishes state and
             // Alpine removes/re-renders this input. Existing-option selection clears afterward
             // so its active option is not invalidated before the command reads it.
@@ -511,7 +541,8 @@ export function legacyAutocompleterAdapter(arguments_) {
                 if (!token) return; // empty buffer: let the key type normally
                 // Only intercept when there is something to commit: an exact-match result or an
                 // addUrl to create with. Otherwise (e.g. a category picker) let the char type.
-                const canCommit = this.addUrl || this.results.some(x => x.Name === token);
+                const canCommit = this.addUrl || profileBridge?.creatable
+                    || this.results.some(x => x.Name === token);
                 if (!canCommit) return;
                 e.preventDefault();
                 this.commitToken(token);

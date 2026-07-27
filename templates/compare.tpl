@@ -11,20 +11,17 @@
     v1: {{ query.Version1|default:0 }},
     r2: {{ query.Resource2ID }},
     v2: {{ query.Version2|default:0 }}
-})" @resource1-selected.window="onResource1Change($event.detail.item.ID)" @resource2-selected.window="onResource2Change($event.detail.item.ID)">
+})">
     <!-- Picker Toolbar -->
     <div class="bg-white shadow rounded-lg p-3 mb-4">
         <div class="flex flex-col md:flex-row items-stretch md:items-center gap-3">
             <!-- Left (OLD) side -->
             <div class="flex flex-wrap items-center gap-2 flex-1 min-w-0">
                 <span class="compare-side-label--old" aria-label="{{ label1 }}">{{ label1 }}</span>
-                <div x-data="autocompleter({
-                    url: '/v1/resources',
-                    selectedResults: [{{ resource1|json }}],
-                    elName: 'r1',
-                    max: 1,
-                    standalone: true,
-                    dispatchOnSelect: 'resource1-selected'
+                <div x-data="singleEntitySelector({
+                    entity: 'resource',
+                    selected: [{{ resource1|json }}],
+                    onChange: (change) => change.added[0] && onResource1Change(change.added[0].raw.ID)
                 })" class="relative flex-1 min-w-[140px]">
                     <input type="text" x-ref="autocompleter" x-bind="inputEvents"
                            class="w-full border rounded px-3 py-1.5 text-sm"
@@ -56,13 +53,10 @@
             <!-- Right (NEW) side -->
             <div class="flex flex-wrap items-center gap-2 flex-1 min-w-0">
                 <span class="compare-side-label--new" aria-label="{{ label2 }}">{{ label2 }}</span>
-                <div x-data="autocompleter({
-                    url: '/v1/resources',
-                    selectedResults: [{{ resource2|json }}],
-                    elName: 'r2',
-                    max: 1,
-                    standalone: true,
-                    dispatchOnSelect: 'resource2-selected'
+                <div x-data="singleEntitySelector({
+                    entity: 'resource',
+                    selected: [{{ resource2|json }}],
+                    onChange: (change) => change.added[0] && onResource2Change(change.added[0].raw.ID)
                 })" class="relative flex-1 min-w-[140px]">
                     <input type="text" x-ref="autocompleter" x-bind="inputEvents"
                            class="w-full border rounded px-3 py-1.5 text-sm"
