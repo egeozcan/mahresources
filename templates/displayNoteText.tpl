@@ -37,7 +37,7 @@
     {% endif %}
     {% endif %}
     {% if sc.Tags %}
-    {% include "/partials/tagList.tpl" with tags=note.Tags addTagUrl='/v1/notes/addTags' id=note.ID %}
+    {% include "/partials/tagList.tpl" with tags=note.Tags addTagUrl='/v1/notes/addTags' id=note.ID usage='note' %}
     {% endif %}
 
     {% if sc.MetaSchemaDisplay %}

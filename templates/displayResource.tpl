@@ -311,7 +311,7 @@
 
     <div class="sidebar-group">
         {% if sc.Tags %}
-        {% include "/partials/tagList.tpl" with tags=resource.Tags addTagUrl='/v1/resources/addTags' id=resource.ID %}
+        {% include "/partials/tagList.tpl" with tags=resource.Tags addTagUrl='/v1/resources/addTags' id=resource.ID usage='resource' %}
         {% endif %}
         {% if sc.CategoryLink %}
         {% if resource.ResourceCategory %}

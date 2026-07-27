@@ -5,7 +5,7 @@
         {% if profile %}
         x-data="{% if profile == 'single' %}singleEntitySelector{% elif profile == 'multi' %}multiEntitySelector{% elif profile == 'creatable' %}creatableEntitySelector{% elif profile == 'tag' %}tagFieldSelector{% endif %}({
         {% if entity %}entity: '{{ entity }}',{% endif %}
-        {% if usage %}usage: '{{ usage }}',{% endif %}
+        {% if usage %}{% if profile == 'tag' %}usage: '{{ usage }}',{% else %}tagSuggestions: { usage: '{{ usage }}' },{% endif %}{% endif %}
         selected: {{ selectedItems|json }} || [],
         form: { name: '{{ elName }}', minimum: parseInt('{{ min }}') || 0 },
         {% if max %}maximum: parseInt('{{ max }}') || 0,{% endif %}

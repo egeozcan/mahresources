@@ -36,7 +36,7 @@
             {% include "/partials/form/checkboxInput.tpl" with name='SearchChildrenForName' label='Search Children For Name' value=queryValues.SearchChildrenForName.0 id=getNextId("SearchChildrenForName") %}
             {% include "/partials/form/textInput.tpl" with name='Description' label='Description' value=queryValues.Description.0 %}
             {% include "/partials/form/textInput.tpl" with name='URL' label='URL' value=queryValues.URL.0 %}
-            {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='tags' title='Tags' selectedItems=tags id=getNextId("autocompleter") %}
+            {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='tag' usage='group' elName='tags' title='Tags' selectedItems=tags id=getNextId("autocompleter") %}
             {% include "/partials/form/checkboxInput.tpl" with name='SearchParentsForTags' label='Search Parents For Tags' value=queryValues.SearchParentsForTags.0 id=getNextId("SearchParentsForTags") %}
             {% include "/partials/form/checkboxInput.tpl" with name='SearchChildrenForTags' label='Search Children For Tags' value=queryValues.SearchChildrenForTags.0 id=getNextId("SearchChildrenForTags") %}
             {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='category' elName='categories' title='Categories' selectedItems=categories id=getNextId("autocompleter") %}

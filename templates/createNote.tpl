@@ -48,7 +48,7 @@
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex gap-2">
                             <div class="flex-1">
-                                {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' addUrl='/v1/tag' elName='tags' title='Tags' selectedItems=tags id=getNextId("autocompleter") %}
+                                {% include "/partials/form/autocompleter.tpl" with profile='tag' usage='note' elName='tags' title='Tags' selectedItems=tags id=getNextId("autocompleter") %}
                             </div>
                             <div class="flex-1">
                                 {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='group' categoryDecoration=true elName='groups' title='Groups' selectedItems=groups id=getNextId("autocompleter") %}

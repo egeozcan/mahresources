@@ -38,7 +38,7 @@
         >
             <input type="hidden" name="winner" value="{{ tag.ID }}">
             <p>Merge others with this tag?</p>
-            {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='losers' title='Tags To Merge' id=getNextId("autocompleter") %}
+            {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='tag' elName='losers' title='Tags To Merge' id=getNextId("autocompleter") %}
             <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Merge" %}</div>
         </form>
     </div>

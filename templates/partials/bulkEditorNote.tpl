@@ -7,14 +7,14 @@
     <form class="px-4" method="post" :action="'/v1/notes/addTags?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)">
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
         <div class="flex gap-2 items-start">
-            {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' addUrl='/v1/tag' elName='editedId' title='Add Tag' id=getNextId("tag_autocompleter") %}
+            {% include "/partials/form/autocompleter.tpl" with profile='tag' usage='note' elName='editedId' title='Add Tag' id=getNextId("tag_autocompleter") %}
             <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Add" %}</div>
         </div>
     </form>
     <form class="px-4" method="post" :action="'/v1/notes/removeTags?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)">
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}
         <div class="flex gap-2 items-start">
-            {% include "/partials/form/autocompleter.tpl" with url='/v1/tags' elName='editedId' title='Remove Tag' id=getNextId("tag_autocompleter") %}
+            {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='tag' usage='note' elName='editedId' title='Remove Tag' id=getNextId("tag_autocompleter") %}
             <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Remove" %}</div>
         </div>
     </form>

@@ -91,7 +91,7 @@
 
     {% if sc.Tags %}
     <div class="sidebar-group">
-        {% include "/partials/tagList.tpl" with tags=group.Tags addTagUrl='/v1/groups/addTags' id=group.ID %}
+        {% include "/partials/tagList.tpl" with tags=group.Tags addTagUrl='/v1/groups/addTags' id=group.ID usage='group' %}
     </div>
     {% endif %}
 
