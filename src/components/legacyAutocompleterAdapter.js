@@ -1,45 +1,43 @@
 import { abortableFetch } from '../index.js';
 import { selectorRegistry } from '../selector/selectorRegistry.ts';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+import { normalizeLegacyAutocompleterConfig } from './legacyAutocompleterConfig.ts';
 
-export function legacyAutocompleterAdapter({
-    selectedResults,
-    max,
-    min,
-    ownerId,
-    url,
-    sortBy,
-    elName,
-    filterEls = [],
-    addUrl = "",
-    extraInfo = "",
-    // Callbacks for standalone/lightbox mode
-    onSelect = null,
-    onRemove = null,
-    standalone = false,
-    // Custom event to dispatch on selection (for compare view integration)
-    dispatchOnSelect = null,
-    // Chip-input: when true, a space also commits the current token. Off by default so
-    // multi-word tag names stay typeable in every existing form (comma always commits).
-    commitOnSpace = false,
-}) {
-    if (typeof filterEls === "string") {
-        try {
-            filterEls = JSON.parse(filterEls);
-        } catch (e) {
-            filterEls = [ filterEls ];
-        }
-    }
+export function legacyAutocompleterAdapter(arguments_) {
+    const { source, selection, rendering } = normalizeLegacyAutocompleterConfig(arguments_);
+    const {
+        searchUrl: url,
+        createUrl: addUrl,
+        ownerId,
+        sortBy,
+        dynamicFilters: filterEls,
+    } = source;
+    const {
+        initialValues: selectedResults,
+        minimum: min,
+        maximum: max,
+    } = selection;
+    const {
+        fieldName: elName,
+        extraInfo,
+        onSelect,
+        onRemove,
+        standalone,
+        dispatchOnSelect,
+        // Chip-input: when true, a space also commits the current token. Off by default so
+        // multi-word tag names stay typeable in every existing form (comma always commits).
+        commitOnSpace,
+    } = rendering;
 
     return {
-        max: parseInt(max) || 0,
-        min: parseInt(min) || 0,
-        ownerId: parseInt(ownerId) || 0,
+        max,
+        min,
+        ownerId,
         results: [],
         selectedIndex: -1,
         errorMessage: false,
         dropdownActive: false,
-        selectedResults: typeof selectedResults === "string" ? JSON.parse(selectedResults) : (selectedResults || []),
+        selectedResults,
         selectedIds: new Set(),
         url,
         addUrl,
