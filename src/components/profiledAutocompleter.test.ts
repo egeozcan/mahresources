@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
     creatableEntitySelector,
+    dynamicEntitySelector,
     singleEntitySelector,
     tagFieldSelector,
 } from './dropdown.js';
@@ -128,6 +129,86 @@ describe('profiled autocompleter bridge', () => {
         expect(markup).not.toContain('x-effect="$store.pasteUpload');
         expect(markup).not.toContain('selectedResults: []');
         expect(markup).not.toContain('standalone: true');
+    });
+
+    test('entity picker filters use the dynamic profile and translate changes through the store', () => {
+        const markup = readFileSync(
+            new URL('../../templates/partials/entityPicker.tpl', import.meta.url),
+            'utf8',
+        );
+
+        expect(markup).toContain('dynamicEntitySelector({');
+        expect(markup).toContain('searchUrl: filter.endpoint');
+        expect(markup).toContain('multiple: filter.multi');
+        expect(markup).toContain('$store.entityPicker.applyFilterChange(filter.key, filter.multi, change)');
+        // The runtime picker keeps its close-time reset but no longer restores state through
+        // legacy flags or per-item select/remove callbacks.
+        expect(markup).toContain("@entity-picker-closed.window=\"resetSelectedResults([])\"");
+        expect(markup).not.toContain('standalone: true');
+        expect(markup).not.toContain('onSelect: (item)');
+        expect(markup).not.toContain('onRemove: (item)');
+        expect(markup).not.toContain('selectedResults: []');
+        expect(markup).not.toContain('url: filter.endpoint');
+    });
+
+    test('a dynamic single-value filter selector replaces its selection atomically', () => {
+        const alpha = { ID: 1, Name: 'Alpha' };
+        const beta = { ID: 2, Name: 'Beta' };
+        const onChange = vi.fn();
+        const selector = mount(dynamicEntitySelector({
+            searchUrl: '/v1/categories',
+            multiple: false,
+            onChange,
+        }) as ProfiledSelector);
+
+        expect(selector.max).toBe(1);
+
+        selector._core.dispatch({
+            type: 'select-option',
+            option: { key: alpha.ID, label: alpha.Name, raw: alpha },
+        });
+        selector._core.dispatch({
+            type: 'select-option',
+            option: { key: beta.ID, label: beta.Name, raw: beta },
+        });
+
+        expect(onChange).toHaveBeenCalledTimes(2);
+        expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({
+            current: [{ key: 2, label: 'Beta', raw: beta }],
+            removed: [{ key: 1, label: 'Alpha', raw: alpha }],
+            added: [{ key: 2, label: 'Beta', raw: beta }],
+        }));
+        // Runtime filters never serialize into a form, so no aggregate form event is dispatched.
+        expect(selector.$dispatch).not.toHaveBeenCalled();
+        selector.destroy();
+    });
+
+    test('a dynamic multi-value filter selector accumulates and clears through commands', () => {
+        const alpha = { ID: 1, Name: 'Alpha' };
+        const beta = { ID: 2, Name: 'Beta' };
+        const onChange = vi.fn();
+        const selector = mount(dynamicEntitySelector({
+            searchUrl: '/v1/tags',
+            multiple: true,
+            onChange,
+        }) as ProfiledSelector);
+
+        expect(selector.max).toBe(0);
+
+        for (const raw of [alpha, beta]) {
+            selector._core.dispatch({
+                type: 'select-option',
+                option: { key: raw.ID, label: raw.Name, raw },
+            });
+        }
+        expect(selector.selectedResults).toEqual([alpha, beta]);
+
+        // The picker's close-time reset is silent: it clears state without re-notifying filters.
+        onChange.mockClear();
+        selector.resetSelectedResults([]);
+        expect(selector.selectedResults).toEqual([]);
+        expect(onChange).not.toHaveBeenCalled();
+        selector.destroy();
     });
 
     test('compare templates use single-entity profiles and local atomic listeners', () => {

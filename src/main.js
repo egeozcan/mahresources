@@ -54,6 +54,7 @@ import { renderJsonTable } from './tableMaker.js';
 import {
   autocompleter,
   creatableEntitySelector,
+  dynamicEntitySelector,
   singleEntitySelector,
   tagFieldSelector,
 } from './components/dropdown.js';
@@ -159,6 +160,7 @@ registerPasteUploadStore(Alpine);
 Alpine.data('autocompleter', autocompleter);
 Alpine.data('singleEntitySelector', singleEntitySelector);
 Alpine.data('creatableEntitySelector', creatableEntitySelector);
+Alpine.data('dynamicEntitySelector', dynamicEntitySelector);
 Alpine.data('tagFieldSelector', tagFieldSelector);
 Alpine.data('confirmAction', confirmAction);
 Alpine.data('confirmGroupDelete', confirmGroupDelete);

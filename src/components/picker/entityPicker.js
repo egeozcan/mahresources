@@ -172,6 +172,22 @@ export function registerEntityPickerStore(Alpine) {
       }
     },
 
+    // Applies one atomic selector change from a filter selector. A single-value filter takes the
+    // resulting selection directly, so an atomic replacement issues one reload rather than a
+    // clear followed by a set.
+    applyFilterChange(key, multiple, change) {
+      if (!multiple) {
+        this.setFilter(key, change.current[0]?.raw.ID ?? null);
+        return;
+      }
+      for (const option of change.removed) {
+        this.removeFromFilter(key, option.raw.ID);
+      }
+      for (const option of change.added) {
+        this.addToFilter(key, option.raw.ID);
+      }
+    },
+
     removeFromFilter(key, value) {
       if (this.filterValues[key]) {
         this.filterValues[key] = this.filterValues[key].filter(v => v !== value);

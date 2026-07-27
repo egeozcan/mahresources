@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
+    createDynamicEntitySelectorProfile,
     createMultiEntityFieldProfile,
     createSingleEntityFieldProfile,
     type SelectorOption,
@@ -124,6 +125,68 @@ describe('entity field profiles', () => {
             { key: 1, label: 'Alpha', raw: alpha },
             betaOption,
         ]);
+
+        profile.selector.dispatch({ type: 'set-query', query: 'Missing' });
+        await completeSearch();
+        expect(profile.selector.getSnapshot().createCandidate).toBeNull();
+        expect(profile.selector.dispatch({ type: 'commit-token', token: 'Missing' })).toEqual({
+            ok: true,
+            consumed: false,
+        });
+    });
+});
+
+describe('dynamic entity selector profile', () => {
+    test('searches a runtime endpoint and keeps at most one selection when not multiple', async () => {
+        vi.useFakeTimers();
+        const alpha: EntityValue = { ID: 1, Name: 'Alpha' };
+        const beta: EntityValue = { ID: 2, Name: 'Beta' };
+        const fetch = vi.fn().mockResolvedValue(response([beta]));
+        vi.stubGlobal('fetch', fetch);
+
+        const profile = createDynamicEntitySelectorProfile<EntityValue>({
+            searchUrl: '/v1/categories',
+            multiple: false,
+        });
+
+        // A runtime selector never serializes into a form, so it carries no form metadata.
+        expect(profile.form).toBeNull();
+        expect(profile.presentation).toEqual({ decoration: null });
+
+        profile.selector.dispatch({ type: 'select-option', option: { key: 1, label: 'Alpha', raw: alpha } });
+        profile.selector.dispatch({ type: 'set-query', query: 'Be' });
+        await completeSearch();
+
+        expect(fetch).toHaveBeenCalledWith(
+            '/v1/categories?name=Be',
+            expect.objectContaining({ signal: expect.any(AbortSignal) }),
+        );
+
+        const available = profile.selector.getSnapshot().options[0];
+        const result = profile.selector.dispatch({ type: 'select-option', option: available });
+        expect(profile.selector.getSnapshot().selected).toEqual([available]);
+        expect(result).toMatchObject({
+            change: {
+                removed: [{ key: 1, label: 'Alpha', raw: alpha }],
+                added: [available],
+            },
+        });
+    });
+
+    test('accumulates selections when multiple and never offers creation', async () => {
+        vi.useFakeTimers();
+        const alpha: EntityValue = { ID: 1, Name: 'Alpha' };
+        const beta: EntityValue = { ID: 2, Name: 'Beta' };
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+
+        const profile = createDynamicEntitySelectorProfile<EntityValue>({
+            searchUrl: '/v1/tags',
+            multiple: true,
+        });
+
+        profile.selector.dispatch({ type: 'select-option', option: { key: 1, label: 'Alpha', raw: alpha } });
+        profile.selector.dispatch({ type: 'select-option', option: { key: 2, label: 'Beta', raw: beta } });
+        expect(profile.selector.getSnapshot().selected).toHaveLength(2);
 
         profile.selector.dispatch({ type: 'set-query', query: 'Missing' });
         await completeSearch();

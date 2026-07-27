@@ -70,17 +70,11 @@
                     <div class="flex gap-3">
                         <template x-for="filter in $store.entityPicker.config.filters" :key="filter.key">
                             <div class="flex-1"
-                                 x-data="autocompleter({
-                                     selectedResults: [],
-                                     url: filter.endpoint,
-                                     max: filter.multi ? 0 : 1,
-                                     standalone: true,
-                                     onSelect: (item) => filter.multi
-                                         ? $store.entityPicker.addToFilter(filter.key, item.ID)
-                                         : $store.entityPicker.setFilter(filter.key, item.ID),
-                                     onRemove: (item) => filter.multi
-                                         ? $store.entityPicker.removeFromFilter(filter.key, item.ID)
-                                         : $store.entityPicker.setFilter(filter.key, null)
+                                 x-data="dynamicEntitySelector({
+                                     searchUrl: filter.endpoint,
+                                     multiple: filter.multi,
+                                     onChange: (change) =>
+                                         $store.entityPicker.applyFilterChange(filter.key, filter.multi, change)
                                  })"
                                  @entity-picker-closed.window="resetSelectedResults([])">
                                 <label class="block text-xs text-stone-500 font-mono mb-1" x-text="filter.label"></label>

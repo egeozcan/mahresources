@@ -84,6 +84,15 @@ export interface CreatableEntityFieldProfileOptions<TRaw extends SelectorEntityV
     readonly entity: CreatableEntityProfileName;
 }
 
+export interface DynamicEntitySelectorProfileOptions<TRaw extends SelectorEntityValue> {
+    /** Endpoint resolved at runtime rather than from the private entity catalog. */
+    readonly searchUrl: string;
+    readonly multiple: boolean;
+    readonly selected?: readonly TRaw[];
+    readonly maximum?: number;
+    readonly parameters?: () => Readonly<Record<string, SelectorHttpParameter>>;
+}
+
 export interface TagFieldProfileOptions<TRaw extends SelectorEntityValue>
     extends Omit<EntityFieldProfileOptions<TRaw>, 'entity' | 'categoryDecoration'> {
     readonly usage: TagUsageEntity;
@@ -112,6 +121,41 @@ function interactionMetadata(): EntityFieldInteractionMetadata {
 function presentationMetadata(categoryDecoration: boolean): EntityFieldPresentationMetadata {
     return Object.freeze({
         decoration: categoryDecoration ? 'category-name' as const : null,
+    });
+}
+
+interface BuildSelectorProfileOptions<TRaw extends SelectorEntityValue> {
+    readonly searchUrl: string;
+    readonly createUrl?: string;
+    readonly parameters?: () => Readonly<Record<string, SelectorHttpParameter>>;
+    readonly selected?: readonly TRaw[];
+    readonly multiple: boolean;
+    readonly maximum?: number;
+    readonly form?: EntityFieldFormInput;
+    readonly categoryDecoration?: boolean;
+}
+
+function buildSelectorProfile<TRaw extends SelectorEntityValue>(
+    options: BuildSelectorProfileOptions<TRaw>,
+): EntityFieldProfile<TRaw> {
+    const source = createDebouncedSelectorSource(createHttpSelectorSource({
+        searchUrl: options.searchUrl,
+        createUrl: options.createUrl,
+        parameters: options.parameters,
+        mapOption: mapEntityOption<TRaw>,
+    }), PROFILE_SEARCH_DELAY_MS);
+    const selector = createSelector({
+        source,
+        selected: options.selected?.map(mapEntityOption),
+        multiple: options.multiple,
+        maxSelected: options.multiple ? options.maximum : undefined,
+    });
+
+    return Object.freeze({
+        selector,
+        form: formMetadata(options.form),
+        interaction: interactionMetadata(),
+        presentation: presentationMetadata(options.categoryDecoration ?? false),
     });
 }
 
@@ -145,24 +189,16 @@ function buildEntityFieldProfile<TRaw extends SelectorEntityValue>(
                 : {}),
         })
         : undefined;
-    const source = createDebouncedSelectorSource(createHttpSelectorSource({
+
+    return buildSelectorProfile({
         searchUrl,
         createUrl,
         parameters,
-        mapOption: mapEntityOption<TRaw>,
-    }), PROFILE_SEARCH_DELAY_MS);
-    const selector = createSelector({
-        source,
-        selected: options.selected?.map(mapEntityOption),
+        selected: options.selected,
         multiple: options.multiple,
-        maxSelected: options.multiple ? options.maximum : undefined,
-    });
-
-    return Object.freeze({
-        selector,
-        form: formMetadata(options.form),
-        interaction: interactionMetadata(),
-        presentation: presentationMetadata(options.categoryDecoration ?? false),
+        maximum: options.maximum,
+        form: options.form,
+        categoryDecoration: options.categoryDecoration,
     });
 }
 
@@ -185,6 +221,23 @@ export function createCreatableEntityFieldProfile<TRaw extends SelectorEntityVal
     options: CreatableEntityFieldProfileOptions<TRaw>,
 ): EntityFieldProfile<TRaw> {
     return buildEntityFieldProfile({ ...options, multiple: false, create: true });
+}
+
+/**
+ * Lower-level escape hatch for selectors whose endpoint is only known at runtime, such as the
+ * entity picker's configuration-driven filters. It still takes a profile object rather than the
+ * legacy collection of unrelated flags, and never exposes entity creation.
+ */
+export function createDynamicEntitySelectorProfile<TRaw extends SelectorEntityValue>(
+    options: DynamicEntitySelectorProfileOptions<TRaw>,
+): EntityFieldProfile<TRaw> {
+    return buildSelectorProfile({
+        searchUrl: options.searchUrl,
+        parameters: options.parameters,
+        selected: options.selected,
+        multiple: options.multiple,
+        maximum: options.maximum,
+    });
 }
 
 /** Creates the creatable multi-tag preset with lean, usage-ranked suggestions. */

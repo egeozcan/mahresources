@@ -1,6 +1,7 @@
 export { createDebouncedSelectorSource } from './debouncedSelectorSource';
 export {
     createCreatableEntityFieldProfile,
+    createDynamicEntitySelectorProfile,
     createMultiEntityFieldProfile,
     createSingleEntityFieldProfile,
     createTagFieldProfile,
@@ -12,6 +13,7 @@ export { createSelector } from './selectorCore';
 export type {
     CreatableEntityFieldProfileOptions,
     CreatableEntityProfileName,
+    DynamicEntitySelectorProfileOptions,
     EntityFieldFormInput,
     EntityFieldFormMetadata,
     EntityFieldInteractionMetadata,

@@ -429,6 +429,30 @@ test.describe('Entity Picker - Group Selection', () => {
     const categoryFilter = pickerModal.locator('label:has-text("Category")').locator('..').locator('input');
     await expect(categoryFilter).toBeVisible();
 
+    // Selecting a single-value filter applies it to the group query.
+    await categoryFilter.fill('Group Picker Category');
+    const categoryOption = pickerModal.locator('.absolute.z-30').locator('text=Group Picker Category');
+    await categoryOption.waitFor({ state: 'visible' });
+    const filteredGroups = page.waitForResponse(resp =>
+      resp.url().includes('/v1/groups')
+      && resp.url().includes(`categoryId=${categoryId}`)
+      && resp.status() === 200
+    );
+    await categoryOption.click();
+    await filteredGroups;
+
+    const categoryChip = pickerModal.locator('span.inline-flex').filter({ hasText: 'Group Picker Category' });
+    await expect(categoryChip).toBeVisible();
+
+    // Closing the picker discards the filter selectors, so reopening starts unfiltered.
+    await page.keyboard.press('Escape');
+    await expect(pickerModal).not.toBeVisible();
+
+    await page.locator('button:has-text("Select Groups")').first().click();
+    await expect(pickerModal).toBeVisible();
+    await expect(pickerModal.locator('span.inline-flex').filter({ hasText: 'Group Picker Category' })).toHaveCount(0);
+    await expect(pickerModal.locator('label:has-text("Category")').locator('..').locator('input')).toHaveValue('');
+
     // Close modal for next test
     await page.keyboard.press('Escape');
   });
