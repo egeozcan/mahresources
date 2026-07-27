@@ -1,5 +1,5 @@
 {# `profile` names an explicit selector profile bridge and takes domain inputs (entity/usage) #}
-{# instead of the legacy url/addUrl/filterEls flags. Both paths render identical markup, hidden #}
+{# instead of the legacy url/addUrl flags. Both paths render identical markup, hidden #}
 {# controls, ids and ARIA relationships, so a call site can be migrated on its own. #}
 <div
         {% if profile %}
@@ -21,7 +21,6 @@
         url: '{{ url }}',
         addUrl: '{{ addUrl }}',
         elName: '{{ elName }}',
-        filterEls: '{{ filterEls }}' || [],
         extraInfo: '{{ extraInfo }}',
         sortBy: '{{ sortBy }}',
     })"

@@ -60,6 +60,7 @@ import {
   tagEditorSelector,
   tagFieldSelector,
 } from './components/dropdown.js';
+import { selectorFormParameters } from './components/selectorFormParameters.js';
 import { confirmAction } from './components/confirmAction.js';
 import { confirmGroupDelete } from './components/confirmGroupDelete.js';
 import { freeFields, generateParamNameForMeta, getJSONValue, getJSONOrObjValue } from './components/freeFields.js';
@@ -127,6 +128,8 @@ window.generateParamNameForMeta = generateParamNameForMeta;
 window.renderMentions = renderMentions;
 window.getJSONValue = getJSONValue;
 window.getJSONOrObjValue = getJSONOrObjValue;
+// Lets a shared form field declare a `parameters` callback over sibling controls.
+window.selectorFormParameters = selectorFormParameters;
 // BH-015: expose the factory so E2E tests can unit-check formatProgress clamping.
 window.downloadCockpit = downloadCockpit;
 

@@ -20,7 +20,6 @@ export function legacyAutocompleterAdapter(arguments_) {
                 createUrl: '',
                 ownerId: 0,
                 sortBy: undefined,
-                dynamicFilters: [],
                 mapOption: (raw) => ({ key: raw.ID, label: raw.Name, raw }),
             },
             selection: {
@@ -44,7 +43,6 @@ export function legacyAutocompleterAdapter(arguments_) {
         createUrl: addUrl,
         ownerId,
         sortBy,
-        dynamicFilters: filterEls,
     } = source;
     const {
         initialValues: selectedResults,
@@ -75,7 +73,6 @@ export function legacyAutocompleterAdapter(arguments_) {
         url,
         addUrl,
         extraInfo,
-        filterEls,
         sortBy,
         addModeForTag: false,
         _addModeShown: false,
@@ -636,22 +633,6 @@ export function legacyAutocompleterAdapter(arguments_) {
 
             if (this.sortBy) {
                 params.SortBy = this.sortBy;
-            }
-
-            if (this.filterEls && Array.isArray(this.filterEls)) {
-                for (const filter of this.filterEls) {
-                    // Deliberately unfiltered, matching the pre-refactor selector: every
-                    // control with this name is visited and the last one wins. A field with a
-                    // selection renders its value input followed by the disabled empty control,
-                    // so the effective value is empty and the dependent search stays unfiltered.
-                    // Narrowing this to :not(:disabled) makes these filters bite for the first
-                    // time, which is a product change (it can empty the relation-type list for
-                    // uncategorized groups) and is out of scope for a behaviour-preserving
-                    // refactor.
-                    document.querySelectorAll(`input[name=${filter.nameInput}]`).forEach((input) => {
-                        params[filter.nameGet] = input.value;
-                    });
-                }
             }
 
             return params;

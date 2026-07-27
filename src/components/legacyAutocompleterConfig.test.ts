@@ -20,7 +20,6 @@ describe('legacy autocompleter configuration normalization', () => {
             createUrl: '/v1/group',
             ownerId: 42,
             sortBy: 'most_used',
-            dynamicFilters: [],
         });
         expect(config.selection).toEqual({
             initialValues: [
@@ -37,22 +36,8 @@ describe('legacy autocompleter configuration normalization', () => {
         expect(config.rendering.fieldName).toBe('GroupIds');
     });
 
-    test('parses serialized dynamic filter declarations at the compatibility edge', () => {
-        const config = normalizeLegacyAutocompleterConfig({
-            selectedResults: [],
-            url: '/v1/groups',
-            filterEls: '[{"nameInput":"GroupRelationTypeId","nameGet":"RelationTypeId"},{"nameInput":"RelationSideFrom","nameGet":"RelationSide"}]',
-        });
-
-        expect(config.source.dynamicFilters).toEqual([
-            { nameInput: 'GroupRelationTypeId', nameGet: 'RelationTypeId' },
-            { nameInput: 'RelationSideFrom', nameGet: 'RelationSide' },
-        ]);
-    });
-
-    test('preserves legacy array references, parser fallback, defaults, and rendering hooks', () => {
+    test('preserves legacy array references, defaults, and rendering hooks', () => {
         const selectedResults = [{ ID: 'tag-1', Name: 'Tag one' }];
-        const filters = [{ nameInput: 'OwnerId', nameGet: 'ownerId' }];
         const onSelect = vi.fn();
         const onRemove = vi.fn();
         const config = normalizeLegacyAutocompleterConfig({
@@ -61,7 +46,6 @@ describe('legacy autocompleter configuration normalization', () => {
             min: undefined,
             ownerId: undefined,
             url: '/v1/tags',
-            filterEls: filters,
             extraInfo: 'Category',
             standalone: true,
             commitOnSpace: true,
@@ -70,7 +54,6 @@ describe('legacy autocompleter configuration normalization', () => {
         });
 
         expect(config.selection.initialValues).toBe(selectedResults);
-        expect(config.source.dynamicFilters).toBe(filters);
         expect(config.selection.maximum).toBe(16);
         expect(config.selection.minimum).toBe(0);
         expect(config.source.ownerId).toBe(0);
@@ -83,13 +66,6 @@ describe('legacy autocompleter configuration normalization', () => {
             onSelect,
             onRemove,
         });
-
-        const fallback = normalizeLegacyAutocompleterConfig({
-            selectedResults: [],
-            url: '/v1/tags',
-            filterEls: 'OwnerId',
-        });
-        expect(fallback.source.dynamicFilters).toEqual(['OwnerId']);
     });
 
     test('keeps the public factory export and legacy Alpine properties behavior-compatible', () => {
@@ -104,7 +80,6 @@ describe('legacy autocompleter configuration normalization', () => {
             addUrl: '/v1/tag',
             sortBy: 'most_used_resource',
             elName: 'TagIds',
-            filterEls: '[{"nameInput":"OwnerId","nameGet":"ownerId"}]',
             extraInfo: 'Category',
             standalone: true,
             commitOnSpace: true,
@@ -119,7 +94,6 @@ describe('legacy autocompleter configuration normalization', () => {
             url: '/v1/tags',
             addUrl: '/v1/tag',
             sortBy: 'most_used_resource',
-            filterEls: [{ nameInput: 'OwnerId', nameGet: 'ownerId' }],
             extraInfo: 'Category',
         });
         expect(component.selectedResults).toBe(selectedResults);

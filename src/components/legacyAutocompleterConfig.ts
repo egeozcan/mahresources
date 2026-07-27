@@ -6,11 +6,6 @@ export interface LegacyAutocompleterRawOption {
     readonly [key: string]: unknown;
 }
 
-export interface LegacyDynamicFilterDeclaration {
-    readonly nameInput: string;
-    readonly nameGet: string;
-}
-
 export interface LegacyAutocompleterArguments<
     TRaw extends LegacyAutocompleterRawOption = LegacyAutocompleterRawOption,
 > {
@@ -21,7 +16,6 @@ export interface LegacyAutocompleterArguments<
     readonly url: string;
     readonly sortBy?: string;
     readonly elName?: string;
-    readonly filterEls?: LegacyDynamicFilterDeclaration[] | string | null;
     readonly addUrl?: string;
     readonly extraInfo?: string;
     readonly onSelect?: ((item: TRaw) => unknown) | null;
@@ -37,7 +31,6 @@ export interface LegacySelectorSourceConfiguration<
     readonly createUrl: string;
     readonly ownerId: number;
     readonly sortBy?: string;
-    readonly dynamicFilters: LegacyDynamicFilterDeclaration[];
     readonly mapOption: (raw: TRaw) => SelectorOption<TRaw>;
 }
 
@@ -76,20 +69,6 @@ function parseSelectedValues<TRaw extends LegacyAutocompleterRawOption>(
         : selectedResults || [];
 }
 
-function parseDynamicFilters(
-    filterEls: LegacyDynamicFilterDeclaration[] | string | null | undefined,
-): LegacyDynamicFilterDeclaration[] {
-    if (typeof filterEls !== 'string') return filterEls || [];
-
-    try {
-        return JSON.parse(filterEls) as LegacyDynamicFilterDeclaration[];
-    } catch {
-        // Preserve the legacy fallback exactly. Malformed declarations are retained at
-        // this compatibility edge and interpreted by the unchanged Alpine adapter.
-        return [filterEls] as unknown as LegacyDynamicFilterDeclaration[];
-    }
-}
-
 function parseLegacyInteger(value: string | number | null | undefined): number {
     return parseInt(value as string) || 0;
 }
@@ -111,7 +90,6 @@ export function normalizeLegacyAutocompleterConfig<
         url,
         sortBy,
         elName,
-        filterEls = [],
         addUrl = '',
         extraInfo = '',
         onSelect = null,
@@ -126,7 +104,6 @@ export function normalizeLegacyAutocompleterConfig<
             createUrl: addUrl,
             ownerId: parseLegacyInteger(ownerId),
             sortBy,
-            dynamicFilters: parseDynamicFilters(filterEls),
             mapOption: (raw) => ({ key: raw.ID, label: raw.Name, raw }),
         },
         selection: {
