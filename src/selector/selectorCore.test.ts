@@ -1130,6 +1130,18 @@ describe('selector open state and navigation', () => {
         expect(selector.getSnapshot()).toMatchObject({ isOpen: true, activeOptionIndex: null });
     });
 
+    test('sets mouse-active options through the same core state used by keyboard navigation', () => {
+        const selector = createSelector({
+            source: new InMemorySelectorSource<RawValue>(),
+            options: [option(1, 'Alpha'), option(2, 'Beta')],
+        });
+
+        selector.dispatch({ type: 'set-active', index: 1 });
+        expect(selector.getSnapshot()).toMatchObject({ isOpen: true, activeOptionIndex: 1 });
+        selector.dispatch({ type: 'set-active', index: 99 });
+        expect(selector.getSnapshot()).toMatchObject({ isOpen: true, activeOptionIndex: null });
+    });
+
     test('keeps navigation on the only option', () => {
         const selector = createSelector({
             source: new InMemorySelectorSource<RawValue>(),

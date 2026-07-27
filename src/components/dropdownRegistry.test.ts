@@ -37,7 +37,7 @@ function mountSelector(selector: LegacySelector, form: HTMLFormElement | null) {
     selector.$el = root;
     selector.$refs = {};
     selector.$watch = vi.fn();
-    selector.$nextTick = (callback) => callback();
+    selector.$nextTick = (callback) => callback ? callback() : Promise.resolve();
     selector.$dispatch = vi.fn();
     return { form, selector };
 }
@@ -93,6 +93,18 @@ describe('legacy autocompleter selector registry integration', () => {
             "removeItem(result); $nextTick(() => root.querySelector('input[role=combobox]')?.focus())",
         );
         expect(markup).not.toContain('selectedResults.splice');
+    });
+
+    test('keeps mouse active state in the core command path for shared result rows', () => {
+        const markup = readFileSync(
+            new URL('../../templates/partials/form/formParts/dropDownResults.tpl', import.meta.url),
+            'utf8',
+        );
+
+        expect(markup).toContain('@mouseover="setActiveIndex(index)"');
+        expect(markup).toContain('@mousedown="setActiveIndex(index); {{ action }}($event)"');
+        expect(markup).toContain('@mousedown="setActiveIndex(results.length); {{ action }}($event)"');
+        expect(markup).not.toContain('selectedIndex = index');
     });
 
     test('routes chip removal through the initialized core and calls the compatibility callback once', () => {

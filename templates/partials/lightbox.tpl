@@ -446,8 +446,8 @@
                             role="combobox"
                             aria-autocomplete="list"
                             aria-controls="lightbox-tag-listbox"
-                            :aria-activedescendant="selectedIndex >= 0 && results[selectedIndex] ? 'lightbox-tag-result-' + selectedIndex : null"
-                            :aria-expanded="dropdownActive && results.length > 0"
+                            :aria-activedescendant="selectedIndex >= 0 ? 'lightbox-tag-result-' + selectedIndex : null"
+                            :aria-expanded="dropdownActive && (results.length > 0 || createCandidate)"
                         >
 
                         <!-- Tag search results dropdown (popover) -->
@@ -457,8 +457,8 @@
                              role="listbox">
                             <template x-for="(tag, rIndex) in results" :key="tag.ID">
                                 <div
-                                    @mousedown.prevent="selectedIndex = rIndex; pushVal($event)"
-                                    @mouseover="selectedIndex = rIndex"
+                                    @mousedown.prevent="setActiveIndex(rIndex); pushVal($event)"
+                                    @mouseover="setActiveIndex(rIndex)"
                                     :id="'lightbox-tag-result-' + rIndex"
                                     role="option"
                                     :aria-selected="rIndex === selectedIndex"
@@ -471,7 +471,7 @@
                             <!-- "Create X" row for the no-match case -->
                             <template x-if="createCandidate">
                                 <div
-                                    @mousedown.prevent="selectedIndex = results.length; pushVal($event)"
+                                    @mousedown.prevent="setActiveIndex(results.length); pushVal($event)"
                                     :id="'lightbox-tag-result-' + results.length"
                                     role="option"
                                     :aria-selected="selectedIndex === results.length"
@@ -669,15 +669,15 @@
                                             autocomplete="off"
                                             role="combobox"
                                             aria-autocomplete="list"
-                                            :aria-expanded="dropdownActive && results.length > 0"
+                                            :aria-expanded="dropdownActive && (results.length > 0 || createCandidate)"
                                         >
                                         <div x-ref="dropdown" popover
                                              class="bg-stone-800 border border-stone-700 rounded-md shadow-lg max-h-48 overflow-y-auto"
                                              role="listbox">
                                             <template x-for="(tag, rIndex) in results" :key="tag.ID">
                                                 <div
-                                                    @mousedown.prevent="selectedIndex = rIndex; pushVal($event)"
-                                                    @mouseover="selectedIndex = rIndex"
+                                                    @mousedown.prevent="setActiveIndex(rIndex); pushVal($event)"
+                                                    @mouseover="setActiveIndex(rIndex)"
                                                     role="option"
                                                     :aria-selected="rIndex === selectedIndex"
                                                     class="px-3 py-2 cursor-pointer text-sm"

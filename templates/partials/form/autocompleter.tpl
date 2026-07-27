@@ -29,12 +29,12 @@
                     autocomplete="off"
                     role="combobox"
                     aria-autocomplete="list"
-                    :aria-expanded="dropdownActive && results.length > 0"
+                    :aria-expanded="dropdownActive && (results.length > 0 || createCandidate)"
                     aria-controls="{{ id }}-listbox"
                     {% if title %}aria-labelledby="{{ id }}-label"{% endif %}
                     :aria-describedby="errorMessage ? '{{ id }}-error' : null"
                     aria-owns="{{ id }}-listbox"
-                    :aria-activedescendant="selectedIndex >= 0 && results[selectedIndex] ? '{{ id }}-result-' + selectedIndex : null"
+                    :aria-activedescendant="selectedIndex >= 0 ? '{{ id }}-result-' + selectedIndex : null"
             >
             {% include "/partials/form/formParts/dropDownResults.tpl" with action="pushVal" %}
             {% include "/partials/form/formParts/dropDownSelectedResults.tpl" %}

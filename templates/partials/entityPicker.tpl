@@ -96,8 +96,8 @@
                                             <template x-for="(result, index) in results" :key="result.ID">
                                                 <div class="px-3 py-1.5 cursor-pointer text-sm"
                                                      :class="{'bg-amber-700 text-white': index === selectedIndex, 'hover:bg-stone-50': index !== selectedIndex}"
-                                                     @mousedown="pushVal"
-                                                     @mouseover="selectedIndex = index"
+                                                     @mousedown="setActiveIndex(index); pushVal($event)"
+                                                     @mouseover="setActiveIndex(index)"
                                                      x-text="result.Name"></div>
                                             </template>
                                         </div>

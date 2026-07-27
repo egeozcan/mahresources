@@ -20,8 +20,8 @@
                         :aria-selected="index === selectedIndex"
                         class="cursor-pointer p-2 flex block w-full rounded text-stone-900"
                         :class="{'bg-amber-700 !text-white': index === selectedIndex}"
-                        @mousedown="{{ action }}"
-                        @mouseover="selectedIndex = index;"
+                        @mousedown="setActiveIndex(index); {{ action }}($event)"
+                        @mouseover="setActiveIndex(index)"
                         tabindex="-1"
                     >
                         <span
@@ -39,7 +39,7 @@
                         :aria-selected="selectedIndex === results.length"
                         class="cursor-pointer p-2 flex block w-full rounded text-stone-900 border-t border-stone-200"
                         :class="{'bg-amber-700 !text-white': selectedIndex === results.length}"
-                        @mousedown="selectedIndex = results.length; {{ action }}($event)"
+                        @mousedown="setActiveIndex(results.length); {{ action }}($event)"
                         tabindex="-1"
                     >
                         <span x-text="'Create &quot;' + createCandidate + '&quot;'" class="overflow-ellipsis overflow-hidden"></span>

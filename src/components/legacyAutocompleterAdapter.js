@@ -48,52 +48,41 @@ export function legacyAutocompleterAdapter(arguments_) {
         extraInfo,
         filterEls,
         sortBy,
-        requestAborter: null,
-        debounceTimer: null,
         addModeForTag: false,
         createCandidate: '',
         _core: null,
         _unsubscribeCore: null,
         loading: false,
         _selecting: false,
-        // Reactive mirror of the input's current value, so createCandidate() recomputes as
-        // the user types (the component otherwise reads value imperatively).
+        // Read-only rendering mirror of the core query.
         query: '',
-        // The buffer value the current `results` correspond to. The "Create X" row only shows
-        // once the search for the CURRENT buffer has completed (otherwise it would flash before
-        // results load and be mistaken for a real option).
-        _searchedQuery: null,
         // Optimistic-write tracking for chips whose onSelect callback is async (lightbox).
         // Reactive Sets so chip :class / :data-tag-pending bindings update on add/delete.
         pendingIds: new Set(),
         failedIds: new Set(),
         _unregisterSelector: null,
 
-        // Set by resetSelectedResults() right before an external (non-user) wholesale
-        // replacement of selectedResults — e.g. the lightbox swapping to a different
-        // resource's tags. Consumed once by the selectedResults $watch below so that swap
-        // is not mistaken for a user add/remove and announced as one.
+        // Retained for legacy template consumers; silent core resets need no suppression flag.
         _suppressNextAnnounce: false,
-        // Sequencer for createAndSelectNow() so back-to-back new-tag commits queue instead
-        // of racing the single `loading` guard in _createAndSelect.
-        _createQueue: [],
-        _processingCreateQueue: false,
 
         init() {
-            this._core = createSelector({
+            // Alpine calls init with the raw data object. Core subscriptions run later, so use
+            // its public reactive data proxy to keep DOM bindings current.
+            const reactive = globalThis.Alpine?.$data?.(this.$el) || this;
+            reactive._core = createSelector({
                 source: createDebouncedSelectorSource(createHttpSelectorSource({
                     searchUrl: url,
                     createUrl: addUrl || undefined,
-                    parameters: () => this.getAdditionalParams(),
+                    parameters: () => reactive.getAdditionalParams(),
                     mapOption: source.mapOption,
                 }), 200),
                 selected: selectedResults.map(source.mapOption),
                 maxSelected: max === 0 ? undefined : max,
             });
-            this._unsubscribeCore = this._core.subscribe((snapshot, change) => {
-                this._syncCoreSnapshot(snapshot, change);
+            reactive._unsubscribeCore = reactive._core.subscribe((snapshot, change) => {
+                reactive._syncCoreSnapshot(snapshot, change);
             });
-            this._syncCoreSnapshot(this._core.getSnapshot());
+            reactive._syncCoreSnapshot(reactive._core.getSnapshot());
 
             // Add ARIA live region for announcements
             this._liveRegion = createLiveRegion(this.$el);
@@ -201,16 +190,18 @@ export function legacyAutocompleterAdapter(arguments_) {
 
             if (!change) {
                 const input = this.$refs?.autocompleter;
+                if (snapshot.searchStatus === 'success' && this.optionCount
+                    && snapshot.activeOptionIndex === null) {
+                    this._core?.dispatch({ type: 'move-active', direction: 'next' });
+                }
                 if (snapshot.searchStatus === 'success' && input && document.activeElement === input) {
-                    if (this.optionCount && snapshot.activeOptionIndex === null) {
-                        this._core?.dispatch({ type: 'move-active', direction: 'next' });
-                    }
                     if (this.results.length) {
                         this._liveRegion?.announce(`${this.results.length} result${this.results.length === 1 ? '' : 's'} available. Use arrow keys to navigate.`);
                     } else if (!this.createCandidate) {
                         this._liveRegion?.announce('No results found.');
                     }
                 }
+                void this.updatePopover();
                 if (snapshot.searchStatus === 'error') this.errorMessage = snapshot.searchError?.message || 'Search failed';
                 if (snapshot.creationStatus === 'error') {
                     this.errorMessage = `Could not add ${snapshot.creationError?.message || 'item'}`;
@@ -249,27 +240,26 @@ export function legacyAutocompleterAdapter(arguments_) {
                 window.removeEventListener('scroll', this._repositionHandler, true);
                 window.removeEventListener('resize', this._repositionHandler);
             }
-            if (this.debounceTimer) {
-                clearTimeout(this.debounceTimer);
-            }
             this._liveRegion?.destroy();
         },
 
         async updatePopover() {
             await this.$nextTick();
-            const popover = this.$refs?.dropdown;
+            const popover = this.$refs?.dropdown || this.$el?.querySelector?.('[popover]');
             if (!popover) return;
 
             const shouldShow = this.dropdownActive && (this.results.length > 0 || !!this.createCandidate);
 
             if (shouldShow) {
-                if (!popover.matches(':popover-open')) {
-                    popover.showPopover();
-                }
+                if (!popover.matches(':popover-open')) popover.showPopover();
                 this.positionDropdown();
             } else {
-                if (popover.matches(':popover-open')) {
+                // `matches(':popover-open')` can lag a core-driven close by one Alpine tick.
+                // hidePopover is idempotent for an already-hidden manual popover.
+                try {
                     popover.hidePopover();
+                } catch {
+                    // A disconnected popover can be removed by an inline editor concurrently.
                 }
             }
         },
@@ -354,8 +344,16 @@ export function legacyAutocompleterAdapter(arguments_) {
         pushVal() {
             if (this.loading) return;
             this._selecting = false;
-            const snapshot = this._core?.getSnapshot();
+            let snapshot = this._core?.getSnapshot();
             if (!snapshot) return;
+            if (snapshot.activeOptionIndex === null && snapshot.options.length) {
+                const result = this._core.dispatch({
+                    type: 'select-option',
+                    option: snapshot.options[0],
+                });
+                if (result.ok) this._clearInput();
+                return;
+            }
             if (snapshot.activeOptionIndex !== null) {
                 const active = snapshot.options[snapshot.activeOptionIndex];
                 if (active) {

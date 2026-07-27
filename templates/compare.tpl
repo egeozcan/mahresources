@@ -32,7 +32,7 @@
                            aria-label="Search left resource">
                     <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
                         <template x-for="(item, index) in results" :key="item.ID">
-                            <div @mousedown.prevent="selectedIndex = index; pushVal($event)"
+                            <div @mousedown.prevent="setActiveIndex(index); pushVal($event)"
                                  class="px-3 py-2 hover:bg-stone-100 cursor-pointer"
                                  :class="{ 'bg-amber-100': selectedIndex === index }"
                                  x-text="item.Name"></div>
@@ -70,7 +70,7 @@
                            aria-label="Search right resource">
                     <div x-show="dropdownActive" x-ref="list" class="absolute z-10 bg-white border rounded shadow-lg mt-1 max-h-60 overflow-auto w-full">
                         <template x-for="(item, index) in results" :key="item.ID">
-                            <div @mousedown.prevent="selectedIndex = index; pushVal($event)"
+                            <div @mousedown.prevent="setActiveIndex(index); pushVal($event)"
                                  class="px-3 py-2 hover:bg-stone-100 cursor-pointer"
                                  :class="{ 'bg-amber-100': selectedIndex === index }"
                                  x-text="item.Name"></div>
