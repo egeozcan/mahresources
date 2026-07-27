@@ -52,9 +52,19 @@ export interface EntityFieldPresentationMetadata {
     readonly decoration: 'category-name' | null;
 }
 
+export interface EntityFieldLookupMetadata {
+    /**
+     * Endpoint the profile searches. Published so a form adapter can resolve entities the
+     * selector has never searched for -- the MRQL filter bar hydrates a field from names
+     * alone -- without the caller having to know or repeat an endpoint.
+     */
+    readonly searchUrl: string;
+}
+
 export interface EntityFieldProfile<TRaw extends SelectorEntityValue> {
     readonly selector: SelectorHandle<TRaw>;
     readonly form: EntityFieldFormMetadata | null;
+    readonly lookup: EntityFieldLookupMetadata;
     readonly interaction: EntityFieldInteractionMetadata;
     readonly presentation: EntityFieldPresentationMetadata;
 }
@@ -154,6 +164,7 @@ function buildSelectorProfile<TRaw extends SelectorEntityValue>(
     return Object.freeze({
         selector,
         form: formMetadata(options.form),
+        lookup: Object.freeze({ searchUrl: options.searchUrl }),
         interaction: interactionMetadata(),
         presentation: presentationMetadata(options.categoryDecoration ?? false),
     });

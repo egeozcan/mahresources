@@ -1,4 +1,18 @@
+{# `profile` names an explicit selector profile bridge and takes domain inputs (entity/usage) #}
+{# instead of the legacy url/addUrl/filterEls flags. Both paths render identical markup, hidden #}
+{# controls, ids and ARIA relationships, so a call site can be migrated on its own. #}
 <div
+        {% if profile %}
+        x-data="{% if profile == 'single' %}singleEntitySelector{% elif profile == 'multi' %}multiEntitySelector{% elif profile == 'creatable' %}creatableEntitySelector{% elif profile == 'tag' %}tagFieldSelector{% endif %}({
+        {% if entity %}entity: '{{ entity }}',{% endif %}
+        {% if usage %}usage: '{{ usage }}',{% endif %}
+        selected: {{ selectedItems|json }} || [],
+        form: { name: '{{ elName }}', minimum: parseInt('{{ min }}') || 0 },
+        {% if max %}maximum: parseInt('{{ max }}') || 0,{% endif %}
+        {% if categoryDecoration %}categoryDecoration: true,{% endif %}
+        {% if parameters %}parameters: () => ({{ parameters }}),{% endif %}
+    })"
+        {% else %}
         x-data="autocompleter({
         selectedResults: {{ selectedItems|json }} || [],
         min: parseInt('{{ min }}') || 0,
@@ -11,6 +25,9 @@
         extraInfo: '{{ extraInfo }}',
         sortBy: '{{ sortBy }}',
     })"
+        {% endif %}
+        data-selector-field="{{ elName }}"
+        data-selector-profile="{{ profile|default:'legacy' }}"
         class="relative w-full"
 >
     {% if title %}

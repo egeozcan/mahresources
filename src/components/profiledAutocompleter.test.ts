@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { selectorRegistry } from '../selector/selectorRegistry';
 import {
     creatableEntitySelector,
     dynamicEntitySelector,
@@ -30,11 +31,18 @@ function createNode() {
     };
 }
 
-function mount(selector: ProfiledSelector): ProfiledSelector {
+function createForm() {
+    return {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+    } as unknown as HTMLFormElement;
+}
+
+function mount(selector: ProfiledSelector, form: HTMLFormElement | null = null): ProfiledSelector {
     const root = createNode() as unknown as HTMLElement & {
         closest: (query: string) => HTMLFormElement | null;
     };
-    root.closest = vi.fn(() => null);
+    root.closest = vi.fn(() => form);
     selector.$el = root;
     selector.$refs = {};
     selector.$watch = vi.fn();
@@ -295,6 +303,44 @@ describe('profiled autocompleter bridge', () => {
         expect(selector.selectedResults).toEqual([beta]);
         expect(add).not.toHaveBeenCalled();
         void resolveAdd;
+        selector.destroy();
+    });
+
+    test('a profiled form field resolves exact labels against its own catalog endpoint', async () => {
+        const form = createForm();
+        const selector = mount(singleEntitySelector({
+            entity: 'group',
+            form: { name: 'ownerId' },
+        }) as ProfiledSelector, form);
+        vi.mocked(fetch).mockResolvedValueOnce({
+            ok: true,
+            json: async () => [{ ID: 7, Name: 'Alpha' }],
+        } as Response);
+
+        const handle = selectorRegistry.get(form, 'ownerId')!;
+        await expect(handle.resolveExactLabels(['alpha'], { silent: true })).resolves.toBe(true);
+
+        expect(fetch).toHaveBeenCalledWith('/v1/groups?Name=alpha');
+        expect(selector.selectedResults).toEqual([{ ID: 7, Name: 'Alpha' }]);
+        selector.destroy();
+    });
+
+    test('a lean tag profile resolves exact labels against the suggestion endpoint', async () => {
+        const form = createForm();
+        const selector = mount(tagFieldSelector({
+            usage: 'group',
+            form: { name: 'tags' },
+        }) as ProfiledSelector, form);
+        vi.mocked(fetch).mockResolvedValueOnce({
+            ok: true,
+            json: async () => [{ ID: 3, Name: 'Beta' }],
+        } as Response);
+
+        const handle = selectorRegistry.get(form, 'tags')!;
+        await expect(handle.resolveExactLabels(['beta'], { silent: true })).resolves.toBe(true);
+
+        expect(fetch).toHaveBeenCalledWith('/v1/tags/suggest?Name=beta');
+        expect(selector.selectedResults).toEqual([{ ID: 3, Name: 'Beta' }]);
         selector.destroy();
     });
 

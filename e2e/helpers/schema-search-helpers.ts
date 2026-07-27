@@ -26,7 +26,7 @@ export async function selectGroupCategory(page: any, searchText: string) {
  */
 export async function removeGroupCategory(page: any, categoryName: string) {
   const removeBtn = page
-    .locator(`[x-data*="autocompleter"] button[aria-label="Remove ${categoryName}"]`)
+    .locator(`[data-selector-field] button[aria-label="Remove ${categoryName}"]`)
     .first();
   await removeBtn.click();
   // Give Alpine time to re-render

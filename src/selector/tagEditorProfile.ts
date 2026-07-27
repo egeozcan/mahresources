@@ -87,6 +87,7 @@ function failureDuration(value: number | undefined): number {
 class TagEditorProfileImpl<TRaw extends SelectorEntityValue> implements TagEditorProfile<TRaw> {
     readonly selector: EntityFieldProfile<TRaw>['selector'];
     readonly form: EntityFieldProfile<TRaw>['form'];
+    readonly lookup: EntityFieldProfile<TRaw>['lookup'];
     readonly interaction: EntityFieldProfile<TRaw>['interaction'];
     readonly presentation: EntityFieldProfile<TRaw>['presentation'];
 
@@ -115,6 +116,7 @@ class TagEditorProfileImpl<TRaw extends SelectorEntityValue> implements TagEdito
             destroy: () => this.coreSelector.destroy(),
         });
         this.form = field.form;
+        this.lookup = field.lookup;
         this.interaction = field.interaction;
         this.presentation = field.presentation;
         this.association = association;

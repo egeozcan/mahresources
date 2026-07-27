@@ -57,9 +57,11 @@ describe('entity field profiles', () => {
         expect(Object.keys(profile).sort()).toEqual([
             'form',
             'interaction',
+            'lookup',
             'presentation',
             'selector',
         ]);
+        expect(profile.lookup).toEqual({ searchUrl: '/v1/groups' });
         expect(profile.form).toEqual({
             name: 'ownerId',
             minimum: 1,

@@ -14,7 +14,9 @@ export function legacyAutocompleterAdapter(arguments_) {
     const normalized = profile
         ? {
             source: {
-                searchUrl: '',
+                // The profile owns its own search source; this endpoint is only read back for
+                // out-of-band label resolution through the form registry handle.
+                searchUrl: profile.lookup.searchUrl,
                 createUrl: '',
                 ownerId: 0,
                 sortBy: undefined,
