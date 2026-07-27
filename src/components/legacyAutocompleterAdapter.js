@@ -1,79 +1,43 @@
-import {
-    createDebouncedSelectorSource,
-    createHttpSelectorSource,
-    createSelector,
-} from '../selector/index.ts';
 import { selectorRegistry } from '../selector/selectorRegistry.ts';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
-import { normalizeLegacyAutocompleterConfig } from './legacyAutocompleterConfig.ts';
 
-export function legacyAutocompleterAdapter(arguments_) {
-    const profileBridge = arguments_._profileBridge || null;
-    const profile = profileBridge?.profile || null;
-    const profileSnapshot = profile?.selector.getSnapshot();
-    const normalized = profile
-        ? {
-            source: {
-                // The profile owns its own search source; this endpoint is only read back for
-                // out-of-band label resolution through the form registry handle.
-                searchUrl: profile.lookup.searchUrl,
-                createUrl: '',
-                ownerId: 0,
-                sortBy: undefined,
-                mapOption: (raw) => ({ key: raw.ID, label: raw.Name, raw }),
-            },
-            selection: {
-                initialValues: profileSnapshot.selected.map((option) => option.raw),
-                minimum: profile.form?.minimum ?? 0,
-                maximum: profileBridge.maximum,
-            },
-            rendering: {
-                fieldName: profile.form?.name,
-                extraInfo: profile.presentation.decoration === 'category-name' ? 'Category' : '',
-                standalone: profile.form === null,
-                commitOnSpace: profile.interaction.commitOnSpace,
-                onSelect: null,
-                onRemove: null,
-            },
-        }
-        : normalizeLegacyAutocompleterConfig(arguments_);
-    const { source, selection, rendering } = normalized;
-    const {
-        searchUrl: url,
-        createUrl: addUrl,
-        ownerId,
-        sortBy,
-    } = source;
-    const {
-        initialValues: selectedResults,
-        minimum: min,
-        maximum: max,
-    } = selection;
-    const {
-        fieldName: elName,
-        extraInfo,
-        onSelect,
-        onRemove,
-        standalone,
-        // Chip-input: when true, a space also commits the current token. Off by default so
-        // multi-word tag names stay typeable in every existing form (comma always commits).
-        commitOnSpace,
-    } = rendering;
+function mapOption(raw) {
+    return { key: raw.ID, label: raw.Name, raw };
+}
+
+/**
+ * Alpine rendering adapter for a selector profile. It owns only presentation concerns -- the
+ * popover, the live region, focus and the DOM buffer -- and forwards every selection decision
+ * to the profile's selector core. `profiledAutocompleter.js` supplies the bridge; nothing
+ * constructs this from endpoints or loose flags.
+ */
+export function legacyAutocompleterAdapter({ _profileBridge: profileBridge }) {
+    const { profile } = profileBridge;
+    // A profile without form metadata is not part of a submitted form: the lightbox tag editor
+    // and the entity picker's filters render one, so there is no field name, no minimum to
+    // enforce, and Escape returns focus to the surrounding surface instead of the form.
+    const formMetadata = profile.form;
+    const elName = formMetadata?.name;
+    const min = formMetadata?.minimum ?? 0;
+    const max = profileBridge.maximum;
+    const creatable = Boolean(profileBridge.creatable);
+    const decorateWithCategoryName = profile.presentation.decoration === 'category-name';
+    // The profile owns its own search source; this endpoint is only read back for out-of-band
+    // label resolution through the form registry handle.
+    const lookupUrl = profile.lookup.searchUrl;
+    // Chip-input: when true, a space also commits the current token. Off by default so
+    // multi-word tag names stay typeable in every existing form (comma always commits).
+    const { commitOnSpace } = profile.interaction;
 
     return {
         max,
         min,
-        ownerId,
         results: [],
         selectedIndex: -1,
         errorMessage: false,
         dropdownActive: false,
-        selectedResults,
+        selectedResults: profile.selector.getSnapshot().selected.map((option) => option.raw),
         selectedIds: new Set(),
-        url,
-        addUrl,
-        extraInfo,
-        sortBy,
         addModeForTag: false,
         _addModeShown: false,
         createCandidate: '',
@@ -99,24 +63,12 @@ export function legacyAutocompleterAdapter(arguments_) {
         _formSubmitHandler: null,
         _formResetHandler: null,
 
-        // Retained for legacy template consumers; silent core resets need no suppression flag.
-        _suppressNextAnnounce: false,
-
         init() {
             this._destroyed = false;
             // Alpine calls init with the raw data object. Core subscriptions run later, so use
             // its public reactive data proxy to keep DOM bindings current.
             const reactive = globalThis.Alpine?.$data?.(this.$el) || this;
-            reactive._core = profile?.selector || createSelector({
-                source: createDebouncedSelectorSource(createHttpSelectorSource({
-                    searchUrl: url,
-                    createUrl: addUrl || undefined,
-                    parameters: () => reactive.getAdditionalParams(),
-                    mapOption: source.mapOption,
-                }), 200),
-                selected: selectedResults.map(source.mapOption),
-                maxSelected: max === 0 ? undefined : max,
-            });
+            reactive._core = profile.selector;
             reactive._unsubscribeCore = reactive._core.subscribe((snapshot, change) => {
                 reactive._syncCoreSnapshot(snapshot, change);
             });
@@ -164,7 +116,7 @@ export function legacyAutocompleterAdapter(arguments_) {
                 const handle = {
                     getRawValues: () => this.selectedResults,
                     replaceRawValues: (values, { silent = false } = {}) => {
-                        this.resetSelectedResults(values, { silent });
+                        this._replaceSelection(values, { silent });
                     },
                     replaceByKeys: (keys, options = {}) => {
                         const existingById = new Map(
@@ -182,9 +134,9 @@ export function legacyAutocompleterAdapter(arguments_) {
                     resolveExactLabels: async (labels, options = {}) => {
                         const selected = [];
                         for (const label of labels) {
-                            const separator = url.includes('?') ? '&' : '?';
+                            const separator = lookupUrl.includes('?') ? '&' : '?';
                             const response = await fetch(
-                                `${url}${separator}Name=${encodeURIComponent(label)}`,
+                                `${lookupUrl}${separator}Name=${encodeURIComponent(label)}`,
                             );
                             if (!response.ok) return false;
                             const results = await response.json();
@@ -203,8 +155,8 @@ export function legacyAutocompleterAdapter(arguments_) {
                 this._registeredForm = form;
             }
 
-            // Form handling only when not in standalone mode
-            if (form && !standalone) {
+            // Minimum enforcement and reset only apply to a field that is part of a form.
+            if (form && formMetadata) {
                 this._form = form;
                 this._formSubmitHandler = (e) => {
                     if (this.selectedResults.length < this.min) {
@@ -213,7 +165,7 @@ export function legacyAutocompleterAdapter(arguments_) {
                     }
                 };
                 this._formResetHandler = () => {
-                    this.resetSelectedResults([], { silent: false });
+                    this._replaceSelection([], { silent: false });
                 };
                 form.addEventListener('submit', this._formSubmitHandler);
                 form.addEventListener('reset', this._formResetHandler);
@@ -268,12 +220,7 @@ export function legacyAutocompleterAdapter(arguments_) {
                 }
                 return;
             }
-            if (profileBridge) {
-                profileBridge.onChange?.(change);
-            } else {
-                for (const option of change.removed) onRemove?.(option.raw);
-                for (const option of change.added) onSelect?.(option.raw);
-            }
+            profileBridge.onChange?.(change);
             // Publish the atomic change to whoever named this field in this form. Registry
             // delivery replaces the old document-wide `multiple-input` broadcast: it cannot
             // reach an unrelated form that happens to reuse the field name.
@@ -388,7 +335,7 @@ export function legacyAutocompleterAdapter(arguments_) {
             const matchesSelected = snapshot?.selected.some((option) => option.label === label);
             const creates = Boolean(
                 label
-                && (this.addUrl || profileBridge?.creatable)
+                && creatable
                 && !matchesAvailable
                 && !matchesSelected
             );
@@ -426,7 +373,7 @@ export function legacyAutocompleterAdapter(arguments_) {
 
         selectResult(item) {
             this._endSelecting();
-            const result = this._core?.dispatch({ type: 'select-option', option: source.mapOption(item) });
+            const result = this._core?.dispatch({ type: 'select-option', option: mapOption(item) });
             if (result?.ok) this._clearInput();
         },
 
@@ -463,21 +410,23 @@ export function legacyAutocompleterAdapter(arguments_) {
             }
         },
 
-        resetSelectedResults(tags, { silent = true } = {}) {
+        /**
+          * Replaces the whole selection with values the surrounding domain owns. Silent by
+          * default: a reset describes state the selector did not choose, so it must not be
+          * echoed back to the callers listening for user-driven changes.
+          */
+        _replaceSelection(values, { silent = true } = {}) {
             this._core?.dispatch({
                 type: 'replace-selection',
-                options: (tags || []).map(source.mapOption),
+                options: (values || []).map(mapOption),
                 reason: 'reset',
                 silent,
             });
         },
 
-        ensureMaxItems() {
-            this._core?.dispatch({
-                type: 'replace-selection',
-                options: this._core.getSnapshot().selected,
-                reason: 'replace',
-            });
+        /** Discards the current selection. Public because form-less filters clear on close. */
+        clearSelection() {
+            this._replaceSelection([]);
         },
 
         removeItem(item) {
@@ -485,11 +434,11 @@ export function legacyAutocompleterAdapter(arguments_) {
         },
 
         getItemDisplayName(item) {
-            if (!this.extraInfo || !item[this.extraInfo]?.Name) {
+            if (!decorateWithCategoryName || !item.Category?.Name) {
                 return item.Name;
             }
 
-            return `${item.Name} (${item[this.extraInfo].Name})`
+            return `${item.Name} (${item.Category.Name})`
         },
 
         // Total roving options including the virtual "Create X" row when present.
@@ -557,8 +506,7 @@ export function legacyAutocompleterAdapter(arguments_) {
                 if (!token) return; // empty buffer: let the key type normally
                 // Only intercept when there is something to commit: an exact-match result or an
                 // addUrl to create with. Otherwise (e.g. a category picker) let the char type.
-                const canCommit = this.addUrl || profileBridge?.creatable
-                    || this.results.some(x => x.Name === token);
+                const canCommit = creatable || this.results.some(x => x.Name === token);
                 if (!canCommit) return;
                 e.preventDefault();
                 this.commitToken(token);
@@ -570,9 +518,9 @@ export function legacyAutocompleterAdapter(arguments_) {
 
                 this._core?.dispatch({ type: 'close' });
 
-                // In standalone mode (lightbox), always blur on Escape
-                // so focus returns to the lightbox for keyboard navigation
-                if (standalone) {
+                // A form-less selector (lightbox tag editor, picker filter) always blurs on
+                // Escape so focus returns to the surrounding surface for keyboard navigation.
+                if (!formMetadata) {
                     e.target.blur();
                 }
             },
@@ -594,7 +542,7 @@ export function legacyAutocompleterAdapter(arguments_) {
 
                 if (e.target.value === '') {
                     const form = e.target.closest('form');
-                    if (form && !standalone && !form.dataset.inlineEditor) {
+                    if (form && formMetadata && !form.dataset.inlineEditor) {
                         form.requestSubmit();
                         return;
                     }
@@ -635,19 +583,5 @@ export function legacyAutocompleterAdapter(arguments_) {
                 this._core?.dispatch({ type: 'set-query', query: value });
             }
         },
-
-        getAdditionalParams() {
-            const params = { };
-
-            if (this.ownerId) {
-                params.ownerId = this.ownerId;
-            }
-
-            if (this.sortBy) {
-                params.SortBy = this.sortBy;
-            }
-
-            return params;
-        }
     }
 }

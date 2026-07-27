@@ -76,7 +76,7 @@
                                      onChange: (change) =>
                                          $store.entityPicker.applyFilterChange(filter.key, filter.multi, change)
                                  })"
-                                 @entity-picker-closed.window="resetSelectedResults([])">
+                                 @entity-picker-closed.window="clearSelection()">
                                 <label class="block text-xs text-stone-500 font-mono mb-1" x-text="filter.label"></label>
                                 <div class="relative">
                                     <input x-ref="autocompleter"

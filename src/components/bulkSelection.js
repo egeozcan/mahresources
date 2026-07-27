@@ -331,13 +331,12 @@ export function setupBulkSelectionListeners() {
       const res = await (async function() {
         const url = new URL(`${window.location.origin}/partials/autocompleter`);
 
+        url.searchParams.append("profile", "tag");
+        url.searchParams.append("usage", entityType);
         url.searchParams.append("selectedItems", JSON.stringify(currentTags));
         url.searchParams.append("title", "Edit tags");
-        url.searchParams.append("sortBy", `most_used_${entityType}`);
         url.searchParams.append("id", `tagEditor_${Math.random()}`);
         url.searchParams.append("elName", "editedId");
-        url.searchParams.append("url", "/v1/tags");
-        url.searchParams.append("addUrl", "/v1/tag");
 
         return fetch(url.toString()).then(x => x.text());
       })();

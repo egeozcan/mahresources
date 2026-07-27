@@ -21,6 +21,21 @@ function unlimitedWhenZero(maximum) {
     return maximum || undefined;
 }
 
+/**
+ * The shared partial can be rendered standalone through `/partials/autocompleter`, where the
+ * initial selection can only arrive as a JSON string in a query parameter. Included from a page
+ * template the same input is a real array. Both spellings describe the same selection.
+ */
+function normalizeSelected(selected) {
+    if (typeof selected !== 'string') return selected || [];
+    return selected ? JSON.parse(selected) : [];
+}
+
+/** Applies the input normalization every profile factory shares. */
+function profileInputs({ selected, ...rest }) {
+    return { ...rest, selected: normalizeSelected(selected) };
+}
+
 function createProfiledAutocompleter(profile, onChange, { creatable, maximum }) {
     return legacyAutocompleterAdapter({
         _profileBridge: {
@@ -34,7 +49,8 @@ function createProfiledAutocompleter(profile, onChange, { creatable, maximum }) 
 
 /** Alpine rendering bridge for the explicit zero-or-one entity field profile. */
 export function singleEntitySelector(arguments_) {
-    const { onChange = null, ...profileOptions } = arguments_;
+    const { onChange = null, ...rawOptions } = arguments_;
+    const profileOptions = profileInputs(rawOptions);
     return createProfiledAutocompleter(
         createSingleEntityFieldProfile(profileOptions),
         onChange,
@@ -44,7 +60,8 @@ export function singleEntitySelector(arguments_) {
 
 /** Alpine rendering bridge for the explicit non-creatable multi-entity field profile. */
 export function multiEntitySelector(arguments_) {
-    const { onChange = null, ...profileOptions } = arguments_;
+    const { onChange = null, ...rawOptions } = arguments_;
+    const profileOptions = profileInputs(rawOptions);
     const maximum = unlimitedWhenZero(profileOptions.maximum);
     return createProfiledAutocompleter(
         createMultiEntityFieldProfile({ ...profileOptions, maximum }),
@@ -55,7 +72,8 @@ export function multiEntitySelector(arguments_) {
 
 /** Alpine rendering bridge for the explicit zero-or-one creatable entity field profile. */
 export function creatableEntitySelector(arguments_) {
-    const { onChange = null, ...profileOptions } = arguments_;
+    const { onChange = null, ...rawOptions } = arguments_;
+    const profileOptions = profileInputs(rawOptions);
     return createProfiledAutocompleter(
         createCreatableEntityFieldProfile(profileOptions),
         onChange,
@@ -65,7 +83,8 @@ export function creatableEntitySelector(arguments_) {
 
 /** Alpine rendering bridge for the runtime-configured dynamic entity selector profile. */
 export function dynamicEntitySelector(arguments_) {
-    const { onChange = null, ...profileOptions } = arguments_;
+    const { onChange = null, ...rawOptions } = arguments_;
+    const profileOptions = profileInputs(rawOptions);
     const maximum = unlimitedWhenZero(profileOptions.maximum);
     return createProfiledAutocompleter(
         createDynamicEntitySelectorProfile({ ...profileOptions, maximum }),
@@ -76,7 +95,8 @@ export function dynamicEntitySelector(arguments_) {
 
 /** Alpine rendering bridge for the explicit creatable tag field profile. */
 export function tagFieldSelector(arguments_) {
-    const { onChange = null, ...profileOptions } = arguments_;
+    const { onChange = null, ...rawOptions } = arguments_;
+    const profileOptions = profileInputs(rawOptions);
     const maximum = unlimitedWhenZero(profileOptions.maximum);
     return createProfiledAutocompleter(
         createTagFieldProfile({ ...profileOptions, maximum }),
@@ -91,7 +111,8 @@ export function tagFieldSelector(arguments_) {
  * keys from `pendingIds`/`failedIds` rather than any adapter-level optimistic tracking.
  */
 export function tagEditorSelector(arguments_) {
-    const { onChange = null, ...profileOptions } = arguments_;
+    const { onChange = null, ...rawOptions } = arguments_;
+    const profileOptions = profileInputs(rawOptions);
     const profile = createTagEditorProfile(profileOptions);
     const base = createProfiledAutocompleter(profile, onChange, { creatable: true, maximum: 0 });
     const baseInit = base.init;
@@ -126,7 +147,14 @@ export function tagEditorSelector(arguments_) {
             const values = tags || [];
             if (entityKey !== this._syncedEntityKey) {
                 this._syncedEntityKey = entityKey;
-                this.resetSelectedResults(values);
+                // Through the profile's own selector, so the navigation invalidates every
+                // in-flight association write rather than only the keys that moved.
+                profile.selector.dispatch({
+                    type: 'replace-selection',
+                    options: values.map(mapTagOption),
+                    reason: 'reset',
+                    silent: true,
+                });
                 return;
             }
             profile.syncAssociations(values.map(mapTagOption));

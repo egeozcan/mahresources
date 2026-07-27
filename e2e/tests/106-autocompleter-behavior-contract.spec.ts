@@ -404,18 +404,17 @@ test.describe('Autocompleter behavior contract', () => {
       const harness = document.createElement('form');
       harness.id = 'chip-removal-contract';
       harness.innerHTML = `
-        <div x-data="autocompleter({
-               selectedResults: [
+        <div x-data="tagFieldSelector({
+               usage: 'group',
+               selected: [
                  { ID: 101, Name: 'Click chip' },
                  { ID: 202, Name: 'Enter chip' },
                  { ID: 303, Name: 'Space chip' }
                ],
-               max: 0,
-               min: 0,
-               ownerId: 0,
-               url: '/v1/tags',
-               elName: 'contractTags',
-               onRemove: item => window.__chipRemovalContract.removed.push(item.ID)
+               form: { name: 'contractTags' },
+               onChange: change => change.removed.forEach(
+                 option => window.__chipRemovalContract.removed.push(option.raw.ID)
+               )
              })">
           <input x-ref="autocompleter" role="combobox" aria-label="Contract tags">
           <div x-ref="dropdown" popover="manual"></div>
@@ -477,22 +476,21 @@ test.describe('Autocompleter behavior contract', () => {
           initTree: (element: Element) => void;
           $data: (element: Element) => Record<string, unknown>;
         };
-        __selectorCallbacks?: { selected: number[]; removed: number[] };
+        __selectorCallbacks?: { events: string[] };
       };
-      browserWindow.__selectorCallbacks = { selected: [], removed: [] };
+      browserWindow.__selectorCallbacks = { events: [] };
 
       const harness = document.createElement('div');
       harness.innerHTML = `
         <div id="single-callback-harness"
-             x-data="autocompleter({
-               selectedResults: [],
-               max: 1,
-               min: 0,
-               ownerId: 0,
-               url: '/v1/categories',
-               elName: 'callbackCategoryId',
-               onSelect: item => window.__selectorCallbacks.selected.push(item.ID),
-               onRemove: item => window.__selectorCallbacks.removed.push(item.ID)
+             x-data="singleEntitySelector({
+               entity: 'category',
+               selected: [],
+               form: { name: 'callbackCategoryId' },
+               onChange: change => {
+                 change.removed.forEach(o => window.__selectorCallbacks.events.push('remove:' + o.raw.ID));
+                 change.added.forEach(o => window.__selectorCallbacks.events.push('select:' + o.raw.ID));
+               }
              })">
           <input x-ref="autocompleter" role="combobox">
           <div x-ref="dropdown" popover="manual"><div x-ref="list"></div></div>
@@ -519,8 +517,10 @@ test.describe('Autocompleter behavior contract', () => {
 
     await expect(page.locator('input[name="callbackCategoryId"]')).toHaveCount(1);
     await expect(page.locator('input[name="callbackCategoryId"]')).toHaveValue('202');
+    // One atomic change carries the replacement: the outgoing value is reported removed
+    // before the incoming one is reported selected.
     await expect.poll(() => page.evaluate(() => (
-      window as typeof window & { __selectorCallbacks?: { selected: number[]; removed: number[] } }
-    ).__selectorCallbacks)).toEqual({ selected: [101, 202], removed: [101] });
+      window as typeof window & { __selectorCallbacks?: { events: string[] } }
+    ).__selectorCallbacks?.events)).toEqual(['select:101', 'remove:101', 'select:202']);
   });
 });

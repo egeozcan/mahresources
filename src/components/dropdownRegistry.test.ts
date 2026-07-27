@@ -1,15 +1,25 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { selectorRegistry, type SelectorFieldChange } from '../selector/selectorRegistry';
-import { autocompleter } from './dropdown.js';
+import { multiEntitySelector, singleEntitySelector, tagFieldSelector } from './dropdown.js';
 
-type LegacySelector = ReturnType<typeof autocompleter> & {
+type MountedSelector = ReturnType<typeof multiEntitySelector> & {
     $el: HTMLElement;
     $refs: Record<string, HTMLElement>;
     $watch: (name: string, callback: (...args: unknown[]) => void) => void;
     $nextTick: (callback: () => void) => void;
     $dispatch: ReturnType<typeof vi.fn>;
 };
+
+/** A non-creatable multi-tag field: searches /v1/tags, never offers a create row. */
+function tagPicker(options: Record<string, unknown> = {}) {
+    return multiEntitySelector({ entity: 'tag', ...options }) as MountedSelector;
+}
+
+/** A creatable tag field: searches the lean suggestion source and can create through /v1/tag. */
+function creatableTagField(options: Record<string, unknown> = {}) {
+    return tagFieldSelector({ usage: 'resource', ...options }) as MountedSelector;
+}
 
 function createNode() {
     return {
@@ -32,7 +42,7 @@ function createForm() {
     } as unknown as HTMLFormElement;
 }
 
-function mountSelector(selector: LegacySelector, form: HTMLFormElement | null) {
+function mountSelector(selector: MountedSelector, form: HTMLFormElement | null) {
     const root = createNode() as unknown as HTMLElement & { closest: (selector: string) => HTMLFormElement | null };
     root.closest = vi.fn(() => form);
     selector.$el = root;
@@ -47,24 +57,15 @@ function createSelector({
     form = createForm(),
     elName = 'tags',
     selectedResults = [{ ID: 1, Name: 'Alpha', MetaSchema: 'hydrated' }],
-    url = '/v1/tags?limit=20',
 }: {
     form?: HTMLFormElement | null;
     elName?: string;
     selectedResults?: Array<Record<string, unknown>>;
-    url?: string;
 } = {}) {
-    return mountSelector(autocompleter({
-        selectedResults,
-        max: 0,
-        min: 0,
-        ownerId: 0,
-        url,
-        elName,
-    }) as LegacySelector, form);
+    return mountSelector(tagPicker({ selected: selectedResults, form: { name: elName } }), form);
 }
 
-describe('legacy autocompleter selector registry integration', () => {
+describe('selector rendering adapter and registry integration', () => {
     beforeEach(() => {
         vi.stubGlobal('document', {
             createElement: vi.fn(() => createNode()),
@@ -110,24 +111,23 @@ describe('legacy autocompleter selector registry integration', () => {
         expect(markup).not.toContain('selectedIndex = index');
     });
 
-    test('routes chip removal through the initialized core and calls the compatibility callback once', () => {
-        const onRemove = vi.fn();
-        const { selector } = mountSelector(autocompleter({
-            selectedResults: [{ ID: 1, Name: 'Alpha' }],
-            max: 0,
-            min: 0,
-            ownerId: 0,
-            url: '/v1/tags',
-            elName: 'tags',
-            onRemove,
-        }) as LegacySelector, createForm());
+    test('routes chip removal through the initialized core and reports one atomic change', () => {
+        const onChange = vi.fn();
+        const { selector } = mountSelector(tagPicker({
+            selected: [{ ID: 1, Name: 'Alpha' }],
+            form: { name: 'tags' },
+            onChange,
+        }), createForm());
         selector.init();
 
         selector.removeItem({ ID: 1, Name: 'Alpha' });
 
         expect(selector.selectedResults).toEqual([]);
-        expect(onRemove).toHaveBeenCalledTimes(1);
-        expect(onRemove).toHaveBeenCalledWith({ ID: 1, Name: 'Alpha' });
+        expect(onChange).toHaveBeenCalledTimes(1);
+        expect(onChange.mock.calls[0][0]).toMatchObject({
+            added: [],
+            removed: [{ raw: { ID: 1, Name: 'Alpha' } }],
+        });
         selector.destroy();
     });
 
@@ -168,16 +168,19 @@ describe('legacy autocompleter selector registry integration', () => {
         vi.useRealTimers();
     });
 
-    test('reevaluates dynamic adapter parameters for every core-owned HTTP search', async () => {
+    test('reevaluates the profile parameter callback for every core-owned HTTP search', async () => {
         vi.useFakeTimers();
         vi.mocked(fetch).mockResolvedValue({ ok: true, json: async () => [] } as Response);
-        const { selector } = createSelector({ selectedResults: [], url: '/v1/tags' });
+        let ownerId = 7;
+        const { selector } = mountSelector(
+            tagPicker({ selected: [], parameters: () => ({ ownerId }) }),
+            createForm(),
+        );
         selector.init();
 
-        selector.ownerId = 7;
         selector._core.dispatch({ type: 'set-query', query: 'first' });
         await vi.advanceTimersByTimeAsync(200);
-        selector.ownerId = 8;
+        ownerId = 8;
         selector._core.dispatch({ type: 'set-query', query: 'second' });
         await vi.advanceTimersByTimeAsync(200);
 
@@ -208,14 +211,7 @@ describe('legacy autocompleter selector registry integration', () => {
             }
             return Promise.resolve({ ok: true, json: async () => [] } as Response);
         });
-        const { selector } = mountSelector(autocompleter({
-            selectedResults: [],
-            max: 0,
-            min: 0,
-            ownerId: 0,
-            url: '/v1/tags',
-            addUrl: '/v1/tag',
-        }) as LegacySelector, createForm());
+        const { selector } = mountSelector(creatableTagField({ selected: [] }), createForm());
         const input = { value: 'First', dispatchEvent: vi.fn() };
         selector.$refs = { autocompleter: input as unknown as HTMLInputElement };
         selector.init();
@@ -252,14 +248,7 @@ describe('legacy autocompleter selector registry integration', () => {
             }
             return Promise.resolve({ ok: true, json: async () => [] } as Response);
         });
-        const { selector } = mountSelector(autocompleter({
-            selectedResults: [],
-            max: 0,
-            min: 0,
-            ownerId: 0,
-            url: '/v1/tags',
-            addUrl: '/v1/tag',
-        }) as LegacySelector, createForm());
+        const { selector } = mountSelector(creatableTagField({ selected: [] }), createForm());
         const input = { value: 'Confirmed', dispatchEvent: vi.fn() };
         selector.$refs = { autocompleter: input as unknown as HTMLInputElement };
         selector.init();
@@ -275,14 +264,7 @@ describe('legacy autocompleter selector registry integration', () => {
     });
 
     test('does not bypass core candidate validity when Enter arrives during search', () => {
-        const { selector } = mountSelector(autocompleter({
-            selectedResults: [],
-            max: 0,
-            min: 0,
-            ownerId: 0,
-            url: '/v1/tags',
-            addUrl: '/v1/tag',
-        }) as LegacySelector, createForm());
+        const { selector } = mountSelector(creatableTagField({ selected: [] }), createForm());
         selector.$refs = {
             autocompleter: { value: 'kbtag_a' } as HTMLInputElement,
         };
@@ -303,14 +285,7 @@ describe('legacy autocompleter selector registry integration', () => {
     });
 
     test('keeps the add-mode sentinel false until the confirmation has been shown', () => {
-        const { selector } = mountSelector(autocompleter({
-            selectedResults: [],
-            max: 0,
-            min: 0,
-            ownerId: 0,
-            url: '/v1/tags',
-            addUrl: '/v1/tag',
-        }) as LegacySelector, createForm());
+        const { selector } = mountSelector(creatableTagField({ selected: [] }), createForm());
         selector.$refs = { autocompleter: { value: '' } as HTMLInputElement };
         selector.init();
 
@@ -332,13 +307,7 @@ describe('legacy autocompleter selector registry integration', () => {
             ok: true,
             json: async () => [{ ID: 1, Name: 'Alpha' }],
         } as Response);
-        const { selector } = mountSelector(autocompleter({
-            selectedResults: [],
-            max: 0,
-            min: 0,
-            ownerId: 0,
-            url: '/v1/tags',
-        }) as LegacySelector, createForm());
+        const { selector } = mountSelector(tagPicker({ selected: [] }), createForm());
         selector.init();
         selector._core.dispatch({ type: 'open' });
         selector._core.dispatch({ type: 'set-query', query: 'alpha' });
@@ -368,13 +337,7 @@ describe('legacy autocompleter selector registry integration', () => {
             ok: true,
             json: async () => [{ ID: 1, Name: 'Alpha' }],
         } as Response);
-        const { selector } = mountSelector(autocompleter({
-            selectedResults: [],
-            max: 0,
-            min: 0,
-            ownerId: 0,
-            url: '/v1/tags',
-        }) as LegacySelector, createForm());
+        const { selector } = mountSelector(tagPicker({ selected: [] }), createForm());
         selector.init();
         selector._core.dispatch({ type: 'open' });
         selector._core.dispatch({ type: 'set-query', query: 'alpha' });
@@ -399,13 +362,7 @@ describe('legacy autocompleter selector registry integration', () => {
         vi.mocked(fetch).mockImplementation(() => new Promise<Response>((resolve) => {
             resolveResponse = resolve;
         }));
-        const { selector } = mountSelector(autocompleter({
-            selectedResults: [],
-            max: 0,
-            min: 0,
-            ownerId: 0,
-            url: '/v1/tags',
-        }) as LegacySelector, createForm());
+        const { selector } = mountSelector(tagPicker({ selected: [] }), createForm());
         selector.init();
         selector._core.dispatch({ type: 'open' });
         selector._core.dispatch({ type: 'set-query', query: 'alpha' });
@@ -471,13 +428,7 @@ describe('legacy autocompleter selector registry integration', () => {
             ok: true,
             json: async () => [{ ID: 1, Name: 'Alpha' }],
         } as Response);
-        const { selector } = mountSelector(autocompleter({
-            selectedResults: [],
-            max: 0,
-            min: 0,
-            ownerId: 0,
-            url: '/v1/tags',
-        }) as LegacySelector, createForm());
+        const { selector } = mountSelector(tagPicker({ selected: [] }), createForm());
         selector.init();
         selector._core.dispatch({ type: 'open' });
         selector._core.dispatch({ type: 'set-query', query: 'alp' });
@@ -501,23 +452,20 @@ describe('legacy autocompleter selector registry integration', () => {
 
     test('translates maximum-one replacement atomically into one field change for its form', () => {
         const calls: string[] = [];
-        const onRemove = vi.fn((item) => calls.push(`remove:${item.Name}`));
-        const onSelect = vi.fn((item) => calls.push(`select:${item.Name}`));
         const form = createForm();
         const observed: SelectorFieldChange[] = [];
         const stopObserving = selectorRegistry.observe(
             form, 'callbackCategoryId', (change) => observed.push(change),
         );
-        const { selector } = mountSelector(autocompleter({
-            selectedResults: [{ ID: 1, Name: 'Alpha' }],
-            max: 1,
-            min: 0,
-            ownerId: 0,
-            url: '/v1/tags',
-            elName: 'callbackCategoryId',
-            onRemove,
-            onSelect,
-        }) as LegacySelector, form);
+        const { selector } = mountSelector(singleEntitySelector({
+            entity: 'category',
+            selected: [{ ID: 1, Name: 'Alpha' }],
+            form: { name: 'callbackCategoryId' },
+            onChange: (change) => {
+                for (const option of change.removed) calls.push(`remove:${option.raw.Name}`);
+                for (const option of change.added) calls.push(`select:${option.raw.Name}`);
+            },
+        }) as MountedSelector, form);
         selector.init();
 
         selector.selectResult({ ID: 2, Name: 'Beta' });
@@ -539,14 +487,9 @@ describe('legacy autocompleter selector registry integration', () => {
         const otherForm = createForm();
         const neighbour = vi.fn();
         const stopObserving = selectorRegistry.observe(otherForm, 'tags', neighbour);
-        const { selector } = mountSelector(autocompleter({
-            selectedResults: [],
-            max: 0,
-            min: 0,
-            ownerId: 0,
-            url: '/v1/tags',
-            elName: 'tags',
-        }) as LegacySelector, ownForm);
+        const { selector } = mountSelector(
+            tagPicker({ selected: [], form: { name: 'tags' } }), ownForm,
+        );
         selector.init();
 
         selector.selectResult({ ID: 7, Name: 'Beta' });
@@ -558,25 +501,21 @@ describe('legacy autocompleter selector registry integration', () => {
     });
 
     test('uses core replacement for nullable clear and keeps a silent reset callback/change-free', () => {
-        const onRemove = vi.fn();
+        const onChange = vi.fn();
         const form = createForm();
         const observer = vi.fn();
         const stopObserving = selectorRegistry.observe(form, 'tags', observer);
-        const { selector } = mountSelector(autocompleter({
-            selectedResults: [{ ID: 1, Name: 'Alpha' }],
-            max: 0,
-            min: 0,
-            ownerId: 0,
-            url: '/v1/tags',
-            elName: 'tags',
-            onRemove,
-        }) as LegacySelector, form);
+        const { selector } = mountSelector(tagPicker({
+            selected: [{ ID: 1, Name: 'Alpha' }],
+            form: { name: 'tags' },
+            onChange,
+        }), form);
         selector.init();
 
-        selector.resetSelectedResults(null, { silent: true });
+        selector.clearSelection();
 
         expect(selector.selectedResults).toEqual([]);
-        expect(onRemove).not.toHaveBeenCalled();
+        expect(onChange).not.toHaveBeenCalled();
         expect(observer).not.toHaveBeenCalled();
         stopObserving();
         selector.destroy();
@@ -604,14 +543,9 @@ describe('legacy autocompleter selector registry integration', () => {
             style: {},
         } as unknown as HTMLElement;
         const makeMounted = () => {
-            const mounted = mountSelector(autocompleter({
-                selectedResults: [{ ID: 1, Name: 'Alpha' }],
-                max: 0,
-                min: 0,
-                ownerId: 0,
-                url: '/v1/tags',
-                elName: 'tags',
-            }) as LegacySelector, form);
+            const mounted = mountSelector(
+                tagPicker({ selected: [{ ID: 1, Name: 'Alpha' }], form: { name: 'tags' } }), form,
+            );
             mounted.selector.$refs = { dropdown: popover };
             return mounted.selector;
         };
@@ -682,7 +616,7 @@ describe('legacy autocompleter selector registry integration', () => {
             'utf8',
         );
 
-        expect(entityPickerMarkup).toContain('@entity-picker-closed.window="resetSelectedResults([])"');
+        expect(entityPickerMarkup).toContain('@entity-picker-closed.window="clearSelection()"');
         expect(entityPickerMarkup).not.toContain('@entity-picker-closed.window="selectedResults = []"');
         // The lightbox tag editor routes its external synchronization through the tag-editor
         // profile, which resets on navigation and reconciles same-resource changes per key.
@@ -706,27 +640,25 @@ describe('legacy autocompleter selector registry integration', () => {
         reset?.();
 
         expect(selector.selectedResults).toEqual([]);
-        expect(selector._suppressNextAnnounce).toBe(false);
         selector.destroy();
     });
 
-    test('adapts non-silent replacement and the legacy silent reset behavior', () => {
+    test('replaces the whole selection whether the replacement is announced or silent', () => {
         const { form, selector } = createSelector();
+        const observer = vi.fn();
+        const stopObserving = selectorRegistry.observe(form!, 'tags', observer);
         selector.init();
         const handle = selectorRegistry.get(form!, 'tags')!;
 
         handle.replaceRawValues([{ ID: 2, Name: 'Beta' }]);
         expect(selector.selectedResults).toEqual([{ ID: 2, Name: 'Beta' }]);
-        expect(selector._suppressNextAnnounce).toBe(false);
-
-        selector.resetSelectedResults([{ ID: 3, Name: 'Gamma' }]);
-        expect(selector.selectedResults).toEqual([{ ID: 3, Name: 'Gamma' }]);
-        expect(selector._suppressNextAnnounce).toBe(false);
+        expect(observer).toHaveBeenCalledTimes(1);
 
         handle.replaceRawValues([{ ID: 4, Name: 'Delta' }], { silent: true });
         expect(selector.selectedResults).toEqual([{ ID: 4, Name: 'Delta' }]);
-        expect(selector._suppressNextAnnounce).toBe(false);
+        expect(observer).toHaveBeenCalledTimes(1);
 
+        stopObserving();
         selector.destroy();
     });
 
@@ -741,7 +673,6 @@ describe('legacy autocompleter selector registry integration', () => {
             { ID: 1, Name: 'Alpha', MetaSchema: 'hydrated' },
             { ID: 2, Name: '#2' },
         ]);
-        expect(selector._suppressNextAnnounce).toBe(false);
 
         selector.destroy();
     });
@@ -763,13 +694,12 @@ describe('legacy autocompleter selector registry integration', () => {
 
         await expect(handle.resolveExactLabels(['beta', 'gamma'], { silent: true }))
             .resolves.toBe(true);
-        expect(fetchMock).toHaveBeenNthCalledWith(1, '/v1/tags?limit=20&Name=beta');
-        expect(fetchMock).toHaveBeenNthCalledWith(2, '/v1/tags?limit=20&Name=gamma');
+        expect(fetchMock).toHaveBeenNthCalledWith(1, '/v1/tags?Name=beta');
+        expect(fetchMock).toHaveBeenNthCalledWith(2, '/v1/tags?Name=gamma');
         expect(selector.selectedResults).toEqual([
             { ID: 2, Name: 'Beta' },
             { ID: 3, Name: 'GAMMA' },
         ]);
-        expect(selector._suppressNextAnnounce).toBe(false);
 
         selector.destroy();
     });

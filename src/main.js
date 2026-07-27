@@ -52,7 +52,6 @@ import { renderJsonTable } from './tableMaker.js';
 
 // Import Alpine components
 import {
-  autocompleter,
   creatableEntitySelector,
   dynamicEntitySelector,
   multiEntitySelector,
@@ -164,7 +163,6 @@ registerEntityPickerStore(Alpine);
 registerPasteUploadStore(Alpine);
 
 // Register Alpine data components
-Alpine.data('autocompleter', autocompleter);
 Alpine.data('singleEntitySelector', singleEntitySelector);
 Alpine.data('creatableEntitySelector', creatableEntitySelector);
 Alpine.data('dynamicEntitySelector', dynamicEntitySelector);
