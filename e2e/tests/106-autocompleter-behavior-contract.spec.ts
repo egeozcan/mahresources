@@ -72,6 +72,62 @@ test.describe('Autocompleter behavior contract', () => {
     await expect(errorAlert).toBeHidden();
   });
 
+  test('legacy Add confirmation creates and selects the current query', async ({ page }) => {
+    const newName = `Confirmed Category ${runId}`;
+    await page.goto('/group/new');
+
+    const input = page.getByRole('combobox', { name: 'Category' });
+    await input.fill(newName);
+    await expect(page.getByRole('option', { name: `Create "${newName}"`, exact: true })).toBeVisible();
+
+    await input.press('Escape');
+    await input.press('Enter');
+    const confirmButton = page.getByRole('button', { name: `Add ${newName}?`, exact: true });
+    await expect(confirmButton).toBeFocused();
+    await confirmButton.press('Enter');
+
+    const selected = page.locator('input[type="hidden"][name="categoryId"]:not([value=""])');
+    await expect(selected).toHaveCount(1);
+    categoryIds.push(Number(await selected.inputValue()));
+  });
+
+  test('create UI waits for the current query search and cancel restores the input focus path', async ({ page }) => {
+    const newName = `Cancelled Category ${runId}`;
+    let signalRequest!: () => void;
+    let releaseResponse!: () => void;
+    const requestStarted = new Promise<void>((resolve) => { signalRequest = resolve; });
+    const responseGate = new Promise<void>((resolve) => { releaseResponse = resolve; });
+
+    await page.goto('/group/new');
+    await page.route('**/v1/categories?*', async (route) => {
+      const query = new URL(route.request().url()).searchParams.get('name');
+      if (query !== newName) {
+        await route.continue();
+        return;
+      }
+      signalRequest();
+      await responseGate;
+      await route.fulfill({ json: [] });
+    });
+
+    const input = page.getByRole('combobox', { name: 'Category' });
+    await input.fill(newName);
+    await requestStarted;
+
+    await expect(page.getByRole('option', { name: `Create "${newName}"`, exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: `Add ${newName}?`, exact: true })).toHaveCount(0);
+
+    releaseResponse();
+    await expect(page.getByRole('option', { name: `Create "${newName}"`, exact: true })).toBeVisible();
+    await input.press('Escape');
+    await input.press('Enter');
+
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+
+    await expect(page.locator('input[type="hidden"][name="categoryId"]:not([value=""])')).toHaveCount(0);
+    await expect(page.getByRole('combobox', { name: 'Category' })).toBeFocused();
+  });
+
   test('maximum-one replacement currently calls onSelect for both values without onRemove', async ({ page }) => {
     await page.goto('/group/new');
 
