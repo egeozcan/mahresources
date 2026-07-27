@@ -135,6 +135,12 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
         }
 
         switch (command.type) {
+            case 'open':
+                return this.open();
+            case 'close':
+                return this.close();
+            case 'move-active':
+                return this.moveActive(command.direction);
             case 'select-option':
                 return this.select(command.option);
             case 'remove-option':
@@ -160,6 +166,42 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
         if (this.snapshot.destroyed) return;
         this.publish(withState(this.snapshot, { destroyed: true }));
         this.subscribers.clear();
+    }
+
+    private open(): SelectorCommandResult<TRaw> {
+        if (this.snapshot.isOpen) return { ok: true };
+        this.publish(withState(this.snapshot, { isOpen: true }));
+        return { ok: true };
+    }
+
+    private close(): SelectorCommandResult<TRaw> {
+        if (!this.snapshot.isOpen && this.snapshot.activeOptionIndex === null) return { ok: true };
+        this.publish(withState(this.snapshot, {
+            isOpen: false,
+            activeOptionIndex: null,
+        }));
+        return { ok: true };
+    }
+
+    private moveActive(direction: 'next' | 'previous'): SelectorCommandResult<TRaw> {
+        const optionCount = this.snapshot.options.length;
+        let activeOptionIndex: number | null = null;
+        if (optionCount > 0) {
+            const current = this.snapshot.activeOptionIndex;
+            if (current === null) {
+                activeOptionIndex = direction === 'next' ? 0 : optionCount - 1;
+            } else if (direction === 'next') {
+                activeOptionIndex = (current + 1) % optionCount;
+            } else {
+                activeOptionIndex = (current - 1 + optionCount) % optionCount;
+            }
+        }
+
+        if (this.snapshot.isOpen && this.snapshot.activeOptionIndex === activeOptionIndex) {
+            return { ok: true };
+        }
+        this.publish(withState(this.snapshot, { isOpen: true, activeOptionIndex }));
+        return { ok: true };
     }
 
     private select(option: SelectorOption<TRaw>): SelectorCommandResult<TRaw> {

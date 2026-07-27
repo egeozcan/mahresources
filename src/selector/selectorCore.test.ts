@@ -279,3 +279,73 @@ describe('selector selection', () => {
         expect(notifications).toEqual([undefined]);
     });
 });
+
+describe('selector open state and navigation', () => {
+    test('opens and closes explicitly while clearing the active option on close', () => {
+        const selector = createSelector({
+            source: new InMemorySelectorSource<RawValue>(),
+            options: [option(1, 'Alpha')],
+        });
+
+        expect(selector.dispatch({ type: 'open' })).toEqual({ ok: true });
+        expect(selector.getSnapshot()).toMatchObject({
+            isOpen: true,
+            activeOptionIndex: null,
+        });
+
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+        expect(selector.getSnapshot().activeOptionIndex).toBe(0);
+        expect(selector.dispatch({ type: 'close' })).toEqual({ ok: true });
+        expect(selector.getSnapshot()).toMatchObject({
+            isOpen: false,
+            activeOptionIndex: null,
+        });
+    });
+
+    test('keeps the active option empty when navigating an empty list', () => {
+        const selector = createSelector({ source: new InMemorySelectorSource<RawValue>() });
+
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+        expect(selector.getSnapshot()).toMatchObject({ isOpen: true, activeOptionIndex: null });
+
+        selector.dispatch({ type: 'move-active', direction: 'previous' });
+        expect(selector.getSnapshot()).toMatchObject({ isOpen: true, activeOptionIndex: null });
+    });
+
+    test('keeps navigation on the only option', () => {
+        const selector = createSelector({
+            source: new InMemorySelectorSource<RawValue>(),
+            options: [option(1, 'Alpha')],
+        });
+
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+        expect(selector.getSnapshot().activeOptionIndex).toBe(0);
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+        expect(selector.getSnapshot().activeOptionIndex).toBe(0);
+        selector.dispatch({ type: 'move-active', direction: 'previous' });
+        expect(selector.getSnapshot().activeOptionIndex).toBe(0);
+    });
+
+    test('wraps next and previous navigation across multiple options', () => {
+        const selector = createSelector({
+            source: new InMemorySelectorSource<RawValue>(),
+            options: [option(1, 'Alpha'), option(2, 'Beta'), option(3, 'Gamma')],
+        });
+
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+        expect(selector.getSnapshot().activeOptionIndex).toBe(0);
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+        expect(selector.getSnapshot().activeOptionIndex).toBe(1);
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+        expect(selector.getSnapshot().activeOptionIndex).toBe(2);
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+        expect(selector.getSnapshot().activeOptionIndex).toBe(0);
+
+        selector.dispatch({ type: 'close' });
+        selector.dispatch({ type: 'open' });
+        selector.dispatch({ type: 'move-active', direction: 'previous' });
+        expect(selector.getSnapshot().activeOptionIndex).toBe(2);
+        selector.dispatch({ type: 'move-active', direction: 'previous' });
+        expect(selector.getSnapshot().activeOptionIndex).toBe(1);
+    });
+});
