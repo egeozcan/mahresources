@@ -128,6 +128,65 @@ describe('legacy autocompleter selector registry integration', () => {
         selector.destroy();
     });
 
+    test('does not bypass core candidate validity when Enter arrives during search', () => {
+        const { selector } = mountSelector(autocompleter({
+            selectedResults: [],
+            max: 0,
+            min: 0,
+            ownerId: 0,
+            url: '/v1/tags',
+            addUrl: '/v1/tag',
+        }) as LegacySelector, createForm());
+        selector.$refs = {
+            autocompleter: { value: 'kbtag_a' } as HTMLInputElement,
+        };
+        selector.init();
+        selector._core.dispatch({ type: 'set-query', query: 'kbtag_a' });
+
+        selector.pushVal();
+
+        expect(selector._core.getSnapshot()).toMatchObject({
+            searchStatus: 'loading',
+            createCandidate: null,
+            createConfirmationCandidate: null,
+        });
+        expect(selector.addModeForTag).toBe('');
+        selector.destroy();
+    });
+
+    test('keeps an explicit core close closed after successful search activation', async () => {
+        vi.useFakeTimers();
+        vi.mocked(fetch).mockResolvedValue({
+            ok: true,
+            json: async () => [{ ID: 1, Name: 'Alpha' }],
+        } as Response);
+        const { selector } = mountSelector(autocompleter({
+            selectedResults: [],
+            max: 0,
+            min: 0,
+            ownerId: 0,
+            url: '/v1/tags',
+        }) as LegacySelector, createForm());
+        selector.init();
+        selector._core.dispatch({ type: 'set-query', query: 'alp' });
+        await vi.advanceTimersByTimeAsync(200);
+        await Promise.resolve();
+
+        expect(selector._core.getSnapshot()).toMatchObject({
+            searchStatus: 'success',
+            isOpen: true,
+            activeOptionIndex: 0,
+        });
+        selector._core.dispatch({ type: 'close' });
+
+        expect(selector._core.getSnapshot()).toMatchObject({
+            isOpen: false,
+            activeOptionIndex: null,
+        });
+        selector.destroy();
+        vi.useRealTimers();
+    });
+
     test('translates maximum-one replacement atomically with removals before additions and one aggregate event', () => {
         const calls: string[] = [];
         const onRemove = vi.fn((item) => calls.push(`remove:${item.Name}`));

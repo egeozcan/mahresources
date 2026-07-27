@@ -68,7 +68,7 @@ test.describe('Inline tag editor keyboard accessibility', () => {
     return combobox;
   }
 
-  test.skip('Enter selects the first matching tag without navigating away', async ({
+  test('Enter selects the first matching tag without navigating away', async ({
     page,
   }) => {
     await page.goto('/resources');
@@ -78,7 +78,7 @@ test.describe('Inline tag editor keyboard accessibility', () => {
     // Type to filter — should show kbtag_alpha
     await combobox.fill('kbtag_a');
     await expect(
-      page.getByRole('option', { name: 'kbtag_alpha' }),
+      page.locator('.card-tags').first().getByRole('option', { name: 'kbtag_alpha' }),
     ).toBeVisible({ timeout: 3000 });
 
     // Press Enter directly — should select, NOT navigate
@@ -88,19 +88,28 @@ test.describe('Inline tag editor keyboard accessibility', () => {
     expect(page.url()).toContain('/resources');
     expect(page.url()).not.toContain('editedId');
 
-    // The active command consumed the keyboard action without submitting the editor form.
-    await expect(combobox).toHaveValue('');
+    // Tag pill should appear
+    await expect(
+      page.getByRole('button', { name: 'Remove kbtag_alpha' }),
+    ).toBeVisible({ timeout: 3000 });
   });
 
-  test('ArrowDown advances core keyboard navigation in the open dropdown', async ({ page }) => {
+  test('ArrowDown reopens a closed dropdown', async ({ page }) => {
     await page.goto('/resources');
 
     const combobox = await openTagEditor(page);
+
+    // Dropdown should be open
     const listbox = page.locator('.card-tags [role="listbox"]');
     await expect(listbox).toBeVisible({ timeout: 3000 });
 
+    // Close with Escape
+    await combobox.press('Escape');
+    await expect(listbox).not.toBeVisible();
+
+    // Reopen with ArrowDown
     await combobox.press('ArrowDown');
-    await expect(page.locator('.card-tags [role="option"][aria-selected="true"]')).toBeVisible();
+    await expect(listbox).toBeVisible({ timeout: 1000 });
   });
 
   test('Enter with empty input selects the first tag without navigating', async ({
@@ -173,14 +182,16 @@ test.describe('Inline tag editor keyboard accessibility', () => {
       const combobox = article.locator('input[role="combobox"]');
       await expect(combobox).toBeFocused({ timeout: 3000 });
 
-      // Commit the core's initially active option, then remove its chip by keyboard.
-      const activeOption = article.locator('[role="option"][aria-selected="true"]');
-      await expect(activeOption).toBeVisible({ timeout: 3000 });
-      const selectedName = (await activeOption.textContent())?.trim();
+      // Type and select a tag
+      await combobox.fill('kbtag_b');
+      await expect(
+        article.getByRole('option', { name: 'kbtag_beta' }),
+      ).toBeVisible({ timeout: 3000 });
       await combobox.press('Enter');
 
+      // Verify tag pill appeared
       const removeBtn = page.getByRole('button', {
-        name: `Remove ${selectedName}`,
+        name: 'Remove kbtag_beta',
       });
       await expect(removeBtn).toBeVisible({ timeout: 3000 });
 

@@ -300,7 +300,7 @@ test.describe('Autocompleter behavior contract', () => {
     await expect(page.locator('#chip-removal-contract button[aria-label^="Remove "]')).toHaveCount(0);
   });
 
-  test('maximum-one replacement currently calls onSelect for both values without onRemove', async ({ page }) => {
+  test('maximum-one replacement reports removal before the replacement selection', async ({ page }) => {
     await page.goto('/group/new');
 
     await page.evaluate(() => {
@@ -345,10 +345,7 @@ test.describe('Autocompleter behavior contract', () => {
       const selector = browserWindow.Alpine.$data(root);
 
       for (const item of [{ ID: 101, Name: 'First' }, { ID: 202, Name: 'Replacement' }]) {
-        selector.results = [item];
-        selector.selectedIndex = 0;
-        selector.dropdownActive = true;
-        selector.pushVal();
+        selector.selectResult(item);
       }
     });
 
@@ -356,6 +353,6 @@ test.describe('Autocompleter behavior contract', () => {
     await expect(page.locator('input[name="callbackCategoryId"]')).toHaveValue('202');
     await expect.poll(() => page.evaluate(() => (
       window as typeof window & { __selectorCallbacks?: { selected: number[]; removed: number[] } }
-    ).__selectorCallbacks)).toEqual({ selected: [101, 202], removed: [] });
+    ).__selectorCallbacks)).toEqual({ selected: [101, 202], removed: [101] });
   });
 });

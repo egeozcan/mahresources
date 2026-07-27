@@ -52,6 +52,7 @@ export function legacyAutocompleterAdapter(arguments_) {
         createCandidate: '',
         _core: null,
         _unsubscribeCore: null,
+        _lastSearchStatus: 'idle',
         loading: false,
         _selecting: false,
         // Read-only rendering mirror of the core query.
@@ -178,6 +179,9 @@ export function legacyAutocompleterAdapter(arguments_) {
         },
 
         _syncCoreSnapshot(snapshot, change) {
+            const searchCompleted = snapshot.searchStatus === 'success'
+                && this._lastSearchStatus !== 'success';
+            this._lastSearchStatus = snapshot.searchStatus;
             this.results = snapshot.options.map((option) => option.raw);
             this.selectedResults = snapshot.selected.map((option) => option.raw);
             this.selectedIds = new Set(this.selectedResults.map((value) => value.ID));
@@ -190,7 +194,7 @@ export function legacyAutocompleterAdapter(arguments_) {
 
             if (!change) {
                 const input = this.$refs?.autocompleter;
-                if (snapshot.searchStatus === 'success' && this.optionCount
+                if (searchCompleted && this.optionCount
                     && snapshot.activeOptionIndex === null) {
                     this._core?.dispatch({ type: 'move-active', direction: 'next' });
                 }
@@ -363,8 +367,9 @@ export function legacyAutocompleterAdapter(arguments_) {
                 if (result.ok && result.consumed) this._clearInput();
                 return;
             }
-            const value = this.$refs?.autocompleter?.value || '';
-            if (value.trim()) this._core.dispatch({ type: 'request-create-confirmation', label: value });
+            // Confirmation is only valid for the candidate produced by the completed core search.
+            // Never manufacture one from the input while search is still loading.
+            this._core.dispatch({ type: 'request-create-confirmation' });
         },
 
         resetSelectedResults(tags, { silent = true } = {}) {
