@@ -8,7 +8,7 @@ import {
     singleEntitySelector,
     tagEditorSelector,
     tagFieldSelector,
-} from './dropdown.js';
+} from './profiledAutocompleter.js';
 
 type ProfiledSelector = ReturnType<typeof singleEntitySelector> & {
     $el: HTMLElement;

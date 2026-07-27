@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { selectorRegistry, type SelectorFieldChange } from '../selector/selectorRegistry';
-import { multiEntitySelector, singleEntitySelector, tagFieldSelector } from './dropdown.js';
+import { multiEntitySelector, singleEntitySelector, tagFieldSelector } from './profiledAutocompleter.js';
 
 type MountedSelector = ReturnType<typeof multiEntitySelector> & {
     $el: HTMLElement;
@@ -131,7 +131,7 @@ describe('selector rendering adapter and registry integration', () => {
         selector.destroy();
     });
 
-    test('mirrors normalized search options, status, and errors from the core', async () => {
+    test('renders normalized search options and surfaces a failed search as an error message', async () => {
         vi.useFakeTimers();
         vi.mocked(fetch)
             .mockResolvedValueOnce({
@@ -143,27 +143,18 @@ describe('selector rendering adapter and registry integration', () => {
         selector.init();
 
         selector._core.dispatch({ type: 'set-query', query: 'alpha' });
-        expect(selector).toMatchObject({
-            query: 'alpha',
-            searchStatus: 'loading',
-            searchError: null,
-            results: [],
-        });
+        expect(selector).toMatchObject({ query: 'alpha', results: [], errorMessage: false });
         await vi.advanceTimersByTimeAsync(200);
         await Promise.resolve();
         expect(selector).toMatchObject({
-            searchStatus: 'success',
-            searchError: null,
             results: [{ ID: 1, Name: 'Alpha' }],
+            errorMessage: false,
         });
 
         selector._core.dispatch({ type: 'set-query', query: 'broken' });
         await vi.advanceTimersByTimeAsync(200);
         await Promise.resolve();
-        expect(selector).toMatchObject({
-            searchStatus: 'error',
-            searchError: expect.objectContaining({ message: 'lookup unavailable' }),
-        });
+        expect(selector.errorMessage).toBe('lookup unavailable');
         selector.destroy();
         vi.useRealTimers();
     });

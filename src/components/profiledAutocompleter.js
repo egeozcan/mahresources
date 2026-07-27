@@ -6,7 +6,7 @@ import {
     createTagEditorProfile,
     createTagFieldProfile,
 } from '../selector/index.ts';
-import { legacyAutocompleterAdapter } from './legacyAutocompleterAdapter.js';
+import { selectorFieldAdapter } from './selectorFieldAdapter.js';
 
 function mapTagOption(raw) {
     return { key: raw.ID, label: raw.Name, raw };
@@ -37,7 +37,7 @@ function profileInputs({ selected, ...rest }) {
 }
 
 function createProfiledAutocompleter(profile, onChange, { creatable, maximum }) {
-    return legacyAutocompleterAdapter({
+    return selectorFieldAdapter({
         _profileBridge: {
             profile,
             onChange,

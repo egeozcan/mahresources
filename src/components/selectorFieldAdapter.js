@@ -11,7 +11,7 @@ function mapOption(raw) {
  * to the profile's selector core. `profiledAutocompleter.js` supplies the bridge; nothing
  * constructs this from endpoints or loose flags.
  */
-export function legacyAutocompleterAdapter({ _profileBridge: profileBridge }) {
+export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
     const { profile } = profileBridge;
     // A profile without form metadata is not part of a submitted form: the lightbox tag editor
     // and the entity picker's filters render one, so there is no field name, no minimum to
@@ -37,16 +37,14 @@ export function legacyAutocompleterAdapter({ _profileBridge: profileBridge }) {
         errorMessage: false,
         dropdownActive: false,
         selectedResults: profile.selector.getSnapshot().selected.map((option) => option.raw),
-        selectedIds: new Set(),
         addModeForTag: false,
         _addModeShown: false,
         createCandidate: '',
         _core: null,
         _unsubscribeCore: null,
         _lastSearchStatus: 'idle',
-        // Search state is a read-only compatibility mirror of the core.
-        searchStatus: 'idle',
-        searchError: null,
+        // Read-only rendering mirror: the tag editor shows a spinner while a creation is
+        // in flight. Every other core search field is read straight off the snapshot.
         loading: false,
         _selecting: false,
         _selectingTimer: null,
@@ -179,12 +177,9 @@ export function legacyAutocompleterAdapter({ _profileBridge: profileBridge }) {
             this._lastSearchStatus = snapshot.searchStatus;
             this.results = snapshot.options.map((option) => option.raw);
             this.selectedResults = snapshot.selected.map((option) => option.raw);
-            this.selectedIds = new Set(this.selectedResults.map((value) => value.ID));
             this.dropdownActive = snapshot.isOpen;
             this.selectedIndex = snapshot.activeOptionIndex ?? -1;
             this.query = snapshot.query;
-            this.searchStatus = snapshot.searchStatus;
-            this.searchError = snapshot.searchError;
             this.createCandidate = snapshot.createCandidate?.label || '';
             // `false` is a sentinel, not just a falsy value: the shared field autofocuses on
             // `addModeForTag !== false`. It must stay `false` until the "Add X?" confirmation has
@@ -312,10 +307,6 @@ export function legacyAutocompleterAdapter({ _profileBridge: profileBridge }) {
         addVal() {
             if (this._core?.getSnapshot().createConfirmationCandidate) this._clearInput();
             this._core?.dispatch({ type: 'confirm-create' });
-        },
-
-        createAndSelectNow(name) {
-            this.commitToken(name);
         },
 
         // Clear the DOM buffer before creation can re-render it. Creation commands own query

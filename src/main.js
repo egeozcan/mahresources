@@ -58,7 +58,7 @@ import {
   singleEntitySelector,
   tagEditorSelector,
   tagFieldSelector,
-} from './components/dropdown.js';
+} from './components/profiledAutocompleter.js';
 import { selectorFormParameters } from './components/selectorFormParameters.js';
 import { confirmAction } from './components/confirmAction.js';
 import { confirmGroupDelete } from './components/confirmGroupDelete.js';
