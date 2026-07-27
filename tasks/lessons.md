@@ -135,3 +135,14 @@ roving active index may point at an option the user never aimed at. A click name
 row, so it must commit that row by identity (`selectResult(result)`), or the click is silently
 dropped whenever the user out-types the debounce. Applying one guard to both paths is what
 broke it.
+
+## A compatibility adapter with two construction paths can zero a field that an out-of-band consumer reads
+The profile branch of `legacyAutocompleterAdapter` built its normalized config with `searchUrl: ''`,
+because a profile owns its own search source and the adapter never searches on its behalf. That was
+true for searching and wrong for everything else: the same `url` also feeds the form registry
+handle's `resolveExactLabels`, which the MRQL filter bar uses to hydrate a field from names alone.
+Migrating the list-page selectors would have turned every hydration fetch into `?Name=...` against
+the current page — no console error, just a filter bar that silently refuses to hydrate. Fix: the
+profile publishes `lookup.searchUrl` and the adapter reads it. When one branch of a two-path
+normalizer stubs a field out, grep every reader of that field before assuming the stub is safe;
+"this branch doesn't use it" is about the branch, not about the field.
