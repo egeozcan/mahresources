@@ -663,7 +663,7 @@ export function autocompleter({
 
             if (this.filterEls && Array.isArray(this.filterEls)) {
                 for (const filter of this.filterEls) {
-                    document.querySelectorAll(`input[name=${filter.nameInput}]`).forEach((input) => {
+                    document.querySelectorAll(`input[name=${filter.nameInput}]:not(:disabled)`).forEach((input) => {
                         params[filter.nameGet] = input.value;
                     });
                 }

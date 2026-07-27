@@ -12,11 +12,11 @@ Source: `docs/plans/2026-07-26-headless-selector-core-refactor.md`
 
 ## Execution batches
 
-- [ ] Batch 1 — behavior contract (Commits 1–4)
-  - [ ] Atomic single-selection replacement
-  - [ ] Rapid-query stale-result handling
-  - [ ] Create confirmation/current-query gating
-  - [ ] Dynamic relation-selector parameters
+- [x] Batch 1 — behavior contract (Commits 1–4)
+  - [x] Atomic single-selection replacement
+  - [x] Rapid-query stale-result handling
+  - [x] Create confirmation/current-query gating
+  - [x] Dynamic relation-selector parameters
 - [ ] Batch 2 — implicit integrations (Commits 5–10)
   - [ ] Scoped selector registry
   - [ ] Legacy registration

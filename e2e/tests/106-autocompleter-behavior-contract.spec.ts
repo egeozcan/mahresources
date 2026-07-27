@@ -128,6 +128,59 @@ test.describe('Autocompleter behavior contract', () => {
     await expect(page.getByRole('combobox', { name: 'Category' })).toBeFocused();
   });
 
+  test('relation group searches read the current relation type and side controls', async ({ page }) => {
+    const typeA = { ID: 401, Name: `Dynamic Type A ${runId}` };
+    const typeB = { ID: 402, Name: `Dynamic Type B ${runId}` };
+    const groupRequests: Array<Record<string, string>> = [];
+
+    await page.route('**/v1/relationTypes?*', async (route) => {
+      const query = new URL(route.request().url()).searchParams.get('name');
+      const result = query === typeA.Name ? typeA : query === typeB.Name ? typeB : null;
+      await route.fulfill({ json: result ? [result] : [] });
+    });
+    await page.route('**/v1/groups?*', async (route) => {
+      const params = Object.fromEntries(new URL(route.request().url()).searchParams.entries());
+      if (params.name) groupRequests.push(params);
+      await route.fulfill({ json: [] });
+    });
+    await page.goto('/relation/new');
+
+    const typeInput = page.getByRole('combobox', { name: 'Type' });
+    const fromGroupInput = page.getByRole('combobox', { name: 'From Group' });
+    const selectType = async (type: { ID: number; Name: string }) => {
+      await typeInput.fill(type.Name);
+      const option = page.getByRole('option', { name: type.Name, exact: true });
+      await expect(option).toBeVisible();
+      await option.click();
+      await expect(page.locator(`input[name="GroupRelationTypeId"][value="${type.ID}"]`)).toHaveCount(1);
+    };
+    const searchGroups = async (query: string) => {
+      await fromGroupInput.fill(query);
+      await expect.poll(() => groupRequests.some((request) => request.name === query)).toBe(true);
+      return groupRequests.find((request) => request.name === query);
+    };
+
+    await selectType(typeA);
+    expect(await searchGroups('baseline-groups')).toMatchObject({
+      RelationTypeId: String(typeA.ID),
+      RelationSide: '0',
+    });
+
+    await selectType(typeB);
+    expect(await searchGroups('changed-type-groups')).toMatchObject({
+      RelationTypeId: String(typeB.ID),
+      RelationSide: '0',
+    });
+
+    await page.locator('input[name="RelationSideFrom"]').evaluate((input: HTMLInputElement) => {
+      input.value = '1';
+    });
+    expect(await searchGroups('changed-side-groups')).toMatchObject({
+      RelationTypeId: String(typeB.ID),
+      RelationSide: '1',
+    });
+  });
+
   test('maximum-one replacement currently calls onSelect for both values without onRemove', async ({ page }) => {
     await page.goto('/group/new');
 
