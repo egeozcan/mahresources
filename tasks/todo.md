@@ -24,14 +24,14 @@ Source: `docs/plans/2026-07-26-headless-selector-core-refactor.md`
   - [x] MRQL write migration
   - [x] Chip removals through commands
   - [x] External replacement through reset commands
-- [ ] Batch 3 — headless foundations (Commits 11–17)
-  - [ ] Types/source/in-memory adapter
-  - [ ] Lifecycle/snapshots/subscriptions
-  - [ ] Selection/removal/replacement
-  - [ ] Open/navigation
-  - [ ] Search orchestration
-  - [ ] Debounced source
-  - [ ] HTTP source
+- [x] Batch 3 — headless foundations (Commits 11–17)
+  - [x] Types/source/in-memory adapter
+  - [x] Lifecycle/snapshots/subscriptions
+  - [x] Selection/removal/replacement
+  - [x] Open/navigation
+  - [x] Search orchestration
+  - [x] Debounced source
+  - [x] HTTP source
 - [ ] Batch 4 — creation and contract completion (Commits 18–21)
   - [ ] Creation queue foundation
   - [ ] Create candidates/token precedence

@@ -1,7 +1,9 @@
 export { createDebouncedSelectorSource } from './debouncedSelectorSource';
+export { createHttpSelectorSource, HttpSelectorSourceError } from './httpSelectorSource';
 export { InMemorySelectorSource } from './inMemorySelectorSource';
 export { createSelector } from './selectorCore';
 export type { InMemoryDeferred } from './inMemorySelectorSource';
+export type { HttpSelectorSourceConfig, SelectorHttpParameter } from './httpSelectorSource';
 export type {
     SelectorChange,
     SelectorChangeReason,
