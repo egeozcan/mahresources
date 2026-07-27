@@ -78,6 +78,99 @@ describe('MRQL list form synchronization', () => {
         });
     });
 
+    test('writes identifier relation filters through the scoped selector registry', async () => {
+        const control = {} as HTMLInputElement;
+        const form = {
+            querySelectorAll: vi.fn((selector: string) => selector === '[name="tags"]' ? [control] : []),
+            querySelector: vi.fn(() => null),
+            elements: [],
+        } as unknown as HTMLFormElement;
+        const replaceByKeys = vi.fn();
+        const unregister = selectorRegistry.register(form, 'tags', {
+            getRawValues: () => [{ ID: 1, Name: 'Hydrated tag', MetaSchema: 'preserve me' }],
+            replaceRawValues: vi.fn(),
+            replaceByKeys,
+            resolveExactLabels: vi.fn(),
+        });
+        const bar = mrqlBar({ entity: 'resource', value: 'tags = 2' });
+        Object.assign(bar, {
+            filterForm: form,
+            $nextTick: (callback: () => void) => callback(),
+            syncMetadataForm: vi.fn(),
+            setFormDisabled: vi.fn(),
+            updateHiddenMRQL: vi.fn(),
+            broadcastQuickTags: vi.fn(),
+        });
+
+        await bar.syncFormFromMRQL();
+
+        expect(replaceByKeys).toHaveBeenCalledOnce();
+        expect(replaceByKeys).toHaveBeenCalledWith(['2'], { silent: true });
+        unregister();
+    });
+
+    test('resolves name relation filters through the scoped selector registry', async () => {
+        const control = {} as HTMLInputElement;
+        const form = {
+            querySelectorAll: vi.fn((selector: string) => selector === '[name="tags"]' ? [control] : []),
+            querySelector: vi.fn(() => null),
+            elements: [],
+        } as unknown as HTMLFormElement;
+        const resolveExactLabels = vi.fn(async () => true);
+        const unregister = selectorRegistry.register(form, 'tags', {
+            getRawValues: () => [],
+            replaceRawValues: vi.fn(),
+            replaceByKeys: vi.fn(),
+            resolveExactLabels,
+        });
+        const bar = mrqlBar({ entity: 'resource', value: 'tags = "Holiday"' });
+        Object.assign(bar, {
+            filterForm: form,
+            $nextTick: (callback: () => void) => callback(),
+            syncMetadataForm: vi.fn(),
+            setFormDisabled: vi.fn(),
+            updateHiddenMRQL: vi.fn(),
+            broadcastQuickTags: vi.fn(),
+        });
+
+        await bar.syncFormFromMRQL();
+
+        expect(resolveExactLabels).toHaveBeenCalledOnce();
+        expect(resolveExactLabels).toHaveBeenCalledWith(['Holiday'], { silent: true });
+        unregister();
+    });
+
+    test('fails closed when a selector cannot resolve every MRQL relation name', async () => {
+        const control = {} as HTMLInputElement;
+        const form = {
+            querySelectorAll: vi.fn((selector: string) => selector === '[name="tags"]' ? [control] : []),
+            querySelector: vi.fn(() => null),
+            elements: [],
+        } as unknown as HTMLFormElement;
+        const unregister = selectorRegistry.register(form, 'tags', {
+            getRawValues: () => [],
+            replaceRawValues: vi.fn(),
+            replaceByKeys: vi.fn(),
+            resolveExactLabels: vi.fn(async () => false),
+        });
+        const setFormDisabled = vi.fn();
+        const bar = mrqlBar({ entity: 'resource', value: 'tags = "missing"' });
+        Object.assign(bar, {
+            filterForm: form,
+            $nextTick: (callback: () => void) => callback(),
+            syncMetadataForm: vi.fn(),
+            setFormDisabled,
+            updateHiddenMRQL: vi.fn(),
+            broadcastQuickTags: vi.fn(),
+        });
+
+        await bar.syncFormFromMRQL();
+
+        expect(bar.formCompatible).toBe(false);
+        expect(setFormDisabled).toHaveBeenCalledWith(true);
+        unregister();
+    });
+
     test('turns resource form values into canonical MRQL', () => {
         const values = new FormData();
         values.set('Name', 'summer "trip"');

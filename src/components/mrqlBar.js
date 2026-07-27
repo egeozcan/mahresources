@@ -801,9 +801,29 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
                 this.syncMetadataForm(translated.metadata || []);
                 for (const name of this.synchronizedFormFields()) {
                     const controls = [...this.filterForm.querySelectorAll(`[name="${CSS.escape(name)}"]`)];
-                    // Autocompleters own dynamically-created hidden controls. If
-                    // the requested IDs differ, update their Alpine state too.
-                    const root = controls[0]?.closest('[x-data^="autocompleter"]');
+                    const isRelation = FORM_FIELDS[this.entity]?.[name]?.[1] === 'relation';
+                    if (isRelation) {
+                        const selector = selectorRegistry.get(this.filterForm, name);
+                        if (!selector) {
+                            this.formCompatible = false;
+                            this.setFormDisabled(true);
+                            return;
+                        }
+                        const rawValues = translated.values.get(name) || [];
+                        if (translated.nameLookups.has(name)) {
+                            const resolved = await selector.resolveExactLabels(rawValues, { silent: true });
+                            if (!resolved) {
+                                this.formCompatible = false;
+                                this.setFormDisabled(true);
+                                return;
+                            }
+                        } else {
+                            // The adapter preserves existing hydrated values for
+                            // matching IDs, avoiding schema-control resets.
+                            selector.replaceByKeys(rawValues, { silent: true });
+                        }
+                        continue;
+                    }
                     const sortRoot = controls[0]?.closest('[x-data^="multiSort"]') ||
                         (name === 'SortBy' ? this.filterForm.querySelector('[x-data^="multiSort"]') : null);
                     if (name === 'SortBy' && sortRoot && window.Alpine?.$data) {
@@ -812,37 +832,6 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
                         data.sortColumns = rawValues.length
                             ? rawValues.map((value) => data.parseSort(value))
                             : [{ column: '', direction: 'desc', metaKey: '' }];
-                        continue;
-                    }
-                    if (root && window.Alpine?.$data) {
-                        const data = window.Alpine.$data(root);
-                        const rawValues = translated.values.get(name) || [];
-                        let selected;
-                        if (translated.nameLookups.has(name)) {
-                            selected = [];
-                            for (const value of rawValues) {
-                                const separator = data.url.includes('?') ? '&' : '?';
-                                const response = await fetch(`${data.url}${separator}Name=${encodeURIComponent(value)}`);
-                                if (!response.ok) { this.formCompatible = false; this.setFormDisabled(true); return; }
-                                const results = await response.json();
-                                const match = Array.isArray(results)
-                                    ? results.find((item) => String(item.Name).toLowerCase() === value.toLowerCase())
-                                    : null;
-                                if (!match) { this.formCompatible = false; this.setFormDisabled(true); return; }
-                                selected.push(match);
-                            }
-                        } else {
-                            // Preserve server-rendered entity details (especially
-                            // MetaSchema on category selectors) when MRQL uses an
-                            // ID. Replacing these with a bare #ID placeholder
-                            // clears schema-driven controls during initialization.
-                            const existingById = new Map(
-                                (data.selectedResults || []).map((item) => [Number(item.ID), item]),
-                            );
-                            selected = rawValues.map(Number).map((ID) =>
-                                existingById.get(ID) || { ID, Name: `#${ID}` });
-                        }
-                        data.resetSelectedResults(selected);
                         continue;
                     }
                     for (const control of controls) {
