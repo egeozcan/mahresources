@@ -1142,6 +1142,28 @@ describe('selector open state and navigation', () => {
         expect(selector.getSnapshot()).toMatchObject({ isOpen: true, activeOptionIndex: null });
     });
 
+    test('does not commit an active option after the selector has closed', () => {
+        const alpha = option(1, 'Alpha');
+        const selector = createSelector({
+            source: new InMemorySelectorSource<RawValue>(),
+            options: [alpha],
+        });
+
+        selector.dispatch({ type: 'open' });
+        selector.dispatch({ type: 'move-active', direction: 'next' });
+        selector.dispatch({ type: 'close' });
+
+        expect(selector.dispatch({ type: 'commit-active' })).toEqual({
+            ok: true,
+            consumed: false,
+        });
+        expect(selector.getSnapshot()).toMatchObject({
+            isOpen: false,
+            activeOptionIndex: null,
+            selected: [],
+        });
+    });
+
     test('keeps navigation on the only option', () => {
         const selector = createSelector({
             source: new InMemorySelectorSource<RawValue>(),

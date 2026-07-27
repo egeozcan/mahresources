@@ -102,8 +102,8 @@ describe('legacy autocompleter selector registry integration', () => {
         );
 
         expect(markup).toContain('@mouseover="setActiveIndex(index)"');
-        expect(markup).toContain('@mousedown="setActiveIndex(index); {{ action }}($event)"');
-        expect(markup).toContain('@mousedown="setActiveIndex(results.length); {{ action }}($event)"');
+        expect(markup).toContain('@mousedown="startSelecting(); setActiveIndex(index); {{ action }}($event)"');
+        expect(markup).toContain('@mousedown="startSelecting(); setActiveIndex(results.length); {{ action }}($event)"');
         expect(markup).not.toContain('selectedIndex = index');
     });
 
@@ -154,6 +154,145 @@ describe('legacy autocompleter selector registry integration', () => {
         selector.destroy();
     });
 
+    test('does not select stale results when a newer query is still loading', async () => {
+        vi.useFakeTimers();
+        vi.mocked(fetch).mockResolvedValue({
+            ok: true,
+            json: async () => [{ ID: 1, Name: 'Alpha' }],
+        } as Response);
+        const { selector } = mountSelector(autocompleter({
+            selectedResults: [],
+            max: 0,
+            min: 0,
+            ownerId: 0,
+            url: '/v1/tags',
+        }) as LegacySelector, createForm());
+        selector.init();
+        selector._core.dispatch({ type: 'open' });
+        selector._core.dispatch({ type: 'set-query', query: 'alpha' });
+        await vi.advanceTimersByTimeAsync(200);
+        await Promise.resolve();
+        expect(selector._core.getSnapshot()).toMatchObject({
+            query: 'alpha',
+            searchStatus: 'success',
+            activeOptionIndex: 0,
+        });
+
+        selector._core.dispatch({ type: 'set-query', query: 'beta' });
+        selector.pushVal();
+
+        expect(selector._core.getSnapshot()).toMatchObject({
+            query: 'beta',
+            searchStatus: 'loading',
+            selected: [],
+        });
+        selector.destroy();
+        vi.useRealTimers();
+    });
+
+    test('does not select a hidden result when Enter follows Escape', async () => {
+        vi.useFakeTimers();
+        vi.mocked(fetch).mockResolvedValue({
+            ok: true,
+            json: async () => [{ ID: 1, Name: 'Alpha' }],
+        } as Response);
+        const { selector } = mountSelector(autocompleter({
+            selectedResults: [],
+            max: 0,
+            min: 0,
+            ownerId: 0,
+            url: '/v1/tags',
+        }) as LegacySelector, createForm());
+        selector.init();
+        selector._core.dispatch({ type: 'open' });
+        selector._core.dispatch({ type: 'set-query', query: 'alpha' });
+        await vi.advanceTimersByTimeAsync(200);
+        await Promise.resolve();
+        selector._core.dispatch({ type: 'close' });
+
+        selector.pushVal();
+
+        expect(selector._core.getSnapshot()).toMatchObject({
+            isOpen: false,
+            activeOptionIndex: null,
+            selected: [],
+        });
+        selector.destroy();
+        vi.useRealTimers();
+    });
+
+    test('does not reactivate after closing before the current search completes', async () => {
+        vi.useFakeTimers();
+        let resolveResponse!: (response: Response) => void;
+        vi.mocked(fetch).mockImplementation(() => new Promise<Response>((resolve) => {
+            resolveResponse = resolve;
+        }));
+        const { selector } = mountSelector(autocompleter({
+            selectedResults: [],
+            max: 0,
+            min: 0,
+            ownerId: 0,
+            url: '/v1/tags',
+        }) as LegacySelector, createForm());
+        selector.init();
+        selector._core.dispatch({ type: 'open' });
+        selector._core.dispatch({ type: 'set-query', query: 'alpha' });
+        await vi.advanceTimersByTimeAsync(200);
+        selector._core.dispatch({ type: 'close' });
+        const completed = new Promise<void>((resolve) => {
+            const unsubscribe = selector._core.subscribe((snapshot) => {
+                if (snapshot.searchStatus === 'success') {
+                    unsubscribe();
+                    resolve();
+                }
+            });
+        });
+        resolveResponse({
+            ok: true,
+            json: async () => [{ ID: 1, Name: 'Alpha' }],
+        } as Response);
+        await completed;
+
+        expect(selector._core.getSnapshot()).toMatchObject({
+            searchStatus: 'success',
+            isOpen: false,
+            activeOptionIndex: null,
+        });
+        selector.destroy();
+        vi.useRealTimers();
+    });
+
+    test('does not announce a silent registry replacement after search success', async () => {
+        vi.useFakeTimers();
+        vi.mocked(fetch).mockResolvedValue({
+            ok: true,
+            json: async () => [{ ID: 1, Name: 'Alpha' }],
+        } as Response);
+        const { form, selector } = createSelector({ selectedResults: [] });
+        const input = { value: '', dispatchEvent: vi.fn() } as unknown as HTMLInputElement;
+        selector.$refs = { autocompleter: input };
+        Object.defineProperty(document, 'activeElement', { configurable: true, value: input });
+        selector.init();
+        const announce = vi.fn();
+        selector._liveRegion = { announce, destroy: vi.fn() };
+        selector._core.dispatch({ type: 'open' });
+        selector._core.dispatch({ type: 'set-query', query: 'alpha' });
+        await vi.advanceTimersByTimeAsync(200);
+        await Promise.resolve();
+        expect(announce).toHaveBeenCalledWith('1 result available. Use arrow keys to navigate.');
+        announce.mockClear();
+
+        selectorRegistry.get(form!, 'tags')?.replaceRawValues(
+            [{ ID: 2, Name: 'Beta' }],
+            { silent: true },
+        );
+
+        expect(selector.selectedResults).toEqual([{ ID: 2, Name: 'Beta' }]);
+        expect(announce).not.toHaveBeenCalled();
+        selector.destroy();
+        vi.useRealTimers();
+    });
+
     test('keeps an explicit core close closed after successful search activation', async () => {
         vi.useFakeTimers();
         vi.mocked(fetch).mockResolvedValue({
@@ -168,6 +307,7 @@ describe('legacy autocompleter selector registry integration', () => {
             url: '/v1/tags',
         }) as LegacySelector, createForm());
         selector.init();
+        selector._core.dispatch({ type: 'open' });
         selector._core.dispatch({ type: 'set-query', query: 'alp' });
         await vi.advanceTimersByTimeAsync(200);
         await Promise.resolve();

@@ -535,6 +535,7 @@ class SelectorCore<TRaw> implements SelectorHandle<TRaw> {
     }
 
     private commitActive(): SelectorCommandResult<TRaw> {
+        if (!this.snapshot.isOpen) return { ok: true, consumed: false };
         const active = this.snapshot.activeOptionIndex;
         if (active === null) return { ok: true, consumed: false };
         const option = this.snapshot.options[active];

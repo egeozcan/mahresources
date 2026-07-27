@@ -49,6 +49,12 @@ test.describe('Autocompleter remove button aria-label', () => {
       `div[role="option"]:visible:has-text("AriaLabelTestCat ${testRunId}")`
     ).first();
     await categoryOption.waitFor({ timeout: 10000 });
+    await expect.poll(() => categoryInput.evaluate((element, query) => {
+      const root = element.closest('[x-data]');
+      const snapshot = (window as typeof window & { Alpine: { $data: (node: Element) => any } })
+        .Alpine.$data(root!)._core.getSnapshot();
+      return snapshot.query === query && snapshot.searchStatus === 'success';
+    }, `AriaLabelTestCat ${testRunId}`)).toBe(true);
     await categoryOption.click();
 
     // Now select a tag in the Tags autocompleter
@@ -59,6 +65,12 @@ test.describe('Autocompleter remove button aria-label', () => {
       `div[role="option"]:visible:has-text("AriaLabelTestTag ${testRunId}")`
     ).first();
     await tagOption.waitFor({ timeout: 10000 });
+    await expect.poll(() => tagInput.evaluate((element, query) => {
+      const root = element.closest('[x-data]');
+      const snapshot = (window as typeof window & { Alpine: { $data: (node: Element) => any } })
+        .Alpine.$data(root!)._core.getSnapshot();
+      return snapshot.query === query && snapshot.searchStatus === 'success';
+    }, `AriaLabelTestTag ${testRunId}`)).toBe(true);
     await tagOption.click();
 
     // Wait for the selected tag to appear in the "selected results" area

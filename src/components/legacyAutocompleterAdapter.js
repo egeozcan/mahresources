@@ -194,11 +194,11 @@ export function legacyAutocompleterAdapter(arguments_) {
 
             if (!change) {
                 const input = this.$refs?.autocompleter;
-                if (searchCompleted && this.optionCount
+                if (searchCompleted && snapshot.isOpen && this.optionCount
                     && snapshot.activeOptionIndex === null) {
                     this._core?.dispatch({ type: 'move-active', direction: 'next' });
                 }
-                if (snapshot.searchStatus === 'success' && input && document.activeElement === input) {
+                if (searchCompleted && snapshot.isOpen && input && document.activeElement === input) {
                     if (this.results.length) {
                         this._liveRegion?.announce(`${this.results.length} result${this.results.length === 1 ? '' : 's'} available. Use arrow keys to navigate.`);
                     } else if (!this.createCandidate) {
@@ -334,6 +334,7 @@ export function legacyAutocompleterAdapter(arguments_) {
 
         startSelecting() {
             this._selecting = true;
+            setTimeout(() => { this._selecting = false; }, 200);
         },
 
         setActiveIndex(index) {
@@ -347,10 +348,10 @@ export function legacyAutocompleterAdapter(arguments_) {
 
         pushVal() {
             if (this.loading) return;
-            this._selecting = false;
-            let snapshot = this._core?.getSnapshot();
+            const snapshot = this._core?.getSnapshot();
             if (!snapshot) return;
-            if (snapshot.activeOptionIndex === null && snapshot.options.length) {
+            if (snapshot.isOpen && snapshot.searchStatus === 'success'
+                && snapshot.activeOptionIndex === null && snapshot.options.length) {
                 const result = this._core.dispatch({
                     type: 'select-option',
                     option: snapshot.options[0],
@@ -358,7 +359,8 @@ export function legacyAutocompleterAdapter(arguments_) {
                 if (result.ok) this._clearInput();
                 return;
             }
-            if (snapshot.activeOptionIndex !== null) {
+            if (snapshot.isOpen && snapshot.searchStatus === 'success'
+                && snapshot.activeOptionIndex !== null) {
                 const active = snapshot.options[snapshot.activeOptionIndex];
                 if (active) {
                     this._liveRegion?.announce(`${this.getItemDisplayName(active.raw)} selected. Use arrow keys to navigate and enter to confirm.`);
@@ -369,7 +371,9 @@ export function legacyAutocompleterAdapter(arguments_) {
             }
             // Confirmation is only valid for the candidate produced by the completed core search.
             // Never manufacture one from the input while search is still loading.
-            this._core.dispatch({ type: 'request-create-confirmation' });
+            if (snapshot.searchStatus !== 'loading') {
+                this._core.dispatch({ type: 'request-create-confirmation' });
+            }
         },
 
         resetSelectedResults(tags, { silent = true } = {}) {

@@ -22,6 +22,12 @@ test.describe('Autocompleter behavior contract', () => {
       await input.fill(category.Name);
       const option = page.getByRole('option', { name: category.Name, exact: true });
       await expect(option).toBeVisible();
+      await expect.poll(() => input.evaluate((element, query) => {
+        const root = element.closest('[x-data]');
+        const snapshot = (window as typeof window & { Alpine: { $data: (node: Element) => any } })
+          .Alpine.$data(root!)._core.getSnapshot();
+        return snapshot.query === query && snapshot.searchStatus === 'success';
+      }, category.Name)).toBe(true);
       await option.click();
     }
 
@@ -70,6 +76,78 @@ test.describe('Autocompleter behavior contract', () => {
     const selector = input.locator('xpath=../..');
     const errorAlert = selector.locator('[role="alert"]');
     await expect(errorAlert).toBeHidden();
+  });
+
+  test('Enter never commits stale or closed results while a search is pending', async ({ page }) => {
+    const firstQuery = `Committed ${runId}`;
+    const pendingQuery = `Pending ${runId}`;
+    let pendingRequestStarted!: () => void;
+    let releasePendingResponse!: () => void;
+    const pendingRequest = new Promise<void>((resolve) => { pendingRequestStarted = resolve; });
+    const pendingResponse = new Promise<void>((resolve) => { releasePendingResponse = resolve; });
+
+    await page.goto('/group/new');
+    await page.route('**/v1/categories?*', async (route) => {
+      const query = new URL(route.request().url()).searchParams.get('name');
+      if (query === firstQuery) {
+        await route.fulfill({ json: [{ ID: 501, Name: firstQuery }] });
+        return;
+      }
+      if (query === pendingQuery) {
+        pendingRequestStarted();
+        await pendingResponse;
+        await route.fulfill({ json: [{ ID: 502, Name: pendingQuery }] });
+        return;
+      }
+      await route.continue();
+    });
+
+    const input = page.getByRole('combobox', { name: 'Category' });
+    const selected = page.locator('input[type="hidden"][name="categoryId"]:not([value=""])');
+    await input.fill(firstQuery);
+    await expect(page.getByRole('option', { name: firstQuery, exact: true })).toBeVisible();
+
+    await input.fill(pendingQuery);
+    await pendingRequest;
+    await input.press('Enter');
+    await expect(selected).toHaveCount(0);
+    releasePendingResponse();
+
+    await expect(page.getByRole('option', { name: pendingQuery, exact: true })).toBeVisible();
+    await input.press('Escape');
+    await expect(page.getByRole('listbox')).toBeHidden();
+    await input.press('Enter');
+    await expect(selected).toHaveCount(0);
+  });
+
+  test('a completed search stays closed when Escape wins the response race', async ({ page }) => {
+    const query = `Close race ${runId}`;
+    let requestStarted!: () => void;
+    let releaseResponse!: () => void;
+    const request = new Promise<void>((resolve) => { requestStarted = resolve; });
+    const response = new Promise<void>((resolve) => { releaseResponse = resolve; });
+
+    await page.goto('/group/new');
+    await page.route('**/v1/categories?*', async (route) => {
+      if (new URL(route.request().url()).searchParams.get('name') !== query) {
+        await route.continue();
+        return;
+      }
+      requestStarted();
+      await response;
+      await route.fulfill({ json: [{ ID: 503, Name: query }] });
+    });
+
+    const input = page.getByRole('combobox', { name: 'Category' });
+    const listbox = page.getByRole('listbox');
+    await input.fill(query);
+    await request;
+    await input.press('Escape');
+    await expect(input).toBeFocused();
+    releaseResponse();
+
+    await expect(listbox).toBeHidden();
+    await expect(input).toBeFocused();
   });
 
   test('legacy Add confirmation creates and selects the current query', async ({ page }) => {
