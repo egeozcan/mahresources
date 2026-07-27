@@ -16,6 +16,7 @@ test.describe('Inline tag editor keyboard accessibility', () => {
   let resourceId: number;
   let tag1Id: number;
   let tag2Id: number;
+  let persistTagId: number;
 
   test.beforeAll(async ({ apiClient }) => {
     const category = await apiClient.createCategory(
@@ -41,6 +42,14 @@ test.describe('Inline tag editor keyboard accessibility', () => {
       'keyboard test tag 2',
     );
     tag2Id = tag2.ID;
+
+    // Its own tag: the other tests in this file select kbtag_alpha on the shared resource, and
+    // a selector correctly stops offering a tag the entity already has.
+    const persistTag = await apiClient.createTag(
+      'kbtag_persist',
+      'keyboard test persistence tag',
+    );
+    persistTagId = persistTag.ID;
 
     const fs = await import('fs');
     const os = await import('os');
@@ -210,10 +219,64 @@ test.describe('Inline tag editor keyboard accessibility', () => {
     }
   });
 
+  test('a tag added in the inline editor is actually persisted on the resource', async ({
+    page,
+    apiClient,
+  }) => {
+    // The editor serializes its own form and POSTs it. Asserting only that the pill appears
+    // cannot tell a real write apart from one that posted an empty selection and silently
+    // cleared the entity's tags.
+    //
+    // Uses a dedicated resource: the other tests in this file apply tags to the shared one,
+    // and a selector correctly stops offering a tag the entity already has.
+    const fs = await import('fs');
+    const os = await import('os');
+    const tmpFile = path.join(os.tmpdir(), 'inline-tag-persist-resource.txt');
+    fs.writeFileSync(tmpFile, 'persistence test');
+    const res = await apiClient.createResource({
+      filePath: tmpFile,
+      name: 'InlineTagPersist Resource',
+      ownerId: ownerGroupId,
+    });
+    fs.unlinkSync(tmpFile);
+
+    try {
+      await page.goto('/resources');
+
+      const combobox = await openTagEditor(page);
+      // Wait for the search this query actually triggered rather than for a fixed delay, so a
+      // cold run cannot race the debounce.
+      const searched = page.waitForResponse(
+        (response) => response.url().includes('/v1/tags/suggest')
+          && response.url().includes('name=kbtag_persist')
+          && response.ok(),
+      );
+      await combobox.fill('kbtag_persist');
+      await searched;
+      await expect(
+        page.locator('.card-tags').first().getByRole('option', { name: 'kbtag_persist' }),
+      ).toBeVisible({ timeout: 3000 });
+
+      const persisted = page.waitForResponse(
+        (response) => response.url().includes('/resources/replaceTags') && response.ok(),
+      );
+      await combobox.press('Enter');
+      await persisted;
+
+      await expect.poll(
+        async () => (await apiClient.getResource(res.ID)).Tags?.map((tag) => tag.Name) ?? [],
+        { timeout: 5000 },
+      ).toContain('kbtag_persist');
+    } finally {
+      await apiClient.deleteResource(res.ID);
+    }
+  });
+
   test.afterAll(async ({ apiClient }) => {
     if (resourceId) await apiClient.deleteResource(resourceId);
     if (tag1Id) await apiClient.deleteTag(tag1Id);
     if (tag2Id) await apiClient.deleteTag(tag2Id);
+    if (persistTagId) await apiClient.deleteTag(persistTagId);
     if (ownerGroupId) await apiClient.deleteGroup(ownerGroupId);
     if (categoryId) await apiClient.deleteCategory(categoryId);
   });

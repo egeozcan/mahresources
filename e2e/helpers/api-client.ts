@@ -90,6 +90,7 @@ export interface Resource extends Entity {
   seriesId?: number;
   ownMeta?: Record<string, unknown>;
   resourceCategoryId?: number;
+  Tags?: Tag[];
 }
 
 export interface SearchResult {

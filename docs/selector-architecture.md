@@ -123,7 +123,10 @@ the form. Both return a cleanup function.
 - **Observation does not depend on registration order.** A consumer rendered before its selector
   gets the same result as one rendered after, so no module reasons about Alpine init sequence.
 - **Delivery is synchronous and isolated.** A throwing observer is logged and skipped; the rest
-  still see the change.
+  still see the change. Synchronous means the notification runs inside the selector's own state
+  publication, *before* Alpine re-renders the field's hidden controls — so an observer that reads
+  the DOM (serializing the form, for instance) must wait a tick (`Alpine.nextTick`) or it will see
+  the previous selection. Observers that use the values in the payload need no such care.
 - **Nothing is delivered on subscribe.** Server-rendered initial state is the template's job;
   observers only see subsequent changes.
 

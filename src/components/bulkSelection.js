@@ -349,8 +349,15 @@ export function setupBulkSelectionListeners() {
       // The inline editor persists on every atomic change of its own tag field. Observing the
       // named field rather than a document-wide event keeps one row's editor from reacting to
       // another editor opened elsewhere on the same list.
+      //
+      // The write serializes the form, and the field's hidden controls are rendered by Alpine
+      // from the new selection. Registry delivery is synchronous -- it happens inside the
+      // selector's own state publication -- so the DOM is still one flush behind at this point.
+      // Serializing now would post an empty selection and silently clear the entity's tags.
       observeSelectorField(form, "editedId", () => {
-        fetch('/v1/' + entityType + 's/replaceTags', { method: "POST", body: new FormData(form) });
+        window.Alpine.nextTick(() => {
+          fetch('/v1/' + entityType + 's/replaceTags', { method: "POST", body: new FormData(form) });
+        });
       });
       form.className = "mb-6 p-4 active";
 
