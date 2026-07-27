@@ -1,3 +1,4 @@
+import { selectorRegistry } from '../selector/selectorRegistry.ts';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 
 // The word currently being typed: a run of field-name characters ending at the
@@ -679,8 +680,14 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
             this._formMutationObserver = new MutationObserver(this._formChangeHandler);
             this._formMutationObserver.observe(this.filterForm, { childList: true, subtree: true });
 
+            const relations = this.relationFormValues();
+            if (!relations.compatible) {
+                this.formCompatible = false;
+                this.setFormDisabled(true);
+                return;
+            }
             const formQuery = formValuesToMRQL(
-                this.entity, new FormData(this.filterForm), this.relationFormValues());
+                this.entity, new FormData(this.filterForm), relations.values);
             this._formQuerySnapshot = formQuery;
             if (!formMetadataIsRepresentable(this.entity, new FormData(this.filterForm))) {
                 this.query = formQuery;
@@ -706,16 +713,20 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
 
         relationFormValues() {
             const values = new Map();
-            if (!this.filterForm || !window.Alpine?.$data) return values;
+            if (!this.filterForm) return { compatible: true, values };
             for (const [name, [, kind]] of Object.entries(FORM_FIELDS[this.entity] || {})) {
                 if (kind !== 'relation') continue;
-                const control = this.filterForm.querySelector(`[name="${CSS.escape(name)}"]`);
-                const root = control?.closest('[x-data^="autocompleter"]');
-                if (!root) continue;
-                const selected = window.Alpine.$data(root).selectedResults || [];
-                values.set(name, selected.map((item) => item.Name).filter(Boolean));
+                if (!this.filterForm.querySelector(`[name="${CSS.escape(name)}"]`)) continue;
+                const selector = selectorRegistry.get(this.filterForm, name);
+                // A rendered relation control without its scoped adapter cannot
+                // be faithfully represented. Do not fall back to DOM/Alpine
+                // inspection, which could read another form's selector.
+                if (!selector) return { compatible: false, values: new Map() };
+                values.set(name, selector.getRawValues()
+                    .map((item) => item.Name)
+                    .filter(Boolean));
             }
-            return values;
+            return { compatible: true, values };
         },
 
         onQuickTagClick(event) {
@@ -753,13 +764,14 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
 
         syncMRQLFromForm() {
             if (!this.filterForm || this._applyingMRQL) return;
-            if (!formMetadataIsRepresentable(this.entity, new FormData(this.filterForm))) {
+            const relations = this.relationFormValues();
+            if (!relations.compatible || !formMetadataIsRepresentable(this.entity, new FormData(this.filterForm))) {
                 this.formCompatible = false;
                 this.setFormDisabled(true);
                 return;
             }
             const query = formValuesToMRQL(
-                this.entity, new FormData(this.filterForm), this.relationFormValues());
+                this.entity, new FormData(this.filterForm), relations.values);
             this.query = query;
             this._formQuerySnapshot = query;
             this.updateHiddenMRQL();
@@ -768,7 +780,9 @@ export function mrqlBar({ entity = 'resource', value = '', error = '' } = {}) {
         },
 
         broadcastQuickTags() {
-            const names = this.relationFormValues().get('tags') || [];
+            const relations = this.relationFormValues();
+            if (!relations.compatible) return;
+            const names = relations.values.get('tags') || [];
             window.dispatchEvent(new CustomEvent('mrql-tags-change', { detail: { names } }));
         },
 

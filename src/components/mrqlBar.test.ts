@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { selectorRegistry } from '../selector/selectorRegistry';
 import {
     expandGroupMRQLFromParams,
     expandResourceMRQLFromParams,
@@ -7,9 +8,76 @@ import {
     metadataRowsForFreeForm,
     toggleQuickTagInMRQL,
     mrqlToFormValues,
+    mrqlBar,
 } from './mrqlBar.js';
 
 describe('MRQL list form synchronization', () => {
+    beforeEach(() => {
+        vi.stubGlobal('CSS', { escape: (value: string) => value });
+        vi.stubGlobal('window', {
+            Alpine: {
+                $data: vi.fn(() => {
+                    throw new Error('MRQL selector reads must not inspect Alpine state');
+                }),
+            },
+        });
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    test('reads relation names from the selector scoped to the active filter form', () => {
+        const tagsControl = (selector: string) => selector.includes('tags') ? {} : null;
+        const firstForm = {
+            querySelector: vi.fn(tagsControl),
+        } as unknown as HTMLFormElement;
+        const secondForm = {
+            querySelector: vi.fn(tagsControl),
+        } as unknown as HTMLFormElement;
+        const first = selectorRegistry.register(firstForm, 'tags', {
+            getRawValues: () => [{ ID: 1, Name: 'First form tag' }],
+            replaceRawValues: vi.fn(),
+            replaceByKeys: vi.fn(),
+            resolveExactLabels: vi.fn(),
+        });
+        const second = selectorRegistry.register(secondForm, 'tags', {
+            getRawValues: () => [{ ID: 2, Name: 'Second form tag' }],
+            replaceRawValues: vi.fn(),
+            replaceByKeys: vi.fn(),
+            resolveExactLabels: vi.fn(),
+        });
+        const bar = mrqlBar({ entity: 'resource' });
+
+        bar.filterForm = firstForm;
+        expect(bar.relationFormValues()).toEqual({
+            compatible: true,
+            values: new Map([['tags', ['First form tag']]]),
+        });
+
+        bar.filterForm = secondForm;
+        expect(bar.relationFormValues()).toEqual({
+            compatible: true,
+            values: new Map([['tags', ['Second form tag']]]),
+        });
+
+        first();
+        second();
+    });
+
+    test('fails closed when a rendered relation selector is not registered', () => {
+        const form = {
+            querySelector: vi.fn(() => ({})),
+        } as unknown as HTMLFormElement;
+        const bar = mrqlBar({ entity: 'resource' });
+        bar.filterForm = form;
+
+        expect(bar.relationFormValues()).toEqual({
+            compatible: false,
+            values: new Map(),
+        });
+    });
+
     test('turns resource form values into canonical MRQL', () => {
         const values = new FormData();
         values.set('Name', 'summer "trip"');
