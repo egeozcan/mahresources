@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"mahresources/auth"
@@ -135,4 +136,37 @@ func TestSearchFacade_FTSStateVisibleToDerivedContexts(t *testing.T) {
 		t.Error("a context derived after InitFTS reports FTS disabled; request-scoped searches would " +
 			"all fall back to LIKE")
 	}
+}
+
+// Concurrent InitFTS against in-flight searches. GlobalSearch fans out over one
+// goroutine per entity type and each consults FTS state, so once the state is
+// shared by a single Service rather than copied into every derived context,
+// these reads race any write.
+//
+// Production only writes at startup, but "only at startup" is a convention, not
+// a guarantee, and the failure mode is a torn read of provider/enabled rather
+// than an error. Run under -race this test fails against plain struct fields and
+// passes against the atomic snapshot.
+func TestSearchFacade_FTSStateIsRaceFree(t *testing.T) {
+	ctx := createFacadeContext(t, "search_fts_race")
+
+	root := &models.Group{Name: "shr-root"}
+	mustCreateFacade(t, ctx, root)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			searchNames(t, ctx, "shr")
+		}()
+	}
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = ctx.InitFTS()
+		}()
+	}
+	wg.Wait()
 }

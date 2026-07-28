@@ -10,11 +10,11 @@ import (
 
 // SearchCache provides an LRU cache for global search results with TTL and type-based invalidation
 type SearchCache struct {
-	cache     map[string]*list.Element
-	lruList   *list.List
-	mu        sync.RWMutex
-	ttl       time.Duration
-	maxSize   int
+	cache   map[string]*list.Element
+	lruList *list.List
+	mu      sync.RWMutex
+	ttl     time.Duration
+	maxSize int
 }
 
 type searchCacheEntry struct {
@@ -151,4 +151,3 @@ func (c *SearchCache) evictOldest() {
 		c.lruList.Remove(elem)
 	}
 }
-

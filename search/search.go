@@ -48,32 +48,30 @@ var allEntityTypes = []string{
 	EntityTypeMRQLQuery,
 }
 
-func (ctx *Service) selectFTSProvider() {
+// newFTSProvider builds the provider for the configured dialect.
+func (ctx *Service) newFTSProvider() fts.FTSProvider {
 	if ctx.dbType == constants.DbTypePosgres {
-		ctx.provider = fts.NewPostgresFTS()
-	} else {
-		ctx.provider = fts.NewSQLiteFTS()
+		return fts.NewPostgresFTS()
 	}
+	return fts.NewSQLiteFTS()
 }
 
 // UseExistingFTS enables reads against an FTS schema that was initialized and
 // validated earlier. Unlike InitFTS it performs no DDL or index rebuild.
 func (ctx *Service) UseExistingFTS() {
-	ctx.selectFTSProvider()
-	ctx.enabled = true
+	ctx.setFTS(ctx.newFTSProvider(), true)
 }
 
 // InitFTS initializes the FTS provider based on the database type.
 func (ctx *opCtx) InitFTS() error {
-	ctx.selectFTSProvider()
+	provider := ctx.newFTSProvider()
 
-	if err := ctx.provider.Setup(ctx.db); err != nil {
-		ctx.provider = nil
-		ctx.enabled = false
+	if err := provider.Setup(ctx.db); err != nil {
+		ctx.setFTS(nil, false)
 		return err
 	}
 
-	ctx.enabled = true
+	ctx.setFTS(provider, true)
 	return nil
 }
 
@@ -81,7 +79,7 @@ func (ctx *opCtx) InitFTS() error {
 // Callers outside this file read FTS state through it rather than touching the
 // field, so the state can move behind a service without touching them.
 func (ctx *Service) ftsAvailable() bool {
-	return ctx.enabled
+	return ctx.ftsSnapshot().enabled
 }
 
 // GlobalSearch performs a unified search across all entity types
@@ -157,7 +155,7 @@ func (ctx *opCtx) GlobalSearch(query *query_models.GlobalSearchQuery) (*query_mo
 		go func(et string) {
 			defer wg.Done()
 			var results []query_models.SearchResultItem
-			if ctx.enabled {
+			if ctx.ftsAvailable() {
 				results = ctx.searchEntityTypeFTS(et, parsedQuery, searchLimit)
 			} else {
 				// Fallback to LIKE-based search if FTS is not available
@@ -467,11 +465,19 @@ func searchEntitiesFTS[T searchable](ctx *opCtx, entityType string, query fts.Pa
 		return nil
 	}
 
+	// Load provider and enabled together. Reading ftsAvailable() at the fan-out
+	// and the provider here are two separate observations, so this one must
+	// tolerate FTS having been torn down in between rather than assume non-nil.
+	state := ctx.ftsSnapshot()
+	if state.provider == nil {
+		return nil
+	}
+
 	info := entitySearchInfo[entityType]
 
 	var entities []T
 	ctx.db.Model(new(T)).
-		Scopes(ctx.provider.BuildSearchScope(config.TableName, config.Columns, query)).
+		Scopes(state.provider.BuildSearchScope(config.TableName, config.Columns, query)).
 		Limit(limit).
 		Find(&entities)
 

@@ -14,6 +14,8 @@
 package search
 
 import (
+	"sync/atomic"
+
 	"gorm.io/gorm"
 
 	"mahresources/constants"
@@ -27,13 +29,35 @@ type Service struct {
 	cache  *SearchCache
 	dbType string
 
-	// provider and enabled are written by InitFTS and UseExistingFTS, both of
-	// which run at startup before the server accepts requests (main.go and
-	// internal/mrqlbench are the only callers) and are then read-only. They are
-	// deliberately unsynchronised, matching the assumption the pre-extraction
-	// code already made. Calling either at runtime would be a data race.
+	// state is swapped atomically by InitFTS and UseExistingFTS. Before the
+	// extraction these were two plain fields, and every derived context held its
+	// own copy; sharing one Service makes the reads genuinely concurrent, since
+	// GlobalSearch fans out over goroutines that consult FTS state.
+	//
+	// It is one snapshot rather than two atomics on purpose: provider and
+	// enabled must be observed together, or a reader can see enabled == true
+	// with provider still nil and dereference it.
+	state atomic.Pointer[ftsState]
+}
+
+// ftsState is the FTS configuration as a single immutable value.
+type ftsState struct {
 	provider fts.FTSProvider
 	enabled  bool
+}
+
+// ftsSnapshot returns the current state, zero-valued before initialization.
+func (s *Service) ftsSnapshot() ftsState {
+	if st := s.state.Load(); st != nil {
+		return *st
+	}
+	return ftsState{}
+}
+
+// setFTS publishes a new state. Startup only in production, but safe to call
+// at any time.
+func (s *Service) setFTS(provider fts.FTSProvider, enabled bool) {
+	s.state.Store(&ftsState{provider: provider, enabled: enabled})
 }
 
 // NewService builds the search service. dbType selects the FTS provider and the
