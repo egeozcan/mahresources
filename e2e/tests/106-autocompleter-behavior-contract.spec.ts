@@ -360,7 +360,7 @@ test.describe('Autocompleter behavior contract', () => {
     // the last one wins, so a selected relation type is sent as an empty value and the dependent
     // group search is NOT actually narrowed. That is the long-standing behaviour this refactor
     // preserves; making these filters bite is a product change tracked separately in
-    // tasks/todo.md, because it leaves uncategorized groups with no selectable relation type.
+    // docs/todo.md, because it leaves uncategorized groups with no selectable relation type.
     await selectType(typeA);
     expect(await searchGroups('baseline-groups')).toMatchObject({
       RelationTypeId: '',

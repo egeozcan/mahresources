@@ -76,7 +76,7 @@ Mahresources is a CRUD application for personal information management written i
 - `index.js` - Utility functions (abortableFetch, clipboard, etc.)
 - `components/` - Alpine.js data components (globalSearch, bulkSelection, etc.)
 - `selector/` - Headless selector core, sources, and entity profiles. Every entity picker is built
-  from it; see `docs/selector-architecture.md` before adding or changing one.
+  from it; see `docs/architecture/selector-architecture.md` before adding or changing one.
 - `webcomponents/` - Custom elements (expandable-text, inline-edit)
 - `tableMaker.js` - JSON table rendering
 
@@ -357,7 +357,7 @@ When you add or change a command or flag in `cmd/mr/commands/`, update the corre
 - One tack per subagent for focused execution
 
 ### 3. Self-Improvement Loop
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern
+- After ANY correction from the user: update `docs/lessons.md` with the pattern
 - Write rules for yourself that prevent the same mistake
 - Ruthlessly iterate on these lessons until mistake rate drops
 - Review lessons at session start for relevant project
@@ -382,12 +382,12 @@ When you add or change a command or flag in `cmd/mr/commands/`, update the corre
 
 ## Task Management
 
-1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
+1. **Plan First**: Write plan to `docs/todo.md` with checkable items
 2. **Verify Plan**: Check in before starting implementation
 3. **Track Progress**: Mark items complete as you go
 4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `tasks/todo.md`
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
+5. **Document Results**: Add review section to `docs/todo.md`
+6. **Capture Lessons**: Update `docs/lessons.md` after corrections
 
 ## Core Principles
 

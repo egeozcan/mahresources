@@ -10,7 +10,7 @@
  * selection still contributes an empty value and the dependent search stays unnarrowed.
  * Restricting this to `:not(:disabled)` would make these cross-filters bite for the first time,
  * which is a product change -- it can leave uncategorized groups with no selectable relation
- * type -- rather than a refactor. It is tracked separately in tasks/todo.md and characterized by
+ * type -- rather than a refactor. It is tracked separately in docs/todo.md and characterized by
  * `106-autocompleter-behavior-contract`.
  *
  * A control name that matches nothing contributes no key at all, so the parameter is omitted
