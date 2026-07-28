@@ -1,0 +1,18 @@
+Endpoint matrix - iter-2026-04-22-5
+All tested with: curl -isS -H 'Accept: application/json'
+
+/v1/resource?id=9999999        -> 404 {"error":"record not found"}     OK
+/v1/note?id=9999999            -> 404 {"error":"record not found"}     OK
+/v1/group?id=9999999           -> 404 {"error":"record not found"}     OK
+/v1/tag?id=9999999             -> 404 HTML 404 page                    OK (template handler, 404 correct)
+/v1/category?id=9999999        -> 404 HTML 404 page                    OK (template handler, 404 correct)
+/v1/query?id=9999999           -> 404 {"error":"record not found"}     OK
+/v1/noteType?id=9999999        -> 404 HTML 404 page                    OK (template handler, 404 correct)
+/v1/mrql/saved/run?id=9999999  -> 404 HTML 404 page                    OK (template handler, 404 correct)
+/v1/resource/version?id=9999999-> 404 {"error":"record not found"}     OK
+/v1/group/export?id=9999999    -> 404 HTML 404 page                    OK (template handler, 404 correct)
+/v1/note/block/table/query?blockId=9999999 -> 404 {"error":"record not found"} OK
+
+Note: HTML 404 responses from template-rendered endpoints use handleHTTPErr() which sets 404 status code.
+All endpoints correctly return 404 (not 500) for missing records.
+BH-024 sibling scope: NONE - all endpoints behave correctly.

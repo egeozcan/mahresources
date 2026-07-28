@@ -138,6 +138,68 @@ captured handle. A test written specifically to catch §2's failure mode did not
 catch it, and only mutation revealed that. This is the fourth time in this
 document that a test proved less than it appeared to.
 
+**Revision 10 — slice 2 is DONE** (commits `f8a2de5e`, `b3c90fa1`, `cfef99f2`),
+and with it the re-measurement §4 makes the decision point. **The measurement
+says stop.**
+
+Slice 2 moved `search_context.go` and `search_cache.go` into `search/` behind a
+facade. The seam was as advertised: five fields and exactly one external method
+(`principalForcedScope`). One correction to §4's characterisation: the risk here
+is not primarily the db handle. Search owns two pieces of state that must be
+*shared* rather than copied, and duplicating either fails **silently** —
+a per-call result cache never hits and never invalidates, so all 31
+`InvalidateSearchCacheByType` call sites quietly become no-ops; a per-call FTS
+flag reads false and downgrades every search to the LIKE fallback. Results stay
+correct in both cases, just stale and slow, so nothing surfaces as an error.
+That is a different and nastier failure mode than §2's, and it is why the two
+tests guarding it assert through deliberate *controls* (a stale read, an
+InitFTS-then-derive check) rather than through their headline assertions.
+
+(23) **A third vacuous test, found the same way as (9).**
+`TestScopedUser_SearchAndMRQLConfined` requested `/v1/search?query=sf-`, but the
+handler reads `q`. The term never arrived: every response was
+`{"query":"","total":0,"results":[]}`, so the confinement assertion held for
+free. **Scoped global search had never been tested.** The behaviour is correct
+(4 in-subtree results against an admin's 7), so this was a dead test rather than
+a bug — but it was the only coverage of the property slice 2 puts at risk. It is
+fixed, given the positive control its MRQL sibling already had, and joined by
+`TestScopedUser_SearchCacheNotSharedAcrossScopes`, which covers both directions
+of the shared-cache leak that nothing covered before.
+
+### The re-measurement, and what it says
+
+| Measure | `dabbfbc6` | after slices 1+2 | delta |
+|---|---|---|---|
+| `application_context` non-test LOC | 29,612 | **23,285** | −6,327 (−21%) |
+| `.go` files | 143 | **131** | −12 |
+| `MahresourcesContext` fields | 26 | **25** | **−1** |
+| methods | 453 | **418** | −35 |
+| **exported methods** | 329 | **329** | **0** |
+| `application_context` test wall-clock | 13.1s | 10.6s (+1.1 +0.7) | ~2s |
+
+**Two slices moved 21% of the package and the god object lost one field and zero
+exported methods.** That is not a failure of execution; it is the direct
+consequence of the facade strategy, which is also the thing that made both
+slices safe enough to land with no call-site churn. But it means the headline
+complaint the brief opened with — 452 methods, 329 exported — is completely
+unimproved, and slices 3 and 4 would improve it by the same amount: nothing.
+
+§1 predicted this ("the payoff from decomposition is lower than the method count
+suggests"). The measurement now confirms it rather than merely arguing it.
+
+**Recommendation: do not proceed to slices 3 or 4. Do slice 5.** The DI ratio is
+where the real coupling is, and it is measured, not asserted:
+
+| Package | concrete `*MahresourcesContext` | `contracts.*` |
+|---|---|---|
+| `server/api_handlers/` | 74 | 173 (70%) |
+| `server/template_handlers/template_context_providers/` | **60** | **2 (3%)** |
+
+Sixty concrete dependencies on the god struct sit in one directory that nobody
+has migrated. Slice 5 changes parameter types at a call boundary, carries no
+extraction risk, needs no facade, and is the only remaining work that would
+actually shrink what `server/` can reach for.
+
 **§2a is now fully satisfied. The decomposition may begin.**
 
 The seam choice itself has survived all four reviews unchallenged. Every defect

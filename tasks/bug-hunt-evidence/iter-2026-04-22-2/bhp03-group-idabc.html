@@ -1,0 +1,2334 @@
+HTTP/1.1 400 Bad Request
+Content-Type: text/html
+Date: Tue, 21 Apr 2026 22:34:53 GMT
+Transfer-Encoding: chunked
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Error 400 - mahresources</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/public/index.css?v=af5c81f0c1">
+    <link rel="stylesheet" href="/public/tailwind.css?v=af5c81f0c1">
+    <link rel="stylesheet" href="/public/jsonTable.css?v=af5c81f0c1">
+    <script type="module" src="/public/dist/main.js?v=af5c81f0c1"></script>
+    <link rel="apple-touch-icon" sizes="57x57" href="/public/favicon/apple-icon-57x57.png">
+    <link rel="apple-touch-icon" sizes="60x60" href="/public/favicon/apple-icon-60x60.png">
+    <link rel="apple-touch-icon" sizes="72x72" href="/public/favicon/apple-icon-72x72.png">
+    <link rel="apple-touch-icon" sizes="76x76" href="/public/favicon/apple-icon-76x76.png">
+    <link rel="apple-touch-icon" sizes="114x114" href="/public/favicon/apple-icon-114x114.png">
+    <link rel="apple-touch-icon" sizes="120x120" href="/public/favicon/apple-icon-120x120.png">
+    <link rel="apple-touch-icon" sizes="144x144" href="/public/favicon/apple-icon-144x144.png">
+    <link rel="apple-touch-icon" sizes="152x152" href="/public/favicon/apple-icon-152x152.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/public/favicon/apple-icon-180x180.png">
+    <link rel="icon" type="image/png" sizes="192x192"  href="/public/favicon/android-icon-192x192.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/public/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="96x96" href="/public/favicon/favicon-96x96.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/public/favicon/favicon-16x16.png">
+    <meta name="msapplication-TileColor" content="#ffffff">
+    <meta name="msapplication-TileImage" content="/public/favicon/ms-icon-144x144.png">
+    <meta name="theme-color" content="#ffffff">
+    
+    
+</head>
+<body class="site bg-stone-50">
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:p-4 focus:bg-white focus:text-amber-700">Skip to main content</a>
+    
+    <header class="header flex items-center justify-between gap-2 px-2">
+        <nav aria-label="Main" x-data="{ mobileOpen: false, adminOpen: false, pluginsOpen: false, currentPath: '' }"
+     x-init="currentPath = $el.dataset.currentPath"
+     data-current-path="/group"
+     class="navbar flex items-center gap-1">
+    <!-- Mobile hamburger -->
+    <button @click="mobileOpen = !mobileOpen" class="navbar-toggle" aria-label="Toggle menu">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path x-show="!mobileOpen" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 12h16M4 18h16" />
+            <path x-show="mobileOpen" x-cloak stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+    </button>
+
+    <!-- Desktop navigation -->
+    <div class="navbar-links">
+        
+        <a href="/dashboard"
+           class="navbar-link ">
+            Dashboard
+        </a>
+        
+        <a href="/notes"
+           class="navbar-link ">
+            Notes
+        </a>
+        
+        <a href="/resources"
+           class="navbar-link ">
+            Resources
+        </a>
+        
+        <a href="/tags"
+           class="navbar-link ">
+            Tags
+        </a>
+        
+        <a href="/groups"
+           class="navbar-link ">
+            Groups
+        </a>
+        
+        <a href="/mrql"
+           class="navbar-link ">
+            MRQL
+        </a>
+        
+
+        <!-- Admin dropdown -->
+        <div class="navbar-dropdown" @click.outside="adminOpen = false" @keydown.escape="if (adminOpen) { adminOpen = false; $el.querySelector('button').focus(); }">
+            <button @click="adminOpen = !adminOpen"
+                    class="navbar-link navbar-link--dropdown"
+                    :class="{ 'navbar-link--active': adminOpen || '/admin/overview' == currentPath|| '/queries' == currentPath|| '/categories' == currentPath|| '/resourceCategories' == currentPath|| '/relations' == currentPath|| '/relationTypes' == currentPath|| '/noteTypes' == currentPath|| '/admin/export' == currentPath|| '/admin/import' == currentPath|| '/logs' == currentPath }"
+                    :aria-expanded="adminOpen.toString()"
+                    aria-haspopup="true">
+                <span>Admin</span>
+                <svg class="navbar-dropdown-arrow" :class="{ 'rotate-180': adminOpen }" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                    <path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+            <div x-show="adminOpen"
+                 x-cloak
+                 x-transition:enter="transition ease-out duration-150"
+                 x-transition:enter-start="opacity-0 -translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0"
+                 x-transition:leave="transition ease-in duration-100"
+                 x-transition:leave-start="opacity-100 translate-y-0"
+                 x-transition:leave-end="opacity-0 -translate-y-1"
+                 class="navbar-dropdown-menu"
+                 role="menu">
+                
+                <a href="/admin/overview"
+                   class="navbar-dropdown-item "
+                   @click="adminOpen = false"
+                   role="menuitem">
+                    Overview
+                </a>
+                
+                <a href="/queries"
+                   class="navbar-dropdown-item "
+                   @click="adminOpen = false"
+                   role="menuitem">
+                    Queries
+                </a>
+                
+                <a href="/categories"
+                   class="navbar-dropdown-item "
+                   @click="adminOpen = false"
+                   role="menuitem">
+                    Categories
+                </a>
+                
+                <a href="/resourceCategories"
+                   class="navbar-dropdown-item "
+                   @click="adminOpen = false"
+                   role="menuitem">
+                    Resource Categories
+                </a>
+                
+                <a href="/relations"
+                   class="navbar-dropdown-item "
+                   @click="adminOpen = false"
+                   role="menuitem">
+                    Relations
+                </a>
+                
+                <a href="/relationTypes"
+                   class="navbar-dropdown-item "
+                   @click="adminOpen = false"
+                   role="menuitem">
+                    Relation Types
+                </a>
+                
+                <a href="/noteTypes"
+                   class="navbar-dropdown-item "
+                   @click="adminOpen = false"
+                   role="menuitem">
+                    Note Types
+                </a>
+                
+                <a href="/admin/export"
+                   class="navbar-dropdown-item "
+                   @click="adminOpen = false"
+                   role="menuitem">
+                    Export
+                </a>
+                
+                <a href="/admin/import"
+                   class="navbar-dropdown-item "
+                   @click="adminOpen = false"
+                   role="menuitem">
+                    Import
+                </a>
+                
+                <a href="/logs"
+                   class="navbar-dropdown-item "
+                   @click="adminOpen = false"
+                   role="menuitem">
+                    Logs
+                </a>
+                
+            </div>
+        </div>
+
+        
+        <div class="navbar-dropdown" @click.outside="pluginsOpen = false" @keydown.escape="if (pluginsOpen) { pluginsOpen = false; $el.querySelector('button').focus(); }">
+            <button @click="pluginsOpen = !pluginsOpen"
+                    class="navbar-link navbar-link--dropdown"
+                    :class="{ 'navbar-link--active': pluginsOpen || '/plugins/manage' == currentPath || '/plugins/fal-ai/generate' == currentPath }"
+                    :aria-expanded="pluginsOpen.toString()"
+                    aria-haspopup="true">
+                <span>Plugins</span>
+                <svg class="navbar-dropdown-arrow" :class="{ 'rotate-180': pluginsOpen }" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                    <path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+            <div x-show="pluginsOpen"
+                 x-cloak
+                 x-transition:enter="transition ease-out duration-150"
+                 x-transition:enter-start="opacity-0 -translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0"
+                 x-transition:leave="transition ease-in duration-100"
+                 x-transition:leave-start="opacity-100 translate-y-0"
+                 x-transition:leave-end="opacity-0 -translate-y-1"
+                 class="navbar-dropdown-menu"
+                 role="menu">
+                <a href="/plugins/manage"
+                   class="navbar-dropdown-item "
+                   @click="pluginsOpen = false"
+                   role="menuitem">
+                    Manage Plugins
+                </a>
+                
+                <div class="navbar-dropdown-divider" role="separator"></div>
+                
+                
+                <a href="/plugins/fal-ai/generate"
+                   class="navbar-dropdown-item "
+                   @click="pluginsOpen = false"
+                   role="menuitem">
+                    Generate Image
+                </a>
+                
+            </div>
+        </div>
+        
+    </div>
+
+    <!-- Mobile navigation -->
+    <div x-show="mobileOpen"
+         x-cloak
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0 -translate-y-2"
+         x-transition:enter-end="opacity-100 translate-y-0"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100 translate-y-0"
+         x-transition:leave-end="opacity-0 -translate-y-2"
+         @click.outside="mobileOpen = false"
+         class="navbar-mobile">
+
+        <div class="navbar-mobile-section">
+            
+            <a href="/dashboard"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Dashboard
+            </a>
+            
+            <a href="/notes"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Notes
+            </a>
+            
+            <a href="/resources"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Resources
+            </a>
+            
+            <a href="/tags"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Tags
+            </a>
+            
+            <a href="/groups"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Groups
+            </a>
+            
+            <a href="/mrql"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                MRQL
+            </a>
+            
+        </div>
+
+        <div class="navbar-mobile-divider"></div>
+
+        <div class="navbar-mobile-section">
+            <span class="navbar-mobile-label">Admin</span>
+            
+            <a href="/admin/overview"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Overview
+            </a>
+            
+            <a href="/queries"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Queries
+            </a>
+            
+            <a href="/categories"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Categories
+            </a>
+            
+            <a href="/resourceCategories"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Resource Categories
+            </a>
+            
+            <a href="/relations"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Relations
+            </a>
+            
+            <a href="/relationTypes"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Relation Types
+            </a>
+            
+            <a href="/noteTypes"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Note Types
+            </a>
+            
+            <a href="/admin/export"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Export
+            </a>
+            
+            <a href="/admin/import"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Import
+            </a>
+            
+            <a href="/logs"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Logs
+            </a>
+            
+        </div>
+
+        
+        <div class="navbar-mobile-divider"></div>
+
+        <div class="navbar-mobile-section">
+            <span class="navbar-mobile-label">Plugins</span>
+            <a href="/plugins/manage"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Manage Plugins
+            </a>
+            
+            <a href="/plugins/fal-ai/generate"
+               class="navbar-mobile-link "
+               @click="mobileOpen = false">
+                Generate Image
+            </a>
+            
+        </div>
+        
+    </div>
+</nav>
+
+        <div class="flex items-center gap-1 flex-shrink-0">
+            <div
+    x-data="globalSearch()"
+    x-cloak
+    @keydown.escape.window="close()"
+    class="global-search"
+>
+    <button
+        @click="toggle()"
+        class="flex items-center gap-2 px-3 py-1.5 text-sm font-mono text-stone-700 bg-stone-100 rounded-lg hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:ring-offset-1 transition-colors"
+        title="Search (Ctrl+K / Cmd+K)"
+        aria-label="Open search dialog"
+        aria-haspopup="dialog"
+    >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+        <span class="hidden sm:inline">Search</span>
+        <kbd class="hidden sm:inline px-1.5 py-0.5 text-xs bg-white rounded border border-stone-300 font-sans" aria-hidden="true">
+            <span x-text="navigator.platform.indexOf('Mac') > -1 ? '\u2318' : 'Ctrl'"></span>K
+        </kbd>
+    </button>
+
+    <template x-if="isOpen">
+        <div class="fixed inset-0 z-50 overflow-y-auto">
+            <div
+                class="fixed inset-0 bg-black/40 backdrop-blur-sm transition-opacity"
+                @click="close()"
+            ></div>
+
+            <div class="relative min-h-screen flex items-start justify-center pt-[12vh] px-4" @click="close()">
+                <div
+                    class="relative bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden ring-1 ring-black/5"
+                    @click.stop
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Search"
+                >
+                    <div class="flex items-center gap-3 px-4 py-3 border-b border-stone-100">
+                        <svg class="w-5 h-5 text-stone-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <input
+                            x-ref="searchInput"
+                            x-model="query"
+                            @input="search()"
+                            @keydown.arrow-up.prevent="navigateUp()"
+                            @keydown.arrow-down.prevent="navigateDown()"
+                            @keydown.enter.prevent="selectResult()"
+                            type="text"
+                            placeholder="Search resources, notes, groups, tags..."
+                            class="flex-1 text-base text-stone-900 placeholder-stone-400 bg-transparent border-0 outline-none focus:ring-0 focus:outline-none"
+                            style="box-shadow: none !important;"
+                            autocomplete="off"
+                            role="combobox"
+                            aria-autocomplete="list"
+                            aria-controls="search-results"
+                            aria-label="Search"
+                            :aria-expanded="results.length > 0"
+                            :aria-activedescendant="results.length > 0 ? 'search-result-' + selectedIndex : null"
+                        >
+                        <template x-if="loading">
+                            <svg class="w-5 h-5 text-stone-400 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                        </template>
+                        <template x-if="query.length > 0 && !loading">
+                            <button
+                                @click="query = ''; results = [];"
+                                class="p-1 text-stone-400 hover:text-stone-600 rounded-md hover:bg-stone-100 transition-colors"
+                                aria-label="Clear search"
+                                type="button"
+                            >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </template>
+                    </div>
+
+                    <ul
+                        x-ref="resultsList"
+                        id="search-results"
+                        role="listbox"
+                        class="max-h-[60vh] overflow-y-auto overscroll-contain"
+                        x-show="results.length > 0"
+                    >
+                        <template x-for="(result, index) in results" :key="result.type + '-' + result.id">
+                            <li
+                                :id="'search-result-' + index"
+                                @click="navigateTo(result.url)"
+                                @mouseenter="selectedIndex = index"
+                                :data-selected="selectedIndex === index"
+                                role="option"
+                                :aria-selected="selectedIndex === index"
+                                class="px-4 py-3 cursor-pointer transition-colors"
+                                :class="selectedIndex === index ? 'bg-amber-50' : 'hover:bg-stone-50'"
+                            >
+                                <div class="flex items-center gap-3">
+                                    <span
+                                        class="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-lg text-lg"
+                                        :class="selectedIndex === index ? 'bg-amber-100' : 'bg-stone-100'"
+                                        x-text="getIcon(result.type)"
+                                    ></span>
+
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center gap-2">
+                                            <span
+                                                class="font-medium text-stone-900 truncate"
+                                                x-html="highlightMatch(result.name, query)"
+                                            ></span>
+                                            <span
+                                                class="flex-shrink-0 text-xs font-mono px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 font-medium"
+                                                x-text="getLabel(result.type)"
+                                            ></span>
+                                        </div>
+                                        <p
+                                            x-show="result.description"
+                                            class="text-sm font-sans text-stone-600 truncate mt-0.5"
+                                            x-html="highlightMatch(result.description, query)"
+                                        ></p>
+                                        <div
+                                            x-show="result.extra && Object.keys(result.extra).length > 0"
+                                            class="flex gap-2 mt-1"
+                                        >
+                                            <template x-for="(value, key) in (result.extra || {})" :key="key">
+                                                <span class="text-xs text-stone-600" x-text="value"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+
+                                    <svg x-show="selectedIndex === index" class="w-4 h-4 text-amber-700 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                                    </svg>
+                                </div>
+                            </li>
+                        </template>
+                    </ul>
+
+                    <div
+                        x-show="query.trim().length >= 2 && results.length === 0 && !loading"
+                        class="px-4 py-12 text-center"
+                    >
+                        <svg class="w-12 h-12 text-stone-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <p class="text-stone-500">No results found for "<span class="font-medium" x-text="query"></span>"</p>
+                        <p class="text-sm font-sans text-stone-600 mt-1">Try a different search term</p>
+                    </div>
+
+                    <div
+                        x-show="query.length === 0 && results.length === 0"
+                        class="px-4 py-12 text-center"
+                    >
+                        <svg class="w-12 h-12 text-stone-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <p class="text-stone-500">Start typing to search</p>
+                        <p class="text-sm font-sans text-stone-600 mt-1">Search across all your resources, notes, groups, and more</p>
+                    </div>
+
+                    <div class="flex items-center justify-center gap-6 px-4 py-2.5 bg-stone-50/80 border-t border-stone-100 text-xs text-stone-600">
+                        <span class="flex items-center gap-1.5">
+                            <kbd class="px-1.5 py-0.5 bg-white rounded border border-stone-200 font-sans text-stone-500 shadow-sm">&uarr;</kbd>
+                            <kbd class="px-1.5 py-0.5 bg-white rounded border border-stone-200 font-sans text-stone-500 shadow-sm">&darr;</kbd>
+                            <span>navigate</span>
+                        </span>
+                        <span class="flex items-center gap-1.5">
+                            <kbd class="px-1.5 py-0.5 bg-white rounded border border-stone-200 font-sans text-stone-500 shadow-sm">&crarr;</kbd>
+                            <span>select</span>
+                        </span>
+                        <span class="flex items-center gap-1.5">
+                            <kbd class="px-2 py-0.5 bg-white rounded border border-stone-200 font-sans text-stone-500 shadow-sm">esc</kbd>
+                            <span>close</span>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+</div>
+            <div x-cloak x-data="{ active: false }" class="settings relative">
+                <button class="p-1 text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)" title="Settings" aria-label="Settings" :aria-expanded="active.toString()" aria-haspopup="true"><span aria-hidden="true">⚙</span></button>
+                <div x-show="active" x-cloak class="absolute right-0 top-full mt-1 w-48 bg-white shadow-lg ring-1 ring-black/5 z-50 p-3 rounded">
+                    <label class="flex justify-between items-center text-sm font-mono">
+                        Show Descriptions
+                        <input type="checkbox" name="showDescriptions" x-data x-init="$store.savedSetting.registerEl($root)" />
+                    </label>
+                    
+                </div>
+            </div>
+        </div>
+        
+    </header>
+    
+<section class="title border-b-2 border-light-blue-400 pb-3">
+    
+    <div class="flex items-end flex-1 min-w-0 gap-3 ">
+        <h1 class="flex flex-col items-start gap-1 flex-1 min-w-0 text-2xl font-bold leading-7 text-stone-900 sm:text-3xl">
+            
+            
+                <span class="break-all">Error 400</span>
+            
+        </h1>
+        
+        
+        
+    </div>
+</section>
+
+    <div class="content pb-16" id="main-content">
+        <aside class="sidebar">
+            
+            
+            
+            
+        </aside>
+        <main class="main">
+            
+            
+            <div class="rounded-md bg-red-50 p-4 mb-4" role="alert">
+                <div class="flex">
+                    <div class="flex-shrink-0">
+                        <svg class="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                        </svg>
+                    </div>
+                    <div class="ml-3">
+                        <h3 class="text-sm font-medium text-red-800">invalid value for &quot;id&quot;: must be a valid number</h3>
+                    </div>
+                </div>
+            </div>
+            
+            
+
+        </main>
+    </div>
+    <footer class="footer sticky bottom-0 bg-white">
+        
+        
+        <script>
+if(!window.__dvQR){
+// Minimal QR Code generator - byte mode, EC level L, versions 1-10
+// Returns SVG string
+window.__dvQR=function(text,size,fg,bg){
+fg=fg||'#000';bg=bg||'#fff';size=size||128;
+// Galois field tables for GF(256) with polynomial 0x11d
+var EXP=new Uint8Array(256),LOG=new Uint8Array(256),v=1;
+for(var i=0;i<255;i++){EXP[i]=v;LOG[v]=i;v=(v<<1)^(v>=128?0x11d:0);}
+EXP[255]=EXP[0];
+function gfMul(a,b){return a&&b?EXP[(LOG[a]+LOG[b])%255]:0;}
+// Reed-Solomon
+function rsEncode(data,ecLen){
+var gen=[1];
+for(var i=0;i<ecLen;i++){var ng=new Array(gen.length+1);ng[0]=gen[0];
+for(var j=1;j<gen.length;j++)ng[j]=gen[j]^gfMul(gen[j-1],EXP[i]);
+ng[gen.length]=gfMul(gen[gen.length-1],EXP[i]);gen=ng;}
+var rem=new Uint8Array(ecLen);
+for(var i=0;i<data.length;i++){var f=rem[0]^data[i];
+for(var j=0;j<ecLen-1;j++)rem[j]=rem[j+1]^gfMul(f,gen[j+1]);
+rem[ecLen-1]=gfMul(f,gen[ecLen]);}
+return rem;}
+// Version info: [total codewords, ec codewords per block, num blocks]
+var VERS=[[0],[26,7,1],[44,10,1],[70,15,1],[100,20,1],[134,26,1],[172,18,2],[196,20,2],[242,24,2],[292,30,2],[346,18,2]];
+// Find version
+var dataBytes=text.length+3;// mode+length+data+terminator overhead
+var ver=1;for(;ver<=10;ver++){var vi=VERS[ver];var cap=vi[0]-vi[1]*vi[2];if(dataBytes<=cap)break;}
+if(ver>10)return '<span style="color:red;font-size:10px">Text too long for QR</span>';
+var modCnt=17+ver*4,ecPerBlk=VERS[ver][1],numBlk=VERS[ver][2],totalCW=VERS[ver][0];
+var dataCW=totalCW-ecPerBlk*numBlk;
+// Encode data (byte mode)
+var bits=[];
+function pushBits(val,len){for(var i=len-1;i>=0;i--)bits.push((val>>i)&1);}
+pushBits(4,4);// byte mode indicator
+pushBits(text.length,ver<=9?8:16);
+for(var i=0;i<text.length;i++)pushBits(text.charCodeAt(i),8);
+pushBits(0,Math.min(4,dataCW*8-bits.length));// terminator
+while(bits.length%8)bits.push(0);// byte align
+while(bits.length<dataCW*8){bits.push(1,1,1,0,1,1,0,0);if(bits.length<dataCW*8)bits.push(0,0,0,1,0,0,0,1);}
+var dataArr=new Uint8Array(dataCW);
+for(var i=0;i<dataCW;i++){var b=0;for(var j=0;j<8;j++)b=(b<<1)|bits[i*8+j];dataArr[i]=b;}
+// Split into blocks and compute EC
+var blkSize=Math.floor(dataCW/numBlk),extra=dataCW%numBlk;
+var dataBlocks=[],ecBlocks=[];
+var offset=0;
+for(var b=0;b<numBlk;b++){var sz=blkSize+(b>=numBlk-extra?1:0);
+dataBlocks.push(dataArr.slice(offset,offset+sz));offset+=sz;
+ecBlocks.push(rsEncode(dataBlocks[b],ecPerBlk));}
+// Interleave
+var codewords=[];
+for(var i=0;i<blkSize+1;i++)for(var b=0;b<numBlk;b++)if(i<dataBlocks[b].length)codewords.push(dataBlocks[b][i]);
+for(var i=0;i<ecPerBlk;i++)for(var b=0;b<numBlk;b++)codewords.push(ecBlocks[b][i]);
+// Create matrix
+var N=modCnt,mat=[];for(var i=0;i<N;i++){mat[i]=new Uint8Array(N);}
+var reserved=[];for(var i=0;i<N;i++){reserved[i]=new Uint8Array(N);}
+// Place finder patterns
+function finder(r,c){for(var dr=-1;dr<=7;dr++)for(var dc=-1;dc<=7;dc++){
+var rr=r+dr,cc=c+dc;if(rr<0||rr>=N||cc<0||cc>=N)continue;
+var v=(dr>=0&&dr<=6&&(dc==0||dc==6))||(dc>=0&&dc<=6&&(dr==0||dr==6))||(dr>=2&&dr<=4&&dc>=2&&dc<=4)?1:0;
+mat[rr][cc]=v;reserved[rr][cc]=1;}}
+finder(0,0);finder(0,N-7);finder(N-7,0);
+// Timing patterns
+for(var i=8;i<N-8;i++){if(!reserved[6][i]){mat[6][i]=i%2==0?1:0;reserved[6][i]=1;}
+if(!reserved[i][6]){mat[i][6]=i%2==0?1:0;reserved[i][6]=1;}}
+// Alignment pattern (version>=2)
+if(ver>=2){var aPos=[0,0,0,0,0,0,0];// simplified: single alignment
+var ap=ver==2?18:ver==3?22:ver==4?26:ver==5?30:ver==6?34:ver==7?22:ver==8?24:ver==9?26:28;
+for(var dr=-2;dr<=2;dr++)for(var dc=-2;dc<=2;dc++){
+if(!reserved[ap+dr][ap+dc]){
+mat[ap+dr][ap+dc]=(Math.abs(dr)==2||Math.abs(dc)==2||(!dr&&!dc))?1:0;
+reserved[ap+dr][ap+dc]=1;}}}
+// Format info area reserved
+for(var i=0;i<9;i++){if(i<N)reserved[8][i]=1;if(i<N)reserved[i][8]=1;
+reserved[8][N-1-i]=1;reserved[N-1-i][8]=1;}
+reserved[8][8]=1;mat[N-8][8]=1;reserved[N-8][8]=1;// dark module
+// Place data bits
+var bitIdx=0,allBits=[];
+for(var i=0;i<codewords.length;i++)for(var j=7;j>=0;j--)allBits.push((codewords[i]>>j)&1);
+var upward=true;for(var col=N-1;col>=1;col-=2){
+if(col==6)col=5;// skip timing
+for(var cnt=0;cnt<N;cnt++){var row=upward?N-1-cnt:cnt;
+for(var dc=0;dc<=1;dc++){var c=col-dc;
+if(!reserved[row][c]){mat[row][c]=bitIdx<allBits.length?allBits[bitIdx]:0;bitIdx++;}}}
+upward=!upward;}
+// Apply mask 0 (checkerboard)
+for(var r=0;r<N;r++)for(var c=0;c<N;c++)if(!reserved[r][c])if((r+c)%2==0)mat[r][c]^=1;
+// Format bits for mask 0, EC level L = 0b01, mask 0b000 → format bits = 0x77c4
+var fmtBits=0x77c4;
+for(var i=0;i<6;i++)mat[8][i]=(fmtBits>>(14-i))&1;
+mat[8][7]=(fmtBits>>8)&1;mat[8][8]=(fmtBits>>7)&1;mat[7][8]=(fmtBits>>6)&1;
+for(var i=0;i<6;i++)mat[5-i][8]=(fmtBits>>(i))&1;
+for(var i=0;i<8;i++)mat[8][N-8+i]=(fmtBits>>(14-i))&1;
+for(var i=0;i<7;i++)mat[N-1-i][8]=(fmtBits>>i)&1;
+// Render SVG
+var cellSize=size/N;
+var rects='<rect width="'+size+'" height="'+size+'" fill="'+bg+'"/>';
+for(var r=0;r<N;r++)for(var c=0;c<N;c++)if(mat[r][c])
+rects+='<rect x="'+(c*cellSize).toFixed(2)+'" y="'+(r*cellSize).toFixed(2)+'" width="'+Math.ceil(cellSize)+'" height="'+Math.ceil(cellSize)+'" fill="'+fg+'"/>';
+return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+size+' '+size+'" style="max-width:100%;height:auto;width:'+size+'px"><'+rects+'</svg>';
+};}
+</script><script>
+if (!window.__metaEditorsSave) {
+  window.__metaEditorsSave = async function(entityType, entityId, path, value) {
+    const form = new URLSearchParams();
+    form.set('path', path);
+    form.set('value', JSON.stringify(value));
+    const resp = await fetch('/v1/' + entityType + '/editMeta?id=' + entityId, {
+      method: 'POST', body: form,
+      headers: {'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json'}
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    return resp.json();
+  };
+}
+</script>
+    </footer>
+    <div class="overlays">
+        <div
+    x-data="{
+        canNavigate() {
+            // Allow navigation unless focus is on an input, textarea, or select
+            const activeEl = document.activeElement;
+            return !activeEl || !['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName);
+        }
+    }"
+    x-show="$store.lightbox.isOpen"
+    x-cloak
+    x-trap="$store.lightbox.isOpen"
+    @keydown.escape.window="$store.lightbox.isOpen && ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.handleEscape())"
+    @keydown.arrow-left.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.prev()"
+    @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
+    @keydown.page-up.window.prevent="$store.lightbox.isOpen && $store.lightbox.prev()"
+    @keydown.page-down.window.prevent="$store.lightbox.isOpen && $store.lightbox.next()"
+    @keydown.space.window="$store.lightbox.isOpen && canNavigate() && ($event.preventDefault(), $store.lightbox.next())"
+    @keydown.enter.window="$store.lightbox.isOpen && canNavigate() && !document.activeElement?.closest('[data-edit-panel], [data-quick-tag-panel]') && $store.lightbox.toggleFullscreen()"
+    @keydown.e.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
+    @keydown.f2.window.prevent="$store.lightbox.isOpen && ($store.lightbox.editPanelOpen ? $store.lightbox.closeEditPanel() : $store.lightbox.openEditPanel())"
+    @keydown.t.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.quickTagPanelOpen ? $store.lightbox.closeQuickTagPanel() : $store.lightbox.openQuickTagPanel())"
+    @keydown.1.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(0, $event)"
+    @keydown.2.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(1, $event)"
+    @keydown.3.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(2, $event)"
+    @keydown.4.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(3, $event)"
+    @keydown.5.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(4, $event)"
+    @keydown.6.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(5, $event)"
+    @keydown.7.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(6, $event)"
+    @keydown.8.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(7, $event)"
+    @keydown.9.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeydown(8, $event)"
+    @keyup.1.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(0)"
+    @keyup.2.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(1)"
+    @keyup.3.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(2)"
+    @keyup.4.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(3)"
+    @keyup.5.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(4)"
+    @keyup.6.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(5)"
+    @keyup.7.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(6)"
+    @keyup.8.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(7)"
+    @keyup.9.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.handleSlotKeyup(8)"
+    @keyup.0.window="$store.lightbox.isOpen && canNavigate() && ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.focusTagEditor())"
+    @keydown.z.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(0)"
+    @keydown.x.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(1)"
+    @keydown.c.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(2)"
+    @keydown.v.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(3)"
+    @keydown.b.window="$store.lightbox.isOpen && $store.lightbox.quickTagPanelOpen && canNavigate() && $store.lightbox.switchTab(4)"
+    @touchstart="$store.lightbox.handleTouchStart($event)"
+    @touchmove="$store.lightbox.handleTouchMove($event)"
+    @touchend="$store.lightbox.handleTouchEnd($event)"
+    class="fixed inset-0 z-50 flex h-dvh w-dvw"
+    role="dialog"
+    aria-modal="true"
+    tabindex="-1"
+    :aria-label="$store.lightbox.getCurrentItem()?.name || 'Media viewer'"
+>
+    <!-- Backdrop -->
+    <div
+        class="absolute inset-0 h-full w-full bg-black/90"
+        @click="$store.lightbox.close()"
+    ></div>
+
+    <!-- Main content area (shrinks when edit panel opens on desktop) -->
+    <div
+        class="relative flex-1 flex flex-col transition-all duration-300 ease-in-out overflow-hidden"
+        :class="[
+            $store.lightbox.editPanelOpen ? ($store.lightbox.quickTagPanelOpen ? 'lg:mr-[320px]' : 'lg:mr-[400px]') : '',
+            $store.lightbox.quickTagPanelOpen ? ($store.lightbox.editPanelOpen ? 'lg:ml-[320px]' : 'lg:ml-[400px]') : ''
+        ]"
+    >
+    <!-- Media area (centered, fills available space) -->
+    <div
+        class="flex-1 flex items-center justify-center min-h-0 relative"
+        :class="$store.lightbox.isDragging ? 'cursor-grabbing' : 'cursor-grab'"
+        @click.self="$store.lightbox.close()"
+        @mousedown="$store.lightbox.handleMouseDown($event)"
+        @mousemove="$store.lightbox.handleMouseMove($event)"
+        @mouseup="$store.lightbox.handleMouseUp($event)"
+        @mouseleave="$store.lightbox.handleMouseUp($event)"
+    >
+        <!-- Loading spinner (shown while media is loading) -->
+        <div
+            x-show="$store.lightbox.loading"
+            class="absolute inset-0 flex items-center justify-center pointer-events-none z-10"
+        >
+            <svg class="w-12 h-12 text-white animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        </div>
+
+        <!-- Media content -->
+        <div class="relative max-h-[90vh] max-w-[90vw] flex items-center justify-center" @click.self="$store.lightbox.close()" @dblclick="$store.lightbox.handleDoubleClick($event)">
+            <!-- Image display -->
+            <template x-if="$store.lightbox.isImage($store.lightbox.getCurrentItem()?.contentType)">
+                <img
+                    :src="$store.lightbox.getCurrentItem()?.viewUrl"
+                    :alt="$store.lightbox.getCurrentItem()?.name || 'Image'"
+                    tabindex="-1"
+                    class="max-h-[90vh] object-contain"
+                    :class="[$store.lightbox._mediaMaxWidthClass(), $store.lightbox.animationsDisabled ? '' : 'transition-all duration-300']"
+                    :style="{ transform: `scale(${$store.lightbox.zoomLevel}) translate(${$store.lightbox.panX}px, ${$store.lightbox.panY}px)`, transformOrigin: 'center center' }"
+                    x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
+                    @load="$store.lightbox.onMediaLoaded()"
+                    @error="$store.lightbox.onMediaLoaded()"
+                >
+            </template>
+
+            <!-- SVG display - use object tag for better SVG rendering with proper sizing -->
+            <!-- Wrapped in a div with overlay to prevent the embedded SVG from stealing focus -->
+            <template x-if="$store.lightbox.isSvg($store.lightbox.getCurrentItem()?.contentType)">
+                <div class="relative">
+                    <object
+                        :data="$store.lightbox.getCurrentItem()?.viewUrl"
+                        type="image/svg+xml"
+                        :aria-label="$store.lightbox.getCurrentItem()?.name || 'SVG Image'"
+                        tabindex="-1"
+                        class="max-h-[90vh] max-w-[90vw] min-h-[50vh] min-w-[50vw] pointer-events-none"
+                        :class="[$store.lightbox._mediaMaxWidthClass(), $store.lightbox.animationsDisabled ? '' : 'transition-all duration-300']"
+                        :style="{ transform: `scale(${$store.lightbox.zoomLevel}) translate(${$store.lightbox.panX}px, ${$store.lightbox.panY}px)`, transformOrigin: 'center center' }"
+                        x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
+                        @load="$store.lightbox.onMediaLoaded()"
+                        @error="$store.lightbox.onMediaLoaded()"
+                    >
+                        <!-- Fallback to img if object fails -->
+                        <img
+                            :src="$store.lightbox.getCurrentItem()?.viewUrl"
+                            :alt="$store.lightbox.getCurrentItem()?.name || 'SVG Image'"
+                            tabindex="-1"
+                            class="max-h-[90vh] max-w-[90vw]"
+                        >
+                    </object>
+                    <!-- Transparent overlay to capture clicks without stealing focus -->
+                    <div class="absolute inset-0" tabindex="-1"></div>
+                </div>
+            </template>
+
+            <!-- Video display -->
+            <template x-if="$store.lightbox.isVideo($store.lightbox.getCurrentItem()?.contentType)">
+                <video
+                    :src="$store.lightbox.getCurrentItem()?.viewUrl"
+                    :key="$store.lightbox.getCurrentItem()?.id"
+                    controls
+                    class="max-h-[90vh] transition-all duration-300"
+                    :class="$store.lightbox._mediaMaxWidthClass()"
+                    x-init="$nextTick(() => $store.lightbox.checkIfMediaLoaded($el))"
+                    @loadeddata="$store.lightbox.onMediaLoaded()"
+                    @error="$store.lightbox.onMediaLoaded()"
+                >
+                    Your browser does not support video playback.
+                </video>
+            </template>
+        </div>
+
+        <!-- Previous button -->
+        <button
+            @click.stop="$store.lightbox.prev()"
+            :disabled="$store.lightbox.pageLoading || ($store.lightbox.currentIndex === 0 && !$store.lightbox.hasPrevPage)"
+            class="absolute left-4 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed rounded-full text-white transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 z-10"
+            aria-label="Previous"
+        >
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+            </svg>
+        </button>
+
+        <!-- Next button -->
+        <button
+            @click.stop="$store.lightbox.next()"
+            :disabled="$store.lightbox.pageLoading || ($store.lightbox.currentIndex === $store.lightbox.items.length - 1 && !$store.lightbox.hasNextPage)"
+            class="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed rounded-full text-white transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 z-10"
+            aria-label="Next"
+        >
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+            </svg>
+        </button>
+
+        <!-- Close button -->
+        <button
+            @click.stop="$store.lightbox.close()"
+            class="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 z-20"
+            aria-label="Close"
+        >
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+        </button>
+    </div>
+
+    <!-- Bottom bar with counter, resolution, and controls (in flow, does not cover media) -->
+    <div class="flex flex-wrap justify-between items-center gap-1 px-4 py-2 text-white text-sm z-20">
+        <!-- Counter -->
+        <div class="bg-black/50 px-3 py-1 rounded">
+            <span x-text="$store.lightbox.currentIndex + 1"></span>
+            /
+            <span x-text="$store.lightbox.items.length"></span>
+            <span x-show="$store.lightbox.hasNextPage" class="text-stone-400">+</span>
+        </div>
+
+        <!-- Native resolution -->
+        <div
+            x-show="$store.lightbox.getCurrentItem()?.width && $store.lightbox.getCurrentItem()?.height"
+            class="bg-black/50 px-3 py-1 rounded tabular-nums"
+            x-text="($store.lightbox.getCurrentItem()?.width || '') + ' \u00d7 ' + ($store.lightbox.getCurrentItem()?.height || '')"
+        ></div>
+
+        <!-- Native zoom percentage with preset picker -->
+        <div x-show="$store.lightbox.nativeZoomPercent()">
+            <button
+                @click.stop="$store.lightbox.showZoomPresets($el)"
+                class="bg-black/50 px-3 py-1 rounded tabular-nums hover:bg-white/30 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
+                x-text="$store.lightbox.nativeZoomPercent()"
+                title="Choose zoom level"
+            ></button>
+        </div>
+
+        <!-- Fullscreen button -->
+        <button
+            x-show="$store.lightbox.fullscreenSupported()"
+            @click.stop="$store.lightbox.toggleFullscreen()"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            :title="$store.lightbox.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
+            :aria-label="$store.lightbox.isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'"
+        >
+            <!-- Expand icon (not fullscreen) -->
+            <svg x-show="!$store.lightbox.isFullscreen" aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>
+            </svg>
+            <!-- Compress icon (fullscreen) -->
+            <svg x-show="$store.lightbox.isFullscreen" x-cloak aria-hidden="true" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 9L4 4m0 0v4m0-4h4m6 0l5-5m0 0v4m0-4h-4M9 15l-5 5m0 0v-4m0 4h4m6 0l5 5m0 0v-4m0 4h-4"></path>
+            </svg>
+        </button>
+
+        <!-- Owner -->
+        <a
+            x-show="$store.lightbox.getCurrentItem()?.ownerName"
+            :href="'/group?id=' + $store.lightbox.getCurrentItem()?.ownerId"
+            class="bg-black/50 px-3 py-1 rounded max-w-[20vw] truncate hidden md:block hover:bg-white/20 transition-colors"
+            x-text="$store.lightbox.getCurrentItem()?.ownerName"
+        ></a>
+
+        <!-- Name -->
+        <div
+            x-show="$store.lightbox.getCurrentItem()?.name"
+            class="bg-black/50 px-3 py-1 rounded max-w-[30vw] truncate hidden md:block"
+            x-text="$store.lightbox.getCurrentItem()?.name"
+        ></div>
+
+        <!-- Quick Tag button (hidden when panel is open — panel has its own close button) -->
+        <button
+            x-show="!$store.lightbox.quickTagPanelOpen"
+            @click.stop="$store.lightbox.openQuickTagPanel()"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            title="Edit tags"
+        >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z"></path>
+            </svg>
+            <span>Edit Tags</span>
+        </button>
+
+        <!-- Edit button (hidden when panel is open — panel has its own close button) -->
+        <button
+            x-show="!$store.lightbox.editPanelOpen"
+            @click.stop="$store.lightbox.openEditPanel()"
+            class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
+            title="Edit resource"
+        >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+            </svg>
+            <span>Edit</span>
+        </button>
+    </div>
+    </div>
+
+    <!-- Quick Tag Panel (slides in from left) -->
+    <div
+        x-show="$store.lightbox.quickTagPanelOpen"
+        x-transition:enter="transition ease-out duration-300"
+        x-transition:enter-start="opacity-0 -translate-x-full"
+        x-transition:enter-end="opacity-100 translate-x-0"
+        x-transition:leave="transition ease-in duration-200"
+        x-transition:leave-start="opacity-100 translate-x-0"
+        x-transition:leave-end="opacity-0 -translate-x-full"
+        data-quick-tag-panel
+        class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:left-0 md:bottom-0 bg-stone-900 md:bg-stone-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
+        :class="$store.lightbox.editPanelOpen ? 'md:w-[320px]' : 'md:w-[400px]'"
+        @click.stop
+        x-effect="$store.lightbox._setupExpandedClickOutside()"
+        @focusout="$store.lightbox.isExpanded() && $nextTick(() => { if (!$el.contains(document.activeElement)) $store.lightbox.collapseExpanded(); })"
+    >
+        <!-- Panel header -->
+        <div class="sticky top-0 bg-stone-900 md:bg-stone-900/95 border-b border-stone-700 p-4 flex items-center justify-between z-10">
+            <h2 class="text-lg font-semibold">Edit Tags</h2>
+            <button
+                @click="$store.lightbox.closeQuickTagPanel()"
+                class="p-1.5 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
+                aria-label="Close edit tags panel"
+            >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Panel content -->
+        <div class="p-4 space-y-4">
+            <!-- Tag editor (autocompleter) -->
+            <template x-if="$store.lightbox.resourceDetails">
+                <div
+                    x-data="autocompleter({
+                        selectedResults: [...($store.lightbox.resourceDetails?.Tags || [])],
+                        url: '/v1/tags',
+                        addUrl: '/v1/tag',
+                        standalone: true,
+                        sortBy: 'most_used_resource',
+                        onSelect: (tag) => $store.lightbox.saveTagAddition(tag),
+                        onRemove: (tag) => $store.lightbox.saveTagRemoval(tag)
+                    })"
+                    :key="$store.lightbox.resourceDetails?.ID"
+                    x-effect="selectedResults = [...($store.lightbox.resourceDetails?.Tags || [])]"
+                    class="relative"
+                >
+                <label class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Tags</label>
+
+                <!-- Add tag input -->
+                <template x-if="!addModeForTag">
+                    <div class="relative mb-3">
+                        <input
+                            x-ref="autocompleter"
+                            data-tag-editor-input
+                            type="text"
+                            x-bind="inputEvents"
+                            class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:border-transparent"
+                            placeholder="Search or add tags..."
+                            aria-label="Search or add tags"
+                            autocomplete="off"
+                            role="combobox"
+                            aria-autocomplete="list"
+                            aria-controls="lightbox-tag-listbox"
+                            :aria-activedescendant="selectedIndex >= 0 && results[selectedIndex] ? 'lightbox-tag-result-' + selectedIndex : null"
+                            :aria-expanded="dropdownActive && results.length > 0"
+                        >
+
+                        <!-- Tag search results dropdown (popover) -->
+                        <div x-ref="dropdown" popover
+                             id="lightbox-tag-listbox"
+                             class="bg-stone-800 border border-stone-700 rounded-md shadow-lg max-h-48 overflow-y-auto"
+                             role="listbox">
+                            <template x-for="(tag, rIndex) in results" :key="tag.ID">
+                                <div
+                                    @mousedown.prevent="selectedIndex = rIndex; pushVal($event)"
+                                    @mouseover="selectedIndex = rIndex"
+                                    :id="'lightbox-tag-result-' + rIndex"
+                                    role="option"
+                                    :aria-selected="rIndex === selectedIndex"
+                                    class="px-3 py-2 cursor-pointer text-sm"
+                                    :class="rIndex === selectedIndex ? 'bg-amber-700 text-white' : 'text-stone-300 hover:bg-stone-700'"
+                                >
+                                    <span x-text="tag.Name"></span>
+                                </div>
+                            </template>
+                        </div>
+
+                        <!-- Loading indicator -->
+                        <template x-if="loading">
+                            <div class="absolute right-3 top-1/2 -translate-y-1/2">
+                                <svg class="w-4 h-4 animate-spin text-stone-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+
+                <!-- Add new tag confirmation -->
+                <template x-if="addModeForTag">
+                    <div class="flex gap-2 items-stretch justify-between mb-3">
+                        <button
+                            type="button"
+                            class="flex-1 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 py-2 px-3"
+                            x-text="'Add ' + addModeForTag + '?'"
+                            x-init="setTimeout(() => $el.focus(), 1)"
+                            @keydown.escape.prevent="exitAdd"
+                            @keydown.enter.prevent.stop="addVal"
+                            @click="addVal"
+                        ></button>
+                        <button
+                            type="button"
+                            class="border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600 py-2 px-3"
+                            @click="exitAdd"
+                            @keydown.escape.prevent="exitAdd"
+                        >Cancel</button>
+                    </div>
+                </template>
+
+                <!-- Current tags as pills -->
+                <div class="flex flex-wrap gap-2">
+                    <template x-for="tag in selectedResults" :key="tag.ID">
+                        <span class="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-700 text-white text-sm rounded-full font-mono">
+                            <span x-text="tag.Name"></span>
+                            <button
+                                @click="removeItem(tag)"
+                                type="button"
+                                class="hover:bg-amber-800 rounded-full p-0.5 focus:outline-none focus:ring-1 focus:ring-white"
+                                :aria-label="'Remove tag ' + tag.Name"
+                            >
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                            </button>
+                        </span>
+                    </template>
+                    <span x-show="!selectedResults?.length" x-cloak class="text-stone-500 text-sm italic">No tags yet</span>
+                </div>
+                </div>
+            </template>
+            <!-- Tags loading state -->
+            <template x-if="!$store.lightbox.resourceDetails">
+                <div class="relative">
+                    <label class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Tags</label>
+                    <div class="text-stone-500 text-sm italic">Loading tags...</div>
+                </div>
+            </template>
+
+            <!-- Divider -->
+            <div class="border-t border-stone-700"></div>
+
+            <!-- Tab bar / Expanded header -->
+            <template x-if="!$store.lightbox.isExpanded()">
+              <div class="flex" role="tablist" aria-label="Tag slot tabs">
+                <template x-for="(tab, tIdx) in $store.lightbox.tabLabels" :key="tIdx">
+                    <button
+                        @click="$store.lightbox.switchTab(tIdx)"
+                        role="tab"
+                        :aria-selected="$store.lightbox.activeTab === tIdx"
+                        class="flex-1 flex flex-col items-center py-1.5 rounded-lg text-xs font-mono transition-colors focus:outline-none focus:ring-2 focus:ring-stone-400"
+                        :class="$store.lightbox.activeTab === tIdx
+                            ? 'bg-stone-700 text-white'
+                            : 'text-stone-400 hover:bg-stone-800 hover:text-stone-300'"
+                    >
+                        <span x-text="tab.name" class="font-semibold tracking-wide"></span>
+                        <kbd class="text-[10px] opacity-60" x-text="'(' + tab.key + ')'"></kbd>
+                    </button>
+                </template>
+              </div>
+            </template>
+            <template x-if="$store.lightbox.isExpanded()">
+              <div class="flex items-center gap-2 py-1.5">
+                <button
+                  @click="$store.lightbox.collapseExpanded()"
+                  class="px-2 py-1 bg-stone-700 hover:bg-stone-600 text-stone-200 rounded-md text-xs font-mono transition-colors focus:outline-none focus:ring-2 focus:ring-stone-400"
+                  aria-label="Back to quick slots"
+                >&larr; Back</button>
+                <span class="text-xs text-stone-400" x-text="'Slot ' + $store.lightbox.quickTagKeyLabel($store.lightbox.expandedSlotIndex) + ' tags'"></span>
+                <span class="text-[10px] text-stone-600 ml-auto">ESC / 0 to close</span>
+              </div>
+            </template>
+
+            <!-- Divider -->
+            <div class="border-t border-stone-700"></div>
+
+            <!-- NORMAL GRID (not expanded) -->
+            <template x-if="!$store.lightbox.isExpanded()">
+            <div class="grid grid-cols-3 gap-2" role="tabpanel">
+                <template x-for="(_, vIdx) in $store.lightbox._numpadOrder" :key="vIdx">
+                    <div x-data="{
+                        get idx() { return $store.lightbox.numpadIndex(vIdx) },
+                        get slot() { return $store.lightbox.getActiveTabSlots()[this.idx] },
+                        get tags() {
+                            const s = this.slot;
+                            if (!s) return [];
+                            return Array.isArray(s) ? s : [s];
+                        },
+                        get matchState() { return $store.lightbox.slotMatchState(this.idx) },
+                        get isEditing() { return $store.lightbox.editingSlotIndex === this.idx && $store.lightbox.isQuickTab() },
+                        tagNames() { return this.tags.map(t => t.name ?? t.Name).join(', ') },
+                    }">
+                        <!-- EDITING MODE: pills + autocomplete -->
+                        <template x-if="isEditing">
+                            <div class="w-full min-h-[4.5rem] rounded-lg border-2 border-stone-500 bg-stone-800 p-2 flex flex-col gap-1.5"
+                                 @click.outside="$store.lightbox.editingSlotIndex = null"
+                                 @keydown.escape.stop="$store.lightbox.editingSlotIndex = null"
+                                 @focusout="$nextTick(() => { if (!$el.contains(document.activeElement)) $store.lightbox.editingSlotIndex = null })">
+                                <kbd class="text-xs font-mono text-stone-500 self-center" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
+                                <!-- Tag pills -->
+                                <div class="flex flex-wrap gap-1">
+                                    <template x-for="t in tags" :key="t.id">
+                                        <span class="inline-flex items-center gap-0.5 bg-stone-700 text-stone-200 rounded px-1.5 py-0.5 text-xs">
+                                            <span x-text="t.name" class="truncate max-w-[6rem]"></span>
+                                            <button
+                                                @click.stop="$store.lightbox.removeTagFromSlot(idx, t.id)"
+                                                class="hover:text-red-400 focus:outline-none focus:text-red-400"
+                                                :aria-label="'Remove ' + t.name + ' from slot'"
+                                            >&times;</button>
+                                        </span>
+                                    </template>
+                                </div>
+                                <!-- Autocomplete for adding more tags (seed with existing slot tags to exclude them) -->
+                                <div x-data="autocompleter({
+                                         selectedResults: tags.map(t => ({ID: t.id, Name: t.name})),
+                                         url: '/v1/tags',
+                                         standalone: true,
+                                         sortBy: 'most_used_resource',
+                                         max: 0,
+                                         onSelect: (tag) => { $store.lightbox.addTagToSlot(idx, tag); }
+                                     })">
+                                    <div class="relative">
+                                        <input
+                                            x-ref="autocompleter"
+                                            type="text"
+                                            x-bind="inputEvents"
+                                            x-init="$nextTick(() => $el.focus())"
+                                            class="w-full px-1.5 py-1 bg-stone-900/50 border border-stone-600 rounded text-xs text-white placeholder-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                                            placeholder="Add tag..."
+                                            :aria-label="'Add tag to slot ' + $store.lightbox.quickTagKeyLabel(idx)"
+                                            autocomplete="off"
+                                            role="combobox"
+                                            aria-autocomplete="list"
+                                            :aria-expanded="dropdownActive && results.length > 0"
+                                        >
+                                        <div x-ref="dropdown" popover
+                                             class="bg-stone-800 border border-stone-700 rounded-md shadow-lg max-h-48 overflow-y-auto"
+                                             role="listbox">
+                                            <template x-for="(tag, rIndex) in results" :key="tag.ID">
+                                                <div
+                                                    @mousedown.prevent="selectedIndex = rIndex; pushVal($event)"
+                                                    @mouseover="selectedIndex = rIndex"
+                                                    role="option"
+                                                    :aria-selected="rIndex === selectedIndex"
+                                                    class="px-3 py-2 cursor-pointer text-sm"
+                                                    :class="rIndex === selectedIndex ? 'bg-amber-700 text-white' : 'text-stone-300 hover:bg-stone-700'"
+                                                >
+                                                    <span x-text="tag.Name"></span>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+
+                        <!-- DISPLAY MODE: filled slot -->
+                        <template x-if="!isEditing && tags.length > 0">
+                            <div class="group relative w-full aspect-[4/3] rounded-lg transition-colors"
+                                :class="{
+                                    'bg-green-900/30 border-2 border-green-600/60 text-green-300 hover:bg-red-900/30 hover:border-red-600/60 hover:text-red-300': matchState === 'all',
+                                    'bg-amber-900/20 border-2 border-amber-600/50 text-amber-300 hover:bg-green-900/30 hover:border-green-600/60 hover:text-green-300': matchState === 'some',
+                                    'bg-stone-800 border border-stone-700 text-stone-300 hover:bg-amber-900/20 hover:border-amber-700 hover:text-amber-300': matchState === 'none',
+                                }"
+                            >
+                                <button
+                                    @click="tags.length <= 1 && $store.lightbox.toggleTabTag(idx)"
+                                    @mousedown="tags.length > 1 && $store.lightbox.handleSlotMousedown(idx)"
+                                    @mouseup="tags.length > 1 && $store.lightbox.handleSlotMouseup(idx)"
+                                    @mouseleave="tags.length > 1 && $store.lightbox.handleSlotMouseleave(idx)"
+                                    class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-none focus:ring-2 focus:ring-stone-400 rounded-lg px-1.5"
+                                    :aria-label="(matchState === 'all' ? 'Remove ' : 'Add ') + tagNames() + (matchState === 'some' ? ' (partially active: ' + tags.filter(t => $store.lightbox.isTagOnResource(t.id ?? t.ID)).length + ' of ' + tags.length + ')' : '')"
+                                    :aria-description="tags.length > 1 ? 'Hold to expand individual tags' : null"
+                                >
+                                    <kbd class="text-sm font-mono text-stone-500" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
+                                    <span class="text-xs font-semibold line-clamp-2 max-w-full text-center leading-tight" x-text="tagNames()"></span>
+                                </button>
+                                <!-- Add button (QUICK tabs only) -->
+                                <template x-if="$store.lightbox.isQuickTab()">
+                                    <button
+                                        @click.stop="$store.lightbox.editingSlotIndex = idx"
+                                        class="absolute top-1 left-1 p-0.5 hover:bg-white/10 rounded-full opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity focus:outline-none focus:ring-1 focus:ring-white"
+                                        :aria-label="'Add tags to slot ' + $store.lightbox.quickTagKeyLabel(idx)"
+                                    >
+                                        <svg class="w-3 h-3 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                                        </svg>
+                                    </button>
+                                </template>
+                                <!-- Clear button (QUICK tabs only) -->
+                                <template x-if="$store.lightbox.isQuickTab()">
+                                    <button
+                                        @click.stop="$store.lightbox.clearQuickTagSlot(idx)"
+                                        class="absolute top-1 right-1 p-0.5 hover:bg-white/10 rounded-full opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity focus:outline-none focus:ring-1 focus:ring-white"
+                                        :aria-label="'Clear slot ' + $store.lightbox.quickTagKeyLabel(idx)"
+                                    >
+                                        <svg class="w-3 h-3 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                        </svg>
+                                    </button>
+                                </template>
+                                <!-- Hold progress bar (multi-tag slots only) -->
+                                <template x-if="tags.length > 1">
+                                  <div
+                                    class="quick-tag-hold-bar"
+                                    :class="{ 'active': $store.lightbox._longPressSlotIdx === idx }"
+                                    aria-hidden="true"
+                                  ></div>
+                                </template>
+                            </div>
+                        </template>
+
+                        <!-- EMPTY SLOT -->
+                        <template x-if="!isEditing && tags.length === 0">
+                            <div class="w-full aspect-[4/3] rounded-lg border border-dashed border-stone-700 flex flex-col items-center justify-center gap-1"
+                                 :class="{ 'cursor-pointer hover:border-stone-500': $store.lightbox.isQuickTab() }"
+                                 @click="$store.lightbox.isQuickTab() && ($store.lightbox.editingSlotIndex = idx)">
+                                <kbd class="text-sm font-mono text-stone-600" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
+                                <!-- Empty label for non-QUICK tabs -->
+                                <span x-show="!$store.lightbox.isQuickTab()" x-cloak class="text-[10px] text-stone-600 italic">empty</span>
+                                <!-- Assign hint for QUICK tabs -->
+                                <span x-show="$store.lightbox.isQuickTab()" x-cloak class="text-[10px] text-stone-500 italic">click to assign</span>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+            </template>
+
+            <!-- EXPANDED GRID (individual tags from one slot) -->
+            <template x-if="$store.lightbox.isExpanded()">
+              <div class="grid grid-cols-3 gap-2" role="region" aria-label="Expanded slot tags">
+                <template x-for="(_, vIdx) in $store.lightbox._numpadOrder" :key="vIdx">
+                  <div x-data="{
+                    get idx() { return $store.lightbox.numpadIndex(vIdx) },
+                    get tag() { return $store.lightbox.expandedTags()[this.idx] },
+                    get isOn() { return this.tag ? $store.lightbox.isTagOnResource(this.tag.id ?? this.tag.ID) : false },
+                    tagName() { return this.tag ? (this.tag.name ?? this.tag.Name) : '' },
+                  }">
+                    <!-- FILLED: tag exists at this position -->
+                    <template x-if="tag">
+                      <div class="group relative w-full aspect-[4/3] rounded-lg transition-colors"
+                        :class="{
+                          'bg-green-900/30 border-2 border-green-600/60 text-green-300 hover:bg-red-900/30 hover:border-red-600/60 hover:text-red-300': isOn,
+                          'bg-stone-800 border border-stone-700 text-stone-300 hover:bg-amber-900/20 hover:border-amber-700 hover:text-amber-300': !isOn,
+                        }"
+                      >
+                        <button
+                          @click="$store.lightbox.toggleExpandedTag(idx)"
+                          class="w-full h-full flex flex-col items-center justify-center gap-1 focus:outline-none focus:ring-2 focus:ring-stone-400 rounded-lg px-1.5"
+                          :aria-label="(isOn ? 'Remove ' : 'Add ') + tagName()"
+                        >
+                          <kbd class="text-sm font-mono text-stone-500" x-text="$store.lightbox.quickTagKeyLabel(idx)"></kbd>
+                          <span class="text-xs font-semibold line-clamp-2 max-w-full text-center leading-tight" x-text="tagName()"></span>
+                        </button>
+                      </div>
+                    </template>
+                    <!-- EMPTY: no tag at this position -->
+                    <template x-if="!tag">
+                      <div class="w-full aspect-[4/3] rounded-lg border border-dashed border-stone-700/30"></div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Edit Panel (slides in from right) -->
+    <div
+        x-show="$store.lightbox.editPanelOpen"
+        x-transition:enter="transition ease-out duration-300"
+        x-transition:enter-start="opacity-0 translate-x-full"
+        x-transition:enter-end="opacity-100 translate-x-0"
+        x-transition:leave="transition ease-in duration-200"
+        x-transition:leave-start="opacity-100 translate-x-0"
+        x-transition:leave-end="opacity-0 translate-x-full"
+        data-edit-panel
+        class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:right-0 md:bottom-0 bg-stone-900 md:bg-stone-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
+        :class="$store.lightbox.quickTagPanelOpen ? 'md:w-[320px]' : 'md:w-[400px]'"
+        @click.stop
+    >
+        <!-- Panel header -->
+        <div class="sticky top-0 bg-stone-900 md:bg-stone-900/95 border-b border-stone-700 p-4 flex items-center justify-between z-10">
+            <h2 class="text-lg font-semibold">Edit Resource</h2>
+            <button
+                @click="$store.lightbox.closeEditPanel()"
+                class="p-1.5 hover:bg-white/10 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-white/50"
+                aria-label="Close edit panel"
+            >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Panel content -->
+        <div class="p-4">
+            <!-- Loading state -->
+            <template x-if="$store.lightbox.detailsLoading && !$store.lightbox.resourceDetails">
+                <div class="flex items-center justify-center py-12">
+                    <svg class="w-8 h-8 animate-spin text-white/50" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </div>
+            </template>
+
+            <!-- Edit form -->
+            <template x-if="$store.lightbox.resourceDetails">
+                <div class="space-y-5 relative">
+                    <!-- Loading overlay when fetching new resource details -->
+                    <div
+                        x-show="$store.lightbox.detailsLoading"
+                        x-transition:enter="transition ease-out duration-100"
+                        x-transition:enter-start="opacity-0"
+                        x-transition:enter-end="opacity-100"
+                        x-transition:leave="transition ease-in duration-75"
+                        x-transition:leave-start="opacity-100"
+                        x-transition:leave-end="opacity-0"
+                        class="absolute inset-0 bg-stone-900/50 flex items-center justify-center z-10 rounded"
+                    >
+                        <svg class="w-6 h-6 animate-spin text-white/70" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </div>
+
+                    <!-- Name field -->
+                    <div>
+                        <label for="lightbox-edit-name" class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Name</label>
+                        <input
+                            type="text"
+                            id="lightbox-edit-name"
+                            :value="$store.lightbox.resourceDetails?.Name || ''"
+                            @blur="$store.lightbox.updateName($event.target.value)"
+                            @keydown.enter="$event.target.blur()"
+                            @keydown.escape.stop="$event.target.blur()"
+                            class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:border-transparent"
+                            placeholder="Resource name"
+                        >
+                    </div>
+
+                    <!-- Description field -->
+                    <div>
+                        <label for="lightbox-edit-description" class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Description</label>
+                        <textarea
+                            id="lightbox-edit-description"
+                            :value="$store.lightbox.resourceDetails?.Description || ''"
+                            @blur="$store.lightbox.updateDescription($event.target.value)"
+                            @keydown.escape.stop="$event.target.blur()"
+                            rows="4"
+                            class="w-full px-3 py-2 bg-stone-800 border border-stone-700 rounded-md text-white font-sans placeholder-stone-500 focus:outline-none focus:ring-2 focus:ring-stone-400 focus:border-transparent resize-y"
+                            placeholder="Add a description..."
+                        ></textarea>
+                    </div>
+
+                    <!-- Resource Category section -->
+                    <template x-if="$store.lightbox.resourceDetails?.resourceCategory">
+                        <div class="space-y-2">
+                            <label class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Category</label>
+                            <a
+                                :href="'/resourceCategory?id=' + $store.lightbox.resourceDetails.resourceCategory.ID"
+                                class="text-amber-400 hover:text-amber-300 text-sm"
+                                x-text="$store.lightbox.resourceDetails.resourceCategory.Name"
+                            ></a>
+
+                            
+                            <template x-if="$store.lightbox.resourceDetails.resourceCategory.CustomSidebar">
+                                <div
+                                    x-data="{ entity: $store.lightbox.resourceDetails }"
+                                    x-html="$store.lightbox.resourceDetails.resourceCategory.CustomSidebar"
+                                    class="text-sm text-stone-300 font-sans"
+                                ></div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- Link to full details page -->
+                    <div class="pt-4 border-t border-stone-700">
+                        <a
+                            :href="'/resource?id=' + $store.lightbox.getCurrentItem()?.id"
+                            class="inline-flex items-center gap-2 text-amber-400 hover:text-amber-300 text-sm"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                            </svg>
+                            View full resource details
+                        </a>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Page loading indicator -->
+    <div
+        x-show="$store.lightbox.pageLoading"
+        x-transition
+        class="absolute bottom-20 left-1/2 -translate-x-1/2 px-4 py-2 bg-white/10 backdrop-blur rounded text-white text-sm z-20"
+        :class="{
+            'lg:-translate-x-[calc(50%+200px)]': $store.lightbox.editPanelOpen && !$store.lightbox.quickTagPanelOpen,
+            'lg:translate-x-[calc(-50%+200px)]': !$store.lightbox.editPanelOpen && $store.lightbox.quickTagPanelOpen
+        }"
+    >
+        Loading more items...
+    </div>
+
+    <!-- Zoom preset popover (top layer, no clipping) -->
+    <div id="zoom-preset-popover" popover></div>
+</div>
+
+        
+<div x-data
+     x-show="$store.pasteUpload.isOpen"
+     x-cloak
+     x-transition:enter="transition ease-out duration-200"
+     x-transition:enter-start="opacity-0"
+     x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150"
+     x-transition:leave-start="opacity-100"
+     x-transition:leave-end="opacity-0"
+     class="fixed inset-0 z-50 overflow-y-auto"
+     role="dialog"
+     aria-modal="true"
+     aria-labelledby="paste-upload-title"
+     @keydown.escape.window="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.close()">
+    
+    <div class="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
+         tabindex="-1"
+         @click="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.close()"></div>
+
+    
+    <div class="flex min-h-full items-center justify-center p-4">
+        <div class="relative bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col"
+             @click.stop
+             x-trap.noscroll="$store.pasteUpload.isOpen">
+            
+            <div class="flex items-center justify-between px-4 py-3 border-b border-stone-200">
+                <h2 id="paste-upload-title" class="text-lg font-semibold text-stone-900">
+                    Upload to <span x-text="$store.pasteUpload.context?.name || 'Unknown'"></span>
+                </h2>
+                <button @click="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.close()"
+                        :disabled="$store.pasteUpload.state === 'uploading'"
+                        class="text-stone-400 hover:text-stone-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                        aria-label="Close">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+
+            
+            <div class="flex-1 overflow-y-auto p-4 space-y-4">
+                
+                <span class="sr-only" aria-live="polite" aria-atomic="true"
+                      x-text="$store.pasteUpload.state === 'uploading'
+                          ? $store.pasteUpload.uploadProgress
+                          : $store.pasteUpload.items.length + ' items ready to upload'"></span>
+
+                
+                <div x-show="$store.pasteUpload.state === 'success'"
+                     x-cloak
+                     class="p-3 bg-amber-50 border border-amber-200 rounded-md text-sm text-amber-700 flex items-center gap-2"
+                     role="status">
+                    <svg class="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                    </svg>
+                    <span x-text="$store.pasteUpload.uploadProgress"></span>
+                </div>
+
+                
+                <div x-show="$store.pasteUpload.errorMessage"
+                     x-cloak
+                     class="p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700"
+                     role="alert">
+                    <span x-text="$store.pasteUpload.errorMessage"></span>
+                </div>
+
+                
+                <template x-for="(item, index) in $store.pasteUpload.items" :key="index">
+                    <div class="flex items-center gap-3 p-3 border rounded-lg transition-colors duration-200"
+                         :class="{
+                             'border-red-300 bg-red-50': item.error && item.error !== 'done',
+                             'border-amber-300 bg-amber-50': item.error === 'done',
+                             'border-stone-200': !item.error
+                         }">
+                        
+                        <div class="w-16 h-16 flex-shrink-0 bg-stone-100 rounded overflow-hidden flex items-center justify-center">
+                            <template x-if="item.type === 'image'">
+                                <img :src="item.previewUrl" :alt="item.name" class="w-full h-full object-cover">
+                            </template>
+                            <template x-if="item.type === 'file'">
+                                <svg class="w-8 h-8 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+                                </svg>
+                            </template>
+                            <template x-if="item.type === 'text' || item.type === 'html'">
+                                <div class="w-full h-full p-1 text-xs text-stone-500 overflow-hidden leading-tight"
+                                     x-text="(item._snippet || '').substring(0, 80)"></div>
+                            </template>
+                        </div>
+
+                        
+                        <div class="flex-1 min-w-0">
+                            <input type="text"
+                                   x-model="item.name"
+                                   :disabled="$store.pasteUpload.state === 'uploading'"
+                                   :aria-label="'Name for item ' + (index + 1)"
+                                   class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600 disabled:bg-stone-100 disabled:cursor-not-allowed">
+                            
+                            <template x-if="item.error && item.error !== 'done'">
+                                <p class="mt-1 text-xs text-red-700">
+                                    <span x-text="item.error"></span>
+                                    <template x-if="item.errorResourceId">
+                                        <span> &mdash;
+                                            <a :href="'/resource?id=' + item.errorResourceId"
+                                               class="text-amber-700 hover:text-amber-800 underline font-medium"
+                                               target="_blank"
+                                               @click.stop>View existing resource</a>
+                                        </span>
+                                    </template>
+                                </p>
+                            </template>
+                        </div>
+
+                        
+                        <button @click="$store.pasteUpload.removeItem(index)"
+                                :disabled="$store.pasteUpload.state === 'uploading'"
+                                class="flex-shrink-0 p-1 text-stone-400 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                :aria-label="'Remove ' + item.name">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+                </template>
+
+                
+                <div x-show="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.state !== 'success' && $store.pasteUpload.items.length > 0"
+                     class="space-y-3 pt-2 border-t border-stone-200">
+                    <p class="text-sm font-medium text-stone-700">Shared metadata</p>
+
+                    
+                    <div x-data="autocompleter({
+                             selectedResults: [],
+                             url: '/v1/tags',
+                             addUrl: '/v1/tag',
+                             standalone: true,
+                         })"
+                         x-effect="$store.pasteUpload.tags = selectedResults.map(r => r.ID)"
+                         class="relative w-full">
+                        <label class="block text-xs text-stone-500 font-mono mb-1">Tags</label>
+                        <div class="relative">
+                            <template x-if="!addModeForTag">
+                                <input x-ref="autocompleter"
+                                       type="text"
+                                       x-bind="inputEvents"
+                                       class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
+                                       placeholder="Search tags..."
+                                       aria-label="Search tags"
+                                       autocomplete="off">
+                            </template>
+                            <template x-if="addModeForTag">
+                                <div class="flex gap-2 items-stretch">
+                                    <button type="button"
+                                            class="flex-1 px-2 py-1.5 text-sm font-medium text-white bg-amber-700 rounded hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600"
+                                            x-text="'Add ' + addModeForTag + '?'"
+                                            x-init="setTimeout(() => $el.focus(), 1)"
+                                            @keydown.escape.prevent="exitAdd"
+                                            @keydown.enter.prevent="addVal"
+                                            @click="addVal"></button>
+                                    <button type="button"
+                                            class="px-2 py-1.5 text-sm text-stone-600 bg-stone-100 rounded hover:bg-stone-200"
+                                            @click="exitAdd">Cancel</button>
+                                </div>
+                            </template>
+                            <div
+    x-ref="dropdown"
+    popover="manual"
+    class="border bg-white shadow-xl rounded max-h-80 overflow-y-auto p-0 m-0"
+    role="region"
+    aria-label="Tags"
+    style="position: fixed;"
+>
+    <div class="p-3">
+        <div
+            x-ref="list"
+            id="paste-upload-tags-listbox"
+            role="listbox"
+            :aria-label="'Tags'"
+        >
+            <template x-for="(result, index) in results" :key="index">
+                    <div
+                        role="option"
+                        :id="'paste-upload-tags-result-' + index"
+                        :aria-selected="index === selectedIndex"
+                        class="cursor-pointer p-2 flex block w-full rounded text-stone-900"
+                        :class="{'bg-amber-700 !text-white': index === selectedIndex}"
+                        @mousedown="pushVal"
+                        @mouseover="selectedIndex = index;"
+                        tabindex="-1"
+                    >
+                        <span
+                                x-text="getItemDisplayName(result)"
+                                class="overflow-ellipsis overflow-hidden"
+                                :title="getItemDisplayName(result)"
+                        ></span>
+                    </div>
+            </template>
+        </div>
+    </div>
+</div>
+                            <template x-for="(result, index) in selectedResults">
+    <p class="
+            inline-flex rounded items-center py-0.5 pl-2 pr-0.5 text-xs font-mono font-medium bg-amber-100
+            text-amber-800 my-0.5 mr-0.5
+        ">
+        <span class="break-all" x-text="getItemDisplayName(result)"></span>
+        <button
+                @click="selectedResults.splice(index, 1);"
+                type="button"
+                :aria-label="'Remove ' + getItemDisplayName(result)"
+                class="
+                        flex-shrink-0 ml-0.5 h-4 w-4 rounded-md inline-flex items-center justify-center
+                        text-amber-600 hover:bg-amber-200 hover:text-amber-700 focus:outline-none
+                        focus:bg-amber-700 focus:text-white"
+                tabindex="0"
+                @keydown.enter.prevent="let el = $el.closest('[x-data]'); selectedResults.splice(index, 1); $nextTick(() => el.querySelector('input[role=combobox]')?.focus())"
+                @keydown.space.prevent="let el = $el.closest('[x-data]'); selectedResults.splice(index, 1); $nextTick(() => el.querySelector('input[role=combobox]')?.focus())"
+        >
+            <span x-text="'Remove ' + result.Name" class="sr-only"></span>
+            <svg class="h-2 w-2" stroke="currentColor" fill="none" viewBox="0 0 8 8">
+                <path stroke-linecap="round" stroke-width="1.5" d="M1 1l6 6m0-6L1 7" />
+            </svg>
+        </button>
+    </p>
+</template>
+                        </div>
+                    </div>
+
+                    
+                    <div x-data="autocompleter({
+                             selectedResults: [],
+                             url: '/v1/resourceCategories',
+                             max: 1,
+                             standalone: true,
+                         })"
+                         x-effect="$store.pasteUpload.categoryId = selectedResults[0]?.ID || null"
+                         class="relative w-full">
+                        <label class="block text-xs text-stone-500 font-mono mb-1">Category</label>
+                        <div class="relative">
+                            <input x-ref="autocompleter"
+                                   type="text"
+                                   x-bind="inputEvents"
+                                   class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
+                                   placeholder="Search categories..."
+                                   aria-label="Search categories"
+                                   autocomplete="off">
+                            <div
+    x-ref="dropdown"
+    popover="manual"
+    class="border bg-white shadow-xl rounded max-h-80 overflow-y-auto p-0 m-0"
+    role="region"
+    aria-label="Category"
+    style="position: fixed;"
+>
+    <div class="p-3">
+        <div
+            x-ref="list"
+            id="paste-upload-category-listbox"
+            role="listbox"
+            :aria-label="'Category'"
+        >
+            <template x-for="(result, index) in results" :key="index">
+                    <div
+                        role="option"
+                        :id="'paste-upload-category-result-' + index"
+                        :aria-selected="index === selectedIndex"
+                        class="cursor-pointer p-2 flex block w-full rounded text-stone-900"
+                        :class="{'bg-amber-700 !text-white': index === selectedIndex}"
+                        @mousedown="pushVal"
+                        @mouseover="selectedIndex = index;"
+                        tabindex="-1"
+                    >
+                        <span
+                                x-text="getItemDisplayName(result)"
+                                class="overflow-ellipsis overflow-hidden"
+                                :title="getItemDisplayName(result)"
+                        ></span>
+                    </div>
+            </template>
+        </div>
+    </div>
+</div>
+                            <template x-for="(result, index) in selectedResults">
+    <p class="
+            inline-flex rounded items-center py-0.5 pl-2 pr-0.5 text-xs font-mono font-medium bg-amber-100
+            text-amber-800 my-0.5 mr-0.5
+        ">
+        <span class="break-all" x-text="getItemDisplayName(result)"></span>
+        <button
+                @click="selectedResults.splice(index, 1);"
+                type="button"
+                :aria-label="'Remove ' + getItemDisplayName(result)"
+                class="
+                        flex-shrink-0 ml-0.5 h-4 w-4 rounded-md inline-flex items-center justify-center
+                        text-amber-600 hover:bg-amber-200 hover:text-amber-700 focus:outline-none
+                        focus:bg-amber-700 focus:text-white"
+                tabindex="0"
+                @keydown.enter.prevent="let el = $el.closest('[x-data]'); selectedResults.splice(index, 1); $nextTick(() => el.querySelector('input[role=combobox]')?.focus())"
+                @keydown.space.prevent="let el = $el.closest('[x-data]'); selectedResults.splice(index, 1); $nextTick(() => el.querySelector('input[role=combobox]')?.focus())"
+        >
+            <span x-text="'Remove ' + result.Name" class="sr-only"></span>
+            <svg class="h-2 w-2" stroke="currentColor" fill="none" viewBox="0 0 8 8">
+                <path stroke-linecap="round" stroke-width="1.5" d="M1 1l6 6m0-6L1 7" />
+            </svg>
+        </button>
+    </p>
+</template>
+                        </div>
+                    </div>
+
+                    
+                    <div x-data="autocompleter({
+                             selectedResults: [],
+                             url: '/v1/seriesList',
+                             addUrl: '/v1/series/create',
+                             max: 1,
+                             standalone: true,
+                         })"
+                         x-effect="$store.pasteUpload.seriesId = selectedResults[0]?.ID || null"
+                         class="relative w-full">
+                        <label class="block text-xs text-stone-500 font-mono mb-1">Series</label>
+                        <div class="relative">
+                            <template x-if="!addModeForTag">
+                                <input x-ref="autocompleter"
+                                       type="text"
+                                       x-bind="inputEvents"
+                                       class="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-amber-600 focus:border-amber-600"
+                                       placeholder="Search or create series..."
+                                       aria-label="Search or create series"
+                                       autocomplete="off">
+                            </template>
+                            <template x-if="addModeForTag">
+                                <div class="flex gap-2 items-stretch">
+                                    <button type="button"
+                                            class="flex-1 px-2 py-1.5 text-sm font-medium text-white bg-amber-700 rounded hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600"
+                                            x-text="'Add ' + addModeForTag + '?'"
+                                            x-init="setTimeout(() => $el.focus(), 1)"
+                                            @keydown.escape.prevent="exitAdd"
+                                            @keydown.enter.prevent="addVal"
+                                            @click="addVal"></button>
+                                    <button type="button"
+                                            class="px-2 py-1.5 text-sm text-stone-600 bg-stone-100 rounded hover:bg-stone-200"
+                                            @click="exitAdd">Cancel</button>
+                                </div>
+                            </template>
+                            <div
+    x-ref="dropdown"
+    popover="manual"
+    class="border bg-white shadow-xl rounded max-h-80 overflow-y-auto p-0 m-0"
+    role="region"
+    aria-label="Series"
+    style="position: fixed;"
+>
+    <div class="p-3">
+        <div
+            x-ref="list"
+            id="paste-upload-series-listbox"
+            role="listbox"
+            :aria-label="'Series'"
+        >
+            <template x-for="(result, index) in results" :key="index">
+                    <div
+                        role="option"
+                        :id="'paste-upload-series-result-' + index"
+                        :aria-selected="index === selectedIndex"
+                        class="cursor-pointer p-2 flex block w-full rounded text-stone-900"
+                        :class="{'bg-amber-700 !text-white': index === selectedIndex}"
+                        @mousedown="pushVal"
+                        @mouseover="selectedIndex = index;"
+                        tabindex="-1"
+                    >
+                        <span
+                                x-text="getItemDisplayName(result)"
+                                class="overflow-ellipsis overflow-hidden"
+                                :title="getItemDisplayName(result)"
+                        ></span>
+                    </div>
+            </template>
+        </div>
+    </div>
+</div>
+                            <template x-for="(result, index) in selectedResults">
+    <p class="
+            inline-flex rounded items-center py-0.5 pl-2 pr-0.5 text-xs font-mono font-medium bg-amber-100
+            text-amber-800 my-0.5 mr-0.5
+        ">
+        <span class="break-all" x-text="getItemDisplayName(result)"></span>
+        <button
+                @click="selectedResults.splice(index, 1);"
+                type="button"
+                :aria-label="'Remove ' + getItemDisplayName(result)"
+                class="
+                        flex-shrink-0 ml-0.5 h-4 w-4 rounded-md inline-flex items-center justify-center
+                        text-amber-600 hover:bg-amber-200 hover:text-amber-700 focus:outline-none
+                        focus:bg-amber-700 focus:text-white"
+                tabindex="0"
+                @keydown.enter.prevent="let el = $el.closest('[x-data]'); selectedResults.splice(index, 1); $nextTick(() => el.querySelector('input[role=combobox]')?.focus())"
+                @keydown.space.prevent="let el = $el.closest('[x-data]'); selectedResults.splice(index, 1); $nextTick(() => el.querySelector('input[role=combobox]')?.focus())"
+        >
+            <span x-text="'Remove ' + result.Name" class="sr-only"></span>
+            <svg class="h-2 w-2" stroke="currentColor" fill="none" viewBox="0 0 8 8">
+                <path stroke-linecap="round" stroke-width="1.5" d="M1 1l6 6m0-6L1 7" />
+            </svg>
+        </button>
+    </p>
+</template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            
+            <div class="flex items-center justify-between px-4 py-3 border-t border-stone-200 bg-stone-50">
+                
+                <span class="text-sm text-stone-600">
+                    <template x-if="$store.pasteUpload.state === 'uploading'">
+                        <span x-text="$store.pasteUpload.uploadProgress"></span>
+                    </template>
+                    <template x-if="$store.pasteUpload.state === 'success'">
+                        <span class="text-amber-700" x-text="$store.pasteUpload.uploadProgress"></span>
+                    </template>
+                    <template x-if="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.state !== 'success'">
+                        <span x-text="$store.pasteUpload.items.length + ' item' + ($store.pasteUpload.items.length !== 1 ? 's' : '')"></span>
+                    </template>
+                </span>
+
+                
+                <div class="flex gap-2">
+                    <button @click="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.close()"
+                            :disabled="$store.pasteUpload.state === 'uploading'"
+                            type="button"
+                            class="px-4 py-2 text-sm font-medium text-stone-700 bg-white border border-stone-300 rounded-md hover:bg-stone-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                        Cancel
+                    </button>
+                    <button @click="$store.pasteUpload.upload()"
+                            :disabled="$store.pasteUpload.state === 'uploading' || $store.pasteUpload.items.length === 0"
+                            type="button"
+                            class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-amber-700 rounded-md hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed">
+                        
+                        <svg x-show="$store.pasteUpload.state === 'uploading'"
+                             x-cloak
+                             class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span x-text="$store.pasteUpload.state === 'error' ? 'Retry' : 'Upload'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<div x-data
+     x-show="$store.pasteUpload.infoMessage"
+     x-cloak
+     x-transition:enter="transition ease-out duration-300"
+     x-transition:enter-start="opacity-0 translate-y-2"
+     x-transition:enter-end="opacity-100 translate-y-0"
+     x-transition:leave="transition ease-in duration-200"
+     x-transition:leave-start="opacity-100 translate-y-0"
+     x-transition:leave-end="opacity-0 translate-y-2"
+     class="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-stone-800 text-white text-sm rounded-lg shadow-lg"
+     role="status"
+     aria-live="polite">
+    <span x-text="$store.pasteUpload.infoMessage"></span>
+</div>
+
+        <div
+    x-data="downloadCockpit()"
+    x-cloak
+    @keydown.escape.window="close()"
+    class="download-cockpit"
+>
+    <!-- Floating trigger button (always visible in corner) -->
+    <button
+        @click="toggle()"
+        class="fixed bottom-4 right-4 z-40 flex items-center gap-2 px-3 py-2 bg-amber-700 text-white rounded-full shadow-lg hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:ring-offset-2 transition-all"
+        :class="{ 'animate-pulse': hasActiveJobs }"
+        title="Jobs (Ctrl+Shift+D / Cmd+Shift+D)"
+        aria-label="Open jobs panel"
+    >
+        <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+        </svg>
+        <span x-show="activeCount > 0" x-text="activeCount" class="px-1.5 py-0.5 text-xs bg-white text-amber-700 rounded-full font-bold"></span>
+    </button>
+
+    <!-- Panel overlay and content -->
+    <template x-if="isOpen">
+        <div class="fixed inset-0 z-50 overflow-hidden">
+            <!-- Backdrop -->
+            <div class="fixed inset-0 bg-black/20" @click="close()"></div>
+
+            <!-- Slide-in panel from right -->
+            <div class="fixed right-0 top-0 bottom-0 w-full max-w-md bg-white shadow-xl flex flex-col"
+                 x-transition:enter="transform transition ease-out duration-300"
+                 x-transition:enter-start="translate-x-full"
+                 x-transition:enter-end="translate-x-0"
+                 x-transition:leave="transform transition ease-in duration-200"
+                 x-transition:leave-start="translate-x-0"
+                 x-transition:leave-end="translate-x-full">
+
+                <!-- Header -->
+                <div class="flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-stone-50">
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-lg font-semibold font-mono text-stone-900">Jobs</h2>
+                        <span class="w-2 h-2 rounded-full"
+                              :class="{
+                                  'bg-green-500': connectionStatus === 'connected',
+                                  'bg-yellow-500 animate-pulse': connectionStatus === 'connecting',
+                                  'bg-red-500': connectionStatus === 'disconnected'
+                              }"
+                              :title="connectionStatus"></span>
+                    </div>
+                    <button @click="close()" class="p-1 text-stone-400 hover:text-stone-600 rounded focus:outline-none focus:ring-2 focus:ring-amber-600" aria-label="Close jobs panel">
+                        <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Job list -->
+                <div class="flex-1 overflow-y-auto">
+                    <template x-if="displayJobs.length === 0">
+                        <div class="flex flex-col items-center justify-center h-full text-stone-500 p-8">
+                            <svg aria-hidden="true" class="w-16 h-16 mb-4 text-stone-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                            </svg>
+                            <p class="text-center">No jobs in queue</p>
+                            <p class="text-sm text-stone-400 mt-1 text-center">Submit remote URLs with "Download in background" to see them here</p>
+                        </div>
+                    </template>
+
+                    <ul class="divide-y divide-stone-100">
+                        <template x-for="job in displayJobs" :key="job.id">
+                            <li class="px-4 py-3 hover:bg-stone-50">
+                                <div class="flex items-start gap-3">
+                                    <!-- Status icon -->
+                                    <span class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-lg"
+                                          :class="{
+                                              'bg-stone-100': job.status === 'pending',
+                                              'bg-amber-100': job.status === 'downloading' || job.status === 'processing' || job.status === 'running',
+                                              'bg-green-100': job.status === 'completed',
+                                              'bg-red-100': job.status === 'failed' || job.status === 'cancelled',
+                                              'bg-yellow-100': job.status === 'paused'
+                                          }"
+                                          x-text="statusIcons[job.status]"
+                                          :aria-label="statusLabels[job.status]"></span>
+
+                                    <!-- Job details -->
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <p class="text-sm font-medium text-stone-900 truncate"
+                                               x-text="getJobTitle(job)"
+                                               :title="job._isAction ? job.label : job.url"></p>
+                                            <span class="flex-shrink-0 text-xs px-2 py-0.5 rounded-full"
+                                                  :class="{
+                                                      'bg-stone-100 text-stone-600': job.status === 'pending',
+                                                      'bg-amber-100 text-amber-700': job.status === 'downloading' || job.status === 'processing' || job.status === 'running',
+                                                      'bg-green-100 text-green-700': job.status === 'completed',
+                                                      'bg-red-100 text-red-700': job.status === 'failed' || job.status === 'cancelled',
+                                                      'bg-yellow-100 text-yellow-700': job.status === 'paused'
+                                                  }"
+                                                  x-text="statusLabels[job.status]"></span>
+                                        </div>
+
+                                        <!-- URL preview / action subtitle -->
+                                        <p class="text-xs text-stone-400 truncate mt-0.5" x-text="getJobSubtitle(job)"></p>
+
+                                        <!-- Progress bar (for downloading) -->
+                                        <template x-if="job.status === 'downloading'">
+                                            <div class="mt-2">
+                                                <div class="flex justify-between text-xs text-stone-500 mb-1">
+                                                    <span x-text="formatProgress(job)"></span>
+                                                    <span x-text="formatSpeed(job)" class="text-amber-700 font-medium"></span>
+                                                </div>
+                                                <div class="w-full bg-stone-200 rounded-full h-2">
+                                                    <div class="bg-amber-700 h-2 rounded-full transition-all duration-300"
+                                                         :class="{ 'animate-pulse': job.totalSize <= 0 }"
+                                                         :style="'width: ' + (job.totalSize > 0 ? getProgressPercent(job) : 100) + '%'"></div>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- Processing indicator with progress bar -->
+                                        <template x-if="job.status === 'processing'">
+                                            <div class="mt-2">
+                                                <div class="flex justify-between text-xs text-stone-500 mb-1">
+                                                    <span>Creating resource...</span>
+                                                </div>
+                                                <div class="w-full bg-stone-200 rounded-full h-2">
+                                                    <div class="bg-amber-700 h-2 rounded-full w-full animate-pulse"></div>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- Plugin action progress -->
+                                        <template x-if="job._isAction && job.status === 'running' && job.progress > 0">
+                                            <div class="mt-2">
+                                                <div class="flex justify-between text-xs text-stone-500 mb-1">
+                                                    <span x-text="job.progress + '%'"></span>
+                                                </div>
+                                                <div class="w-full bg-stone-200 rounded-full h-2">
+                                                    <div class="bg-purple-600 h-2 rounded-full transition-all duration-300"
+                                                         :style="'width: ' + job.progress + '%'"></div>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <!-- Error message -->
+                                        <template x-if="job.error">
+                                            <p class="mt-1 text-xs text-red-700 truncate" x-text="job.error" :title="job.error"></p>
+                                        </template>
+
+                                        <!-- Plugin job message -->
+                                        <template x-if="job._isAction && job.message">
+                                            <p class="mt-1 text-xs truncate"
+                                               :class="job.status === 'failed' ? 'text-red-700' : 'text-stone-500'"
+                                               x-text="job.message"></p>
+                                        </template>
+
+                                        <!-- Resource link on completion -->
+                                        <template x-if="job.status === 'completed' && job.resourceId">
+                                            <a :href="'/resource?id=' + job.resourceId"
+                                               class="mt-1 inline-block text-xs text-amber-700 hover:text-amber-900 hover:underline">
+                                                View resource &rarr;
+                                            </a>
+                                        </template>
+
+                                        <!-- Plugin action result link -->
+                                        <template x-if="job._isAction && job.status === 'completed' && job.result?.redirect">
+                                            <a :href="job.result.redirect"
+                                               class="mt-1 inline-block text-xs text-purple-600 hover:text-purple-800 hover:underline">
+                                                View result &rarr;
+                                            </a>
+                                        </template>
+
+                                        <!-- Action buttons (download jobs only) -->
+                                        <template x-if="!job._isAction">
+                                        <div class="mt-2 flex gap-3">
+                                            <!-- Pause button (for pending/downloading) -->
+                                            <template x-if="canPause(job)">
+                                                <button @click="pauseJob(job.id)"
+                                                        class="text-xs text-yellow-600 hover:text-yellow-800 focus:outline-none focus:underline">
+                                                    Pause
+                                                </button>
+                                            </template>
+
+                                            <!-- Resume button (for paused) -->
+                                            <template x-if="canResume(job)">
+                                                <button @click="resumeJob(job.id)"
+                                                        class="text-xs text-amber-700 hover:text-amber-800 focus:outline-none focus:underline">
+                                                    Resume
+                                                </button>
+                                            </template>
+
+                                            <!-- Retry button (for failed/cancelled) -->
+                                            <template x-if="canRetry(job)">
+                                                <button @click="retryJob(job.id)"
+                                                        class="text-xs text-amber-700 hover:text-amber-800 focus:outline-none focus:underline">
+                                                    Retry
+                                                </button>
+                                            </template>
+
+                                            <!-- Cancel button (for active jobs, not paused) -->
+                                            <template x-if="isActive(job)">
+                                                <button @click="cancelJob(job.id)"
+                                                        class="text-xs text-red-700 hover:text-red-800 focus:outline-none focus:underline">
+                                                    Cancel
+                                                </button>
+                                            </template>
+                                        </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
+
+                <!-- Footer with keyboard hint -->
+                <div class="px-4 py-2 bg-stone-50 border-t border-stone-200 text-xs text-stone-500 text-center">
+                    Press <kbd class="px-1.5 py-0.5 bg-white rounded border border-stone-300 font-mono">Esc</kbd> to close
+                    or <kbd class="px-1.5 py-0.5 bg-white rounded border border-stone-300 font-mono">
+                        <span x-text="navigator.platform.indexOf('Mac') > -1 ? '\u2318' : 'Ctrl'"></span>+Shift+D
+                    </kbd> to toggle
+                </div>
+            </div>
+        </div>
+    </template>
+</div>
+
+        <div x-data="pluginActionModal()" x-cloak>
+    <template x-if="isOpen">
+        <div class="plugin-action-overlay" @click.self="close()" @keydown.escape.window="isOpen && close()">
+            <div class="plugin-action-modal" role="dialog" aria-modal="true" aria-labelledby="plugin-action-modal-title" x-trap.noscroll="isOpen">
+                <header class="plugin-action-modal-header">
+                    <h3 x-text="action?.label" id="plugin-action-modal-title" class="plugin-action-modal-title"></h3>
+                    <button @click="close()" class="plugin-action-modal-close" aria-label="Close">&times;</button>
+                </header>
+
+                <template x-if="action?.description">
+                    <p class="plugin-action-modal-desc" x-text="action.description"></p>
+                </template>
+
+                <template x-if="action?.confirm && !result">
+                    <p class="plugin-action-modal-confirm" x-text="action.confirm"></p>
+                </template>
+
+                <template x-if="result">
+                    <div class="plugin-action-modal-result" role="status">
+                        <p x-text="result.message || 'Action completed successfully'"></p>
+                    </div>
+                </template>
+
+                <template x-if="!result">
+                    <form @submit.prevent="submit()">
+                        <template x-if="errors._general">
+                            <div class="plugin-action-modal-error" role="alert" x-text="errors._general"></div>
+                        </template>
+
+                        <template x-for="param in (action?.params || [])" :key="param.name">
+                            <div class="plugin-action-modal-field">
+                                <label :for="'plugin-param-' + param.name" class="plugin-action-modal-label">
+                                    <span x-text="param.label"></span>
+                                    <span x-show="param.required" class="plugin-action-modal-required" aria-hidden="true">*</span>
+                                </label>
+
+                                <template x-if="param.type === 'text' || param.type === 'hidden'">
+                                    <input :type="param.type" :id="'plugin-param-' + param.name"
+                                           x-model="formValues[param.name]"
+                                           :required="param.required"
+                                           class="plugin-action-modal-input"
+                                           :aria-invalid="errors[param.name] ? 'true' : null"
+                                           :aria-describedby="errors[param.name] ? 'plugin-param-error-' + param.name : null">
+                                </template>
+
+                                <template x-if="param.type === 'textarea'">
+                                    <textarea :id="'plugin-param-' + param.name"
+                                              x-model="formValues[param.name]"
+                                              :required="param.required"
+                                              rows="3"
+                                              class="plugin-action-modal-textarea"
+                                              :aria-invalid="errors[param.name] ? 'true' : null"
+                                              :aria-describedby="errors[param.name] ? 'plugin-param-error-' + param.name : null"></textarea>
+                                </template>
+
+                                <template x-if="param.type === 'number'">
+                                    <input type="number" :id="'plugin-param-' + param.name"
+                                           x-model.number="formValues[param.name]"
+                                           :required="param.required"
+                                           :min="param.min" :max="param.max" :step="param.step"
+                                           class="plugin-action-modal-input"
+                                           :aria-invalid="errors[param.name] ? 'true' : null"
+                                           :aria-describedby="errors[param.name] ? 'plugin-param-error-' + param.name : null">
+                                </template>
+
+                                <template x-if="param.type === 'select'">
+                                    <select :id="'plugin-param-' + param.name"
+                                            x-model="formValues[param.name]"
+                                            :required="param.required"
+                                            class="plugin-action-modal-select"
+                                            :aria-invalid="errors[param.name] ? 'true' : null"
+                                            :aria-describedby="errors[param.name] ? 'plugin-param-error-' + param.name : null">
+                                        <template x-if="!param.default">
+                                            <option value="" disabled selected>-- Select --</option>
+                                        </template>
+                                        <template x-for="opt in (param.options || [])" :key="opt">
+                                            <option :value="opt" x-text="opt"></option>
+                                        </template>
+                                    </select>
+                                </template>
+
+                                <template x-if="param.type === 'boolean'">
+                                    <div class="plugin-action-modal-checkbox-wrap">
+                                        <input type="checkbox" :id="'plugin-param-' + param.name"
+                                               x-model="formValues[param.name]"
+                                               class="plugin-action-modal-checkbox">
+                                    </div>
+                                </template>
+
+                                <template x-if="errors[param.name]">
+                                    <span class="plugin-action-modal-field-error" :id="'plugin-param-error-' + param.name" role="alert" x-text="errors[param.name]"></span>
+                                </template>
+                            </div>
+                        </template>
+
+                        <div class="plugin-action-modal-actions">
+                            <button type="button" @click="close()" class="btn btn-secondary">Cancel</button>
+                            <button type="submit" :disabled="submitting" class="btn btn-primary">
+                                <span x-show="!submitting">Run</span>
+                                <span x-show="submitting">Running...</span>
+                            </button>
+                        </div>
+                    </form>
+                </template>
+            </div>
+        </div>
+    </template>
+</div>
+
+        
+    </div>
+</body>
+</html>

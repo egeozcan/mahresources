@@ -1,0 +1,36 @@
+FINDING BH9-A1: Alt-fs directory does not exist on disk
+$ ls -la /some/folder => "No such file or directory"
+
+FINDING BH9-A2: Regular multipart upload ignores PathName / silently writes to default fs
+POST /v1/resource with PathName=some_key + resource=@/tmp/bh9-test.png
+=> HTTP 200, StorageLocation: null (went to default fs, PathName silently ignored)
+Code: AddResource() uses only ctx.fs, takes ResourceCreator which has no PathName field.
+
+FINDING BH9-A3: Local resource API returns filesystem path error when PathName=some_key
+POST /v1/resource/local PathName=some_key LocalPath=/tmp/bh9-test.png
+=> HTTP 400, {"error":"open /some/folder/tmp/bh9-test.png: no such file or directory"}
+This is the expected behavior: GetFsForStorageLocation finds the key, builds the path /some/folder,
+then tries to open /some/folder/tmp/bh9-test.png which doesn't exist.
+
+FINDING BH9-A4: UI has NO filesystem selector in resource create form
+/templates/createResource.tpl has no storage/filesystem/PathName field.
+Alt-fs keys only appear in the admin overview panel (read-only display).
+
+FINDING BH9-A5: ResourcePayload archive manifest has no StorageLocation field
+/archive/manifest.go ResourcePayload struct: no storage_location field.
+Export/import round-trip does NOT preserve the alt-fs assignment.
+
+FINDING BH9-B1: gallery block - confirmed BH-020 (dangling resourceIds after resource delete)
+Block 21: content remains {"resourceIds": [112]} after resource 112 deleted.
+
+FINDING BH9-B2: references block - dangling groupIds after group delete
+Block 22: content remains {"groupIds": [1013]} after group 1013 deleted.
+
+FINDING BH9-B3: calendar block - dangling resourceId in source after resource delete
+Block 23: content remains {"calendars":[{"source":{"type":"resource","resourceId":112}}]} 
+BUT the calendar events endpoint returns a graceful error: {"errors":[{"calendarId":"cal-1","error":"failed to fetch: failed to get resource: record not found"}]}
+The content is still dangling; the error is surfaced at fetch time, not cleaned.
+
+FINDING BH9-B4: table block - dangling queryId after query delete
+Block 24: content remains {"queryId": 239} after query 239 deleted.
+The table query endpoint returns HTTP 200 {"error":"record not found"} - non-standard error shape.

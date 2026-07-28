@@ -1,0 +1,38 @@
+[
+  {
+    "ID": 30,
+    "CreatedAt": "2026-04-22T00:36:20.224007+02:00",
+    "UpdatedAt": "2026-04-22T00:36:20.224007+02:00",
+    "guid": "019db22f-f380-741d-8a2e-efc023fa6b15",
+    "Name": "bh7-nul\u0000byte",
+    "Description": "",
+    "Meta": null,
+    "Resources": null,
+    "Notes": null,
+    "Groups": null
+  },
+  {
+    "ID": 29,
+    "CreatedAt": "2026-04-22T00:36:20.215541+02:00",
+    "UpdatedAt": "2026-04-22T00:36:20.215541+02:00",
+    "guid": "019db22f-f377-7143-a5de-3a0603c4add4",
+    "Name": "bh7-with\nnewline\nin\nname",
+    "Description": "",
+    "Meta": null,
+    "Resources": null,
+    "Notes": null,
+    "Groups": null
+  },
+  {
+    "ID": 28,
+    "CreatedAt": "2026-04-22T00:36:20.204901+02:00",
+    "UpdatedAt": "2026-04-22T00:36:20.204901+02:00",
+    "guid": "019db22f-f36c-7cb8-80f0-8692635df2c0",
+    "Name": "bh7-\u200d\u202e",
+    "Description": "",
+    "Meta": null,
+    "Resources": null,
+    "Notes": null,
+    "Groups": null
+  }
+]
