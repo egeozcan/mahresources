@@ -98,9 +98,9 @@ func TestMahresourcesContext_createThumbFromVideo(t *testing.T) {
 	// Create a mock resource with the file location for temp file fallback
 	mockResource := &models.Resource{
 		ID:       1,
-		Location: "../test_data/pexels-thirdman-5862328.mp4",
+		Location: "../e2e/test-assets/sample-video.mp4",
 	}
-	if err := ctx.createThumbFromVideo(context.TODO(), getMeTheFileOrPanic("../test_data/pexels-thirdman-5862328.mp4"), bytes.NewBuffer(make([]byte, 0)), mockResource); err != nil {
+	if err := ctx.createThumbFromVideo(context.TODO(), getMeTheFileOrPanic("../e2e/test-assets/sample-video.mp4"), bytes.NewBuffer(make([]byte, 0)), mockResource); err != nil {
 		t.Errorf("createThumbFromVideo() error = %v", err)
 	}
 }
