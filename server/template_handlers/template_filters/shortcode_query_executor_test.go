@@ -12,7 +12,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models"
-	"mahresources/models/util"
+	"mahresources/models/seed"
 	"mahresources/shortcodes"
 )
 
@@ -32,7 +32,7 @@ func setupExecutorTestContext(t *testing.T) (*application_context.MahresourcesCo
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	util.AddInitialData(db)
+	seed.AddInitialData(db)
 	sqlDB, _ := db.DB()
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
 	ctx := application_context.NewMahresourcesContext(nil, db, readOnlyDB, &application_context.MahresourcesConfig{

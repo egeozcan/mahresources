@@ -7,7 +7,7 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/constants"
-	"mahresources/lib/deferredtoken"
+	"mahresources/deferredtoken"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/template_filters"
 	"mahresources/shortcodes"

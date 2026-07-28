@@ -1,4 +1,4 @@
-package lib
+package idlock
 
 import (
 	"context"
@@ -25,10 +25,10 @@ func (stdLogger) Printf(format string, args ...interface{}) {
 	fmt.Printf(format, args...)
 }
 
-// IDLock limits concurrency globally (if maxParallel > 0) and per-ID.
+// Lock limits concurrency globally (if maxParallel > 0) and per-ID.
 // It ensures that only one operation per ID can run at a time,
 // and optionally limits the total number of concurrent operations across all IDs.
-type IDLock[T comparable] struct {
+type Lock[T comparable] struct {
 	mu           sync.Mutex         // Protects access to the 'locks' map
 	locks        map[T]*idLockState // Map from ID to its lock state
 	maxParallel  uint               // Maximum global concurrency (0 means unlimited)
@@ -36,8 +36,8 @@ type IDLock[T comparable] struct {
 	log          logger             // Logger for warnings or errors
 }
 
-// NewIDLock returns an IDLock with an optional global concurrency limit.
-func NewIDLock[T comparable](maxParallel uint, log logger) *IDLock[T] {
+// New returns an Lock with an optional global concurrency limit.
+func New[T comparable](maxParallel uint, log logger) *Lock[T] {
 	if log == nil {
 		log = stdLogger{} // Use default logger if none provided
 	}
@@ -48,7 +48,7 @@ func NewIDLock[T comparable](maxParallel uint, log logger) *IDLock[T] {
 		globalTokens = make(chan struct{}, maxParallel)
 	}
 
-	return &IDLock[T]{
+	return &Lock[T]{
 		locks:        make(map[T]*idLockState),
 		maxParallel:  maxParallel,
 		globalTokens: globalTokens, // Will be nil if maxParallel is 0
@@ -58,7 +58,7 @@ func NewIDLock[T comparable](maxParallel uint, log logger) *IDLock[T] {
 
 // releaseGlobalToken tries to release one global token.
 // It's safe to call even if maxParallel is 0 or no token was held.
-func (l *IDLock[T]) releaseGlobalToken() {
+func (l *Lock[T]) releaseGlobalToken() {
 	// Only attempt to release if a global limit exists (globalTokens is not nil)
 	if l.globalTokens != nil {
 		select {
@@ -72,7 +72,7 @@ func (l *IDLock[T]) releaseGlobalToken() {
 
 // Acquire blocks until it acquires the lock for the given ID.
 // If maxParallel > 0, it also blocks until a global token is available.
-func (l *IDLock[T]) Acquire(id T) {
+func (l *Lock[T]) Acquire(id T) {
 	// 1. Acquire global token if needed (blocks if limit reached)
 	if l.globalTokens != nil {
 		l.globalTokens <- struct{}{} // Block until a global token is free
@@ -98,7 +98,7 @@ func (l *IDLock[T]) Acquire(id T) {
 // AcquireContext attempts to acquire the lock for the given ID, respecting the context.
 // Returns nil on success, or the context error if the context is cancelled or times out
 // before the lock (both global and ID-specific) can be acquired.
-func (l *IDLock[T]) AcquireContext(ctx context.Context, id T) error {
+func (l *Lock[T]) AcquireContext(ctx context.Context, id T) error {
 	// --- Initial Context Check ---
 	// Immediately return if context is already cancelled. Avoids unnecessary work.
 	if err := ctx.Err(); err != nil {
@@ -179,12 +179,12 @@ func (l *IDLock[T]) AcquireContext(ctx context.Context, id T) error {
 
 // Release unlocks the lock for the given ID and releases a global token if applicable.
 // It's crucial that Release is called exactly once for every successful Acquire call.
-func (l *IDLock[T]) Release(id T) {
+func (l *Lock[T]) Release(id T) {
 	l.mu.Lock()
 	state, ok := l.locks[id]
 	if !ok {
 		l.mu.Unlock()
-		l.log.Printf("IDLock.Release: Attempted to release lock for ID '%v' which has no active state.\n", id)
+		l.log.Printf("Lock.Release: Attempted to release lock for ID '%v' which has no active state.\n", id)
 		return
 	}
 
@@ -198,7 +198,7 @@ func (l *IDLock[T]) Release(id T) {
 			delete(l.locks, id)
 		}
 	default:
-		l.log.Printf("IDLock.Release: Attempted to release lock for ID '%v' which was not held (double release?)\n", id)
+		l.log.Printf("Lock.Release: Attempted to release lock for ID '%v' which was not held (double release?)\n", id)
 	}
 	l.mu.Unlock() // Unlock before potentially blocking on global token release
 
@@ -212,7 +212,7 @@ func (l *IDLock[T]) Release(id T) {
 // Returns true if the lock (both global and ID-specific) was acquired, false otherwise.
 // A timeout of 0 attempts to acquire immediately without blocking.
 // A negative timeout always returns false.
-func (l *IDLock[T]) AcquireWithTimeout(id T, timeout time.Duration) bool {
+func (l *Lock[T]) AcquireWithTimeout(id T, timeout time.Duration) bool {
 	if timeout < 0 {
 		return false // Negative timeout is invalid
 	}
@@ -280,7 +280,7 @@ func (l *IDLock[T]) AcquireWithTimeout(id T, timeout time.Duration) bool {
 // It returns (true, nil) if the lock was acquired and 'fn' completed successfully.
 // It returns (true, error) if the lock was acquired but 'fn' returned an error or timed out (context.DeadlineExceeded).
 // It returns (false, nil) if the lock could not be acquired within 'lockTimeout'.
-func (l *IDLock[T]) RunWithLockTimeout(id T, lockTimeout, runTimeout time.Duration, fn func() error) (lockAcquired bool, err error) {
+func (l *Lock[T]) RunWithLockTimeout(id T, lockTimeout, runTimeout time.Duration, fn func() error) (lockAcquired bool, err error) {
 	// Try to acquire the lock using the robust AcquireWithTimeout
 	acquired := l.AcquireWithTimeout(id, lockTimeout)
 	if !acquired {
@@ -299,7 +299,7 @@ func (l *IDLock[T]) RunWithLockTimeout(id T, lockTimeout, runTimeout time.Durati
 		// Defer panic recovery within the goroutine
 		defer func() {
 			if r := recover(); r != nil {
-				l.log.Printf("IDLock.RunWithLockTimeout: Recovered panic in function for ID '%v': %v\n", id, r)
+				l.log.Printf("Lock.RunWithLockTimeout: Recovered panic in function for ID '%v': %v\n", id, r)
 				// Send a specific error indicating a panic occurred
 				errChan <- fmt.Errorf("panic in locked function: %v", r)
 			}

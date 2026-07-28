@@ -23,7 +23,7 @@ import (
 	"mahresources/contracts"
 	"mahresources/download_queue"
 	"mahresources/fts"
-	"mahresources/lib"
+	"mahresources/idlock"
 	"mahresources/models"
 	"mahresources/plugin_system"
 	"mahresources/storage"
@@ -298,11 +298,11 @@ type MahresourcesInputConfig struct {
 }
 
 type MahresourcesLocks struct {
-	ThumbnailGenerationLock      *lib.IDLock[uint]
-	VideoThumbnailGenerationLock *lib.IDLock[uint]
-	OfficeDocumentGenerationLock *lib.IDLock[uint]
-	ResourceHashLock             *lib.IDLock[string]
-	VersionUploadLock            *lib.IDLock[uint]
+	ThumbnailGenerationLock      *idlock.Lock[uint]
+	VideoThumbnailGenerationLock *idlock.Lock[uint]
+	OfficeDocumentGenerationLock *idlock.Lock[uint]
+	ResourceHashLock             *idlock.Lock[string]
+	VersionUploadLock            *idlock.Lock[uint]
 }
 
 type MahresourcesContext struct {
@@ -428,15 +428,15 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		altFileSystems[key] = storage.CreateStorage(path)
 	}
 
-	thumbnailGenerationLock := lib.NewIDLock[uint](uint(0), nil)
+	thumbnailGenerationLock := idlock.New[uint](uint(0), nil)
 	videoThumbConcurrency := config.VideoThumbnailConcurrency
 	if videoThumbConcurrency == 0 {
 		videoThumbConcurrency = 4
 	}
-	videoThumbnailGenerationLock := lib.NewIDLock[uint](videoThumbConcurrency, nil)
-	officeDocumentGenerationLock := lib.NewIDLock[uint](uint(2), nil)
-	resourceHashLock := lib.NewIDLock[string](uint(0), nil)
-	versionUploadLock := lib.NewIDLock[uint](uint(0), nil)
+	videoThumbnailGenerationLock := idlock.New[uint](videoThumbConcurrency, nil)
+	officeDocumentGenerationLock := idlock.New[uint](uint(2), nil)
+	resourceHashLock := idlock.New[string](uint(0), nil)
+	versionUploadLock := idlock.New[uint](uint(0), nil)
 
 	// Initialize search cache with 60 second TTL and 1000 max entries
 	searchCache := NewSearchCache(60*time.Second, 1000)

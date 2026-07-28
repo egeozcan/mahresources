@@ -14,11 +14,11 @@ import (
 
 	"gorm.io/gorm"
 	"mahresources/contracts"
-	"mahresources/lib"
 	"mahresources/models"
 	"mahresources/models/block_types"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"mahresources/ordering"
 	"mahresources/plugin_system"
 )
 
@@ -80,7 +80,7 @@ func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor
 		if lastPos == "" {
 			editor.Position = "n" // middle of alphabet for first block
 		} else {
-			editor.Position = lib.PositionBetween(lastPos, "")
+			editor.Position = ordering.PositionBetween(lastPos, "")
 		}
 	}
 
@@ -490,7 +490,7 @@ func (ctx *MahresourcesContext) maybeRebalanceBlockPositions(noteID uint) bool {
 		log.Printf("Warning: failed to read positions for rebalance check on note %d: %v", noteID, err)
 		return false
 	}
-	if !lib.NeedsRebalancing(positions, rebalanceThreshold) {
+	if !ordering.NeedsRebalancing(positions, rebalanceThreshold) {
 		return false
 	}
 	if err := ctx.RebalanceBlockPositions(noteID); err != nil {
@@ -517,7 +517,7 @@ func (ctx *MahresourcesContext) RebalanceBlockPositions(noteID uint) error {
 	}
 
 	// Generate evenly distributed positions
-	newPositions := lib.GenerateEvenPositions(len(blocks))
+	newPositions := ordering.GenerateEvenPositions(len(blocks))
 
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
 		for i, block := range blocks {

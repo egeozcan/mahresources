@@ -5,7 +5,7 @@ import (
 	"log"
 	"strings"
 
-	"mahresources/lib"
+	"mahresources/mentions"
 	"mahresources/models"
 )
 
@@ -31,12 +31,12 @@ func (ctx *MahresourcesContext) syncMentionsForNote(note *models.Note) {
 
 	text := strings.Join(parts, "\n")
 
-	mentions := lib.ParseMentions(text)
-	if len(mentions) == 0 {
+	parsed := mentions.Parse(text)
+	if len(parsed) == 0 {
 		return
 	}
 
-	grouped := lib.GroupMentionsByType(mentions)
+	grouped := mentions.GroupByType(parsed)
 
 	if ids, ok := grouped["tag"]; ok {
 		if err := ctx.AddTagsToNote(note.ID, ids); err != nil {
@@ -59,8 +59,8 @@ func (ctx *MahresourcesContext) syncMentionsForNote(note *models.Note) {
 // and adds any referenced entities as relations (additive only -- never
 // removes manually-added relations).
 func (ctx *MahresourcesContext) syncMentionsForGroup(group *models.Group) {
-	mentions := lib.ParseMentions(group.Description)
-	grouped := lib.GroupMentionsByType(mentions)
+	parsed := mentions.Parse(group.Description)
+	grouped := mentions.GroupByType(parsed)
 
 	// Tags: Append (form also manages these)
 	if ids, ok := grouped["tag"]; ok {
@@ -98,12 +98,12 @@ func (ctx *MahresourcesContext) syncMentionsForGroup(group *models.Group) {
 // syncMentionsForResource parses @-mentions from the resource's description
 // and adds any referenced entities as relations.
 func (ctx *MahresourcesContext) syncMentionsForResource(resource *models.Resource) {
-	mentions := lib.ParseMentions(resource.Description)
-	if len(mentions) == 0 {
+	parsed := mentions.Parse(resource.Description)
+	if len(parsed) == 0 {
 		return
 	}
 
-	grouped := lib.GroupMentionsByType(mentions)
+	grouped := mentions.GroupByType(parsed)
 
 	if ids, ok := grouped["tag"]; ok {
 		tags := BuildAssociationSlice(ids, TagFromID)

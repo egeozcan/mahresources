@@ -8,8 +8,8 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"mahresources/auth"
 	"mahresources/contracts"
-	"mahresources/lib"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
@@ -322,7 +322,7 @@ func (ctx *MahresourcesContext) ShareNote(noteId uint) (string, error) {
 		return *note.ShareToken, nil
 	}
 
-	token := lib.GenerateShareToken()
+	token := auth.GenerateShareToken()
 	// BH-035: record when this token was minted so the admin /admin/shares
 	// dashboard can sort by age and operators have an audit trail. Kept in
 	// the same Updates call so either both persist or neither does.

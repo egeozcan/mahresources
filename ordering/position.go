@@ -1,4 +1,4 @@
-package lib
+package ordering
 
 const (
 	minChar = 'a'

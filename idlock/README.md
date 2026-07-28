@@ -1,6 +1,6 @@
-# IDLock - Per-ID Concurrency Limiter for Go
+# idlock - Per-ID Concurrency Limiter for Go
 
-`IDLock` is a Go concurrency utility that provides synchronization primitives for controlling access based on a generic identifier (`T comparable`). It ensures that only one operation associated with a specific ID can proceed at any given time. Additionally, it offers an optional global concurrency limit across all IDs.
+`idlock.Lock` is a Go concurrency utility that provides synchronization primitives for controlling access based on a generic identifier (`T comparable`). It ensures that only one operation associated with a specific ID can proceed at any given time. Additionally, it offers an optional global concurrency limit across all IDs.
 
 ## Motivation & Use Cases
 
@@ -11,7 +11,7 @@ Imagine scenarios where you need to perform operations based on an ID, but concu
 *   **API Rate Limiting (Client-Side):** Prevent sending too many concurrent requests related to the same API key or session ID.
 *   **Global Resource Capping:** Limit the total number of concurrent database connections or CPU-intensive tasks across all IDs, while still serializing access per ID.
 
-`IDLock` provides a flexible way to manage these scenarios.
+The package provides a flexible way to manage these scenarios.
 
 ## Features
 
@@ -32,12 +32,12 @@ Imagine scenarios where you need to perform operations based on an ID, but concu
 
 ```go
 // No global limit (unlimited concurrent operations across *different* IDs)
-lock := lib.NewIDLock[string](0, nil) // Uses default logger
+lock := idlock.New[string](0, nil) // Uses default logger
 
 // Global limit of 10 concurrent operations across all IDs
 // Provide a custom logger (optional)
-myLogger := &MyCustomLogger{} // Must implement lib.logger interface
-globalLock := lib.NewIDLock[int](10, myLogger)
+myLogger := &MyCustomLogger{} // Must implement idlock.logger interface
+globalLock := idlock.New[int](10, myLogger)
 ```
 
 ### Basic Acquire/Release
@@ -64,7 +64,7 @@ If `maxParallel` was set > 0 during initialization, `Acquire` might block not on
 
 ```go
 maxGlobal := 2
-globalLock := lib.NewIDLock[int](uint(maxGlobal), nil)
+globalLock := idlock.New[int](uint(maxGlobal), nil)
 var wg sync.WaitGroup
 
 for i := 0; i < maxGlobal+1; i++ {
@@ -166,7 +166,7 @@ if !lockAcquired {
 
 ## Logging
 
-`IDLock` accepts an optional logger that implements the following interface:
+`idlock.New` accepts an optional logger that implements the following interface:
 
 ```go
 type logger interface {
@@ -174,5 +174,5 @@ type logger interface {
 }
 ```
 
-If `nil` is passed to `NewIDLock`, a default logger writing to `fmt.Printf` will be used for internal warnings (e.g., attempting to release a lock that isn't held). You can provide your own logger (e.g., using `log/slog`, `logrus`, `zap`) by creating a simple wrapper that satisfies the interface.
+If `nil` is passed to `idlock.New`, a default logger writing to `fmt.Printf` will be used for internal warnings (e.g., attempting to release a lock that isn't held). You can provide your own logger (e.g., using `log/slog`, `logrus`, `zap`) by creating a simple wrapper that satisfies the interface.
 ```

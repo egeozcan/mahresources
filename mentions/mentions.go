@@ -1,4 +1,4 @@
-package lib
+package mentions
 
 import (
 	"fmt"
@@ -19,10 +19,10 @@ type Mention struct {
 	OriginalMatch string // The full original marker text as found in the source
 }
 
-// ParseMentions extracts all unique @[type:id:name] markers from text.
+// Parse extracts all unique @[type:id:name] markers from text.
 // It deduplicates by type+id, keeping the first occurrence.
 // Invalid IDs (zero or unparseable) are skipped.
-func ParseMentions(text string) []Mention {
+func Parse(text string) []Mention {
 	matches := mentionPattern.FindAllStringSubmatch(text, -1)
 	if len(matches) == 0 {
 		return nil
@@ -58,10 +58,10 @@ func ParseMentions(text string) []Mention {
 	return result
 }
 
-// ParseAllMentions extracts every @[type:id:name] marker from text without deduplication.
+// ParseAll extracts every @[type:id:name] marker from text without deduplication.
 // This is used by the rendering filter where different name spellings of the same entity
 // (e.g. @[group:1:Old Name] and @[group:1:New Name]) each need their own replacement.
-func ParseAllMentions(text string) []Mention {
+func ParseAll(text string) []Mention {
 	matches := mentionPattern.FindAllStringSubmatch(text, -1)
 	if len(matches) == 0 {
 		return nil
@@ -92,13 +92,13 @@ func ParseAllMentions(text string) []Mention {
 // htmlTagPattern matches HTML tags for stripping in line-only checks.
 var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 
-// IsMentionOnlyOnLine returns true if the given marker string is the only
+// IsOnlyOnLine returns true if the given marker string is the only
 // non-whitespace, non-HTML content on its line within the full text.
 // This is used to determine whether a mention should render as a standalone
 // embed or as an inline link.
 // It handles both plain text and HTML-wrapped text (e.g. after markdown processing
 // wraps standalone lines in <p> tags).
-func IsMentionOnlyOnLine(fullText, marker string) bool {
+func IsOnlyOnLine(fullText, marker string) bool {
 	lines := strings.Split(fullText, "\n")
 	for _, line := range lines {
 		if strings.Contains(line, marker) {
@@ -116,10 +116,10 @@ func IsMentionOnlyOnLine(fullText, marker string) bool {
 	return false
 }
 
-// IsMentionStandaloneAt checks if the marker occurrence at position pos in fullText
+// IsStandaloneAt checks if the marker occurrence at position pos in fullText
 // is the only non-whitespace, non-HTML content on its line.
-// Unlike IsMentionOnlyOnLine, this checks the specific occurrence rather than any line.
-func IsMentionStandaloneAt(fullText string, pos int, marker string) bool {
+// Unlike IsOnlyOnLine, this checks the specific occurrence rather than any line.
+func IsStandaloneAt(fullText string, pos int, marker string) bool {
 	// Find the start of the line containing this position
 	lineStart := strings.LastIndex(fullText[:pos], "\n")
 	if lineStart == -1 {
@@ -145,10 +145,10 @@ func IsMentionStandaloneAt(fullText string, pos int, marker string) bool {
 	return stripped == marker
 }
 
-// GroupMentionsByType groups mention IDs by their entity type.
+// GroupByType groups mention IDs by their entity type.
 // The returned map keys are type strings and values are slices of IDs
 // in the order they appear in the input.
-func GroupMentionsByType(mentions []Mention) map[string][]uint {
+func GroupByType(mentions []Mention) map[string][]uint {
 	if len(mentions) == 0 {
 		return nil
 	}

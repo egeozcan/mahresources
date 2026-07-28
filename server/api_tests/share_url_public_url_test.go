@@ -8,7 +8,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models"
-	"mahresources/models/util"
+	"mahresources/models/seed"
 	"mahresources/server"
 
 	"github.com/jmoiron/sqlx"
@@ -36,14 +36,14 @@ func setupTestEnvWithShareConfig(t *testing.T, sharePublicURL string) *TestConte
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	util.AddInitialData(db)
+	seed.AddInitialData(db)
 
 	cfg := &application_context.MahresourcesConfig{
-		DbType:          constants.DbTypeSqlite,
-		BindAddress:     "127.0.0.1:8181",
-		SharePort:       "8182",
+		DbType:           constants.DbTypeSqlite,
+		BindAddress:      "127.0.0.1:8181",
+		SharePort:        "8182",
 		ShareBindAddress: "127.0.0.1",
-		SharePublicURL:  sharePublicURL,
+		SharePublicURL:   sharePublicURL,
 	}
 	fs := afero.NewMemMapFs()
 	sqlDB, _ := db.DB()

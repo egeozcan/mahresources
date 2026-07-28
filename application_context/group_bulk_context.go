@@ -11,10 +11,10 @@ import (
 	"gorm.io/gorm/clause"
 	"mahresources/constants"
 	"mahresources/contracts"
-	"mahresources/lib"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"slices"
 )
 
 func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) error {
@@ -415,7 +415,7 @@ func (ctx *MahresourcesContext) FindParentsOfGroup(id uint) ([]models.Group, err
 	}
 
 	sort.Slice(results, func(i, j int) bool {
-		return lib.IndexOf(ids, results[i].ID) > lib.IndexOf(ids, results[j].ID)
+		return slices.Index(ids, results[i].ID) > slices.Index(ids, results[j].ID)
 	})
 
 	return results, nil

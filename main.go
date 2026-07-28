@@ -22,7 +22,7 @@ import (
 	"mahresources/constants"
 	"mahresources/hash_worker"
 	"mahresources/models"
-	"mahresources/models/util"
+	"mahresources/models/seed"
 	"mahresources/server"
 	"mahresources/storage"
 	"mahresources/thumbnail_worker"
@@ -467,7 +467,7 @@ func main() {
 	// startup sweep so the first-pass cleanup honors any persisted override.
 	context.RunStartupExportSweep()
 
-	util.AddInitialData(db)
+	seed.AddInitialData(db)
 
 	// Bootstrap an admin account from flags/env when requested. Idempotent and
 	// independent of whether auth is currently enabled, so an operator can seed

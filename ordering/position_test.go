@@ -1,5 +1,5 @@
-// lib/position_test.go
-package lib
+// ordering/position_test.go
+package ordering
 
 import (
 	"fmt"

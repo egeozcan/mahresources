@@ -1,4 +1,4 @@
-package lib
+package idlock
 
 import (
 	"context"
@@ -29,9 +29,9 @@ func (m *MockLogger) Printf(format string, args ...interface{}) {
 }
 
 func TestNewIDLock(t *testing.T) {
-	lock := NewIDLock[string](5, nil)
+	lock := New[string](5, nil)
 	if lock == nil {
-		t.Error("NewIDLock returned nil")
+		t.Error("New returned nil")
 		return
 	}
 	if lock.maxParallel != 5 {
@@ -40,7 +40,7 @@ func TestNewIDLock(t *testing.T) {
 }
 
 func TestAcquireAndRelease(t *testing.T) {
-	lock := NewIDLock[string](0, nil) // No global limit
+	lock := New[string](0, nil) // No global limit
 	id := "testID"
 
 	// Basic acquire/release
@@ -49,7 +49,7 @@ func TestAcquireAndRelease(t *testing.T) {
 }
 
 func TestAcquireMultipleTimes(t *testing.T) {
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "testID"
 
 	lock.Acquire(id)
@@ -64,7 +64,7 @@ func TestAcquireMultipleTimes(t *testing.T) {
 }
 
 func TestConcurrentAccessSameID(t *testing.T) {
-	lock := NewIDLock[int](0, nil)
+	lock := New[int](0, nil)
 	id := 1
 	iterations := 100
 	var counter int
@@ -88,7 +88,7 @@ func TestConcurrentAccessSameID(t *testing.T) {
 
 func TestMaxParallelLimit(t *testing.T) {
 	maxParallel := 3
-	lock := NewIDLock[string](uint(maxParallel), nil)
+	lock := New[string](uint(maxParallel), nil)
 	id := "testID"
 	var activeCount int32
 	var maxActive int32
@@ -126,13 +126,13 @@ func TestMaxParallelLimit(t *testing.T) {
 
 // Tests releasing an ID that was never acquired, hitting the default case in 'Release'.
 func TestReleaseNonExistingLock(t *testing.T) {
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	lock.Release("nonExistingID") // This triggers the "ok == false" branch, no panic
 }
 
 // Tests calling Release more times than Acquire
 func TestDoubleRelease(t *testing.T) {
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "testID"
 
 	lock.Acquire(id)
@@ -142,7 +142,7 @@ func TestDoubleRelease(t *testing.T) {
 }
 
 func TestAcquireWithTimeout_ZeroTimeout(t *testing.T) {
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "testID"
 
 	// 1) Lock is free, so zero-timeout should succeed
@@ -168,7 +168,7 @@ func TestAcquireWithTimeout_ZeroTimeout(t *testing.T) {
 
 // Negative timeout also yields immediate fail
 func TestAcquireWithTimeout_NegativeTimeout(t *testing.T) {
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "testID"
 
 	ok := lock.AcquireWithTimeout(id, -1*time.Second)
@@ -178,7 +178,7 @@ func TestAcquireWithTimeout_NegativeTimeout(t *testing.T) {
 }
 
 func TestAcquireWithTimeout_Success(t *testing.T) {
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "testID"
 
 	ok := lock.AcquireWithTimeout(id, 100*time.Millisecond)
@@ -189,7 +189,7 @@ func TestAcquireWithTimeout_Success(t *testing.T) {
 }
 
 func TestAcquireWithTimeout_TimesOutIfLocked(t *testing.T) {
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "testID"
 
 	lock.Acquire(id)
@@ -203,7 +203,7 @@ func TestAcquireWithTimeout_TimesOutIfLocked(t *testing.T) {
 
 // The test from before that ensures we get false if lock acquisition times out
 func TestRunWithLockTimeout_LockAcquisitionTimeout(t *testing.T) {
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "testID"
 
 	lock.Acquire(id)
@@ -219,7 +219,7 @@ func TestRunWithLockTimeout_LockAcquisitionTimeout(t *testing.T) {
 }
 
 func TestRunWithLockTimeout_RunTimeout(t *testing.T) {
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "testID"
 
 	success, err := lock.RunWithLockTimeout(id, 1*time.Second, 50*time.Millisecond, func() error {
@@ -232,7 +232,7 @@ func TestRunWithLockTimeout_RunTimeout(t *testing.T) {
 }
 
 func TestRunWithLockTimeout_Success(t *testing.T) {
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "testID"
 
 	success, err := lock.RunWithLockTimeout(id, 1*time.Second, 500*time.Millisecond, func() error {
@@ -247,7 +247,7 @@ func TestRunWithLockTimeout_Success(t *testing.T) {
 // If the function runs too long, we still return true once it's timed out because we did acquire the lock
 func TestRunWithLockTimeout_TimeoutButAcquired(t *testing.T) {
 	// t.Parallel() // Avoid parallel if modifying shared state like this without atomic/channels
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "testIDTimeoutButAcquired" // Use distinct ID
 
 	var mu sync.Mutex // Mutex to protect 'started'
@@ -277,7 +277,7 @@ func TestRunWithLockTimeout_TimeoutButAcquired(t *testing.T) {
 }
 
 func TestRunWithLockTimeout_Concurrent(t *testing.T) {
-	lock := NewIDLock[int](0, nil)
+	lock := New[int](0, nil)
 	id := 1
 	const numContenders = 5
 	var successCount int32
@@ -333,7 +333,7 @@ func TestRunWithLockTimeout_Concurrent(t *testing.T) {
 }
 
 func TestRunWithLockTimeout_GlobalTokenTimeout(t *testing.T) {
-	lock := NewIDLock[string](1, nil)
+	lock := New[string](1, nil)
 	id := "testID"
 
 	// Acquire the single global token
@@ -354,7 +354,7 @@ func TestRunWithLockTimeout_GlobalTokenTimeout(t *testing.T) {
 func TestRunWithLockTimeout_PanicRecovery(t *testing.T) {
 	// t.Parallel() // This test modifies shared state (logger), maybe avoid parallel if using mock assertions heavily
 	mockLogger := &MockLogger{} // Use mock logger to check output if needed
-	lock := NewIDLock[string](0, mockLogger)
+	lock := New[string](0, mockLogger)
 	id := "testIDPanicRecovery" // Use a distinct ID
 	panicMsg := "Intentional panic"
 	expectedErrStr := fmt.Sprintf("panic in locked function: %v", panicMsg)
@@ -405,7 +405,7 @@ func TestRunWithLockTimeout_PanicRecovery(t *testing.T) {
 
 // This test attempts AcquireWithTimeout and normal Acquire concurrently
 func TestAcquireWithTimeout_ConcurrentUsage(t *testing.T) {
-	lock := NewIDLock[int](0, nil)
+	lock := New[int](0, nil)
 	id := 42
 	var acquiredCount int32
 
@@ -435,7 +435,7 @@ func TestAcquireWithTimeout_ConcurrentUsage(t *testing.T) {
 
 // TestAcquireContext_Success ensures we can acquire a lock with enough time.
 func TestAcquireContext_Success(t *testing.T) {
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "contextTestID"
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -450,7 +450,7 @@ func TestAcquireContext_Success(t *testing.T) {
 // TestAcquireContext_Canceled ensures that if our context is canceled, we fail to acquire.
 func TestAcquireContext_Canceled(t *testing.T) {
 	t.Parallel()
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "contextCanceledIDOriginal" // Use a distinct ID
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -472,7 +472,7 @@ func TestAcquireContext_Canceled(t *testing.T) {
 
 // TestAcquireContext_Timeout ensures that if our context times out, AcquireContext fails.
 func TestAcquireContext_Timeout(t *testing.T) {
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "contextTimeoutID"
 
 	// Acquire first so the ID is locked
@@ -490,7 +490,7 @@ func TestAcquireContext_Timeout(t *testing.T) {
 // TestAcquireContext_GlobalLimit ensures global tokens are respected by AcquireContext.
 func TestAcquireContext_GlobalLimit(t *testing.T) {
 	mockLogger := &MockLogger{}
-	lock := NewIDLock[string](1, mockLogger)
+	lock := New[string](1, mockLogger)
 	id := "globalLimitID"
 
 	// Acquire one so global limit is used up
@@ -508,8 +508,8 @@ func TestAcquireContext_GlobalLimit(t *testing.T) {
 // TestAcquireContext_AlreadyCanceled_LockFree verifies fix for race condition
 // where context is canceled *before* calling AcquireContext and the lock is free.
 func TestAcquireContext_AlreadyCanceled_LockFree(t *testing.T) {
-	t.Parallel()                      // Mark as parallelizable
-	lock := NewIDLock[string](0, nil) // No global limit needed for this specific race
+	t.Parallel()                // Mark as parallelizable
+	lock := New[string](0, nil) // No global limit needed for this specific race
 	id := "alreadyCanceledFree"
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -542,7 +542,7 @@ func TestAcquireContext_AlreadyCanceled_LockFree(t *testing.T) {
 // but with a global limit active, ensuring the fix works with global tokens.
 func TestAcquireContext_AlreadyCanceled_LockFree_GlobalLimit(t *testing.T) {
 	t.Parallel()
-	lock := NewIDLock[string](1, nil) // With global limit
+	lock := New[string](1, nil) // With global limit
 	id := "alreadyCanceledFreeGlobal"
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -578,7 +578,7 @@ func TestAcquireContext_AlreadyCanceled_LockFree_GlobalLimit(t *testing.T) {
 // TestRunWithLockTimeout_HoldsLockUntilFnCompletes verifies that when fn exceeds
 // runTimeout, the lock is NOT released until fn actually finishes.
 func TestRunWithLockTimeout_HoldsLockUntilFnCompletes(t *testing.T) {
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "testHoldsLock"
 
 	fnStarted := make(chan struct{})
@@ -618,7 +618,7 @@ func TestRunWithLockTimeout_HoldsLockUntilFnCompletes(t *testing.T) {
 // is canceled *before* the call, but the lock is already held by someone else.
 func TestAcquireContext_AlreadyCanceled_LockHeld(t *testing.T) {
 	t.Parallel()
-	lock := NewIDLock[string](0, nil)
+	lock := New[string](0, nil)
 	id := "alreadyCanceledHeld"
 
 	// Acquire the lock first

@@ -1,4 +1,4 @@
-package util
+package seed
 
 import (
 	"encoding/json"

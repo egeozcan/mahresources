@@ -8,7 +8,7 @@ import (
 
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
-	"mahresources/lib/deferredtoken"
+	"mahresources/deferredtoken"
 	"mahresources/mrql"
 	"mahresources/plugin_system"
 	"mahresources/shortcodes"

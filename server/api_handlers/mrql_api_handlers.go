@@ -13,7 +13,7 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/constants"
-	"mahresources/lib/deferredtoken"
+	"mahresources/deferredtoken"
 	"mahresources/models"
 	"mahresources/mrql"
 	"mahresources/plugin_system"

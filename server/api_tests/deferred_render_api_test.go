@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"mahresources/lib/deferredtoken"
+	"mahresources/deferredtoken"
 	"mahresources/models"
 )
 

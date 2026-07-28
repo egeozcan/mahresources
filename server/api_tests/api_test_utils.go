@@ -12,7 +12,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"mahresources/models"
-	"mahresources/models/util"
+	"mahresources/models/seed"
 	"mahresources/server"
 	"net/http"
 	"net/http/httptest"
@@ -84,7 +84,7 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 		t.Fatalf("Failed to create supplemental indexes: %v", err)
 	}
 
-	util.AddInitialData(db)
+	seed.AddInitialData(db)
 
 	config := &application_context.MahresourcesConfig{
 		DbType:                       constants.DbTypeSqlite,
