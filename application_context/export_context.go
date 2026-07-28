@@ -379,19 +379,44 @@ func (ctx *MahresourcesContext) bfsCollectGroupRelations(plan *exportPlan, front
 		return nil, err
 	}
 
-	var newGroupIDs []uint
-
+	// Collect the candidate targets first, then filter them through a scoped
+	// visibility check before they enter the plan.
+	//
+	// The query above reads group_relations, which scopeColumn() does not map,
+	// so scopeReadCallback applies no filter to it. Consuming ToGroupId directly
+	// would let a group-limited principal pull groups outside its subtree into
+	// the plan — and the manifest is written from plan state, so their names and
+	// GUIDs would reach the archive even though loadGroupPayload (which *is*
+	// scoped) later fails to read the row. Filtering here keeps the traversal
+	// intact for unscoped callers while confining scoped ones.
+	var candidates []uint
+	seen := make(map[uint]bool, len(relations))
 	for _, rel := range relations {
 		if rel.ToGroupId == nil {
 			continue
 		}
 		toID := *rel.ToGroupId
-		if _, exists := plan.groupExportID[toID]; !exists {
-			plan.groupIDs = append(plan.groupIDs, toID)
-			plan.groupExportID[toID] = fmt.Sprintf("g%04d", len(plan.groupExportID)+1)
-			plan.shellGroupIDs[toID] = true
-			newGroupIDs = append(newGroupIDs, toID)
+		if _, exists := plan.groupExportID[toID]; exists || seen[toID] {
+			continue
 		}
+		seen[toID] = true
+		candidates = append(candidates, toID)
+	}
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+
+	visible := ctx.visibleGroupIDs(candidates)
+
+	var newGroupIDs []uint
+	for _, toID := range candidates {
+		if !visible[toID] {
+			continue
+		}
+		plan.groupIDs = append(plan.groupIDs, toID)
+		plan.groupExportID[toID] = fmt.Sprintf("g%04d", len(plan.groupExportID)+1)
+		plan.shellGroupIDs[toID] = true
+		newGroupIDs = append(newGroupIDs, toID)
 	}
 
 	return newGroupIDs, nil
@@ -1480,6 +1505,18 @@ func (ctx *MahresourcesContext) loadGroupPayload(
 				if dID, ok := danglingByFromTo[k]; ok {
 					grp.DanglingRef = dID
 				}
+			}
+			// A relation that resolved to neither an in-archive target nor a
+			// dangling stub is unrepresentable: the importer silently ignores it
+			// and it violates the archive contract. This happens under a scoped
+			// principal, where the target group is invisible — so the row is
+			// still readable here (group_relations is not scope-mapped) but
+			// collectDanglingRefs skipped it (its ToGroup preload came back nil).
+			// Omit it. Emitting a dangling stub instead is NOT an option: the
+			// stub carries the target's name, which is exactly what the scope
+			// boundary must withhold.
+			if grp.ToRef == "" && grp.DanglingRef == "" {
+				continue
 			}
 		}
 		p.Relationships = append(p.Relationships, grp)
