@@ -267,9 +267,39 @@ and 2 moved 21% of the package's LOC and left the god struct's exported surface
 at exactly 329 methods; slice 5 moved no LOC and removed 61 unrestricted
 references to it.
 
-The remaining concrete surface is `server/api_handlers/` (74 references, 30%
-unmigrated). Finishing it is the same shape of work as slice 5 — and, unlike
-slice 5, without the route-table obstacle, since handlers are wired one by one.
+**Revision 12 — `api_handlers/` is done too** (commit `2ce92ad4`), along with two
+hygiene items: the FTS state is now atomic rather than race-free-by-convention
+(`7dfb4eb9`), and two empty tracked test databases are gone (`8b3df8da`).
+
+| Package | concrete refs before | after | non-assertion |
+|---|---|---|---|
+| `server/api_handlers/` | 74 | **16** | **1** |
+| `template_context_providers/` | 60 | **21** | **0** |
+| `template_filters/` | 20 | **13** | 10 (unmigrated internals) |
+
+The single real one left in `api_handlers` is `principalBinder.WithPrincipal`,
+which returns `*MahresourcesContext` by definition.
+
+(27) **"Only parameter types" was wrong a third time, and this one was a live
+bug.** Narrowing a parameter from `*MahresourcesContext` to an interface changes
+nil semantics: **a nil pointer assigned to an interface produces a NON-NIL
+interface holding a nil pointer.** Every `appCtx == nil` guard inside the
+narrowed helpers silently stopped firing, and the first method call panicked on
+a nil receiver. It reached two call sites; the existing custom-CSS test caught
+one, and the other (`buildPageRenderContext`) was found only by auditing the
+rest — it guards `appCtx != nil` two lines below the widening call, which is
+proof nil is expected there.
+
+The regression test for it was itself vacuous on the first attempt: asserting
+the returned context is non-nil passes with a widened typed nil, because only
+*invoking* the resolver panics. **That is the fifth vacuous test in this
+document, and the second one written specifically to catch a defect it could
+not detect.** Both were found by mutation, not by review.
+
+Migrating `api_handlers` also required narrowing three `template_filters` entry
+points and the six internal helpers behind them: a handler holding an interface
+cannot call a function demanding the concrete type, so the dependency chain has
+to narrow together or not at all.
 
 **§2a is now fully satisfied. The decomposition may begin.**
 
