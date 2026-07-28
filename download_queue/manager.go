@@ -5,9 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
-	"mahresources/server/interfaces"
 	"net"
 	"net/http"
 	"path"
@@ -36,7 +36,7 @@ type ManagerConfig struct {
 // ResourceCreator is the interface needed to create resources
 // This avoids a circular dependency with application_context
 type ResourceCreator interface {
-	AddResource(file interfaces.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error)
+	AddResource(file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error)
 }
 
 // actorResourceCreator is the optional capability (implemented by

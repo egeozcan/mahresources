@@ -8,13 +8,13 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"mahresources/contracts"
 	"mahresources/lib"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
 	"mahresources/mrql"
-	"mahresources/server/interfaces"
 )
 
 func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteEditor) (*models.Note, error) {
@@ -411,7 +411,7 @@ func (ctx *MahresourcesContext) GetNoteByShareToken(token string) (*models.Note,
 	return &note, nil
 }
 
-func (ctx *MahresourcesContext) NoteMetaKeys() ([]interfaces.MetaKey, error) {
+func (ctx *MahresourcesContext) NoteMetaKeys() ([]contracts.MetaKey, error) {
 	return metaKeys(ctx, "notes")
 }
 

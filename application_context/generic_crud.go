@@ -3,7 +3,7 @@ package application_context
 import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"mahresources/server/interfaces"
+	"mahresources/contracts"
 )
 
 // ScopeFunc represents different scope function signatures used in the codebase.
@@ -26,7 +26,7 @@ func ScopeWithIgnoreSortForCount[Q any](scopeFn func(query Q, ignoreSort bool) f
 
 // CRUDReader provides generic read operations for any entity type T.
 // Q is the query type used for filtering.
-type CRUDReader[T interfaces.BasicEntityReader, Q any] struct {
+type CRUDReader[T contracts.BasicEntityReader, Q any] struct {
 	db             *gorm.DB
 	scopeFn        ScopeFunc[Q]
 	scopeFnNoSort  ScopeFunc[Q]
@@ -43,7 +43,7 @@ type CRUDReaderConfig[Q any] struct {
 }
 
 // NewCRUDReader creates a new generic CRUD reader.
-func NewCRUDReader[T interfaces.BasicEntityReader, Q any](db *gorm.DB, config CRUDReaderConfig[Q]) *CRUDReader[T, Q] {
+func NewCRUDReader[T contracts.BasicEntityReader, Q any](db *gorm.DB, config CRUDReaderConfig[Q]) *CRUDReader[T, Q] {
 	scopeFnNoSort := config.ScopeFnNoSort
 	if scopeFnNoSort == nil {
 		scopeFnNoSort = config.ScopeFn
@@ -102,14 +102,14 @@ func (r *CRUDReader[T, Q]) GetByIDs(ids []uint, limit int) ([]*T, error) {
 // CRUDWriter provides generic write operations for any entity type T.
 // C is the creator type used for creating/updating entities.
 // ModelBuilder is a function that converts a creator to a model instance.
-type CRUDWriter[T interfaces.BasicEntityReader, C any] struct {
+type CRUDWriter[T contracts.BasicEntityReader, C any] struct {
 	db           *gorm.DB
 	modelBuilder func(creator C) (T, error)
 	entityName   string
 }
 
 // NewCRUDWriter creates a new generic CRUD writer.
-func NewCRUDWriter[T interfaces.BasicEntityReader, C any](
+func NewCRUDWriter[T contracts.BasicEntityReader, C any](
 	db *gorm.DB,
 	modelBuilder func(creator C) (T, error),
 	entityName string,

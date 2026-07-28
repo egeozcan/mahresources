@@ -10,7 +10,7 @@ import (
 )
 
 // ProgressReader wraps an io.Reader and tracks bytes read
-// Implements interfaces.File (io.Reader + io.Closer)
+// Implements contracts.File (io.Reader + io.Closer)
 type ProgressReader struct {
 	reader     io.Reader
 	downloaded int64

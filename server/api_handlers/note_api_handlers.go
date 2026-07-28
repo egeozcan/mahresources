@@ -5,16 +5,16 @@ import (
 	"fmt"
 	"io"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 	"net/http"
 	"strconv"
 	"strings"
 )
 
-func GetNotesHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetNotesHandler(ctx contracts.NoteReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
@@ -48,7 +48,7 @@ func GetNotesHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter,
 	}
 }
 
-func GetNoteHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetNoteHandler(ctx contracts.NoteReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
 		note, err := ctx.GetNote(id)
@@ -63,10 +63,10 @@ func GetNoteHandler(ctx interfaces.NoteReader) func(writer http.ResponseWriter, 
 	}
 }
 
-func GetAddNoteHandler(ctx interfaces.NoteWriteReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddNoteHandler(ctx contracts.NoteWriteReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteWriteReader)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.NoteWriteReader)
 
 		var queryVars = query_models.NoteEditor{}
 		var sentFields map[string]bool
@@ -173,10 +173,10 @@ func GetAddNoteHandler(ctx interfaces.NoteWriteReader) func(writer http.Response
 	}
 }
 
-func GetRemoveNoteHandler(ctx interfaces.NoteDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveNoteHandler(ctx contracts.NoteDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.NoteDeleter)
 
 		id := getEntityID(request)
 
@@ -200,7 +200,7 @@ func GetRemoveNoteHandler(ctx interfaces.NoteDeleter) func(writer http.ResponseW
 	}
 }
 
-func GetNoteMetaKeysHandler(ctx interfaces.NoteMetaReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetNoteMetaKeysHandler(ctx contracts.NoteMetaReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		keys, err := ctx.NoteMetaKeys()
 
@@ -214,7 +214,7 @@ func GetNoteMetaKeysHandler(ctx interfaces.NoteMetaReader) func(writer http.Resp
 	}
 }
 
-func GetNoteTypesHandler(ctx interfaces.NoteTypeReader) func(http.ResponseWriter, *http.Request) {
+func GetNoteTypesHandler(ctx contracts.NoteTypeReader) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
@@ -238,10 +238,10 @@ func GetNoteTypesHandler(ctx interfaces.NoteTypeReader) func(http.ResponseWriter
 	}
 }
 
-func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddNoteTypeHandler(ctx contracts.NoteTypeWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteTypeWriter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.NoteTypeWriter)
 
 		var editor = query_models.NoteTypeEditor{}
 
@@ -368,10 +368,10 @@ func GetAddNoteTypeHandler(ctx interfaces.NoteTypeWriter) func(writer http.Respo
 	}
 }
 
-func GetRemoveNoteTypeHandler(ctx interfaces.NoteTypeDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveNoteTypeHandler(ctx contracts.NoteTypeDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteTypeDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.NoteTypeDeleter)
 
 		id := getEntityID(request)
 
@@ -395,7 +395,7 @@ func GetRemoveNoteTypeHandler(ctx interfaces.NoteTypeDeleter) func(writer http.R
 	}
 }
 
-func GetAddTagsToNotesHandler(ctx interfaces.BulkNoteTagEditor) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddTagsToNotesHandler(ctx contracts.BulkNoteTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -418,7 +418,7 @@ func GetAddTagsToNotesHandler(ctx interfaces.BulkNoteTagEditor) func(writer http
 	}
 }
 
-func GetRemoveTagsFromNotesHandler(ctx interfaces.BulkNoteTagEditor) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveTagsFromNotesHandler(ctx contracts.BulkNoteTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -441,7 +441,7 @@ func GetRemoveTagsFromNotesHandler(ctx interfaces.BulkNoteTagEditor) func(writer
 	}
 }
 
-func GetAddGroupsToNotesHandler(ctx interfaces.BulkNoteGroupEditor) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddGroupsToNotesHandler(ctx contracts.BulkNoteGroupEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -464,7 +464,7 @@ func GetAddGroupsToNotesHandler(ctx interfaces.BulkNoteGroupEditor) func(writer 
 	}
 }
 
-func GetAddMetaToNotesHandler(ctx interfaces.BulkNoteMetaEditor) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddMetaToNotesHandler(ctx contracts.BulkNoteMetaEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditMetaQuery{}
 		var err error
@@ -487,9 +487,9 @@ func GetAddMetaToNotesHandler(ctx interfaces.BulkNoteMetaEditor) func(writer htt
 	}
 }
 
-func GetBulkDeleteNotesHandler(ctx interfaces.NoteDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetBulkDeleteNotesHandler(ctx contracts.NoteDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.NoteDeleter)
 
 		var editor = query_models.BulkQuery{}
 		var err error

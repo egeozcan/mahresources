@@ -11,10 +11,10 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 )
 
 func sQLToMap(rows *sqlx.Rows) ([]map[string]any, error) {
@@ -65,7 +65,7 @@ func sQLToMap(rows *sqlx.Rows) ([]map[string]any, error) {
 	return data, nil
 }
 
-func GetDatabaseSchemaHandler(ctx interfaces.SchemaReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetDatabaseSchemaHandler(ctx contracts.SchemaReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		schema, err := ctx.GetDatabaseSchema()
 		if err != nil {
@@ -133,7 +133,7 @@ func fillQueryParameters(dst *query_models.QueryParameters, request *http.Reques
 	return nil
 }
 
-func GetRunQueryHandler(ctx interfaces.QueryRunner) func(writer http.ResponseWriter, request *http.Request) {
+func GetRunQueryHandler(ctx contracts.QueryRunner) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
 		name := http_utils.GetQueryParameter(request, "name", "")
@@ -172,7 +172,7 @@ func GetRunQueryHandler(ctx interfaces.QueryRunner) func(writer http.ResponseWri
 	}
 }
 
-func GetQueryHandler(ctx interfaces.QueryReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetQueryHandler(ctx contracts.QueryReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
 		query, err := ctx.GetQuery(id)
@@ -187,7 +187,7 @@ func GetQueryHandler(ctx interfaces.QueryReader) func(writer http.ResponseWriter
 	}
 }
 
-func GetQueriesHandler(ctx interfaces.QueryReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetQueriesHandler(ctx contracts.QueryReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.QueryQuery
 		page := http_utils.GetPageParameter(request)
@@ -212,10 +212,10 @@ func GetQueriesHandler(ctx interfaces.QueryReader) func(writer http.ResponseWrit
 	}
 }
 
-func GetAddQueryHandler(ctx interfaces.QueryWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddQueryHandler(ctx contracts.QueryWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.QueryWriter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.QueryWriter)
 
 		var queryEditor = query_models.QueryEditor{}
 
@@ -247,10 +247,10 @@ func GetAddQueryHandler(ctx interfaces.QueryWriter) func(writer http.ResponseWri
 	}
 }
 
-func GetRemoveQueryHandler(ctx interfaces.QueryDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveQueryHandler(ctx contracts.QueryDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.QueryDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.QueryDeleter)
 
 		id := getEntityID(request)
 

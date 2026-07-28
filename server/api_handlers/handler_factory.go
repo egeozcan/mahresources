@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 )
 
 // CRUDHandlerFactory creates HTTP handlers for standard CRUD operations.
@@ -22,18 +22,18 @@ import (
 // IMPORTANT: Q must be a pointer type (e.g., *TagQuery, not TagQuery).
 // The ListHandler and CountHandler use reflection to instantiate query objects,
 // which requires Q to be a pointer so we can create the underlying struct.
-type CRUDHandlerFactory[T interfaces.BasicEntityReader, Q, C any] struct {
+type CRUDHandlerFactory[T contracts.BasicEntityReader, Q, C any] struct {
 	entityName       string // Singular form, e.g., "tag"
 	entityNamePlural string // Plural form, e.g., "tags"
-	reader           interfaces.GenericReader[T, Q]
-	writer           interfaces.GenericWriter[T, C]
+	reader           contracts.GenericReader[T, Q]
+	writer           contracts.GenericWriter[T, C]
 }
 
 // NewCRUDHandlerFactory creates a new handler factory for an entity.
-func NewCRUDHandlerFactory[T interfaces.BasicEntityReader, Q, C any](
+func NewCRUDHandlerFactory[T contracts.BasicEntityReader, Q, C any](
 	entityName, entityNamePlural string,
-	reader interfaces.GenericReader[T, Q],
-	writer interfaces.GenericWriter[T, C],
+	reader contracts.GenericReader[T, Q],
+	writer contracts.GenericWriter[T, C],
 ) *CRUDHandlerFactory[T, Q, C] {
 	return &CRUDHandlerFactory[T, Q, C]{
 		entityName:       entityName,
@@ -218,10 +218,10 @@ func (f *CRUDHandlerFactory[T, Q, C]) CreateHandler() http.HandlerFunc {
 // CreateTagHandler returns a handler that creates or updates tags based on ID presence.
 // For JSON update requests, it pre-fills unset fields from the existing tag
 // so that partial JSON updates don't clear fields, while still allowing explicit clearing.
-func CreateTagHandler(writer interfaces.TagsWriter) http.HandlerFunc {
+func CreateTagHandler(writer contracts.TagsWriter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Request-scope so CreatedByUserId is stamped with the acting user.
-		writer := withRequestContext(writer, r).(interfaces.TagsWriter)
+		writer := withRequestContext(writer, r).(contracts.TagsWriter)
 		var creator query_models.TagCreator
 		var sentFields map[string]bool
 
@@ -309,10 +309,10 @@ func CreateTagHandler(writer interfaces.TagsWriter) http.HandlerFunc {
 // For update requests, it pre-fills unset fields from the existing entity so
 // that partial updates (both JSON and form-encoded) don't clear fields that
 // were not included in the request body, while still allowing explicit clearing.
-func CreateCategoryHandler(ctx interfaces.CategoryCRUDReader) http.HandlerFunc {
+func CreateCategoryHandler(ctx contracts.CategoryCRUDReader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Request-scope so CreatedByUserId is stamped with the acting user.
-		ctx := withRequestContext(ctx, r).(interfaces.CategoryCRUDReader)
+		ctx := withRequestContext(ctx, r).(contracts.CategoryCRUDReader)
 		var editor query_models.CategoryEditor
 		var sentFields map[string]bool
 
@@ -424,10 +424,10 @@ func CreateCategoryHandler(ctx interfaces.CategoryCRUDReader) http.HandlerFunc {
 // CreateResourceCategoryHandler returns a handler that creates or updates resource categories.
 // For update requests, pre-fills unset fields from the existing entity so that
 // partial updates (both JSON and form-encoded) don't clear unsent fields.
-func CreateResourceCategoryHandler(writer interfaces.ResourceCategoryWriter) http.HandlerFunc {
+func CreateResourceCategoryHandler(writer contracts.ResourceCategoryWriter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Request-scope so CreatedByUserId is stamped with the acting user.
-		writer := withRequestContext(writer, r).(interfaces.ResourceCategoryWriter)
+		writer := withRequestContext(writer, r).(contracts.ResourceCategoryWriter)
 		var editor query_models.ResourceCategoryEditor
 		var sentFields map[string]bool
 
@@ -533,13 +533,13 @@ func CreateResourceCategoryHandler(writer interfaces.ResourceCategoryWriter) htt
 // submissions can clear the Template field, while partial JSON updates
 // (e.g. CLI --name only) preserve unset fields.
 func CreateQueryHandler(ctx interface {
-	interfaces.QueryWriter
-	interfaces.QueryReader
+	contracts.QueryWriter
+	contracts.QueryReader
 }) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		effectiveCtx := withRequestContext(ctx, r).(interface {
-			interfaces.QueryWriter
-			interfaces.QueryReader
+			contracts.QueryWriter
+			contracts.QueryReader
 		})
 
 		var editor query_models.QueryEditor

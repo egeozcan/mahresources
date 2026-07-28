@@ -1,4 +1,4 @@
-package interfaces
+package contracts
 
 import (
 	"mime/multipart"

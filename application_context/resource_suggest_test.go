@@ -11,8 +11,8 @@ import (
 
 	"mahresources/auth"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models"
-	"mahresources/server/interfaces"
 )
 
 // newSuggestTestContext builds an in-memory context with the tables the
@@ -88,7 +88,7 @@ func suggestLinkSimilar(t *testing.T, ctx *MahresourcesContext, a, b uint, dist 
 	}
 }
 
-func suggestNames(s []interfaces.SuggestedTag) []string {
+func suggestNames(s []contracts.SuggestedTag) []string {
 	names := make([]string, len(s))
 	for i, x := range s {
 		names[i] = x.Name
@@ -96,7 +96,7 @@ func suggestNames(s []interfaces.SuggestedTag) []string {
 	return names
 }
 
-func suggestHas(s []interfaces.SuggestedTag, name string) bool {
+func suggestHas(s []contracts.SuggestedTag, name string) bool {
 	for _, x := range s {
 		if x.Name == name {
 			return true

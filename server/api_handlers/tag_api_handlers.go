@@ -4,15 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 	"net/http"
 	"strconv"
 )
 
-func GetTagsHandler(ctx interfaces.TagsReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetTagsHandler(ctx contracts.TagsReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
@@ -44,10 +44,10 @@ func GetTagsHandler(ctx interfaces.TagsReader) func(writer http.ResponseWriter, 
 	}
 }
 
-func GetAddTagHandler(ctx interfaces.TagsWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddTagHandler(ctx contracts.TagsWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.TagsWriter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.TagsWriter)
 
 		var creator = query_models.TagCreator{}
 
@@ -79,10 +79,10 @@ func GetAddTagHandler(ctx interfaces.TagsWriter) func(writer http.ResponseWriter
 	}
 }
 
-func GetRemoveTagHandler(ctx interfaces.TagDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveTagHandler(ctx contracts.TagDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.TagDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.TagDeleter)
 
 		var query query_models.EntityIdQuery
 
@@ -111,9 +111,9 @@ func GetRemoveTagHandler(ctx interfaces.TagDeleter) func(writer http.ResponseWri
 	}
 }
 
-func GetBulkDeleteTagsHandler(ctx interfaces.BulkTagDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetBulkDeleteTagsHandler(ctx contracts.BulkTagDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.BulkTagDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.BulkTagDeleter)
 
 		var editor = query_models.BulkQuery{}
 		var err error
@@ -141,10 +141,10 @@ func GetBulkDeleteTagsHandler(ctx interfaces.BulkTagDeleter) func(writer http.Re
 	}
 }
 
-func GetMergeTagsHandler(ctx interfaces.TagMerger) func(writer http.ResponseWriter, request *http.Request) {
+func GetMergeTagsHandler(ctx contracts.TagMerger) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.TagMerger)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.TagMerger)
 
 		var editor = query_models.MergeQuery{}
 		var err error

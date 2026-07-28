@@ -1,4 +1,4 @@
-package interfaces
+package contracts
 
 // GenericReader defines the standard read operations for any entity type.
 // T is the entity type, Q is the query parameter type.

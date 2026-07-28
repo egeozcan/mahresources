@@ -20,12 +20,12 @@ import (
 	"gorm.io/gorm"
 	"mahresources/auth"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/download_queue"
 	"mahresources/fts"
 	"mahresources/lib"
 	"mahresources/models"
 	"mahresources/plugin_system"
-	"mahresources/server/interfaces"
 	"mahresources/storage"
 )
 
@@ -657,7 +657,7 @@ func (ctx *MahresourcesContext) GetDefaultFs() afero.Fs {
 //	ctx.WithRequest(r).CreateTag(&creator)
 //
 // The returned value implements all the same interfaces as the original context.
-// Implements interfaces.RequestContextSetter.
+// Implements contracts.RequestContextSetter.
 func (ctx *MahresourcesContext) WithRequest(r *http.Request) any {
 	// Create a shallow copy to avoid modifying the original
 	ctxCopy := *ctx
@@ -840,8 +840,8 @@ func pageLimitCustom(maxResults int) func(db *gorm.DB) *gorm.DB {
 	}
 }
 
-func metaKeys(ctx *MahresourcesContext, table string) ([]interfaces.MetaKey, error) {
-	var results []interfaces.MetaKey
+func metaKeys(ctx *MahresourcesContext, table string) ([]contracts.MetaKey, error) {
+	var results []contracts.MetaKey
 
 	// Group-subtree scoping is applied explicitly here rather than via the GORM
 	// scope callbacks: the SQLite query's FROM clause is a multi-table
@@ -879,7 +879,7 @@ func metaKeys(ctx *MahresourcesContext, table string) ([]interfaces.MetaKey, err
 			return nil, err
 		}
 	} else {
-		results = make([]interfaces.MetaKey, 0)
+		results = make([]contracts.MetaKey, 0)
 	}
 
 	return results, nil

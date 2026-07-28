@@ -105,7 +105,7 @@ func TestMahresourcesContext_createThumbFromVideo(t *testing.T) {
 	}
 }
 
-// bytesFile wraps a bytes.Reader to implement interfaces.File (io.Reader + io.Closer)
+// bytesFile wraps a bytes.Reader to implement contracts.File (io.Reader + io.Closer)
 type bytesFile struct {
 	*bytes.Reader
 }
@@ -322,4 +322,3 @@ func TestTimeoutReader_CloseStopsWatcher(t *testing.T) {
 	// Give goroutine time to exit
 	time.Sleep(10 * time.Millisecond)
 }
-

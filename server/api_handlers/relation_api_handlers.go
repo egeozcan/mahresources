@@ -5,20 +5,20 @@ import (
 	"fmt"
 	"io"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 )
 
-func GetAddGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddGroupRelationTypeHandler(ctx contracts.RelationshipWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipWriter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.RelationshipWriter)
 
 		var editor = query_models.RelationshipTypeEditorQuery{}
 
@@ -43,10 +43,10 @@ func GetAddGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(writ
 	}
 }
 
-func GetEditGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetEditGroupRelationTypeHandler(ctx contracts.RelationshipWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipWriter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.RelationshipWriter)
 
 		var editor = query_models.RelationshipTypeEditorQuery{}
 		var sentFields map[string]bool
@@ -108,10 +108,10 @@ func GetEditGroupRelationTypeHandler(ctx interfaces.RelationshipWriter) func(wri
 	}
 }
 
-func GetAddRelationHandler(ctx interfaces.RelationshipWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddRelationHandler(ctx contracts.RelationshipWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipWriter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.RelationshipWriter)
 
 		var editor = query_models.GroupRelationshipQuery{}
 		var sentFields map[string]bool
@@ -187,7 +187,7 @@ func GetAddRelationHandler(ctx interfaces.RelationshipWriter) func(writer http.R
 	}
 }
 
-func GetRelationTypesHandler(ctx interfaces.RelationshipReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetRelationTypesHandler(ctx contracts.RelationshipReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
@@ -211,10 +211,10 @@ func GetRelationTypesHandler(ctx interfaces.RelationshipReader) func(writer http
 	}
 }
 
-func GetRemoveRelationHandler(ctx interfaces.RelationshipDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveRelationHandler(ctx contracts.RelationshipDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.RelationshipDeleter)
 
 		id := getEntityID(request)
 
@@ -238,10 +238,10 @@ func GetRemoveRelationHandler(ctx interfaces.RelationshipDeleter) func(writer ht
 	}
 }
 
-func GetRemoveRelationTypeHandler(ctx interfaces.RelationshipDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveRelationTypeHandler(ctx contracts.RelationshipDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.RelationshipDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.RelationshipDeleter)
 
 		id := getEntityID(request)
 

@@ -6,11 +6,11 @@ import (
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/mrql"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 	"mahresources/server/template_handlers/template_entities"
 	"net/http"
 	"strconv"
@@ -118,12 +118,12 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 			"categories":        categories,
 			"listHeaderCarrier": listHeaderCarrier,
 			"pagination":        pagination,
-			"mrqlError":       mrqlError,
-			"tags":            tags,
-			"popularTags":     popularTags,
-			"notes":           notes,
-			"resources":       resources,
-			"parsedQuery":     query,
+			"mrqlError":         mrqlError,
+			"tags":              tags,
+			"popularTags":       popularTags,
+			"notes":             notes,
+			"resources":         resources,
+			"parsedQuery":       query,
 			"action": template_entities.Entry{
 				Name: "Add",
 				Url:  "/group/new",
@@ -221,7 +221,7 @@ func GroupTimelineContextProvider(context *application_context.MahresourcesConte
 			"popularTags":       popularTags,
 			"notes":             notes,
 			"resources":         resources,
-			"parsedQuery":     query,
+			"parsedQuery":       query,
 			"action": template_entities.Entry{
 				Name: "Add",
 				Url:  "/group/new",
@@ -308,7 +308,7 @@ func GroupContextProvider(context *application_context.MahresourcesContext) func
 	return groupContextProviderImpl(context)
 }
 
-func groupContextProviderImpl(context interfaces.GroupReader) func(request *http.Request) pongo2.Context {
+func groupContextProviderImpl(context contracts.GroupReader) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())

@@ -1,4 +1,4 @@
-package interfaces
+package contracts
 
 import (
 	"github.com/jmoiron/sqlx"

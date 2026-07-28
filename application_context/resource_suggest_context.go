@@ -3,8 +3,8 @@ package application_context
 import (
 	"sort"
 
+	"mahresources/contracts"
 	"mahresources/models/query_models"
-	"mahresources/server/interfaces"
 )
 
 // Tunable ranking parameters for GetSuggestedTags. Kept as named constants so
@@ -42,7 +42,7 @@ type suggestAccumulator struct {
 // this is the primary guard. The two source queries are likewise scoped, so a
 // confined principal can only ever receive suggestions derived from resources
 // inside its subtree.
-func (ctx *MahresourcesContext) GetSuggestedTags(resourceId uint, limit int) ([]interfaces.SuggestedTag, error) {
+func (ctx *MahresourcesContext) GetSuggestedTags(resourceId uint, limit int) ([]contracts.SuggestedTag, error) {
 	if limit <= 0 {
 		limit = suggestedTagsDefaultLimit
 	}
@@ -115,7 +115,7 @@ func (ctx *MahresourcesContext) GetSuggestedTags(resourceId uint, limit int) ([]
 		}
 	}
 
-	suggestions := make([]interfaces.SuggestedTag, 0, len(acc))
+	suggestions := make([]contracts.SuggestedTag, 0, len(acc))
 	for id, a := range acc {
 		var score float64
 		if maxSimFreq > 0 {
@@ -133,7 +133,7 @@ func (ctx *MahresourcesContext) GetSuggestedTags(resourceId uint, limit int) ([]
 			sources = append(sources, "group")
 		}
 
-		suggestions = append(suggestions, interfaces.SuggestedTag{
+		suggestions = append(suggestions, contracts.SuggestedTag{
 			ID:      id,
 			Name:    a.name,
 			Score:   score,

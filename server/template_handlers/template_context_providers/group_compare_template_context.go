@@ -5,16 +5,16 @@ import (
 
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
-	"mahresources/server/interfaces"
 )
 
 func GroupCompareContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
 	return groupCompareContextProviderImpl(context)
 }
 
-func groupCompareContextProviderImpl(context interfaces.GroupComparer) func(request *http.Request) pongo2.Context {
+func groupCompareContextProviderImpl(context contracts.GroupComparer) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		baseContext := StaticTemplateCtx(request)
 

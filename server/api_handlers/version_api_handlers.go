@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 )
 
 // versionErrorStatus maps a version operation error to the appropriate HTTP status code.
@@ -35,7 +35,7 @@ func versionErrorStatus(err error) int {
 }
 
 // GetListVersionsHandler returns handler for listing versions
-func GetListVersionsHandler(ctx interfaces.VersionReader) func(http.ResponseWriter, *http.Request) {
+func GetListVersionsHandler(ctx contracts.VersionReader) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resourceID, err := strconv.ParseUint(r.URL.Query().Get("resourceId"), 10, 64)
 		if err != nil {
@@ -55,7 +55,7 @@ func GetListVersionsHandler(ctx interfaces.VersionReader) func(http.ResponseWrit
 }
 
 // GetVersionHandler returns handler for getting a single version
-func GetVersionHandler(ctx interfaces.VersionReader) func(http.ResponseWriter, *http.Request) {
+func GetVersionHandler(ctx contracts.VersionReader) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		versionID, err := strconv.ParseUint(r.URL.Query().Get("id"), 10, 64)
 		if err != nil {
@@ -79,7 +79,7 @@ func GetVersionHandler(ctx interfaces.VersionReader) func(http.ResponseWriter, *
 // BH-034: maxUploadSize is a getter read at request time (mirrors the
 // pattern in GetResourceUploadHandler). 0 = unlimited. Oversize bodies are
 // bounded by http.MaxBytesReader and surface as ParseMultipartForm errors.
-func GetUploadVersionHandler(ctx interfaces.VersionWriter, maxUploadSize func() int64) func(http.ResponseWriter, *http.Request) {
+func GetUploadVersionHandler(ctx contracts.VersionWriter, maxUploadSize func() int64) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resourceID, err := strconv.ParseUint(r.URL.Query().Get("resourceId"), 10, 64)
 		if err != nil {
@@ -125,7 +125,7 @@ func GetUploadVersionHandler(ctx interfaces.VersionWriter, maxUploadSize func() 
 }
 
 // GetRestoreVersionHandler returns handler for restoring a version
-func GetRestoreVersionHandler(ctx interfaces.VersionWriter) func(http.ResponseWriter, *http.Request) {
+func GetRestoreVersionHandler(ctx contracts.VersionWriter) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var query query_models.VersionRestoreQuery
 		if err := tryFillStructValuesFromRequest(&query, r); err != nil {
@@ -149,7 +149,7 @@ func GetRestoreVersionHandler(ctx interfaces.VersionWriter) func(http.ResponseWr
 }
 
 // GetDeleteVersionHandler returns handler for deleting a version
-func GetDeleteVersionHandler(ctx interfaces.VersionDeleter) func(http.ResponseWriter, *http.Request) {
+func GetDeleteVersionHandler(ctx contracts.VersionDeleter) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resourceID, err := strconv.ParseUint(r.URL.Query().Get("resourceId"), 10, 64)
 		if err != nil {
@@ -183,7 +183,7 @@ func GetDeleteVersionHandler(ctx interfaces.VersionDeleter) func(http.ResponseWr
 }
 
 // GetVersionFileHandler returns handler for downloading version file
-func GetVersionFileHandler(ctx interfaces.VersionFileServer) func(http.ResponseWriter, *http.Request) {
+func GetVersionFileHandler(ctx contracts.VersionFileServer) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		versionID, err := strconv.ParseUint(r.URL.Query().Get("versionId"), 10, 64)
 		if err != nil {
@@ -218,7 +218,7 @@ func GetVersionFileHandler(ctx interfaces.VersionFileServer) func(http.ResponseW
 }
 
 // GetCleanupVersionsHandler returns handler for cleaning up versions
-func GetCleanupVersionsHandler(ctx interfaces.VersionCleaner) func(http.ResponseWriter, *http.Request) {
+func GetCleanupVersionsHandler(ctx contracts.VersionCleaner) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var query query_models.VersionCleanupQuery
 		if err := tryFillStructValuesFromRequest(&query, r); err != nil {
@@ -241,7 +241,7 @@ func GetCleanupVersionsHandler(ctx interfaces.VersionCleaner) func(http.Response
 }
 
 // GetBulkCleanupVersionsHandler returns handler for bulk cleanup
-func GetBulkCleanupVersionsHandler(ctx interfaces.VersionCleaner) func(http.ResponseWriter, *http.Request) {
+func GetBulkCleanupVersionsHandler(ctx contracts.VersionCleaner) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var query query_models.BulkVersionCleanupQuery
 		if err := tryFillStructValuesFromRequest(&query, r); err != nil {
@@ -269,7 +269,7 @@ func GetBulkCleanupVersionsHandler(ctx interfaces.VersionCleaner) func(http.Resp
 }
 
 // GetCompareVersionsHandler returns handler for comparing versions
-func GetCompareVersionsHandler(ctx interfaces.VersionComparer) func(http.ResponseWriter, *http.Request) {
+func GetCompareVersionsHandler(ctx contracts.VersionComparer) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		resourceID, err := strconv.ParseUint(r.URL.Query().Get("resourceId"), 10, 64)
 		if err != nil {

@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 	"net/http"
 )
 
-func GetSeriesHandler(ctx interfaces.SeriesReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetSeriesHandler(ctx contracts.SeriesReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := getEntityID(request)
 
@@ -25,9 +25,9 @@ func GetSeriesHandler(ctx interfaces.SeriesReader) func(writer http.ResponseWrit
 	}
 }
 
-func GetUpdateSeriesHandler(ctx interfaces.SeriesWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetUpdateSeriesHandler(ctx contracts.SeriesWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.SeriesWriter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.SeriesWriter)
 
 		var editor query_models.SeriesEditor
 		if err := tryFillStructValuesFromRequest(&editor, request); err != nil {
@@ -50,9 +50,9 @@ func GetUpdateSeriesHandler(ctx interfaces.SeriesWriter) func(writer http.Respon
 	}
 }
 
-func GetDeleteSeriesHandler(ctx interfaces.SeriesDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetDeleteSeriesHandler(ctx contracts.SeriesDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.SeriesDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.SeriesDeleter)
 
 		id := getEntityID(request)
 
@@ -75,9 +75,9 @@ func GetDeleteSeriesHandler(ctx interfaces.SeriesDeleter) func(writer http.Respo
 	}
 }
 
-func GetRemoveResourceFromSeriesHandler(ctx interfaces.ResourceSeriesRemover) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveResourceFromSeriesHandler(ctx contracts.ResourceSeriesRemover) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceSeriesRemover)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.ResourceSeriesRemover)
 
 		id := getEntityID(request)
 

@@ -4,14 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 	"net/http"
 )
 
 // GetEditMetaHandler returns an HTTP handler that performs deep-merge-by-path
 // editing of an entity's Meta JSON column.
-func GetEditMetaHandler(ctx interfaces.MetaEditor, name string) func(http.ResponseWriter, *http.Request) {
+func GetEditMetaHandler(ctx contracts.MetaEditor, name string) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := http_utils.GetUIntQueryParameter(request, "id", 0)
 		if id == 0 {

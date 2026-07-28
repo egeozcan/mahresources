@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"io"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
 	"mahresources/mrql"
-	"mahresources/server/interfaces"
 	"path"
 	"strings"
 
@@ -146,7 +146,7 @@ func (ctx *MahresourcesContext) DeleteResource(resourceId uint) error {
 	return nil
 }
 
-func (ctx *MahresourcesContext) ResourceMetaKeys() ([]interfaces.MetaKey, error) {
+func (ctx *MahresourcesContext) ResourceMetaKeys() ([]contracts.MetaKey, error) {
 	return metaKeys(ctx, "resources")
 }
 

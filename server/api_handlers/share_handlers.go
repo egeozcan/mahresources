@@ -7,8 +7,8 @@ import (
 	"strconv"
 
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 )
 
 type ShareResponse struct {
@@ -16,10 +16,10 @@ type ShareResponse struct {
 	ShareUrl   string `json:"shareUrl"`
 }
 
-func GetShareNoteHandler(ctx interfaces.NoteSharer) func(writer http.ResponseWriter, request *http.Request) {
+func GetShareNoteHandler(ctx contracts.NoteSharer) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteSharer)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.NoteSharer)
 
 		noteId := http_utils.GetUIntFormValue(request, "noteId", 0)
 		if noteId == 0 {
@@ -59,9 +59,9 @@ func GetShareNoteHandler(ctx interfaces.NoteSharer) func(writer http.ResponseWri
 // success, the browser-form path (HTML Accept) redirects back to
 // /admin/shares (303 See Other); API consumers get JSON with the revoke
 // count.
-func GetBulkUnshareNotesHandler(ctx interfaces.NoteSharer) func(writer http.ResponseWriter, request *http.Request) {
+func GetBulkUnshareNotesHandler(ctx contracts.NoteSharer) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteSharer)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.NoteSharer)
 
 		if err := request.ParseForm(); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
@@ -119,10 +119,10 @@ func parseUintStrict(s string) (uint, error) {
 	return uint(n), nil
 }
 
-func GetUnshareNoteHandler(ctx interfaces.NoteSharer) func(writer http.ResponseWriter, request *http.Request) {
+func GetUnshareNoteHandler(ctx contracts.NoteSharer) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.NoteSharer)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.NoteSharer)
 
 		noteId := http_utils.GetUIntFormValue(request, "noteId", 0)
 		if noteId == 0 {

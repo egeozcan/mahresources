@@ -62,10 +62,11 @@ Mahresources is a CRUD application for personal information management written i
 
 **models/** - GORM models and database layer. Entity models are in `*_model.go` files. Query DTOs are in `query_models/`. GORM query scopes are in `database_scopes/`.
 
+**contracts/** - The boundary between the two layers above: the Reader/Writer/Deleter interfaces that `application_context` implements and `server` consumes, plus the few shared response types they exchange (`CalendarEventsResponse`, `MetaKey`, `SuggestedTag`). It depends only on `models/` and `constants/`, so both layers can point at it without pointing at each other.
+
 **server/** - HTTP layer with Gorilla Mux routing.
 - `api_handlers/` - JSON API endpoints
 - `template_handlers/` - HTML template rendering
-- `interfaces/` - Interface definitions for dependency injection (Reader, Writer, Deleter patterns)
 - `openapi/` - OpenAPI 3.0 spec generation from code
 - `routes_openapi.go` - API route definitions with OpenAPI metadata
 
@@ -92,7 +93,9 @@ Mahresources is a CRUD application for personal information management written i
 
 **Generic Entity Writers**: `EntityWriter[T]` generic type handles common CRUD operations across entities.
 
-**Interface-based DI**: Handlers receive specific interfaces (e.g., `ResourceReader`, `GroupWriter`) rather than concrete implementations.
+**Interface-based DI**: Handlers receive specific interfaces (e.g., `contracts.ResourceReader`, `contracts.GroupWriter`) rather than concrete implementations. `application_context/contract_checks.go` asserts at compile time that `MahresourcesContext` satisfies each one.
+
+**Enforced layering**: the dependency direction is `server/` → `application_context/` → `contracts/` → `models/` → `constants/`, and it is checked, not merely documented. `internal/arch/layering_test.go` fails the build if anything below `server/` imports it (only `main`, `cmd/...`, and `internal/...` may), if `models/` reaches outside itself, or if `contracts/` depends on either layer that uses it. When you need to hand a type across the `application_context`/`server` boundary, put it in `contracts/`.
 
 ### Entity Relationships
 

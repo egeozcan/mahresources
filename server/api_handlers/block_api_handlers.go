@@ -4,17 +4,17 @@ import (
 	"encoding/json"
 	"errors"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models/block_types"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 	"net/http"
 	"strconv"
 	"time"
 )
 
-func GetBlocksHandler(ctx interfaces.BlockReader) func(http.ResponseWriter, *http.Request) {
+func GetBlocksHandler(ctx contracts.BlockReader) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		noteID := uint(http_utils.GetIntQueryParameter(request, "noteId", 0))
 		if noteID == 0 {
@@ -33,7 +33,7 @@ func GetBlocksHandler(ctx interfaces.BlockReader) func(http.ResponseWriter, *htt
 	}
 }
 
-func GetBlockHandler(ctx interfaces.BlockReader) func(http.ResponseWriter, *http.Request) {
+func GetBlockHandler(ctx contracts.BlockReader) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
 		if id == 0 {
@@ -52,7 +52,7 @@ func GetBlockHandler(ctx interfaces.BlockReader) func(http.ResponseWriter, *http
 	}
 }
 
-func CreateBlockHandler(ctx interfaces.BlockWriter) func(http.ResponseWriter, *http.Request) {
+func CreateBlockHandler(ctx contracts.BlockWriter) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor query_models.NoteBlockEditor
 
@@ -73,7 +73,7 @@ func CreateBlockHandler(ctx interfaces.BlockWriter) func(http.ResponseWriter, *h
 	}
 }
 
-func UpdateBlockContentHandler(ctx interfaces.BlockWriter) func(http.ResponseWriter, *http.Request) {
+func UpdateBlockContentHandler(ctx contracts.BlockWriter) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
 		if id == 0 {
@@ -114,7 +114,7 @@ func UpdateBlockContentHandler(ctx interfaces.BlockWriter) func(http.ResponseWri
 	}
 }
 
-func UpdateBlockStateHandler(ctx interfaces.BlockStateWriter) func(http.ResponseWriter, *http.Request) {
+func UpdateBlockStateHandler(ctx contracts.BlockStateWriter) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
 		if id == 0 {
@@ -163,7 +163,7 @@ func UpdateBlockStateHandler(ctx interfaces.BlockStateWriter) func(http.Response
 	}
 }
 
-func DeleteBlockHandler(ctx interfaces.BlockDeleter) func(http.ResponseWriter, *http.Request) {
+func DeleteBlockHandler(ctx contracts.BlockDeleter) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
 		if id == 0 {
@@ -194,7 +194,7 @@ func DeleteBlockHandler(ctx interfaces.BlockDeleter) func(http.ResponseWriter, *
 	}
 }
 
-func ReorderBlocksHandler(ctx interfaces.BlockWriter) func(http.ResponseWriter, *http.Request) {
+func ReorderBlocksHandler(ctx contracts.BlockWriter) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var body query_models.NoteBlockReorderEditor
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
@@ -264,7 +264,7 @@ func GetBlockTypesHandler() func(http.ResponseWriter, *http.Request) {
 	}
 }
 
-func RebalanceBlocksHandler(ctx interfaces.BlockRebalancer) func(http.ResponseWriter, *http.Request) {
+func RebalanceBlocksHandler(ctx contracts.BlockRebalancer) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		noteID := uint(http_utils.GetIntQueryParameter(request, "noteId", 0))
 		if noteID == 0 {
@@ -302,7 +302,7 @@ type TableBlockQueryResponse struct {
 // The handler reads the block content to get queryId and queryParams,
 // merges stored params with request query params, executes the query,
 // and transforms results to table format.
-func GetTableBlockQueryDataHandler(ctx interfaces.TableBlockQueryRunner) func(http.ResponseWriter, *http.Request) {
+func GetTableBlockQueryDataHandler(ctx contracts.TableBlockQueryRunner) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		blockID := uint(http_utils.GetIntQueryParameter(request, "blockId", 0))
 		if blockID == 0 {
@@ -406,7 +406,7 @@ func GetTableBlockQueryDataHandler(ctx interfaces.TableBlockQueryRunner) func(ht
 
 // GetCalendarBlockEventsHandler returns events for a calendar block.
 // Route: GET /v1/note/block/calendar/events?blockId=X&start=Y&end=Z
-func GetCalendarBlockEventsHandler(ctx interfaces.CalendarBlockEventFetcher) func(http.ResponseWriter, *http.Request) {
+func GetCalendarBlockEventsHandler(ctx contracts.CalendarBlockEventFetcher) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		blockID := uint(http_utils.GetIntQueryParameter(request, "blockId", 0))
 		if blockID == 0 {

@@ -1,4 +1,4 @@
-package interfaces
+package contracts
 
 import "net/http"
 
@@ -8,10 +8,10 @@ import "net/http"
 //
 // Example usage in a handler:
 //
-//	func GetAddTagHandler(ctx interfaces.TagsWriter) http.HandlerFunc {
+//	func GetAddTagHandler(ctx contracts.TagsWriter) http.HandlerFunc {
 //	    return func(w http.ResponseWriter, r *http.Request) {
 //	        // Enable request-aware logging if supported
-//	        effectiveCtx := withRequestContext(ctx, request).(interfaces.TagsWriter)
+//	        effectiveCtx := withRequestContext(ctx, request).(contracts.TagsWriter)
 //	        // ... use effectiveCtx for operations
 //	    }
 //	}

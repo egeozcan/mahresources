@@ -9,14 +9,14 @@ import (
 	"strings"
 
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 )
 
 // GetTemplatePartialsHandler lists template partials (JSON).
-func GetTemplatePartialsHandler(ctx interfaces.TemplatePartialReader) func(http.ResponseWriter, *http.Request) {
+func GetTemplatePartialsHandler(ctx contracts.TemplatePartialReader) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
@@ -41,9 +41,9 @@ func GetTemplatePartialsHandler(ctx interfaces.TemplatePartialReader) func(http.
 // GetAddTemplatePartialHandler creates or updates a template partial. A non-zero
 // ID updates; JSON/form partial updates pre-fill absent fields from the existing
 // partial so unsent fields are preserved.
-func GetAddTemplatePartialHandler(ctx interfaces.TemplatePartialWriter) func(http.ResponseWriter, *http.Request) {
+func GetAddTemplatePartialHandler(ctx contracts.TemplatePartialWriter) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.TemplatePartialWriter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.TemplatePartialWriter)
 
 		var editor = query_models.TemplatePartialEditor{}
 
@@ -116,9 +116,9 @@ func GetAddTemplatePartialHandler(ctx interfaces.TemplatePartialWriter) func(htt
 }
 
 // GetRemoveTemplatePartialHandler deletes a template partial by ID.
-func GetRemoveTemplatePartialHandler(ctx interfaces.TemplatePartialDeleter) func(http.ResponseWriter, *http.Request) {
+func GetRemoveTemplatePartialHandler(ctx contracts.TemplatePartialDeleter) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.TemplatePartialDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.TemplatePartialDeleter)
 
 		id := getEntityID(request)
 		if id == 0 {

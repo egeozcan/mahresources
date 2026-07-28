@@ -7,10 +7,10 @@ import (
 	"io"
 	"mahresources/application_context"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 	"net/http"
 	"path"
 	"strconv"
@@ -23,7 +23,7 @@ type uploadErrorDetail struct {
 	ResourceID uint   `json:"existingResourceId,omitempty"`
 }
 
-func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourcesHandler(ctx contracts.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		page := http_utils.GetPageParameter(request)
 		var query query_models.ResourceSearchQuery
@@ -64,7 +64,7 @@ func GetResourcesHandler(ctx interfaces.ResourceReader) func(writer http.Respons
 	}
 }
 
-func GetResourceHandler(ctx interfaces.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceHandler(ctx contracts.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.EntityIdQuery
 
@@ -88,14 +88,14 @@ func GetResourceHandler(ctx interfaces.ResourceReader) func(writer http.Response
 // SuggestedTagsResponse is the envelope returned by GetSuggestedTagsHandler.
 // Exported so the OpenAPI registry can derive its schema.
 type SuggestedTagsResponse struct {
-	Suggestions []interfaces.SuggestedTag `json:"suggestions"`
+	Suggestions []contracts.SuggestedTag `json:"suggestions"`
 }
 
 // GetSuggestedTagsHandler returns context-aware tag suggestions for a single
 // resource. Always 200 with a (possibly empty) array on success; 400 on a
 // missing/zero id; 404 when the resource is not found or not visible under the
 // caller's scope.
-func GetSuggestedTagsHandler(ctx interfaces.ResourceSuggestionReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetSuggestedTagsHandler(ctx contracts.ResourceSuggestionReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.EntityIdQuery
 
@@ -121,7 +121,7 @@ func GetSuggestedTagsHandler(ctx interfaces.ResourceSuggestionReader) func(write
 	}
 }
 
-func GetResourceContentHandler(ctx interfaces.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceContentHandler(ctx contracts.ResourceReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.EntityIdQuery
 		var detailsQuery query_models.ResourceSearchQuery
@@ -171,10 +171,10 @@ func GetResourceContentHandler(ctx interfaces.ResourceReader) func(writer http.R
 // tests and live configuration updates both take effect without re-wiring
 // the router. 0 = unlimited (legacy behaviour). Over-limit requests surface
 // as ParseMultipartForm errors and map to HTTP 400.
-func GetResourceUploadHandler(ctx interfaces.ResourceCreator, maxUploadSize func() int64) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceUploadHandler(ctx contracts.ResourceCreator, maxUploadSize func() int64) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceCreator)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.ResourceCreator)
 
 		var remoteCreator = query_models.ResourceFromRemoteCreator{}
 
@@ -316,10 +316,10 @@ func GetResourceUploadHandler(ctx interfaces.ResourceCreator, maxUploadSize func
 	}
 }
 
-func GetResourceAddLocalHandler(ctx interfaces.ResourceCreator) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceAddLocalHandler(ctx contracts.ResourceCreator) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceCreator)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.ResourceCreator)
 
 		var creator = query_models.ResourceFromLocalCreator{}
 
@@ -344,10 +344,10 @@ func GetResourceAddLocalHandler(ctx interfaces.ResourceCreator) func(writer http
 	}
 }
 
-func GetResourceAddRemoteHandler(ctx interfaces.ResourceCreator) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceAddRemoteHandler(ctx contracts.ResourceCreator) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceCreator)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.ResourceCreator)
 
 		var creator = query_models.ResourceFromRemoteCreator{}
 
@@ -441,10 +441,10 @@ func GetResourceAddRemoteHandler(ctx interfaces.ResourceCreator) func(writer htt
 	}
 }
 
-func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceEditHandler(ctx contracts.ResourceEditReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceEditReader)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.ResourceEditReader)
 
 		var editor = query_models.ResourceEditor{}
 		var sentFields map[string]bool
@@ -561,7 +561,7 @@ func GetResourceEditHandler(ctx interfaces.ResourceEditReader) func(writer http.
 	}
 }
 
-func GetResourceThumbnailHandler(ctx interfaces.ResourceThumbnailLoader) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceThumbnailHandler(ctx contracts.ResourceThumbnailLoader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query = query_models.ResourceThumbnailQuery{}
 		err := tryFillStructValuesFromRequest(&query, request)
@@ -619,7 +619,7 @@ func GetResourceThumbnailHandler(ctx interfaces.ResourceThumbnailLoader) func(wr
 // supplied image. The new image is resized down and re-encoded as JPEG. On
 // success returns 204; invalid or undecodable images return 400.
 func PostResourceCustomThumbnailHandler(
-	ctx interfaces.ResourceThumbnailWriter,
+	ctx contracts.ResourceThumbnailWriter,
 	maxUploadSize func() int64,
 ) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
@@ -707,7 +707,7 @@ func resourceIDFromRequest(request *http.Request) (uint, error) {
 // DeleteResourceCustomThumbnailHandler removes all stored previews for the
 // resource so that the next thumbnail request regenerates them automatically.
 func DeleteResourceCustomThumbnailHandler(
-	ctx interfaces.ResourceThumbnailWriter,
+	ctx contracts.ResourceThumbnailWriter,
 ) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		resourceID, err := resourceIDFromRequest(request)
@@ -730,10 +730,10 @@ func DeleteResourceCustomThumbnailHandler(
 	}
 }
 
-func GetRemoveResourceHandler(ctx interfaces.ResourceDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveResourceHandler(ctx contracts.ResourceDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.ResourceDeleter)
 
 		var query = query_models.EntityIdQuery{}
 
@@ -761,7 +761,7 @@ func GetRemoveResourceHandler(ctx interfaces.ResourceDeleter) func(writer http.R
 	}
 }
 
-func GetResourceMetaKeysHandler(ctx interfaces.ResourceMetaReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceMetaKeysHandler(ctx contracts.ResourceMetaReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		keys, err := ctx.ResourceMetaKeys()
 
@@ -776,9 +776,9 @@ func GetResourceMetaKeysHandler(ctx interfaces.ResourceMetaReader) func(writer h
 	}
 }
 
-func GetAddTagsToResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddTagsToResourcesHandler(ctx contracts.BulkResourceTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.BulkResourceTagEditor)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.BulkResourceTagEditor)
 
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -801,9 +801,9 @@ func GetAddTagsToResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(wri
 	}
 }
 
-func GetAddGroupsToResourcesHandler(ctx interfaces.BulkResourceGroupEditor) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddGroupsToResourcesHandler(ctx contracts.BulkResourceGroupEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.BulkResourceGroupEditor)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.BulkResourceGroupEditor)
 
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -826,9 +826,9 @@ func GetAddGroupsToResourcesHandler(ctx interfaces.BulkResourceGroupEditor) func
 	}
 }
 
-func GetRemoveTagsFromResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveTagsFromResourcesHandler(ctx contracts.BulkResourceTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.BulkResourceTagEditor)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.BulkResourceTagEditor)
 
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -851,9 +851,9 @@ func GetRemoveTagsFromResourcesHandler(ctx interfaces.BulkResourceTagEditor) fun
 	}
 }
 
-func GetReplaceTagsOfResourcesHandler(ctx interfaces.BulkResourceTagEditor) func(writer http.ResponseWriter, request *http.Request) {
+func GetReplaceTagsOfResourcesHandler(ctx contracts.BulkResourceTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.BulkResourceTagEditor)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.BulkResourceTagEditor)
 
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -876,9 +876,9 @@ func GetReplaceTagsOfResourcesHandler(ctx interfaces.BulkResourceTagEditor) func
 	}
 }
 
-func GetAddMetaToResourcesHandler(ctx interfaces.BulkResourceMetaEditor) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddMetaToResourcesHandler(ctx contracts.BulkResourceMetaEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.BulkResourceMetaEditor)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.BulkResourceMetaEditor)
 
 		var editor = query_models.BulkEditMetaQuery{}
 		var err error
@@ -901,10 +901,10 @@ func GetAddMetaToResourcesHandler(ctx interfaces.BulkResourceMetaEditor) func(wr
 	}
 }
 
-func GetBulkDeleteResourcesHandler(ctx interfaces.BulkResourceDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetBulkDeleteResourcesHandler(ctx contracts.BulkResourceDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.BulkResourceDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.BulkResourceDeleter)
 
 		var editor = query_models.BulkQuery{}
 		var err error
@@ -932,10 +932,10 @@ func GetBulkDeleteResourcesHandler(ctx interfaces.BulkResourceDeleter) func(writ
 	}
 }
 
-func GetMergeResourcesHandler(ctx interfaces.ResourceMerger) func(writer http.ResponseWriter, request *http.Request) {
+func GetMergeResourcesHandler(ctx contracts.ResourceMerger) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceMerger)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.ResourceMerger)
 
 		var editor = query_models.MergeQuery{}
 		var err error
@@ -958,7 +958,7 @@ func GetMergeResourcesHandler(ctx interfaces.ResourceMerger) func(writer http.Re
 	}
 }
 
-func GetRotateResourceHandler(ctx interfaces.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
+func GetRotateResourceHandler(ctx contracts.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.RotateResourceQuery{}
 		var err error
@@ -979,7 +979,7 @@ func GetRotateResourceHandler(ctx interfaces.ResourceMediaProcessor) func(writer
 	}
 }
 
-func GetCropResourceHandler(ctx interfaces.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
+func GetCropResourceHandler(ctx contracts.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.CropResourceQuery{}
 
@@ -1006,7 +1006,7 @@ func GetCropResourceHandler(ctx interfaces.ResourceMediaProcessor) func(writer h
 	}
 }
 
-func GetTrimVideoHandler(ctx interfaces.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
+func GetTrimVideoHandler(ctx contracts.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.TrimVideoQuery{}
 
@@ -1033,7 +1033,7 @@ func GetTrimVideoHandler(ctx interfaces.ResourceMediaProcessor) func(writer http
 	}
 }
 
-func GetBulkCalculateDimensionsHandler(ctx interfaces.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
+func GetBulkCalculateDimensionsHandler(ctx contracts.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkQuery{}
 		var err error
@@ -1069,7 +1069,7 @@ func GetBulkCalculateDimensionsHandler(ctx interfaces.ResourceMediaProcessor) fu
 	}
 }
 
-func GetResourceSetDimensionsHandler(ctx interfaces.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceSetDimensionsHandler(ctx contracts.ResourceMediaProcessor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.ResourceEditor{}
 		var err error

@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
-	"mahresources/server/interfaces"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,7 +22,7 @@ type capturingResourceCreator struct {
 	name string
 }
 
-func (c *capturingResourceCreator) AddResource(file interfaces.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+func (c *capturingResourceCreator) AddResource(file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
 	_, _ = io.Copy(io.Discard, file)
 	c.name = resourceQuery.Name
 	return &models.Resource{ID: 1, Name: resourceQuery.Name}, nil
