@@ -87,7 +87,7 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
             // away from the input, so the blur handler never fires.
             this.$nextTick(() => {
                 if (this._destroyed) return;
-                const popover = this.$refs?.dropdown;
+                const popover = this._refEl('dropdown');
                 if (!popover) return;
                 this._popover = popover;
                 this._popoverMouseDownHandler = (e) => {
@@ -195,7 +195,7 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
             this.loading = snapshot.creationStatus === 'loading';
 
             if (!change) {
-                const input = this.$refs?.autocompleter;
+                const input = this._refEl('autocompleter');
                 if (searchCompleted && snapshot.isOpen && this.optionCount
                     && snapshot.activeOptionIndex === null) {
                     this._core?.dispatch({ type: 'move-active', direction: 'next' });
@@ -260,9 +260,20 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
             this._liveRegion = null;
         },
 
+        // Alpine builds the `$refs` proxy the first time it is read and caches it on the element,
+        // from the ref registries that exist at that moment. Every template renders the input and
+        // its dropdown inside an `x-if`, so those refs are registered only once Alpine reaches
+        // that branch -- after `init()` has run. A read from `init()` would therefore cache an
+        // empty proxy for the lifetime of the field, and every later lookup would miss: the
+        // popover would never be positioned and would sit in the viewport corner. Resolve the
+        // element from the field's own subtree so a lookup is correct whenever it happens.
+        _refEl(name) {
+            return this.$refs?.[name] || this.$el?.querySelector?.(`[x-ref="${name}"]`) || null;
+        },
+
         async updatePopover() {
             await this.$nextTick();
-            const popover = this.$refs?.dropdown || this.$el?.querySelector?.('[popover]');
+            const popover = this._refEl('dropdown') || this.$el?.querySelector?.('[popover]');
             if (!popover) return;
 
             const shouldShow = this.dropdownActive && (this.results.length > 0 || !!this.createCandidate);
@@ -282,8 +293,8 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
         },
 
         positionDropdown() {
-            const popover = this.$refs?.dropdown;
-            const input = this.$refs?.autocompleter;
+            const popover = this._refEl('dropdown');
+            const input = this._refEl('autocompleter');
             if (!popover || !input) return;
 
             const inputRect = input.getBoundingClientRect();
@@ -312,7 +323,7 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
         // Clear the DOM buffer before creation can re-render it. Creation commands own query
         // consumption themselves, so do not send an input event that invalidates their candidate.
         _clearInput({ notify = true } = {}) {
-            const inputEl = this.$refs?.autocompleter;
+            const inputEl = this._refEl('autocompleter');
             if (inputEl) {
                 inputEl.value = '';
                 if (notify) inputEl.dispatchEvent(new Event('input'));
@@ -454,7 +465,7 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
         async showSelected() {
             await this.$nextTick();
 
-            const list = this.$refs?.dropdown;
+            const list = this._refEl('dropdown');
 
             if (!list) {
                 return;
@@ -559,7 +570,7 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
                     // Focus can return before this fires -- committing an option blurs the
                     // input and the caller (or the user) refocuses it right after. Closing
                     // then would hide a dropdown that is being used again.
-                    if (document.activeElement === this.$refs?.autocompleter) return;
+                    if (document.activeElement === this._refEl('autocompleter')) return;
                     this._core?.dispatch({ type: 'close' });
                 }, 150);
             },

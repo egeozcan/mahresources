@@ -174,3 +174,16 @@ the current page — no console error, just a filter bar that silently refuses t
 profile publishes `lookup.searchUrl` and the adapter reads it. When one branch of a two-path
 normalizer stubs a field out, grep every reader of that field before assuming the stub is safe;
 "this branch doesn't use it" is about the branch, not about the field.
+
+## Alpine caches `$refs` on first read — reading it from `init()` poisons it forever
+`$refs` is not a live lookup. The magic builds a merged proxy over the `_x_refs` registries that
+exist on the ancestor chain **at first access** and caches it on the element as `_x_refs_proxy`.
+Every selector template declares its input and dropdown inside `<template x-if>`, so those refs
+are registered only when Alpine reaches that branch — after the root's `init()` has run. The
+initial `_syncCoreSnapshot(...)` call in `init()` read `this.$refs?.autocompleter`, which cached
+an empty proxy: from then on `$refs.dropdown` and `$refs.autocompleter` were permanently
+`undefined`, `positionDropdown()` early-returned, and every autocompleter popover in the app
+opened at the viewport origin (top-left). Nothing threw, and no test covered the geometry.
+Diagnose it by comparing `el._x_refs` (correct) against `el._x_refs_proxy` (empty). Fix: resolve
+refs through the field's own subtree (`this.$refs?.[name] || this.$el.querySelector('[x-ref=…]')`)
+so a lookup is correct whenever it happens, instead of depending on init ordering.
