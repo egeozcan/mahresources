@@ -84,6 +84,60 @@ after the move neither package can host them. They must be rewritten against
 the exported API before code moves. That is the `guid_test.go` lesson arriving
 from the other direction: a file can reference symbols on both sides of a seam.
 
+**Revision 9 — slice 1 is DONE** (commits `0fa18344`, `db76229d`, `f8270f8f`).
+Executing it surfaced four more defects in this plan, all confirmed against the
+code, and all four are the same shape the plan already warned about: an
+inventory taken from a proxy rather than from a search.
+
+(19) **The `ctx.*` fan-out was still one short.** §3.2 names three external
+helpers; there are four. `visibleGroupIDs` (added by the §5a fix, in
+`scoping.go`, which stays) is called from `bfsCollectGroupRelations`, which
+moves. `ScopeResolver` therefore needs two methods, not one. The plan's own
+fan-out table was measured before the §5a fix landed and never re-run against
+`dabbfbc6`, which §2a step 2 was supposed to catch.
+
+(20) **`guid_test.go` straddles the seam in a second way.** §3.4 flagged it for
+`ensureGUID`. It also calls `CreateGroup`, which does not move. Both tests
+overwrite the GUID immediately afterwards and assert only on `ensureGUID`, so
+they now insert the row directly. Two revisions found this file; neither read it.
+
+(21) **The scoped-import denial test cannot live in `application_context`.**
+§3.4 insists all five new tests belong there because they need `WithPrincipal`
+and friends. That reasoning holds for four of them. It does not hold for the
+import denial, which is a property of `denyScopedPrincipal` applied at the
+router in `server/routes.go`: `application_context` has no router and cannot
+observe it. It is in `server/api_tests`, so the per-package expectation in §3.5
+is wrong. Corrected counts below.
+
+(22) **Test (4) passes on the baseline.** §3.4 anticipated that `Begin()`
+inheriting the scoped context might expose a pre-existing latent bug. It does
+not. `Begin()` carries both the scope filter and the acting user, confirmed
+behaviourally as well as by inspection. Nothing to fix.
+
+Corrected §3.5 outcome, measured:
+
+| Package | Plan said | Actual |
+|---|---|---|
+| `application_context` | 465 | **464** (4 new, not 5) |
+| `groupio` | 64 | **64** |
+| `server/api_tests` | 627 | **628** (the import-denial test) |
+| `archive` | 15 | **15** |
+| `internal/arch` | 3 | **4** (the `groupio` rule was adopted) |
+
+464 + 64 = 528 = 524 + 4, and `api_tests` gains the fifth new test. No test was
+deleted, 64 relocated, 5 added.
+
+The one methodological thing this slice did that the plan did not ask for, and
+which is worth carrying into slice 2: **every new and rewritten test was checked
+by mutation, not by observing green.** That is what caught the handle-propagation
+test being insensitive to the very defect it existed to catch. Its fixture used a
+`GroupRelation` edge, and the relation BFS is confined through `Deps.Scope`, which
+resolves against `ctx.db` and stays correct even when `Deps.DB` is wrong. Only an
+M2M edge, guarded by the GORM callbacks that read `Deps.DB`, actually detects a
+captured handle. A test written specifically to catch §2's failure mode did not
+catch it, and only mutation revealed that. This is the fourth time in this
+document that a test proved less than it appeared to.
+
 **§2a is now fully satisfied. The decomposition may begin.**
 
 The seam choice itself has survived all four reviews unchallenged. Every defect
