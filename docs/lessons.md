@@ -2,6 +2,30 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## A test is not evidence until you break the thing it tests
+
+Across three package extractions, four separate tests turned out to prove nothing, and in every case
+the test was green and looked reasonable. A scoped-export test asserted plan contents while
+`Subtree: true` pre-seeded the very group it checked for. The only scoped-search test requested
+`/v1/search?query=` where the handler reads `q`, so every response was
+`{"query":"","total":0,"results":[]}` and its "no out-of-subtree results" assertion held for free —
+scoped search had never once been exercised. Template-page confinement was covered only in a
+browser. And a handle-propagation test written *specifically* to catch a captured-db-handle bug was
+insensitive to it, because its fixture used a `GroupRelation` edge and that path is confined through
+a scope resolver reading a different handle than the one under test; only an M2M edge, guarded by
+the GORM callbacks that read `Deps.DB`, actually detects the defect.
+
+The rule: after a test passes, break the code it covers and confirm it fails. Not a code review of
+the test — an actual mutation, run. It takes a minute and it is the only thing that distinguishes
+"this passed" from "this would have caught the bug".
+
+Two corollaries. Every negative assertion ("X must not appear") needs a positive control in the same
+test ("Y does appear"), or an empty result set satisfies it forever; prefer a control that fails
+*loudly* with a message saying the rest of the test is now meaningless. And when the failure mode is
+silent-but-degraded rather than wrong — a per-call cache that never hits, an FTS flag that reads
+false and falls back to LIKE — the control *is* the test, because the headline assertion still
+passes on correct-looking output.
+
 ## A UI-only assertion cannot tell a successful write from one that posted nothing
 The inline tag editor serializes its own form and POSTs it. When the change notification moved from
 Alpine's `$watch('selectedResults')` (which runs *after* the DOM flush) into the selector core's
