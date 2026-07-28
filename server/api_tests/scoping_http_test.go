@@ -172,6 +172,48 @@ func TestScopedUser_ExportConfined(t *testing.T) {
 	}
 }
 
+// Template pages are confined by being built against a per-request,
+// principal-scoped context: routes.go calls info.contextFn(sc) inside the
+// request handler, not once at wiring time. Binding the providers to the
+// singleton instead would unscope every HTML page while leaving the /v1 API —
+// and therefore every other test in this file — perfectly correct.
+//
+// e2e covers this through the browser, but only there; this is the fast pin.
+func TestScopedUser_TemplatePagesConfined(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildScopingFixture(t, tc)
+	scopedH := map[string]string{"Accept": "application/json", "Authorization": f.bearer}
+	adminH := map[string]string{"Accept": "application/json", "Authorization": unscopedAdminBearer(t, tc)}
+
+	// The template routes serve their pongo2 context as JSON under .json, which
+	// is the same context the HTML page renders from.
+	for _, path := range []string{"/groups.json", "/notes.json", "/resources.json"} {
+		// Control: an unscoped admin sees the out-of-subtree entities through
+		// this exact route, so their absence below is enforcement and not an
+		// empty or broken page.
+		ctrl := doReq(tc, http.MethodGet, path, adminH, nil, nil).Body.String()
+		if !strings.Contains(ctrl, "sf-outside") && !strings.Contains(ctrl, "sf-rOut") &&
+			!strings.Contains(ctrl, "sf-nOut") {
+			t.Fatalf("control invalid: %s did not surface any out-of-subtree entity for an admin, "+
+				"so the scoped assertion proves nothing, got: %s", path, ctrl)
+		}
+
+		scoped := doReq(tc, http.MethodGet, path, scopedH, nil, nil).Body.String()
+		for _, secret := range []string{"sf-outside", "sf-rOut", "sf-nOut"} {
+			if strings.Contains(scoped, secret) {
+				t.Errorf("%s leaked out-of-subtree entity %q to a group-limited principal; the page "+
+					"context was not built against the request-scoped context", path, secret)
+			}
+		}
+	}
+
+	// Positive: the scoped user's own page still has their in-subtree data.
+	groups := doReq(tc, http.MethodGet, "/groups.json", scopedH, nil, nil).Body.String()
+	if !strings.Contains(groups, "sf-root") || !strings.Contains(groups, "sf-child") {
+		t.Errorf("scoped /groups.json lost in-subtree groups, got: %s", groups)
+	}
+}
+
 // The global search result cache is process-wide and keyed on the lowercased
 // search term alone — it carries no principal in the key. Correctness therefore
 // rests entirely on GlobalSearch bypassing the cache, for both reads and writes,
