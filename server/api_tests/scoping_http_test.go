@@ -108,8 +108,18 @@ func TestScopedUser_SearchAndMRQLConfined(t *testing.T) {
 	f := buildScopingFixture(t, tc)
 	h := map[string]string{"Accept": "application/json", "Authorization": f.bearer}
 
-	search := doReq(tc, http.MethodGet, "/v1/search?query=sf-", h, nil, nil).Body.String()
-	if strings.Contains(search, "sf-rOut") || strings.Contains(search, "sf-nOut") {
+	// The handler reads the "q" parameter. This request previously said
+	// "query=", so the term never arrived: every response was
+	// {"query":"","total":0,"results":[]} and the confinement assertion below
+	// held for free. Scoped search was, in effect, untested. The positive
+	// control now fails loudly if that ever recurs.
+	search := doReq(tc, http.MethodGet, "/v1/search?q=sf", h, nil, nil).Body.String()
+	if !strings.Contains(search, "sf-rIn") || !strings.Contains(search, "sf-nIn") {
+		t.Fatalf("control invalid: scoped search surfaced no in-subtree entities, so the "+
+			"confinement assertion proves nothing, got: %s", search)
+	}
+	if strings.Contains(search, "sf-rOut") || strings.Contains(search, "sf-nOut") ||
+		strings.Contains(search, "sf-outside") {
 		t.Fatalf("search must not surface out-of-subtree entities, got: %s", search)
 	}
 
@@ -160,6 +170,64 @@ func TestScopedUser_ExportConfined(t *testing.T) {
 	if outResp.Code != http.StatusNotFound {
 		t.Fatalf("scoped user must not export an out-of-subtree group, got %d", outResp.Code)
 	}
+}
+
+// The global search result cache is process-wide and keyed on the lowercased
+// search term alone — it carries no principal in the key. Correctness therefore
+// rests entirely on GlobalSearch bypassing the cache, for both reads and writes,
+// whenever the caller is group-limited. Neither direction was covered.
+//
+// Each sub-test gets its own server so it starts from an empty cache; the two
+// directions fail in different ways and would otherwise share one entry.
+func TestScopedUser_SearchCacheNotSharedAcrossScopes(t *testing.T) {
+	const q = "/v1/search?q=sf"
+
+	t.Run("scoped read does not hit an admin-populated entry", func(t *testing.T) {
+		tc := setupAuthEnv(t)
+		f := buildScopingFixture(t, tc)
+		adminH := map[string]string{"Accept": "application/json", "Authorization": unscopedAdminBearer(t, tc)}
+		scopedH := map[string]string{"Accept": "application/json", "Authorization": f.bearer}
+
+		// Admin first, filling the shared entry with out-of-subtree entities.
+		admin := doReq(tc, http.MethodGet, q, adminH, nil, nil).Body.String()
+		if !strings.Contains(admin, "sf-rOut") {
+			t.Fatalf("control invalid: the admin search did not surface out-of-subtree entities, so "+
+				"the cache entry holds nothing that could leak, got: %s", admin)
+		}
+
+		scoped := doReq(tc, http.MethodGet, q, scopedH, nil, nil).Body.String()
+		if strings.Contains(scoped, "sf-rOut") || strings.Contains(scoped, "sf-nOut") ||
+			strings.Contains(scoped, "sf-outside") {
+			t.Fatalf("a group-limited principal was served another scope's cached results: %s", scoped)
+		}
+		if !strings.Contains(scoped, "sf-rIn") {
+			t.Fatalf("control invalid: the scoped search returned nothing in-subtree, so its lack of "+
+				"out-of-subtree entities proves nothing, got: %s", scoped)
+		}
+	})
+
+	t.Run("scoped write does not poison the entry for an admin", func(t *testing.T) {
+		tc := setupAuthEnv(t)
+		f := buildScopingFixture(t, tc)
+		adminH := map[string]string{"Accept": "application/json", "Authorization": unscopedAdminBearer(t, tc)}
+		scopedH := map[string]string{"Accept": "application/json", "Authorization": f.bearer}
+
+		// Scoped first. If its truncated result set were written to the shared
+		// cache, the admin below would silently lose the out-of-subtree rows.
+		scoped := doReq(tc, http.MethodGet, q, scopedH, nil, nil).Body.String()
+		if !strings.Contains(scoped, "sf-rIn") {
+			t.Fatalf("control invalid: the scoped search returned nothing, so it could not poison "+
+				"anything, got: %s", scoped)
+		}
+
+		admin := doReq(tc, http.MethodGet, q, adminH, nil, nil).Body.String()
+		for _, want := range []string{"sf-rOut", "sf-nOut", "sf-outside"} {
+			if !strings.Contains(admin, want) {
+				t.Errorf("admin search is missing %q after a scoped search ran first; the scoped "+
+					"results were written to the shared cache, got: %s", want, admin)
+			}
+		}
+	})
 }
 
 // unscopedAdminBearer returns a bearer for an admin with no scope group, used as
