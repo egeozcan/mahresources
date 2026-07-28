@@ -1,0 +1,78 @@
+import { test, expect } from '../../fixtures/base.fixture';
+
+test.describe('Query CRUD Operations', () => {
+  let createdQueryId: number;
+
+  test('should create a new query', async ({ queryPage }) => {
+    createdQueryId = await queryPage.create({
+      name: 'E2E Test Query',
+      text: 'SELECT * FROM tags LIMIT 10',
+    });
+    expect(createdQueryId).toBeGreaterThan(0);
+  });
+
+  test('should display the created query', async ({ queryPage, page }) => {
+    expect(createdQueryId, 'Query must be created first').toBeGreaterThan(0);
+    await queryPage.gotoDisplay(createdQueryId);
+    await expect(page.locator('h1')).toContainText('E2E Test Query');
+    await expect(page.locator('text=SELECT * FROM tags LIMIT 10')).toBeVisible();
+  });
+
+  test('should update the query', async ({ queryPage, page }) => {
+    expect(createdQueryId, 'Query must be created first').toBeGreaterThan(0);
+    await queryPage.update(createdQueryId, {
+      name: 'Updated E2E Query',
+      text: 'SELECT * FROM categories LIMIT 5',
+    });
+    await expect(page.locator('h1')).toContainText('Updated E2E Query');
+  });
+
+  test('should list the query', async ({ queryPage }) => {
+    await queryPage.verifyQueryInList('Updated E2E Query');
+  });
+
+  test('should delete the query', async ({ queryPage }) => {
+    expect(createdQueryId, 'Query must be created first').toBeGreaterThan(0);
+    await queryPage.delete(createdQueryId);
+    await queryPage.verifyQueryNotInList('Updated E2E Query');
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    // Clean up the created query (in case the delete test was skipped due to earlier failures)
+    if (createdQueryId) {
+      try {
+        await apiClient.deleteQuery(createdQueryId);
+      } catch {
+        // Ignore - query may have been deleted by the delete test
+      }
+    }
+  });
+});
+
+test.describe('Query with Template', () => {
+  let queryWithTemplateId: number;
+
+  test('should create query with template', async ({ queryPage }) => {
+    queryWithTemplateId = await queryPage.create({
+      name: 'Templated Query',
+      text: 'SELECT id, name, description FROM groups WHERE id = {{ id }}',
+      template: '{"id": 1}',
+    });
+    expect(queryWithTemplateId).toBeGreaterThan(0);
+  });
+
+  test.afterAll(async ({ apiClient }) => {
+    if (queryWithTemplateId) {
+      await apiClient.deleteQuery(queryWithTemplateId);
+    }
+  });
+});
+
+test.describe('Query Validation', () => {
+  test('should require name and text fields', async ({ queryPage, page }) => {
+    await queryPage.gotoNew();
+    await queryPage.save();
+    // HTML5 required validation prevents submission
+    await expect(page).toHaveURL(/\/query\/new/);
+  });
+});

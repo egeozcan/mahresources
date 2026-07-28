@@ -26,15 +26,16 @@ test.describe('Page Accessibility - Dynamic Pages', () => {
     test(`${pageConfig.name} should have no accessibility violations`, async ({ page, checkA11y, a11yTestData }) => {
       const path = buildPath(pageConfig.path, a11yTestData);
 
-      await page.goto(path);
+      const response = await page.goto(path);
 
       // Wait for page to be fully loaded
       await page.waitForLoadState('load');
 
-      // Verify we're on a valid page (not a 404 or error)
-      const title = await page.title();
-      expect(title).not.toContain('Error');
-      expect(title).not.toContain('404');
+      // Verify we're on a valid page (not a 404 or error). Assert on the HTTP
+      // status, not the title: seeded entity names embed Date.now(), so a
+      // timestamp that happens to contain "404" used to fail a substring check
+      // (e.g. "Note: A11y Test Note 1785234046132-rok59l").
+      expect(response?.status()).toBe(200);
 
       // Run accessibility check
       await checkA11y();
