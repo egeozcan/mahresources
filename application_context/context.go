@@ -22,11 +22,11 @@ import (
 	"mahresources/constants"
 	"mahresources/contracts"
 	"mahresources/download_queue"
-	"mahresources/fts"
 	"mahresources/groupio"
 	"mahresources/idlock"
 	"mahresources/models"
 	"mahresources/plugin_system"
+	"mahresources/search"
 	"mahresources/storage"
 )
 
@@ -326,8 +326,12 @@ type MahresourcesContext struct {
 	locks   MahresourcesLocks
 	// downloadManager handles background remote URL downloads
 	downloadManager *download_queue.DownloadManager
-	// searchCache provides caching for global search results
-	searchCache *SearchCache
+	// search owns global search: the cross-entity query, the LIKE/FTS backends,
+	// and the process-wide result cache. Safe as a field because it holds no db
+	// handle -- see searchDeps() in search_facade.go. It is shared by every
+	// derived context, which is what keeps InitFTS state and cache
+	// invalidation visible across them.
+	search *search.Service
 	// currentRequest holds the current HTTP request for logging purposes.
 	// This is set per-request via WithRequest() to capture request metadata in logs.
 	currentRequest *http.Request
@@ -341,10 +345,6 @@ type MahresourcesContext struct {
 	thumbnailQueue chan<- uint
 	// icsCache provides LRU caching for ICS calendar data
 	icsCache *ICSCache
-	// ftsProvider is the active FTS provider (nil if FTS is not initialized)
-	ftsProvider fts.FTSProvider
-	// ftsEnabled indicates whether FTS is available
-	ftsEnabled bool
 	// pluginManager manages Lua plugin loading and hook execution
 	pluginManager *plugin_system.PluginManager
 	// DefaultResourceCategoryID is the resolved ID of the default resource category.
@@ -445,7 +445,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 	versionUploadLock := idlock.New[uint](uint(0), nil)
 
 	// Initialize search cache with 60 second TTL and 1000 max entries
-	searchCache := NewSearchCache(60*time.Second, 1000)
+	searchCache := search.NewSearchCache(60*time.Second, 1000)
 
 	// Initialize ICS cache with configurable or default values
 	icsCacheMaxEntries := config.ICSCacheMaxEntries
@@ -473,7 +473,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			ResourceHashLock:             resourceHashLock,
 			VersionUploadLock:            versionUploadLock,
 		},
-		searchCache:               searchCache,
+		search:                    search.NewService(searchCache, config.DbType),
 		icsCache:                  icsCache,
 		DefaultResourceCategoryID: 1,
 		rootAdmin:                 newRootAdminCache(),

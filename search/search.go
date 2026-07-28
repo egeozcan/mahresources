@@ -1,4 +1,4 @@
-package application_context
+package search
 
 import (
 	"fmt"
@@ -28,16 +28,16 @@ const (
 // InvalidateSearchCacheByType removes cached search results that contain the specified entity type.
 // This should be called after creating, updating, or deleting entities to ensure search results are fresh.
 // Note: Even without explicit invalidation, the cache has a 60-second TTL for eventual consistency.
-func (ctx *MahresourcesContext) InvalidateSearchCacheByType(entityType string) {
-	if ctx.searchCache != nil {
-		ctx.searchCache.InvalidateByType(entityType)
+func (ctx *Service) InvalidateSearchCacheByType(entityType string) {
+	if ctx.cache != nil {
+		ctx.cache.InvalidateByType(entityType)
 	}
 }
 
 // ClearSearchCache removes all cached search results
-func (ctx *MahresourcesContext) ClearSearchCache() {
-	if ctx.searchCache != nil {
-		ctx.searchCache.Clear()
+func (ctx *Service) ClearSearchCache() {
+	if ctx.cache != nil {
+		ctx.cache.Clear()
 	}
 }
 
@@ -48,44 +48,44 @@ var allEntityTypes = []string{
 	EntityTypeMRQLQuery,
 }
 
-func (ctx *MahresourcesContext) selectFTSProvider() {
-	if ctx.Config.DbType == constants.DbTypePosgres {
-		ctx.ftsProvider = fts.NewPostgresFTS()
+func (ctx *Service) selectFTSProvider() {
+	if ctx.dbType == constants.DbTypePosgres {
+		ctx.provider = fts.NewPostgresFTS()
 	} else {
-		ctx.ftsProvider = fts.NewSQLiteFTS()
+		ctx.provider = fts.NewSQLiteFTS()
 	}
 }
 
 // UseExistingFTS enables reads against an FTS schema that was initialized and
 // validated earlier. Unlike InitFTS it performs no DDL or index rebuild.
-func (ctx *MahresourcesContext) UseExistingFTS() {
+func (ctx *Service) UseExistingFTS() {
 	ctx.selectFTSProvider()
-	ctx.ftsEnabled = true
+	ctx.enabled = true
 }
 
 // InitFTS initializes the FTS provider based on the database type.
-func (ctx *MahresourcesContext) InitFTS() error {
+func (ctx *opCtx) InitFTS() error {
 	ctx.selectFTSProvider()
 
-	if err := ctx.ftsProvider.Setup(ctx.db); err != nil {
-		ctx.ftsProvider = nil
-		ctx.ftsEnabled = false
+	if err := ctx.provider.Setup(ctx.db); err != nil {
+		ctx.provider = nil
+		ctx.enabled = false
 		return err
 	}
 
-	ctx.ftsEnabled = true
+	ctx.enabled = true
 	return nil
 }
 
 // ftsAvailable reports whether full-text search is initialized and usable.
 // Callers outside this file read FTS state through it rather than touching the
 // field, so the state can move behind a service without touching them.
-func (ctx *MahresourcesContext) ftsAvailable() bool {
-	return ctx.ftsEnabled
+func (ctx *Service) ftsAvailable() bool {
+	return ctx.enabled
 }
 
 // GlobalSearch performs a unified search across all entity types
-func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQuery) (*query_models.GlobalSearchResponse, error) {
+func (ctx *opCtx) GlobalSearch(query *query_models.GlobalSearchQuery) (*query_models.GlobalSearchResponse, error) {
 	if query.Limit <= 0 {
 		query.Limit = 20
 	} else if query.Limit > 50 {
@@ -105,13 +105,12 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 	// so it must be bypassed for group-limited principals to avoid leaking
 	// (or being poisoned by) results from another scope. Their per-type queries
 	// are still scoped by the GORM callbacks (search uses ctx.db).
-	_, scopeForced, scopeDeny := ctx.principalForcedScope()
-	cacheable := !scopeForced && !scopeDeny
+	cacheable := !ctx.restricted()
 
 	// Check server-side cache first (only for default type searches to keep cache key simple)
-	if cacheable && ctx.searchCache != nil && len(query.Types) == 0 {
+	if cacheable && ctx.cache != nil && len(query.Types) == 0 {
 		cacheKey := strings.ToLower(searchTerm)
-		if cached, ok := ctx.searchCache.Get(cacheKey); ok {
+		if cached, ok := ctx.cache.Get(cacheKey); ok {
 			// Total reflects all cached results; apply limit only for the returned slice
 			total := len(cached)
 			results := cached
@@ -129,7 +128,7 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 	// Use a higher limit for caching to support subsequent queries with different limits
 	// Only use cacheLimit when we're going to cache (default type searches)
 	searchLimit := query.Limit
-	shouldCache := cacheable && ctx.searchCache != nil && len(query.Types) == 0
+	shouldCache := cacheable && ctx.cache != nil && len(query.Types) == 0
 	if shouldCache {
 		searchLimit = 50 // Cache up to 50 results
 	}
@@ -158,7 +157,7 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 		go func(et string) {
 			defer wg.Done()
 			var results []query_models.SearchResultItem
-			if ctx.ftsEnabled {
+			if ctx.enabled {
 				results = ctx.searchEntityTypeFTS(et, parsedQuery, searchLimit)
 			} else {
 				// Fallback to LIKE-based search if FTS is not available
@@ -189,7 +188,7 @@ func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQue
 
 	// Cache results before applying user's limit
 	if shouldCache {
-		ctx.searchCache.Set(strings.ToLower(searchTerm), allResults)
+		ctx.cache.Set(strings.ToLower(searchTerm), allResults)
 	}
 
 	// Total reflects all results found; apply limit only for the returned slice
@@ -256,7 +255,7 @@ var entitySearchInfo = map[string]searchEntityInfo{
 	EntityTypeMRQLQuery:        {entityType: EntityTypeMRQLQuery, urlFormat: "/mrql?saved=%d"},
 }
 
-func (ctx *MahresourcesContext) searchEntityType(entityType, searchTerm string, limit int) []query_models.SearchResultItem {
+func (ctx *opCtx) searchEntityType(entityType, searchTerm string, limit int) []query_models.SearchResultItem {
 	switch entityType {
 	case EntityTypeGroup:
 		return searchEntitiesLike[models.Group](ctx, entityType, searchTerm, limit)
@@ -282,7 +281,7 @@ func (ctx *MahresourcesContext) searchEntityType(entityType, searchTerm string, 
 	return nil
 }
 
-func (ctx *MahresourcesContext) searchEntityTypeFTS(entityType string, query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
+func (ctx *opCtx) searchEntityTypeFTS(entityType string, query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
 	switch entityType {
 	case EntityTypeResource:
 		return searchEntitiesFTS[models.Resource](ctx, entityType, query, limit)
@@ -314,13 +313,6 @@ func (ctx *MahresourcesContext) searchEntityTypeFTS(entityType string, query fts
 		return searchEntitiesLike[models.SavedMRQLQuery](ctx, entityType, term, limit)
 	}
 	return nil
-}
-
-func (ctx *MahresourcesContext) getLikeOperator() string {
-	if ctx.Config.DbType == constants.DbTypePosgres {
-		return "ILIKE"
-	}
-	return "LIKE"
 }
 
 func calculateRelevanceScore(name, description, searchTerm string, extraFields ...string) int {
@@ -416,9 +408,9 @@ func escapeLikeWildcards(s string) string {
 }
 
 // searchEntitiesLike performs a LIKE-based search for any searchable entity type.
-func searchEntitiesLike[T searchable](ctx *MahresourcesContext, entityType, searchTerm string, limit int) []query_models.SearchResultItem {
+func searchEntitiesLike[T searchable](ctx *opCtx, entityType, searchTerm string, limit int) []query_models.SearchResultItem {
 	info := entitySearchInfo[entityType]
-	likeOp := ctx.getLikeOperator()
+	likeOp := ctx.LikeOperator()
 	escaped := escapeLikeWildcards(searchTerm)
 	pattern := "%" + escaped + "%"
 	likeEscape := " ESCAPE '\\'"
@@ -427,7 +419,7 @@ func searchEntitiesLike[T searchable](ctx *MahresourcesContext, entityType, sear
 	// Non-ASCII characters (e.g. Ä, ş) are byte-compared, so "Spätzle" doesn't
 	// match "SPÄTZLE". Wrap both column and pattern in LOWER() on SQLite; the
 	// Postgres path already uses ILIKE and is case-folded end-to-end.
-	usingSQLite := ctx.Config.DbType != constants.DbTypePosgres
+	usingSQLite := ctx.dbType != constants.DbTypePosgres
 	buildClause := func(col string) string {
 		if usingSQLite {
 			return "LOWER(" + col + ") " + likeOp + " LOWER(?)" + likeEscape
@@ -469,7 +461,7 @@ func searchEntitiesLike[T searchable](ctx *MahresourcesContext, entityType, sear
 }
 
 // searchEntitiesFTS performs an FTS-based search for any searchable entity type.
-func searchEntitiesFTS[T searchable](ctx *MahresourcesContext, entityType string, query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
+func searchEntitiesFTS[T searchable](ctx *opCtx, entityType string, query fts.ParsedQuery, limit int) []query_models.SearchResultItem {
 	config := fts.GetEntityConfig(entityType)
 	if config == nil {
 		return nil
@@ -479,7 +471,7 @@ func searchEntitiesFTS[T searchable](ctx *MahresourcesContext, entityType string
 
 	var entities []T
 	ctx.db.Model(new(T)).
-		Scopes(ctx.ftsProvider.BuildSearchScope(config.TableName, config.Columns, query)).
+		Scopes(ctx.provider.BuildSearchScope(config.TableName, config.Columns, query)).
 		Limit(limit).
 		Find(&entities)
 

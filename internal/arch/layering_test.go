@@ -209,6 +209,33 @@ func TestGroupioStaysBelowApplicationContext(t *testing.T) {
 	}
 }
 
+// TestSearchStaysBelowApplicationContext pins the second extraction, for the
+// same reason as the first: search/ is consumed by application_context through
+// a facade, and reaching back up would let a caller bypass the per-call handle
+// that is the only thing confining a group-limited principal's search.
+func TestSearchStaysBelowApplicationContext(t *testing.T) {
+	forbidden := []string{
+		modulePath + "/application_context",
+		modulePath + "/server",
+		modulePath + "/contracts",
+		modulePath + "/groupio",
+	}
+	for dir, imports := range pkgImports(t) {
+		if !under(dir, "search") {
+			continue
+		}
+		for _, imp := range sorted(imports) {
+			for _, bad := range forbidden {
+				if imp == bad || strings.HasPrefix(imp, bad+"/") {
+					t.Errorf("%s imports %s\n"+
+						"\tsearch/ sits below application_context/ and server/. It may depend on\n"+
+						"\tfts/, models/ and constants/ only.", dir, imp)
+				}
+			}
+		}
+	}
+}
+
 func sorted(set map[string]bool) []string {
 	out := make([]string, 0, len(set))
 	for k := range set {

@@ -1,4 +1,4 @@
-package application_context
+package search
 
 import (
 	"mahresources/models/query_models"
