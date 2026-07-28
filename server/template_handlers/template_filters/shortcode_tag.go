@@ -106,7 +106,16 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 func buildPageRenderContext(reqCtx context.Context, appCtx *application_context.MahresourcesContext) context.Context {
 	reqCtx = plugin_system.WithMRQLCache(reqCtx)
 	reqCtx = application_context.WithMRQLRenderDataCache(reqCtx)
-	reqCtx = shortcodes.WithPartialResolver(reqCtx, BuildPartialResolver(appCtx))
+	// partials stays a nil INTERFACE when appCtx is nil. Assigning a nil
+	// *MahresourcesContext would make it a non-nil interface holding a nil
+	// pointer, defeating BuildPartialResolver's own nil check and returning a
+	// resolver that panics on first use. The appCtx != nil guard below shows nil
+	// is an expected input here.
+	var partials PartialResolverContext
+	if appCtx != nil {
+		partials = appCtx
+	}
+	reqCtx = shortcodes.WithPartialResolver(reqCtx, BuildPartialResolver(partials))
 	reqCtx = shortcodes.WithQueryBudget(reqCtx, pageQueryBudget(appCtx))
 	if appCtx != nil {
 		reqCtx = shortcodes.WithDeferredSigner(reqCtx, func(entityType string, entityID uint, body string) string {
@@ -119,14 +128,14 @@ func buildPageRenderContext(reqCtx context.Context, appCtx *application_context.
 // BuildMetaContextForEntity builds the shortcode rendering context for an entity
 // (Group, Resource, or Note). It is the exported entry point so the template
 // preview handler and the process_shortcodes tag share one implementation.
-func BuildMetaContextForEntity(entity any, appCtx *application_context.MahresourcesContext) *shortcodes.MetaShortcodeContext {
+func BuildMetaContextForEntity(entity any, appCtx MetaScopeResolver) *shortcodes.MetaShortcodeContext {
 	return buildMetaContext(entity, appCtx)
 }
 
 // buildMetaContext uses reflection to extract entity type, ID, Meta, and MetaSchema
 // from Group, Resource, or Note model structs. When appCtx is non-nil, scope fields
 // (parent, root) are resolved via DB; otherwise falls back to best-effort sentinels.
-func buildMetaContext(entity any, appCtx *application_context.MahresourcesContext) *shortcodes.MetaShortcodeContext {
+func buildMetaContext(entity any, appCtx MetaScopeResolver) *shortcodes.MetaShortcodeContext {
 	v := reflect.ValueOf(entity)
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() {
@@ -219,7 +228,7 @@ func carrierEntityType(typeName string) string {
 // resolveScopeFromEntity resolves scope group IDs for an entity.
 // When appCtx is available, uses DB-backed resolution for parent/root.
 // Otherwise falls back to sentinel values.
-func resolveScopeFromEntity(v reflect.Value, entityType string, entityID uint, appCtx *application_context.MahresourcesContext) (scopeID, parentID, rootID uint) {
+func resolveScopeFromEntity(v reflect.Value, entityType string, entityID uint, appCtx MetaScopeResolver) (scopeID, parentID, rootID uint) {
 	sentinel := mrql.UnresolvedScopeSentinel
 
 	// Extract OwnerId via reflection

@@ -21,7 +21,7 @@ type resetSettingRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-func GetListSettingsHandler(ctx *application_context.MahresourcesContext) http.HandlerFunc {
+func GetListSettingsHandler(ctx SettingsContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		views := ctx.Settings().List()
 		w.Header().Set("Content-Type", constants.JSON)
@@ -29,7 +29,7 @@ func GetListSettingsHandler(ctx *application_context.MahresourcesContext) http.H
 	}
 }
 
-func GetSetSettingHandler(ctx *application_context.MahresourcesContext) http.HandlerFunc {
+func GetSetSettingHandler(ctx SettingsContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := mux.Vars(r)["key"]
 		var req setSettingRequest
@@ -46,7 +46,7 @@ func GetSetSettingHandler(ctx *application_context.MahresourcesContext) http.Han
 	}
 }
 
-func GetResetSettingHandler(ctx *application_context.MahresourcesContext) http.HandlerFunc {
+func GetResetSettingHandler(ctx SettingsContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := mux.Vars(r)["key"]
 		var req resetSettingRequest
@@ -60,7 +60,7 @@ func GetResetSettingHandler(ctx *application_context.MahresourcesContext) http.H
 	}
 }
 
-func writeSettingView(w http.ResponseWriter, ctx *application_context.MahresourcesContext, key string) {
+func writeSettingView(w http.ResponseWriter, ctx SettingsContext, key string) {
 	for _, v := range ctx.Settings().List() {
 		if v.Key == key {
 			w.Header().Set("Content-Type", constants.JSON)
@@ -80,4 +80,3 @@ func classifySettingError(err error) int {
 	}
 	return http.StatusBadRequest
 }
-

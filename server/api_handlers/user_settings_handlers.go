@@ -27,9 +27,9 @@ const maxUserSettingBodyBytes = int64(application_context.MaxUserSettingValueSiz
 // GetUserSettingsHandler returns all settings for the authenticated user as a JSON
 // object (key → raw JSON value). The owner is resolved from the request principal
 // inside the context layer, so this works identically under auth-on and auth-off.
-func GetUserSettingsHandler(ctx *application_context.MahresourcesContext) http.HandlerFunc {
+func GetUserSettingsHandler(ctx UserSettingsContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		effectiveCtx := ctx.WithRequest(r).(*application_context.MahresourcesContext)
+		effectiveCtx := ctx.WithRequest(r).(UserSettingsContext)
 		settings, err := effectiveCtx.GetUserSettings()
 		if err != nil {
 			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
@@ -41,7 +41,7 @@ func GetUserSettingsHandler(ctx *application_context.MahresourcesContext) http.H
 }
 
 // SetUserSettingHandler upserts a single setting for the authenticated user.
-func SetUserSettingHandler(ctx *application_context.MahresourcesContext) http.HandlerFunc {
+func SetUserSettingHandler(ctx UserSettingsContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := mux.Vars(r)["key"]
 		// Bound the body before decoding so an oversize payload is rejected up front
@@ -52,7 +52,7 @@ func SetUserSettingHandler(ctx *application_context.MahresourcesContext) http.Ha
 			http_utils.HandleError(err, w, r, http.StatusBadRequest)
 			return
 		}
-		effectiveCtx := ctx.WithRequest(r).(*application_context.MahresourcesContext)
+		effectiveCtx := ctx.WithRequest(r).(UserSettingsContext)
 		if err := effectiveCtx.SetUserSetting(key, req.Value); err != nil {
 			http_utils.HandleError(err, w, r, classifyUserSettingError(err))
 			return
@@ -62,10 +62,10 @@ func SetUserSettingHandler(ctx *application_context.MahresourcesContext) http.Ha
 }
 
 // DeleteUserSettingHandler removes a single setting for the authenticated user.
-func DeleteUserSettingHandler(ctx *application_context.MahresourcesContext) http.HandlerFunc {
+func DeleteUserSettingHandler(ctx UserSettingsContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := mux.Vars(r)["key"]
-		effectiveCtx := ctx.WithRequest(r).(*application_context.MahresourcesContext)
+		effectiveCtx := ctx.WithRequest(r).(UserSettingsContext)
 		if err := effectiveCtx.DeleteUserSetting(key); err != nil {
 			http_utils.HandleError(err, w, r, classifyUserSettingError(err))
 			return

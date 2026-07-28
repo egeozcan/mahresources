@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 
-	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/mrql"
 	"mahresources/server/http_utils"
@@ -47,7 +46,7 @@ type templatePreviewResponse struct {
 // live preview. Because it executes MRQL and plugin shortcodes it is mounted
 // under the taxonomy/editor path prefixes (never in isReadViaPost), so it is
 // gated at the same capability as saving the corresponding template.
-func GetPreviewTemplateHandler(ctx *application_context.MahresourcesContext, entityType string) func(http.ResponseWriter, *http.Request) {
+func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req templatePreviewRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
@@ -129,7 +128,7 @@ func GetPreviewTemplateHandler(ctx *application_context.MahresourcesContext, ent
 
 // loadPreviewEntity fetches the carrier entity with its category relation
 // preloaded, returning the entity and its category/type ID (0 if none).
-func loadPreviewEntity(ctx *application_context.MahresourcesContext, entityType string, id uint) (any, uint, error) {
+func loadPreviewEntity(ctx TemplatePreviewContext, entityType string, id uint) (any, uint, error) {
 	switch entityType {
 	case "group":
 		g, err := ctx.GetGroup(id)
@@ -165,7 +164,7 @@ func loadPreviewEntity(ctx *application_context.MahresourcesContext, entityType 
 // loadPreviewCarrier fetches the carrier itself (Category / ResourceCategory /
 // NoteType) for a carrier-mode preview (CustomListHeader). entityType is the
 // member entity type the carrier governs ("group"/"resource"/"note").
-func loadPreviewCarrier(ctx *application_context.MahresourcesContext, entityType string, id uint) (any, error) {
+func loadPreviewCarrier(ctx TemplatePreviewContext, entityType string, id uint) (any, error) {
 	switch entityType {
 	case "group":
 		return ctx.GetCategory(id)

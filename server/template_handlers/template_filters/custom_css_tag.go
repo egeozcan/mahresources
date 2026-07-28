@@ -57,8 +57,14 @@ func (node *customCSSNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.T
 	reqCtx := customCSSReqCtx(ctx)
 	pluginRenderer := customCSSPluginRenderer(ctx, reqCtx)
 	var executor shortcodes.QueryExecutor
+	// metaResolver stays a nil INTERFACE when there is no context. Assigning a
+	// nil *MahresourcesContext to it would produce a non-nil interface holding a
+	// nil pointer, and buildMetaContext's `appCtx != nil` guards would stop
+	// firing — a nil-receiver panic on the first scope lookup.
+	var metaResolver MetaScopeResolver
 	if appCtx != nil {
 		executor = BuildQueryExecutor(appCtx)
+		metaResolver = appCtx
 	}
 
 	for _, e := range entities {
@@ -73,7 +79,7 @@ func (node *customCSSNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.T
 		seen[key] = true
 
 		rendered := css
-		if metaCtx := buildMetaContext(e, appCtx); metaCtx != nil {
+		if metaCtx := buildMetaContext(e, metaResolver); metaCtx != nil {
 			rendered = shortcodes.Process(reqCtx, css, *metaCtx, pluginRenderer, executor)
 		}
 		if _, werr := writer.WriteString("<style data-mr-custom-css=\"" + key + "\">" + rendered + "</style>"); werr != nil {

@@ -83,7 +83,7 @@ func timelineErrorStatus(err error) int {
 
 // GetResourceTimelineHandler returns an HTTP handler that produces timeline
 // bucket counts for resources, filtered by the standard resource query params.
-func GetResourceTimelineHandler(ctx *application_context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetResourceTimelineHandler(ctx TimelineContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.ResourceSearchQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
@@ -115,7 +115,7 @@ func GetResourceTimelineHandler(ctx *application_context.MahresourcesContext) fu
 
 // GetNoteTimelineHandler returns an HTTP handler that produces timeline
 // bucket counts for notes, filtered by the standard note query params.
-func GetNoteTimelineHandler(ctx *application_context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetNoteTimelineHandler(ctx TimelineContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.NoteQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
@@ -147,7 +147,7 @@ func GetNoteTimelineHandler(ctx *application_context.MahresourcesContext) func(w
 
 // GetGroupTimelineHandler returns an HTTP handler that produces timeline
 // bucket counts for groups, filtered by the standard group query params.
-func GetGroupTimelineHandler(ctx *application_context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetGroupTimelineHandler(ctx TimelineContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.GroupQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
@@ -179,7 +179,7 @@ func GetGroupTimelineHandler(ctx *application_context.MahresourcesContext) func(
 
 // GetTagTimelineHandler returns an HTTP handler that produces timeline
 // bucket counts for tags, filtered by the standard tag query params.
-func GetTagTimelineHandler(ctx *application_context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetTagTimelineHandler(ctx TimelineContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.TagQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
@@ -210,7 +210,7 @@ func GetTagTimelineHandler(ctx *application_context.MahresourcesContext) func(wr
 
 // GetCategoryTimelineHandler returns an HTTP handler that produces timeline
 // bucket counts for categories, filtered by the standard category query params.
-func GetCategoryTimelineHandler(ctx *application_context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetCategoryTimelineHandler(ctx TimelineContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.CategoryQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {
@@ -241,7 +241,7 @@ func GetCategoryTimelineHandler(ctx *application_context.MahresourcesContext) fu
 
 // GetQueryTimelineHandler returns an HTTP handler that produces timeline
 // bucket counts for queries, filtered by the standard query query params.
-func GetQueryTimelineHandler(ctx *application_context.MahresourcesContext) func(writer http.ResponseWriter, request *http.Request) {
+func GetQueryTimelineHandler(ctx TimelineContext) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var query query_models.QueryQuery
 		if err := decoder.Decode(&query, request.URL.Query()); err != nil {

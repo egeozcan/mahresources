@@ -20,7 +20,7 @@ import (
 // result cache (free) and charges each cache miss against the budget. Once the
 // budget is spent it refuses further misses with a budget error — rendered as
 // the standard MRQL error box — and logs a single warning per page.
-func BuildQueryExecutor(appCtx *application_context.MahresourcesContext) shortcodes.QueryExecutor {
+func BuildQueryExecutor(appCtx QueryExecutorContext) shortcodes.QueryExecutor {
 	base := func(reqCtx context.Context, query string, opts shortcodes.QueryOptions) (*shortcodes.QueryResult, error) {
 		return executeMRQLForShortcode(reqCtx, appCtx, query, opts)
 	}
@@ -40,7 +40,7 @@ func pageQueryBudget(appCtx *application_context.MahresourcesContext) int {
 
 // logPageQueryBudgetExceeded records one warning per page render when the inline
 // MRQL query budget is hit, reviewable at /logs (entity type "mrql").
-func logPageQueryBudgetExceeded(appCtx *application_context.MahresourcesContext, limit int) {
+func logPageQueryBudgetExceeded(appCtx budgetLogger, limit int) {
 	if appCtx == nil {
 		return
 	}
@@ -56,7 +56,7 @@ func logPageQueryBudgetExceeded(appCtx *application_context.MahresourcesContext,
 
 // executeMRQLForShortcode runs an MRQL query and converts the result into shortcode types.
 // It detects GROUP BY queries and routes them through ExecuteMRQLGrouped.
-func executeMRQLForShortcode(reqCtx context.Context, appCtx *application_context.MahresourcesContext, query string, opts shortcodes.QueryOptions) (*shortcodes.QueryResult, error) {
+func executeMRQLForShortcode(reqCtx context.Context, appCtx mrqlShortcodeRunner, query string, opts shortcodes.QueryOptions) (*shortcodes.QueryResult, error) {
 	// Resolve saved query name to query string
 	actualQuery := query
 	var savedID uint
@@ -217,13 +217,13 @@ func collectResultRenderIDs(result *application_context.MRQLResult, ids *mrqlRen
 	}
 }
 
-func loadResultRenderData(reqCtx context.Context, appCtx *application_context.MahresourcesContext, ids mrqlRenderIDs) (*application_context.MRQLRenderData, error) {
+func loadResultRenderData(reqCtx context.Context, appCtx mrqlShortcodeRunner, ids mrqlRenderIDs) (*application_context.MRQLRenderData, error) {
 	return appCtx.LoadMRQLRenderData(reqCtx, ids.resourceCategories, ids.noteTypes, ids.categories, ids.scopeGroups)
 }
 
 // convertResultItems converts MRQLResult entities into QueryResultItems using
 // batch-loaded scalar carriers and hierarchy data.
-func convertResultItems(reqCtx context.Context, result *application_context.MRQLResult, appCtx *application_context.MahresourcesContext) ([]shortcodes.QueryResultItem, error) {
+func convertResultItems(reqCtx context.Context, result *application_context.MRQLResult, appCtx mrqlShortcodeRunner) ([]shortcodes.QueryResultItem, error) {
 	var ids mrqlRenderIDs
 	collectResultRenderIDs(result, &ids)
 	data, err := loadResultRenderData(reqCtx, appCtx, ids)
@@ -314,7 +314,7 @@ func convertResultItemsWithData(reqCtx context.Context, result *application_cont
 }
 
 // convertGroupedResultItems converts MRQLGroupedResult into QueryResult.
-func convertGroupedResultItems(reqCtx context.Context, result *application_context.MRQLGroupedResult, appCtx *application_context.MahresourcesContext) (*shortcodes.QueryResult, error) {
+func convertGroupedResultItems(reqCtx context.Context, result *application_context.MRQLGroupedResult, appCtx mrqlShortcodeRunner) (*shortcodes.QueryResult, error) {
 	qr := &shortcodes.QueryResult{EntityType: result.EntityType}
 	if result.Mode == "aggregated" {
 		qr.Mode, qr.Rows = "aggregated", result.Rows

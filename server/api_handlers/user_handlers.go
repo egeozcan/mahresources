@@ -59,7 +59,7 @@ func userErrorStatus(err error) int {
 }
 
 // GetUsersHandler lists all user accounts (admin only).
-func GetUsersHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetUsersHandler(ctx UserAdminContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		offset := int(http_utils.GetIntQueryParameter(r, "offset", 0))
 		limit := int(http_utils.GetIntQueryParameter(r, "limit", 0))
@@ -73,7 +73,7 @@ func GetUsersHandler(ctx *application_context.MahresourcesContext) func(http.Res
 }
 
 // GetUserHandler returns a single user by id (admin only).
-func GetUserHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetUserHandler(ctx UserAdminContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(r, "id", 0))
 		user, err := ctx.GetUser(id)
@@ -86,7 +86,7 @@ func GetUserHandler(ctx *application_context.MahresourcesContext) func(http.Resp
 }
 
 // CreateUserHandler creates a new account (admin only).
-func CreateUserHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func CreateUserHandler(ctx UserAdminContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req userRequest
 		if err := tryFillStructValuesFromRequest(&req, r); err != nil {
@@ -106,7 +106,7 @@ func CreateUserHandler(ctx *application_context.MahresourcesContext) func(http.R
 }
 
 // UpdateUserHandler updates an existing account (admin only).
-func UpdateUserHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func UpdateUserHandler(ctx UserAdminContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req userRequest
 		if err := tryFillStructValuesFromRequest(&req, r); err != nil {
@@ -135,7 +135,7 @@ func UpdateUserHandler(ctx *application_context.MahresourcesContext) func(http.R
 }
 
 // DeleteUserHandler removes an account (admin only).
-func DeleteUserHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func DeleteUserHandler(ctx UserAdminContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := uint(http_utils.GetUIntFormValue(r, "id", 0))
 		if id == 0 {
