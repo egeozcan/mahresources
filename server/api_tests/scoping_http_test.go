@@ -162,6 +162,69 @@ func TestScopedUser_ExportConfined(t *testing.T) {
 	}
 }
 
+// unscopedAdminBearer returns a bearer for an admin with no scope group, used as
+// the control that a route's 403 comes from the group-limited deny and not from
+// the route being missing or broken for everyone.
+func unscopedAdminBearer(t *testing.T, tc *TestContext) string {
+	t.Helper()
+	u, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "unscoped-admin", Password: "password1", Role: models.RoleAdmin,
+	})
+	if err != nil {
+		t.Fatalf("create admin: %v", err)
+	}
+	raw, _, err := tc.AppCtx.CreateApiToken(u.ID, "t", nil)
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	return "Bearer " + raw
+}
+
+// Import is denied outright for group-limited principals, not confined. Import
+// creates new top-level groups a scoped principal could not place inside its
+// subtree, and the caller-supplied ShellGroupAction/DanglingAction destination
+// IDs drive association and GroupRelation writes the GORM scope callbacks do not
+// guard. All five import routes are therefore wrapped in denyScopedPrincipal.
+//
+// This is a boundary to preserve across the groupio extraction, not a feature to
+// add: the refactor must not quietly make any import entry point reachable by a
+// scoped principal. Enabling scoped import is its own project.
+func TestScopedUser_ImportRoutesDenied(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildScopingFixture(t, tc)
+	adminBearer := unscopedAdminBearer(t, tc)
+
+	routes := []struct {
+		method, path string
+	}{
+		{http.MethodPost, "/v1/groups/import/parse"},
+		{http.MethodGet, "/v1/imports/job-1/plan"},
+		{http.MethodDelete, "/v1/imports/job-1"},
+		{http.MethodPost, "/v1/imports/job-1/apply"},
+		{http.MethodGet, "/v1/imports/job-1/result"},
+	}
+
+	for _, rt := range routes {
+		scopedH := map[string]string{"Accept": "application/json", "Authorization": f.bearer, "Content-Type": "application/json"}
+		resp := doReq(tc, rt.method, rt.path, scopedH, nil, strings.NewReader(`{}`))
+		if resp.Code != http.StatusForbidden {
+			t.Errorf("%s %s: group-limited principal got %d, want 403 — the import surface must stay fail-closed",
+				rt.method, rt.path, resp.Code)
+		}
+
+		// Control: the same route reached by an unscoped admin must NOT 403.
+		// Without this, a route that 403s for everyone (or a path typo answered
+		// uniformly) would satisfy the assertion above while proving nothing
+		// about the group-limited deny specifically.
+		adminH := map[string]string{"Accept": "application/json", "Authorization": adminBearer, "Content-Type": "application/json"}
+		ctrl := doReq(tc, rt.method, rt.path, adminH, nil, strings.NewReader(`{}`))
+		if ctrl.Code == http.StatusForbidden {
+			t.Errorf("%s %s: control invalid — an unscoped admin also got 403, so the scoped 403 "+
+				"does not demonstrate the group-limited deny", rt.method, rt.path)
+		}
+	}
+}
+
 func TestScopedUser_CannotMutateOutsideBlock(t *testing.T) {
 	tc := setupAuthEnv(t)
 	f := buildScopingFixture(t, tc)
