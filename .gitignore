@@ -12,6 +12,12 @@
 /*.db-shm
 /*.db-wal
 /*.db-journal
+# The rules above are root-anchored, which is how application_context/test.db
+# and test.23.db came to be tracked. Catch SQLite artifacts in any directory.
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
 /*.wdb
 /.idea
 /public/*.json
