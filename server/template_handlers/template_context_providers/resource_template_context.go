@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-func ResourceListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func ResourceListContextProvider(context ResourcePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetPageParameter(request)
 		simpleMode := strings.HasSuffix(request.URL.Path, "/simple")
@@ -137,11 +137,11 @@ func ResourceListContextProvider(context *application_context.MahresourcesContex
 	}
 }
 
-func ResourceCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func ResourceCreateContextProvider(context ResourcePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle":      "Create Resource",
-			"altFileSystems": context.Config.AltFileSystems, // BH-023: expose alt-fs keys for Storage select
+			"altFileSystems": context.AltFileSystems(), // BH-023: expose alt-fs keys for Storage select
 		}.Update(StaticTemplateCtx(request))
 
 		var query query_models.EntityIdQuery
@@ -216,7 +216,7 @@ func ResourceCreateContextProvider(context *application_context.MahresourcesCont
 	}
 }
 
-func ResourceTimelineContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func ResourceTimelineContextProvider(context ResourcePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.ResourceSearchQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -301,7 +301,7 @@ func ResourceTimelineContextProvider(context *application_context.MahresourcesCo
 	}
 }
 
-func ResourceContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func ResourceContextProvider(context ResourcePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 

@@ -12,7 +12,7 @@ import (
 // Returns the settings grouped by SettingGroup (preserves the display order
 // from RuntimeSettings.List), plus a read-only snapshot of boot-only settings
 // for the reference section.
-func AdminSettingsContextProvider(ctx *application_context.MahresourcesContext) func(r *http.Request) pongo2.Context {
+func AdminSettingsContextProvider(ctx AdminSettingsPageContext) func(r *http.Request) pongo2.Context {
 	return func(r *http.Request) pongo2.Context {
 		baseContext := StaticTemplateCtx(r)
 
@@ -23,7 +23,7 @@ func AdminSettingsContextProvider(ctx *application_context.MahresourcesContext) 
 			"pageTitle":       "Settings",
 			"hideSidebar":     true,
 			"settingsByGroup": groups,
-			"bootOnly":        bootOnlyFields(ctx.Config),
+			"bootOnly":        bootOnlyFields(ctx.Configuration()),
 		}.Update(baseContext)
 	}
 }

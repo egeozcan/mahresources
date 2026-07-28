@@ -2,7 +2,6 @@ package template_context_providers
 
 import (
 	"github.com/flosch/pongo2/v4"
-	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
@@ -11,7 +10,7 @@ import (
 	"strconv"
 )
 
-func TagListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func TagListContextProvider(context TagPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetPageParameter(request)
 		resultsPerPage := getResultsPerPage(request, constants.MaxResultsPerPage)
@@ -63,7 +62,7 @@ func TagListContextProvider(context *application_context.MahresourcesContext) fu
 	}
 }
 
-func TagTimelineContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func TagTimelineContextProvider(context TagPageContext) func(request *http.Request) pongo2.Context {
 	listProvider := TagListContextProvider(context)
 	return func(request *http.Request) pongo2.Context {
 		ctx := listProvider(request)
@@ -72,7 +71,7 @@ func TagTimelineContextProvider(context *application_context.MahresourcesContext
 	}
 }
 
-func TagCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func TagCreateContextProvider(context TagPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Tag",
@@ -100,7 +99,7 @@ func TagCreateContextProvider(context *application_context.MahresourcesContext) 
 	}
 }
 
-func TagContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func TagContextProvider(context TagPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())

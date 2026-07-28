@@ -22,95 +22,124 @@ import (
 )
 
 type templateInformation struct {
-	contextFn    func(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context
+	contextFn    templateContextFn
 	templateName string
 	method       string
 }
 
+// templateContextFn is the uniform shape the route table stores.
+type templateContextFn = func(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context
+
+// adaptTemplate lets each template provider declare the narrow interface it
+// actually needs while the route table stays a single uniform map. Go has no
+// function-parameter contravariance, so a func(TagPageContext) cannot be stored
+// as a func(*MahresourcesContext) without this.
+//
+// The returned function is invoked PER REQUEST with the principal-scoped
+// context (see the loop below), never bound once here. Binding at wiring time
+// would hand every provider the unscoped singleton and silently unscope every
+// HTML page for group-limited users; TestScopedUser_TemplatePagesConfined
+// covers that.
+//
+// The assertion cannot fail: template_context_providers declares a compile-time
+// `var _ T = (*application_context.MahresourcesContext)(nil)` for each of these
+// interfaces.
+func adaptTemplate[T any](fn func(T) func(request *http.Request) pongo2.Context) templateContextFn {
+	return func(c *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+		typed, ok := any(c).(T)
+		if !ok {
+			return func(*http.Request) pongo2.Context {
+				return pongo2.Context{"errorMessage": "internal template wiring error"}
+			}
+		}
+		return fn(typed)
+	}
+}
+
 var templates = map[string]templateInformation{
-	"/dashboard": {template_context_providers.DashboardContextProvider, "dashboard.tpl", http.MethodGet},
+	"/dashboard": {adaptTemplate(template_context_providers.DashboardContextProvider), "dashboard.tpl", http.MethodGet},
 
-	"/note/new":      {template_context_providers.NoteCreateContextProvider, "createNote.tpl", http.MethodGet},
-	"/notes":         {template_context_providers.NoteListContextProvider, "listNotes.tpl", http.MethodGet},
-	"/note":          {template_context_providers.NoteContextProvider, "displayNote.tpl", http.MethodGet},
-	"/note/text":     {template_context_providers.NoteContextProvider, "displayNoteText.tpl", http.MethodGet},
-	"/note/edit":     {template_context_providers.NoteCreateContextProvider, "createNote.tpl", http.MethodGet},
-	"/noteType/new":  {template_context_providers.NoteTypeCreateContextProvider, "createNoteType.tpl", http.MethodGet},
-	"/noteTypes":     {template_context_providers.NoteTypeListContextProvider, "listNoteTypes.tpl", http.MethodGet},
-	"/noteType":      {template_context_providers.NoteTypeContextProvider, "displayNoteType.tpl", http.MethodGet},
-	"/noteType/edit": {template_context_providers.NoteTypeCreateContextProvider, "createNoteType.tpl", http.MethodGet},
+	"/note/new":      {adaptTemplate(template_context_providers.NoteCreateContextProvider), "createNote.tpl", http.MethodGet},
+	"/notes":         {adaptTemplate(template_context_providers.NoteListContextProvider), "listNotes.tpl", http.MethodGet},
+	"/note":          {adaptTemplate(template_context_providers.NoteContextProvider), "displayNote.tpl", http.MethodGet},
+	"/note/text":     {adaptTemplate(template_context_providers.NoteContextProvider), "displayNoteText.tpl", http.MethodGet},
+	"/note/edit":     {adaptTemplate(template_context_providers.NoteCreateContextProvider), "createNote.tpl", http.MethodGet},
+	"/noteType/new":  {adaptTemplate(template_context_providers.NoteTypeCreateContextProvider), "createNoteType.tpl", http.MethodGet},
+	"/noteTypes":     {adaptTemplate(template_context_providers.NoteTypeListContextProvider), "listNoteTypes.tpl", http.MethodGet},
+	"/noteType":      {adaptTemplate(template_context_providers.NoteTypeContextProvider), "displayNoteType.tpl", http.MethodGet},
+	"/noteType/edit": {adaptTemplate(template_context_providers.NoteTypeCreateContextProvider), "createNoteType.tpl", http.MethodGet},
 
-	"/templatePartial/new":  {template_context_providers.TemplatePartialCreateContextProvider, "createTemplatePartial.tpl", http.MethodGet},
-	"/templatePartials":     {template_context_providers.TemplatePartialListContextProvider, "listTemplatePartials.tpl", http.MethodGet},
-	"/templatePartial":      {template_context_providers.TemplatePartialContextProvider, "displayTemplatePartial.tpl", http.MethodGet},
-	"/templatePartial/edit": {template_context_providers.TemplatePartialCreateContextProvider, "createTemplatePartial.tpl", http.MethodGet},
+	"/templatePartial/new":  {adaptTemplate(template_context_providers.TemplatePartialCreateContextProvider), "createTemplatePartial.tpl", http.MethodGet},
+	"/templatePartials":     {adaptTemplate(template_context_providers.TemplatePartialListContextProvider), "listTemplatePartials.tpl", http.MethodGet},
+	"/templatePartial":      {adaptTemplate(template_context_providers.TemplatePartialContextProvider), "displayTemplatePartial.tpl", http.MethodGet},
+	"/templatePartial/edit": {adaptTemplate(template_context_providers.TemplatePartialCreateContextProvider), "createTemplatePartial.tpl", http.MethodGet},
 
-	"/resource/new":      {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
-	"/resources":         {template_context_providers.ResourceListContextProvider, "listResources.tpl", http.MethodGet},
-	"/resources/details": {template_context_providers.ResourceListContextProvider, "listResourcesDetails.tpl", http.MethodGet},
-	"/resources/simple":  {template_context_providers.ResourceListContextProvider, "listResourcesSimple.tpl", http.MethodGet},
-	"/resource":          {template_context_providers.ResourceContextProvider, "displayResource.tpl", http.MethodGet},
-	"/resource/edit":     {template_context_providers.ResourceCreateContextProvider, "createResource.tpl", http.MethodGet},
-	"/resource/compare":  {template_context_providers.CompareContextProvider, "compare.tpl", http.MethodGet},
+	"/resource/new":      {adaptTemplate(template_context_providers.ResourceCreateContextProvider), "createResource.tpl", http.MethodGet},
+	"/resources":         {adaptTemplate(template_context_providers.ResourceListContextProvider), "listResources.tpl", http.MethodGet},
+	"/resources/details": {adaptTemplate(template_context_providers.ResourceListContextProvider), "listResourcesDetails.tpl", http.MethodGet},
+	"/resources/simple":  {adaptTemplate(template_context_providers.ResourceListContextProvider), "listResourcesSimple.tpl", http.MethodGet},
+	"/resource":          {adaptTemplate(template_context_providers.ResourceContextProvider), "displayResource.tpl", http.MethodGet},
+	"/resource/edit":     {adaptTemplate(template_context_providers.ResourceCreateContextProvider), "createResource.tpl", http.MethodGet},
+	"/resource/compare":  {adaptTemplate(template_context_providers.CompareContextProvider), "compare.tpl", http.MethodGet},
 
-	"/series": {template_context_providers.SeriesContextProvider, "displaySeries.tpl", http.MethodGet},
+	"/series": {adaptTemplate(template_context_providers.SeriesContextProvider), "displaySeries.tpl", http.MethodGet},
 
-	"/group/new":     {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
-	"/groups":        {template_context_providers.GroupsListContextProvider, "listGroups.tpl", http.MethodGet},
-	"/groups/text":   {template_context_providers.GroupsListContextProvider, "listGroupsText.tpl", http.MethodGet},
-	"/group":         {template_context_providers.GroupContextProvider, "displayGroup.tpl", http.MethodGet},
-	"/group/compare": {template_context_providers.GroupCompareContextProvider, "groupCompare.tpl", http.MethodGet},
-	"/group/edit":    {template_context_providers.GroupCreateContextProvider, "createGroup.tpl", http.MethodGet},
-	"/group/tree":    {template_context_providers.GroupTreeContextProvider, "displayGroupTree.tpl", http.MethodGet},
+	"/group/new":     {adaptTemplate(template_context_providers.GroupCreateContextProvider), "createGroup.tpl", http.MethodGet},
+	"/groups":        {adaptTemplate(template_context_providers.GroupsListContextProvider), "listGroups.tpl", http.MethodGet},
+	"/groups/text":   {adaptTemplate(template_context_providers.GroupsListContextProvider), "listGroupsText.tpl", http.MethodGet},
+	"/group":         {adaptTemplate(template_context_providers.GroupContextProvider), "displayGroup.tpl", http.MethodGet},
+	"/group/compare": {adaptTemplate(template_context_providers.GroupCompareContextProvider), "groupCompare.tpl", http.MethodGet},
+	"/group/edit":    {adaptTemplate(template_context_providers.GroupCreateContextProvider), "createGroup.tpl", http.MethodGet},
+	"/group/tree":    {adaptTemplate(template_context_providers.GroupTreeContextProvider), "displayGroupTree.tpl", http.MethodGet},
 
-	"/tag/new":  {template_context_providers.TagCreateContextProvider, "createTag.tpl", http.MethodGet},
-	"/tags":     {template_context_providers.TagListContextProvider, "listTags.tpl", http.MethodGet},
-	"/tag":      {template_context_providers.TagContextProvider, "displayTag.tpl", http.MethodGet},
-	"/tag/edit": {template_context_providers.TagCreateContextProvider, "createTag.tpl", http.MethodGet},
+	"/tag/new":  {adaptTemplate(template_context_providers.TagCreateContextProvider), "createTag.tpl", http.MethodGet},
+	"/tags":     {adaptTemplate(template_context_providers.TagListContextProvider), "listTags.tpl", http.MethodGet},
+	"/tag":      {adaptTemplate(template_context_providers.TagContextProvider), "displayTag.tpl", http.MethodGet},
+	"/tag/edit": {adaptTemplate(template_context_providers.TagCreateContextProvider), "createTag.tpl", http.MethodGet},
 
-	"/relationType/edit": {template_context_providers.RelationTypeEditContextProvider, "createRelationType.tpl", http.MethodGet},
-	"/relationType/new":  {template_context_providers.RelationTypeCreateContextProvider, "createRelationType.tpl", http.MethodGet},
-	"/relation/new":      {template_context_providers.RelationCreateContextProvider, "createRelation.tpl", http.MethodGet},
-	"/relation/edit":     {template_context_providers.RelationEditContextProvider, "createRelation.tpl", http.MethodGet},
-	"/relationTypes":     {template_context_providers.RelationTypeListContextProvider, "listRelationTypes.tpl", http.MethodGet},
-	"/relations":         {template_context_providers.RelationListContextProvider, "listRelations.tpl", http.MethodGet},
-	"/relationType":      {template_context_providers.RelationTypeContextProvider, "displayRelationType.tpl", http.MethodGet},
-	"/relation":          {template_context_providers.RelationContextProvider, "displayRelation.tpl", http.MethodGet},
+	"/relationType/edit": {adaptTemplate(template_context_providers.RelationTypeEditContextProvider), "createRelationType.tpl", http.MethodGet},
+	"/relationType/new":  {adaptTemplate(template_context_providers.RelationTypeCreateContextProvider), "createRelationType.tpl", http.MethodGet},
+	"/relation/new":      {adaptTemplate(template_context_providers.RelationCreateContextProvider), "createRelation.tpl", http.MethodGet},
+	"/relation/edit":     {adaptTemplate(template_context_providers.RelationEditContextProvider), "createRelation.tpl", http.MethodGet},
+	"/relationTypes":     {adaptTemplate(template_context_providers.RelationTypeListContextProvider), "listRelationTypes.tpl", http.MethodGet},
+	"/relations":         {adaptTemplate(template_context_providers.RelationListContextProvider), "listRelations.tpl", http.MethodGet},
+	"/relationType":      {adaptTemplate(template_context_providers.RelationTypeContextProvider), "displayRelationType.tpl", http.MethodGet},
+	"/relation":          {adaptTemplate(template_context_providers.RelationContextProvider), "displayRelation.tpl", http.MethodGet},
 
-	"/category/new":  {template_context_providers.CategoryCreateContextProvider, "createCategory.tpl", http.MethodGet},
-	"/categories":    {template_context_providers.CategoryListContextProvider, "listCategories.tpl", http.MethodGet},
-	"/category":      {template_context_providers.CategoryContextProvider, "displayCategory.tpl", http.MethodGet},
-	"/category/edit": {template_context_providers.CategoryCreateContextProvider, "createCategory.tpl", http.MethodGet},
+	"/category/new":  {adaptTemplate(template_context_providers.CategoryCreateContextProvider), "createCategory.tpl", http.MethodGet},
+	"/categories":    {adaptTemplate(template_context_providers.CategoryListContextProvider), "listCategories.tpl", http.MethodGet},
+	"/category":      {adaptTemplate(template_context_providers.CategoryContextProvider), "displayCategory.tpl", http.MethodGet},
+	"/category/edit": {adaptTemplate(template_context_providers.CategoryCreateContextProvider), "createCategory.tpl", http.MethodGet},
 
-	"/resourceCategory/new":  {template_context_providers.ResourceCategoryCreateContextProvider, "createResourceCategory.tpl", http.MethodGet},
-	"/resourceCategories":    {template_context_providers.ResourceCategoryListContextProvider, "listResourceCategories.tpl", http.MethodGet},
-	"/resourceCategory":      {template_context_providers.ResourceCategoryContextProvider, "displayResourceCategory.tpl", http.MethodGet},
-	"/resourceCategory/edit": {template_context_providers.ResourceCategoryCreateContextProvider, "createResourceCategory.tpl", http.MethodGet},
+	"/resourceCategory/new":  {adaptTemplate(template_context_providers.ResourceCategoryCreateContextProvider), "createResourceCategory.tpl", http.MethodGet},
+	"/resourceCategories":    {adaptTemplate(template_context_providers.ResourceCategoryListContextProvider), "listResourceCategories.tpl", http.MethodGet},
+	"/resourceCategory":      {adaptTemplate(template_context_providers.ResourceCategoryContextProvider), "displayResourceCategory.tpl", http.MethodGet},
+	"/resourceCategory/edit": {adaptTemplate(template_context_providers.ResourceCategoryCreateContextProvider), "createResourceCategory.tpl", http.MethodGet},
 
-	"/query/new":  {template_context_providers.QueryCreateContextProvider, "createQuery.tpl", http.MethodGet},
-	"/queries":    {template_context_providers.QueryListContextProvider, "listQueries.tpl", http.MethodGet},
-	"/query":      {template_context_providers.QueryContextProvider, "displayQuery.tpl", http.MethodGet},
-	"/query/edit": {template_context_providers.QueryCreateContextProvider, "createQuery.tpl", http.MethodGet},
+	"/query/new":  {adaptTemplate(template_context_providers.QueryCreateContextProvider), "createQuery.tpl", http.MethodGet},
+	"/queries":    {adaptTemplate(template_context_providers.QueryListContextProvider), "listQueries.tpl", http.MethodGet},
+	"/query":      {adaptTemplate(template_context_providers.QueryContextProvider), "displayQuery.tpl", http.MethodGet},
+	"/query/edit": {adaptTemplate(template_context_providers.QueryCreateContextProvider), "createQuery.tpl", http.MethodGet},
 
-	"/resources/timeline":  {template_context_providers.ResourceTimelineContextProvider, "listResourcesTimeline.tpl", http.MethodGet},
-	"/notes/timeline":      {template_context_providers.NoteTimelineContextProvider, "listNotesTimeline.tpl", http.MethodGet},
-	"/groups/timeline":     {template_context_providers.GroupTimelineContextProvider, "listGroupsTimeline.tpl", http.MethodGet},
-	"/tags/timeline":       {template_context_providers.TagTimelineContextProvider, "listTagsTimeline.tpl", http.MethodGet},
-	"/categories/timeline": {template_context_providers.CategoryTimelineContextProvider, "listCategoriesTimeline.tpl", http.MethodGet},
-	"/queries/timeline":    {template_context_providers.QueryTimelineContextProvider, "listQueriesTimeline.tpl", http.MethodGet},
+	"/resources/timeline":  {adaptTemplate(template_context_providers.ResourceTimelineContextProvider), "listResourcesTimeline.tpl", http.MethodGet},
+	"/notes/timeline":      {adaptTemplate(template_context_providers.NoteTimelineContextProvider), "listNotesTimeline.tpl", http.MethodGet},
+	"/groups/timeline":     {adaptTemplate(template_context_providers.GroupTimelineContextProvider), "listGroupsTimeline.tpl", http.MethodGet},
+	"/tags/timeline":       {adaptTemplate(template_context_providers.TagTimelineContextProvider), "listTagsTimeline.tpl", http.MethodGet},
+	"/categories/timeline": {adaptTemplate(template_context_providers.CategoryTimelineContextProvider), "listCategoriesTimeline.tpl", http.MethodGet},
+	"/queries/timeline":    {adaptTemplate(template_context_providers.QueryTimelineContextProvider), "listQueriesTimeline.tpl", http.MethodGet},
 
-	"/logs": {template_context_providers.LogListContextProvider, "listLogs.tpl", http.MethodGet},
-	"/log":  {template_context_providers.LogContextProvider, "displayLog.tpl", http.MethodGet},
+	"/logs": {adaptTemplate(template_context_providers.LogListContextProvider), "listLogs.tpl", http.MethodGet},
+	"/log":  {adaptTemplate(template_context_providers.LogContextProvider), "displayLog.tpl", http.MethodGet},
 
-	"/admin/overview": {template_context_providers.AdminOverviewContextProvider, "adminOverview.tpl", http.MethodGet},
-	"/admin/users":    {template_context_providers.AdminUsersContextProvider, "adminUsers.tpl", http.MethodGet},
-	"/account":        {template_context_providers.AccountContextProvider, "account.tpl", http.MethodGet},
-	"/admin/export":   {template_context_providers.AdminExportContextProvider, "adminExport.tpl", http.MethodGet},
-	"/admin/import":   {template_context_providers.AdminImportContextProvider, "adminImport.tpl", http.MethodGet},
-	"/admin/shares":   {template_context_providers.AdminSharesContextProvider, "adminShares.tpl", http.MethodGet}, // BH-035
-	"/admin/settings": {template_context_providers.AdminSettingsContextProvider, "adminSettings.tpl", http.MethodGet},
+	"/admin/overview": {adaptTemplate(template_context_providers.AdminOverviewContextProvider), "adminOverview.tpl", http.MethodGet},
+	"/admin/users":    {adaptTemplate(template_context_providers.AdminUsersContextProvider), "adminUsers.tpl", http.MethodGet},
+	"/account":        {adaptTemplate(template_context_providers.AccountContextProvider), "account.tpl", http.MethodGet},
+	"/admin/export":   {adaptTemplate(template_context_providers.AdminExportContextProvider), "adminExport.tpl", http.MethodGet},
+	"/admin/import":   {adaptTemplate(template_context_providers.AdminImportContextProvider), "adminImport.tpl", http.MethodGet},
+	"/admin/shares":   {adaptTemplate(template_context_providers.AdminSharesContextProvider), "adminShares.tpl", http.MethodGet}, // BH-035
+	"/admin/settings": {adaptTemplate(template_context_providers.AdminSettingsContextProvider), "adminSettings.tpl", http.MethodGet},
 
-	"/mrql": {template_context_providers.MRQLContextProvider, "mrql.tpl", http.MethodGet},
+	"/mrql": {adaptTemplate(template_context_providers.MRQLContextProvider), "mrql.tpl", http.MethodGet},
 }
 
 func wrapContextWithPlugins(appContext *application_context.MahresourcesContext, ctxFn func(request *http.Request) pongo2.Context) func(request *http.Request) pongo2.Context {

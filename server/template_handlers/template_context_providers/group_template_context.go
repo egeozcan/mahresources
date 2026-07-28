@@ -16,7 +16,7 @@ import (
 	"strconv"
 )
 
-func GroupsListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func GroupsListContextProvider(context GroupPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetPageParameter(request)
 		resultsPerPage := getResultsPerPage(request, constants.MaxResultsPerPage)
@@ -143,7 +143,7 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 	}
 }
 
-func GroupTimelineContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func GroupTimelineContextProvider(context GroupPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.GroupQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -241,7 +241,7 @@ func GroupTimelineContextProvider(context *application_context.MahresourcesConte
 	}
 }
 
-func GroupCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func GroupCreateContextProvider(context GroupPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Group",
@@ -304,7 +304,7 @@ func GroupCreateContextProvider(context *application_context.MahresourcesContext
 	}
 }
 
-func GroupContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func GroupContextProvider(context GroupPageContext) func(request *http.Request) pongo2.Context {
 	return groupContextProviderImpl(context)
 }
 
@@ -384,7 +384,7 @@ func groupContextProviderImpl(context contracts.GroupReader) func(request *http.
 	}
 }
 
-func GroupTreeContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func GroupTreeContextProvider(context GroupPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		baseContext := StaticTemplateCtx(request)
 

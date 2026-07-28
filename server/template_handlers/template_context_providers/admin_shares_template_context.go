@@ -5,8 +5,6 @@ import (
 	"strings"
 
 	"github.com/flosch/pongo2/v4"
-
-	"mahresources/application_context"
 )
 
 // adminSharesRow is the view model the /admin/shares template iterates.
@@ -27,7 +25,7 @@ type adminSharesRow struct {
 // | Revoke. ShareCreatedAt is a nullable timestamp (newly added column);
 // existing rows minted before this migration render "(unknown)" rather than
 // being back-filled with an inaccurate NOW().
-func AdminSharesContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func AdminSharesContextProvider(context AdminSharesPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		baseContext := StaticTemplateCtx(request)
 

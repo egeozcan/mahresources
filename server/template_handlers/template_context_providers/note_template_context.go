@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-func NoteListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func NoteListContextProvider(context NotePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetPageParameter(request)
 		resultsPerPage := getResultsPerPage(request, constants.MaxResultsPerPage)
@@ -139,7 +139,7 @@ func NoteListContextProvider(context *application_context.MahresourcesContext) f
 	}
 }
 
-func NoteTimelineContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func NoteTimelineContextProvider(context NotePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.NoteQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -221,7 +221,7 @@ func NoteTimelineContextProvider(context *application_context.MahresourcesContex
 	}
 }
 
-func NoteCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func NoteCreateContextProvider(context NotePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Note",
@@ -287,7 +287,7 @@ func NoteCreateContextProvider(context *application_context.MahresourcesContext)
 	}
 }
 
-func NoteContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func NoteContextProvider(context NotePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -311,7 +311,7 @@ func NoteContextProvider(context *application_context.MahresourcesContext) func(
 		// produce URLs that won't resolve for any external recipient. When
 		// unset, shareBaseUrl stays empty and the template surfaces a warning
 		// so the admin knows why the sidebar is degraded.
-		shareEnabled := context.Config.SharePort != ""
+		shareEnabled := context.ShareEnabled()
 		shareBaseUrl := ""
 		shareUrlConfigured := false
 		if rawURL := context.Settings().SharePublicURL(); rawURL != "" {
@@ -348,7 +348,7 @@ func NoteContextProvider(context *application_context.MahresourcesContext) func(
 	}
 }
 
-func NoteTypeListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func NoteTypeListContextProvider(context NotePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
@@ -390,7 +390,7 @@ func NoteTypeListContextProvider(context *application_context.MahresourcesContex
 	}
 }
 
-func NoteTypeCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func NoteTypeCreateContextProvider(context NotePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Note Type",
@@ -418,7 +418,7 @@ func NoteTypeCreateContextProvider(context *application_context.MahresourcesCont
 	}
 }
 
-func NoteTypeContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func NoteTypeContextProvider(context NotePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())

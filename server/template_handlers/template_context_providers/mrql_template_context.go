@@ -5,10 +5,9 @@ import (
 	"net/http"
 
 	"github.com/flosch/pongo2/v4"
-	"mahresources/application_context"
 )
 
-func MRQLContextProvider(ctx *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func MRQLContextProvider(ctx MRQLPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		baseContext := StaticTemplateCtx(request)
 

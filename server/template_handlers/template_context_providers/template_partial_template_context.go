@@ -6,14 +6,13 @@ import (
 
 	"github.com/flosch/pongo2/v4"
 
-	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/template_entities"
 )
 
-func TemplatePartialListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func TemplatePartialListContextProvider(context TemplatePartialPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
@@ -52,7 +51,7 @@ func TemplatePartialListContextProvider(context *application_context.Mahresource
 	}
 }
 
-func TemplatePartialCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func TemplatePartialCreateContextProvider(context TemplatePartialPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Template Partial",
@@ -79,7 +78,7 @@ func TemplatePartialCreateContextProvider(context *application_context.Mahresour
 	}
 }
 
-func TemplatePartialContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func TemplatePartialContextProvider(context TemplatePartialPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())

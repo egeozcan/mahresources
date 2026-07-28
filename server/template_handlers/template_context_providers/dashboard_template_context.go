@@ -14,7 +14,7 @@ import (
 const dashboardItemsPerSection = 6
 const dashboardActivityLimit = 20
 
-func DashboardContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func DashboardContextProvider(context DashboardPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		baseContext := StaticTemplateCtx(request)
 
@@ -88,7 +88,7 @@ func DashboardContextProvider(context *application_context.MahresourcesContext) 
 
 		return pongo2.Context{
 			"pageTitle":       "Dashboard",
-			"hideSidebar": true,
+			"hideSidebar":     true,
 			"recentResources": recentResources,
 			"recentNotes":     recentNotes,
 			"recentGroups":    recentGroups,
