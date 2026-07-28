@@ -200,6 +200,77 @@ has migrated. Slice 5 changes parameter types at a call boundary, carries no
 extraction risk, needs no facade, and is the only remaining work that would
 actually shrink what `server/` can reach for.
 
+**Revision 11 — slice 5 is DONE** (commits `56d0662d`, `badc7c77`). All 61
+template context providers took `*MahresourcesContext` and could reach any of
+its 329 exported methods. **None do now.**
+
+| Measure | before | after |
+|---|---|---|
+| provider fns taking the concrete type | 61 | **0** |
+| concrete references in the package | 60 | **21** (20 compile-time assertions + 1 comment) |
+
+§4 called this "pure `contracts/` work, no extraction" and predicted "near-zero
+risk, because it changes only parameter types at the call boundary." The first
+half held. The second half was wrong twice, and the second miss was dangerous.
+
+(24) **The route table forbids changing a parameter type.** All 69 providers are
+stored in one map whose field is
+`func(*MahresourcesContext) func(*http.Request) pongo2.Context`. Go has no
+function-parameter contravariance, so narrowing any provider's parameter breaks
+the map. This is not a detail — it is the reason the migration stalled at 2 of
+61 while `api_handlers/` reached 70%: handlers are wired individually, providers
+are wired through a uniform table. **A DI migration is only "just parameter
+types" when each call site is independent.**
+
+(25) **The obvious fix is a silent security regression.** The natural way to get
+past (24) is to apply `appContext` when the map is built, turning the field into
+an already-bound `func(*http.Request) pongo2.Context`. That is wrong:
+`routes.go` calls `info.contextFn(sc)` **per request** with a principal-scoped
+context, and binding at wiring time hands every page the unscoped singleton.
+Every HTML page would leak across subtrees while the entire `/v1` API — and
+every existing scoping test — stayed correct. The fix is `adaptTemplate[T]`,
+which preserves the per-request call and mirrors the existing `scopedAPI[T]`.
+
+**Template-page confinement was covered only by e2e, in a browser.** It is now
+pinned in Go by `TestScopedUser_TemplatePagesConfined`, written *before* the
+migration and verified by mutation: binding to the singleton leaks
+out-of-subtree groups, notes and resources through `/groups.json`,
+`/notes.json` and `/resources.json`, and every other `TestScopedUser_*` test
+still passes. That is the third time in this document a security property turned
+out to rest on a test that did not test it.
+
+(26) **Interfaces cannot describe struct fields.** Four providers read
+`Config`/`DefaultResourceCategoryID` directly. They get four narrow accessors
+(`DatabaseType`, `ShareEnabled`, `AltFileSystems`, `IsDefaultResourceCategory`)
+rather than an escape hatch back to the whole config.
+
+The interfaces live in the providers package, not `contracts/`, for the reason
+`api_handlers.GroupImporter` already documents: `contracts/` may import only
+`models/` and `constants/`, and several of these methods return
+`application_context`-owned types (`RuntimeSettings`, `PopularTag`,
+`ActivityEntry`, `MRQLFilterError`) or `plugin_system.PluginManager`. **Moving
+those four DTOs into `contracts/` is the obvious follow-up** and would let most
+of these interfaces move with them.
+
+### Where this leaves the effort
+
+| Slice | Verdict |
+|---|---|
+| 1 `groupio` | done; 5,865 LOC out, no call-site churn |
+| 2 `search` | done; 651 LOC out, no call-site churn |
+| 3 `media`, 4 `mrql` | **not recommended** — see revision 10 |
+| 5 template DI | done; 61 concrete params to 0 |
+
+Slice 5 was the one worth doing, and for the reason revision 10 predicted: it
+is the only one of the five that reduced what `server/` can reach for. Slices 1
+and 2 moved 21% of the package's LOC and left the god struct's exported surface
+at exactly 329 methods; slice 5 moved no LOC and removed 61 unrestricted
+references to it.
+
+The remaining concrete surface is `server/api_handlers/` (74 references, 30%
+unmigrated). Finishing it is the same shape of work as slice 5 — and, unlike
+slice 5, without the route-table obstacle, since handlers are wired one by one.
+
 **§2a is now fully satisfied. The decomposition may begin.**
 
 The seam choice itself has survived all four reviews unchallenged. Every defect
