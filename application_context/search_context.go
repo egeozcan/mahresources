@@ -77,6 +77,13 @@ func (ctx *MahresourcesContext) InitFTS() error {
 	return nil
 }
 
+// ftsAvailable reports whether full-text search is initialized and usable.
+// Callers outside this file read FTS state through it rather than touching the
+// field, so the state can move behind a service without touching them.
+func (ctx *MahresourcesContext) ftsAvailable() bool {
+	return ctx.ftsEnabled
+}
+
 // GlobalSearch performs a unified search across all entity types
 func (ctx *MahresourcesContext) GlobalSearch(query *query_models.GlobalSearchQuery) (*query_models.GlobalSearchResponse, error) {
 	if query.Limit <= 0 {
