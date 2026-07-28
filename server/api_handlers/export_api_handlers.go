@@ -22,9 +22,11 @@ import (
 )
 
 // GroupExporter is the application_context capability the export estimate
-// handler depends on. It is defined here (not in server/interfaces) because
-// server/interfaces is already imported by application_context, so adding
-// application_context types to server/interfaces would create an import cycle.
+// handler depends on.
+//
+// It is defined here rather than in contracts/ because contracts/ may import
+// only models/ and constants/ (enforced by internal/arch), and these method
+// signatures name the export DTOs, which live in groupio/.
 type GroupExporter interface {
 	EstimateExport(req *application_context.ExportRequest) (*application_context.ExportEstimate, error)
 	StreamExport(ctx context.Context, req *application_context.ExportRequest, dst io.Writer, report application_context.ReporterFn) error

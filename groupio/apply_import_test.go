@@ -1,4 +1,4 @@
-package application_context
+package groupio
 
 import (
 	"bytes"
@@ -8,12 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jmoiron/sqlx"
 	"github.com/spf13/afero"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"mahresources/archive"
-	"mahresources/constants"
 	"mahresources/download_queue"
 	"mahresources/models"
 )
@@ -21,47 +19,15 @@ import (
 // createGUIDIsolatedContext returns a context backed by an in-memory SQLite
 // DB unique to this test (named cache), so source and destination instances
 // don't share rows. Schema includes everything ApplyImport / StreamExport touch.
-func createGUIDIsolatedContext(t *testing.T, name string) *MahresourcesContext {
+func createGUIDIsolatedContext(t *testing.T, name string) *opCtx {
 	t.Helper()
 
-	dsn := "file:" + name + "?mode=memory&cache=shared"
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("file:"+name+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(
-		&models.Query{},
-		&models.Resource{},
-		&models.ResourceVersion{},
-		&models.Note{},
-		&models.Tag{},
-		&models.Group{},
-		&models.Category{},
-		&models.NoteType{},
-		&models.Preview{},
-		&models.GroupRelation{},
-		&models.GroupRelationType{},
-		&models.ImageHash{},
-		&models.ResourceSimilarity{},
-		&models.LogEntry{},
-		&models.ResourceCategory{},
-		&models.Series{},
-		&models.NoteBlock{},
-		&models.PluginKV{},
-	); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	config := &MahresourcesConfig{DbType: constants.DbTypeSqlite}
-	fs := afero.NewMemMapFs()
-	sqlDB, _ := db.DB()
-	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
-	ctx := NewMahresourcesContext(fs, db, readOnlyDB, config)
-
-	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
-	defaultRC.ID = 1
-	db.FirstOrCreate(defaultRC, 1)
-	return ctx
+	migrateTestSchema(t, db)
+	return newTestCtx(t, db, afero.NewMemMapFs(), nil)
 }
 
 // noopSink satisfies download_queue.ProgressSink for tests.
@@ -1459,7 +1425,7 @@ func TestApplyImport_ReplaceUsesAttachedFs(t *testing.T) {
 	// --- Destination: pre-seed the resource on an attached filesystem ---
 	dstCtx := createGUIDIsolatedContext(t, "altfs_replace_dst")
 	altFs := afero.NewMemMapFs()
-	dstCtx.altFileSystems["altfs"] = altFs
+	dstCtx.alt["altfs"] = altFs
 
 	altLocation := "alt/" + res.Hash + ".txt"
 	if err := afero.WriteFile(altFs, altLocation, []byte("OLD_ALT_BYTES"), 0644); err != nil {

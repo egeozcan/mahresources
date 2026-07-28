@@ -145,6 +145,16 @@ func TestGroupioFacade_ObservesDerivedHandleNotSingleton(t *testing.T) {
 				return err
 			}
 
+			// Direct: the deps handed to the service must BE the transactional
+			// handle. Asserted by identity because it is the actual invariant;
+			// the behavioural check below can be satisfied accidentally by
+			// SQLite shared-cache visibility.
+			if got := txCtx.groupioDeps().DB; got != txCtx.db {
+				t.Errorf("groupioDeps() inside a transaction handed the service %p, want the "+
+					"transactional handle %p — its writes would escape the transaction",
+					got, txCtx.db)
+			}
+
 			est, err := txCtx.EstimateExport(&ExportRequest{
 				RootGroupIDs: []uint{g.ID},
 				Scope:        archive.ExportScope{Subtree: true},
@@ -154,8 +164,7 @@ func TestGroupioFacade_ObservesDerivedHandleNotSingleton(t *testing.T) {
 			}
 			if est.Counts.Groups != 1 {
 				t.Errorf("export inside a transaction saw %d groups, want 1 — the facade did not "+
-					"observe the transactional handle, so its writes would escape the transaction",
-					est.Counts.Groups)
+					"observe the transactional handle", est.Counts.Groups)
 			}
 			return errRollback
 		})
@@ -179,11 +188,25 @@ func TestGroupioFacade_ObservesDerivedHandleNotSingleton(t *testing.T) {
 		mustCreateFacade(t, ctx, root)
 		outside := &models.Group{Name: "fp-outside"}
 		mustCreateFacade(t, ctx, outside)
-		rt := &models.GroupRelationType{Name: "fp-type"}
-		mustCreateFacade(t, ctx, rt)
-		mustCreateFacade(t, ctx, &models.GroupRelation{FromGroupId: &root.ID, ToGroupId: &outside.ID, RelationTypeId: &rt.ID})
+
+		// An M2M edge, deliberately not a typed GroupRelation. The relation BFS
+		// is confined through Deps.Scope, which resolves against ctx.db and so
+		// stays correct even when Deps.DB is wrong — a GroupRelation fixture
+		// here would pass against a facade holding a captured handle. The M2M
+		// branch is guarded by the GORM callbacks, which read Deps.DB, so it is
+		// the branch that actually detects the wrong handle.
+		if err := ctx.db.Model(root).Association("RelatedGroups").Append(outside); err != nil {
+			t.Fatalf("relate groups: %v", err)
+		}
 
 		req := fullBFSRequest(root.ID)
+
+		// Direct: the deps must carry this derived context's handle.
+		scopedCtx := ctx.WithPrincipal(scopedGuest(root.ID))
+		if got := scopedCtx.groupioDeps().DB; got != scopedCtx.db {
+			t.Errorf("groupioDeps() on a principal-derived context handed the service %p, want the "+
+				"derived handle %p — scope would not be enforced", got, scopedCtx.db)
+		}
 
 		// Control: on the singleton handle the edge is followed.
 		ctrl, err := ctx.EstimateExport(req)
@@ -196,7 +219,7 @@ func TestGroupioFacade_ObservesDerivedHandleNotSingleton(t *testing.T) {
 
 		// On the derived handle it must not be. A facade holding the singleton
 		// would return the control's answer here.
-		est, err := ctx.WithPrincipal(scopedGuest(root.ID)).EstimateExport(req)
+		est, err := scopedCtx.EstimateExport(req)
 		if err != nil {
 			t.Fatalf("scoped EstimateExport: %v", err)
 		}

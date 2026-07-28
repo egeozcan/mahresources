@@ -1,4 +1,4 @@
-package application_context
+package groupio
 
 import (
 	"bytes"
@@ -8,12 +8,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jmoiron/sqlx"
 	"github.com/spf13/afero"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"mahresources/archive"
-	"mahresources/constants"
 	"mahresources/download_queue"
 	"mahresources/models"
 )
@@ -32,61 +30,22 @@ var _ download_queue.ProgressSink = noopSinkAltFS{}
 
 // createContextWithAltFs creates a fresh isolated context that has an alt-fs
 // named "archival" backed by an in-memory filesystem.
-func createContextWithAltFs(t *testing.T, name string) (*MahresourcesContext, afero.Fs) {
+func createContextWithAltFs(t *testing.T, name string) (*opCtx, afero.Fs) {
 	t.Helper()
 
-	dsn := "file:" + name + "?mode=memory&cache=shared"
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("file:"+name+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(
-		&models.Query{},
-		&models.Resource{},
-		&models.ResourceVersion{},
-		&models.Note{},
-		&models.Tag{},
-		&models.Group{},
-		&models.Category{},
-		&models.NoteType{},
-		&models.Preview{},
-		&models.GroupRelation{},
-		&models.GroupRelationType{},
-		&models.ImageHash{},
-		&models.ResourceSimilarity{},
-		&models.LogEntry{},
-		&models.ResourceCategory{},
-		&models.Series{},
-		&models.NoteBlock{},
-		&models.PluginKV{},
-	); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	migrateTestSchema(t, db)
 
+	// Config.AltFileSystems turns strings into real FS objects via
+	// storage.CreateStorage in production. Tests inject an in-memory afero
+	// directly. The Config side of that setup is gone: nothing in groupio reads
+	// Config -- the PathName validation that needed it stays in
+	// application_context.
 	altFs := afero.NewMemMapFs()
-
-	// Config.AltFileSystems values are strings that are turned into real FS objects
-	// in NewMahresourcesContext via storage.CreateStorage. For tests we bypass that:
-	// we construct the context normally (no alt-fs in config) and then inject the
-	// in-memory afero directly into the context's altFileSystems map.
-	config := &MahresourcesConfig{
-		DbType: constants.DbTypeSqlite,
-	}
-	fs := afero.NewMemMapFs()
-	sqlDB, _ := db.DB()
-	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
-	ctx := NewMahresourcesContext(fs, db, readOnlyDB, config)
-
-	// Register the in-memory alt-fs (bypasses disk path creation).
-	ctx.RegisterAltFs("archival", altFs)
-	// Also persist the string key in Config so PathName validation works.
-	ctx.Config.AltFileSystems = map[string]string{"archival": "/fake/archival"}
-
-	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
-	defaultRC.ID = 1
-	db.FirstOrCreate(defaultRC, 1)
-
-	return ctx, altFs
+	return newTestCtx(t, db, afero.NewMemMapFs(), map[string]afero.Fs{"archival": altFs}), altFs
 }
 
 // TestExportImport_PreservesStorageLocation verifies BH-023 layer 1:

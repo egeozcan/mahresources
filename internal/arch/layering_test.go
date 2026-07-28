@@ -181,6 +181,34 @@ func TestContractsStayBelowTheLayersThatUseThem(t *testing.T) {
 	}
 }
 
+// TestGroupioStaysBelowApplicationContext pins the seam the groupio extraction
+// created. groupio/ owns group import/export and is consumed by
+// application_context through a facade; the moment it reaches back up, the
+// extraction has been undone and the facade's whole point — that the service
+// receives a *gorm.DB per call rather than capturing context state — is
+// available to be bypassed.
+func TestGroupioStaysBelowApplicationContext(t *testing.T) {
+	forbidden := []string{
+		modulePath + "/application_context",
+		modulePath + "/server",
+		modulePath + "/contracts",
+	}
+	for dir, imports := range pkgImports(t) {
+		if !under(dir, "groupio") {
+			continue
+		}
+		for _, imp := range sorted(imports) {
+			for _, bad := range forbidden {
+				if imp == bad || strings.HasPrefix(imp, bad+"/") {
+					t.Errorf("%s imports %s\n"+
+						"\tgroupio/ sits below application_context/ and server/. It may depend on\n"+
+						"\tarchive/, models/, download_queue/ and constants/ only.", dir, imp)
+				}
+			}
+		}
+	}
+}
+
 func sorted(set map[string]bool) []string {
 	out := make([]string, 0, len(set))
 	for k := range set {

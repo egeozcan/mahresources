@@ -1,4 +1,4 @@
-package application_context
+package groupio
 
 import (
 	"bytes"
@@ -249,7 +249,7 @@ func TestEstimateExport_CountsGroupsResourcesNotes(t *testing.T) {
 	}
 }
 
-func mustCreateGroup(t *testing.T, ctx *MahresourcesContext, name string, ownerID *uint) *models.Group {
+func mustCreateGroup(t *testing.T, ctx *opCtx, name string, ownerID *uint) *models.Group {
 	t.Helper()
 	g := models.Group{Name: name, OwnerId: ownerID}
 	if err := ctx.db.Create(&g).Error; err != nil {
@@ -261,7 +261,7 @@ func mustCreateGroup(t *testing.T, ctx *MahresourcesContext, name string, ownerI
 	return &g
 }
 
-func mustCreateResource(t *testing.T, ctx *MahresourcesContext, name string, ownerID *uint, content []byte) *models.Resource {
+func mustCreateResource(t *testing.T, ctx *opCtx, name string, ownerID *uint, content []byte) *models.Resource {
 	t.Helper()
 	sum := sha1.Sum(content)
 	hash := fmt.Sprintf("%x", sum)
@@ -276,7 +276,7 @@ func mustCreateResource(t *testing.T, ctx *MahresourcesContext, name string, own
 		HashType:           "SHA1",
 		FileSize:           int64(len(content)),
 		Location:           location,
-		ResourceCategoryId: ctx.DefaultResourceCategoryID,
+		ResourceCategoryId: testDefaultResourceCategoryID,
 	}
 	if err := ctx.db.Create(&r).Error; err != nil {
 		t.Fatalf("create resource %q: %v", name, err)
@@ -288,7 +288,7 @@ func mustCreateResource(t *testing.T, ctx *MahresourcesContext, name string, own
 	return &r
 }
 
-func mustCreateNote(t *testing.T, ctx *MahresourcesContext, name string, ownerID *uint) *models.Note {
+func mustCreateNote(t *testing.T, ctx *opCtx, name string, ownerID *uint) *models.Note {
 	t.Helper()
 	n := models.Note{Name: name, OwnerId: ownerID}
 	if err := ctx.db.Create(&n).Error; err != nil {
@@ -300,7 +300,7 @@ func mustCreateNote(t *testing.T, ctx *MahresourcesContext, name string, ownerID
 	return &n
 }
 
-func mustLinkRelatedGroup(t *testing.T, ctx *MahresourcesContext, fromID, toID uint) {
+func mustLinkRelatedGroup(t *testing.T, ctx *opCtx, fromID, toID uint) {
 	t.Helper()
 	var from, to models.Group
 	if err := ctx.db.First(&from, fromID).Error; err != nil {
@@ -317,7 +317,7 @@ func mustLinkRelatedGroup(t *testing.T, ctx *MahresourcesContext, fromID, toID u
 	})
 }
 
-func mustLinkRelatedResource(t *testing.T, ctx *MahresourcesContext, groupID, resourceID uint) {
+func mustLinkRelatedResource(t *testing.T, ctx *opCtx, groupID, resourceID uint) {
 	t.Helper()
 	var g models.Group
 	if err := ctx.db.First(&g, groupID).Error; err != nil {
@@ -335,7 +335,7 @@ func mustLinkRelatedResource(t *testing.T, ctx *MahresourcesContext, groupID, re
 	})
 }
 
-func mustLinkRelatedNote(t *testing.T, ctx *MahresourcesContext, groupID, noteID uint) {
+func mustLinkRelatedNote(t *testing.T, ctx *opCtx, groupID, noteID uint) {
 	t.Helper()
 	var g models.Group
 	if err := ctx.db.First(&g, groupID).Error; err != nil {
@@ -353,7 +353,7 @@ func mustLinkRelatedNote(t *testing.T, ctx *MahresourcesContext, groupID, noteID
 	})
 }
 
-func mustCreateGroupRelationType(t *testing.T, ctx *MahresourcesContext, name string) *models.GroupRelationType {
+func mustCreateGroupRelationType(t *testing.T, ctx *opCtx, name string) *models.GroupRelationType {
 	t.Helper()
 	rt := models.GroupRelationType{Name: name}
 	if err := ctx.db.Create(&rt).Error; err != nil {
@@ -365,7 +365,7 @@ func mustCreateGroupRelationType(t *testing.T, ctx *MahresourcesContext, name st
 	return &rt
 }
 
-func mustCreateGroupRelation(t *testing.T, ctx *MahresourcesContext, fromID, toID, typeID uint) *models.GroupRelation {
+func mustCreateGroupRelation(t *testing.T, ctx *opCtx, fromID, toID, typeID uint) *models.GroupRelation {
 	t.Helper()
 	rel := models.GroupRelation{
 		FromGroupId:    &fromID,
@@ -516,7 +516,7 @@ func TestStreamExport_BlobsToggle(t *testing.T) {
 	}
 }
 
-func mustUploadNewVersion(t *testing.T, ctx *MahresourcesContext, resourceID uint, content []byte, comment string) *models.ResourceVersion {
+func mustUploadNewVersion(t *testing.T, ctx *opCtx, resourceID uint, content []byte, comment string) *models.ResourceVersion {
 	t.Helper()
 	hash := fmt.Sprintf("%x", sha1.Sum(content))
 	// Load the resource to get the existing version number.
@@ -608,7 +608,7 @@ func TestStreamExport_VersionHistoryRoundTrip(t *testing.T) {
 	}
 }
 
-func mustInsertPreview(t *testing.T, ctx *MahresourcesContext, resID uint, w, h uint, contentType string, data []byte) *models.Preview {
+func mustInsertPreview(t *testing.T, ctx *opCtx, resID uint, w, h uint, contentType string, data []byte) *models.Preview {
 	t.Helper()
 	prev := models.Preview{
 		ResourceId:  &resID,

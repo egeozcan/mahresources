@@ -1,4 +1,4 @@
-package application_context
+package groupio
 
 import (
 	"context"
@@ -37,7 +37,7 @@ type ExportEstimate struct {
 
 // EstimateExport walks the requested scope and returns counts without
 // touching file bytes. Used by /v1/groups/export/estimate.
-func (ctx *MahresourcesContext) EstimateExport(req *ExportRequest) (*ExportEstimate, error) {
+func (ctx *opCtx) EstimateExport(req *ExportRequest) (*ExportEstimate, error) {
 	if len(req.RootGroupIDs) == 0 {
 		return nil, fmt.Errorf("export: at least one root group required")
 	}
@@ -125,7 +125,7 @@ type exportPlan struct {
 // buildExportPlan walks the DB starting from req.RootGroupIDs, collecting all
 // in-scope entities, and assigns deterministic export IDs (g0001, r0042, etc.)
 // in insertion order. Task 9 extends it with dangling reference detection.
-func (ctx *MahresourcesContext) buildExportPlan(req *ExportRequest) (*exportPlan, error) {
+func (ctx *opCtx) buildExportPlan(req *ExportRequest) (*exportPlan, error) {
 	plan := &exportPlan{
 		req:                      req,
 		groupExportID:            map[uint]string{},
@@ -144,7 +144,7 @@ func (ctx *MahresourcesContext) buildExportPlan(req *ExportRequest) (*exportPlan
 	groupSet := map[uint]bool{}
 	for _, rootID := range req.RootGroupIDs {
 		if req.Scope.Subtree {
-			ids, err := ctx.collectSubtreeGroupIDs(rootID)
+			ids, err := ctx.scope.SubtreeGroupIDs(rootID)
 			if err != nil {
 				return nil, fmt.Errorf("collectSubtreeGroupIDs(%d): %w", rootID, err)
 			}
@@ -273,7 +273,7 @@ func estimateJSONOverhead(plan *exportPlan) int64 {
 // bfsRelatedEntities runs a BFS from in-scope groups, following enabled m2m
 // edges up to plan.req.RelatedDepth hops. Discovered groups become shells,
 // discovered resources/notes get full payloads. Only groups spawn the next hop.
-func (ctx *MahresourcesContext) bfsRelatedEntities(plan *exportPlan) error {
+func (ctx *opCtx) bfsRelatedEntities(plan *exportPlan) error {
 	req := plan.req
 	frontier := make([]uint, len(plan.groupIDs))
 	copy(frontier, plan.groupIDs)
@@ -322,7 +322,7 @@ func (ctx *MahresourcesContext) bfsRelatedEntities(plan *exportPlan) error {
 
 // bfsCollectM2M follows RelatedGroups, RelatedResources, RelatedNotes edges
 // from frontier groups. Returns newly discovered group IDs.
-func (ctx *MahresourcesContext) bfsCollectM2M(plan *exportPlan, frontier []uint) ([]uint, error) {
+func (ctx *opCtx) bfsCollectM2M(plan *exportPlan, frontier []uint) ([]uint, error) {
 	var groups []models.Group
 	if err := ctx.db.
 		Preload("RelatedGroups").
@@ -371,7 +371,7 @@ func (ctx *MahresourcesContext) bfsCollectM2M(plan *exportPlan, frontier []uint)
 
 // bfsCollectGroupRelations follows typed GroupRelation edges from frontier
 // groups. Returns newly discovered group IDs (as shells).
-func (ctx *MahresourcesContext) bfsCollectGroupRelations(plan *exportPlan, frontier []uint) ([]uint, error) {
+func (ctx *opCtx) bfsCollectGroupRelations(plan *exportPlan, frontier []uint) ([]uint, error) {
 	var relations []models.GroupRelation
 	if err := ctx.db.
 		Where("from_group_id IN ?", frontier).
@@ -406,7 +406,7 @@ func (ctx *MahresourcesContext) bfsCollectGroupRelations(plan *exportPlan, front
 		return nil, nil
 	}
 
-	visible := ctx.visibleGroupIDs(candidates)
+	visible := ctx.scope.VisibleGroupIDs(candidates)
 
 	var newGroupIDs []uint
 	for _, toID := range candidates {
@@ -427,7 +427,7 @@ func (ctx *MahresourcesContext) bfsCollectGroupRelations(plan *exportPlan, front
 // discovered IDs (newResourceIDs / newNoteIDs) to avoid re-scanning the full
 // plan on every BFS level. Returns newly added group IDs so they can enter the
 // BFS frontier. Uses batch queries to avoid N+1.
-func (ctx *MahresourcesContext) bfsEnsureOwners(plan *exportPlan, newResourceIDs, newNoteIDs []uint) ([]uint, error) {
+func (ctx *opCtx) bfsEnsureOwners(plan *exportPlan, newResourceIDs, newNoteIDs []uint) ([]uint, error) {
 	var newGroupIDs []uint
 
 	if len(newResourceIDs) > 0 {
@@ -483,7 +483,7 @@ func (ctx *MahresourcesContext) bfsEnsureOwners(plan *exportPlan, newResourceIDs
 	return newGroupIDs, nil
 }
 
-func (ctx *MahresourcesContext) findResourcesByOwner(groupIDs []uint) ([]models.Resource, error) {
+func (ctx *opCtx) findResourcesByOwner(groupIDs []uint) ([]models.Resource, error) {
 	if len(groupIDs) == 0 {
 		return nil, nil
 	}
@@ -494,7 +494,7 @@ func (ctx *MahresourcesContext) findResourcesByOwner(groupIDs []uint) ([]models.
 	return resources, nil
 }
 
-func (ctx *MahresourcesContext) findNotesByOwner(groupIDs []uint) ([]models.Note, error) {
+func (ctx *opCtx) findNotesByOwner(groupIDs []uint) ([]models.Note, error) {
 	if len(groupIDs) == 0 {
 		return nil, nil
 	}
@@ -505,7 +505,7 @@ func (ctx *MahresourcesContext) findNotesByOwner(groupIDs []uint) ([]models.Note
 	return notes, nil
 }
 
-func (ctx *MahresourcesContext) findSeriesForResources(resourceIDs []uint) ([]uint, error) {
+func (ctx *opCtx) findSeriesForResources(resourceIDs []uint) ([]uint, error) {
 	if len(resourceIDs) == 0 {
 		return nil, nil
 	}
@@ -541,7 +541,7 @@ func sortAscUint(s []uint) {
 //  3. Resources that share a series_id with in-scope resources but are
 //     themselves not in scope (only when Fidelity.ResourceSeries is set and
 //     there are in-scope series).
-func (ctx *MahresourcesContext) collectDanglingRefs(plan *exportPlan) error {
+func (ctx *opCtx) collectDanglingRefs(plan *exportPlan) error {
 	req := plan.req
 
 	// Build fast-lookup sets.
@@ -766,7 +766,7 @@ type blobReadInfo struct {
 // StreamExport walks the export plan built from req, writes a complete tar
 // archive to dst, and sends live ProgressEvent values to report. Honors
 // jobCtx cancellation.
-func (ctx *MahresourcesContext) StreamExport(
+func (ctx *opCtx) StreamExport(
 	jobCtx context.Context,
 	req *ExportRequest,
 	dst io.Writer,
@@ -977,7 +977,7 @@ func (ctx *MahresourcesContext) StreamExport(
 // collectSchemaDefIDs performs SELECT-only queries to discover which schema
 // definition rows are referenced by in-scope entities, and assigns them export
 // IDs in the plan maps.
-func (ctx *MahresourcesContext) collectSchemaDefIDs(plan *exportPlan) error {
+func (ctx *opCtx) collectSchemaDefIDs(plan *exportPlan) error {
 	req := plan.req
 
 	// Categories (from groups).
@@ -1111,7 +1111,7 @@ func (ctx *MahresourcesContext) collectSchemaDefIDs(plan *exportPlan) error {
 // be opened. Missing blobs are recorded in plan.warnings (and emitted via
 // report) so they appear in the manifest — which must be written before any
 // blob streaming starts.
-func (ctx *MahresourcesContext) preScanBlobs(plan *exportPlan, report ReporterFn) error {
+func (ctx *opCtx) preScanBlobs(plan *exportPlan, report ReporterFn) error {
 	if plan.missingBlobs == nil {
 		plan.missingBlobs = map[string]bool{}
 	}
@@ -1198,7 +1198,7 @@ func (ctx *MahresourcesContext) preScanBlobs(plan *exportPlan, report ReporterFn
 // Schema-def writers
 // ────────────────────────────────────────────────────────────────────────────
 
-func (ctx *MahresourcesContext) writeCategoryDefs(w *archive.Writer, plan *exportPlan) error {
+func (ctx *opCtx) writeCategoryDefs(w *archive.Writer, plan *exportPlan) error {
 	ids := keysOfUintMap(plan.categoryExportID)
 	if len(ids) == 0 {
 		return w.WriteCategoryDefs([]archive.CategoryDef{})
@@ -1229,7 +1229,7 @@ func (ctx *MahresourcesContext) writeCategoryDefs(w *archive.Writer, plan *expor
 	return w.WriteCategoryDefs(defs)
 }
 
-func (ctx *MahresourcesContext) writeNoteTypeDefs(w *archive.Writer, plan *exportPlan) error {
+func (ctx *opCtx) writeNoteTypeDefs(w *archive.Writer, plan *exportPlan) error {
 	ids := keysOfUintMap(plan.noteTypeExportID)
 	if len(ids) == 0 {
 		return w.WriteNoteTypeDefs([]archive.NoteTypeDef{})
@@ -1263,7 +1263,7 @@ func (ctx *MahresourcesContext) writeNoteTypeDefs(w *archive.Writer, plan *expor
 	return w.WriteNoteTypeDefs(defs)
 }
 
-func (ctx *MahresourcesContext) writeResourceCategoryDefs(w *archive.Writer, plan *exportPlan) error {
+func (ctx *opCtx) writeResourceCategoryDefs(w *archive.Writer, plan *exportPlan) error {
 	ids := keysOfUintMap(plan.resourceCategoryExportID)
 	if len(ids) == 0 {
 		return w.WriteResourceCategoryDefs([]archive.ResourceCategoryDef{})
@@ -1297,7 +1297,7 @@ func (ctx *MahresourcesContext) writeResourceCategoryDefs(w *archive.Writer, pla
 	return w.WriteResourceCategoryDefs(defs)
 }
 
-func (ctx *MahresourcesContext) writeTagDefs(w *archive.Writer, plan *exportPlan) error {
+func (ctx *opCtx) writeTagDefs(w *archive.Writer, plan *exportPlan) error {
 	ids := keysOfUintMap(plan.tagExportID)
 	if len(ids) == 0 {
 		return w.WriteTagDefs([]archive.TagDef{})
@@ -1320,7 +1320,7 @@ func (ctx *MahresourcesContext) writeTagDefs(w *archive.Writer, plan *exportPlan
 	return w.WriteTagDefs(defs)
 }
 
-func (ctx *MahresourcesContext) writeGroupRelationTypeDefs(w *archive.Writer, plan *exportPlan) error {
+func (ctx *opCtx) writeGroupRelationTypeDefs(w *archive.Writer, plan *exportPlan) error {
 	ids := keysOfUintMap(plan.grtExportID)
 	if len(ids) == 0 {
 		return w.WriteGroupRelationTypeDefs([]archive.GroupRelationTypeDef{})
@@ -1369,7 +1369,7 @@ func (ctx *MahresourcesContext) writeGroupRelationTypeDefs(w *archive.Writer, pl
 // writeSeries
 // ────────────────────────────────────────────────────────────────────────────
 
-func (ctx *MahresourcesContext) writeSeries(w *archive.Writer, plan *exportPlan) error {
+func (ctx *opCtx) writeSeries(w *archive.Writer, plan *exportPlan) error {
 	if len(plan.seriesIDs) == 0 {
 		return nil
 	}
@@ -1403,7 +1403,7 @@ type dkey struct {
 	rel  string
 }
 
-func (ctx *MahresourcesContext) loadGroupPayload(
+func (ctx *opCtx) loadGroupPayload(
 	id uint,
 	plan *exportPlan,
 	danglingByFromTo map[dkey]string,
@@ -1529,7 +1529,7 @@ func (ctx *MahresourcesContext) loadGroupPayload(
 // loadNotePayload
 // ────────────────────────────────────────────────────────────────────────────
 
-func (ctx *MahresourcesContext) loadNotePayload(id uint, plan *exportPlan) (*archive.NotePayload, error) {
+func (ctx *opCtx) loadNotePayload(id uint, plan *exportPlan) (*archive.NotePayload, error) {
 	var n models.Note
 	if err := ctx.db.
 		Preload("Tags").
@@ -1605,7 +1605,7 @@ func (ctx *MahresourcesContext) loadNotePayload(id uint, plan *exportPlan) (*arc
 // loadResourcePayload
 // ────────────────────────────────────────────────────────────────────────────
 
-func (ctx *MahresourcesContext) loadResourcePayload(
+func (ctx *opCtx) loadResourcePayload(
 	id uint,
 	plan *exportPlan,
 ) (*archive.ResourcePayload, *blobReadInfo, error) {
@@ -1791,7 +1791,7 @@ func (ctx *MahresourcesContext) loadResourcePayload(
 // writeResourceBlob
 // ────────────────────────────────────────────────────────────────────────────
 
-func (ctx *MahresourcesContext) writeResourceBlob(
+func (ctx *opCtx) writeResourceBlob(
 	w *archive.Writer,
 	info *blobReadInfo,
 	plan *exportPlan,
@@ -1839,7 +1839,7 @@ func (ctx *MahresourcesContext) writeResourceBlob(
 // toManifest converts the fully-built exportPlan into the archive.Manifest
 // that will be written as the first tar entry. Returns an error if any DB
 // query fails (I2).
-func (p *exportPlan) toManifest(req *ExportRequest, ctx *MahresourcesContext) (*archive.Manifest, error) {
+func (p *exportPlan) toManifest(req *ExportRequest, ctx *opCtx) (*archive.Manifest, error) {
 	// Count blobs written — we track unique hashes in plan.uniqueHashes already.
 	blobCount := len(p.uniqueHashes)
 
@@ -2104,7 +2104,7 @@ func keysOfUintBoolMap(m map[uint]bool) []uint {
 // ensureGUID assigns a UUID v7 to the given entity row if it has none.
 // Uses an atomic conditional UPDATE to handle concurrent exports safely.
 // Returns the GUID (either pre-existing or newly assigned).
-func (ctx *MahresourcesContext) ensureGUID(table string, id uint, existing *string) string {
+func (ctx *opCtx) ensureGUID(table string, id uint, existing *string) string {
 	if existing != nil && *existing != "" {
 		return *existing
 	}

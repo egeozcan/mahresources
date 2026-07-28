@@ -1,21 +1,18 @@
-package application_context
+package groupio
 
 import (
 	"sync"
 	"testing"
 
-	"github.com/jmoiron/sqlx"
 	"github.com/spf13/afero"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"mahresources/constants"
 	"mahresources/models"
-	"mahresources/models/query_models"
 )
 
 // createGUIDTestContext creates a minimal in-memory context for GUID tests.
 // Each call gets its own isolated database via a unique named memory cache.
-func createGUIDTestContext(t *testing.T, name string) *MahresourcesContext {
+func createGUIDTestContext(t *testing.T, name string) *opCtx {
 	t.Helper()
 
 	dsn := "file:" + name + "?mode=memory&cache=shared"
@@ -28,18 +25,22 @@ func createGUIDTestContext(t *testing.T, name string) *MahresourcesContext {
 		t.Fatalf("Failed to migrate database: %v", err)
 	}
 
-	config := &MahresourcesConfig{DbType: constants.DbTypeSqlite}
-	fs := afero.NewMemMapFs()
-	sqlDB, _ := db.DB()
-	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")
-	ctx := NewMahresourcesContext(fs, db, readOnlyDB, config)
+	return newTestCtx(t, db, afero.NewMemMapFs(), nil)
+}
 
-	// Ensure default resource category (required by CreateGroup internally)
-	defaultRC := &models.ResourceCategory{Name: "Default", Description: "Default resource category."}
-	defaultRC.ID = 1
-	db.FirstOrCreate(defaultRC, 1)
-
-	return ctx
+// mustCreateGUIDGroup inserts a bare group row.
+//
+// The application_context original went through ctx.CreateGroup, which does not
+// move. Nothing here depends on it: both tests overwrite the GUID immediately
+// afterwards and assert only on ensureGUID, so a direct insert is the same
+// starting state with none of the coupling.
+func mustCreateGUIDGroup(t *testing.T, ctx *opCtx, name string) *models.Group {
+	t.Helper()
+	g := &models.Group{Name: name}
+	if err := ctx.db.Create(g).Error; err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	return g
 }
 
 // TestEnsureGUID_ConcurrentConverges verifies that when multiple goroutines call
@@ -50,11 +51,7 @@ func createGUIDTestContext(t *testing.T, name string) *MahresourcesContext {
 func TestEnsureGUID_ConcurrentConverges(t *testing.T) {
 	ctx := createGUIDTestContext(t, "guid_concurrent")
 
-	// Create a group through normal channel so schema is satisfied.
-	group, err := ctx.CreateGroup(&query_models.GroupCreator{Name: "Test Group"})
-	if err != nil {
-		t.Fatalf("CreateGroup: %v", err)
-	}
+	group := mustCreateGUIDGroup(t, ctx, "Test Group")
 
 	// Manually set the GUID to NULL to simulate a pre-GUID entity that needs backfill.
 	if err := ctx.db.Model(&models.Group{}).Where("id = ?", group.ID).Update("guid", nil).Error; err != nil {
@@ -108,12 +105,9 @@ func TestEnsureGUID_ConcurrentConverges(t *testing.T) {
 func TestEnsureGUID_ExistingGUIDNotOverwritten(t *testing.T) {
 	ctx := createGUIDTestContext(t, "guid_existing")
 
-	group, err := ctx.CreateGroup(&query_models.GroupCreator{Name: "Already Has GUID"})
-	if err != nil {
-		t.Fatalf("CreateGroup: %v", err)
-	}
+	group := mustCreateGUIDGroup(t, ctx, "Already Has GUID")
 
-	// CreateGroup may assign a GUID; ensure one exists.
+	// Ensure a GUID exists.
 	existing := "00000000-0000-7000-8000-000000000001"
 	if err := ctx.db.Model(&models.Group{}).Where("id = ?", group.ID).Update("guid", existing).Error; err != nil {
 		t.Fatalf("set GUID: %v", err)

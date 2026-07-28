@@ -1,4 +1,4 @@
-package application_context
+package groupio
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 // notes, resources, series, and schema defs, then resolves name-based mappings
 // against the local database. The resulting ImportPlan is persisted as JSON to
 // _imports/<jobID>.plan.json and returned.
-func (ctx *MahresourcesContext) ParseImport(cancelCtx context.Context, jobID, tarPath string) (*ImportPlan, error) {
+func (ctx *opCtx) ParseImport(cancelCtx context.Context, jobID, tarPath string) (*ImportPlan, error) {
 	f, err := ctx.fs.Open(tarPath)
 	if err != nil {
 		return nil, fmt.Errorf("open import tar: %w", err)
@@ -124,7 +124,7 @@ func (ctx *MahresourcesContext) ParseImport(cancelCtx context.Context, jobID, ta
 // LoadImportPlan reads a previously persisted plan from _imports/<jobID>.plan.json.
 // Falls back to _imports/<jobID>.plan.applied.json if the original has been
 // consumed by an apply operation.
-func (ctx *MahresourcesContext) LoadImportPlan(jobID string) (*ImportPlan, error) {
+func (ctx *opCtx) LoadImportPlan(jobID string) (*ImportPlan, error) {
 	planPath := importPlanPath(jobID)
 	f, err := ctx.fs.Open(planPath)
 	if err != nil {
@@ -145,7 +145,7 @@ func (ctx *MahresourcesContext) LoadImportPlan(jobID string) (*ImportPlan, error
 
 // DeleteImportFiles removes the plan JSON, consumed plan, result, and the tar
 // file for a given job.
-func (ctx *MahresourcesContext) DeleteImportFiles(jobID string) error {
+func (ctx *opCtx) DeleteImportFiles(jobID string) error {
 	planPath := importPlanPath(jobID)
 	_ = ctx.fs.Remove(planPath)
 
@@ -165,7 +165,7 @@ func (ctx *MahresourcesContext) DeleteImportFiles(jobID string) error {
 }
 
 // persistImportPlan writes the plan as JSON to _imports/<jobID>.plan.json.
-func (ctx *MahresourcesContext) persistImportPlan(plan *ImportPlan) error {
+func (ctx *opCtx) persistImportPlan(plan *ImportPlan) error {
 	planPath := importPlanPath(plan.JobID)
 	dir := filepath.Dir(planPath)
 	if err := ctx.fs.MkdirAll(dir, 0755); err != nil {
@@ -247,7 +247,7 @@ func (c *importDataCollector) OnGroupRelationTypeDefs(defs []archive.GroupRelati
 
 // --- Name-based mapping resolvers ---
 
-func (ctx *MahresourcesContext) resolveCategories(defs []archive.CategoryDef) []MappingEntry {
+func (ctx *opCtx) resolveCategories(defs []archive.CategoryDef) []MappingEntry {
 	entries := make([]MappingEntry, 0, len(defs))
 	for _, def := range defs {
 		entry := MappingEntry{
@@ -305,7 +305,7 @@ func (ctx *MahresourcesContext) resolveCategories(defs []archive.CategoryDef) []
 
 // resolveCategoryByName creates a MappingEntry for a category name discovered
 // from payloads (not from a schema def). HasPayload is set to the given value.
-func (ctx *MahresourcesContext) resolveCategoryByName(name string, hasPayload bool) MappingEntry {
+func (ctx *opCtx) resolveCategoryByName(name string, hasPayload bool) MappingEntry {
 	entry := MappingEntry{
 		SourceKey:  name,
 		HasPayload: hasPayload,
@@ -325,7 +325,7 @@ func (ctx *MahresourcesContext) resolveCategoryByName(name string, hasPayload bo
 	return entry
 }
 
-func (ctx *MahresourcesContext) resolveNoteTypes(defs []archive.NoteTypeDef) []MappingEntry {
+func (ctx *opCtx) resolveNoteTypes(defs []archive.NoteTypeDef) []MappingEntry {
 	entries := make([]MappingEntry, 0, len(defs))
 	for _, def := range defs {
 		entry := MappingEntry{
@@ -386,7 +386,7 @@ func (ctx *MahresourcesContext) resolveNoteTypes(defs []archive.NoteTypeDef) []M
 	return entries
 }
 
-func (ctx *MahresourcesContext) resolveResourceCategories(defs []archive.ResourceCategoryDef) []MappingEntry {
+func (ctx *opCtx) resolveResourceCategories(defs []archive.ResourceCategoryDef) []MappingEntry {
 	entries := make([]MappingEntry, 0, len(defs))
 	for _, def := range defs {
 		entry := MappingEntry{
@@ -442,7 +442,7 @@ func (ctx *MahresourcesContext) resolveResourceCategories(defs []archive.Resourc
 	return entries
 }
 
-func (ctx *MahresourcesContext) resolveTags(defs []archive.TagDef, collector *importDataCollector) []MappingEntry {
+func (ctx *opCtx) resolveTags(defs []archive.TagDef, collector *importDataCollector) []MappingEntry {
 	// Collect all tag names from defs
 	seen := make(map[string]bool)
 	entries := make([]MappingEntry, 0, len(defs))
@@ -531,7 +531,7 @@ func (ctx *MahresourcesContext) resolveTags(defs []archive.TagDef, collector *im
 	return entries
 }
 
-func (ctx *MahresourcesContext) resolveTagByName(name string) MappingEntry {
+func (ctx *opCtx) resolveTagByName(name string) MappingEntry {
 	entry := MappingEntry{
 		SourceKey:  name,
 		HasPayload: false,
@@ -552,7 +552,7 @@ func (ctx *MahresourcesContext) resolveTagByName(name string) MappingEntry {
 	return entry
 }
 
-func (ctx *MahresourcesContext) resolveGRTDefs(defs []archive.GroupRelationTypeDef) []MappingEntry {
+func (ctx *opCtx) resolveGRTDefs(defs []archive.GroupRelationTypeDef) []MappingEntry {
 	entries := make([]MappingEntry, 0, len(defs))
 	for _, def := range defs {
 		entry := MappingEntry{
@@ -610,7 +610,7 @@ func (ctx *MahresourcesContext) resolveGRTDefs(defs []archive.GroupRelationTypeD
 }
 
 // matchGRT tries to match a GRT by name and category names.
-func (ctx *MahresourcesContext) matchGRT(name, fromCatName, toCatName string) (bool, *models.GroupRelationType) {
+func (ctx *opCtx) matchGRT(name, fromCatName, toCatName string) (bool, *models.GroupRelationType) {
 	query := ctx.db.Where("name = ?", name)
 
 	if fromCatName != "" {
@@ -644,7 +644,7 @@ func (ctx *MahresourcesContext) matchGRT(name, fromCatName, toCatName string) (b
 
 // --- Series resolution ---
 
-func (ctx *MahresourcesContext) resolveSeriesInfo(seriesMap map[string]*archive.SeriesPayload) []SeriesMapping {
+func (ctx *opCtx) resolveSeriesInfo(seriesMap map[string]*archive.SeriesPayload) []SeriesMapping {
 	mappings := make([]SeriesMapping, 0, len(seriesMap))
 	for _, sp := range seriesMap {
 		sm := SeriesMapping{
@@ -699,7 +699,7 @@ func danglingFromName(d archive.DanglingRef) string {
 // GUIDMatch/GUIDMatchID/GUIDMatchName, and the plan's GUIDMatches counter is
 // incremented. Resources are checked separately since they appear as counts in
 // the tree, not as direct item nodes.
-func (ctx *MahresourcesContext) resolveGUIDMatches(plan *ImportPlan, collector *importDataCollector) {
+func (ctx *opCtx) resolveGUIDMatches(plan *ImportPlan, collector *importDataCollector) {
 	var walk func(items []ImportPlanItem)
 	walk = func(items []ImportPlanItem) {
 		for i := range items {
@@ -744,7 +744,7 @@ func (ctx *MahresourcesContext) resolveGUIDMatches(plan *ImportPlan, collector *
 
 // --- Hash conflicts ---
 
-func (ctx *MahresourcesContext) countHashConflicts(resources map[string]*archive.ResourcePayload) int {
+func (ctx *opCtx) countHashConflicts(resources map[string]*archive.ResourcePayload) int {
 	count := 0
 	for _, rp := range resources {
 		if rp.Hash == "" {

@@ -23,6 +23,7 @@ import (
 	"mahresources/contracts"
 	"mahresources/download_queue"
 	"mahresources/fts"
+	"mahresources/groupio"
 	"mahresources/idlock"
 	"mahresources/models"
 	"mahresources/plugin_system"
@@ -317,7 +318,12 @@ type MahresourcesContext struct {
 	Config     *MahresourcesConfig
 	// these are the alternative locations to look at files or import them from
 	altFileSystems map[string]afero.Fs
-	locks          MahresourcesLocks
+	// groupio owns group import/export. Safe as a field because it holds only
+	// filesystems, never a db handle — see groupioDeps() in groupio_facade.go.
+	// It shares the altFileSystems map object, so RegisterAltFs (which mutates
+	// in place and never reassigns) stays visible to it.
+	groupio *groupio.Service
+	locks   MahresourcesLocks
 	// downloadManager handles background remote URL downloads
 	downloadManager *download_queue.DownloadManager
 	// searchCache provides caching for global search results
@@ -459,6 +465,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		readOnlyDB:     readOnlyDB,
 		Config:         config,
 		altFileSystems: altFileSystems,
+		groupio:        groupio.NewService(filesystem, altFileSystems),
 		locks: MahresourcesLocks{
 			ThumbnailGenerationLock:      thumbnailGenerationLock,
 			VideoThumbnailGenerationLock: videoThumbnailGenerationLock,

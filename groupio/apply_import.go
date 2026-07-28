@@ -1,4 +1,4 @@
-package application_context
+package groupio
 
 import (
 	"context"
@@ -26,7 +26,7 @@ const applyBatchSize = 500
 // Phase 1 walks the tar (collect metadata + write blobs + buffer previews).
 // Phase 2 creates DB entities in batched transactions from the collected data.
 // Single-shot: caller must delete the plan file after enqueue to prevent re-apply.
-func (ctx *MahresourcesContext) ApplyImport(
+func (ctx *opCtx) ApplyImport(
 	cancelCtx context.Context,
 	parseJobID string,
 	decisions *ImportDecisions,
@@ -140,7 +140,7 @@ func (ctx *MahresourcesContext) ApplyImport(
 // applyState holds all mutable state for the apply operation. Methods on this
 // struct implement each phase of the apply pipeline.
 type applyState struct {
-	ctx       *MahresourcesContext
+	ctx       *opCtx
 	collector *importDataCollector
 	plan      *ImportPlan
 	decisions *ImportDecisions
@@ -1924,7 +1924,7 @@ func (s *applyState) applyM2MLinks() error {
 		// Tags
 		tagIDs := s.resolveTagIDs(gp.Tags)
 		if len(tagIDs) > 0 {
-			tags := BuildAssociationSlicePtr(tagIDs, TagPtrFromID)
+			tags := buildAssociationSlicePtr(tagIDs, tagPtrFromID)
 			if err := s.ctx.db.Model(&group).Association("Tags").Append(tags); err != nil {
 				return fmt.Errorf("group %s tags: %w", exportID, err)
 			}
@@ -1933,7 +1933,7 @@ func (s *applyState) applyM2MLinks() error {
 		// RelatedGroups
 		relGroupIDs := s.resolveRefIDs(gp.RelatedGroups)
 		if len(relGroupIDs) > 0 {
-			groups := BuildAssociationSlicePtr(relGroupIDs, GroupPtrFromID)
+			groups := buildAssociationSlicePtr(relGroupIDs, groupPtrFromID)
 			if err := s.ctx.db.Model(&group).Association("RelatedGroups").Append(groups); err != nil {
 				return fmt.Errorf("group %s related groups: %w", exportID, err)
 			}
@@ -1942,7 +1942,7 @@ func (s *applyState) applyM2MLinks() error {
 		// RelatedResources
 		relResIDs := s.resolveRefIDs(gp.RelatedResources)
 		if len(relResIDs) > 0 {
-			resources := BuildAssociationSlicePtr(relResIDs, ResourcePtrFromID)
+			resources := buildAssociationSlicePtr(relResIDs, resourcePtrFromID)
 			if err := s.ctx.db.Model(&group).Association("RelatedResources").Append(resources); err != nil {
 				return fmt.Errorf("group %s related resources: %w", exportID, err)
 			}
@@ -1951,7 +1951,7 @@ func (s *applyState) applyM2MLinks() error {
 		// RelatedNotes
 		relNoteIDs := s.resolveRefIDs(gp.RelatedNotes)
 		if len(relNoteIDs) > 0 {
-			notes := BuildAssociationSlicePtr(relNoteIDs, NotePtrFromID)
+			notes := buildAssociationSlicePtr(relNoteIDs, notePtrFromID)
 			if err := s.ctx.db.Model(&group).Association("RelatedNotes").Append(notes); err != nil {
 				return fmt.Errorf("group %s related notes: %w", exportID, err)
 			}
@@ -1997,7 +1997,7 @@ func (s *applyState) applyM2MLinks() error {
 		// Tags
 		tagIDs := s.resolveTagIDs(rp.Tags)
 		if len(tagIDs) > 0 {
-			tags := BuildAssociationSlicePtr(tagIDs, TagPtrFromID)
+			tags := buildAssociationSlicePtr(tagIDs, tagPtrFromID)
 			if err := s.ctx.db.Model(&resource).Association("Tags").Append(tags); err != nil {
 				return fmt.Errorf("resource %s tags: %w", exportID, err)
 			}
@@ -2006,7 +2006,7 @@ func (s *applyState) applyM2MLinks() error {
 		// Groups (m2m)
 		groupIDs := s.resolveRefIDs(rp.Groups)
 		if len(groupIDs) > 0 {
-			groups := BuildAssociationSlicePtr(groupIDs, GroupPtrFromID)
+			groups := buildAssociationSlicePtr(groupIDs, groupPtrFromID)
 			if err := s.ctx.db.Model(&resource).Association("Groups").Append(groups); err != nil {
 				return fmt.Errorf("resource %s groups: %w", exportID, err)
 			}
@@ -2015,7 +2015,7 @@ func (s *applyState) applyM2MLinks() error {
 		// Notes (m2m)
 		noteIDs := s.resolveRefIDs(rp.Notes)
 		if len(noteIDs) > 0 {
-			notes := BuildAssociationSlicePtr(noteIDs, NotePtrFromID)
+			notes := buildAssociationSlicePtr(noteIDs, notePtrFromID)
 			if err := s.ctx.db.Model(&resource).Association("Notes").Append(notes); err != nil {
 				return fmt.Errorf("resource %s notes: %w", exportID, err)
 			}
@@ -2036,7 +2036,7 @@ func (s *applyState) applyM2MLinks() error {
 		// Tags
 		tagIDs := s.resolveTagIDs(np.Tags)
 		if len(tagIDs) > 0 {
-			tags := BuildAssociationSlicePtr(tagIDs, TagPtrFromID)
+			tags := buildAssociationSlicePtr(tagIDs, tagPtrFromID)
 			if err := s.ctx.db.Model(&note).Association("Tags").Append(tags); err != nil {
 				return fmt.Errorf("note %s tags: %w", exportID, err)
 			}
@@ -2045,7 +2045,7 @@ func (s *applyState) applyM2MLinks() error {
 		// Resources (m2m)
 		resIDs := s.resolveRefIDs(np.Resources)
 		if len(resIDs) > 0 {
-			resources := BuildAssociationSlicePtr(resIDs, ResourcePtrFromID)
+			resources := buildAssociationSlicePtr(resIDs, resourcePtrFromID)
 			if err := s.ctx.db.Model(&note).Association("Resources").Append(resources); err != nil {
 				return fmt.Errorf("note %s resources: %w", exportID, err)
 			}
@@ -2054,7 +2054,7 @@ func (s *applyState) applyM2MLinks() error {
 		// Groups (m2m)
 		groupIDs := s.resolveRefIDs(np.Groups)
 		if len(groupIDs) > 0 {
-			groups := BuildAssociationSlicePtr(groupIDs, GroupPtrFromID)
+			groups := buildAssociationSlicePtr(groupIDs, groupPtrFromID)
 			if err := s.ctx.db.Model(&note).Association("Groups").Append(groups); err != nil {
 				return fmt.Errorf("note %s groups: %w", exportID, err)
 			}
