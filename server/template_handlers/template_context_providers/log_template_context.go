@@ -26,26 +26,38 @@ var logActions = []SelectOption{
 	{Link: models.LogActionCreate, Title: "Create"},
 	{Link: models.LogActionUpdate, Title: "Update"},
 	{Link: models.LogActionDelete, Title: "Delete"},
+	{Link: models.LogActionReset, Title: "Reset"},
 	{Link: models.LogActionSystem, Title: "System"},
 	{Link: models.LogActionProgress, Title: "Progress"},
 	{Link: models.LogActionPlugin, Title: "Plugin"},
 }
 
+// entityTypes is the curated list, which exists to give nice labels and a
+// sensible order. Entity types are written as free strings from many call
+// sites, so this list drifts — makeFilterOptions therefore also surfaces
+// whatever value is actually applied, even when it is not listed here.
 var entityTypes = []SelectOption{
 	{Link: "", Title: "All Types", Active: true},
 	{Link: "tag", Title: "Tag"},
 	{Link: "category", Title: "Category"},
 	{Link: "note", Title: "Note"},
 	{Link: "noteType", Title: "Note Type"},
+	{Link: "note_type", Title: "Note Type (legacy key)"},
 	{Link: "resource", Title: "Resource"},
 	{Link: "resourceCategory", Title: "Resource Category"},
+	{Link: "resource_category", Title: "Resource Category (legacy key)"},
 	{Link: "resource_version", Title: "Resource Version"},
 	{Link: "group", Title: "Group"},
 	{Link: "series", Title: "Series"},
 	{Link: "query", Title: "Query"},
 	{Link: "relation", Title: "Relation"},
 	{Link: "relationType", Title: "Relation Type"},
+	{Link: "templatePartial", Title: "Template Partial"},
+	{Link: "mrql_query", Title: "MRQL Query"},
+	{Link: "runtime_setting", Title: "Runtime Setting"},
 	{Link: "plugin", Title: "Plugin"},
+	{Link: "migration", Title: "Migration"},
+	{Link: "sql", Title: "Slow Query"},
 }
 
 // LogListContextProvider provides context for the log list template.
@@ -120,16 +132,31 @@ func LogContextProvider(context contracts.LogEntryReader) func(request *http.Req
 // makeFilterOptions creates a copy of the options with the correct active state.
 func makeFilterOptions(options []SelectOption, currentValue string) []SelectOption {
 	result := make([]SelectOption, len(options))
+	matched := false
 	for i, opt := range options {
+		active := opt.Link == currentValue
+		matched = matched || active
 		result[i] = SelectOption{
 			Link:   opt.Link,
 			Title:  opt.Title,
-			Active: opt.Link == currentValue,
+			Active: active,
 		}
 	}
 	// If no value is selected, mark the first option (All) as active
 	if currentValue == "" && len(result) > 0 {
 		result[0].Active = true
+		return result
+	}
+	// An applied value that is not in the curated list must still appear and be
+	// selected. Otherwise the control falls back to "All", and submitting the
+	// filter form silently discards a filter the user can see working in the
+	// table right next to it.
+	if !matched && currentValue != "" {
+		result = append(result, SelectOption{
+			Link:   currentValue,
+			Title:  currentValue,
+			Active: true,
+		})
 	}
 	return result
 }

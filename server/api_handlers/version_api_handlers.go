@@ -3,12 +3,15 @@ package api_handlers
 import (
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 
 	"mahresources/constants"
 	"mahresources/contracts"
+	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
 )
@@ -211,10 +214,37 @@ func GetVersionFileHandler(ctx contracts.VersionFileServer) func(http.ResponseWr
 		defer file.Close()
 
 		w.Header().Set("Content-Type", version.ContentType)
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"v%d_%s\"", version.VersionNumber, version.Hash[:8]))
+		// Keep the extension: a downloaded file named "v3_a3bf2ae2" has no type
+		// for the OS to dispatch on and will not open by double-click.
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", versionDownloadFilename(version)))
 
 		http.ServeContent(w, r, "", version.CreatedAt, file)
 	}
+}
+
+// versionDownloadFilename builds the download name for a resource version:
+// "v<n>_<hash prefix><ext>". The extension is taken from the version's own
+// stored location, falling back to the content type, so the saved file keeps a
+// type the OS can dispatch on.
+func versionDownloadFilename(version *models.ResourceVersion) string {
+	base := fmt.Sprintf("v%d_%s", version.VersionNumber, safeHashPrefix(version.Hash))
+
+	if ext := path.Ext(version.Location); ext != "" {
+		return base + ext
+	}
+	if exts, err := mime.ExtensionsByType(version.ContentType); err == nil && len(exts) > 0 {
+		return base + exts[0]
+	}
+	return base
+}
+
+// safeHashPrefix returns the first 8 characters of a hash, tolerating hashes
+// shorter than that rather than panicking on the slice.
+func safeHashPrefix(hash string) string {
+	if len(hash) < 8 {
+		return hash
+	}
+	return hash[:8]
 }
 
 // GetCleanupVersionsHandler returns handler for cleaning up versions

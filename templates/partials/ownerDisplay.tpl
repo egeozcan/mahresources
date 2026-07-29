@@ -2,7 +2,7 @@
 <details class="detail-collapsible mb-4">
     <summary>Owner: {{ owner.GetName() }}</summary>
     <div class="detail-panel-body">
-        {% include "/partials/group.tpl" with entity=owner %}
+        {% include "/partials/group.tpl" with entity=owner tagBaseUrl="/groups" %}
     </div>
 </details>
 {% endif %}

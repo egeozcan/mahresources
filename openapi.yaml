@@ -1491,6 +1491,8 @@ components:
                     type: integer
                 ResourceCategoryId:
                     type: integer
+                SeriesId:
+                    type: integer
                 ShowDhashZero:
                     type: boolean
                 ShowWithSimilar:
@@ -6201,6 +6203,10 @@ paths:
                   name: ResourceCategoryId
                   schema:
                     type: integer
+                - in: query
+                  name: SeriesId
+                  schema:
+                    type: integer
                 - explode: true
                   in: query
                   name: Groups
@@ -6561,6 +6567,10 @@ paths:
                     type: integer
                 - in: query
                   name: ResourceCategoryId
+                  schema:
+                    type: integer
+                - in: query
+                  name: SeriesId
                   schema:
                     type: integer
                 - explode: true

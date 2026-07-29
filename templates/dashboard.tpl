@@ -85,7 +85,8 @@
                 <span class="dashboard-activity-type">{{ entry.EntityType }}</span>
                 <a href="{{ entry.EntityType|entityPath }}?id={{ entry.EntityID }}" class="dashboard-activity-name">{{ entry.Name }}</a>
                 <span class="dashboard-activity-action">{{ entry.Action }}</span>
-                <time class="dashboard-activity-time" datetime="{{ entry.Timestamp|date:"2006-01-02T15:04:05Z" }}">
+                {# Z07:00, not a bare Z — a trailing Z in a Go layout is a literal, so local time was stamped as UTC. #}
+                <time class="dashboard-activity-time" datetime="{{ entry.Timestamp|date:"2006-01-02T15:04:05Z07:00" }}">
                     {{ entry.Timestamp|timeago }}
                 </time>
             </li>

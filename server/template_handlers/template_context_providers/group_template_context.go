@@ -375,7 +375,7 @@ func groupContextProviderImpl(context contracts.GroupReader) func(request *http.
 		if sectionConfig.Breadcrumb {
 			result["breadcrumb"] = pongo2.Context{
 				"HomeName": "Groups",
-				"HomeUrl":  "groups",
+				"HomeUrl":  "/groups",
 				"Entries":  breadcrumbEls,
 			}
 		}
@@ -383,6 +383,16 @@ func groupContextProviderImpl(context contracts.GroupReader) func(request *http.
 		return result.Update(baseContext)
 	}
 }
+
+const (
+	// defaultTreeDepth is how many levels /group/tree renders when no specific
+	// descendant was requested.
+	defaultTreeDepth = 3
+	// treeRootListLimit bounds the "select a root group" picker. It is also the
+	// hard ceiling inside GetGroupTreeRoots, which clamps anything above 100
+	// back down to 50 — raising this alone will not widen the list.
+	treeRootListLimit = 50
+)
 
 func GroupTreeContextProvider(context GroupPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
@@ -413,19 +423,36 @@ func GroupTreeContextProvider(context GroupPageContext) func(request *http.Reque
 			}
 		}
 
-		// No root specified: show list of root groups
+		// No root specified: show list of root groups. Ask for one more than we
+		// display so the page can say the list is cut off instead of silently
+		// omitting every root that sorts after the limit.
 		if rootID == 0 {
-			roots, err := context.GetGroupTreeRoots(50)
+			roots, err := context.GetGroupTreeRoots(treeRootListLimit + 1)
 			if err != nil {
 				return addErrContext(err, baseContext).Update(tplContext)
 			}
 
+			truncated := len(roots) > treeRootListLimit
+			if truncated {
+				roots = roots[:treeRootListLimit]
+			}
+
 			tplContext["roots"] = roots
+			tplContext["rootsTruncated"] = truncated
+			tplContext["rootsLimit"] = treeRootListLimit
 			return tplContext.Update(baseContext)
 		}
 
-		// Fetch initial tree (3 levels deep)
-		treeRows, err := context.GetGroupTreeDown(rootID, 3, 50)
+		// Fetch the initial tree. Three levels is the default slice, but when
+		// "Show in Tree" asks for a specific descendant the fetch has to reach
+		// it: highlightedPath is [root … target], and rendering a fixed 3-level
+		// slice meant a target below that never appeared on the page while the
+		// sidebar still claimed the teal nodes showed the path to it.
+		depth := defaultTreeDepth
+		if needed := len(highlightedPath); needed > depth {
+			depth = needed
+		}
+		treeRows, err := context.GetGroupTreeDown(rootID, depth, 50)
 		if err != nil {
 			return addErrContext(err, baseContext).Update(tplContext)
 		}
@@ -454,7 +481,7 @@ func GroupTreeContextProvider(context GroupPageContext) func(request *http.Reque
 		tplContext["rootGroup"] = rootGroup
 		tplContext["breadcrumb"] = pongo2.Context{
 			"HomeName": "Groups",
-			"HomeUrl":  "groups",
+			"HomeUrl":  "/groups",
 			"Entries": []template_entities.Entry{
 				{Name: rootGroup.GetName(), ID: rootGroup.ID, Url: fmt.Sprintf("/group?id=%v", rootGroup.ID)},
 			},

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"mahresources/models"
 	"mahresources/models/types"
@@ -48,8 +49,8 @@ func (ctx *MahresourcesContext) CompareGroupsCross(g1ID uint, g2ID uint) (*model
 		URL1:                 compareURL(group1.URL),
 		URL2:                 compareURL(group2.URL),
 		SameName:             group1.Name == group2.Name,
-		SameCreatedAt:        group1.CreatedAt.Equal(group2.CreatedAt),
-		SameUpdatedAt:        group1.UpdatedAt.Equal(group2.UpdatedAt),
+		SameCreatedAt:        sameRenderedTimestamp(group1.CreatedAt, group2.CreatedAt),
+		SameUpdatedAt:        sameRenderedTimestamp(group1.UpdatedAt, group2.UpdatedAt),
 		SameDescription:      descriptionLeft == descriptionRight,
 		SameMeta:             metaLeft == metaRight,
 		DescriptionLeftText:  descriptionLeft,
@@ -271,6 +272,19 @@ func compareGroupName(group *models.Group) string {
 		return fmt.Sprintf("Group %d", group.ID)
 	}
 	return name
+}
+
+// comparedTimestampLayout is the precision the compare page renders timestamps
+// at (groupCompare.tpl uses "Jan 02, 2006 15:04"). Comparisons must use the
+// same precision: comparing at full nanosecond precision while rendering to the
+// minute flagged CREATED and UPDATED as changed on two visually identical
+// values, so a group and its own fresh clone always reported "Core 2 changed".
+const comparedTimestampLayout = "2006-01-02 15:04"
+
+// sameRenderedTimestamp reports whether two timestamps render identically on
+// the compare page.
+func sameRenderedTimestamp(a, b time.Time) bool {
+	return a.Format(comparedTimestampLayout) == b.Format(comparedTimestampLayout)
 }
 
 func compareCategoryName(category *models.Category) string {

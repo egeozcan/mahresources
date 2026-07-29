@@ -1,6 +1,9 @@
 package block_types
 
-import "sync"
+import (
+	"sort"
+	"sync"
+)
 
 var (
 	registry = make(map[string]BlockType)
@@ -31,8 +34,13 @@ func GetBlockType(typeName string) BlockType {
 	return registry[typeName]
 }
 
-// GetAllBlockTypes returns all registered block types.
-// The order of returned types is not guaranteed.
+// GetAllBlockTypes returns all registered block types, ordered by type name.
+//
+// The order is part of the contract: this backs the "+ Add Block" listbox, and
+// ranging the registry map gave a different rotation on every request. That
+// broke muscle memory, made "the 2nd item" mean a different block each time,
+// and — because the picker's roving tabindex is keyed on position — left
+// keyboard users able to insert only whichever type randomly landed first.
 func GetAllBlockTypes() []BlockType {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -40,5 +48,6 @@ func GetAllBlockTypes() []BlockType {
 	for _, bt := range registry {
 		types = append(types, bt)
 	}
+	sort.Slice(types, func(i, j int) bool { return types[i].Type() < types[j].Type() })
 	return types
 }

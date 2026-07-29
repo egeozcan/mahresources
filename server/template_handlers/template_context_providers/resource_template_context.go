@@ -393,7 +393,7 @@ func ResourceContextProvider(context ResourcePageContext) func(request *http.Req
 
 			result["breadcrumb"] = pongo2.Context{
 				"HomeName": "Groups",
-				"HomeUrl":  "groups",
+				"HomeUrl":  "/groups",
 				"Entries":  breadcrumbEls,
 			}
 		}

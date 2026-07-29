@@ -452,12 +452,21 @@ func (dm *DownloadManager) downloadWithProgress(job *DownloadJob) (*models.Resou
 		},
 	)
 
-	// Determine filename
-	name := job.creator.FileName
-	if name == "" {
-		name = path.Base(job.URL)
+	// The stored file name and the resource's display name are different things,
+	// and conflating them lost the Name the user typed: the worker built one
+	// value from FileName -> path.Base(URL) and used it for both, never
+	// consulting creator.Name. AddRemoteResource (the foreground path) has
+	// always preferred creator.Name, so this mirrors it.
+	fileName := job.creator.FileName
+	if fileName == "" {
+		fileName = path.Base(job.URL)
 	}
-	name = trimResourceName(name)
+	fileName = trimResourceName(fileName)
+
+	name := trimResourceName(job.creator.Name)
+	if name == "" {
+		name = fileName
+	}
 
 	// Use existing AddResource logic
 	originalName := job.creator.OriginalName
@@ -483,7 +492,7 @@ func (dm *DownloadManager) downloadWithProgress(job *DownloadJob) (*models.Resou
 		}
 	}
 
-	return creator.AddResource(progressBody, name, &query_models.ResourceCreator{
+	return creator.AddResource(progressBody, fileName, &query_models.ResourceCreator{
 		ResourceQueryBase: query_models.ResourceQueryBase{
 			Name:               name,
 			Description:        job.creator.Description,

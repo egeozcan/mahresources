@@ -250,6 +250,13 @@
             </li>
             {% endfor %}
         </ul>
+        {% if rootsTruncated %}
+        <p class="text-sm text-stone-500 mt-4">
+            Showing the first {{ rootsLimit }} root groups.
+            <a href="/groups" class="text-amber-700 hover:text-amber-900 underline">Search all groups</a>
+            to reach one that is not listed here.
+        </p>
+        {% endif %}
         {% else %}
         <p class="text-stone-500 p-4">No root groups found.</p>
         {% endif %}

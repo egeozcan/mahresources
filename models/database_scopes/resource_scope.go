@@ -142,6 +142,10 @@ func ResourceQuery(query *query_models.ResourceSearchQuery, ignoreSort bool, ori
 			dbQuery = dbQuery.Where("resources.resource_category_id = ?", query.ResourceCategoryId)
 		}
 
+		if query.SeriesId != 0 {
+			dbQuery = dbQuery.Where("resources.series_id = ?", query.SeriesId)
+		}
+
 		if query.Hash != "" {
 			dbQuery = dbQuery.Where("resources.hash = ?", query.Hash)
 		}

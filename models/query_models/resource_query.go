@@ -52,9 +52,13 @@ type ResourceSearchQuery struct {
 	ContentTypes       []string
 	OwnerId            uint
 	ResourceCategoryId uint
-	Groups             []uint
-	Tags               []uint
-	Notes              []uint
+	// SeriesId restricts results to one series. It lives on ResourceQueryBase
+	// (the create/edit shape) too, and its absence here meant the schema decoder
+	// silently dropped ?seriesId= on every list request.
+	SeriesId         uint
+	Groups           []uint
+	Tags             []uint
+	Notes            []uint
 	Ids              []uint
 	CreatedBefore    string
 	CreatedAfter     string

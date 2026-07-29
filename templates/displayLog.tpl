@@ -61,7 +61,8 @@
                 <div class="bg-white px-4 py-3 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
                     <dt class="text-sm font-medium font-mono text-stone-500">Details</dt>
                     <dd class="mt-1 text-sm text-stone-900 sm:mt-0 sm:col-span-2">
-                        <pre class="bg-stone-100 p-2 rounded text-xs overflow-x-auto" x-data x-init="(() => { const parsed = JSON.parse($el.textContent); $el.textContent = JSON.stringify(parsed, null, 2); })()">{{ log.Details }}</pre>
+                        {# .String explicitly: types.JSON is a slice type, and pongo2 only consults fmt.Stringer for structs, so a bare {{ log.Details }} renders "<types.JSON Value>". #}
+                        <pre class="bg-stone-100 p-2 rounded text-xs overflow-x-auto" x-data x-init="(() => { const raw = $el.textContent.trim(); if (!raw) return; try { $el.textContent = JSON.stringify(JSON.parse(raw), null, 2); } catch (e) { /* leave the raw payload visible */ } })()">{{ log.Details.String }}</pre>
                     </dd>
                 </div>
                 {% endif %}

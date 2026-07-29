@@ -303,6 +303,14 @@ func getPathExtensionOptions(url *url.URL, options *[]*SelectOption) *[]*SelectO
 			(*option).Active = true
 		}
 		urlWithNewPath := getURLWithNewPath(url, option.Link)
+		// Filters carry across a view change; the page number must not. Views
+		// use different page sizes (Simple renders 4x the rows), so "page 2"
+		// denotes a different slice in each one and carrying it produced a
+		// blank dead end with no explanation. Switching views lands on page 1.
+		if q := urlWithNewPath.Query(); q.Has("page") {
+			q.Del("page")
+			urlWithNewPath.RawQuery = q.Encode()
+		}
 		(*option).Link = urlWithNewPath.String()
 	}
 
