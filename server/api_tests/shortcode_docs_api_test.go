@@ -106,7 +106,7 @@ func TestShortcodeDocsEndpoint(t *testing.T) {
 		byName[d.Name] = d
 	}
 
-	for _, want := range []string{"meta", "property", "mrql", "conditional", "link", "each", "item", "partial"} {
+	for _, want := range []string{"meta", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload"} {
 		d, ok := byName[want]
 		if !ok {
 			t.Errorf("missing built-in %q in docs", want)
@@ -132,6 +132,11 @@ func TestShortcodeDocsEndpoint(t *testing.T) {
 	}
 	if got := byName["each"].IsBlock; got != "required" {
 		t.Errorf("each isBlock: expected 'required', got %q", got)
+	}
+	// [reload] is usable both self-closing (icon button) and as a block whose
+	// content becomes the button face.
+	if got := byName["reload"].IsBlock; got != "optional" {
+		t.Errorf("reload isBlock: expected 'optional', got %q", got)
 	}
 	if got := byName["item"].IsBlock; got != "no" {
 		t.Errorf("item isBlock: expected 'no', got %q", got)

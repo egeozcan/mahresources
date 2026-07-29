@@ -17,7 +17,7 @@ The parser recognizes these patterns:
 
 - **Built-in inline:** `[meta ...]`, `[property ...]`, `[item ...]`, `[partial ...]`
 - **Built-in block:** `[conditional ...]...[/conditional]`, `[each ...]...[/each]`, `[lazy]...[/lazy]`, `[details ...]...[/details]`
-- **Built-in inline or block:** `[mrql ...]` or `[mrql ...]...[/mrql]`, `[link ...]` or `[link ...]...[/link]`
+- **Built-in inline or block:** `[mrql ...]` or `[mrql ...]...[/mrql]`, `[link ...]` or `[link ...]...[/link]`, `[reload ...]` or `[reload ...]...[/reload]`
 - **Plugin:** `[plugin:plugin-name:shortcode-name ...]`
 
 Attribute values can be double-quoted, single-quoted, or unquoted. When a key appears more than once, the last value wins.
@@ -36,6 +36,7 @@ Attribute values can be double-quoted, single-quoted, or unquoted. When a key ap
 | `[partial]` | Inline | Expand a named Template Partial |
 | `[lazy]` | Block | Defer server rendering until the block scrolls into view |
 | `[details]` | Block | Defer server rendering until a disclosure is opened |
+| `[reload]` | Inline or block | Re-render the nearest deferred block or custom-content slot on demand |
 
 ### Block Syntax
 
@@ -701,6 +702,61 @@ The load-on-open mechanism is the same signed round-trip as `[lazy]`.
 - **JavaScript is required** for the deferral to hydrate (as it is for the rest of the app). A `<noscript>` note is shown when it is disabled.
 - The deferred body renders against the **entity**, so an `[item]` from an enclosing `[each]` is not available inside a `[lazy]`/`[details]` block (the same non-goal as `[each]`'s element-relative paths).
 - The token key is per-process and per-boot by default, so a placeholder minted before a restart -- or, in a multi-process deployment, resolved by a different process -- fails to load and shows a small "could not load -- Retry" message. Set the `TEMPLATE_SIGNING_KEY` environment variable to a shared secret across all processes for behind-a-load-balancer deployments.
+
+## `[reload]` -- Re-render on demand
+
+A button that re-renders content on the server and swaps it into the page. Which content it refreshes is not fixed at render time: the button carries no token and names no target, and the browser resolves what to refresh at click time by walking up the DOM from the button.
+
+`[reload]` works self-closing or as a block. Self-closing it renders a circular-arrow icon button; a block body becomes the button face instead. A block body that expands to nothing falls back to the icon.
+
+```
+[reload]
+[reload label="Refresh totals"]
+[reload]Refresh[/reload]
+```
+
+### Attributes
+
+| Attribute | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `label` | No | `Reload` | The button's accessible name. The default applies whenever the button face carries no text of its own, which covers the icon and a block body that is only an `<svg>` or an `<img>`; those also get it as a tooltip. A button with visible text and no `label` is named by that text and gets no `aria-label` at all; when you do set `label` there, keep the visible text inside it (WCAG 2.5.3 Label in Name) |
+
+### What it reloads
+
+Walking up from the button, the first of these wins:
+
+1. **The innermost enclosing `[lazy]` or `[details]` block.** It already carries a sealed token for its own body, so only that block is re-rendered.
+2. **Otherwise the whole custom-content slot the button was written in** (CustomHeader, CustomSidebar, CustomSummary, CustomAvatar, or a description). The `process_shortcodes` tag wraps such a slot in `<div class="shortcode-region" data-shortcode-region="TOKEN">`, where the token seals the whole raw slot body the same way `[lazy]` seals its own. The wrapper is emitted only when the rendered slot actually contains a reload button and the slot is rendering against a group, resource, or note, so slots without a `[reload]` are byte-for-byte unchanged. It is `display: contents`, so it adds no layout box.
+3. **Otherwise the page** (`window.location.reload()`). Anywhere the walk finds neither a deferred block nor a region, the button falls straight through to a page reload without attempting a request. That covers every surface whose slots are rendered outside the `process_shortcodes` tag or without a signer: the public share server, the category-template live preview, the JSON rendering of the `Custom*` slots, and `CustomMRQLResult` cards on `/mrql`. It also covers a `CustomListHeader` carrier slot, whose `category` / `resource_category` / `note_type` context the deferred endpoint cannot load by id.
+
+Cases 1 and 2 fetch `POST /v1/shortcodes/deferred`, the endpoint `[lazy]` and `[details]` use. `TEMPLATE_SIGNING_KEY` applies to region tokens exactly as it does to `[lazy]`/`[details]` tokens.
+
+Because this is a proximity walk, a `[reload]` placed inside a `[lazy]` body refreshes just that block, and the same `[reload]` moved outside it refreshes the whole slot:
+
+```
+[lazy]
+  [reload label="Refresh open tasks"]
+  [mrql query='type = "note"' format="list"]
+[/lazy]
+```
+
+### During a reload
+
+- The content being replaced stays on screen and is dimmed while the request is in flight, rather than collapsing to a loading placeholder. A `[lazy]` or `[details]` block *inside* a reloaded slot does come back unrevealed, and loads again on its own terms.
+- `aria-busy` is set on the content being refreshed and on the button, and the button greys out. On the icon form the glyph also spins, which `prefers-reduced-motion` suppresses.
+- Activation announces "Reloading" politely, then "Content reloaded" on success. A fast reload coalesces the two.
+- On failure the previous content is left exactly as it was, "Could not reload the content" is announced assertively, and a "Reload failed." marker appears beside the button so the stale content is not mistaken for fresh.
+- The button is normally inside the content it replaces. If it had focus when it was activated, and focus has not moved elsewhere in the meantime, focus goes to the equivalent reload button in the fresh content; if no reload button survives the re-render, it goes to the refreshed container so the reader is not dropped onto `<body>`.
+- Repeat activations while a reload is in flight are ignored. If the page itself re-renders while a reload is in flight (an Alpine morph), that reload is abandoned: the button becomes clickable again immediately against the newly rendered content, and the abandoned request reports neither success nor failure.
+
+### Limitations
+
+- **JavaScript is required.** Unlike `[lazy]` and `[details]`, which show a `<noscript>` note in place of content they cannot fetch, the button itself renders with scripting off and simply does nothing.
+- The block body is the face of a `<button>`, so keep it to phrasing content: a button may not contain links or other interactive elements. Two cases are refused outright rather than left to produce invalid markup, and the template linter flags both:
+  - **A `[reload]` inside another `[reload]`.** Nested buttons are repaired differently by every browser, and each repair leaves two controls in the accessibility tree. The outer `[reload]` renders a `⚠ reload` marker instead of a button. The body's *source* is checked as well as its rendered output, because a `[lazy]`/`[details]` inside the face is sealed rather than expanded, so a `[reload]` within it would be invisible at render time and arrive inside the button when the deferred fetch landed.
+  - **A `[lazy]` or `[details]` inside a `[reload]`.** Both emit a block-level element, which a button may not contain. Each renders its own `⚠` marker in place. This is also what stops the deferred-nesting case above from reaching the page by way of a `[partial]`, whose source the checks on the button's own body never see.
+- A region token carries the slot's own source, so a `[reload]` in a `CustomSummary` adds one sealed copy of that slot per card on a list page. The sealed token runs about **1.34x the size of the raw slot body** (base64 over a nonce and an authentication tag), so a 2 KB `CustomSummary` adds roughly 2.7 KB per card — about 135 KB on a 50-card page. The ciphertext is randomised, so identical slots across cards do not compress against each other. This scales with cards rendered per page, not with database size. Putting the `[reload]` inside a `[lazy]` mints no region at all, because the block's own token (which `[lazy]` seals regardless) serves the button. That only shrinks the page when the deferred body is smaller than the whole slot, but it never adds a second copy on top.
+- A description is sealed **after** its Markdown and mention filters have run, so a `[reload]` written in one re-evaluates the shortcodes inside it but replays the surrounding prose as it stood when the page loaded. Edits to the description text itself need a page load.
 
 ## Plugin Shortcodes
 

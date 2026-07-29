@@ -121,6 +121,27 @@ Deferral applies only on the main display pages; on share pages, the live previe
 [details summary="Nutrition"][meta path="calories"] kcal[/details]
 ```
 
+### `[reload]`
+
+A button that **re-renders content on the server without navigating**. Both the self-closing and the block form are valid.
+
+- `[reload]` -- circular-arrow icon button. `label` (default `Reload`) is its accessible name and, because the icon is the whole button face, its tooltip.
+- `[reload]Refresh[/reload]` -- the inner content (itself shortcode-expanded) becomes the button face instead of the icon, and names the button on its own. Keep it to phrasing content: a `<button>` may not contain links or other interactive elements. A `[reload]` inside another `[reload]`, and a `[lazy]` or `[details]` inside a `[reload]`, are refused outright (they render a `⚠` marker, and the linter flags them). Put the `[reload]` *inside* the `[lazy]`, never the other way round. `label` is optional here; if you set it, keep the visible text inside it (WCAG 2.5.3 Label in Name). A body that expands to nothing falls back to the icon.
+
+What gets reloaded is resolved in the browser at click time by walking up from the button:
+
+1. the innermost enclosing `[lazy]` or `[details]` block, if there is one -- only that block re-renders;
+2. otherwise the whole custom-content slot being rendered (`CustomHeader`, `CustomSidebar`, `CustomSummary`, `CustomAvatar`, or a description). A `[reload]` inside a `CustomMRQLResult` card reloads the slot holding the `[mrql]`, not the card;
+3. otherwise the page -- share pages, the live preview iframe, `CustomListHeader`, JSON-rendered slots, and `/mrql` result cards.
+
+So pair `[reload]` with `[lazy]` to scope the refresh to that one block, and place it outside any deferred block to refresh the entire slot. Prefer the paired form in `CustomSummary`: a bare `[reload]` makes every card on a list page carry a sealed copy of the slot's source (about 1.34x the slot's own size, per card), while one inside a `[lazy]` reuses the token that block seals anyway. Steps 1 and 2 go through the same deferred-render fetch `[lazy]` and `[details]` use; the current content stays on screen dimmed while the request is in flight, and is left exactly as it was if the request fails. Requires JavaScript.
+
+```
+[reload]
+[reload label="Refresh stock"]Refresh stock[/reload]
+[lazy][reload label="Refresh open tasks"][mrql query='type = "note"' format="list"][/lazy]
+```
+
 ## Built-in Plugin Shortcodes
 
 Only three built-in plugins currently ship shortcodes:

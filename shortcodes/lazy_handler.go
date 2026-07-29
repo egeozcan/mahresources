@@ -36,6 +36,9 @@ func RenderLazyShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 	if !sc.IsBlock {
 		return shortcodeErrorMarker("lazy", "[lazy] requires a closing [/lazy] tag")
 	}
+	if withinReloadFace(reqCtx) {
+		return shortcodeErrorMarker("lazy", "[lazy] cannot be used inside a [reload] button face")
+	}
 
 	signer := deferredSignerFrom(reqCtx)
 	if signer == nil || !isDeferrableEntity(ctx) {

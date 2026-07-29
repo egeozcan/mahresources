@@ -190,6 +190,8 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 			replacement = RenderLazyShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "details":
 			replacement = RenderDetailsShortcode(reqCtx, sc, ctx, renderer, executor, depth)
+		case sc.Name == "reload":
+			replacement = RenderReloadShortcode(reqCtx, sc, ctx, renderer, executor, depth)
 		case sc.Name == "item":
 			// [item] only has meaning inside an [each] block, where the each
 			// handler substitutes it before this dispatch runs. A bare [item]

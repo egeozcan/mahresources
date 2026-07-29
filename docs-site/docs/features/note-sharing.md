@@ -133,6 +133,7 @@ Templates run in a **restricted mode** appropriate to an anonymous, unauthentica
 - **No queries.** `[mrql]` shortcodes do not execute — running queries on the public surface would leak data beyond the shared note and add unauthenticated database load. They render as an HTML comment, not as results and not as leaked shortcode text.
 - **No plugins.** Plugin shortcodes (`[plugin:...]`) do not run — plugin code executes against the unscoped database. They also render as an HTML comment.
 - **Read-only metadata.** `[meta]` renders in display mode only: the share page never shows an edit control that would POST back to the primary server. Note that the metadata **value itself is still published** onto the public page as read-only text, so a shared Custom Header that references a `[meta]` field exposes that field's value to anyone with the URL.
+- **Whole-page reload.** A `[reload]` button renders normally, but a share page renders its slots without the deferred tokens that make a single block or slot re-renderable, so there is nothing smaller for the button to refresh -- activating it reloads the whole page.
 
 `[property]`, `[conditional]`, `[each]`, `[link]`, and `[partial]` work normally — they are pure functions over the already-shared note.
 

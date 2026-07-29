@@ -22,6 +22,9 @@ func RenderDetailsShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortc
 	if !sc.IsBlock {
 		return shortcodeErrorMarker("details", "[details] requires a closing [/details] tag")
 	}
+	if withinReloadFace(reqCtx) {
+		return shortcodeErrorMarker("details", "[details] cannot be used inside a [reload] button face")
+	}
 
 	summary := sc.Attrs["summary"]
 	if summary == "" {

@@ -306,3 +306,47 @@ func TestLintUndocumentedPluginSkipsAttrChecks(t *testing.T) {
 		t.Errorf("undocumented plugin should not flag unknown attrs, got %+v", *got)
 	}
 }
+
+func TestLintNestedReload(t *testing.T) {
+	const src = `[reload]Outer [reload]inner[/reload][/reload]`
+	issue := findIssue(Lint(src, LintOptions{Known: KnownFromBuiltins()}), "cannot contain another [reload]")
+	if issue == nil {
+		t.Fatal("expected a nested-[reload] diagnostic")
+	}
+	// The renderer refuses this outright, so it is an error, not a suggestion.
+	if issue.Severity != SeverityError {
+		t.Errorf("severity = %v, want %v", issue.Severity, SeverityError)
+	}
+	// It must anchor to the inner opener — the one the author has to delete.
+	if want := strings.Index(src, "[reload]inner"); issue.Start != want {
+		t.Errorf("anchored at %d, want the inner opener at %d", issue.Start, want)
+	}
+}
+
+func TestLintSiblingReloadsAreFine(t *testing.T) {
+	issues := Lint(`[reload]a[/reload] and [reload]b[/reload]`, LintOptions{Known: KnownFromBuiltins()})
+	if issue := findIssue(issues, "cannot contain another [reload]"); issue != nil {
+		t.Errorf("sibling [reload] blocks flagged as nested: %+v", issue)
+	}
+}
+
+func TestLintDeferredBlockInsideReloadFace(t *testing.T) {
+	for _, name := range []string{"lazy", "details"} {
+		src := "[reload][" + name + "]x[/" + name + "][/reload]"
+		want := "[" + name + "] cannot be used inside a [reload] button face"
+		issue := findIssue(Lint(src, LintOptions{Known: KnownFromBuiltins()}), want)
+		if issue == nil {
+			t.Errorf("no diagnostic for %s inside a reload face", name)
+			continue
+		}
+		if issue.Severity != SeverityError {
+			t.Errorf("%s: severity = %v, want %v", name, issue.Severity, SeverityError)
+		}
+	}
+
+	// Outside a reload face they are ordinary blocks.
+	issues := Lint(`[lazy][reload][/reload][/lazy]`, LintOptions{Known: KnownFromBuiltins()})
+	if issue := findIssue(issues, "cannot be used inside a [reload] button face"); issue != nil {
+		t.Errorf("[lazy] wrapping a [reload] flagged: %+v", issue)
+	}
+}

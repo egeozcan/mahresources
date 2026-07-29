@@ -74,6 +74,69 @@ function renderError(el, onRetry) {
   el.appendChild(wrap);
 }
 
+// Only the newest write to a container may land. Two [reload] buttons in the same
+// block activated in quick succession would otherwise race, and the slower
+// response would win.
+const reloadGenerations = new WeakMap();
+
+// invalidateReloads strands any reloadInto still in flight for contentEl. The
+// reveal path cancels a reload the same way reload() cancels a reveal through
+// _requestId: without both directions, a morph-triggered reveal and a reload can
+// each land on top of the other, and whichever is slower wins.
+function invalidateReloads(contentEl) {
+  if (!contentEl) return;
+  reloadGenerations.set(contentEl, (reloadGenerations.get(contentEl) || 0) + 1);
+}
+
+// reloadInto re-fetches token and swaps the result into contentEl, keeping the
+// current content on screen for the whole round trip: a refresh must not
+// collapse the block to a "Loading…" line and back, and a failed one must not
+// destroy what the reader was already looking at. host carries aria-busy (it is
+// contentEl itself for a region, whose content is its own body).
+//
+// isStale is an optional predicate asking "has something else taken this content
+// over while we were waiting?" A region has no reveal path to bump the generation
+// counter, so it uses this to notice that a page morph re-rendered it underneath.
+//
+// Resolves true when the swap was applied and false when it was abandoned, so the
+// caller does not report success for a result nobody saw. Rejects when the fetch
+// fails.
+export function reloadInto(host, contentEl, token, isStale) {
+  const generation = (reloadGenerations.get(contentEl) || 0) + 1;
+  reloadGenerations.set(contentEl, generation);
+  host.setAttribute('aria-busy', 'true');
+  contentEl.classList.add('deferred-reloading');
+
+  // A superseded reload keeps its hands off the busy state: the newer one owns it.
+  const current = () => {
+    if (reloadGenerations.get(contentEl) !== generation) return false;
+    host.removeAttribute('aria-busy');
+    contentEl.classList.remove('deferred-reloading');
+    return true;
+  };
+
+  return fetchDeferred(token).then(
+    (html) => {
+      if (!current() || !contentEl.isConnected) return false;
+      if (typeof isStale === 'function' && isStale()) return false;
+      contentEl.innerHTML = html;
+      hydrate(contentEl);
+      return true;
+    },
+    (err) => {
+      // A superseded or detached attempt does not own the outcome: a newer one is
+      // in flight, has already landed, or the content is gone, so reporting this
+      // failure would contradict what the reader can see. isStale is the same
+      // question for a region — content re-rendered underneath us — and it has to
+      // be asked on this side too, or a request that was abandoned for being
+      // obsolete still reports "Reload failed" over content that just arrived.
+      if (!current() || !contentEl.isConnected) return false;
+      if (typeof isStale === 'function' && isStale()) return false;
+      throw err;
+    },
+  );
+}
+
 class LazyShortcode extends HTMLElement {
   static get observedAttributes() {
     return ['data-token'];
@@ -129,6 +192,20 @@ class LazyShortcode extends HTMLElement {
     }
   }
 
+  // Public entry point for [reload]. The block is already revealed when a button
+  // inside it can be clicked, so this refreshes in place rather than re-running
+  // the reveal: bump the request id to strand any reveal still in flight, then
+  // swap in the fresh body.
+  reload() {
+    if (!this._token || !this._content) return Promise.resolve();
+    this._requestId++;
+    this._revealed = true;
+    this._loaded = true;
+    this._loading = false;
+    this._unobserve();
+    return reloadInto(this, this._content, this._token);
+  }
+
   _observeOrReveal() {
     if (this._loaded || this._loading || !this._token) return;
     const obs = lazyObserver();
@@ -148,6 +225,7 @@ class LazyShortcode extends HTMLElement {
     this._requestId++;
     this._loaded = false;
     this._loading = false;
+    invalidateReloads(this._content);
     this.setAttribute('aria-busy', 'true');
     if (this._content) renderLoading(this._content);
   }
@@ -252,10 +330,23 @@ class DetailsShortcode extends HTMLElement {
     }
   }
 
+  // Public entry point for [reload]. A button inside the disclosure body is only
+  // reachable once it is open and loaded, so this refreshes in place; see
+  // LazyShortcode.reload. aria-busy goes on the content div, matching where
+  // _load puts it for this element.
+  reload() {
+    if (!this._token || !this._content) return Promise.resolve();
+    this._requestId++;
+    this._loaded = true;
+    this._loading = false;
+    return reloadInto(this._content, this._content, this._token);
+  }
+
   _resetContent() {
     this._requestId++;
     this._loaded = false;
     this._loading = false;
+    invalidateReloads(this._content);
     if (this._content) {
       this._content.innerHTML = '';
       this._content.removeAttribute('aria-busy');

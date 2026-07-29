@@ -23,7 +23,7 @@ describe('morphOptionsWithShortcodeElements', () => {
     },
   );
 
-  it.each(['LAZY-SHORTCODE', 'DETAILS-SHORTCODE', 'META-SHORTCODE'])(
+  it.each(['LAZY-SHORTCODE', 'DETAILS-SHORTCODE', 'META-SHORTCODE', 'RELOAD-SHORTCODE'])(
     'refreshes %s after attributes have been patched',
     (tagName) => {
       const refreshFromMorph = vi.fn();
@@ -36,6 +36,22 @@ describe('morphOptionsWithShortcodeElements', () => {
       expect(refreshFromMorph).toHaveBeenCalledWith(toEl);
     },
   );
+
+  // <reload-shortcode> owns server-rendered children, so morph must patch them as
+  // usual; it only wants the callback afterwards to re-check the button's name.
+  it('lets morph patch reload-shortcode children while still notifying it', () => {
+    const skip = vi.fn();
+    const skipChildren = vi.fn();
+    const refreshFromMorph = vi.fn();
+    const options = morphOptionsWithShortcodeElements();
+
+    options.updating(el('RELOAD-SHORTCODE'), el('RELOAD-SHORTCODE'), false, skip, skipChildren);
+    options.updated(el('RELOAD-SHORTCODE', { refreshFromMorph }), el('RELOAD-SHORTCODE'));
+
+    expect(skipChildren).not.toHaveBeenCalled();
+    expect(skip).not.toHaveBeenCalled();
+    expect(refreshFromMorph).toHaveBeenCalledOnce();
+  });
 
   it('leaves ordinary elements to Alpine morph', () => {
     const refreshFromMorph = vi.fn();

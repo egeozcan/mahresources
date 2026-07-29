@@ -2536,3 +2536,74 @@ details.details-shortcode > summary:focus-visible {
 details.details-shortcode > .details-content {
   margin-top: 0.375rem;
 }
+
+/* [reload] button. The host and the region wrapper are display:contents so
+   neither adds a box: the button lands wherever the author wrote it, and a slot
+   that gained a region keeps the layout it had before. */
+reload-shortcode {
+  display: contents;
+}
+.shortcode-region {
+  display: contents;
+}
+.reload-shortcode-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: #57534e;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.reload-shortcode-button:hover {
+  color: #b45309;
+}
+.reload-shortcode-button:focus-visible {
+  outline: 2px solid #b45309;
+  outline-offset: 2px;
+  border-radius: 0.25rem;
+}
+/* Busy state uses colour, not opacity: opacity would fade the focus outline with
+   it, and WCAG 1.4.11 wants that ring at 3:1 or better. */
+.reload-shortcode-button[data-reloading] {
+  cursor: progress;
+  color: #78716c;
+}
+.reload-shortcode-icon {
+  width: 1em;
+  height: 1em;
+  flex: none;
+}
+.reload-shortcode-button--icon .reload-shortcode-icon {
+  width: 1.125em;
+  height: 1.125em;
+}
+.reload-shortcode-button[data-reloading] .reload-shortcode-icon {
+  animation: reload-shortcode-spin 0.8s linear infinite;
+}
+@keyframes reload-shortcode-spin {
+  to { transform: rotate(360deg); }
+}
+/* Content being refreshed stays readable, just visibly stale. Opacity here forms
+   a group, so a descendant cannot opt out: the level has to be one that keeps the
+   focused reload button's amber outline above the 3:1 required by WCAG 1.4.11
+   (0.8 leaves it at ~3.5:1). */
+.deferred-reloading {
+  opacity: 0.8;
+}
+/* A region generates no box, so opacity on it does nothing: dim its children. */
+.shortcode-region.deferred-reloading > * {
+  opacity: 0.8;
+}
+.reload-shortcode-error {
+  margin-left: 0.35rem;
+  color: #b91c1c;
+  font-size: 0.8125rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reload-shortcode-button[data-reloading] .reload-shortcode-icon {
+    animation: none;
+  }
+}

@@ -73,7 +73,7 @@ func KnownFromBuiltins() KnownShortcodes {
 var conditionalOperators = []string{"eq", "neq", "gt", "lt", "gte", "lte", "in", "contains", "matches", "empty", "not-empty"}
 
 // builtinBaseNames is used for near-miss detection of misspelled shortcodes.
-var builtinBaseNames = []string{"meta", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details"}
+var builtinBaseNames = []string{"meta", "property", "mrql", "conditional", "link", "each", "item", "partial", "lazy", "details", "reload"}
 
 // looseBracketPattern finds bracket expressions that lead with an identifier,
 // used to detect shortcode-looking brackets that did not parse as real
@@ -103,7 +103,8 @@ func Lint(input string, opts LintOptions) []LintIssue {
 
 	// Inner byte spans of every [each] block, so [item] outside any [each] can
 	// be flagged.
-	eachSpans := eachInnerSpans(tokens)
+	eachSpans := namedBlockSpans(tokens, "each")
+	reloadSpans := namedBlockSpans(tokens, "reload")
 
 	// --- Structural checks over the token stream ---
 	for _, tk := range tokens {
@@ -172,6 +173,21 @@ func Lint(input string, opts LintOptions) []LintIssue {
 			if !insideSpans(tk.start, eachSpans) {
 				add(tk.start, tk.end, SeverityWarning,
 					"[item] is only meaningful inside an [each] block")
+			}
+		case "reload":
+			// A <button> may not contain another button. The renderer refuses the
+			// whole thing rather than emit invalid interactive nesting, so say so
+			// here while the author can still see which one is at fault.
+			if insideSpans(tk.start, reloadSpans) {
+				add(tk.start, tk.end, SeverityError,
+					"[reload] cannot contain another [reload]")
+			}
+		case "lazy", "details":
+			// Both emit a block, and a button takes phrasing content only. The
+			// renderer refuses them here for the same reason.
+			if insideSpans(tk.start, reloadSpans) {
+				add(tk.start, tk.end, SeverityError,
+					"["+tk.name+"] cannot be used inside a [reload] button face")
 			}
 		case "partial":
 			if opts.PartialName != "" && tk.attrs["name"] == opts.PartialName {
@@ -429,14 +445,17 @@ func conditionalInnerRanges(input string, tokens []token) map[int]string {
 	return result
 }
 
-// eachInnerSpans returns the inner-content byte ranges [openerEnd, closerStart)
-// of every [each] block, pairing openers with closers by depth over the token
-// stream. Used to detect [item] tokens sitting outside any [each].
-func eachInnerSpans(tokens []token) [][2]int {
+// namedBlockSpans returns the inner-content byte ranges [openerEnd, closerStart)
+// of every block with the given name, pairing openers with closers by depth over
+// the token stream. Used to place a token relative to a block: [item] tokens
+// sitting outside any [each], [reload] tokens sitting inside another [reload].
+// (Distinct from blockInnerSpans in split_else.go, which scans raw text for any
+// block rather than the token stream for one name.)
+func namedBlockSpans(tokens []token, name string) [][2]int {
 	var spans [][2]int
 	var stack []int
 	for i := range tokens {
-		if tokens[i].name != "each" {
+		if tokens[i].name != name {
 			continue
 		}
 		if !tokens[i].closing {

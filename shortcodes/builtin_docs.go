@@ -38,7 +38,7 @@ type DocExample struct {
 }
 
 // BuiltinDoc documents one built-in shortcode (meta, property, mrql,
-// conditional, link, each, item, partial, lazy, details).
+// conditional, link, each, item, partial, lazy, details, reload).
 type BuiltinDoc struct {
 	Name        string          `json:"name"`
 	Syntax      string          `json:"syntax"`
@@ -229,6 +229,20 @@ func BuiltinDocs() []BuiltinDoc {
 			Examples: []DocExample{
 				{Title: "Collapsible section", Code: "[details summary=\"Nutrition\"]\n  [meta path=\"calories\"] kcal\n[/details]"},
 				{Title: "Start expanded", Code: "[details summary=\"Notes\" open=\"true\"]\n  [property path=\"Description\"]\n[/details]"},
+			},
+		},
+		{
+			Name:        "reload",
+			Syntax:      `[reload]`,
+			Description: "A button that re-renders content on the server without navigating. It reloads the innermost [lazy] or [details] block it sits inside. Outside those it reloads the whole custom-content slot it was written in (header, sidebar, summary or avatar). Where neither can be re-rendered on its own (share pages, live preview) it reloads the page. Self-closing it renders a circular-arrow icon button; wrap a block body to use that content as the button face instead. Keep the body to text or icons: a button may not contain links or other interactive elements.",
+			IsBlock:     BlockOptional,
+			Attrs: []DocAttr{
+				{Name: "label", Type: "string", Default: "Reload", Description: "Accessible name for the button. The default applies whenever the button face carries no text of its own (the icon, or a body that is only an image or an svg), and that case also gets it as a tooltip. When the button has visible text, keep that text inside this value."},
+			},
+			Examples: []DocExample{
+				{Title: "Icon button", Code: `[reload]`},
+				{Title: "Refresh one deferred block", Code: "[lazy]\n  [reload label=\"Refresh open tasks\"]\n  [mrql query='type = \"note\"' format=\"list\"]\n[/lazy]"},
+				{Title: "Labelled button", Code: `[reload]Refresh[/reload]`},
 			},
 		},
 	}

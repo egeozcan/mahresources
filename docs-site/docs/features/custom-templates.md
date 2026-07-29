@@ -217,11 +217,12 @@ This is intentional, not an inconsistency; avatar-replacement on resource cards 
 
 `CustomListHeader` renders a banner at the **top of a list page**, but only when the list is filtered to **exactly one** category/type — a group list at `/groups?categories=42`, a resource list at `/resources?resourceCategoryId=7`, or a note list at `/notes?noteTypeId=3`. Unfiltered lists, and lists filtered to more than one category, show no header. It is the natural home for a category "dashboard": a title, a description, and a few `[mrql]` counts.
 
-Unlike the other slots, `CustomListHeader` is processed with **the category/type itself as the entity**, not a member group/resource/note. This has three consequences:
+Unlike the other slots, `CustomListHeader` is processed with **the category/type itself as the entity**, not a member group/resource/note. This has four consequences:
 
 - `[property path="Name"]` yields the category's own name (and `path="Description"` its description). Other `[property]` paths that expect a member entity's fields will be empty.
 - `[meta]` renders its empty state — a category carries no `Meta`, so a `[meta path="..." default="—"]` shows the default.
 - `[mrql]` resolves against **global scope** (not a group subtree), so dashboard queries count across the whole instance. Add an explicit `scope="..."` attribute if you want to narrow it.
+- `[reload]` falls back to reloading the page -- the deferred-render endpoint cannot load a category/type by id, so the header has no region of its own to re-render. For the same reason `[lazy]` and `[details]` render inline here instead of deferring.
 
 ```html
 <div class="cat-dashboard">
@@ -311,6 +312,7 @@ Shortcodes let you embed dynamic content in custom templates without writing Alp
 - **`[each]`** / **`[item]`** -- Iterate over an array in the entity's metadata
 - **`[partial]`** -- Include a reusable shared snippet by name
 - **`[lazy]`** / **`[details]`** -- Defer rendering until the block scrolls into view or is opened
+- **`[reload]`** -- Button that re-renders the innermost `[lazy]`/`[details]` block, or else the whole custom-content slot, in place
 
 Plugins can also register custom shortcodes via `mah.shortcode()`.
 

@@ -184,6 +184,15 @@
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[details summary="Nutrition"][meta path="calories"] kcal[/details]</code></pre>
                     </div>
                     <div>
+                        <code class="bg-stone-100 px-1 rounded">[reload]</code>
+                        &mdash; a button that re-renders content in place, without navigating. It refreshes the innermost [lazy] or [details] block around it, or the whole custom-content slot when it sits outside both. Self-closing renders a circular-arrow icon; wrap a body to use that as the button face instead.
+                        <br><span class="text-stone-400 ml-4">
+                            <b class="text-stone-500">label</b>="accessible name"
+                        </span>
+                        <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[lazy][reload label="Refresh tasks"][mrql query='type = "note"' format="list"][/lazy]
+[reload]Refresh[/reload]</code></pre>
+                    </div>
+                    <div>
                         <code class="bg-stone-100 px-1 rounded">[plugin:name:shortcode attr="val"]</code>
                         &mdash; render a plugin-provided shortcode. See each plugin's docs page for available shortcodes.
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[plugin:meta-editors:star-rating path="rating"]

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"reflect"
 
 	"github.com/flosch/pongo2/v4"
@@ -86,10 +87,41 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 	}
 
 	result := shortcodes.Process(reqCtx, content, *metaCtx, pluginRenderer, executor)
+	result = wrapReloadableRegion(result, content, *metaCtx, appCtx)
 	if _, writeErr := writer.WriteString(result); writeErr != nil {
 		return ctx.Error(fmt.Sprintf("process_shortcodes: write error: %s", writeErr), nil)
 	}
 	return nil
+}
+
+// wrapReloadableRegion wraps a rendered custom-content slot in a region element
+// carrying a sealed token of the slot's raw body, so a [reload] button in that
+// slot can re-render the whole slot through /v1/shortcodes/deferred. The token
+// is the same (entityType, entityID, body) seal [lazy] and [details] mint, which
+// is what lets one endpoint serve all three: a region is simply a body that was
+// rendered eagerly and can be asked for again.
+//
+// It is emitted only when the rendered slot actually contains a reload button.
+// During this page render a [reload] inside a deferred [lazy]/[details] block is
+// not expanded at all (that body is captured into a token instead), so a button
+// present here is one with no deferred ancestor on the page, and every other slot
+// keeps its markup byte-for-byte unchanged. Buttons that arrive later, inside a
+// body the deferred endpoint expands, do sit under a deferred host: the frontend
+// walks the DOM at click time, so those resolve to that host rather than here.
+// Carrier slots (CustomListHeader) are skipped because the endpoint cannot load a
+// Category by (type, id); a [reload] there falls back to reloading the page.
+func wrapReloadableRegion(rendered, raw string, metaCtx shortcodes.MetaShortcodeContext, appCtx *application_context.MahresourcesContext) string {
+	if appCtx == nil || !shortcodes.ContainsReloadButton(rendered) || !shortcodes.IsDeferrableEntity(metaCtx) {
+		return rendered
+	}
+	token := deferredtoken.Seal(appCtx.DeferredSigningKey(), metaCtx.EntityType, metaCtx.EntityID, raw)
+	if token == "" {
+		// Sealing only fails catastrophically (a broken CSPRNG), but a wrapper
+		// with no token is one the frontend would skip anyway. Leave the slot as
+		// it was and let the button fall back to reloading the page.
+		return rendered
+	}
+	return `<div class="shortcode-region" data-shortcode-region="` + html.EscapeString(token) + `">` + rendered + `</div>`
 }
 
 // buildPageRenderContext wraps reqCtx with the per-page render helpers shared by
