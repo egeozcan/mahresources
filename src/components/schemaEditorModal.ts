@@ -5,6 +5,7 @@
  */
 
 import { getPreviewDefaultValue } from '../schema-editor/schema-core';
+import { captureTrigger, restoreFocus } from '../utils/focus.js';
 
 // Alpine.js magic properties injected at runtime
 interface AlpineMagics {
@@ -42,8 +43,20 @@ export function schemaEditorModal() {
     currentSchema: '',
     /** The textarea element this modal reads/writes to */
     _textareaEl: null as HTMLTextAreaElement | null,
+    /**
+     * The control that opened the modal (WS4 finding 97). Captured at open
+     * rather than looked up at close: the previous code did
+     * `$el.querySelector('.visual-editor-btn')` inside closeModal, and `$el` in
+     * an Alpine method is the element whose directive is evaluating — the
+     * modal's own close button — not the component root. It found nothing and
+     * silently returned. `$root` is no better; it walks up from the same
+     * element and is undefined once that subtree is torn down. Both halves of
+     * that trap are already written down in docs/lessons.md.
+     */
+    _trigger: null as HTMLElement | null,
 
-    openModal(textareaId: string) {
+    openModal(textareaId: string, event?: Event) {
+      this._trigger = captureTrigger(event as Event) as HTMLElement | null;
       this._textareaEl = document.getElementById(textareaId) as HTMLTextAreaElement;
       const raw = this._textareaEl?.value || '';
 
@@ -85,8 +98,24 @@ export function schemaEditorModal() {
 
     closeModal() {
       this.open = false;
-      // Return focus to trigger button (it lives in the same x-data root element)
-      (this as unknown as AlpineMagics).$el.querySelector<HTMLElement>('.visual-editor-btn')?.focus();
+      // x-trap on the modal (schemaEditorModal.tpl) carries .noreturn, so this
+      // is the only thing deciding where focus lands. Without .noreturn the
+      // trap's own returnFocus fires on a setTimeout and overwrites this with
+      // whatever had focus when it activated — which openModal's $nextTick had
+      // already moved into the modal.
+      //
+      // It has to be deferred. `this.open = false` only *schedules* Alpine's
+      // teardown, so a synchronous restore lands while the modal is still
+      // mounted and its focus trap is still active — the trap's focusin guard
+      // then pulls focus straight back in, and the reader ends on <body> when
+      // the subtree finally goes. Measured settling on BODY before this defer.
+      // The trigger itself is outside the x-if, so it stays connected and this
+      // is not the $refs-after-teardown trap.
+      const trigger = this._trigger;
+      this._trigger = null;
+      (this as unknown as AlpineMagics).$nextTick(() => {
+        requestAnimationFrame(() => restoreFocus(trigger));
+      });
     },
 
     handleSchemaChange(e: CustomEvent) {

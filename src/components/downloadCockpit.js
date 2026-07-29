@@ -1,4 +1,5 @@
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+import { captureTrigger, focusFirstIn, restoreFocus } from '../utils/focus.js';
 
 export function downloadCockpit() {
     return {
@@ -68,16 +69,9 @@ export function downloadCockpit() {
             this.$watch('isOpen', (value) => {
                 if (value) {
                     this.announce('Jobs panel opened. Shows background job progress.');
-                    this.$nextTick(() => {
-                        const panel = this.$refs.panel;
-                        if (!panel) return;
-                        const firstFocusable = panel.querySelector(
-                            'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'
-                        );
-                        (firstFocusable || panel).focus();
-                    });
+                    this.$nextTick(() => focusFirstIn(this.$refs.panel));
                 } else if (this._lastTrigger) {
-                    this._lastTrigger.focus();
+                    restoreFocus(this._lastTrigger);
                     this._lastTrigger = null;
                 }
             });
@@ -96,8 +90,8 @@ export function downloadCockpit() {
         },
 
         toggle(event) {
-            if (!this.isOpen && event?.currentTarget) {
-                this._lastTrigger = event.currentTarget;
+            if (!this.isOpen) {
+                this._lastTrigger = captureTrigger(event) ?? this._lastTrigger;
             }
             this.isOpen = !this.isOpen;
         },

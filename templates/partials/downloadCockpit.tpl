@@ -35,6 +35,12 @@
                  aria-modal="true"
                  aria-labelledby="cockpit-panel-heading"
                  tabindex="-1"
+                 {# The plan cites this panel as the app's correct example. It is — for   #}
+                 {# focus *restore*. Verifying finding 4 measured Tab walking straight    #}
+                 {# out of it too (Close button -> body -> "Skip to main content"), so it #}
+                 {# was declaring aria-modal without trapping, exactly like the search    #}
+                 {# dialog. .noreturn because the component restores focus itself.        #}
+                 x-trap.noreturn="isOpen"
                  x-transition:enter="transform transition ease-out duration-300"
                  x-transition:enter-start="translate-x-full"
                  x-transition:enter-end="translate-x-0"

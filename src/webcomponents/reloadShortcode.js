@@ -17,6 +17,7 @@
 // fetched on demand, and it still finds whatever now encloses it.
 
 import { reloadInto } from './deferredShortcodes.js';
+import { parkFocus } from '../utils/focus.js';
 
 const DEFERRED_HOSTS = 'lazy-shortcode, details-shortcode';
 const REGION_ATTR = 'data-shortcode-region';
@@ -57,58 +58,6 @@ function restoreFocus(container, button, index) {
   // already gone with the old markup, so parking it on the refreshed content
   // beats leaving the reader on <body>.
   if (container.isConnected) parkFocus(container);
-}
-
-// Anything that can already take focus on its own must not be given a tabindex:
-// stamping tabindex="-1" on a link or a control would pull it out of sequential
-// Tab navigation for good. Focus parking succeeds on these, so an omission here
-// is not a missed opportunity — it is a control silently dropped from the Tab
-// order. Err toward listing too much: over-listing only costs a parking attempt.
-const NATIVELY_FOCUSABLE = [
-  'a[href]',
-  'area[href]',
-  'button',
-  'input',
-  'select',
-  'textarea',
-  'summary',
-  'iframe',
-  'object',
-  'embed',
-  'audio[controls]',
-  'video[controls]',
-  '[contenteditable]',
-  '[tabindex]',
-].join(', ');
-
-// A region wrapper is display:contents, so it generates no box and browsers do
-// not reliably let it take focus. Rather than guess, try it and check, then work
-// outwards. Each rung is further from the refreshed content than the last, and
-// the ladder only ends where focus already was, so it never leaves the reader
-// worse off than doing nothing.
-function parkFocus(element) {
-  if (focusOn(element)) return;
-  // The wrapper could not hold focus, so hand it to the first child that can. A
-  // hidden or boxless child is skipped rather than swallowing the focus.
-  for (const child of element.children) {
-    if (focusOn(child)) return;
-  }
-  // Nothing inside can hold it either: a boxless wrapper whose refreshed content
-  // is only text has no element child at all. Climb until something takes it,
-  // which lands the reader beside the content instead of on <body>.
-  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
-    if (focusOn(ancestor)) return;
-  }
-}
-
-function focusOn(element) {
-  const borrowed = !element.matches(NATIVELY_FOCUSABLE);
-  if (borrowed) element.setAttribute('tabindex', '-1');
-  element.focus({ preventScroll: true });
-  if (document.activeElement === element) return true;
-  // It could not take focus after all, so leave no trace on it.
-  if (borrowed) element.removeAttribute('tabindex');
-  return false;
 }
 
 // The server names the button whenever the face it rendered carries no text. It

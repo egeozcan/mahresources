@@ -752,7 +752,7 @@
     </section>
 
     {# ── Saved Queries Section ───────────────────────────────────── #}
-    <section aria-label="Saved queries" data-testid="mrql-saved-panel">
+    <section aria-label="Saved queries" data-saved-queries data-testid="mrql-saved-panel">
         <div class="flex items-center justify-between mb-2">
             <h2 class="text-base font-semibold font-mono text-stone-800">
                 Saved Queries

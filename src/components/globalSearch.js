@@ -1,5 +1,6 @@
 import { abortableFetch } from '../index.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
+import { captureTrigger, restoreFocus } from '../utils/focus.js';
 
 // Client-side search cache with TTL
 const searchCache = new Map();
@@ -63,6 +64,10 @@ export function globalSearch() {
         // ceiling, so rendering it bare would state 50 as a fact.
         total: 0,
         totalCapped: false,
+        // WS4 finding 30: what to give focus back to on close. The dialog lives
+        // inside <template x-if="isOpen">, so closing detaches the focused input
+        // and the browser drops to <body> unless something takes it.
+        _lastTrigger: null,
 
         typeIcons: {
             resource: '\u{1F4C4}',
@@ -150,6 +155,11 @@ export function globalSearch() {
                         this.$refs.searchInput?.focus();
                     });
                     this.announce('Search dialog opened. Type to search resources, notes, groups, and tags.');
+                } else if (this._lastTrigger) {
+                    // The x-if teardown has already detached the input, so this
+                    // is the only thing standing between the reader and <body>.
+                    restoreFocus(this._lastTrigger);
+                    this._lastTrigger = null;
                 }
             });
         },
@@ -175,7 +185,14 @@ export function globalSearch() {
             }
         },
 
-        toggle() {
+        toggle(event) {
+            if (!this.isOpen) {
+                // Read before the flip: once the x-if mounts and the $nextTick
+                // above runs, document.activeElement is the dialog's own input.
+                // The activeElement fallback is what makes Cmd+K work — that
+                // path calls toggle() with no event at all.
+                this._lastTrigger = captureTrigger(event) ?? document.activeElement;
+            }
             this.isOpen = !this.isOpen;
             if (this.isOpen) {
                 this.query = '';

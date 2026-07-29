@@ -5,7 +5,7 @@
     class="global-search"
 >
     <button
-        @click="toggle()"
+        @click="toggle($event)"
         class="flex items-center gap-2 px-3 py-1.5 text-sm font-mono text-stone-700 bg-stone-100 rounded-lg hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:ring-offset-1 transition-colors"
         title="Search (Ctrl+K / Cmd+K)"
         aria-label="Open search dialog"
@@ -28,12 +28,25 @@
             ></div>
 
             <div class="relative min-h-screen flex items-start justify-center pt-[12vh] px-4" @click="close()">
+                {# WS4 finding 4: this was the only element in the app declaring        #}
+                {# aria-modal="true" without a focus trap — one Tab from an empty query  #}
+                {# left the dialog and landed on page chrome behind the overlay. It goes #}
+                {# on this element and not on the <template x-if> (a template has no box #}
+                {# to trap) nor on the outer x-data div (which lives forever, so the     #}
+                {# trap would fight the page while closed).                              #}
+                {#                                                                       #}
+                {# .noreturn matters: x-trap activates on a setTimeout(15) and records    #}
+                {# whatever has focus then as its return node — which is the search input #}
+                {# this component focuses in $nextTick. On close that node is already     #}
+                {# detached, so the trap's own restore lands on <body> and finding 30     #}
+                {# would survive the fix. The restore is done explicitly instead.         #}
                 <div
                     class="relative bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden ring-1 ring-black/5"
                     @click.stop
                     role="dialog"
                     aria-modal="true"
                     aria-label="Search"
+                    x-trap.noscroll.noreturn="isOpen"
                 >
                     <div class="flex items-center gap-3 px-4 py-3 border-b border-stone-100">
                         <svg class="w-5 h-5 text-stone-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">

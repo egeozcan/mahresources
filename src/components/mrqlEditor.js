@@ -1,4 +1,5 @@
 import * as userSettings from '../userSettings.js';
+import { focusOn, parkFocus } from '../utils/focus.js';
 
 export function mrqlEditor() {
   return {
@@ -845,6 +846,10 @@ export function mrqlEditor() {
 
     async deleteSavedQuery(id, name) {
       if (!window.confirm('Delete saved query "' + (name || id) + '"?')) return;
+      // Recorded before the delete: fetchSavedQueries() replaces the array
+      // wholesale, so the x-for rebuilds every <li> and the captured button is
+      // a disconnected node by the time it matters (WS4 finding 124).
+      const removedIndex = this.savedQueries.findIndex((q) => Number(q.id) === Number(id));
       try {
         const resp = await fetch('/v1/mrql/saved/delete?id=' + id, {
           method: 'POST',
@@ -858,8 +863,27 @@ export function mrqlEditor() {
             this.clearLoadedSaved();
           }
           await this.fetchSavedQueries();
+          this._focusAfterSavedDelete(removedIndex);
         }
       } catch (_) { /* ignore */ }
+    },
+
+    // WS4 finding 124. The Delete button that was activated is destroyed by the
+    // x-for rebuild, dropping the reader on <body> — and back through the nav,
+    // the search box, the NL box and the editor to get to the list again. Land
+    // on the row that took the deleted one's place, else the one before it,
+    // else the section itself when the list is now empty.
+    _focusAfterSavedDelete(removedIndex) {
+      this.$nextTick(() => {
+        const rows = Array.from(document.querySelectorAll('[data-saved-id]'));
+        if (rows.length === 0) {
+          parkFocus(document.querySelector('[data-saved-queries]'));
+          return;
+        }
+        const idx = Math.min(Math.max(removedIndex, 0), rows.length - 1);
+        const target = rows[idx].querySelector('[aria-label^="Delete saved query"]');
+        if (!focusOn(target)) parkFocus(rows[idx]);
+      });
     },
 
     destroy() {

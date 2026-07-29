@@ -1,6 +1,7 @@
 import { abortableFetch } from '../../index.js';
 import { morphOptionsWithShortcodeElements } from '../../utils/shortcodeElementMorph.js';
 import { findListContainer } from '../../utils/listContainer.js';
+import { focusFirstIn, focusOn } from '../../utils/focus.js';
 
 /**
  * Edit panel state/methods for the lightbox store.
@@ -47,19 +48,24 @@ export const editPanelMethods = {
     // Revalidate against the server on (re)open so stale cached details are refreshed (BH: L5).
     await this.fetchResourceDetails(undefined, true);
 
-    requestAnimationFrame(() => {
-      const panel = document.querySelector('[data-edit-panel]');
-      if (panel) {
-        const firstInput = panel.querySelector('input, textarea');
-        if (firstInput) {
-          firstInput.focus();
-        }
-      }
-    });
+    // WS4 finding 123. This used to be querySelector('input, textarea'), which
+    // is #lightbox-edit-name — and canNavigate() in lightbox.tpl deliberately
+    // makes ArrowLeft/ArrowRight inert while a text field has focus, so simply
+    // opening the panel killed image navigation with no indication why.
+    // focusFirstIn lands on the panel's own "Close info panel" button, which is
+    // a BUTTON, so paging keeps working and a screen reader lands on the
+    // dismiss control. Do not re-target an input here: the selector, not the
+    // markup order, is the bug.
+    requestAnimationFrame(() => focusFirstIn(document.querySelector('[data-edit-panel]')));
   },
 
   closeEditPanel() {
+    // The "Resource info" toggle is x-show'd on !editPanelOpen, so it is hidden
+    // while the panel is open and reappears as the panel goes. Hand focus back
+    // to it rather than letting the removed panel drop the reader on <body>.
+    const toggle = document.querySelector('button[title="Resource info"]');
     this.editPanelOpen = false;
+    if (toggle) requestAnimationFrame(() => focusOn(toggle));
     // The media viewport widens again — re-clamp pan to the new bounds (BH: M7).
     requestAnimationFrame(() => this.constrainPan());
 

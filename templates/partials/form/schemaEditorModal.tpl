@@ -1,7 +1,7 @@
 {# Reusable schema editor modal partial. #}
 {# Parameters: textareaId — the id of the MetaSchema textarea to bind to (e.g. "metaSchemaTextarea") #}
 <div x-data="schemaEditorModal()">
-    <button type="button" class="visual-editor-btn mt-6 inline-flex items-center px-3 py-2 border border-stone-300 shadow-sm text-sm font-medium font-mono rounded-md text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600" @click="openModal('{{ textareaId }}')">
+    <button type="button" class="visual-editor-btn mt-6 inline-flex items-center px-3 py-2 border border-stone-300 shadow-sm text-sm font-medium font-mono rounded-md text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600" @click="openModal('{{ textareaId }}', $event)">
         Visual Editor
     </button>
 
@@ -9,7 +9,7 @@
     <template x-if="open">
         <div class="fixed inset-0 z-50 flex items-center justify-center" @keydown.escape="closeModal()">
             <div class="absolute inset-0 bg-black/40" @click="closeModal()"></div>
-            <div x-ref="modalContent" x-trap.noscroll="open" class="relative bg-white rounded-lg shadow-2xl flex flex-col" style="width:90vw;max-width:1400px;height:80vh;max-height:100vh;overflow-x:auto;" role="dialog" aria-modal="true" aria-label="Meta JSON Schema Editor">
+            <div x-ref="modalContent" x-trap.noscroll.noreturn="open" class="relative bg-white rounded-lg shadow-2xl flex flex-col" style="width:90vw;max-width:1400px;height:80vh;max-height:100vh;overflow-x:auto;" role="dialog" aria-modal="true" aria-label="Meta JSON Schema Editor">
                 <!-- Header -->
                 <div class="flex items-center border-b border-stone-200 px-4 bg-stone-50 rounded-t-lg">
                     <h3 class="text-sm font-medium font-mono text-stone-700 py-3 mr-6">Meta JSON Schema</h3>

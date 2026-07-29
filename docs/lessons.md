@@ -2,6 +2,94 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## `expect.poll` is satisfied by a transient early state, so it cannot assert where something *ends up*
+
+The finding-66 focus test passed against the bug. Clicking "Select All" collapses the wrapper the
+button lives in, so focus drops to `<body>` — but not immediately: measured, the button is still
+focused at 0 ms and at 200 ms, and only loses it at ~400 ms when the `x-collapse` finishes.
+`expect.poll(...).toBe(true)` returns on the **first** matching sample, so it caught the
+pre-teardown state and went green while the defect was fully present.
+
+`expect.poll` answers "did this ever become true within the timeout". A focus assertion, and any
+assertion about a settled end state, needs "what is it once it stops changing". Those are different
+questions and the first one is much easier to satisfy. The spec now samples `document.activeElement`
+until it is unchanged for ~600 ms and then asserts once, which also covers Alpine's `$nextTick` and
+`x-trap`'s `setTimeout(…, 15)`.
+
+The general shape: whenever the thing under test has a transition, a teardown, or a deferred
+callback between the action and the outcome, poll for **stability**, not for the answer you want.
+
+## Alpine's `$refs`, read inside a deferred callback, resolves against a detached element and returns nothing
+
+Third variant of the same trap, after `$el` and `$root`. The export picker's fix was
+`$nextTick(() => focusOn(this.$refs.groupSearch))` and did precisely nothing. `addGroup` is invoked
+from a button inside an `x-for`, so `this` is that row's scope; the method then empties the array
+that renders the row, and by the time the tick runs the element the scope is bound to is detached.
+`$refs` resolves by walking up from that node, finds no parent, and comes back empty —
+`focusOn(undefined)` returns false and says nothing. A capture-phase `focusin`/`focusout` log showed
+the button gaining focus, losing it, and nothing ever gaining it again. No error, no warning, no
+console output at all.
+
+Read the ref **synchronously**, before the mutation that tears the scope's element down, and close
+over the node. The three magics fail for one reason — they all resolve lazily from the currently
+evaluating element — so the rule is: never let `$el`, `$root` or `$refs` be evaluated inside a
+callback that runs after the DOM has moved on.
+
+## A restore that runs on the line after `open = false` fires before the teardown it is compensating for
+
+Setting an Alpine flag only *schedules* the DOM work. A `restoreFocus()` on the next line therefore
+runs while the dialog is still mounted and its `x-trap` is still active — and focus-trap's `focusin`
+guard pulls focus straight back inside, so when the subtree finally goes the reader lands on `<body>`
+regardless. This bit three separate dialogs in one batch (the lightbox, the metadata overlay and the
+schema editor), each measured settling on `<body>`.
+
+Two parts to getting it right. Add `.noreturn` to `x-trap` so the trap stops deciding — its own
+`returnFocus` records whatever had focus ~15 ms after activation, which is usually something the
+component itself focused on open, and is a detached node by the time it is used. Then defer your own
+restore past the release (`$nextTick` plus a frame, or two `requestAnimationFrame`s).
+
+The one dialog that worked first time did so by accident of structure: its restore lives in a
+`$watch` handler, which Alpine already runs after the flush.
+
+## A test whose locator is wider than its subject passes for reasons unrelated to the thing it guards
+
+`TestViewSwitcherDropsPageNumber` pinned finding 70: the view switcher must not carry `?page=` across
+a view change, because each view paginates differently. It read *every* `href="/resources…?…"` on the
+page and asserted none contained `page=2`. That includes the pagination footer, whose entire job is
+to link to page 2 — so the test could only ever pass on a page where page 2 did not exist. It did:
+the fixture created 3 resources against a page size of 50. The guard was green, and had been since it
+was written, without the view switcher's behaviour being observed once.
+
+It surfaced only because WS6 made out-of-range pages redirect, which broke the fixture's premise
+(`?page=2` on a one-page list now 302s) and forced the row count up. With a real page 2 the footer
+correctly linked to it and the test failed — on the control, not on the subject.
+
+Two rules. **Scope the locator to the component under test** — here, `class="view-switcher-option"`,
+which is what the test's own name says it is about. And **add the positive control that the
+precondition holds**: the test now asserts `page=2` appears *somewhere* on the page before asserting
+no view-switcher link carries it, so "the page is empty" can never satisfy it again. This is the same
+family as "every negative assertion needs a positive control", one level up: the control has to cover
+the *fixture* as well as the assertion.
+
+## `SetupTestEnv`'s in-memory database is per-connection, so anything that fans out over goroutines silently sees an empty schema
+
+`SetupTestEnv` opens `file:<test name>?mode=memory&cache=private`. With `cache=private` every new
+connection in the `database/sql` pool is a **separate, empty database** — the schema and rows exist
+only on whichever connection ran the migration. Most tests never notice, because they issue one
+request at a time and the pool hands back the same connection.
+
+`GlobalSearch` fans out over ten goroutines, one per entity type. That forces the pool open, nine of
+the ten query a database with no tables, and the whole search returns `{"total":0,"results":[]}` with
+no error anywhere. A first draft of the WS6 search tests looked like it was exercising search and was
+exercising nothing: the "exact total is not flagged as a floor" control passed against zero results,
+which is precisely the shape of a control that proves nothing.
+
+`auth_test.go:22-30` already documents this for sessions and tokens and pins `SetMaxOpenConns(1)`.
+The rule is more general than auth: **if the code under test does concurrent database work, pin the
+pool to one connection**, or the test measures an empty database. The tell is a result that is
+plausibly empty — zero hits, zero rows, nothing found — which is exactly the result an assertion of
+the form "X is absent" is happiest to receive.
+
 ## An HTML `pattern` attribute is compiled with the regex `v` flag, and an invalid pattern is ignored rather than reported
 
 Finding 157 wanted the template-partial name rule "stated *and* checked next to the field". The

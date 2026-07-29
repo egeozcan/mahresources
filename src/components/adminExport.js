@@ -1,3 +1,4 @@
+import { focusOn } from '../utils/focus.js';
 export function adminExport(initial = {}) {
   return {
     selectedGroups: [],
@@ -53,11 +54,25 @@ export function adminExport(initial = {}) {
     },
 
     addGroup(g) {
+      const searchInput = this.$refs.groupSearch;
       if (!this.selectedGroups.some(sel => sel.id === g.id)) {
         this.selectedGroups.push(g);
       }
       this.groupQuery = '';
       this.groupResults = [];
+      // WS4 finding 35: emptying groupResults tears the x-for <li> — and with it
+      // the button that was just activated — out of the DOM, so focus fell to
+      // <body> and adding a second group meant tabbing from the top of the page.
+      // The search input is outside the x-for and so is the one stable anchor;
+      // restoreFocus(trigger) would be useless here because the trigger is gone.
+      //
+      // The ref is read HERE and not inside the callback. This method is invoked
+      // from a button inside the x-for, so `this` is that row's scope — and by
+      // the time the tick runs, the row is detached, `$refs` resolves against a
+      // node with no parent and comes back empty, and focusOn(undefined) quietly
+      // does nothing. Measured: focusin fired for the button and then never
+      // again. Same family as the $el/$root trap in docs/lessons.md.
+      this.$nextTick(() => focusOn(searchInput));
     },
 
     removeGroup(id) {

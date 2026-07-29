@@ -1,4 +1,6 @@
 import { abortableFetch } from '../../index.js';
+import { captureTrigger, restoreFocus } from '../../utils/focus.js';
+import { findListContainer } from '../../utils/listContainer.js';
 
 /**
  * Navigation and pagination state/methods for the lightbox store.
@@ -97,7 +99,7 @@ export const navigationMethods = {
     }
 
     event.preventDefault();
-    this.triggerElement = event.currentTarget;
+    this.triggerElement = captureTrigger(event);
 
     // Check if inside a container with a lightbox source (multi-section pages)
     const sourceContainer = event.currentTarget.closest('[data-lightbox-source]');
@@ -162,10 +164,16 @@ export const navigationMethods = {
     this.isOpen = true;
     this.loading = true;
 
-    // Blur the trigger element so x-trap can move focus into the lightbox
-    if (document.activeElement && document.activeElement !== document.body) {
-      document.activeElement.blur();
-    }
+    // WS4 finding 74. There used to be a pre-emptive
+    //   document.activeElement.blur()
+    // here, commented "so x-trap can move focus into the lightbox". It is not
+    // needed — measured, the trap takes focus with the trigger still focused —
+    // and it was actively harmful: x-trap activates on a setTimeout(15) and
+    // records whatever has focus at that moment as its return node, so blurring
+    // first made it record <body>. close()'s own restore below then ran, landed
+    // correctly, and was overwritten when the trap deactivated and "returned"
+    // focus to <body>. The trap now carries .noreturn (lightbox.tpl) and this
+    // blur is gone, so the restore in close() is the only thing deciding.
 
     const item = this.getCurrentItem();
     const mediaType = this.isVideo(item?.contentType) ? 'video' : this.isSvg(item?.contentType) ? 'SVG' : 'image';
@@ -306,9 +314,25 @@ export const navigationMethods = {
     this._preloadedUrls.clear();
     this._preloadedImages = [];
 
+    // A bare .focus() is silently a no-op on a detached node, and the thumbnail
+    // that opened the viewer is often gone by now — an in-place crop or rotate
+    // calls refreshPageContent(), which morphs the whole list. restoreFocus
+    // checks isConnected and parks on the list instead of dropping to <body>.
+    //
+    // Deferred, and that is load-bearing: `this.isOpen = false` above only
+    // schedules Alpine's teardown, so a synchronous restore lands while the
+    // viewer is still mounted and x-trap is still active — the trap's focusin
+    // guard pulls focus straight back in and the reader ends on <body> when the
+    // subtree finally goes. Measured settling on BODY for 1.6s before this.
+    // Two frames, because the trap releases on its own timer.
     if (this.triggerElement) {
-      this.triggerElement.focus({ preventScroll: true });
+      const trigger = this.triggerElement;
       this.triggerElement = null;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          restoreFocus(trigger, findListContainer(document) ?? document.querySelector('main'));
+        });
+      });
     }
 
     this.announce('Media viewer closed');

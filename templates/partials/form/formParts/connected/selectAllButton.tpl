@@ -3,6 +3,7 @@
 {# guard has to come first.                                                     #}
 <div x-data x-show="$store.bulkSelection.elements.length > 0 && [...$store.bulkSelection.selectedIds].length + 1 !== $store.bulkSelection.elements.length" x-collapse>
     <button type="button"
+        data-bulk-select-all
         @click.prevent="$store.bulkSelection.selectAll()"
         class="
             inline-flex justify-center

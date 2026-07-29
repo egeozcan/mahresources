@@ -17,7 +17,7 @@
         </span>
       </template>
     </div>
-    <input type="text" x-model="groupQuery" @input.debounce.250ms="searchGroups()"
+    <input type="text" x-ref="groupSearch" x-model="groupQuery" @input.debounce.250ms="searchGroups()"
            placeholder="Search to add groups..." class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded"
            aria-label="Search groups to add" />
     <ul x-show="groupResults.length > 0" class="mt-2 max-h-48 overflow-y-auto border border-stone-200 rounded">

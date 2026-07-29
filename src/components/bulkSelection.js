@@ -3,6 +3,7 @@ import { observeSelectorField } from '../selector/selectorRegistry.ts';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { morphOptionsWithShortcodeElements } from '../utils/shortcodeElementMorph.js';
 import { findListContainer } from '../utils/listContainer.js';
+import { focusOn } from '../utils/focus.js';
 
 const btnClasses = `bulk-action-btn inline-flex justify-center
       py-1.5 px-3 mt-3
@@ -98,10 +99,32 @@ export function registerBulkSelectionStore(Alpine) {
 
     deselectAll() {
       this.selectedIds.forEach((x) => this.deselect(x));
+      this._followFocus('[data-bulk-select-all]');
     },
 
     selectAll() {
       this.elements.forEach((option) => this.select(option.itemId));
+      this._followFocus('[data-bulk-deselect-all]');
+    },
+
+    // WS4 finding 66. Both controls live inside an x-show/x-collapse wrapper
+    // keyed on the selection being empty, so activating one collapses the
+    // element that has focus and the browser drops the reader on <body> — after
+    // selecting 50 rows they had to Tab from the top of the document to reach
+    // the bulk actions they had just revealed.
+    //
+    // $nextTick is required, not optional: a synchronous focus() runs before
+    // Alpine flips x-show, so the destination is still display:none and refuses
+    // focus. It is also sufficient — measured, the replacement is focusable at
+    // the start of the transition, so there is no need to wait out x-collapse.
+    _followFocus(selector) {
+      queueMicrotask(() => {
+        requestAnimationFrame(() => {
+          const replacement = Array.from(document.querySelectorAll(selector))
+            .find((el) => el.offsetParent !== null);
+          if (replacement) focusOn(replacement);
+        });
+      });
     },
 
     hasActiveEditor() {

@@ -1,4 +1,5 @@
 <button type="button"
+    data-bulk-deselect-all
     @click.prevent="$store.bulkSelection.deselectAll()"
     class="
         inline-flex justify-center

@@ -1,3 +1,12 @@
+{# WS4 finding 90: expanded, this covers the viewport, but it declared no role, #}
+{# no aria-modal, no label, no trap and no Escape handler — Tab walked straight  #}
+{# onto controls the overlay was hiding.                                          #}
+{#                                                                                #}
+{# Every attribute below is BOUND, not literal. This element is never created or  #}
+{# destroyed — only the `expanded` class changes — and json.tpl is included by    #}
+{# displayResource / displayNote / displayNoteText / displayGroup / displayTag, so #}
+{# a hardcoded role="dialog" would put a permanent, never-open dialog landmark on #}
+{# all of them. Alpine drops an attribute whose bound value is false.             #}
 <div
         class="tableContainer flex gap-3 flex-col"
         x-cloak
@@ -7,17 +16,36 @@
                 jsonData: {{ jsonData|json }},
                 keys: '{{ keys }}' ,
                 expanded: false,
+                _expandTrigger: null,
+                setExpanded(next, event) {
+                    if (next && event) this._expandTrigger = event.currentTarget;
+                    this.expanded = next;
+                    if (next) return;
+                    const trigger = this._expandTrigger;
+                    this._expandTrigger = null;
+                    if (trigger) requestAnimationFrame(() => requestAnimationFrame(() => trigger.focus()));
+                },
             })
         "
+        :role="expanded && 'dialog'"
+        :aria-modal="expanded && 'true'"
+        :aria-label="expanded && '{{ metaTitle|default:"Meta Data" }}'"
+        {# Not .noscroll — x-effect below already owns the body scroll lock.      #}
+        {# .noreturn because the trap's own returnFocus records whatever had      #}
+        {# focus ~15ms after activation, which measured as an unrelated sidebar   #}
+        {# autocompleter. setExpanded() restores to the control that opened it,   #}
+        {# two frames later so the trap has finished releasing.                   #}
+        x-trap.noreturn="expanded"
+        @keydown.escape.stop="expanded && setExpanded(false)"
         x-effect="document.body.classList.toggle('overflow-hidden', expanded)"
-        @click="(e) => {if(!e.shiftKey) return; expanded = !expanded; e.preventDefault();}"
+        @click="(e) => {if(!e.shiftKey) return; setExpanded(!expanded, e); e.preventDefault();}"
 >
     <div class="metaHeader">
         <h2 class="sidebar-group-title">{{ metaTitle|default:"Meta Data" }}</h2>
         <button
                 x-show="jsonData && (Array.isArray(jsonData) ? jsonData.length : Object.keys(jsonData).length)"
                 class="metaExpandBtn"
-                @click.prevent="expanded = !expanded"
+                @click.prevent="setExpanded(!expanded, $event)"
                 :aria-label="expanded ? 'Minimize metadata view' : 'Expand metadata to fullscreen'"
                 :aria-expanded="expanded.toString()"
         >

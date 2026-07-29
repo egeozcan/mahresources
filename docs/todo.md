@@ -229,8 +229,8 @@ Statuses are filled in during Phase 1.
 | 1 | high | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — resource named `'205'`, Description survived  · **FIXED** |
 | 2 | high | bug | recovered | WS9 | verify | |
 | 3 | high | bug | recovered | WS7 | verify | |
-| 4 | high | a11y | recovered | WS4 | verify | |
-| 5 | high | a11y | verified-run | WS4 | spot | |
+| 4 | high | a11y | recovered | WS4 | verify | **CONFIRMED, worse than reported** — with an empty query the **first** Tab leaves; Shift+Tab leaves immediately too  · **FIXED** — `x-trap.noscroll.noreturn` |
+| 5 | high | a11y | verified-run | WS4 | spot | **CONFIRMED** — `BODY` at all 8 samples over 1.4s after ArrowRight  · **FIXED** — `render()` restores the roving target when focus was inside |
 | 6 | high | a11y | verified-run | WS5 | verify after 47 | |
 | 7 | high | bug | ✅ VERIFIED | WS13 | accept | |
 | 8 | high | bug | recovered | WS7 | verify | |
@@ -243,7 +243,7 @@ Statuses are filled in during Phase 1.
 | 15 | high | bug | recovered | WS2 | verify | **CONFIRMED** — no Save control, `@click.away` the only trigger  · **FIXED** — Save/Cancel + Ctrl/Cmd+Enter + keyboard focus-out commit |
 | 16 | high | bug | recovered | WS3 | verify | **CONFIRMED** — destructive confirm fired over an empty selection  · **FIXED** — submit disabled, confirm skipped, `losers` jargon gone |
 | 17 | high | bug | ✅ VERIFIED | WS12 | accept | |
-| 18 | high | ux | recovered | WS12 | verify | |
+| 18 | high | ux | recovered | WS12 | verify | **CONFIRMED** — Visual Editor blank on an unparseable schema; `rawJsonError` computed in `schemaEditorModal.ts:67-75` but rendered only inside the Raw tabpanel  · **FIXED** — hoisted above the tab body |
 | 19 | high | design | recovered | WS7 | verify | |
 | 20 | high | bug | ✅ VERIFIED | WS3 | accept | **CONFIRMED** — /categories 400, /tags 200, same SortBy  · **FIXED** — the option is only offered where the model has a meta column |
 | 21 | high | bug | recovered | WS2 | verify | **CONFIRMED** — only signal a 1×1 clipped region  · **FIXED** — visible inline error, editor stays open holding the input |
@@ -254,13 +254,13 @@ Statuses are filled in during Phase 1.
 | 26 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — live, `/log?id=521`  · **FIXED** |
 | 27 | med | bug | verified-run | WS8 | spot | **CONFIRMED** — `runtime_setting` missing from dropdown  · **FIXED** |
 | 28 | med | bug | verified-run | WS12 | spot | |
-| 29 | med | ux | verified-run | WS6 | spot | |
-| 30 | med | a11y | recovered | WS4 | verify | |
-| 31 | med | bug | recovered | WS6 | verify | |
-| 32 | med | ux | recovered | WS6 | verify | |
+| 29 | med | ux | verified-run | WS6 | spot | **PARTLY CONFIRMED** — the edit form of an empty category, yes; the report's "same on /category/new" is **wrong** (`_scopeParam()` already short-circuits there)  · **FIXED** — explains itself, and borrows an unscoped sample |
+| 30 | med | a11y | recovered | WS4 | verify | **CONFIRMED** — `BODY` at all 5 samples after Escape  · **FIXED** — `captureTrigger` + `restoreFocus`, `document.activeElement` fallback for Cmd+K |
+| 31 | med | bug | recovered | WS6 | verify | **PARTLY CONFIRMED, symptom stale** — the reported "No results found" has not been shown since 652917e5 (already on master); at HEAD the dialog body is **blank**  · **FIXED** — new below-threshold state |
+| 32 | med | ux | recovered | WS6 | verify | **CONFIRMED** — 15 shown, nothing said, `/search` 404  · **FIXED** — `totalCapped` + "See all N+" row + a real `/search` page. Report's `total=50` reading corrected: 50 is the service ceiling, not the match count |
 | 33 | med | ux | recovered | WS10 | verify | |
 | 34 | med | ux | recovered | WS3 | verify | **CONFIRMED** — bare page at /v1/users, every field lost  · **FIXED, cause corrected** — the empty `scopeGroupId` decodes to `*uint(0)`, which made the accurate message unreachable; and `HandleFormError` would have echoed the password (exact-case filter) |
-| 35 | med | a11y | recovered | WS4 | verify | |
+| 35 | med | a11y | recovered | WS4 | verify | **CONFIRMED** — `BODY` immediately, not a transition artefact  · **FIXED** — focus the search input; ref captured **before** the x-for teardown |
 | 36 | med | a11y | recovered | WS5 | verify | |
 | 37 | med | bug | recovered | WS8 | Dup → 27 | **CONFIRMED** — `?EntityType=runtime_setting` → select shows `''`  · **FIXED** |
 | 38 | med | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — seriesId=1 / 999999 / none all return 50  · **FIXED** |
@@ -279,7 +279,7 @@ Statuses are filled in during Phase 1.
 | 51 | med | bug | verified-run | WS13 | spot | |
 | 52 | med | bug | recovered | WS8 | Dup → 44 |  · **FIXED** |
 | 53 | med | bug | recovered | WS2 | Dup → 15 |  · **FIXED** |
-| 54 | med | ux | recovered | WS6 | verify | |
+| 54 | med | ux | recovered | WS6 | verify | **CONFIRMED** — zero articles, main text is chrome only  · **FIXED** |
 | 55 | med | ux | recovered | WS7 | verify | |
 | 56 | med | ux | recovered | WS3 | verify | **CONFIRMED** — full-page 400 at /v1/groups/addTags  · **FIXED** — guard + `tag ID` → `tag` |
 | 57 | med | ux | recovered | WS14 | verify | |
@@ -291,18 +291,18 @@ Statuses are filled in during Phase 1.
 | 63 | med | design | verified-run | WS7 | spot | |
 | 64 | med | a11y | verified-run | WS5 | spot | |
 | 65 | med | ux | verified-run | WS14 | spot | |
-| 66 | med | a11y | verified-run | WS4 | spot | |
+| 66 | med | a11y | verified-run | WS4 | spot | **CONFIRMED** — `BUTTON` at 0/200ms, `BODY` from 400ms  · **FIXED** — focus follows to the control that replaces it |
 | 67 | med | design | verified-run | WS7 | spot | |
-| 68 | med | ux | verified-run | WS6 | spot | |
+| 68 | med | ux | verified-run | WS6 | spot | **CONFIRMED** — both halves  · **FIXED** — `{% empty %}`, Select All gated, out-of-range page 302s |
 | 69 | med | bug | verified-run | WS1 | spot | **CONFIRMED** — 0×0 preview served 200  · **FIXED** — Dup → 72 |
 | 70 | med | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — simple p1=75, p2=4; grid p2=25  · **FIXED** |
 | 71 | med | bug | recovered | WS8 | verify |  · **FIXED** |
 | 72 | med | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED, cause corrected** — see below  · **FIXED** — zero-dim previews never persisted, 0×0 rows no longer canonical, SVG viewBox read at upload, poisoned rows repaired on read |
 | 73 | med | bug | recovered | WS1 | verify | **CAUSE WRONG** — see below  · **FIXED by 72's fix**; rotate confirmed atomic (it fails before any write) |
-| 74 | med | a11y | recovered | WS4 | verify | |
+| 74 | med | a11y | recovered | WS4 | verify | **CONFIRMED, cause corrected** — the restore already existed and was stomped twice; see below  · **FIXED** — blur deleted, `.noreturn`, restore deferred two frames |
 | 75 | med | design | recovered | WS7 | verify | |
 | 76 | med | a11y | recovered | WS5 | Dup → 139 | |
-| 77 | med | ux | recovered | WS6 | Dup → 68 | |
+| 77 | med | ux | recovered | WS6 | Dup → 68 | **CONFIRMED** — Dup → 68  · **FIXED** |
 | 78 | med | ux | recovered | WS14 | verify | |
 | 79 | med | bug | recovered | WS2 | verify (suspect) | **REJECTED — not reproducible** in 9 runs; the invisible checked boxes are the header settings toggles and the zero-checked Select All is a `nth=1` locator hitting hidden "Deselect All". See WS2 |
 | 80 | med | ux | recovered | WS7 | Dup → 25 | |
@@ -315,14 +315,14 @@ Statuses are filled in during Phase 1.
 | 87 | med | a11y | verified-run | WS2 | Dup → 15 |  · **FIXED** |
 | 88 | med | ux | verified-run | WS2 | Dup → 21 |  · **FIXED** |
 | 89 | med | design | verified-run | WS7 | spot | |
-| 90 | med | a11y | verified-run | WS4 | spot | |
+| 90 | med | a11y | verified-run | WS4 | spot | **CONFIRMED** — `role=null`, `aria-modal=null`, Escape inert, Tab onto covered controls  · **FIXED** — conditional dialog semantics + `x-trap` + explicit restore |
 | 91 | med | ux | verified-run | WS3 | Dup → 56 | **CONFIRMED**  · **FIXED** — Dup → 56 |
 | 92 | med | ux | verified-run | WS3 | Dup → 16 | **CONFIRMED**  · **FIXED** — Dup → 16 |
 | 93 | med | bug | verified-run | WS12 | Dup → 17 | |
 | 94 | med | bug | recovered | WS8 | verify | |
 | 95 | med | bug | recovered | WS12 | verify | |
 | 96 | med | ux | recovered | WS12 | verify | |
-| 97 | med | a11y | recovered | WS4 | verify | |
+| 97 | med | a11y | recovered | WS4 | verify | **CONFIRMED, cause corrected** — the restore existed and `$el` scoping broke it; x-trap was already present  · **FIXED** |
 | 98 | med | ux | recovered | WS14 | verify | |
 | 99 | med | a11y | recovered | WS5 | verify | |
 | 100 | med | ux | recovered | WS3 | verify | **CONFIRMED** — raw JSON body rendered as the message  · **FIXED** — shared `errorMessageFromResponse` |
@@ -347,11 +347,11 @@ Statuses are filled in during Phase 1.
 | 119 | low | ux | verified-run | WS3 | spot | **CONFIRMED** — two 404 presentations, `record not found` as the body  · **FIXED** — one presentation, a message per entity, and a recovery link |
 | 120 | low | design | verified-run | WS10 | spot | |
 | 121 | low | a11y | verified-run | WS10 | Dup → 116 | |
-| 122 | low | ux | verified-run | WS6 | spot | |
-| 123 | low | ux | verified-run | WS4 | spot | |
-| 124 | low | a11y | verified-run | WS4 | spot | |
+| 122 | low | ux | verified-run | WS6 | spot | **CONFIRMED** — every step of the report reproduces verbatim  · **FIXED** — Dup → 31 |
+| 123 | low | ux | verified-run | WS4 | spot | **CONFIRMED** — `openEditPanel` explicitly focused the Name input  · **FIXED** — `focusFirstIn` lands on the panel Close button |
+| 124 | low | a11y | verified-run | WS4 | spot | **CONFIRMED** — `BODY` after the x-for rebuild  · **FIXED** — lands on the row that took the deleted one's place |
 | 125 | low | ux | verified-run | WS11 | spot | |
-| 126 | low | design | verified-run | WS6 | spot | |
+| 126 | low | design | verified-run | WS6 | spot | **CONFIRMED** — todos alone has no zero-length branch  · **FIXED** |
 | 127 | low | a11y | verified-run | WS5 | spot | |
 | 128 | low | ux | verified-run | WS13 | spot | |
 | 129 | low | ux | recovered | WS14 | verify | |
@@ -371,7 +371,7 @@ Statuses are filled in during Phase 1.
 | 143 | low | bug | recovered | WS8 | verify (suspect) | |
 | 144 | low | ux | recovered | WS5 | verify | |
 | 145 | low | ux | recovered | WS14 | product | |
-| 146 | low | ux | recovered | WS6 | Dup → 68 | |
+| 146 | low | ux | recovered | WS6 | Dup → 68 | **CONFIRMED** — `/resources?page=99` 200s blank, Previous → page 98  · **FIXED** — 302 to the last real page; JSON/.body routes deliberately exempt |
 | 147 | low | bug | verified-run | WS11 | spot | |
 | 148 | low | design | verified-run | WS7 | spot | |
 | 149 | low | ux | verified-run | WS14 | spot | |
@@ -972,71 +972,250 @@ unchanged and pinned by tests; the HTML branch changed shape for every one of th
 
 ### WS4 — Focus management and modal semantics ★ a11y, and a11y is a project priority
 
-Findings **4, 5, 30, 35, 66, 74, 90, 97, 123, 124**. One shared helper plus per-site wiring.
+Findings **4, 5, 30, 35, 66, 74, 90, 97, 123, 124**. All ten confirmed live, each with a polled
+`document.activeElement` before and after. Two of the plan's stated causes were wrong in a way that
+would have produced a redundant or ineffective fix — see "Where the plan was wrong" below.
 
-The codebase already contains the correct pattern twice and never shares it:
-`downloadCockpit.js:67-83` + `:98-103` captures `_lastTrigger` from `event.currentTarget` and
-restores focus on close; `reloadShortcode.js:45` has a `restoreFocus(container, button, index)` with
-a `parkFocus` fallback — **module-private, not exported**. There is no `src/utils/focus*.js`.
+- [x] **Extracted `src/utils/focus.js`** — `NATIVELY_FOCUSABLE`, `FOCUSABLE_IN_CONTAINER`, `focusOn`,
+      `parkFocus`, `captureTrigger`, `restoreFocus`, `focusFirstIn`. The behaviour and most of the
+      comments come verbatim from the two places that already did this correctly
+      (`downloadCockpit.js`, `reloadShortcode.js`); both now import from it. Pure refactor, proved by
+      their existing specs staying green.
+      `restoreFocus(trigger, fallback)` adds the one thing neither had: an `isConnected` check.
+      `.focus()` on a detached node is silently a no-op, which is exactly how three of these
+      findings present.
+- [x] **4 + 30 — the global search dialog.** It was the only element in the app declaring
+      `aria-modal="true"` with no trap. `x-trap.noscroll.noreturn="isOpen"` on the panel div, and an
+      explicit capture/restore for the trigger.
+      `.noreturn` is not cosmetic: `x-trap` activates on a `setTimeout(…, 15)` and records whatever
+      has focus *then* as its return node — which is the search input this component focuses in
+      `$nextTick`. On close that node is already detached, so the trap's own restore lands on
+      `<body>` and finding 30 would have survived the fix for finding 4.
+      `toggle($event)` with a `document.activeElement` fallback, because the Cmd+K path calls
+      `toggle()` with no event at all.
+- [x] **The jobs cockpit had the same missing trap**, found while verifying 4. The plan cites it as
+      the app's correct example; it is — for focus *restore*. Tab measured walking straight out of it
+      (Close button → `<body>` → "Skip to main content" → nav) while its `aria-modal` panel was open.
+      `x-trap.noreturn="isOpen"` added there too. Not in the report.
+- [x] **5 — the group tree.** `render()` does `container.replaceChildren(ul)`, so the focused
+      `<li role=treeitem>` is detached; `_applyRovingTabindex` restored `tabindex="0"` but never
+      called `.focus()`, and tabindex is not focus. `render()` now re-focuses the roving target —
+      but only when focus was inside the container immediately before the swap. That condition
+      matters twice: `render()` also runs on first paint, where moving focus is a WCAG 3.2 change of
+      context; and `expandNode()` renders up to three times, which the condition chains through for
+      free. The hand-rolled refocus in the ArrowLeft branch — the one path that got this right — is
+      now redundant and gone.
+- [x] **35 — the export group picker.** `addGroup` clears `groupResults`, so the `x-for` tears out
+      the button that was just activated. Focus goes to the search input, which is outside the
+      `x-for` and the widget's one stable anchor.
+- [x] **66 — Select All / Deselect All.** Both live inside an `x-show`/`x-collapse` wrapper keyed on
+      the selection being empty, so activating one collapses the element that has focus. Focus now
+      follows to the control that replaces it (`data-bulk-select-all` / `data-bulk-deselect-all`, so
+      the lookup does not depend on label text). One change covers all four `bulkEditor*.tpl`.
+- [x] **74 — the lightbox.** See the correction below; the fix is three things, not one.
+- [x] **90 — the metadata Expand overlay.** Conditional `:role` / `:aria-modal` / `:aria-label`,
+      `x-trap.noreturn`, Escape, and an explicit restore to the control that opened it. Every
+      attribute is **bound, not literal**: the element is never created or destroyed — only the
+      `expanded` class changes — and `json.tpl` is included by five detail templates, so a hardcoded
+      `role="dialog"` would put a permanent, never-open dialog landmark on all of them.
+- [x] **97 — the schema editor.** See the correction below.
+- [x] **123 — the lightbox Info panel.** `openEditPanel()` ended with
+      `panel.querySelector('input, textarea').focus()`, which is `#lightbox-edit-name` — and
+      `canNavigate()` deliberately makes ArrowLeft/ArrowRight inert while a text field has focus, so
+      merely opening the panel killed image navigation with no indication why. `focusFirstIn` lands
+      on the panel's own Close button instead. The selector was the bug, so re-ordering the markup
+      would not have fixed it.
+- [x] **124 — deleting a saved query.** `fetchSavedQueries()` replaces the array wholesale, so the
+      `x-for` rebuilds every row. Focus lands on the row that took the deleted one's place, else the
+      previous row, else the section.
 
-- [ ] **Extract `src/utils/focus.js`** exporting `captureTrigger`, `restoreFocus`, `parkFocus`, and
-      rewire `reloadShortcode.js` and `downloadCockpit.js` to it (behaviour unchanged — this is a
-      pure refactor, verified by the existing specs staying green).
-- [ ] **4 + 30 — global search.** `templates/partials/globalSearch.tpl:31-37` declares
-      `role="dialog" aria-modal="true"` but has **no `x-trap`**, while `partials/lightbox.tpl:40`,
-      `entityPicker.tpl:19`, `pasteUpload.tpl:25`, `pluginActionModal.tpl:4` and
-      `blockEditor.tpl:727` all use `x-trap.noscroll`. Add `x-trap.noscroll` and restore focus to the
-      trigger on close (`globalSearch.js:139-144` currently clears state and touches nothing).
-- [ ] **90 — the metadata "Expand" overlay is not a dialog at all** (`role=null`, `aria-modal=null`,
-      no keydown handler). Make it `role="dialog" aria-modal="true"` with `x-trap.noscroll` and
-      Escape-to-close.
-- [ ] **66 — Select All / Deselect All drop focus because the focused button is collapsed away.**
-      `selectAllButton.tpl:1` wraps the button in `<div x-show="…" x-collapse>`; clicking it makes
-      the predicate false, so the button is removed while focused. Same for Deselect All, whose whole
-      toolbar (`bulkEditorResource.tpl:4`) is `x-show`/`x-collapse`. Move focus to the equivalent
-      control in the toolbar that replaces it.
-- [ ] **5, 35, 74, 97, 124** — restore focus after tree expand, export-picker add, lightbox close,
-      schema-modal close, and saved-query delete. All use the extracted helper.
-- [ ] **123 — the lightbox Info panel autofocuses the Name input**, so ArrowLeft/Right become caret
-      movement and image navigation dies silently. Do not autofocus an editable field on panel open.
-- [ ] **Guard:** a parameterized Playwright spec over `(page, action)` pairs asserting
-      `document.activeElement !== document.body` after each. This is the clearest gap in the current
-      suite — only 10 specs repo-wide use `toBeFocused`, and there is **no** focus-restore-on-close or
-      systematic focus-trap sweep.
+**Tests.** `e2e/tests/regressions/ws4-focus-management.spec.ts`, 11 tests, all seen red first (9 of
+11 on the first run; the other two were fixture gaps in the spec, corrected and then seen red).
+Playwright only — focus is a runtime property of the document, so there is nothing here Go can
+assert beyond markup, which is Batch 13's job.
+
+#### Where the plan was wrong
+
+1. **74 is not a missing restore, and not a missing trap.** `x-trap` is already on
+   `lightbox.tpl:40` and `close()` already called `triggerElement.focus()`. The restore fired, landed,
+   and was overwritten **twice**: by the still-active trap's `focusin` guard, and then by
+   focus-trap's own `returnFocus` — which had been poisoned to `<body>` by a pre-emptive
+   `document.activeElement.blur()` in `open()`, commented "so x-trap can move focus into the
+   lightbox". Measured counterfactual: the trap takes focus perfectly well with the trigger still
+   focused, so the blur bought nothing and cost everything. Fix = delete the blur, add `.noreturn`,
+   and defer the restore two frames so it runs after the trap releases.
+2. **97 is not an absent restore either.** `closeModal()` already called
+   `$el.querySelector('.visual-editor-btn')?.focus()`. It never ran, because `$el` in an Alpine
+   method is the element whose directive is evaluating — the modal's own close button — not the
+   component root. That is **already written down** in `docs/lessons.md` from `descriptionEditor.js`,
+   and it caught a second file. `$root` would not have helped (it walks up from the same element and
+   is undefined once the subtree goes); the trigger is captured at open instead.
+3. **The plan's blanket "all use the extracted helper" is wrong for three of the five sites it
+   lists.** 5, 35 and 124 all destroy the trigger themselves, so `restoreFocus(trigger)` is
+   inapplicable by construction — the captured node is disconnected. Those need `focusOn` on a
+   node re-found *after* the re-render, which is a different shape.
+
+#### Two defects the tests did not catch, and one the spec nearly hid
+
+1. **`expect.poll` is satisfied by a transient early state, which made the finding-66 test pass
+   against the bug.** Measured, the activated Select All is still focused at 0 ms and 200 ms and only
+   loses focus at ~400 ms. `expect.poll(...).toBe(true)` returns on the *first* match, so it caught
+   the pre-teardown sample and went green. The spec now has `settledActiveElement`, which waits for
+   `document.activeElement` to stop changing (~600 ms of quiet) and asserts once. Every focus
+   assertion in the file goes through it.
+2. **`$refs` read inside a deferred callback resolves against a detached element and comes back
+   empty.** The first cut of the finding-35 fix was `$nextTick(() => focusOn(this.$refs.groupSearch))`
+   and did nothing at all: `addGroup` is invoked from a button inside the `x-for`, so `this` is that
+   row's scope, and by the time the tick runs the row is gone. A `focusin`/`focusout` log showed the
+   button gaining focus, losing it, and nothing ever gaining it again — no error, no warning. The ref
+   is read synchronously now. Same family as the `$el`/`$root` trap already in `docs/lessons.md`,
+   third variant.
+3. **A synchronous restore runs before the teardown it is compensating for.** Setting the
+   `open`/`isOpen` flag only *schedules* Alpine's work, so `restoreFocus` called on the next line
+   lands while the dialog is still mounted and its trap is still active — the trap pulls focus
+   straight back, and the reader ends on `<body>` anyway. This bit findings 74, 90 and 97
+   independently, each measured settling on `<body>` before the defer was added. The one that worked
+   first time (finding 30) did so only because its restore sits in a `$watch` handler, which Alpine
+   already runs after the flush.
 
 ### WS6 — Empty states ★ lowest effort per finding
 
-Findings **29, 31, 32, 54, 68/77/146, 122, 126, 18**.
+Findings **29, 31, 32, 54, 68/77/146, 122, 126, 18**. All ten confirmed, two only partly — and the
+plan's own count of the work was wrong. See "Where the plan was wrong" at the end of this section.
 
-The pattern already exists: `templates/listTags.tpl:22-23` uses Pongo2's `{% empty %}` to render
-`<div class="detail-empty">No tags found. <a href="/tag/new">Create one</a>.</div>`, styled at
-`public/index.css:781-796`. Nine list templates follow it. **Twelve do not:**
+- [x] **The six templates that actually needed `{% empty %}`.** `listResources.tpl`,
+      `listResourcesDetails.tpl`, `listResourcesSimple.tpl`, `listNotes.tpl`, `listGroups.tpl`,
+      `listGroupsText.tpl`. All six now include the new shared `partials/listEmpty.tpl`, and so do
+      the eight templates that already had their own hand-rolled copy — so there is one wording, one
+      class, and one place to change it.
+      - The wording branches on a new `hasActiveFilter`, computed once in `StaticTemplateCtx`
+        (`list_filters.go`) because it is a property of the URL, not of any entity: *"No resources
+        match these filters. Clear filters."* against *"No resources yet. Create one."*
+        `clearFiltersUrl` keeps the sort — sorting is not what emptied the list — and drops the page.
+      - `hasActiveFilter` treats **any** unrecognised parameter as a filter. That is the safe
+        default: a filter field nobody adds to `nonFilterParams` still produces the honest "match
+        these filters" wording rather than the wrong "nothing here yet".
+      - `.list-container > .detail-empty { grid-column: 1 / -1 }` was needed and is not obvious.
+        `.list-container` is `grid-template-columns: repeat(auto-fill, minmax(280px, 1fr))`, so the
+        message lands in the **first 280px column** and reads as mis-centered. Measured at 404px
+        inside an 824px container before the rule. `.items-container` (the groups lists) is a flex
+        column and needed nothing.
+      - `listResourcesDetails.tpl`'s empty state is a `<tr><td colspan="9">`, not a bare `<div>`:
+        between `<tbody>` and `<tr>` the HTML parser hoists a `<div>` out of the table entirely. It
+        stays inside `data-list-container` so a bulk delete that empties the list morphs it in.
+- [x] **Select All is hidden when there is nothing to select.**
+      `selectAllButton.tpl:1`'s predicate was `selectedIds.length + 1 !== elements.length`, which on
+      an empty list is `1 !== 0` — true. The length guard now comes first. One file, and the four
+      `bulkEditor*.tpl` partials that include it twice each get it for free.
+- [x] **68/146 — an out-of-range `?page=` redirects to the last real page.** `GetPageParameter`
+      clamps only to `[1, 1e9]`; the count is not known there. `outOfRangePageRedirect` is called at
+      each of the twelve `GeneratePagination` sites — the one place where the page, the size and the
+      count are all in hand — and returns the `_redirect` context `RenderTemplate` already honours
+      (`render_template.go:44`).
+      Three things it deliberately does **not** do:
+      - **It does not redirect a zero-result list.** There is no last valid page to send anyone to;
+        redirecting would fight the empty state, and page 1 answers identically. Pinned by
+        `TestEmptyResultPage_IsNotRedirected`.
+      - **It does not redirect the JSON or `.body` routes.** `routes.go` registers `path`,
+        `path + ".json"` and `path + ".body"` against the same provider, and the `_redirect` check
+        runs *before* the JSON branch — so without the exclusion the documented dual-response
+        contract would have started answering 302 to `/resources.json?page=99`. Pinned by
+        `TestOutOfRangePage_JSONContractUnchanged`. This was not in the plan and would have been an
+        undetected API break.
+      - **It does not fire on the MRQL fail-closed path**, where the count is left at zero
+        deliberately so the error banner renders — the zero-count guard covers that for free.
+- [x] **31 + 122 — the sub-threshold search state.** New `belowSearchThreshold` on the component and
+      a third region in `globalSearch.tpl`. It tests the **raw** length for "something was typed" and
+      the **trimmed** length for "long enough", which is exactly the pair the other two regions split
+      between them — so a whitespace-only query of any length falls into it too, not just the literal
+      one-character case the report names. The 2-character minimum is kept (product default) and is
+      now one shared `MIN_SEARCH_LENGTH` constant rather than a literal in two places.
+- [x] **32 — the truncation indicator and the `/search` page.**
+      - `GlobalSearchResponse` gained `totalCapped`. This is the correction that mattered: the plan
+        says to render *"Showing 15 of N"*, but `search.go` trims to its own 50-row ceiling **before**
+        computing `total`, so `N` is a floor. A corpus with 4000 matches also reports 50. The dialog
+        renders `50+` when the flag is set and a bare number when it is not.
+      - The overflow row is appended to `navResults` rather than put in the footer. `selectResult()`
+        only ever reads `url` off the selected row, so it becomes arrow-key reachable for free —
+        the same shape the pinned MRQL row already uses.
+      - **`/search` is a new page**, scoped deliberately: `searchResults.tpl` +
+        `SearchPageContextProvider`, results grouped by entity type in a fixed order (ranging the map
+        would reintroduce finding 47), with a search box in the sidebar. It is **not paginated** —
+        the service returns at most 50 rows, so a page 2 would be empty by construction. The page
+        states the cap instead of pretending to page past it. Raising the service ceiling is a
+        performance decision this finding does not license.
+- [x] **126 — the empty todos block.** Two sibling `<template x-if>` branches, matching what gallery,
+      references and table already do. Alpine allows only one root element inside a `<template x-if>`,
+      so it has to be a sibling rather than a wrapping div.
+- [x] **18 — the schema parse error is on whichever tab is open.** `openModal` already computes
+      `rawJsonError` and then hard-sets the tab to `edit`, while the message was rendered only inside
+      the *raw* tabpanel. It is hoisted above the tab body, the duplicate `role="alert"` inside the
+      raw panel is gone (two live regions would announce the same string twice), and the Edit tab
+      now explains itself and offers a button to the Raw tab instead of rendering an empty editor.
+- [x] **29 — the category live preview says something.** Two changes in `templatePreview.js`: the
+      silent `else if (!this.entityId) return;` now sets an error and blanks the frame the way the
+      carrier branch already did, and `_loadDefaultEntity` falls back to an **unscoped** sample when
+      the scoped lookup finds nothing. The pane says so, because that sample does not carry the
+      category's meta. The scoping is not dropped in general — it is deliberate.
 
-`listResources.tpl`, `listResourcesDetails.tpl`, `listResourcesSimple.tpl`, `listResourcesTimeline.tpl`,
-`listNotes.tpl`, `listNotesTimeline.tpl`, `listGroups.tpl`, `listGroupsText.tpl`, `listGroupsTimeline.tpl`,
-`listCategoriesTimeline.tpl`, `listQueriesTimeline.tpl`, `listTagsTimeline.tpl`.
+**Tests.** `server/api_tests/ws6_empty_states_test.go` (8 lists × 2 assertions, the filtered/unfiltered
+split, the Select All gate, the redirect, and three negative controls) and
+`server/api_tests/ws6_search_page_test.go` (the page, its empty and no-query states, and both
+directions of `totalCapped`). Playwright for what Go cannot reach:
+`e2e/tests/regressions/ws6-empty-states.spec.ts`. **All seen red first** — the four templates were
+reverted on disk and three of the five specs failed exactly where expected, then restored.
 
-- [ ] Add `{% empty %}` to all twelve, with a "clear filters" link when a filter is active.
-      **Product default:** mirror the tags wording — *"No resources match these filters. Clear filters."*
-      when filtered, *"No resources yet. Create one."* when not.
-- [ ] Hide "Select All" when there is nothing to select.
-- [ ] **68/146** — an out-of-range `?page=99` should redirect to the last valid page rather than
-      render blank with a pagination footer that still lists pages 1-2.
-- [ ] **31 + 122 — the 1-character query is the only unhandled search state.**
-      `globalSearch.js:162` returns early below 2 characters; the template shows the placeholder only
-      at `query.length === 0` (`globalSearch.tpl:152`) and the empty state only at `>= 2` (`:141`).
-      **Product default:** keep the 2-character minimum and show *"Type at least 2 characters"* —
-      never a definitive-sounding "No results found".
-- [ ] **32** — `globalSearch.js:187` hardcodes `limit=15` while the API reports a much larger total.
-      **Product default:** render *"Showing 15 of N — press Enter to see all"* and add the missing
-      `/search` results page (it currently 404s).
-- [ ] **126** — an empty todos block renders a zero-height blank card while References, Gallery and
-      Table all render an empty-state line. Match them.
-- [ ] **29** — the category live preview is a permanently blank 384px box for a category with no
-      groups, and the "Preview against" search is scoped by `categoryId` so a brand-new category can
-      never populate it. **Product default:** fall back to a synthetic sample entity, and say so.
-- [ ] **18** — the Visual Editor opens blank when the stored schema is invalid; the parse error is
-      hidden behind the Raw JSON tab. Surface it on the default tab.
+#### Where the plan was wrong
+
+1. **"Twelve list templates have no `{% empty %}`" — six of those twelve have no server-side loop at
+   all.** `listResourcesTimeline`, `listNotesTimeline`, `listGroupsTimeline`,
+   `listCategoriesTimeline`, `listQueriesTimeline` and `listTagsTimeline` are 8-15 lines that
+   `{% include "/partials/timeline.tpl" %}`, which renders an Alpine chart in the browser. There is
+   no `{% for %}` to attach `{% empty %}` to. **They already have an empty state** —
+   `timeline.js:173-175` renders *"No activity in this period."* — verified live on
+   `/resources/timeline?mrql=name ~ "*zzzznope*"` and `/categories/timeline?name=zzzznope`, with the
+   unfiltered timeline rendering bars as the control that the message is conditional. The real count
+   was **six**, and eight more templates were folded onto the shared partial for consistency.
+2. **Finding 31's symptom is stale.** The report says a one-character query shows a definitive
+   *"No results found for 'a'"*. It has not, since 652917e5 — a commit already on master — changed
+   the empty state's predicate from `query.length > 0` to `query.trim().length >= 2`. That moved the
+   defect from "wrong message" to "**no** message". A fixer chasing the reported string would have
+   found nothing to change and closed it as not-reproducible; the actual defect (a blank dialog body,
+   for one character *and* for whitespace of any length) is real and is what was fixed. The report's
+   own evidence contains the answer — it quotes `textContent`, which includes `x-show`-hidden markup;
+   finding **32's** author noticed exactly this and said so, and 31's did not.
+3. **Finding 29's scope is narrower than reported.** Its step 7, "same on /category/new", is wrong:
+   `_scopeParam()` already returns `''` when there is no `categoryId`, with a comment saying why.
+   Verified live — `/category/new` issues an unscoped lookup and renders a real preview. Only the
+   **edit** form of a category with no members is affected.
+4. **Finding 32's numbers are misread.** "The backend reports total=50" is read as the true match
+   count; 50 is the service's own ceiling, applied before counting. "It caps the payload at 20" is
+   the *default* limit, not a cap. A fix that printed `total` verbatim would have shipped a number
+   that is a lie on any large corpus.
+
+#### Two defects the tests did not catch, both in existing tests
+
+Same shape as the earlier batches: something that measured nothing.
+
+1. **`TestViewSwitcherDropsPageNumber` (the Batch 2 guard for finding 70) was passing vacuously, and
+   for two independent reasons.** It created 3 resources and requested `?page=2` — which the new
+   redirect answers with a 302, so its premise had become unreachable and its assertions would have
+   run against a redirect body. Fixing that exposed the second: its locator matched **every**
+   `/resources…` href on the page, including the pagination footer. It only ever passed because 3
+   resources meant no pagination link carried `page=2` either. With a real page 2 the footer
+   correctly links to page 2 and the test failed on it. It now reads only
+   `class="view-switcher-option"` links — what it always claimed to be about — and carries a positive
+   control that `page=2` is present somewhere, so "no view-switcher link carries it" cannot pass
+   against an empty page. **A test whose locator is wider than its subject passes for reasons
+   unrelated to the thing it guards.**
+2. **`SetupTestEnv` cannot be used to test anything that fans out over goroutines.** It opens
+   `file:<test>?mode=memory&cache=private`, where each new connection is a *separate, empty*
+   database. `GlobalSearch` runs ten goroutines, one per entity type, which forces the pool open — so
+   nine of the ten query an empty schema and every search returns `{"total":0,"results":[]}`. The
+   first draft of `ws6_search_page_test.go` looked like it was testing search and was testing
+   nothing; `TestGlobalSearch_ExactTotalIsNotFlaggedAsAFloor` "passed" against zero results.
+   `auth_test.go:22-30` already documents the trap for sessions and tokens. `setupSearchEnv` pins
+   `SetMaxOpenConns(1)`.
 
 ### WS5 — Keyboard operability, accessible names, headings, target sizes
 
@@ -1338,8 +1517,8 @@ the cheapest high-confidence work clears the ledger early.
 - [x] **Batch 4** — WS2 silent write failures. Second data-loss cluster.
 - [x] **Batch 5** — WS3 validation and error surfaces. Start with `HandleError`; the client-side
       guards then have a survivable fallback behind them.
-- [ ] **Batch 6** — WS6 empty states. Cheap, and the `{% empty %}` pattern is mechanical.
-- [ ] **Batch 7** — WS4 focus management. Extract `src/utils/focus.js` first as a pure refactor.
+- [x] **Batch 6** — WS6 empty states. Cheap, and the `{% empty %}` pattern is mechanical.
+- [x] **Batch 7** — WS4 focus management. Extract `src/utils/focus.js` first as a pure refactor.
 - [ ] **Batch 8** — WS5 keyboard, names, headings, target sizes.
 - [ ] **Batch 9** — WS7 mobile and layout. Start with finding 3 (nav trap) and 8 (one-line CSS).
 - [ ] **Batch 10** — WS10 global chrome, WS9 jobs cockpit.
@@ -1369,6 +1548,25 @@ the cheapest high-confidence work clears the ledger early.
 ## Review
 
 _To be filled in on completion._
+
+### Batch 6 (WS6) — verification run
+
+| Gate | Result |
+|---|---|
+| `go test --tags 'json1 fts5' ./...` | pass (37 packages) |
+| `staticcheck ./...` | clean |
+| `npm run build` | clean |
+| `npm run test:unit` | 766 passed / 45 files |
+| `cd e2e && npm run test:with-server:all` | **1769 passed, 0 failed**, 1 flaky, 5 skipped |
+
+**The one flake was self-inflicted and is a process correction.**
+`lightbox.spec.ts` "should restore focus to the same input after navigating with info panel open"
+failed once, at a 10.7s timeout. It did not reproduce: 8/8 alone with `--repeat-each=8 --retries=0`,
+and 279/279 for the whole `lightbox/` directory at `--repeat-each=3 --retries=0`. It failed only in
+the run where four verification agents were driving their own browsers concurrently — CPU contention
+against a poll-based focus assertion. **Verification agents and the E2E gate are run serially from
+Batch 7 on.** Rebuilding `public/dist/main.js` mid-run (which also happened) has the same problem:
+the running servers read that file from disk.
 
 ### Batch 5 (WS3) — verification run
 

@@ -1,4 +1,5 @@
 import { abortableFetch } from '../index.js';
+import { focusOn, parkFocus } from '../utils/focus.js';
 
 export function groupTree({ initialRows = [], highlightedPath = null, containingId = 0, rootId = 0 }) {
   const pathArray = highlightedPath || [];
@@ -68,10 +69,30 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
         }));
       });
 
+      // WS4 finding 5. replaceChildren discards every <li role=treeitem> and
+      // every toggle <button>, so whichever of them had focus is detached and
+      // the browser resets to <body> — a keyboard user had to Tab in from the
+      // top of the page after every single expand.
+      //
+      // The condition is "focus was inside the tree", not a flag set by the
+      // action, and that is deliberate on two counts: render() also runs on
+      // first paint, where moving focus would be a WCAG 3.2.5 change of context
+      // the reader did not ask for; and expandNode() renders up to three times
+      // (loading, then again in `finally`), which this chains through for free
+      // because the first restore puts focus back inside the container.
+      const hadFocus = container.contains(document.activeElement);
+
       container.replaceChildren(ul);
 
       // BH-029: roving tabindex — exactly one treeitem is tab-stoppable.
       this._applyRovingTabindex(container, prevStopId);
+
+      if (hadFocus) {
+        // The roving target is the node the user was on. tabindex is not focus,
+        // which is why _applyRovingTabindex alone never fixed this.
+        const target = container.querySelector('li[role="treeitem"][tabindex="0"]');
+        if (!focusOn(target)) parkFocus(container);
+      }
     },
 
     _applyRovingTabindex(container, preferredId = null) {
@@ -271,12 +292,10 @@ export function groupTree({ initialRows = [], highlightedPath = null, containing
             if (!Number.isNaN(nodeId)) {
               e.preventDefault();
               this.expandedNodes.delete(nodeId);
+              // render() restores focus to the roving target for every path
+              // now, so the hand-rolled refocus that used to live here — the
+              // only path in the component that got this right — is redundant.
               this.render();
-              const refocused = container.querySelector(`li[role="treeitem"][data-group-id="${nodeId}"]`);
-              if (refocused) {
-                // _applyRovingTabindex already set tabindex=0 on the same node via preferredId.
-                refocused.focus();
-              }
             }
             return;
           }

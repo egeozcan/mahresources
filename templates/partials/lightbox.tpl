@@ -37,7 +37,10 @@
     }"
     x-show="$store.lightbox.isOpen"
     x-cloak
-    x-trap="$store.lightbox.isOpen && !$store.lightbox.cropOpen"
+    {# .noreturn (WS4 finding 74): the trap records whatever had focus when it #}
+    {# activated and restores to it on release, which raced and then beat     #}
+    {# close()'s own restore. close() owns that decision now.                 #}
+    x-trap.noreturn="$store.lightbox.isOpen && !$store.lightbox.cropOpen"
     @keydown.escape.window="$store.lightbox.isOpen && ($store.lightbox.cropOpen ? $store.lightbox.closeCrop() : ($store.lightbox.isExpanded() ? $store.lightbox.collapseExpanded() : $store.lightbox.handleEscape()))"
     @keydown.arrow-left.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.prev()"
     @keydown.arrow-right.window="$store.lightbox.isOpen && canNavigate() && $store.lightbox.next()"
