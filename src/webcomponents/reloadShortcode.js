@@ -82,13 +82,22 @@ const NATIVELY_FOCUSABLE = [
 ].join(', ');
 
 // A region wrapper is display:contents, so it generates no box and browsers do
-// not reliably let it take focus. Rather than guess, try it and check.
+// not reliably let it take focus. Rather than guess, try it and check, then work
+// outwards. Each rung is further from the refreshed content than the last, and
+// the ladder only ends where focus already was, so it never leaves the reader
+// worse off than doing nothing.
 function parkFocus(element) {
   if (focusOn(element)) return;
   // The wrapper could not hold focus, so hand it to the first child that can. A
   // hidden or boxless child is skipped rather than swallowing the focus.
   for (const child of element.children) {
     if (focusOn(child)) return;
+  }
+  // Nothing inside can hold it either: a boxless wrapper whose refreshed content
+  // is only text has no element child at all. Climb until something takes it,
+  // which lands the reader beside the content instead of on <body>.
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    if (focusOn(ancestor)) return;
   }
 }
 
@@ -137,9 +146,9 @@ function scheduleNameCheck(host) {
   });
 }
 
-// Text an assistive technology would actually reach: everything under an
-// aria-hidden subtree contributes nothing to the accessible name, and neither
-// does anything CSS has taken off the page.
+// Text an assistive technology would actually reach. Four ways a subtree can
+// carry words that name nothing: aria-hidden, the hidden attribute, inert (which
+// removes it from the accessibility tree just as thoroughly), and CSS.
 function exposedText(element) {
   let text = '';
   for (const node of element.childNodes) {
@@ -149,6 +158,7 @@ function exposedText(element) {
       node.nodeType === Node.ELEMENT_NODE &&
       node.getAttribute('aria-hidden') !== 'true' &&
       !node.hasAttribute('hidden') &&
+      !node.hasAttribute('inert') &&
       isDisplayed(node)
     ) {
       text += exposedText(node);

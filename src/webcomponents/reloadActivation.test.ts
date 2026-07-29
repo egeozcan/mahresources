@@ -155,3 +155,91 @@ describe('reload activation across a morph', () => {
     expect(host.appended[0].textContent).toBe('Reload failed.');
   });
 });
+
+// Focus parking, exercised through _activate because that is the only way in.
+// A region wrapper is display:contents: it generates no box, so browsers do not
+// reliably let it hold focus.
+function parkable(canFocus: boolean, extra: Record<string, any> = {}) {
+  const attrs: Record<string, string> = {};
+  const el: any = {
+    isConnected: true,
+    children: [],
+    parentElement: null,
+    querySelectorAll: () => [],
+    matches: () => false,
+    getAttribute: (k: string) => attrs[k] ?? null,
+    hasAttribute: (k: string) => k in attrs,
+    setAttribute: (k: string, v: string) => void (attrs[k] = v),
+    removeAttribute: (k: string) => void delete attrs[k],
+    classList: { add: () => {}, remove: () => {}, contains: () => false },
+    ...extra,
+  };
+  el.focus = vi.fn(() => {
+    if (canFocus) (globalThis as any).document.activeElement = el;
+  });
+  return el;
+}
+
+describe('focus parking when the activated button is gone', () => {
+  it('walks out to an ancestor when the region holds only text', async () => {
+    // A conditional dropped the button from the refreshed content, and what came
+    // back is bare text: no element child anywhere to land on.
+    const ancestor = parkable(true);
+    const region = parkable(false, { parentElement: ancestor });
+    const button = fakeButton();
+
+    let settle: any;
+    const host = Object.create(ReloadShortcode.prototype);
+    host._init = true;
+    host._busy = false;
+    host._activationId = 0;
+    host.appended = [];
+    host.appendChild = (n: any) => host.appended.push(n);
+    host.querySelector = () => null;
+    host._resolveTarget = () => ({
+      container: region,
+      run: () => new Promise((resolve) => { settle = resolve; }),
+    });
+
+    (globalThis as any).document.activeElement = button;
+    const activation = host._activate(button);
+    button.isConnected = false; // the swap removed it
+    settle(true);
+    await activation;
+
+    // Leaving the reader on <body> is what the fallback exists to prevent.
+    expect(region.focus).toHaveBeenCalled();
+    expect(ancestor.focus).toHaveBeenCalled();
+    expect((globalThis as any).document.activeElement).toBe(ancestor);
+  });
+
+  it('prefers an element child over an ancestor', async () => {
+    const ancestor = parkable(true);
+    const child = parkable(true);
+    const region = parkable(false, { parentElement: ancestor, children: [child] });
+    const button = fakeButton();
+
+    let settle: any;
+    const host = Object.create(ReloadShortcode.prototype);
+    host._init = true;
+    host._busy = false;
+    host._activationId = 0;
+    host.appended = [];
+    host.appendChild = (n: any) => host.appended.push(n);
+    host.querySelector = () => null;
+    host._resolveTarget = () => ({
+      container: region,
+      run: () => new Promise((resolve) => { settle = resolve; }),
+    });
+
+    (globalThis as any).document.activeElement = button;
+    const activation = host._activate(button);
+    button.isConnected = false;
+    settle(true);
+    await activation;
+
+    expect(child.focus).toHaveBeenCalled();
+    expect(ancestor.focus).not.toHaveBeenCalled();
+  });
+});
+

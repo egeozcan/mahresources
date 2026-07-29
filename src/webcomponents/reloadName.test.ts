@@ -126,6 +126,15 @@ describe('reload button accessible name', () => {
     expect(button.getAttribute('aria-label')).toBeNull();
   });
 
+  it('ignores subtrees taken out of the accessibility tree with inert', async () => {
+    const button = fakeButton([elementNode({ inert: '' }, [textNode('Refresh')])]);
+
+    hostFor(button).connectedCallback();
+    await flush();
+
+    expect(button.getAttribute('aria-label')).toBe('Reload');
+  });
+
   it('keeps a name the server already supplied', async () => {
     const button = fakeButton([elementNode({ 'aria-hidden': 'true' }, [textNode('↻')])]);
     button.setAttribute('aria-label', 'Refresh totals');

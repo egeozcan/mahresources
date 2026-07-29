@@ -86,6 +86,45 @@ const reloadGenerations = new WeakMap();
 function invalidateReloads(contentEl) {
   if (!contentEl) return;
   reloadGenerations.set(contentEl, (reloadGenerations.get(contentEl) || 0) + 1);
+  // The stranded attempt will never run its own cleanup, so it is settled from
+  // here: its caller learns straight away that it was abandoned, instead of
+  // waiting on a response nobody will use — which may be slow, or never come.
+  // Dropping the entry also matters because activeReloads holds strong
+  // references, and a leaked one outlives the page it belonged to.
+  const entry = activeReloads.get(contentEl);
+  if (!entry) return;
+  activeReloads.delete(contentEl);
+  entry.abandon();
+}
+
+// Containers currently being reloaded, so an overlap can be detected. A WeakMap
+// cannot be walked, and this only ever holds what is in flight.
+const activeReloads = new Map();
+
+// Two reloads whose containers nest are, to the reader, the same reload: writing
+// a region also rewrites every block inside it. Keyed by container alone, each
+// would believe itself unopposed, and the one that answered last would win no
+// matter which was asked for last — so a slow region reload could land on top of
+// a block the reader refreshed afterwards, with content that predates it.
+//
+// The newer activation wins, whether it targets the same container or one that
+// nests with it.
+function supersede(contentEl) {
+  for (const [other, entry] of activeReloads) {
+    if (other !== contentEl && !overlaps(other, contentEl)) continue;
+    invalidateReloads(other);
+    if (other === contentEl) continue;
+    // A different container is taking over. The abandoned reload will not clear
+    // its own busy state (a superseded attempt keeps its hands off shared
+    // state), and the new one is setting it on a different element, so without
+    // this its container would stay marked busy for good.
+    entry.host.removeAttribute('aria-busy');
+    other.classList.remove('deferred-reloading');
+  }
+}
+
+function overlaps(a, b) {
+  return (typeof a.contains === 'function' && a.contains(b)) || (typeof b.contains === 'function' && b.contains(a));
 }
 
 // reloadInto re-fetches token and swaps the result into contentEl, keeping the
@@ -102,20 +141,31 @@ function invalidateReloads(contentEl) {
 // caller does not report success for a result nobody saw. Rejects when the fetch
 // fails.
 export function reloadInto(host, contentEl, token, isStale) {
+  supersede(contentEl);
   const generation = (reloadGenerations.get(contentEl) || 0) + 1;
   reloadGenerations.set(contentEl, generation);
+
+  // Settled the moment something else takes this container over, so the caller
+  // is not left waiting on a request whose result can no longer be used.
+  let abandon;
+  const abandoned = new Promise((resolve) => {
+    abandon = () => resolve(false);
+  });
+  activeReloads.set(contentEl, { host, abandon });
+
   host.setAttribute('aria-busy', 'true');
   contentEl.classList.add('deferred-reloading');
 
   // A superseded reload keeps its hands off the busy state: the newer one owns it.
   const current = () => {
     if (reloadGenerations.get(contentEl) !== generation) return false;
+    activeReloads.delete(contentEl);
     host.removeAttribute('aria-busy');
     contentEl.classList.remove('deferred-reloading');
     return true;
   };
 
-  return fetchDeferred(token).then(
+  const settled = fetchDeferred(token).then(
     (html) => {
       if (!current() || !contentEl.isConnected) return false;
       if (typeof isStale === 'function' && isStale()) return false;
@@ -135,6 +185,11 @@ export function reloadInto(host, contentEl, token, isStale) {
       throw err;
     },
   );
+
+  // Whichever comes first: a real outcome, or the news that this attempt no
+  // longer matters. A late failure on an abandoned attempt resolves false rather
+  // than throwing, so nothing is left unhandled.
+  return Promise.race([abandoned, settled]);
 }
 
 class LazyShortcode extends HTMLElement {

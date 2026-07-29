@@ -19,12 +19,15 @@ beforeAll(async () => {
   ({ reloadInto } = await import('./deferredShortcodes.js'));
 });
 
-function fakeEl() {
+function fakeEl(descendants: any[] = []) {
   const attrs = new Map<string, string>();
   const classes = new Set<string>();
   return {
     innerHTML: 'original',
     isConnected: true,
+    // A region contains the deferred blocks inside it; reloadInto has to be able
+    // to see that overlap.
+    contains: (other: any) => descendants.includes(other),
     setAttribute: (k: string, v: string) => void attrs.set(k, v),
     removeAttribute: (k: string) => void attrs.delete(k),
     hasAttribute: (k: string) => attrs.has(k),
@@ -166,3 +169,114 @@ describe('reloadInto', () => {
     expect(el.innerHTML).toBe('original');
   });
 });
+
+describe('reloadInto across nested containers', () => {
+  it('lets a reload inside a block supersede the region reload enclosing it', async () => {
+    const inner = fakeEl();
+    const region = fakeEl([inner]);
+
+    // The reader asks for the whole region, then changes their mind and refreshes
+    // just the block inside it. The region's answer is the slower one.
+    const outer = reloadInto(region, region, 'region-token');
+    const nested = reloadInto(inner, inner, 'inner-token');
+
+    pending[1].resolve('fresh block');
+    await expect(nested).resolves.toBe(true);
+
+    pending[0].resolve('stale region');
+    // Replacing the region would throw away the block the reader just refreshed
+    // and put back a render that predates it.
+    await expect(outer).resolves.toBe(false);
+    expect(region.innerHTML).toBe('original');
+    expect(inner.innerHTML).toBe('fresh block');
+  });
+
+  it('lets a region reload supersede a block reload inside it', async () => {
+    const inner = fakeEl();
+    const region = fakeEl([inner]);
+
+    const nested = reloadInto(inner, inner, 'inner-token');
+    const outer = reloadInto(region, region, 'region-token');
+
+    pending[1].resolve('fresh region');
+    await expect(outer).resolves.toBe(true);
+
+    pending[0].resolve('stale block');
+    // The region render already contains this block, freshly rendered.
+    await expect(nested).resolves.toBe(false);
+    expect(inner.innerHTML).toBe('original');
+    expect(region.innerHTML).toBe('fresh region');
+  });
+
+  it('clears the busy state of the overlapping reload it superseded', async () => {
+    const inner = fakeEl();
+    const region = fakeEl([inner]);
+
+    reloadInto(region, region, 'region-token');
+    expect(region.getAttribute('aria-busy')).toBe('true');
+
+    // Nothing else will ever clear this: the abandoned reload keeps its hands off
+    // shared state, and its host is not the one taking over.
+    reloadInto(inner, inner, 'inner-token');
+    expect(region.getAttribute('aria-busy')).toBeNull();
+    expect(region.classList.contains('deferred-reloading')).toBe(false);
+  });
+
+  it('leaves unrelated containers alone', async () => {
+    const a = fakeEl();
+    const b = fakeEl();
+
+    const first = reloadInto(a, a, 'token-a');
+    const second = reloadInto(b, b, 'token-b');
+
+    pending[1].resolve('from b');
+    pending[0].resolve('from a');
+
+    await expect(second).resolves.toBe(true);
+    await expect(first).resolves.toBe(true);
+    expect(a.innerHTML).toBe('from a');
+    expect(b.innerHTML).toBe('from b');
+  });
+});
+
+describe('reloadInto supersession releases the caller', () => {
+  it('resolves a superseded reload without waiting for its response', async () => {
+    const inner = fakeEl();
+    const region = fakeEl([inner]);
+
+    const outer = reloadInto(region, region, 'region-token');
+    reloadInto(inner, inner, 'inner-token');
+
+    // The region's request may be slow, or may never answer at all. Its outcome
+    // is already decided, so the button that started it must be released now
+    // rather than kept spinning on a reply nobody is waiting for.
+    await expect(outer).resolves.toBe(false);
+    expect(pending.every((p) => p !== undefined)).toBe(true);
+  });
+
+  it('resolves a reload superseded on its own container without waiting', async () => {
+    const el = fakeEl();
+
+    const first = reloadInto(el, el, 'token-a');
+    reloadInto(el, el, 'token-b');
+
+    // Two [reload] buttons in one region target the same container.
+    await expect(first).resolves.toBe(false);
+  });
+
+  it('still reports a live reload only when its response lands', async () => {
+    const el = fakeEl();
+    let settled = false;
+
+    const only = reloadInto(el, el, 'token-a').then((v) => {
+      settled = true;
+      return v;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    pending[0].resolve('payload');
+    await expect(only).resolves.toBe(true);
+  });
+});
+
