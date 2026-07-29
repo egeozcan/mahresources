@@ -1,5 +1,6 @@
 import { abortableFetch } from '../../index.js';
 import { morphOptionsWithShortcodeElements } from '../../utils/shortcodeElementMorph.js';
+import { findListContainer } from '../../utils/listContainer.js';
 
 /**
  * Edit panel state/methods for the lightbox store.
@@ -100,7 +101,7 @@ export const editPanelMethods = {
   },
 
   async refreshPageContent() {
-    const listContainer = document.querySelector('.list-container, .items-container');
+    const listContainer = findListContainer(document);
     if (!listContainer) return;
 
     try {
@@ -113,7 +114,7 @@ export const editPanelMethods = {
       const html = await response.text();
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
-      const newListContainer = doc.querySelector('.list-container, .items-container');
+      const newListContainer = findListContainer(doc);
 
       if (newListContainer && window.Alpine) {
         const scrollX = window.scrollX;

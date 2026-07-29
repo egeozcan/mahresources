@@ -144,7 +144,7 @@
 
                     {# Todos block #}
                     <template x-if="block.type === 'todos'">
-                        <div x-data="blockTodos(block, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state), () => editMode)">
+                        <div x-data="blockTodos(block, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state), () => editMode, (id, content) => updateBlockContentDebounced(id, content))">
                             <template x-if="!editMode">
                                 <ul class="space-y-1">
                                     <template x-for="item in items" :key="item.id">
@@ -170,6 +170,7 @@
                                             <input
                                                 type="text"
                                                 x-model="item.label"
+                                                @input="saveContentDebounced()"
                                                 @blur="saveContent()"
                                                 class="flex-1 p-1 border border-stone-300 rounded"
                                             >
@@ -305,7 +306,7 @@
 
                     {# Table block #}
                     <template x-if="block.type === 'table'">
-                        <div x-data="blockTable(block, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state), () => editMode)" x-init="init()">
+                        <div x-data="blockTable(block, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state), () => editMode, (id, content) => updateBlockContentDebounced(id, content))" x-init="init()">
                             {# Display mode - Table view #}
                             <template x-if="!editMode">
                                 <div>
@@ -476,11 +477,11 @@
                                                     <span class="text-xs text-stone-500 pt-1">Params:</span>
                                                     <template x-for="row in queryParamRows" :key="row.id">
                                                         <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-stone-100 rounded text-xs">
-                                                            <input type="text" :value="row.key" @change="updateParamKey(row.id, $event.target.value)"
+                                                            <input type="text" :value="row.key" @input="updateParamKey(row.id, $event.target.value, { refetch: false })" @change="updateParamKey(row.id, $event.target.value)"
                                                                    class="font-mono w-20 px-1 bg-white border border-stone-300 rounded" placeholder="name"
                                                                    aria-label="Parameter name">
                                                             <span class="text-stone-400">=</span>
-                                                            <input type="text" :value="row.value" @change="updateParamValue(row.id, $event.target.value)"
+                                                            <input type="text" :value="row.value" @input="updateParamValue(row.id, $event.target.value, { refetch: false })" @change="updateParamValue(row.id, $event.target.value)"
                                                                    class="font-mono w-24 px-1 bg-white border border-stone-300 rounded" placeholder="value"
                                                                    aria-label="Parameter value">
                                                             <button @click="removeQueryParam(row.id)" class="text-stone-400 hover:text-red-500" aria-label="Remove parameter">&times;</button>
@@ -512,6 +513,7 @@
                                                             <input
                                                                 type="text"
                                                                 x-model="col.label"
+                                                                @input="saveContentDebounced()"
                                                                 @blur="saveContent()"
                                                                 class="flex-1 p-1 border border-stone-300 rounded text-sm"
                                                                 placeholder="Column label"
@@ -531,6 +533,7 @@
                                                                 <input
                                                                     type="text"
                                                                     x-model="row[col.id]"
+                                                                    @input="saveContentDebounced()"
                                                                     @blur="saveContent()"
                                                                     class="flex-1 p-1 border border-stone-300 rounded text-sm"
                                                                     :placeholder="col.label"
@@ -552,7 +555,7 @@
 
                     {# Calendar block #}
                     <template x-if="block.type === 'calendar'">
-                        <div x-data="blockCalendar(block, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state), () => editMode, noteId)" x-init="init()">
+                        <div x-data="blockCalendar(block, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state), () => editMode, noteId, (id, content) => updateBlockContentDebounced(id, content))" x-init="init()">
                             {# View mode #}
                             <template x-if="!editMode">
                                 <div class="calendar-block">
@@ -838,6 +841,7 @@
                                                         </template>
                                                     </div>
                                                     <input type="text" :value="cal.name"
+                                                           @input="updateCalendarName(cal.id, $event.target.value, { debounced: true })"
                                                            @blur="updateCalendarName(cal.id, $event.target.value)"
                                                            class="flex-1 px-2 py-1 text-sm border border-stone-300 rounded">
                                                     <span class="text-xs text-stone-400" x-text="cal.source.type === 'url' ? 'URL' : 'File'"></span>

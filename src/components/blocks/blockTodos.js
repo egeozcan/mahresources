@@ -1,11 +1,12 @@
 // src/components/blocks/blockTodos.js
 // editMode is passed as a getter function to maintain reactivity with parent scope
-export function blockTodos(block, saveContentFn, saveStateFn, getEditMode) {
+export function blockTodos(block, saveContentFn, saveStateFn, getEditMode, saveContentDebouncedFn) {
   return {
     block,
     saveContentFn,
     saveStateFn,
     getEditMode,
+    saveContentDebouncedFn,
     items: [...(block?.content?.items || [])],
     checked: [...(block?.state?.checked || [])],
 
@@ -28,6 +29,14 @@ export function blockTodos(block, saveContentFn, saveStateFn, getEditMode) {
 
     saveContent() {
       this.saveContentFn(this.block.id, { items: this.items });
+    },
+
+    // Called on input for debounced auto-save. Without it an item label typed
+    // and never blurred was discarded on navigation (finding 50).
+    saveContentDebounced() {
+      if (this.saveContentDebouncedFn) {
+        this.saveContentDebouncedFn(this.block.id, { items: JSON.parse(JSON.stringify(this.items)) });
+      }
     },
 
     addItem() {

@@ -1,3 +1,37 @@
+/** Prefer the API's own explanation over a generic client-side one. */
+async function readServerError(response, fallback) {
+    try {
+        const body = await response.json();
+        if (body && typeof body.error === 'string' && body.error.trim()) {
+            return body.error;
+        }
+    } catch {
+        // Not JSON — fall through.
+    }
+    return `${fallback} (HTTP ${response.status})`;
+}
+
+/**
+ * Broadcast a committed inline edit to every other element on the page that
+ * displays the same field. The resource detail page renders the name twice —
+ * once in the <h1> as this component, once server-side in the METADATA card —
+ * and only the first one used to update, so a rename left two different names
+ * on screen until a manual reload (UI bug hunt 2026-07-29, finding 151).
+ *
+ * `data-entity-field` marks a display of the *page's main entity*. Detail pages
+ * show exactly one, which is why a document-wide broadcast is safe; anything
+ * rendered per card must not carry the attribute.
+ */
+document.addEventListener('inline-edit:saved', (event) => {
+    const { field, value } = event.detail || {};
+    if (!field) return;
+    document.querySelectorAll(`[data-entity-field="${CSS.escape(field)}"]`).forEach((el) => {
+        // The editor keeps its own text; rewriting it here would fight it.
+        if (el.closest('inline-edit')) return;
+        el.textContent = value;
+    });
+});
+
 class InlineEdit extends HTMLElement {
     static get observedAttributes() {
         return ['multiline', 'post', 'name', 'label'];
@@ -84,6 +118,24 @@ class InlineEdit extends HTMLElement {
 
         this.shadowRoot.appendChild(this.displayContainer);
 
+        // Visible failure message. Deliberately not a live region: the assertive
+        // window.mahAnnounce call already speaks the failure, and a role="alert"
+        // here would make screen readers say it twice. The input points at it
+        // with aria-describedby instead.
+        this.errorElement = document.createElement('div');
+        this.errorElement.id = 'inline-edit-error';
+        this.errorElement.setAttribute('data-inline-edit-error', '');
+        // Not appended until there is something to say: the <h1> that hosts this
+        // component must not grow a permanently reserved row.
+        Object.assign(this.errorElement.style, {
+            marginTop: '4px',
+            color: '#b91c1c',
+            fontSize: '0.875rem',
+            fontWeight: '400',
+            lineHeight: '1.25rem',
+            whiteSpace: 'normal',
+        });
+
         // Hidden slot consumes light DOM content so it is not rendered alongside
         // the shadow DOM. Without this, both the light DOM text and the shadow
         // DOM span are exposed to assistive technology, causing double announcement.
@@ -169,12 +221,48 @@ class InlineEdit extends HTMLElement {
 
     enterEditMode() {
         if (this.isEditing) return;
+        this.clearError();
         this.isEditing = true;
         this._originalValue = this.displayText.textContent;
         this.inputElement.value = this._originalValue;
         this.shadowRoot.replaceChild(this.inputElement, this.displayContainer);
         this.inputElement.focus();
         this.inputElement.select();
+    }
+
+    /**
+     * Show a rejection where the user can actually see it, and put them back in
+     * the field with the text they typed. Before this, the only signals were a
+     * 1x1 clipped live region and a one-second red flash, and the typed value
+     * was discarded (findings 21 / 88).
+     */
+    showError(message, keepValue) {
+        this.errorElement.textContent = message;
+        if (!this.errorElement.isConnected) {
+            this.shadowRoot.appendChild(this.errorElement);
+        }
+
+        this.inputElement.setAttribute('aria-invalid', 'true');
+        this.inputElement.setAttribute('aria-describedby', this.errorElement.id);
+        this.inputElement.style.borderColor = '#b91c1c';
+
+        this.isEditing = true;
+        this.inputElement.value = keepValue;
+        if (this.displayContainer.parentNode === this.shadowRoot) {
+            this.shadowRoot.replaceChild(this.inputElement, this.displayContainer);
+        }
+        this.inputElement.focus();
+        this.inputElement.select();
+    }
+
+    clearError() {
+        if (this.errorElement.isConnected) {
+            this.errorElement.remove();
+        }
+        this.errorElement.textContent = '';
+        this.inputElement.removeAttribute('aria-invalid');
+        this.inputElement.removeAttribute('aria-describedby');
+        this.inputElement.style.borderColor = '#ccc';
     }
 
     exitEditMode() {
@@ -189,6 +277,7 @@ class InlineEdit extends HTMLElement {
 
         if (this._cancelled) {
             this._cancelled = false;
+            this.clearError();
             this.displayText.textContent = this._originalValue;
             this.shadowRoot.replaceChild(this.displayContainer, this.inputElement);
             if (keyboardExit) this.editButton.focus();
@@ -209,10 +298,16 @@ class InlineEdit extends HTMLElement {
             fetch(this.postUrl, {
                 method: 'POST',
                 body: formData,
-            }).then((response) => {
+            }).then(async (response) => {
                 if (!response.ok) {
-                    throw new Error(`Server responded with ${response.status}`);
+                    // The server explains itself — "a tag named "design" already
+                    // exists", "name must not be empty" — and this used to throw
+                    // that away in favour of "Could not save name" (finding 152).
+                    throw new Error(await readServerError(response, `Could not save ${this.label}`));
                 }
+                // Retire any message a previous rejection left behind, or a
+                // corrected name lands under a red error that no longer applies.
+                this.clearError();
                 // Update document title when the entity name changes
                 if (this.name === 'name') {
                     const suffix = ' - mahresources';
@@ -235,16 +330,26 @@ class InlineEdit extends HTMLElement {
                 setTimeout(() => { this.displayText.style.backgroundColor = ''; }, 1000);
                 // Announce to assistive tech (the green flash alone is color-only). WCAG 4.1.3.
                 window.mahAnnounce?.(`${this.label} saved`);
+                // Let every other display of this field catch up (finding 151).
+                this.dispatchEvent(new CustomEvent('inline-edit:saved', {
+                    bubbles: true,
+                    composed: true,
+                    detail: { field: this.name, value: newValue, previous: this._originalValue, post: this.postUrl },
+                }));
             }).catch((error) => {
                 console.error('Error posting data:', error);
-                // Revert on error
+                const message = (error && error.message) || `Could not save ${this.label}`;
+                // The stored value is unchanged, so every *display* of it reverts…
                 this.displayText.textContent = this._originalValue;
                 this.textContent = this._originalValue;
                 this.displayText.style.transition = 'background-color 0.3s';
                 this.displayText.style.backgroundColor = '#fee2e2';
                 setTimeout(() => { this.displayText.style.backgroundColor = ''; }, 1000);
+                // …but the user's attempt is not thrown away: the editor reopens
+                // holding it, next to a visible reason.
+                this.showError(message, newValue);
                 // Announce the failure assertively (the red flash alone is color-only). WCAG 4.1.3.
-                window.mahAnnounce?.(`Could not save ${this.label}`, { assertive: true });
+                window.mahAnnounce?.(message, { assertive: true });
             });
         }
     }

@@ -234,19 +234,19 @@ Statuses are filled in during Phase 1.
 | 6 | high | a11y | verified-run | WS5 | verify after 47 | |
 | 7 | high | bug | ✅ VERIFIED | WS13 | accept | |
 | 8 | high | bug | recovered | WS7 | verify | |
-| 9 | high | bug | verified-run | WS2 | spot | |
+| 9 | high | bug | verified-run | WS2 | spot | **CONFIRMED** — alert on addTags/removeTags/addMeta/recalculate, write already landed  · **FIXED, cause corrected** — the plan's `list-container` class breaks the table layout; hook decoupled instead |
 | 10 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — HTTP 500 `encountered errors during dimension calculation`  · **FIXED** — gated on `IsRasterImage()`, now 415 naming the format |
 | 11 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — HTTP 500 `image: unknown format`  · **FIXED** — rotate gated on `IsRasterImage()`, now 415 |
 | 12 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — png 1392B → jpeg 10217B (7.3× inflation)  · **FIXED** — rotate shares crop's encoder table; live re-check png 1392B → png 1390B, RGBA intact |
 | 13 | high | a11y | recovered | WS5 | verify | |
 | 14 | high | a11y | recovered | WS5 | verify | |
-| 15 | high | bug | recovered | WS2 | verify | |
+| 15 | high | bug | recovered | WS2 | verify | **CONFIRMED** — no Save control, `@click.away` the only trigger  · **FIXED** — Save/Cancel + Ctrl/Cmd+Enter + keyboard focus-out commit |
 | 16 | high | bug | recovered | WS3 | verify | |
 | 17 | high | bug | ✅ VERIFIED | WS12 | accept | |
 | 18 | high | ux | recovered | WS12 | verify | |
 | 19 | high | design | recovered | WS7 | verify | |
 | 20 | high | bug | ✅ VERIFIED | WS3 | accept | **CONFIRMED** — /categories 400, /tags 200, same SortBy |
-| 21 | high | bug | recovered | WS2 | verify | |
+| 21 | high | bug | recovered | WS2 | verify | **CONFIRMED** — only signal a 1×1 clipped region  · **FIXED** — visible inline error, editor stays open holding the input |
 | 22 | high | ux | recovered | WS11 | verify | |
 | 23 | high | bug | recovered | WS11 | verify | |
 | 24 | high | design | recovered | WS11 | verify | |
@@ -275,10 +275,10 @@ Statuses are filled in during Phase 1.
 | 47 | med | bug | verified-run | WS8 | spot | **CONFIRMED** — 8 distinct orders in 20 calls  · **FIXED** |
 | 48 | med | a11y | verified-run | WS5 | spot | |
 | 49 | med | a11y | verified-run | WS5 | spot | |
-| 50 | med | bug | verified-run | WS2 | spot | |
+| 50 | med | bug | verified-run | WS2 | spot | **CONFIRMED** — and two more blur/change-only controls found  · **FIXED** — debounced `@input` on all five |
 | 51 | med | bug | verified-run | WS13 | spot | |
 | 52 | med | bug | recovered | WS8 | Dup → 44 |  · **FIXED** |
-| 53 | med | bug | recovered | WS2 | Dup → 15 | |
+| 53 | med | bug | recovered | WS2 | Dup → 15 |  · **FIXED** |
 | 54 | med | ux | recovered | WS6 | verify | |
 | 55 | med | ux | recovered | WS7 | verify | |
 | 56 | med | ux | recovered | WS3 | verify | |
@@ -304,7 +304,7 @@ Statuses are filled in during Phase 1.
 | 76 | med | a11y | recovered | WS5 | Dup → 139 | |
 | 77 | med | ux | recovered | WS6 | Dup → 68 | |
 | 78 | med | ux | recovered | WS14 | verify | |
-| 79 | med | bug | recovered | WS2 | verify (suspect) | |
+| 79 | med | bug | recovered | WS2 | verify (suspect) | **REJECTED — not reproducible** in 9 runs; the invisible checked boxes are the header settings toggles and the zero-checked Select All is a `nth=1` locator hitting hidden "Deselect All". See WS2 |
 | 80 | med | ux | recovered | WS7 | Dup → 25 | |
 | 81 | med | design | recovered | WS7 | verify | |
 | 82 | med | bug | ✅ VERIFIED | WS11 | accept | **CONFIRMED** — `&ldquo; &ndash; &hellip; &lsquo; &rsquo;` |
@@ -312,8 +312,8 @@ Statuses are filled in during Phase 1.
 | 84 | med | bug | verified-run | WS8 | spot |  · **FIXED** |
 | 85 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — `filename="v2_9b998df6"`  · **FIXED** |
 | 86 | med | bug | verified-run | WS1 | Dup → 10/11 + gating | **CONFIRMED** — actions offered for SVG  · **FIXED** — `isRasterImage` gates the details sidebar and the lightbox Rotate/Crop buttons |
-| 87 | med | a11y | verified-run | WS2 | Dup → 15 | |
-| 88 | med | ux | verified-run | WS2 | Dup → 21 | |
+| 87 | med | a11y | verified-run | WS2 | Dup → 15 |  · **FIXED** |
+| 88 | med | ux | verified-run | WS2 | Dup → 21 |  · **FIXED** |
 | 89 | med | design | verified-run | WS7 | spot | |
 | 90 | med | a11y | verified-run | WS4 | spot | |
 | 91 | med | ux | verified-run | WS3 | Dup → 56 | |
@@ -376,8 +376,8 @@ Statuses are filled in during Phase 1.
 | 148 | low | design | verified-run | WS7 | spot | |
 | 149 | low | ux | verified-run | WS14 | spot | |
 | 150 | low | design | verified-run | WS7 | spot | |
-| 151 | low | bug | verified-run | WS2 | spot | |
-| 152 | low | ux | verified-run | WS2 | spot | |
+| 151 | low | bug | verified-run | WS2 | spot | **CONFIRMED**  · **FIXED** — `inline-edit:saved` → `[data-entity-field]`; the card's Copy button is left stale on purpose (see WS2) |
+| 152 | low | ux | verified-run | WS2 | spot | **CONFIRMED** — `UNIQUE constraint failed: tags.name` reached the client  · **FIXED** — server message humanised, client stops swallowing it |
 | 153 | low | ux | recovered | WS14 | verify | |
 | 154 | low | ux | recovered | WS12 | verify | |
 | 155 | low | ux | recovered | WS12 | verify | |
@@ -575,49 +575,201 @@ localised change with an obvious Go test. Highest confidence per unit of effort 
 
 ### WS2 — Silent write failures and lost edits ★ user data loss
 
-Findings **9, 15/53/87, 21/88, 50, 79, 151, 152**. Four shared components.
+Findings **9, 15/53/87, 21/88/152, 50, 79, 151**. Four shared components; 79 rejected.
 
-- [ ] **9 (high) — one CSS class.** `bulkSelection.js:190` queries
-      `document.querySelector(".list-container, .items-container")` on both the live page and the
-      re-fetched `.body` document, and throws "Could not find refreshed list" (`:197`) if either is
-      null; the catch at `:208-210` raises `alert("Bulk operation failed: …")`. **`listResourcesDetails.tpl`
-      has neither class** — `:13-14` is `<div class="detail-table-wrap"><table class="gallery detail-table">`.
-      Add `list-container` to the wrapper. Bulk delete is unaffected only because it carries
-      `class="no-ajax"` and does a full navigation.
-      - Red: an E2E spec that adds a tag via the bulk toolbar on `/resources/details`, asserts **no
-        dialog appears** and the row's Updated timestamp refreshes.
-- [ ] **15/53/87 — the inline description editor has no keyboard commit path.**
+- [x] **9 (high) — not one CSS class; the hook was coupled to a layout class.** `bulkSelection.js:190`
+      queried `document.querySelector(".list-container, .items-container")` on both the live page and
+      the re-fetched `.body` document, and threw "Could not find refreshed list" (`:197`) if either
+      was null; the catch at `:208-210` raised `alert("Bulk operation failed: …")`.
+      **`listResourcesDetails.tpl` has neither class** — `:13-14` is
+      `<div class="detail-table-wrap"><table class="gallery detail-table">`. Bulk delete was
+      unaffected only because it carries `class="no-ajax"` and does a full navigation.
+
+      **The plan's stated fix — "add `list-container` to the wrapper" — is wrong, and was measured
+      wrong before it was written.** `.list-container` (`public/index.css:395`) is
+      `display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr))`, and
+      `.detail-table-wrap` (`:832`) declares no `display`, so the grid wins. Measured in-browser by
+      adding the class at runtime: the wrapper flips to `display: grid` with
+      `grid-template-columns: 353.5px ×4` at 1920px, and the table stops filling its box — 1462 →
+      987.63 px with 11 rows (a 474 px blank gutter inside the bordered card), 1462 → 612.5 px when
+      empty, and the preview thumbnails shrink with the column (192 → 45.5 px on the panorama row).
+      Nothing in the CSS neutralises it.
+
+      Fixed instead by separating the JS hook from the layout class: new
+      `src/utils/listContainer.js` exports
+      `LIST_CONTAINER_SELECTOR = '[data-list-container], .list-container, .items-container'` and
+      `findListContainer(root)`, `listResourcesDetails.tpl` carries `data-list-container`, and the
+      three call sites that used the class pair as a hook — `bulkSelection.js`,
+      `lightbox/editPanel.js` (`refreshPageContent`) and `main.js` (the download-completed refresh,
+      which queried `.list-container` alone and had the same blind spot) — go through the helper.
+      `bulkSelection`'s two-step "which class did the live one have, query the refreshed doc for
+      that one" went away with it: both documents are now queried with the same selector, which is
+      what `editPanel.js` already did.
+      - Red: `e2e/tests/regressions/bulk-ops-details-view.spec.ts` — bulk Add Tag on
+        `/resources/details`, asserting no dialog is raised, the tag is present **through the API**,
+        and the row checkbox and toolbar cleared (the failure path throws before `form.reset()` and
+        `deselectAll()`, so a stuck-checked row is the honest signature). Same steps on `/resources`
+        as the positive control. Seen red — and the first draft's dialog assertion passed for the
+        wrong reason, because it ran before the alert had been raised; it now waits for the handler
+        to reach *some* conclusion first.
+- [x] **15/53/87 — the inline description editor has no keyboard commit path.**
       `templates/partials/description.tpl:22-60`: the textarea's only save trigger is
       `@click.away` (`:23`); `@keydown.escape` (`:55`) discards without confirmation; there is no
       Save button. Included by **12 templates** (`displayResource`, `displayGroup`, `displayNote`,
       `displayTag`, `displayCategory`, `displayResourceCategory`, `displayNoteType`,
       `displayRelation`, `displayRelationType`, `displayQuery`, `displayTemplatePartial`,
       `partials/note.tpl`), so one fix covers every entity.
-      Add explicit **Save** and **Cancel** buttons plus `Ctrl/Cmd+Enter` to save, and commit on blur
-      when focus leaves the editor region entirely. Keep `@click.away` for compatibility.
-      - Red: a Playwright spec per surface — type, press Tab, reload, assert the text persisted.
-- [ ] **21/88/152 — inline rename failures are invisible.** `src/webcomponents/inlineedit.js:247`
+      The whole editor moved out of the attribute and into `src/components/descriptionEditor.js`,
+      which now has **Save** and **Cancel** buttons, `Ctrl/Cmd+Enter`, a commit when focus leaves
+      the editor region, a visible error carrying the server's message, and the original
+      `@click.away`.
+
+      Three decisions worth recording:
+      - **Tab-out commits without reloading; every other path still reloads.** Save, `Ctrl+Enter`
+        and click-away reload, because the stored text is markdown with shortcodes and only the
+        server renders it — that is what click-away already did. Tab-out is a safety net, and
+        reloading as a keyboard user moves to the next control is a change of context on focus
+        (WCAG 3.2.2), so it repaints the value as plain text instead. Re-opening the editor then
+        has to show the saved value, not the template's now-stale `{{ description }}`; that is what
+        `serverValue` and the textarea's `x-init` are for.
+      - **Only a Tab commits on focus loss.** A pointer-driven blur is the first half of the same
+        gesture as the click that follows, and `@click.away` owns that path. Letting both fire made
+        focusout win the `saving` guard and the reload never happened, which broke
+        `description-inline-edit-preserves-markdown`. The `_keyboardExit` flag set on `keydown` is
+        the same idiom `inlineedit.js` already uses.
+      - **`$root`, not `$el`.** Alpine binds `$el` to the element whose directive is evaluating, so
+        inside a method reached from the textarea's `@keydown`, `$el` was the textarea and
+        `$el.querySelector('textarea')` was null — every new commit path silently returned. This
+        cost a full red-green cycle; the symptom was five green-looking buttons that saved nothing.
+      - Red: `e2e/tests/regressions/description-editor-keyboard-commit.spec.ts`, five tests across a
+        note detail page and a `/notes` card, each asserting the persisted value through `apiClient`.
+        The Cancel/Escape test carries its own positive control so "still the original" cannot pass
+        against an endpoint that never fires.
+- [x] **21/88/152 — inline rename failures are invisible.** `src/webcomponents/inlineedit.js:247`
       announces via `window.mahAnnounce`, which writes into a region created by
       `src/utils/ariaLiveRegion.js:12-22` — `width:1px; height:1px; clip:rect(0,0,0,0)`. The only
       visible signal is a 1-second `#fee2e2` flash. Also (152) the component discards the server's
       message: the API returns `{"error":"UNIQUE constraint failed: tags.name"}` and
       `{"error":"name must not be empty"}`, and the UI says "Could not save name".
-      Render a **visible** inline error next to the field carrying the server's message, keep the
-      editor open with the user's text, and keep the live-region announcement as well.
-- [ ] **50 — block editor loses unblurred edits.** `blockEditor.tpl:511-517` (table column label),
-      `:529-536` (table cells) and `:170-174` (todo item label) are `@blur="saveContent()"` only,
+      Fixed in two halves, because a message is only worth surfacing once it is worth reading.
+      - **Server (cheaper as a Go test).** `EntityWriter.UpdateName`
+        (`application_context/basic_entity_context.go:26`) backs *every* `/v1/<entity>/editName`
+        route, so one change covers all of them: a unique-constraint violation now becomes
+        `a tag named "design" already exists`, matching the wording `tags_context.go:130` already
+        uses on create. The entity label is derived from the GORM schema name
+        (`modelLabel` + `spaceCamelCase` in `db_errors.go`, `NoteType` → `note type`) because the
+        writer is generic and has no label to be handed.
+      - **Client.** `inlineedit.js` reads the server's `{"error": …}` body instead of throwing
+        `Server responded with 400`, and on failure reopens the editor holding the user's text next
+        to a visible message. The message element is created lazily and removed on success, so the
+        `<h1>` that hosts the component does not carry a permanently reserved row — several
+        existing specs click the centre of that `<h1>` to blur. It is deliberately **not** a live
+        region: `mahAnnounce` already announces assertively and a `role="alert"` here would make a
+        screen reader say it twice; the input points at it with `aria-describedby` and gains
+        `aria-invalid`.
+      - Red: `server/api_tests/edit_name_error_messages_test.go` (tag / category / resource
+        category, each asserting the driver's text does *not* reach the caller, plus a control that
+        a free rename still persists) and
+        `e2e/tests/regressions/inline-rename-visible-error.spec.ts`.
+- [x] **50 — block editor loses unblurred edits.** `blockEditor.tpl:511-517` (table column label),
+      `:529-536` (table cells) and `:170-174` (todo item label) were `@blur="saveContent()"` only,
       while heading and text blocks use `@input` + `@blur`. `flushPendingUpdates()`
-      (`blockEditor.js:165-183`) only flushes already-committed content, so it does not help.
-      Add a debounced `@input` save to match the heading/text blocks.
-- [ ] **151 — stale metadata after rename.** The H1 and `document.title` update optimistically
-      (`inlineedit.js:191-193`) but the METADATA card's Name field does not, so one screen shows two
-      names. Broadcast the new value to every element bound to that field.
-- [ ] **79** — verify; suspected transient.
+      (`blockEditor.js:165-183`) cannot rescue them: it only drains `_pendingUpdates`, and
+      `updateBlockContentDebounced` is the sole writer to that map — the blur-only path calls
+      `updateBlockContent`, which *deletes* from it.
+
+      `blockTodos`, `blockTable` and `blockCalendar` now take the parent's
+      `updateBlockContentDebounced` as a trailing argument and expose `saveContentDebounced()`,
+      mirroring `blockText.onBlockInput`; the templates add `@input` alongside the existing `@blur`.
+      Two more controls in the same file had the same defect and are not in the report, so they are
+      fixed here too: the **calendar name** (`:840`, blur-only) and the table **query parameter
+      key/value** (`:479`, `:483`), which were `@change`-only — on a text input that also means
+      blur-or-Enter. The query-param `@input` path deliberately does *not* re-run the query
+      (`{ refetch: false }`); firing a server query per keystroke would be a worse bug than the one
+      being fixed. The debounced payloads are snapshots rather than the live Alpine proxies, since
+      the parent parks them in `blocks[]` and in `_pendingUpdates` and would otherwise keep a
+      "previous content" that mutates along with the edit.
+      - Red: `e2e/tests/blocks/block-inputs-autosave-while-typing.spec.ts` — types and asserts
+        persistence **without ever blurring**, then asserts the field still has focus, so a working
+        `@blur` cannot make it green. A heading block is the positive control.
+      - **Not done, and why.** The 500 ms debounce is one timer shared by every block on the page
+        (`blockEditor.js:6-18` holds a single `timeoutId`), so a keystroke in one block cancels
+        another's pending save. Routing three more block types through it makes that reachable in
+        principle — but not in practice: moving focus to another block's input always fires that
+        block's `@blur`, which saves immediately. No test could be written that goes red, so the
+        timer was left alone rather than changed on spec.
+- [x] **151 — stale metadata after rename.** The H1 and `document.title` update optimistically
+      (`inlineedit.js:191-193`) but the METADATA card's Name field did not, so one screen showed two
+      names. A successful save now dispatches `inline-edit:saved` and a document-level listener
+      updates every `[data-entity-field="<field>"]`; `displayResource.tpl` marks the card's Name.
+      The attribute means "a display of the page's *main* entity" — detail pages show exactly one,
+      which is what makes a document-wide broadcast safe, and per-card markup must not carry it.
+      - Not fixed, deliberately: the card's **Copy Name** button still copies the pre-rename value,
+        because its payload is baked into an inline Alpine expression (`updateClipboard('…')`).
+        Moving it to a data attribute would invert `bughunt_ws8_test.go:366-385`, the Batch 2 guard
+        that asserts the astral-character escaping in exactly that expression. Out of scope here.
+      - Red: `e2e/tests/regressions/inline-rename-updates-metadata-card.spec.ts`, with the H1 as the
+        control that the rename reached the client at all.
+- [x] **79 — REJECTED, not reproducible.** Three scripted runs of the report's own protocol
+      (filtered and unfiltered, 3 and 50 rows), plus six race-timed runs clicking Select All the
+      instant the node exists, all show the checkboxes tracking the store exactly, before and after
+      a reload. Both halves of the report are artefacts of how it was measured:
+      - The "two checked checkboxes that are invisible and unnamed" are the header settings-menu
+        toggles (`layouts/base.tpl:49,53` — `showDescriptions` and `showHoverPreviews`, no class, no
+        `aria-label`, inside the collapsed gear dropdown, both on by default). The live probe
+        returns them byte-for-byte as the report's evidence #255, and its #253 total of 9
+        checkboxes is 2 settings + 3 sidebar + 4 rows.
+      - "The first Select All click left zero checkboxes checked even though the toolbar reacted"
+        reproduces exactly when `button:has-text('Select All')` is taken at `nth=1`: that substring
+        also matches **Deselect All**, which sits in the `x-show`-collapsed toolbar, so the click
+        times out on a hidden element. That yields `{"checked":0,"toolbar":true}` — the reported
+        shape — with the app behaving correctly.
+      - Selection is in-memory only (no `localStorage`/`sessionStorage` entries exist) and the view
+        switcher is a full navigation (`boxSelect.tpl:3` is a plain `<a href>`), so a grid selection
+        is *expected* not to survive the switch.
 
 **Regression risk:** medium-high. `inlineedit.js` and `description.tpl` are on almost every detail
 page. `docs/lessons.md` is explicit here: *"A UI-only assertion cannot tell a successful write from
 one that posted nothing"* — every test in this workstream must assert the **persisted** value via
 `apiClient`, not the DOM.
+
+**Three defects the live re-verification caught that the tests did not** — two in the new code, one
+pre-existing. All three are the same shape as the workstream itself: a write that reaches the server
+while the page says nothing, or says the wrong thing.
+
+1. **The tab-out commit persisted, then threw while repainting.** `save({reload:false})` sets
+   `editing = false`, which tears down the `<template x-if="editing">` subtree the `@focusout`
+   expression belongs to; the queued `$nextTick` callback then read Alpine's `$root` magic, which
+   resolves by walking up from the *currently evaluating element* — by then detached — and returns
+   `undefined`. `_showPlainText` threw `Cannot read properties of undefined`, so a keyboard user
+   committed successfully and went on looking at the pre-edit text, with a red console error each
+   time. Fixed by capturing the root element in `init()` while it is still attached. This is the
+   second `$el`/`$root` trap in one component; the comment there now names both.
+2. **A successful rename left the previous rejection's error on screen.** `clearError()` was called
+   from `enterEditMode` and the cancel branch but not from the success branch, so correcting a
+   rejected name persisted it and then sat under a red "name must not be empty" with the input still
+   `aria-invalid="true"`. A successful save that looks failed is the finding inverted.
+3. **`blockTable.selectQuery()` and `clearQuery()` never saved anything** —
+   `src/components/blocks/blockTable.js` declares `get queryParams()` with no setter and both
+   methods execute `this.queryParams = {}`. Alpine's reactive proxy returns `Reflect.set`'s `false`
+   for a setter-less accessor, which in a module (strict mode) throws
+   `TypeError: 'set' on proxy: trap returned falsish for property 'queryParams'` — *before*
+   `saveContent()`. The statements that ran first had already flipped the UI, so selecting a query
+   rendered a query-mode block that was never persisted and never fetched its data, and clearing one
+   showed manual mode while the server kept the query, which reappeared on the next load. Present on
+   master (`git show master:src/components/blocks/blockTable.js` has the same pair). Fixed by
+   assigning `queryParamRows = []`, the property the getter actually derives from.
+
+Why the tests missed each is the point:
+- the description spec asserted the persisted value and nothing about the page, so a commit that
+  succeeded and then threw was green. It now also asserts what the region displays, that re-opening
+  the editor offers the saved text, and that no uncaught page error fired.
+- the rename spec's control opened a *fresh* editor to assert "no error", so the error → correct
+  transition was never exercised. There is now a test for exactly that transition.
+- `blocks.spec.ts`'s "should select and clear a table query data source" passes throughout, because
+  every assertion in it reads the DOM. The new
+  `e2e/tests/blocks/table-block-query-selection-persists.spec.ts` reads the stored block instead and
+  fails on any page error.
 
 ### WS3 — Validation before submit, and error surfaces that keep you in the app
 
@@ -1030,7 +1182,7 @@ the cheapest high-confidence work clears the ledger early.
 - [x] **Batch 2** — WS8 backend one-liners. Best effort ratio; clears 17 findings; independently
       testable in Go; no frontend coupling. **Fix 47 here so WS5 can re-test 6.**
 - [x] **Batch 3** — WS1 image pipeline. Highest impact, four ✅ VERIFIED, data-destroying.
-- [ ] **Batch 4** — WS2 silent write failures. Second data-loss cluster.
+- [x] **Batch 4** — WS2 silent write failures. Second data-loss cluster.
 - [ ] **Batch 5** — WS3 validation and error surfaces. Start with `HandleError`; the client-side
       guards then have a survivable fallback behind them.
 - [ ] **Batch 6** — WS6 empty states. Cheap, and the `{% empty %}` pattern is mechanical.

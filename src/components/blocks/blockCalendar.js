@@ -70,13 +70,14 @@ const COLOR_PALETTE = [
   '#f97316', // orange
 ];
 
-export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, noteId) {
+export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, noteId, saveContentDebouncedFn) {
   return {
     block,
     saveContentFn,
     saveStateFn,
     getEditMode,
     noteId,
+    saveContentDebouncedFn,
 
     // Calendar sources from content
     calendars: JSON.parse(JSON.stringify(block?.content?.calendars || [])),
@@ -309,6 +310,14 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       this.saveContentFn(this.block.id, { calendars: this.calendars });
     },
 
+    // Called on input for debounced auto-save (same class as finding 50: the
+    // calendar name was blur-only too).
+    saveContentDebounced() {
+      if (this.saveContentDebouncedFn) {
+        this.saveContentDebouncedFn(this.block.id, { calendars: JSON.parse(JSON.stringify(this.calendars)) });
+      }
+    },
+
     // Calendar management
     addCalendarFromUrl() {
       const trimmedUrl = this.newUrl.trim();
@@ -366,12 +375,16 @@ export function blockCalendar(block, saveContentFn, saveStateFn, getEditMode, no
       this.fetchEvents(true);
     },
 
-    updateCalendarName(calId, name) {
+    updateCalendarName(calId, name, { debounced = false } = {}) {
       const cal = this.calendars.find(c => c.id === calId);
       if (cal) {
         cal.name = name;
         this.calendarMeta[calId].name = name;
-        this.saveContent();
+        if (debounced) {
+          this.saveContentDebounced();
+        } else {
+          this.saveContent();
+        }
       }
     },
 

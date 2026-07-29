@@ -61,6 +61,7 @@ import {
 } from './components/profiledAutocompleter.js';
 import { selectorFormParameters } from './components/selectorFormParameters.js';
 import { confirmAction } from './components/confirmAction.js';
+import { descriptionEditor } from './components/descriptionEditor.js';
 import { confirmGroupDelete } from './components/confirmGroupDelete.js';
 import { freeFields, generateParamNameForMeta, getJSONValue, getJSONOrObjValue } from './components/freeFields.js';
 import { registerBulkSelectionStore, bulkSelectionForms, selectableItem, setupBulkSelectionListeners } from './components/bulkSelection.js';
@@ -106,6 +107,7 @@ import { templateBundle } from './components/templateBundle.js';
 import { renderMentions } from './utils/renderMentions.js';
 import { createLiveRegion } from './utils/ariaLiveRegion.js';
 import { morphOptionsWithShortcodeElements } from './utils/shortcodeElementMorph.js';
+import { findListContainer } from './utils/listContainer.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -171,6 +173,7 @@ Alpine.data('multiEntitySelector', multiEntitySelector);
 Alpine.data('tagFieldSelector', tagFieldSelector);
 Alpine.data('tagEditorSelector', tagEditorSelector);
 Alpine.data('confirmAction', confirmAction);
+Alpine.data('descriptionEditor', descriptionEditor);
 Alpine.data('confirmGroupDelete', confirmGroupDelete);
 Alpine.data('freeFields', freeFields);
 Alpine.data('bulkSelectionForms', bulkSelectionForms);
@@ -241,7 +244,7 @@ setupHoverCard();
 // Refresh resource lists when background downloads complete
 window.addEventListener('download-completed', async (e) => {
   const job = e.detail;
-  const listContainer = document.querySelector('.list-container');
+  const listContainer = findListContainer(document);
 
   if (!listContainer || !job.resourceId) return;
 
@@ -255,7 +258,7 @@ window.addEventListener('download-completed', async (e) => {
     // Parse and extract the new list container
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
-    const newListContainer = doc.querySelector('.list-container');
+    const newListContainer = findListContainer(doc);
 
     if (newListContainer) {
       // Remember x-data texts before morph so we can detect changes.

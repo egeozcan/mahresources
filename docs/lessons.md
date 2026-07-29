@@ -2,6 +2,40 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## In an Alpine component method, `$el` is the element that called you and `$root` is stale once your subtree is gone
+
+Moving the inline description editor out of an `@click.away` attribute into an `Alpine.data`
+component cost two red-green cycles to the same magic, twice over. First: every new commit path —
+Save, Cancel, Ctrl+Enter — silently did nothing, because `save()` resolved the textarea with
+`this.$el.querySelector(...)` and `$el` is bound to the element whose *directive is currently
+evaluating*, not to the component root. Called from the textarea's `@keydown`, `$el` was the
+textarea, and a textarea contains no textarea. Nothing threw; five visible buttons just saved
+nothing. Switching to `$root` fixed that and introduced the second: `$root` resolves by walking up
+from that same element, so a `$nextTick` callback queued after `editing = false` — which tears down
+the `<template x-if="editing">` subtree it came from — read `$root` off a detached node and got
+`undefined`. The write landed and the repaint threw.
+
+The rule: a component method that needs the root element should capture it in `init()`, where `$el`
+*is* the root and the node is attached, and use that. Treat `$el` and `$root` as safe only inside
+the expression that is evaluating right now. Same family as the `$refs` caching lesson below: these
+magics are resolved against a moment, not against the component.
+
+## A test that asserts the persisted value is still blind to what the page does afterwards
+
+Three defects survived a full green suite in one batch, and each slipped through the same gap.
+A description commit persisted correctly and *then* threw while repainting, so a keyboard user saved
+their edit and went on looking at the pre-edit text — the spec asserted the API value and stopped.
+A rename that recovered from a rejection persisted, but the previous error stayed on screen, because
+the "no error" control opened a *fresh* editor and never exercised the error→correct transition.
+And `blockTable.selectQuery()` threw before `saveContent()` for a year, invisible because the only
+test covering it asserted on the DOM the throw had already updated.
+
+"Assert the persisted value, not the DOM" is necessary and not sufficient. A write path needs three
+assertions: the value reached the server, the page now shows it, and nothing threw
+(`page.on('pageerror')` is one line). And a control that exercises the *happy* path from a clean
+start does not cover recovery — if the code has an error state, a test must enter it and then leave
+it.
+
 ## "Flaky" is a symptom, not a diagnosis
 
 Three `[reload]` specs failed in a full run and passed on retry, so they were reported as flaky and

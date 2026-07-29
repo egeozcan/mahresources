@@ -2,6 +2,7 @@ import { setCheckBox } from '../index.js';
 import { observeSelectorField } from '../selector/selectorRegistry.ts';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { morphOptionsWithShortcodeElements } from '../utils/shortcodeElementMorph.js';
+import { findListContainer } from '../utils/listContainer.js';
 
 const btnClasses = `bulk-action-btn inline-flex justify-center
       py-1.5 px-3 mt-3
@@ -187,11 +188,8 @@ export function registerBulkSelectionStore(Alpine) {
           const newHtml = await refreshResponse.text();
           const parser = new DOMParser();
           const refreshedDocument = parser.parseFromString(newHtml, 'text/html');
-          const listContainer = document.querySelector(".list-container, .items-container");
-          const listSelector = listContainer?.classList.contains('list-container')
-            ? '.list-container'
-            : '.items-container';
-          const refreshedListContainer = refreshedDocument.querySelector(listSelector);
+          const listContainer = findListContainer(document);
+          const refreshedListContainer = findListContainer(refreshedDocument);
 
           if (!listContainer || !refreshedListContainer) {
             throw new Error('Could not find refreshed list');

@@ -52,12 +52,13 @@ function isCacheExpired(entry) {
   return !entry || (Date.now() - entry.timestamp) >= CACHE_TTL;
 }
 
-export function blockTable(block, saveContentFn, saveStateFn, getEditMode) {
+export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveContentDebouncedFn) {
   return {
     block,
     saveContentFn,
     saveStateFn,
     getEditMode,
+    saveContentDebouncedFn,
 
     get editMode() {
       return this.getEditMode ? this.getEditMode() : false;
@@ -165,6 +166,30 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode) {
       this.sortDirection = this.sortColumn === colId && this.sortDirection === 'asc' ? 'desc' : 'asc';
       this.sortColumn = colId;
       this.saveStateFn(this.block.id, { sortColumn: this.sortColumn, sortDirection: this.sortDirection });
+    },
+
+    // The debounced path parks this object in the parent's blocks[] and in
+    // _pendingUpdates, so hand over a snapshot rather than the live Alpine
+    // proxies — otherwise the content kept for rollback mutates with the edit.
+    _contentSnapshot() {
+      if (this.isQueryMode) {
+        return {
+          queryId: this.queryId,
+          queryParams: JSON.parse(JSON.stringify(this.queryParams)),
+          isStatic: this.isStatic,
+        };
+      }
+      return {
+        columns: JSON.parse(JSON.stringify(this.columns)),
+        rows: JSON.parse(JSON.stringify(this.rows)),
+      };
+    },
+
+    // Called on input for debounced auto-save. Without it a column label or a
+    // cell typed and never blurred was discarded on navigation (finding 50).
+    saveContentDebounced() {
+      if (!this.saveContentDebouncedFn) return;
+      this.saveContentDebouncedFn(this.block.id, this._contentSnapshot());
     },
 
     saveContent() {
@@ -290,7 +315,10 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode) {
     selectQuery(query) {
       this.queryId = query.ID || query.id;
       this.selectedQueryName = query.Name || query.name;
-      this.queryParams = {};
+      // queryParams is a getter over queryParamRows. Assigning to it threw
+      // ("'set' on proxy: trap returned falsish") before saveContent() ran, so
+      // the block flipped to query mode in the UI and was never persisted.
+      this.queryParamRows = [];
       this.isStatic = false;
       // Clear manual data
       this.columns = [];
@@ -302,7 +330,7 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode) {
 
     clearQuery() {
       this.queryId = null;
-      this.queryParams = {};
+      this.queryParamRows = [];
       this.isStatic = false;
       this.queryColumns = [];
       this.queryRows = [];
@@ -319,20 +347,35 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode) {
       this.saveContent();
     },
 
-    // Set a param row's value (by stable row id) and refresh.
-    updateParamValue(id, value) {
+    // Set a param row's value (by stable row id). `refetch` is false on the
+    // per-keystroke @input path: that one only needs to not lose the text, and
+    // re-running the query on every character would hammer the server.
+    updateParamValue(id, value, { refetch = true } = {}) {
       const row = this.queryParamRows.find(r => r.id === id);
       if (!row) return;
       row.value = value;
+      if (!refetch) {
+        this.saveContentDebounced();
+        return;
+      }
       this.saveContent();
       this.fetchQueryData(true);
     },
 
     // Rename a param row's key (by stable row id). The row identity is unchanged,
     // so the value input the user may be tabbing into is never destroyed.
-    updateParamKey(id, key) {
+    updateParamKey(id, key, { refetch = true } = {}) {
       const row = this.queryParamRows.find(r => r.id === id);
       if (!row) return;
+      if (!refetch) {
+        // Per-keystroke: keep the raw text. Trimming here would make the
+        // one-way :value binding rewrite the input mid-word and swallow the
+        // space the user just typed. The queryParams getter trims on the way
+        // to the server anyway, so nothing untrimmed is ever persisted.
+        row.key = key || '';
+        this.saveContentDebounced();
+        return;
+      }
       row.key = (key || '').trim();
       this.saveContent();
       this.fetchQueryData(true);

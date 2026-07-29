@@ -10,7 +10,10 @@
 {% block body %}
     {% include "/partials/customListHeader.tpl" %}
     {% include "/partials/mrqlBar.tpl" with entity="resource" %}
-    <div class="detail-table-wrap">
+    {# data-list-container is the JS hook the bulk-operation refresh morphs into. #}
+    {# It is an attribute and not the .list-container class, which carries a CSS #}
+    {# grid this table must not inherit (finding 9). #}
+    <div class="detail-table-wrap" data-list-container>
         <table class="gallery detail-table" aria-label="Resources">
             <thead>
                 <tr>

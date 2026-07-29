@@ -33,7 +33,9 @@ func (w *EntityWriter[T]) UpdateName(id uint, name string) error {
 	entity := new(T)
 	result := w.ctx.db.Model(entity).Where("id = ?", id).Update("name", name)
 	if result.Error != nil {
-		return result.Error
+		// The inline rename editor shows this text to the user, so the driver's
+		// "UNIQUE constraint failed: tags.name" must not be what it gets.
+		return friendlyUniqueNameError(modelLabel(w.ctx.db, entity), name, result.Error)
 	}
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
