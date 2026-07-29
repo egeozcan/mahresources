@@ -324,3 +324,104 @@ describe('reloadInto and the Alpine entity scope', () => {
   });
 });
 
+describe('applyEntity does not roll the scope back', () => {
+  it('abandons the whole swap when its snapshot is older than the scope', async () => {
+    const el = fakeEl();
+    // A sibling [lazy] (or an inline edit) already installed newer data.
+    const scope: any = { entity: { ID: 1, Name: 'newer', UpdatedAt: '2026-07-29T10:00:00Z' } };
+    (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
+
+    const run = reloadInto(el, el, 'token-a');
+    // This request was issued first and loaded the entity before that edit, but
+    // its response comes back last.
+    pending[0].resolveWith({
+      html: 'older markup',
+      entity: { ID: 1, Name: 'older', UpdatedAt: '2026-07-29T09:00:00Z' },
+    });
+
+    await expect(run).resolves.toBe(false);
+    expect(scope.entity.Name).toBe('newer');
+    // The HTML is exactly as old as the entity that came with it: installing it
+    // would put stale server-expanded values beside the newer bindings.
+    expect(el.innerHTML).toBe('original');
+  });
+
+  it('applies a snapshot newer than the scope', async () => {
+    const el = fakeEl();
+    const scope: any = { entity: { ID: 1, Name: 'older', UpdatedAt: '2026-07-29T09:00:00Z' } };
+    (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
+
+    const run = reloadInto(el, el, 'token-a');
+    pending[0].resolveWith({
+      html: 'markup',
+      entity: { ID: 1, Name: 'newer', UpdatedAt: '2026-07-29T10:00:00Z' },
+    });
+
+    await expect(run).resolves.toBe(true);
+    expect(scope.entity.Name).toBe('newer');
+  });
+
+  it('applies when neither side carries a usable timestamp', async () => {
+    const el = fakeEl();
+    const scope: any = { entity: { ID: 1, Name: 'old' } };
+    (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
+
+    const run = reloadInto(el, el, 'token-a');
+    pending[0].resolveWith({ html: 'markup', entity: { ID: 1, Name: 'new' } });
+
+    await expect(run).resolves.toBe(true);
+    expect(scope.entity.Name).toBe('new');
+  });
+
+  it('refuses to write a different entity into the scope', async () => {
+    const el = fakeEl();
+    const scope: any = { entity: { ID: 1, Name: 'mine' } };
+    (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
+
+    const run = reloadInto(el, el, 'token-a');
+    pending[0].resolveWith({ html: 'markup', entity: { ID: 2, Name: 'someone else' } });
+
+    await expect(run).resolves.toBe(true);
+    expect(scope.entity.ID).toBe(1);
+  });
+});
+
+describe('applyEntity merges rather than replaces', () => {
+  it('keeps fields the response does not carry', async () => {
+    const el = fakeEl();
+    // A note detail page puts the full note in scope, including fields the
+    // deferred response deliberately withholds so list cards never receive them.
+    const scope: any = {
+      entity: { ID: 1, Name: 'old', UpdatedAt: '2026-07-29T09:00:00Z', blocks: [{ id: 7 }] },
+    };
+    (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
+
+    const run = reloadInto(el, el, 'token-a');
+    pending[0].resolveWith({
+      html: 'markup',
+      entity: { ID: 1, Name: 'new', UpdatedAt: '2026-07-29T10:00:00Z', hasShare: true },
+    });
+
+    await expect(run).resolves.toBe(true);
+    expect(scope.entity.Name).toBe('new');
+    // Replacing outright would make entity.blocks vanish from a detail page after
+    // the first deferred fetch.
+    expect(scope.entity.blocks).toEqual([{ id: 7 }]);
+    expect(scope.entity.hasShare).toBe(true);
+  });
+
+  it('never introduces a field the response withheld', async () => {
+    const el = fakeEl();
+    // A list card's scope was built without a share token; merging must not be a
+    // way for one to appear.
+    const scope: any = { entity: { ID: 1, Name: 'old', hasShare: true } };
+    (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
+
+    const run = reloadInto(el, el, 'token-a');
+    pending[0].resolveWith({ html: 'markup', entity: { ID: 1, Name: 'new', hasShare: true } });
+
+    await expect(run).resolves.toBe(true);
+    expect('shareToken' in scope.entity).toBe(false);
+  });
+});
+

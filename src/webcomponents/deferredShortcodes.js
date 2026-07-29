@@ -61,10 +61,58 @@ function applyEntity(el, entity) {
   if (!entity || !alpine || typeof alpine.$data !== 'function') return;
   try {
     const scope = alpine.$data(el);
-    if (scope && 'entity' in scope) scope.entity = entity;
+    if (!scope || !('entity' in scope)) return;
+    if (!supersedes(entity, scope.entity)) return;
+    // Merged, not replaced. The response carries the shape that is safe to send
+    // to every surface, which is narrower than what a detail page put in scope:
+    // replacing outright would make fields like entity.blocks vanish after the
+    // first deferred fetch. Merging refreshes what the server sent and leaves the
+    // rest at its page-load value. It cannot introduce anything the response
+    // withheld, so a scope built without a share token never acquires one.
+    scope.entity = scope.entity ? { ...scope.entity, ...entity } : entity;
   } catch (e) {
     /* a scope we cannot reach must never break the swap */
   }
+}
+
+// entityIsCurrent asks the same question as supersedes, but for the caller
+// deciding whether to install the HTML that came with this entity. The markup was
+// expanded server-side from exactly this snapshot, so it is precisely as stale:
+// swapping it in while refusing the entity would leave old server-expanded values
+// sitting beside newer bindings.
+function entityIsCurrent(el, entity) {
+  const alpine = window.Alpine;
+  if (!entity || !alpine || typeof alpine.$data !== 'function') return true;
+  try {
+    const scope = alpine.$data(el);
+    if (!scope || !('entity' in scope)) return true;
+    const current = scope.entity;
+    // Only a scope holding this same entity can date the response. Where the
+    // nearest scope belongs to something else — a card whose own markup carries
+    // no x-data, so the page's entity is what resolves — it says nothing about
+    // whether this render is stale, and refusing the swap would break that
+    // reload outright. Guarding the write is enough there.
+    if (!current || current.ID == null || entity.ID == null || current.ID !== entity.ID) return true;
+    return supersedes(entity, current);
+  } catch (e) {
+    return true;
+  }
+}
+
+// One Alpine scope can be shared by several deferred blocks, and each one's
+// staleness checks are local to its own container — so nothing there stops a
+// request that loaded the entity early, and answered late, from rolling the
+// scope back over newer data a sibling block or an inline edit already put
+// there. The entity's own timestamp is what orders them; when it cannot be read
+// on both sides, the fresh render is still the better guess.
+function supersedes(incoming, current) {
+  if (!current) return true;
+  // A scope holding a different entity is not this response's to write.
+  if (current.ID != null && incoming.ID != null && current.ID !== incoming.ID) return false;
+  const to = Date.parse(incoming.UpdatedAt);
+  const from = Date.parse(current.UpdatedAt);
+  if (!Number.isFinite(to) || !Number.isFinite(from)) return true;
+  return to >= from;
 }
 
 function hydrate(container) {
@@ -191,6 +239,11 @@ export function reloadInto(host, contentEl, token, isStale) {
     ({ html, entity }) => {
       if (!current() || !contentEl.isConnected) return false;
       if (typeof isStale === 'function' && isStale()) return false;
+      // A snapshot older than the one already on the page means this whole
+      // response predates what the reader is looking at. Keeping the current
+      // content is right here in a way it would not be on first reveal, where
+      // refusing would leave nothing at all.
+      if (!entityIsCurrent(contentEl, entity)) return false;
       contentEl.innerHTML = html;
       applyEntity(contentEl, entity);
       hydrate(contentEl);

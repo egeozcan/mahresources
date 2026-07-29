@@ -8,6 +8,7 @@ import (
 	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/lib/deferredtoken"
+	"mahresources/models"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/template_filters"
 	"mahresources/shortcodes"
@@ -19,16 +20,17 @@ type deferredRenderRequest struct {
 
 type deferredRenderResponse struct {
 	HTML string `json:"html"`
-	// Entity is the entity this body was just rendered against, in the same shape
-	// the display page embeds as its Alpine `entity` scope. Custom templates bind
-	// to it directly (x-text="entity.Meta.status" is a documented way to write
-	// them), and those bindings resolve against the scope the page created at
-	// load: re-rendering the HTML beside them would otherwise leave every one of
-	// them showing a snapshot the reload was asked to replace.
+	// Entity is the entity this body was just rendered against, in the shape the
+	// page embeds as its Alpine `entity` scope. Custom templates bind to it
+	// directly (x-text="entity.Meta.status" is a documented way to write them),
+	// and those bindings resolve against the scope the page created at load:
+	// re-rendering the HTML beside them would otherwise leave every one of them
+	// showing a snapshot the reload was asked to replace.
 	//
-	// This exposes nothing new. It is the same entity, loaded through the same
-	// request-scoped context, that the display page already serialises in full for
-	// this principal.
+	// It is passed through sanitizeDeferredEntity first, because "the shape the
+	// page embeds" is not one shape: a list card is built from a narrower
+	// projection than a display page, and the endpoint cannot tell which surface a
+	// token came from.
 	Entity any `json:"entity,omitempty"`
 }
 
@@ -97,6 +99,33 @@ func GetDeferredRenderHandler(ctx *application_context.MahresourcesContext) func
 		html := shortcodes.Process(reqCtx, body, *metaCtx, renderer, executor)
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(deferredRenderResponse{HTML: html, Entity: entity})
+		_ = json.NewEncoder(writer).Encode(deferredRenderResponse{HTML: html, Entity: sanitizeDeferredEntity(entity)})
 	}
+}
+
+// sanitizeDeferredEntity narrows a freshly loaded entity to the shape that is
+// safe to hand to any page's Alpine scope.
+//
+// loadPreviewEntity returns the full model, which is what a *display* page
+// embeds. A list card is not built from that: the notes-list provider takes a
+// copy with ShareToken and Blocks removed and a transient HasShare flag set,
+// because partials/note.tpl serialises entity|json into every card and a
+// plaintext share token there leaked into the rendered HTML of /notes (BH-038).
+//
+// A deferred token carries the entity, not the surface that minted it, so the
+// endpoint cannot tell a card's token from a display page's. It therefore returns
+// the narrower shape to both. Nothing binds to ShareToken or Blocks through the
+// entity scope, and this payload exists only to refresh bindings — never to drive
+// the share UI, which has its own endpoints.
+func sanitizeDeferredEntity(entity any) any {
+	note, ok := entity.(*models.Note)
+	if !ok {
+		return entity
+	}
+	// Shallow copy so the request-scoped model this was loaded into is untouched.
+	safe := *note
+	safe.HasShare = safe.ShareToken != nil && *safe.ShareToken != ""
+	safe.ShareToken = nil
+	safe.Blocks = nil
+	return &safe
 }

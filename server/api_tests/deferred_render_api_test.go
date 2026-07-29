@@ -186,3 +186,48 @@ func TestDeferredRender_ReturnsFreshEntityForAlpineScope(t *testing.T) {
 		t.Error("entity should carry the same fields the display page embeds, including ID")
 	}
 }
+
+// BH-038 strips ShareToken from note list cards because partials/note.tpl
+// serialises entity|json into every card's Alpine scope, so a plaintext token
+// there is a leak. The deferred response feeds that same scope, and must not
+// reintroduce what that fix removed. loadPreviewEntity returns the full model,
+// which is the shape a *display* page embeds — not the shape a card was built
+// from.
+func TestDeferredRender_EntityNeverCarriesTheShareToken(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	token := "sharetokenvalue0123456789abcdef"
+	n := &models.Note{Name: "Shared Note", ShareToken: &token}
+	if err := tc.DB.Create(n).Error; err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+
+	rr := tc.MakeRequest(http.MethodPost, "/v1/shortcodes/deferred",
+		map[string]any{"token": signToken(tc, "note", n.ID, `[property path="Name"]`)})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	raw := rr.Body.String()
+	if strings.Contains(raw, token) {
+		t.Errorf("deferred response leaked the plaintext share token:\n%s", raw)
+	}
+
+	var resp struct {
+		Entity map[string]any `json:"entity"`
+	}
+	if err := json.NewDecoder(strings.NewReader(raw)).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, present := resp.Entity["shareToken"]; present {
+		t.Error("entity still carries a shareToken field")
+	}
+	// The card's scope was built with this transient flag standing in for the
+	// token; replacing it with a model that omits it would break those bindings.
+	if got := resp.Entity["hasShare"]; got != true {
+		t.Errorf("entity.hasShare = %v, want true", got)
+	}
+	if _, present := resp.Entity["blocks"]; present {
+		t.Error("entity still carries blocks, which the card projection drops")
+	}
+}
