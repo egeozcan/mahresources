@@ -47,6 +47,7 @@ var (
 	_ RelationPageContext         = (*application_context.MahresourcesContext)(nil)
 	_ ResourceCategoryPageContext = (*application_context.MahresourcesContext)(nil)
 	_ ResourcePageContext         = (*application_context.MahresourcesContext)(nil)
+	_ SearchPageContext           = (*application_context.MahresourcesContext)(nil)
 	_ TagPageContext              = (*application_context.MahresourcesContext)(nil)
 	_ TemplatePartialPageContext  = (*application_context.MahresourcesContext)(nil)
 	_ contracts.LogEntryReader    = (*application_context.MahresourcesContext)(nil)
@@ -150,6 +151,12 @@ type QueryPageContext interface {
 	GetQueriesCount(queryQ *query_models.QueryQuery) (int64, error)
 	IsReadOnlyDBEnforced() bool
 	DatabaseType() string
+}
+
+// SearchPageContext serves /search, the full results page behind the Cmd+K
+// dialog's "see all" row (WS6, finding 32).
+type SearchPageContext interface {
+	contracts.GlobalSearcher
 }
 
 // RelationPageContext serves the relation and relation-type pages.

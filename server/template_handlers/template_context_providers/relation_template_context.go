@@ -47,6 +47,12 @@ func RelationTypeListContextProvider(context RelationPageContext) func(request *
 			return addErrContext(err, baseContext)
 		}
 
+		// WS6 68/146: an out-of-range ?page= redirects to the last real page
+		// instead of rendering blank under a footer that offers pages it has.
+		if redirect := outOfRangePageRedirect(request, relationTypesCount, constants.MaxResultsPerPage, page); redirect != nil {
+			return redirect
+		}
+
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), relationTypesCount, constants.MaxResultsPerPage, int(page))
 
 		if err != nil {
@@ -176,6 +182,12 @@ func RelationListContextProvider(context RelationPageContext) func(request *http
 
 		if err != nil {
 			return addErrContext(err, baseContext)
+		}
+
+		// WS6 68/146: an out-of-range ?page= redirects to the last real page
+		// instead of rendering blank under a footer that offers pages it has.
+		if redirect := outOfRangePageRedirect(request, relationTypesCount, constants.MaxResultsPerPage, page); redirect != nil {
+			return redirect
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), relationTypesCount, constants.MaxResultsPerPage, int(page))

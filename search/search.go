@@ -25,6 +25,12 @@ const (
 	EntityTypeMRQLQuery        = "mrqlQuery"
 )
 
+// searchCacheLimit is how many rows a cacheable search collects before it stops.
+// It is also the ceiling the reported Total saturates at, which is why
+// GlobalSearchResponse carries TotalCapped: without it a caller cannot tell
+// "exactly 50 matches" from "at least 50" (WS6, finding 32).
+const searchCacheLimit = 50
+
 // InvalidateSearchCacheByType removes cached search results that contain the specified entity type.
 // This should be called after creating, updating, or deleting entities to ensure search results are fresh.
 // Note: Even without explicit invalidation, the cache has a 60-second TTL for eventual consistency.
@@ -116,9 +122,12 @@ func (ctx *opCtx) GlobalSearch(query *query_models.GlobalSearchQuery) (*query_mo
 				results = results[:query.Limit]
 			}
 			return &query_models.GlobalSearchResponse{
-				Query:   searchTerm,
-				Total:   total,
-				Results: results,
+				Query: searchTerm,
+				Total: total,
+				// The cache holds at most searchCacheLimit rows, so a cached
+				// total is a floor for exactly the same reason a fresh one is.
+				TotalCapped: total >= searchCacheLimit,
+				Results:     results,
 			}, nil
 		}
 	}
@@ -128,7 +137,7 @@ func (ctx *opCtx) GlobalSearch(query *query_models.GlobalSearchQuery) (*query_mo
 	searchLimit := query.Limit
 	shouldCache := cacheable && ctx.cache != nil && len(query.Types) == 0
 	if shouldCache {
-		searchLimit = 50 // Cache up to 50 results
+		searchLimit = searchCacheLimit // Cache up to searchCacheLimit results
 	}
 
 	// Parse the search query to detect prefix/fuzzy modes
@@ -196,9 +205,13 @@ func (ctx *opCtx) GlobalSearch(query *query_models.GlobalSearchQuery) (*query_mo
 	}
 
 	return &query_models.GlobalSearchResponse{
-		Query:   searchTerm,
-		Total:   total,
-		Results: allResults,
+		Query: searchTerm,
+		Total: total,
+		// total is computed after the trim above, so it saturates at
+		// searchLimit. Saying so is what lets the UI render "50+" rather than
+		// present the ceiling as an exact count (WS6, finding 32).
+		TotalCapped: total >= searchLimit,
+		Results:     allResults,
 	}, nil
 }
 

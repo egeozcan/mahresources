@@ -61,6 +61,11 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
     open: false,
     loading: false,
     error: '',
+    // Set when the preview fell back to an entity outside this category because
+    // the category has no members yet. The pane says so, since the author would
+    // otherwise reasonably assume the sample carries the category's own meta
+    // (WS6, finding 29).
+    usingUnscopedSample: false,
     issues: [],
     _refreshTimer: null,
     _searchTimer: null,
@@ -153,9 +158,32 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
         const resp = await fetch(`${LIST_ENDPOINTS[this.entityType]}?maxResults=1${this._scopeParam()}`);
         if (!resp.ok) return;
         const first = normalizeList(await resp.json())[0];
-        if (first) this._selectEntity(first);
+        if (first) {
+          this._selectEntity(first);
+          return;
+        }
       } catch (e) {
-        /* no default available */
+        /* fall through to the unscoped sample below */
+      }
+
+      // WS6 finding 29: on the edit form of a category that has no members yet,
+      // the scoped lookup can only ever return nothing, so the preview pane
+      // stayed an unexplained 384px void — at exactly the moment an author most
+      // needs it. Fall back to any entity of the right type so the template can
+      // still be seen rendering, and say that is what happened. The scoping is
+      // deliberate and is NOT dropped in general: a category-scoped template
+      // should normally render against an entity that carries the category.
+      if (!this._scopeParam()) return;
+      try {
+        const resp = await fetch(`${LIST_ENDPOINTS[this.entityType]}?maxResults=1`);
+        if (!resp.ok) return;
+        const first = normalizeList(await resp.json())[0];
+        if (first) {
+          this.usingUnscopedSample = true;
+          this._selectEntity(first);
+        }
+      } catch (e) {
+        /* nothing to preview against at all */
       }
     },
 
@@ -234,6 +262,14 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
           return;
         }
       } else if (!this.entityId) {
+        // Nothing to render against, and nothing said about it. Match the
+        // carrier branch above: explain, and blank the frame so the pane is not
+        // a silent void (WS6, finding 29).
+        this.error =
+          'Nothing to preview against yet — this category has no ' +
+          `${this.entityType}s, and none exist to borrow. Pick one above, or create one first.`;
+        this.issues = [];
+        this._renderFrame('', '', null);
         return;
       }
       // Concurrent refreshes (slot switch racing a debounced edit) can resolve

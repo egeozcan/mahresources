@@ -21,11 +21,34 @@
                     <div class="flex-1"></div>
                     <button type="button" class="text-stone-400 hover:text-stone-600 text-lg" @click="closeModal()" aria-label="Close">&times;</button>
                 </div>
+                {# WS6 finding 18: openModal already computes the parse error, but it was     #}
+                {# rendered only inside the Raw JSON tabpanel — and openModal forces the      #}
+                {# 'edit' tab. An author opening the Visual Editor on a stored schema that    #}
+                {# does not parse therefore saw an empty editor and no reason for it. The     #}
+                {# message is hoisted above the tab body so it shows whichever tab is open;   #}
+                {# the copy inside the Raw panel is gone, so only one live region announces.  #}
+                <p x-show="!rawJsonValid" x-cloak class="text-red-600 text-xs px-4 py-2 bg-red-50 border-b border-red-200" role="alert">
+                    This schema is not valid JSON, so the visual editor cannot show it: <span x-text="rawJsonError"></span>
+                </p>
                 <!-- Body -->
                 <div class="flex-1 overflow-hidden">
                     <template x-if="tab === 'edit'">
                         <div role="tabpanel" id="panel-edit" aria-labelledby="tab-edit" class="h-full">
-                            <schema-editor mode="edit" :schema="currentSchema" @schema-change="handleSchemaChange($event)" style="height:100%;"></schema-editor>
+                            <template x-if="rawJsonValid">
+                                <schema-editor mode="edit" :schema="currentSchema" @schema-change="handleSchemaChange($event)" style="height:100%;"></schema-editor>
+                            </template>
+                            {# Deliberately not a button, and deliberately not the words "Raw JSON".  #}
+                            {# tests/schema/editor-bugfixes.spec.ts locates the tab with            #}
+                            {# locator('button', { hasText: 'Raw JSON' }), which is a substring      #}
+                            {# match — a second control naming that tab makes the locator ambiguous #}
+                            {# under strict mode and breaks the spec. Same family as the error.tpl   #}
+                            {# <nav> landmark lesson: a new control in a shared partial is a new     #}
+                            {# match for every existing locator.                                    #}
+                            <template x-if="!rawJsonValid">
+                                <p class="p-6 text-sm text-stone-600">
+                                    Correct the JSON on the tab to the right, and the visual editor will open here.
+                                </p>
+                            </template>
                         </div>
                     </template>
                     <template x-if="tab === 'preview'">
@@ -36,7 +59,9 @@
                     <template x-if="tab === 'raw'">
                         <div role="tabpanel" id="panel-raw" aria-labelledby="tab-raw" class="h-full flex flex-col">
                             <textarea x-model="rawJson" @input="handleRawChange()" class="w-full flex-1 p-4 font-mono text-xs resize-none focus:ring-0" :class="rawJsonValid ? 'border-none' : 'border-2 border-red-500'" spellcheck="false" :aria-invalid="!rawJsonValid"></textarea>
-                            <p x-show="!rawJsonValid" class="text-red-500 text-xs px-4 py-1 bg-red-50" x-text="rawJsonError" role="alert"></p>
+                            {# The error used to be repeated here. It now lives above the tab body #}
+                            {# so it is visible on every tab; a second role="alert" carrying the   #}
+                            {# same string would make a screen reader announce it twice.           #}
                         </div>
                     </template>
                 </div>

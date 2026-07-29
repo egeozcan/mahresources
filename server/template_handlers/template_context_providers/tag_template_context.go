@@ -35,6 +35,12 @@ func TagListContextProvider(context TagPageContext) func(request *http.Request) 
 			return addErrContext(err, baseContext)
 		}
 
+		// WS6 68/146: an out-of-range ?page= redirects to the last real page
+		// instead of rendering blank under a footer that offers pages it has.
+		if redirect := outOfRangePageRedirect(request, tagsCount, resultsPerPage, page); redirect != nil {
+			return redirect
+		}
+
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), tagsCount, resultsPerPage, int(page))
 
 		if err != nil {

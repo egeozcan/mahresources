@@ -14,7 +14,7 @@
                 {% endif %}
             </article>
         {% empty %}
-            <div class="detail-empty">No relation types found.</div>
+            {% include "/partials/listEmpty.tpl" with label="relation types" createUrl="/relationType/new" %}
         {% endfor %}
     </div>
 {% endblock %}

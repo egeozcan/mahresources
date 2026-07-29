@@ -14,6 +14,8 @@
     <div class="flex flex-col gap-4 items-container"{% if owners && owners|length == 1 %} data-paste-context='{"type":"group","id":{{ owners.0.ID }},"name":"{{ owners.0.Name|escapejs }}"}'{% endif %}>
         {% for entity in groups %}
             {% include "/partials/group.tpl" with selectable=true %}
+        {% empty %}
+            {% include "/partials/listEmpty.tpl" with label="groups" createUrl="/group/new" %}
         {% endfor %}
     </div>
     {% plugin_slot "group_list_after" %}

@@ -14,7 +14,7 @@
                 {% endif %}
             </article>
         {% empty %}
-            <div class="detail-empty">No resource categories found.</div>
+            {% include "/partials/listEmpty.tpl" with label="resource categories" createUrl="/resourceCategory/new" %}
         {% endfor %}
     </div>
 {% endblock %}

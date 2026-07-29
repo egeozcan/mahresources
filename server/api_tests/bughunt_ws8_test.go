@@ -3,6 +3,7 @@ package api_tests
 import (
 	"encoding/json"
 	"fmt"
+	"mahresources/constants"
 	"net/http"
 	"regexp"
 	"strings"
@@ -266,9 +267,24 @@ func TestResourceListFiltersBySeries(t *testing.T) {
 // across, but Simple renders four times as many rows per page, so "page 2"
 // means something different in each view and page 2 of Simple is usually empty.
 // Switching views must land on page 1.
+//
+// Two things about this test changed while WS6 was landing, and both were
+// defects in the test rather than in the code:
+//
+//  1. It created 3 resources and asked for page 2 — an out-of-range page, which
+//     WS6's finding-68 fix now answers with a 302. The premise had become
+//     unreachable, and the assertions would have run against a redirect body.
+//     It builds a real page 2 now.
+//  2. Its locator matched *every* /resources href on the page, which includes
+//     the pagination footer. That only passed because 3 resources meant no
+//     pagination link carried page=2 either. With a real page 2 the footer
+//     legitimately links to page 2 — correctly — and the test failed on it.
+//     It now reads only the view switcher's own links, which is what it claims
+//     to be about. A test whose locator is wider than its subject passes for
+//     reasons unrelated to the thing it guards.
 func TestViewSwitcherDropsPageNumber(t *testing.T) {
 	tc := SetupTestEnv(t)
-	for i := range 3 {
+	for i := range constants.MaxResultsPerPage + 3 {
 		tc.CreateResourceWithType(t, fmt.Sprintf("Resource %d", i), "image/png")
 	}
 
@@ -278,9 +294,18 @@ func TestViewSwitcherDropsPageNumber(t *testing.T) {
 	}
 
 	body := resp.Body.String()
-	links := regexp.MustCompile(`href="(/resources(?:/[a-z]+)?\?[^"]*)"`).FindAllStringSubmatch(body, -1)
-	if len(links) == 0 {
-		t.Fatal("no view-switcher links found; the rest of this test is meaningless")
+	// partials/boxSelect.tpl renders each option as
+	// <a href="..." class="view-switcher-option">.
+	viewSwitcher := regexp.MustCompile(`<a href="([^"]+)"[^>]*class="view-switcher-option"`)
+	links := viewSwitcher.FindAllStringSubmatch(body, -1)
+	if len(links) < 2 {
+		t.Fatalf("found %d view-switcher links; the rest of this test is meaningless", len(links))
+	}
+
+	// Positive control: page 2 really is rendered, so "no link carries page=2"
+	// is a statement about the view switcher and not about an empty page.
+	if !strings.Contains(body, "page=2") {
+		t.Fatal("the page carries no page=2 anywhere, so the assertion below is vacuous")
 	}
 
 	for _, l := range links {

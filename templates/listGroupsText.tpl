@@ -13,6 +13,8 @@
     <div class="flex flex-col gap-4 items-container">
         {% for entity in groups %}
             {% include "/partials/group.tpl" with selectable=true fullText=true %}
+        {% empty %}
+            {% include "/partials/listEmpty.tpl" with label="groups" createUrl="/group/new" %}
         {% endfor %}
     </div>
 {% endblock %}

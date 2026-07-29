@@ -20,7 +20,12 @@ type SearchResultItem struct {
 
 // GlobalSearchResponse represents the search response
 type GlobalSearchResponse struct {
-	Query   string             `json:"query"`
-	Total   int                `json:"total"`
-	Results []SearchResultItem `json:"results"`
+	Query string `json:"query"`
+	Total int    `json:"total"`
+	// TotalCapped reports that Total is a floor rather than an exact count:
+	// the search service trims to its own 50-row ceiling before counting, so a
+	// corpus with thousands of matches also reports 50. Callers that display
+	// the number must render it as "50+" when this is set (WS6, finding 32).
+	TotalCapped bool               `json:"totalCapped,omitempty"`
+	Results     []SearchResultItem `json:"results"`
 }

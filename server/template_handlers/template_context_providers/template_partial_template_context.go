@@ -34,6 +34,12 @@ func TemplatePartialListContextProvider(context TemplatePartialPageContext) func
 			return addErrContext(err, baseContext)
 		}
 
+		// WS6 68/146: an out-of-range ?page= redirects to the last real page
+		// instead of rendering blank under a footer that offers pages it has.
+		if redirect := outOfRangePageRedirect(request, partialsCount, constants.MaxResultsPerPage, page); redirect != nil {
+			return redirect
+		}
+
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), partialsCount, constants.MaxResultsPerPage, int(page))
 		if err != nil {
 			return addErrContext(err, baseContext)

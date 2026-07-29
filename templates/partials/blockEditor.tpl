@@ -145,7 +145,13 @@
                     {# Todos block #}
                     <template x-if="block.type === 'todos'">
                         <div x-data="blockTodos(block, (id, content) => updateBlockContent(id, content), (id, state) => updateBlockState(id, state), () => editMode, (id, content) => updateBlockContentDebounced(id, content))">
-                            <template x-if="!editMode">
+                            {# WS6 finding 126: with no items this rendered an empty <ul>, so the #}
+                            {# whole card collapsed to its padding — a zero-height blank box, while #}
+                            {# gallery, references and table each say what is missing. Two sibling  #}
+                            {# x-if templates, not one wrapping div: Alpine allows only a single    #}
+                            {# root element inside a <template x-if>, which is the shape the        #}
+                            {# gallery block at the "No resources selected" branch already uses.    #}
+                            <template x-if="!editMode && items.length > 0">
                                 <ul class="space-y-1">
                                     <template x-for="item in items" :key="item.id">
                                         <li>
@@ -162,6 +168,9 @@
                                         </li>
                                     </template>
                                 </ul>
+                            </template>
+                            <template x-if="!editMode && items.length === 0">
+                                <p class="text-stone-400 text-sm font-sans">No items yet</p>
                             </template>
                             <template x-if="editMode">
                                 <div class="space-y-2">

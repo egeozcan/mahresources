@@ -787,6 +787,13 @@ html {
     letter-spacing: 0.02em;
 }
 
+/* .list-container is a card grid, so an empty state dropped into it lands in
+   the first 280px column and reads as mis-centered rather than as the list's
+   own message. It has to span the row. (WS6, findings 54/68/77.) */
+.list-container > .detail-empty {
+    grid-column: 1 / -1;
+}
+
 .detail-empty::before {
     content: '—  ';
 }

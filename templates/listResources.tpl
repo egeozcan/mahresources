@@ -14,6 +14,8 @@
     <section class="list-container"{% if owner && owner|length == 1 %} data-paste-context='{"type":"group","id":{{ owner.0.ID }},"name":"{{ owner.0.Name|escapejs }}"}'{% endif %}>
         {% for entity in resources %}
             {% include "/partials/resource.tpl" with selectable=true %}
+        {% empty %}
+            {% include "/partials/listEmpty.tpl" with label="resources" createUrl="/resource/new" %}
         {% endfor %}
     </section>
     {% plugin_slot "resource_list_after" %}

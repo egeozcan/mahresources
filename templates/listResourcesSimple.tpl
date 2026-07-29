@@ -10,6 +10,8 @@
 {% block gallery %}
     {% for entity in resources %}
         {% include "/partials/resource.tpl" %}
+    {% empty %}
+        {% include "/partials/listEmpty.tpl" with label="resources" createUrl="/resource/new" %}
     {% endfor %}
 {% endblock %}
 

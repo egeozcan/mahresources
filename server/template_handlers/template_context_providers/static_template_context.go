@@ -171,6 +171,11 @@ var StaticTemplateCtx = func(request *http.Request) pongo2.Context {
 		"withQuery":   getWithQuery(request),
 		"hasQuery":    getHasQuery(request),
 		"stringId":    stringId,
+		// WS6: which branch of partials/listEmpty.tpl a zero-result list shows.
+		// Computed here rather than per entity because it is a property of the
+		// URL, and every list template extends this context.
+		"hasActiveFilter": hasActiveFilter(request),
+		"clearFiltersUrl": clearFiltersURL(request),
 		"getNextId": func(elName string) string {
 			currentId += 1
 			return fmt.Sprintf("input_%v_%v", elName, currentId)

@@ -32,6 +32,16 @@ function setCachedResults(query, results) {
     searchCache.set(key, { results, timestamp: Date.now() });
 }
 
+// The dialog does not search below this many characters — a one-character
+// query matches most of the corpus and the request is not worth issuing. The
+// constant is shared with the template's "keep typing" state so the two cannot
+// drift (WS6, findings 31/122).
+const MIN_SEARCH_LENGTH = 2;
+
+// How many rows the dialog shows. The server reports the true match count
+// alongside them, which is what the "see all" row is built from.
+const SEARCH_RESULT_LIMIT = 15;
+
 export function globalSearch() {
     return {
         isOpen: false,
@@ -47,6 +57,12 @@ export function globalSearch() {
         // from validation state, never from the /v1/search cache.
         mrqlRow: null,
         _mrqlTimer: null,
+        // What the server reported about the full match set, so the dialog can
+        // say what it is not showing (WS6, finding 32). `totalCapped` means
+        // `total` is a floor: the search service stops counting at its own
+        // ceiling, so rendering it bare would state 50 as a fact.
+        total: 0,
+        totalCapped: false,
 
         typeIcons: {
             resource: '\u{1F4C4}',
@@ -59,7 +75,8 @@ export function globalSearch() {
             relationType: '\u{1F517}',
             noteType: '\u{1F4CB}',
             mrqlQuery: '\u{1F4CA}',
-            mrql: '\u{25B6}\u{FE0F}'
+            mrql: '\u{25B6}\u{FE0F}',
+            seeAll: '\u{2026}'
         },
 
         typeLabels: {
@@ -73,15 +90,47 @@ export function globalSearch() {
             relationType: 'Relation Type',
             noteType: 'Note Type',
             mrqlQuery: 'Saved Query',
-            mrql: 'MRQL'
+            mrql: 'MRQL',
+            seeAll: 'All results'
         },
 
         // navResults is the navigable listbox contents: the pinned MRQL action
-        // row (when present) followed by the search results. Rendering and
+        // row (when present), the search results, then the "see all" row when
+        // the server reported more matches than are shown. Rendering and
         // arrow-key navigation operate over this; the search cache holds only
         // `results`.
+        //
+        // Appending the overflow row here rather than putting a link in the
+        // footer is what makes it reachable by keyboard for free: selectResult()
+        // only ever reads `url` off the selected row.
         get navResults() {
-            return this.mrqlRow ? [this.mrqlRow, ...this.results] : this.results;
+            const rows = this.mrqlRow ? [this.mrqlRow, ...this.results] : this.results;
+            return this.seeAllRow ? [...rows, this.seeAllRow] : rows;
+        },
+
+        // WS6 finding 32: the dialog asks for SEARCH_LIMIT rows but the server
+        // knows the true match count, so it can say what is being withheld.
+        get seeAllRow() {
+            if (!this.results.length || this.total <= this.results.length) return null;
+            const shown = this.results.length;
+            const of = this.totalCapped ? `${this.total}+` : `${this.total}`;
+            return {
+                type: 'seeAll',
+                id: 0,
+                name: `See all ${of} results`,
+                description: `Showing ${shown} of ${of}`,
+                url: '/search?q=' + encodeURIComponent(this.query.trim()),
+            };
+        },
+
+        // True while the typed query is below the 2-character search threshold
+        // but is not empty — including a query that is only whitespace, of any
+        // length. Before this, the placeholder was gated on the RAW length being
+        // zero and the empty state on the TRIMMED length being >= 2, so this
+        // band matched no region at all and the dialog body went blank with no
+        // explanation (WS6, findings 31 and 122).
+        get belowSearchThreshold() {
+            return this.query.length > 0 && this.query.trim().length < MIN_SEARCH_LENGTH;
         },
 
         init() {
@@ -132,6 +181,8 @@ export function globalSearch() {
                 this.query = '';
                 this.results = [];
                 this.mrqlRow = null;
+                this.total = 0;
+                this.totalCapped = false;
                 this.selectedIndex = 0;
             }
         },
@@ -141,6 +192,8 @@ export function globalSearch() {
             this.query = '';
             this.results = [];
             this.mrqlRow = null;
+            this.total = 0;
+            this.totalCapped = false;
         },
 
         search() {
@@ -158,9 +211,13 @@ export function globalSearch() {
             // Package 5b: evaluate the MRQL interpretation alongside the search.
             this.evaluateMRQL(searchTerm);
 
-            // Require at least 2 characters to search
-            if (searchTerm.length < 2) {
+            // Require at least MIN_SEARCH_LENGTH characters to search. The
+            // template's `belowSearchThreshold` region explains this state; it
+            // used to fall through every x-show predicate and render nothing.
+            if (searchTerm.length < MIN_SEARCH_LENGTH) {
                 this.results = [];
+                this.total = 0;
+                this.totalCapped = false;
                 return;
             }
 
@@ -168,6 +225,11 @@ export function globalSearch() {
             const cached = getCachedResults(searchTerm);
             if (cached) {
                 this.results = cached;
+                // The cache holds results, not the server's total. Reporting the
+                // cached length as the total is honest — it is what is known —
+                // and keeps a stale "see all N" from outliving its response.
+                this.total = cached.length;
+                this.totalCapped = false;
                 this.selectedIndex = 0;
                 if (this.results.length > 0) {
                     this.announce(`${this.results.length} result${this.results.length === 1 ? '' : 's'} found. Use arrow keys to navigate.`);
@@ -184,7 +246,7 @@ export function globalSearch() {
                 this.loading = true;
 
                 const { abort, ready } = abortableFetch(
-                    `/v1/search?q=${encodeURIComponent(searchTerm)}&limit=15`
+                    `/v1/search?q=${encodeURIComponent(searchTerm)}&limit=${SEARCH_RESULT_LIMIT}`
                 );
                 this.requestAborter = abort;
 
@@ -192,6 +254,8 @@ export function globalSearch() {
                     .then(data => {
                         if (this.query.trim() === searchTerm) {
                             this.results = data.results || [];
+                            this.total = typeof data.total === 'number' ? data.total : this.results.length;
+                            this.totalCapped = data.totalCapped === true;
                             this.selectedIndex = 0;
                             // Cache non-empty results only. Caching an empty
                             // response would poison this term for the full TTL,

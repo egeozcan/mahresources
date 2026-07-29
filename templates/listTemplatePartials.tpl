@@ -14,7 +14,7 @@
                 {% endif %}
             </article>
         {% empty %}
-            <div class="detail-empty">No template partials found.</div>
+            {% include "/partials/listEmpty.tpl" with label="template partials" createUrl="/templatePartial/new" %}
         {% endfor %}
     </div>
 {% endblock %}

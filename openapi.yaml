@@ -263,6 +263,8 @@ components:
                     type: array
                 total:
                     type: integer
+                totalCapped:
+                    type: boolean
             type: object
         Group:
             properties:

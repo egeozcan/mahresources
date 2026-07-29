@@ -14,7 +14,7 @@
                 {% endif %}
             </article>
         {% empty %}
-            <div class="detail-empty">No note types found.</div>
+            {% include "/partials/listEmpty.tpl" with label="note types" createUrl="/noteType/new" %}
         {% endfor %}
     </div>
 {% endblock %}

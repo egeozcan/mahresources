@@ -48,6 +48,14 @@
 
         <p x-show="error" x-text="error" role="alert" class="text-xs text-red-600 font-mono px-3 py-2"></p>
 
+        {# WS6 finding 29: when the category has no members, the preview borrows an #}
+        {# entity from outside it rather than rendering nothing. Say so — the       #}
+        {# sample does not carry this category's meta, so property lookups against  #}
+        {# it will not resolve the way they will in production.                     #}
+        <p x-show="usingUnscopedSample" class="text-xs text-amber-800 font-mono px-3 py-2 bg-amber-50">
+            This category has no entities yet, so the preview uses one from elsewhere. It does not carry this category's metadata.
+        </p>
+
         <p class="text-[11px] text-stone-600 px-3 pt-2">
             Rendered in an isolated sandbox — interactive editors and API-backed widgets are non-functional in preview.
         </p>

@@ -15,7 +15,7 @@
         {% for entity in queries %}
             {% include "/partials/query.tpl" %}
         {% empty %}
-            <div class="detail-empty">No queries found.</div>
+            {% include "/partials/listEmpty.tpl" with label="queries" createUrl="/query/new" %}
         {% endfor %}
     </div>
 {% endblock %}

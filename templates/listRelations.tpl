@@ -23,7 +23,7 @@
                 </div>
             </article>
         {% empty %}
-            <div class="detail-empty">No relations found.</div>
+            {% include "/partials/listEmpty.tpl" with label="relations" createUrl="/relation/new" %}
         {% endfor %}
     </div>
 {% endblock %}

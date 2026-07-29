@@ -72,6 +72,12 @@ func NoteListContextProvider(context NotePageContext) func(request *http.Request
 			popularTags = []application_context.PopularTag{}
 		}
 
+		// WS6 68/146: an out-of-range ?page= redirects to the last real page
+		// instead of rendering blank under a footer that offers pages it has.
+		if redirect := outOfRangePageRedirect(request, noteCount, resultsPerPage, page); redirect != nil {
+			return redirect
+		}
+
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), noteCount, resultsPerPage, int(page))
 
 		if err != nil {
@@ -372,6 +378,12 @@ func NoteTypeListContextProvider(context NotePageContext) func(request *http.Req
 
 		if err != nil {
 			return addErrContext(err, baseContext)
+		}
+
+		// WS6 68/146: an out-of-range ?page= redirects to the last real page
+		// instead of rendering blank under a footer that offers pages it has.
+		if redirect := outOfRangePageRedirect(request, noteTypesCount, constants.MaxResultsPerPage, page); redirect != nil {
+			return redirect
 		}
 
 		pagination, err := template_entities.GeneratePagination(request.URL.String(), noteTypesCount, constants.MaxResultsPerPage, int(page))

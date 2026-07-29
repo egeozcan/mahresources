@@ -59,6 +59,10 @@ func adaptTemplate[T any](fn func(T) func(request *http.Request) pongo2.Context)
 var templates = map[string]templateInformation{
 	"/dashboard": {adaptTemplate(template_context_providers.DashboardContextProvider), "dashboard.tpl", http.MethodGet},
 
+	// WS6 finding 32: the full results page behind the Cmd+K dialog's "see all"
+	// row. /search answered 404 before this.
+	"/search": {adaptTemplate(template_context_providers.SearchPageContextProvider), "searchResults.tpl", http.MethodGet},
+
 	"/note/new":      {adaptTemplate(template_context_providers.NoteCreateContextProvider), "createNote.tpl", http.MethodGet},
 	"/notes":         {adaptTemplate(template_context_providers.NoteListContextProvider), "listNotes.tpl", http.MethodGet},
 	"/note":          {adaptTemplate(template_context_providers.NoteContextProvider), "displayNote.tpl", http.MethodGet},

@@ -148,6 +148,25 @@
                         <p class="text-sm font-sans text-stone-600 mt-1">Try a different search term</p>
                     </div>
 
+                    {# WS6 findings 31/122: the band between "nothing typed" and #}
+                    {# "long enough to search" matched no region at all, so the  #}
+                    {# dialog body went blank with no explanation for any        #}
+                    {# one-character query and for any whitespace-only query of  #}
+                    {# any length. belowSearchThreshold covers both: it tests    #}
+                    {# the RAW length for "something was typed" and the TRIMMED  #}
+                    {# length for "long enough", which is exactly the pair the   #}
+                    {# other two regions split between them.                     #}
+                    <div
+                        x-show="belowSearchThreshold && navResults.length === 0"
+                        class="px-4 py-12 text-center"
+                    >
+                        <svg class="w-12 h-12 text-stone-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <p class="text-stone-500">Type at least 2 characters</p>
+                        <p class="text-sm font-sans text-stone-600 mt-1">Keep typing to search resources, notes, groups, and more</p>
+                    </div>
+
                     <div
                         x-show="query.length === 0 && navResults.length === 0"
                         class="px-4 py-12 text-center"

@@ -57,6 +57,16 @@
                         <td class="detail-table-secondary detail-table-truncate">{{ entity.OriginalName }}</td>
                         <td class="detail-table-secondary detail-table-truncate">{{ entity.OriginalLocation }}</td>
                     </tr>
+                {% empty %}
+                    {# The empty state has to live inside a row here, not beside #}
+                    {# the table: a bare <div> between <tbody> and <tr> is       #}
+                    {# hoisted out of the table by the HTML parser and lands     #}
+                    {# above it, detached from the header it belongs under.      #}
+                    <tr>
+                        <td colspan="9">
+                            {% include "/partials/listEmpty.tpl" with label="resources" createUrl="/resource/new" %}
+                        </td>
+                    </tr>
                 {% endfor %}
             </tbody>
         </table>

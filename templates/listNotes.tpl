@@ -14,6 +14,8 @@
     <section class="list-container"{% if owners && owners|length == 1 %} data-paste-context='{"type":"group","id":{{ owners.0.ID }},"name":"{{ owners.0.Name|escapejs }}"}'{% endif %}>
     {% for entity in notes %}
         {% include "/partials/note.tpl" with selectable=true %}
+    {% empty %}
+        {% include "/partials/listEmpty.tpl" with label="notes" createUrl="/note/new" %}
     {% endfor %}
     </section>
     {% plugin_slot "note_list_after" %}
