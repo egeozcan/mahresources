@@ -119,6 +119,31 @@ Two more were corroborated from source while checking those, upgrading them from
   or Accept negotiation. `server/api_tests/not_found_test.go:40` already *documents* this
   ("The not found handler currently only renders HTML") — that test must be inverted, not deleted.
 
+### Two defects found by chasing E2E flakes (not from the hunt)
+
+Recorded here because both were live bugs, and because "flaky test" was the wrong first diagnosis in
+one case and the right one in the other.
+
+**`editMeta` moved `UpdatedAt` backwards — and that silently broke `[reload]`.**
+`basic_entity_context.go` wrote `updated_at = CURRENT_TIMESTAMP`. SQLite renders that as whole-second
+UTC, while every other write path stores GORM's nanosecond value. A row created at `12:00:00.863` and
+edited 90 ms later came back stamped `12:00:00` — earlier than before. `deferredShortcodes.js` orders
+a fresh deferred render against the entity already on the page by `UpdatedAt`, so the freshly
+rendered content looked stale, was discarded, and the reader kept seeing old values **with no error**.
+The three `106-reload-shortcode.spec.ts` flakes were that bug; their failure rate was simply the
+chance that the edit landed in the same wall-clock second as the page render. Fixed by binding Go's
+clock instead. Reproduction went from 23 failures in 48 runs to 48/48 passing (and the file now runs
+in 11 s instead of 1.6 min, because nothing waits out a 10 s timeout any more).
+
+**Two download-cockpit specs were genuinely test-side.** `download-cockpit-a11y` sampled
+`document.activeElement` once, immediately after the panel became visible — but the component moves
+focus in an Alpine `$nextTick`, and `x-show` reveals the panel on the flip itself, so the assertion
+raced a tick it never waited for. Now polled. `download-cockpit-svg-aria-hidden` asserted on an
+empty state that only renders while `displayJobs` is empty, on a server the whole suite shares and
+several specs put export and plugin-action jobs on; it now drives the component into that state
+rather than hoping the server is idle. The exact interleaving was not reproduced in a reduced run —
+the mechanism is certain, the trigger ordering was not pinned down.
+
 ### Phase 1 results that changed the plan
 
 Verified live against a freshly seeded ephemeral instance on :8210. Three findings turned out to
@@ -463,10 +488,13 @@ Tasks:
       specific worry and found clean: the gate, the decode and the encode all return **before** the
       first write (the `storeVersionFile` call), so a failed rotate cannot degrade anything — which
       is why the report's stated cause could not have been right. The version insert, resource
-      update and preview delete then run inside one transaction. Not made fully atomic: the lazy v1
-      back-fill `Create` still sits outside that transaction, as it does in `CropResource` too. That
-      is pre-existing, affects only resources predating the versioning system, and is out of scope
-      here — noted rather than fixed.
+      update and preview delete then run inside one transaction. **Fixed in a follow-up:** the lazy
+      v1 back-fill `Create` used to sit outside that transaction, so a failure while writing the new
+      version left a back-filled "Original" row committed on its own — a version history invented
+      for a transform that never happened. `RotateResource`, `CropResource` and `TrimVideo` all had
+      it; all three now open the transaction before the back-fill and run the count, the back-fill
+      and the max-version read inside it. Proved with GORM callback fault injection
+      (`server/api_tests/transform_atomicity_test.go`), seen red first.
 - [x] **Proof:** 42 new subtests, each seen red first. Re-verified live on a reseeded instance —
       the defects that only appear in request *sequences* were replayed end to end:
 
@@ -1001,7 +1029,7 @@ the cheapest high-confidence work clears the ledger early.
       order (the report's own areas), not in severity order, so one server session covers each area.
 - [x] **Batch 2** — WS8 backend one-liners. Best effort ratio; clears 17 findings; independently
       testable in Go; no frontend coupling. **Fix 47 here so WS5 can re-test 6.**
-- [ ] **Batch 3** — WS1 image pipeline. Highest impact, four ✅ VERIFIED, data-destroying.
+- [x] **Batch 3** — WS1 image pipeline. Highest impact, four ✅ VERIFIED, data-destroying.
 - [ ] **Batch 4** — WS2 silent write failures. Second data-loss cluster.
 - [ ] **Batch 5** — WS3 validation and error surfaces. Start with `HandleError`; the client-side
       guards then have a survivable fallback behind them.

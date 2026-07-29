@@ -54,8 +54,20 @@ test.describe('Download cockpit SVG aria-hidden', () => {
     const triggerButton = page.locator('button[aria-label="Open jobs panel"]');
     await triggerButton.click();
 
-    // The empty state section should be visible (no jobs in a fresh ephemeral server)
-    // The empty state SVG is inside the panel — it's the large cloud icon
+    // The empty state renders only while displayJobs is empty, and the cockpit
+    // lists every job on the server — background downloads *and* plugin action
+    // jobs. The suite shares one server, so any spec running in parallel can
+    // put a job in this panel and the empty state never appears. Drive the
+    // component into the state under test instead of hoping the server is idle.
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.download-cockpit');
+      const scope = el && (window as any).Alpine?.$data?.(el);
+      if (!scope || !('jobs' in scope)) return false;
+      scope.jobs = [];
+      scope.retainedCompletedJobs = [];
+      return true;
+    });
+
     const emptyStateSvg = page.locator('.download-cockpit svg.w-16');
     await expect(emptyStateSvg).toBeVisible();
     await expect(emptyStateSvg).toHaveAttribute('aria-hidden', 'true');

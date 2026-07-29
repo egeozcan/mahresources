@@ -2,6 +2,30 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## "Flaky" is a symptom, not a diagnosis
+
+Three `[reload]` specs failed in a full run and passed on retry, so they were reported as flaky and
+unrelated to the work in hand. They were neither. `editMeta` wrote `updated_at = CURRENT_TIMESTAMP`,
+which SQLite renders at whole-second UTC while every other write path stores GORM's nanosecond
+value — so editing a row in the same second it was written moved its `UpdatedAt` *backwards*. The
+deferred-render client orders a fresh render against the entity on the page by that column, so it
+judged the new content stale and discarded it. A user editing metadata and hitting Reload within the
+same second saw old values and no error at all. The retry passed only because the second attempt
+landed in a later second.
+
+What made this hard to see is that the failure rate was a *clock* race, not a load race, yet it
+looked exactly like a load race: only under full parallelism was the suite slow enough for the
+interleaving to show, and "passes on retry" is the signature everyone reads as flake.
+
+The rule: before calling a test flaky, reproduce it deliberately — `--repeat-each=N --retries=0` on
+the single spec — and get a rate. A real flake and a real bug are told apart by evidence, not by
+whether the retry was green. Then split server from client before theorising about either: here,
+replaying the endpoint with curl proved the server returned fresh content, which moved the whole
+investigation to the client and, from there, to the timestamp it was comparing.
+
+Corollary: dismissing a failure as "unrelated to my change" is a claim about the cause, and it needs
+the same evidence as any other. "It is in a different feature" is not that evidence.
+
 ## A test is not evidence until you break the thing it tests
 
 Across three package extractions, four separate tests turned out to prove nothing, and in every case

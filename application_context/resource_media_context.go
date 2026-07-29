@@ -1054,13 +1054,13 @@ func (ctx *MahresourcesContext) createThumbFromVideoFileAtTime(
 	// Construct ffmpeg command with -ss BEFORE -i for fast seeking
 	cmd := exec.CommandContext(httpContext, ctx.Config.FfmpegPath,
 		"-ss", fmt.Sprintf("%d", secondsIn), // Seek BEFORE input (fast input seeking)
-		"-i", filePath,                      // File input (enables seeking)
-		"-vframes", "1",                     // Grab one frame
-		"-vf", "scale=640:-1",               // Scale the image
-		"-c:v", "mjpeg",                     // Encode to JPEG (faster than PNG)
-		"-q:v", "3",                         // JPEG quality (lower = better, 2-5 is good)
-		"-f", "image2pipe",                  // Output format
-		"pipe:1",                            // Output to stdout
+		"-i", filePath, // File input (enables seeking)
+		"-vframes", "1", // Grab one frame
+		"-vf", "scale=640:-1", // Scale the image
+		"-c:v", "mjpeg", // Encode to JPEG (faster than PNG)
+		"-q:v", "3", // JPEG quality (lower = better, 2-5 is good)
+		"-f", "image2pipe", // Output format
+		"pipe:1", // Output to stdout
 	)
 
 	cmd.Stdout = resultBuffer
@@ -1083,17 +1083,17 @@ func (ctx *MahresourcesContext) createThumbFromVideoFileAtTime(
 func isOfficeDocument(contentType string) bool {
 	officeTypes := []string{
 		// Microsoft Office (OpenXML)
-		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",       // docx
-		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",             // xlsx
-		"application/vnd.openxmlformats-officedocument.presentationml.presentation",     // pptx
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document",   // docx
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",         // xlsx
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation", // pptx
 		// OpenDocument
 		"application/vnd.oasis.opendocument.text",         // odt
 		"application/vnd.oasis.opendocument.spreadsheet",  // ods
 		"application/vnd.oasis.opendocument.presentation", // odp
 		// Legacy Microsoft Office
-		"application/msword",                                                      // doc
-		"application/vnd.ms-excel",                                                // xls
-		"application/vnd.ms-powerpoint",                                           // ppt
+		"application/msword",            // doc
+		"application/vnd.ms-excel",      // xls
+		"application/vnd.ms-powerpoint", // ppt
 	}
 
 	for _, t := range officeTypes {
@@ -1277,9 +1277,9 @@ func getOfficeExtension(contentType string) string {
 		"application/vnd.oasis.opendocument.text":                                   ".odt",
 		"application/vnd.oasis.opendocument.spreadsheet":                            ".ods",
 		"application/vnd.oasis.opendocument.presentation":                           ".odp",
-		"application/msword":                                                        ".doc",
-		"application/vnd.ms-excel":                                                  ".xls",
-		"application/vnd.ms-powerpoint":                                             ".ppt",
+		"application/msword":            ".doc",
+		"application/vnd.ms-excel":      ".xls",
+		"application/vnd.ms-powerpoint": ".ppt",
 	}
 
 	if ext, ok := extensions[contentType]; ok {
@@ -1431,8 +1431,20 @@ func (ctx *MahresourcesContext) RotateResource(httpContext context.Context, reso
 	}
 
 	// Ensure resource has versions (lazy migration)
+	// One transaction covers every write below. The lazy v1 back-fill used to
+	// run on ctx.db, outside it, so a failure while writing the new version
+	// left that back-fill committed on its own — inventing a version history
+	// for a transform that never happened.
+	tx := ctx.db.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+
 	var versionCount int64
-	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Count(&versionCount)
+	if err := tx.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Count(&versionCount).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
 	if versionCount == 0 {
 		v1 := models.ResourceVersion{
 			ResourceID:      resourceId,
@@ -1447,14 +1459,18 @@ func (ctx *MahresourcesContext) RotateResource(httpContext context.Context, reso
 			StorageLocation: resource.StorageLocation,
 			Comment:         "Original (before rotation)",
 		}
-		if err := ctx.db.Create(&v1).Error; err != nil {
+		if err := tx.Create(&v1).Error; err != nil {
+			tx.Rollback()
 			return fmt.Errorf("failed to create initial version: %w", err)
 		}
 	}
 
 	// Get next version number
 	var maxVersion int
-	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Select("COALESCE(MAX(version_number), 0)").Scan(&maxVersion)
+	if err := tx.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Select("COALESCE(MAX(version_number), 0)").Scan(&maxVersion).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
 
 	version := models.ResourceVersion{
 		ResourceID:    resourceId,
@@ -1469,7 +1485,6 @@ func (ctx *MahresourcesContext) RotateResource(httpContext context.Context, reso
 		Comment:       fmt.Sprintf("Rotated %d degrees", degrees) + encoded.Note,
 	}
 
-	tx := ctx.db.Begin()
 	if err := tx.Create(&version).Error; err != nil {
 		tx.Rollback()
 		return err
@@ -1606,8 +1621,20 @@ func (ctx *MahresourcesContext) CropResource(
 
 	// Lazy migration: materialize v1 if this resource was created before the
 	// versioning system existed.
+	// One transaction covers every write below. The lazy v1 back-fill used to
+	// run on ctx.db, outside it, so a failure while writing the new version
+	// left that back-fill committed on its own — inventing a version history
+	// for a transform that never happened.
+	tx := ctx.db.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+
 	var versionCount int64
-	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Count(&versionCount)
+	if err := tx.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Count(&versionCount).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
 	if versionCount == 0 {
 		v1 := models.ResourceVersion{
 			ResourceID:      resourceId,
@@ -1622,13 +1649,17 @@ func (ctx *MahresourcesContext) CropResource(
 			StorageLocation: resource.StorageLocation,
 			Comment:         "Original (before crop)",
 		}
-		if err := ctx.db.Create(&v1).Error; err != nil {
+		if err := tx.Create(&v1).Error; err != nil {
+			tx.Rollback()
 			return fmt.Errorf("failed to create initial version: %w", err)
 		}
 	}
 
 	var maxVersion int
-	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Select("COALESCE(MAX(version_number), 0)").Scan(&maxVersion)
+	if err := tx.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Select("COALESCE(MAX(version_number), 0)").Scan(&maxVersion).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
 
 	comment := strings.TrimSpace(userComment)
 	if comment == "" {
@@ -1649,7 +1680,6 @@ func (ctx *MahresourcesContext) CropResource(
 		Comment:       comment,
 	}
 
-	tx := ctx.db.Begin()
 	if err := tx.Create(&version).Error; err != nil {
 		tx.Rollback()
 		return err
@@ -1776,8 +1806,20 @@ func (ctx *MahresourcesContext) TrimVideo(
 	}
 
 	// Lazy migration: materialize v1 if this resource predates versioning
+	// One transaction covers every write below. The lazy v1 back-fill used to
+	// run on ctx.db, outside it, so a failure while writing the new version
+	// left that back-fill committed on its own — inventing a version history
+	// for a transform that never happened.
+	tx := ctx.db.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+
 	var versionCount int64
-	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Count(&versionCount)
+	if err := tx.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).Count(&versionCount).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
 	if versionCount == 0 {
 		v1 := models.ResourceVersion{
 			ResourceID:      resourceId,
@@ -1792,14 +1834,18 @@ func (ctx *MahresourcesContext) TrimVideo(
 			StorageLocation: resource.StorageLocation,
 			Comment:         "Original (before trim)",
 		}
-		if err := ctx.db.Create(&v1).Error; err != nil {
+		if err := tx.Create(&v1).Error; err != nil {
+			tx.Rollback()
 			return fmt.Errorf("failed to create initial version: %w", err)
 		}
 	}
 
 	var maxVersion int
-	ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).
-		Select("COALESCE(MAX(version_number), 0)").Scan(&maxVersion)
+	if err := tx.Model(&models.ResourceVersion{}).Where("resource_id = ?", resourceId).
+		Select("COALESCE(MAX(version_number), 0)").Scan(&maxVersion).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
 
 	versionComment := strings.TrimSpace(comment)
 	if versionComment == "" {
@@ -1819,7 +1865,6 @@ func (ctx *MahresourcesContext) TrimVideo(
 		Comment:       versionComment,
 	}
 
-	tx := ctx.db.Begin()
 	if err := tx.Create(&version).Error; err != nil {
 		tx.Rollback()
 		return err

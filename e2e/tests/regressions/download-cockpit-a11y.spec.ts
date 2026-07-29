@@ -12,11 +12,19 @@ test.describe('BH-028: download cockpit panel a11y', () => {
     await expect(panel).toHaveAttribute('role', 'dialog');
     await expect(panel).toHaveAttribute('aria-modal', 'true');
 
-    // Focus must land inside the panel on open
-    const focusInsidePanel = await page.evaluate(() => {
-      return document.activeElement?.closest('[data-testid="cockpit-panel"]') !== null;
-    });
-    expect(focusInsidePanel, 'focus must move into the panel on open').toBe(true);
+    // Focus must land inside the panel on open. The component moves it in an
+    // Alpine $nextTick after isOpen flips, and x-show makes the panel visible
+    // on the flip itself — so toBeVisible() can resolve a tick before focus
+    // has moved. Sampling activeElement once races that tick; poll instead.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () => document.activeElement?.closest('[data-testid="cockpit-panel"]') !== null
+          ),
+        { message: 'focus must move into the panel on open', timeout: 5000 }
+      )
+      .toBe(true);
   });
 
   test('connection status has accessible name', async ({ page }) => {

@@ -10,6 +10,7 @@ import (
 	"mahresources/contracts"
 	"mahresources/models"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -206,7 +207,7 @@ func readMergeWrite(ctx context.Context, conn *sql.Conn, tableName string, id ui
 	}
 	return mergeAndWrite(ctx, func(query string, args ...any) (sql.Result, error) {
 		return conn.ExecContext(ctx, query, args...)
-	}, "UPDATE "+tableName+" SET meta = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+	}, "UPDATE "+tableName+" SET meta = ?, updated_at = ? WHERE id = ?",
 		parts, newVal, metaStr, id)
 }
 
@@ -221,12 +222,13 @@ func readMergeWriteTx(ctx context.Context, tx *sql.Tx, tableName string, id uint
 	}
 	return mergeAndWrite(ctx, func(query string, args ...any) (sql.Result, error) {
 		return tx.ExecContext(ctx, query, args...)
-	}, "UPDATE "+tableName+" SET meta = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+	}, "UPDATE "+tableName+" SET meta = $1, updated_at = $2 WHERE id = $3",
 		parts, newVal, metaStr, id)
 }
 
 // mergeAndWrite parses the current meta, applies setNestedValue, and executes
-// the caller-provided UPDATE statement with the encoded JSON and entity ID.
+// the caller-provided UPDATE statement with the encoded JSON, the new
+// updated_at stamp, and the entity ID — in that parameter order.
 func mergeAndWrite(_ context.Context, exec func(string, ...any) (sql.Result, error), updateSQL string, parts []string, newVal any, metaStr *string, id uint) (json.RawMessage, error) {
 	var meta map[string]any
 	if metaStr != nil && *metaStr != "" {
@@ -244,7 +246,13 @@ func mergeAndWrite(_ context.Context, exec func(string, ...any) (sql.Result, err
 		return nil, err
 	}
 
-	result, err := exec(updateSQL, string(encoded), id)
+	// Stamp updated_at from Go's clock rather than SQL's CURRENT_TIMESTAMP.
+	// SQLite renders that as whole-second UTC, while every other write path
+	// stores GORM's nanosecond value — so a row edited in the same second it
+	// was written came back with an UpdatedAt *earlier* than before. Anything
+	// ordering by that column believed the edit was the older state; the
+	// [reload] shortcode used it to discard freshly rendered content as stale.
+	result, err := exec(updateSQL, string(encoded), time.Now(), id)
 	if err != nil {
 		return nil, err
 	}
