@@ -124,7 +124,7 @@ func GetBulkDeleteTagsHandler(ctx contracts.BulkTagDeleter) func(writer http.Res
 		}
 
 		if len(editor.ID) == 0 {
-			http_utils.HandleError(fmt.Errorf("at least one tag ID is required"), writer, request, http.StatusBadRequest)
+			http_utils.HandleError(fmt.Errorf("at least one tag is required"), writer, request, http.StatusBadRequest)
 			return
 		}
 

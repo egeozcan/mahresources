@@ -13,7 +13,10 @@ import (
 
 func (ctx *MahresourcesContext) MergeTags(winnerId uint, loserIds []uint) error {
 	if len(loserIds) == 0 {
-		return errors.New("one or more losers required")
+		// Finding 92: "losers" is merge-implementation vocabulary. The wording
+		// keeps "is required" because api_handlers.statusCodeForError reads that
+		// phrase to answer 400 rather than 500.
+		return errors.New("at least one tag to merge is required")
 	}
 
 	for _, id := range loserIds {

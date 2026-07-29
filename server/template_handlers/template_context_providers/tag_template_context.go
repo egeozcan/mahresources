@@ -49,6 +49,7 @@ func TagListContextProvider(context TagPageContext) func(request *http.Request) 
 				Name: "Add",
 				Url:  "/tag/new",
 			},
+			"sortMetaSupported": true,
 			"sortValues": createSortCols([]SortColumn{
 				{Name: "Created", Value: "created_at"},
 				{Name: "Name", Value: "name"},

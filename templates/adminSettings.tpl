@@ -29,8 +29,13 @@
         </label>
         <p class="text-xs text-stone-500 mt-0.5">{{ s.Description }}</p>
         <div class="mt-2 flex flex-wrap gap-2 items-start">
+          {# Finding 115: every setting rendered as a text box, so "abc" in an #}
+          {# int64 field went to the server and came back 400 in the console. #}
           <input :id="'setting-' + key"
-                 type="text"
+                 :type="inputType"
+                 :min="inputMin"
+                 :max="inputMax"
+                 :step="inputType === 'number' ? '1' : null"
                  x-model="value"
                  class="border border-stone-300 rounded px-2 py-1 text-sm flex-1 min-w-[12rem] font-mono focus:outline-none focus:ring-2 focus:ring-amber-500"
                  :aria-describedby="'hint-' + key" />
@@ -124,6 +129,21 @@
       overridden: initial.overridden,
       flash: '',
       error: '',
+
+      // A duration is typed as "30s"/"5m", not as a number, so only the integer
+      // types become spinbuttons; everything else stays a text box.
+      get inputType() {
+        return ['int', 'int64', 'uint64'].includes(this.type) ? 'number' : 'text';
+      },
+      get inputMin() {
+        if (this.inputType !== 'number') return null;
+        if (initial.minNumeric != null) return String(initial.minNumeric);
+        return this.type === 'uint64' ? '0' : null;
+      },
+      get inputMax() {
+        if (this.inputType !== 'number' || initial.maxNumeric == null) return null;
+        return String(initial.maxNumeric);
+      },
 
       get bootDefaultDisplay() {
         return formatValue(this.type, initial.bootDefault);

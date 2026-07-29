@@ -14,10 +14,17 @@ test.describe('G2: Compare page without resource params', () => {
     expect(jsErrors).toEqual([]);
   });
 
-  test('shows error message when r1 is missing', async ({ page }) => {
+  test('shows error message when r1 is missing, exactly once', async ({ page }) => {
     await page.goto('/resource/compare');
-    // The context provider sets errorMessage when Resource1ID == 0
-    await expect(page.getByText(/Resource 1 ID.*required/i).first()).toBeVisible({ timeout: 5000 });
+    // The context provider sets errorMessage when Resource1ID == 0. The wording
+    // changed with the 2026-07-29 hunt (WS3): compare.tpl used to render its own
+    // copy on top of the one layouts/base.tpl already shows, so the reader saw
+    // two different sentences about the same failure. With the duplicate gone,
+    // this string is the only thing on the page, so it names what to do.
+    await expect(
+      page.getByText(/Pick a resource to compare versions of/i).first(),
+    ).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText(/and use Compare from its version panel/i)).toHaveCount(1);
   });
 
   test('no JS errors on /resource/compare?r1=0', async ({ page }) => {

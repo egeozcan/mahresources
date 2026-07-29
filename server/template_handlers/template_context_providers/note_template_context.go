@@ -126,6 +126,7 @@ func NoteListContextProvider(context NotePageContext) func(request *http.Request
 				Name: "Create",
 				Url:  "/note/new",
 			},
+			"sortMetaSupported": true,
 			"sortValues": createSortCols([]SortColumn{
 				{Name: "Created", Value: "created_at"},
 				{Name: "Name", Value: "name"},
@@ -208,6 +209,7 @@ func NoteTimelineContextProvider(context NotePageContext) func(request *http.Req
 				Name: "Create",
 				Url:  "/note/new",
 			},
+			"sortMetaSupported": true,
 			"sortValues": createSortCols([]SortColumn{
 				{Name: "Created", Value: "created_at"},
 				{Name: "Name", Value: "name"},

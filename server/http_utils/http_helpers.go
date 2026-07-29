@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // ErrInvalidSortColumn is returned when a sort column does not exist in the database.
@@ -184,16 +185,44 @@ func extractSchemaFieldName(msg string) string {
 // BH-006: native form POST errors previously rendered a bare error page,
 // discarding all user input. This helper keeps the user on the create/edit
 // form with their data intact (Post-Redirect-Get pattern).
+// sensitiveFormFields are never round-tripped through a redirect URL, whatever
+// case the form spells them in.
+var sensitiveFormFields = map[string]bool{
+	"password":           true,
+	"newpassword":        true,
+	"currentpassword":    true,
+	"confirmpassword":    true,
+	"token":              true,
+	"apitoken":           true,
+	"csrf_token":         true,
+	"create_admin_token": true,
+}
+
+func isSensitiveFormField(name string) bool {
+	return sensitiveFormFields[strings.ToLower(name)]
+}
+
 func HandleFormError(w http.ResponseWriter, r *http.Request, redirectURL string, err error, form url.Values) {
+	HandleFormErrorWithStatus(w, r, redirectURL, err, form, http.StatusBadRequest)
+}
+
+// HandleFormErrorWithStatus is HandleFormError for a caller that already knows
+// the status its error deserves. The browser path is identical; only the JSON
+// fallback differs, which matters where an error maps to something other than
+// 400 (a duplicate username is a 409, a missing user a 404).
+func HandleFormErrorWithStatus(w http.ResponseWriter, r *http.Request, redirectURL string, err error, form url.Values, statusCode int) {
 	if !RequestAcceptsHTML(r) || strings.HasSuffix(r.URL.Path, ".json") {
-		HandleError(err, w, r, http.StatusBadRequest)
+		HandleError(err, w, r, statusCode)
 		return
 	}
 
 	q := url.Values{}
 	for k, vs := range form {
-		// Never echo sensitive fields back via URL.
-		if k == "Password" || k == "Token" {
+		// Never echo sensitive fields back via URL. Matched case-insensitively:
+		// the admin create-user form spells its field "password", so an
+		// exact-case check would have echoed the password into the address bar
+		// the moment that form started using this helper.
+		if isSensitiveFormField(k) {
 			continue
 		}
 		for _, v := range vs {
@@ -209,11 +238,47 @@ func HandleFormError(w http.ResponseWriter, r *http.Request, redirectURL string,
 	http.Redirect(w, r, redirectURL+sep+q.Encode(), http.StatusFound)
 }
 
+// HTMLErrorRenderer renders an error as a full page in the application's own
+// chrome. It is installed once at router construction (server/routes.go) rather
+// than imported, because http_utils cannot depend on template_handlers:
+// template_context_providers already imports http_utils, so a direct dependency
+// would be an import cycle.
+type HTMLErrorRenderer func(writer http.ResponseWriter, request *http.Request, statusCode int, message string)
+
+var (
+	htmlErrorRendererMu sync.RWMutex
+	htmlErrorRenderer   HTMLErrorRenderer
+)
+
+// SetHTMLErrorRenderer installs the renderer HandleError uses for HTML-accepting
+// requests. With none installed — a package used on its own, or a test that never
+// builds a router — HandleError falls back to the self-contained document below,
+// so http_utils stays usable without the template layer.
+func SetHTMLErrorRenderer(renderer HTMLErrorRenderer) {
+	htmlErrorRendererMu.Lock()
+	defer htmlErrorRendererMu.Unlock()
+	htmlErrorRenderer = renderer
+}
+
+func currentHTMLErrorRenderer() HTMLErrorRenderer {
+	htmlErrorRendererMu.RLock()
+	defer htmlErrorRendererMu.RUnlock()
+	return htmlErrorRenderer
+}
+
 func HandleError(err error, writer http.ResponseWriter, request *http.Request, responseCode int) {
 	err = SanitizeSchemaError(err)
 	fmt.Printf("\n[ERROR]: %v\n", err)
 
 	if RequestAcceptsHTML(request) {
+		// BH-WS3 (findings 16/92, 56/91, 34, 119): a rejected form POST used to
+		// land the reader on a chrome-less document whose only way out was
+		// javascript:history.back(). Render the app's own error page instead.
+		if renderer := currentHTMLErrorRenderer(); renderer != nil {
+			renderer(writer, request, responseCode, err.Error())
+			return
+		}
+
 		writer.Header().Set("Content-Type", "text/html")
 		writer.WriteHeader(responseCode)
 		_, _ = fmt.Fprintf(writer, `<!DOCTYPE html>

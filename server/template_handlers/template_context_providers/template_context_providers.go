@@ -21,11 +21,27 @@ func init() {
 	})
 }
 
+// addErrContext turns an error raised while building a page into the error page
+// the reader sees. It maps the driver's vocabulary to a message about the thing
+// the reader asked for, and attaches somewhere to go — findings 119/132/135/111,
+// where "record not found" was the entire page body and nothing linked anywhere.
+//
+// The entity is derived from the request path, which StaticTemplateCtx already
+// puts in the context under "url". That keeps the signature — and its 157 call
+// sites — unchanged; a provider that builds its context by hand simply falls
+// back to the generic message and the dashboard link.
 func addErrContext(err error, ctx pongo2.Context) pongo2.Context {
 	statusCode := http.StatusInternalServerError
 	errMsg := err.Error()
+	surface, hasSurface := surfaceForPath(requestPathFromContext(ctx))
+
 	if strings.Contains(errMsg, "record not found") {
 		statusCode = http.StatusNotFound
+		if hasSurface {
+			errMsg = surface.notFoundMessage()
+		} else {
+			errMsg = "That page doesn't exist, or it has been deleted."
+		}
 	} else if strings.Contains(errMsg, "schema: error converting value") ||
 		strings.Contains(errMsg, "schema: invalid path") {
 		statusCode = http.StatusBadRequest
@@ -35,10 +51,33 @@ func addErrContext(err error, ctx pongo2.Context) pongo2.Context {
 		statusCode = http.StatusBadRequest
 		errMsg = "invalid sort column"
 	}
+
+	recovery := []RecoveryLink{DashboardRecovery}
+	if hasSurface {
+		recovery = surface.recoveryLinks()
+	}
+
 	return ctx.Update(pongo2.Context{
-		"errorMessage": errMsg,
-		"_statusCode":  statusCode,
-		"pageTitle":    fmt.Sprintf("Error %d", statusCode),
+		"errorMessage":  errMsg,
+		"_statusCode":   statusCode,
+		"pageTitle":     fmt.Sprintf("Error %d", statusCode),
+		"errorRecovery": recovery,
+	})
+}
+
+// addMessageErrContext is addErrContext for a failure the provider can describe
+// itself, where the driver has no error worth translating — a missing required
+// query parameter, say. The status code is chosen by the caller.
+func addMessageErrContext(message string, statusCode int, ctx pongo2.Context) pongo2.Context {
+	recovery := []RecoveryLink{DashboardRecovery}
+	if surface, ok := surfaceForPath(requestPathFromContext(ctx)); ok {
+		recovery = surface.recoveryLinks()
+	}
+	return ctx.Update(pongo2.Context{
+		"errorMessage":  message,
+		"_statusCode":   statusCode,
+		"pageTitle":     fmt.Sprintf("Error %d", statusCode),
+		"errorRecovery": recovery,
 	})
 }
 

@@ -19,7 +19,9 @@ import (
 
 func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) error {
 	if len(loserIds) == 0 {
-		return errors.New("one or more losers required")
+		// Finding 92, group side: see MergeTags for why the phrasing keeps
+		// "is required".
+		return errors.New("at least one group to merge is required")
 	}
 
 	if winnerId == 0 {
@@ -274,7 +276,7 @@ func (ctx *MahresourcesContext) BulkAddTagsToGroups(query *query_models.BulkEdit
 		return fmt.Errorf("at least one group ID is required")
 	}
 	if len(query.EditedId) == 0 {
-		return fmt.Errorf("at least one tag ID is required")
+		return fmt.Errorf("at least one tag is required")
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)
@@ -315,7 +317,7 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromGroups(query *query_models.Bul
 		return fmt.Errorf("at least one group ID is required")
 	}
 	if len(query.EditedId) == 0 {
-		return fmt.Errorf("at least one tag ID is required")
+		return fmt.Errorf("at least one tag is required")
 	}
 
 	uniqueGroupIds := deduplicateUints(query.ID)

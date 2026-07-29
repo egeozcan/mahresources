@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/spf13/afero"
 	"mahresources/application_context"
+	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers"
 
 	"github.com/flosch/pongo2/v4"
@@ -25,6 +26,16 @@ import (
 // drift test can't traverse.
 func BuildPrimaryRouter(appContext *application_context.MahresourcesContext, fs afero.Fs, altFs map[string]string) *mux.Router {
 	router := mux.NewRouter()
+
+	// Give http_utils.HandleError the app's own error page. Installed here rather
+	// than imported because template_context_providers imports http_utils, so the
+	// direct dependency would be an import cycle. The same plugin enricher the
+	// 404 and 403 pages use goes with it, so an API rejection a browser displays
+	// renders identical chrome to every other page.
+	errorPageEnricher := pluginMenuEnricher(appContext)
+	http_utils.SetHTMLErrorRenderer(func(w http.ResponseWriter, r *http.Request, statusCode int, message string) {
+		template_handlers.RenderHTMLError(w, r, statusCode, message, errorPageEnricher)
+	})
 
 	registerRoutes(router, appContext)
 

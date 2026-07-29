@@ -19,6 +19,16 @@ func SeriesContextProvider(context contracts.SeriesReader) func(request *http.Re
 			return addErrContext(err, baseContext)
 		}
 
+		// Finding 111: /series is a detail route with no index page, so a bare
+		// /series used to look up series 0 and answer "record not found", which
+		// says nothing about the missing id. There is no series list to offer, so
+		// the message has to carry the explanation itself.
+		if query.ID == 0 {
+			return addMessageErrContext(
+				"A series id is required — open a series from one of its resources.",
+				http.StatusNotFound, baseContext)
+		}
+
 		series, err := context.GetSeries(query.ID)
 		if err != nil {
 			return addErrContext(err, baseContext)

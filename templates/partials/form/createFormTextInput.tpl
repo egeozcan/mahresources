@@ -9,17 +9,21 @@
                     value="{{ value }}"
                     {% if type %}type="{{ type }}"{% else %}type="text"{% endif %}
                     {% if required %}required aria-required="true"{% endif %}
+                    {% if pattern %}pattern="{{ pattern }}"{% endif %}
+                    {% if patternHint %}title="{{ patternHint }}"{% endif %}
                     name="{{ name }}"
                     id="{{ field_id }}"
                     autocomplete="off"
+                    {% if description or required %}aria-describedby="{{ field_id }}-description"{% endif %}
                     class="flex-1 block w-full focus:ring-amber-600 focus:border-amber-600 min-w-0 rounded-md sm:text-sm border-stone-300"
             >
         </div>
-        {% if required %}
-        <span class="text-sm font-sans text-stone-500" id="{{ field_id }}-description">Required</span>
-        <script>
-            document.getElementById("{{ field_id }}").setAttribute("aria-describedby", "{{ field_id }}-description");
-        </script>
+        {# Finding 157: `description` was accepted by the caller and rendered by #}
+        {# nobody, so the template-partial Name field's kebab-case rule -- passed #}
+        {# in since the field was written -- could only be learned by being #}
+        {# rejected. aria-describedby is now an attribute rather than a script. #}
+        {% if description or required %}
+        <span class="text-sm font-sans text-stone-500" id="{{ field_id }}-description">{% if description %}{{ description }}{% if required %} {% endif %}{% endif %}{% if required %}Required{% endif %}</span>
         {% endif %}
     </div>
 </div>

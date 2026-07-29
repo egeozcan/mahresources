@@ -44,7 +44,8 @@ import {
   updateClipboard,
   parseQueryParams,
   addMetaToGroup,
-  addMetaToResource
+  addMetaToResource,
+  errorMessageFromResponse
 } from './index.js';
 
 // Import tableMaker
@@ -61,6 +62,7 @@ import {
 } from './components/profiledAutocompleter.js';
 import { selectorFormParameters } from './components/selectorFormParameters.js';
 import { confirmAction } from './components/confirmAction.js';
+import { selectionRequired } from './components/selectionRequired.js';
 import { descriptionEditor } from './components/descriptionEditor.js';
 import { confirmGroupDelete } from './components/confirmGroupDelete.js';
 import { freeFields, generateParamNameForMeta, getJSONValue, getJSONOrObjValue } from './components/freeFields.js';
@@ -128,6 +130,7 @@ window.parseQueryParams = parseQueryParams;
 window.addMetaToGroup = addMetaToGroup;
 window.addMetaToResource = addMetaToResource;
 window.renderJsonTable = renderJsonTable;
+window.errorMessageFromResponse = errorMessageFromResponse;
 window.generateParamNameForMeta = generateParamNameForMeta;
 window.renderMentions = renderMentions;
 window.getJSONValue = getJSONValue;
@@ -173,6 +176,7 @@ Alpine.data('multiEntitySelector', multiEntitySelector);
 Alpine.data('tagFieldSelector', tagFieldSelector);
 Alpine.data('tagEditorSelector', tagEditorSelector);
 Alpine.data('confirmAction', confirmAction);
+Alpine.data('selectionRequired', selectionRequired);
 Alpine.data('descriptionEditor', descriptionEditor);
 Alpine.data('confirmGroupDelete', confirmGroupDelete);
 Alpine.data('freeFields', freeFields);

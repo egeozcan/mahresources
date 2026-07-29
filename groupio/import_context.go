@@ -27,13 +27,15 @@ func (ctx *opCtx) ParseImport(cancelCtx context.Context, jobID, tarPath string) 
 
 	r, err := archive.NewReader(f)
 	if err != nil {
-		return nil, fmt.Errorf("new archive reader: %w", err)
+		// Finding 106: archive.NewReader/ReadManifest already return a sentence a
+		// reader can act on. Re-wrapping turned it back into a call chain.
+		return nil, err
 	}
 	defer r.Close()
 
 	manifest, err := r.ReadManifest()
 	if err != nil {
-		return nil, fmt.Errorf("read manifest: %w", err)
+		return nil, err
 	}
 
 	collector := &importDataCollector{

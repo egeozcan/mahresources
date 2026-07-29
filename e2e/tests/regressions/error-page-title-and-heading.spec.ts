@@ -20,9 +20,13 @@ test.describe('Error pages have proper title and h1 heading', () => {
     });
   }
 
+  // Finding 119: an unmatched path used to title itself "404 Not Found" while a
+  // missing entity said "Error 404". One presentation now, so this asserts the
+  // shared title rather than the old divergence.
   test('catch-all 404 still works correctly', async ({ page }) => {
     await page.goto('/this-does-not-exist');
-    await expect(page).toHaveTitle(/404 Not Found/);
+    await expect(page).toHaveTitle(/Error 404/);
     await expect(page.locator('h1').first()).toBeVisible();
+    await expect(page.getByText('Page not found')).toBeVisible();
   });
 });

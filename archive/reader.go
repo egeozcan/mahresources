@@ -57,12 +57,17 @@ func (r *Reader) ReadManifest() (*Manifest, error) {
 	if r.manifest != nil {
 		return r.manifest, nil
 	}
+	// BH-WS3 (finding 106): a file that is not an archive used to fail with
+	// "archive: read first entry: unexpected EOF" — three layers of internal
+	// vocabulary and no remedy. Both surfaces that show this (the /admin/import
+	// page and `mr groups import`) print whatever comes back, so the sentence a
+	// reader needs belongs here, where the file is first found not to be ours.
 	hdr, err := r.tr.Next()
 	if err != nil {
-		return nil, fmt.Errorf("archive: read first entry: %w", err)
+		return nil, fmt.Errorf("this file is not a mahresources export archive: expected a .tar or .tar.gz whose first entry is manifest.json")
 	}
 	if hdr.Name != "manifest.json" {
-		return nil, fmt.Errorf("archive: first entry %q != manifest.json", hdr.Name)
+		return nil, fmt.Errorf("this file is not a mahresources export archive: its first entry is %q, expected manifest.json", hdr.Name)
 	}
 	// BH-017: read the manifest body once so we can parse it twice — once as
 	// a map to presence-check required fields, once into the typed Manifest.

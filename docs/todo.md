@@ -241,11 +241,11 @@ Statuses are filled in during Phase 1.
 | 13 | high | a11y | recovered | WS5 | verify | |
 | 14 | high | a11y | recovered | WS5 | verify | |
 | 15 | high | bug | recovered | WS2 | verify | **CONFIRMED** — no Save control, `@click.away` the only trigger  · **FIXED** — Save/Cancel + Ctrl/Cmd+Enter + keyboard focus-out commit |
-| 16 | high | bug | recovered | WS3 | verify | |
+| 16 | high | bug | recovered | WS3 | verify | **CONFIRMED** — destructive confirm fired over an empty selection  · **FIXED** — submit disabled, confirm skipped, `losers` jargon gone |
 | 17 | high | bug | ✅ VERIFIED | WS12 | accept | |
 | 18 | high | ux | recovered | WS12 | verify | |
 | 19 | high | design | recovered | WS7 | verify | |
-| 20 | high | bug | ✅ VERIFIED | WS3 | accept | **CONFIRMED** — /categories 400, /tags 200, same SortBy |
+| 20 | high | bug | ✅ VERIFIED | WS3 | accept | **CONFIRMED** — /categories 400, /tags 200, same SortBy  · **FIXED** — the option is only offered where the model has a meta column |
 | 21 | high | bug | recovered | WS2 | verify | **CONFIRMED** — only signal a 1×1 clipped region  · **FIXED** — visible inline error, editor stays open holding the input |
 | 22 | high | ux | recovered | WS11 | verify | |
 | 23 | high | bug | recovered | WS11 | verify | |
@@ -259,7 +259,7 @@ Statuses are filled in during Phase 1.
 | 31 | med | bug | recovered | WS6 | verify | |
 | 32 | med | ux | recovered | WS6 | verify | |
 | 33 | med | ux | recovered | WS10 | verify | |
-| 34 | med | ux | recovered | WS3 | verify | |
+| 34 | med | ux | recovered | WS3 | verify | **CONFIRMED** — bare page at /v1/users, every field lost  · **FIXED, cause corrected** — the empty `scopeGroupId` decodes to `*uint(0)`, which made the accurate message unreachable; and `HandleFormError` would have echoed the password (exact-case filter) |
 | 35 | med | a11y | recovered | WS4 | verify | |
 | 36 | med | a11y | recovered | WS5 | verify | |
 | 37 | med | bug | recovered | WS8 | Dup → 27 | **CONFIRMED** — `?EntityType=runtime_setting` → select shows `''`  · **FIXED** |
@@ -281,7 +281,7 @@ Statuses are filled in during Phase 1.
 | 53 | med | bug | recovered | WS2 | Dup → 15 |  · **FIXED** |
 | 54 | med | ux | recovered | WS6 | verify | |
 | 55 | med | ux | recovered | WS7 | verify | |
-| 56 | med | ux | recovered | WS3 | verify | |
+| 56 | med | ux | recovered | WS3 | verify | **CONFIRMED** — full-page 400 at /v1/groups/addTags  · **FIXED** — guard + `tag ID` → `tag` |
 | 57 | med | ux | recovered | WS14 | verify | |
 | 58 | med | a11y | recovered | WS5 | verify | |
 | 59 | med | a11y | recovered | WS5 | Dup → 64 | |
@@ -316,8 +316,8 @@ Statuses are filled in during Phase 1.
 | 88 | med | ux | verified-run | WS2 | Dup → 21 |  · **FIXED** |
 | 89 | med | design | verified-run | WS7 | spot | |
 | 90 | med | a11y | verified-run | WS4 | spot | |
-| 91 | med | ux | verified-run | WS3 | Dup → 56 | |
-| 92 | med | ux | verified-run | WS3 | Dup → 16 | |
+| 91 | med | ux | verified-run | WS3 | Dup → 56 | **CONFIRMED**  · **FIXED** — Dup → 56 |
+| 92 | med | ux | verified-run | WS3 | Dup → 16 | **CONFIRMED**  · **FIXED** — Dup → 16 |
 | 93 | med | bug | verified-run | WS12 | Dup → 17 | |
 | 94 | med | bug | recovered | WS8 | verify | |
 | 95 | med | bug | recovered | WS12 | verify | |
@@ -325,26 +325,26 @@ Statuses are filled in during Phase 1.
 | 97 | med | a11y | recovered | WS4 | verify | |
 | 98 | med | ux | recovered | WS14 | verify | |
 | 99 | med | a11y | recovered | WS5 | verify | |
-| 100 | med | ux | recovered | WS3 | verify | |
+| 100 | med | ux | recovered | WS3 | verify | **CONFIRMED** — raw JSON body rendered as the message  · **FIXED** — shared `errorMessageFromResponse` |
 | 101 | med | design | verified-run | WS7 | Dup → 19 | |
 | 102 | low | design | verified-run | WS10 | spot | |
-| 103 | low | ux | verified-run | WS3 | spot | |
+| 103 | low | ux | verified-run | WS3 | spot | **CONFIRMED** — bare id, broken grammar, internal reason  · **FIXED** — sentence + link to the colliding resource; JSON `details[]` contract kept |
 | 104 | low | design | verified-run | WS14 | spot | |
 | 105 | low | a11y | verified-run | WS5 | Dup → 36 | |
-| 106 | low | ux | verified-run | WS3 | spot | |
+| 106 | low | ux | verified-run | WS3 | spot | **CONFIRMED** — internal Go chain, printed twice  · **FIXED** — message moved to `archive.Reader`, printed once |
 | 107 | low | ux | verified-run | WS14 | product | |
 | 108 | low | a11y | verified-run | WS5 | spot | |
-| 109 | low | ux | recovered | WS3 | verify | |
+| 109 | low | ux | recovered | WS3 | verify | **CONFIRMED** — `minLength: -1`  · **FIXED** — `minlength` and the rule, both from `auth.MinPasswordLength` |
 | 110 | low | a11y | recovered | WS5 | verify | |
-| 111 | low | ux | recovered | WS3 | verify | |
+| 111 | low | ux | recovered | WS3 | verify | **CONFIRMED** — `Error 404 / record not found`  · **FIXED** — says an id is required and links to /resources; no index page added, deliberately |
 | 112 | low | design | recovered | WS14 | verify | |
 | 113 | low | a11y | recovered | WS9 | verify | |
-| 114 | low | bug | ✅ VERIFIED | WS3 | accept | **CONFIRMED** — HTTP 404, `text/html` |
-| 115 | low | ux | recovered | WS3 | verify | |
+| 114 | low | bug | ✅ VERIFIED | WS3 | accept | **CONFIRMED** — HTTP 404, `text/html`  · **FIXED** — /v1 answers JSON; `not_found_test.go` inverted, not deleted |
+| 115 | low | ux | recovered | WS3 | verify | **CONFIRMED** — role textbox on an int64 setting  · **FIXED** — int types become number inputs; found `admin-settings.spec.ts` locating by `input[type="text"]` |
 | 116 | low | a11y | recovered | WS10 | verify | |
 | 117 | low | ux | verified-run | WS14 | spot | |
 | 118 | low | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — `datetime="…13:59:40Z"` at local 13:59+03:00  · **FIXED** |
-| 119 | low | ux | verified-run | WS3 | spot | |
+| 119 | low | ux | verified-run | WS3 | spot | **CONFIRMED** — two 404 presentations, `record not found` as the body  · **FIXED** — one presentation, a message per entity, and a recovery link |
 | 120 | low | design | verified-run | WS10 | spot | |
 | 121 | low | a11y | verified-run | WS10 | Dup → 116 | |
 | 122 | low | ux | verified-run | WS6 | spot | |
@@ -357,17 +357,17 @@ Statuses are filled in during Phase 1.
 | 129 | low | ux | recovered | WS14 | verify | |
 | 130 | low | design | recovered | WS14 | product | |
 | 131 | low | ux | recovered | WS14 | verify | |
-| 132 | low | ux | recovered | WS3 | Dup → 119 | |
+| 132 | low | ux | recovered | WS3 | Dup → 119 | **CONFIRMED**  · **FIXED** — Dup → 119 |
 | 133 | low | a11y | recovered | WS5 | verify | |
 | 134 | low | ux | recovered | WS11 | verify | |
-| 135 | low | ux | verified-run | WS3 | Dup → 119 | |
+| 135 | low | ux | verified-run | WS3 | Dup → 119 | **CONFIRMED**  · **FIXED** — Dup → 119 |
 | 136 | low | bug | verified-run | WS14 | spot | |
 | 137 | low | ux | verified-run | WS14 | spot | |
 | 138 | low | design | verified-run | WS14 | spot | |
 | 139 | low | a11y | verified-run | WS5 | spot | |
 | 140 | low | ux | recovered | WS14 | verify | |
 | 141 | low | ux | recovered | WS7 | verify | |
-| 142 | low | ux | recovered | WS3 | verify | |
+| 142 | low | ux | recovered | WS3 | verify | **CONFIRMED** — no `required`, whole form in the query string  · **FIXED, cause corrected** — plain `required` breaks the URL-download path; the guard is conditional |
 | 143 | low | bug | recovered | WS8 | verify (suspect) | |
 | 144 | low | ux | recovered | WS5 | verify | |
 | 145 | low | ux | recovered | WS14 | product | |
@@ -382,7 +382,7 @@ Statuses are filled in during Phase 1.
 | 154 | low | ux | recovered | WS12 | verify | |
 | 155 | low | ux | recovered | WS12 | verify | |
 | 156 | low | design | recovered | WS12 | verify | |
-| 157 | low | ux | recovered | WS12 | verify | |
+| 157 | low | ux | recovered | WS3 | verify | **CONFIRMED** — rule only enforced after submit  · **FIXED, two causes corrected** — `createFormTextInput.tpl` never rendered the `description` it was handed, and `pattern="[a-z][a-z0-9-]*"` is invalid under the regex `v` flag, so it validated nothing |
 | 158 | low | ux | recovered | WS11 | Dup → 125 | |
 | 159 | low | bug | recovered | WS11 | verify (expect reject) | |
 | 160 | low | bug | recovered | WS11 | verify (self-caveated) | |
@@ -774,48 +774,201 @@ Why the tests missed each is the point:
 ### WS3 — Validation before submit, and error surfaces that keep you in the app
 
 Findings **16/92, 20, 34, 56/91, 100, 103, 106, 109, 111, 114, 115, 119/132/135, 142, 157**.
+All fourteen confirmed; all fixed. Four of the plan's stated causes were wrong — see
+"Where the plan's diagnosis was wrong" at the end of this section.
 
 Two halves. The first is client-side guards so the user never reaches an error page; the second
-makes the error page itself survivable when they do.
+makes the error page itself survivable when they do. The shared surface landed first, so the guards
+have something decent behind them.
 
-- [ ] **The single leverage point.** `server/http_utils/http_helpers.go:212` `HandleError` writes a
-      **self-contained inline HTML document** (`:219-244`) with no nav, no site chrome, and a single
-      `javascript:history.back()` link — for all 481 call sites. Replace that inline document with a
-      render of the app's own `templates/error.tpl` (which already extends `layouts/base.tpl` and
-      therefore carries the header, nav and search), keeping the JSON branch untouched.
-      Only one E2E spec references the current markup (`e2e/tests/edge-cases.spec.ts`), so the blast
-      radius is small.
-      - Red: a Go test asserting an HTML-accepting 400 response contains the nav landmark.
-- [ ] **Map raw errors to human messages.** `addErrContext`
-      (`template_context_providers.go:24`) surfaces GORM's `record not found` verbatim as the page
-      body (findings 119/132/135/111). Give it a message table: "That resource doesn't exist or has
-      been deleted." plus a recovery link to the entity's list. Also unify the two 404 presentations
-      — `RenderNotFound` says "404 Not Found / Page not found", `addErrContext` says "Error 404 /
-      record not found".
-- [ ] **114** — `RenderNotFound` (`render_template.go:107`) always writes `text/html`. Return JSON
-      for unmatched paths under `/v1/`. **`server/api_tests/not_found_test.go:40` documents the
-      current behaviour — invert that test, do not delete it.**
-- [ ] **16/92 (tag merge) and 56/91 (Add Tags).** Both are plain HTML form POSTs to `/v1/…` with a
-      `?redirect=`, so a rejection navigates away. Both live in exactly one partial each:
-      `templates/displayTag.tpl:32-43` (+ `displayGroup.tpl:104-119`, `compare.tpl:234-246`) and
-      `templates/partials/tagList.tpl:7` (included by `displayGroup`, `displayResource`,
-      `displayNote`, `displayNoteText`). Disable the submit button while the selection is empty, and
-      do not fire the destructive confirm at all when there is nothing to merge.
-- [ ] **20 — the Custom Property sort should not be offered on `/categories`.** Not a validator bug:
-      `SortColumnMatcher` (`db_utils.go:37`) accepts `meta->>'x'` for both pages, but
-      `models.Category` **has no `meta` column** (`category_model.go:48` has only `MetaSchema string`),
-      so the DB errors and `addErrContext:32-36` maps it to "invalid sort column". It works on
-      `/tags` because `models.Tag` does have `Meta types.JSON`. Remove the option for entities with
-      no meta column.
-- [ ] **34, 109, 115, 142, 157** — client-side guards: `minlength=8` on the user password field,
-      `type=number` on numeric runtime settings, `required` on the resource file input, the
-      kebab-case rule stated and checked next to the template-partial Name field. Preserve form
-      state on rejection instead of round-tripping the whole editor body through the query string.
-- [ ] **100, 103, 106** — render the server's message as a message, not as a raw JSON body; print
-      the import error once, not twice; link the duplicate-upload error to the resource it collided
-      with instead of printing a bare id.
-- [ ] **111** — either add a `/series` index page or make the bare `/series` 404 explain that an id
-      is required.
+#### Half one — the error surface
+
+- [x] **`HandleError` renders the app's own page.** `server/http_utils/http_helpers.go:212` wrote a
+      self-contained inline HTML document with no nav, no chrome and one
+      `javascript:history.back()` link, for **477** non-test call sites (the plan said 481).
+      It now renders `templates/error.tpl`, through a renderer installed at router construction
+      (`http_utils.SetHTMLErrorRenderer`, wired in `server/server.go`) rather than imported —
+      `template_context_providers` imports `http_utils`, so a direct dependency is an import cycle.
+      With no renderer installed the old document is still the fallback, so `http_utils` stays
+      usable on its own. **The JSON branch is byte-identical**, which is what the inline editors,
+      the bulk toolbar and the MRQL bar read; `TestHandleError_JSONBranchUnchanged` pins its shape
+      (one key, `error`, JSON content type) and `TestHandleError_NoAcceptHeaderStaysJSON` covers
+      callers that send no `Accept` at all.
+- [x] **`error.tpl` got a body.** The plan's "render error.tpl, which already carries the header,
+      nav and search" was true only because `layouts/base.tpl` does that work; error.tpl itself was
+      four lines with an empty `{% block body %}`. The recovery links live in **error.tpl**, not in
+      base.tpl, because base.tpl's `role="alert"` region also serves **200-status** pages —
+      `/admin/users`, `/group/compare`, `/account` — where a "where to go next" list would be
+      nonsense.
+      It is a `<div>`, not a `<nav>`: the first version used a labelled `<nav>` and immediately broke
+      two existing specs that do `expect(page.locator('nav')).toBeVisible()`, because a second
+      navigation landmark on every error page makes that locator ambiguous app-wide. Same family as
+      the lightbox-partial lesson.
+- [x] **`addErrContext` stops leaking GORM strings** (119/132/135/111).
+      `template_context_providers.go:24` put `err.Error()` straight into `errorMessage`, so a missing
+      note read `record not found`. New `error_surfaces.go` maps the first path segment to the entity
+      behind it and produces *"That note doesn't exist, or it has been deleted."* plus a link to that
+      entity's list. The entity is derived from `ctx["url"]`, which `StaticTemplateCtx` already sets
+      for every template route — that keeps the signature and its **157** call sites untouched, and a
+      provider that builds its context by hand degrades to the generic message plus the dashboard
+      link. The **JSON API contract is unchanged**: `/v1/note?id=99999` still answers
+      `record not found`, with a Go test and an e2e test each pinning it.
+- [x] **The two 404s are one 404.** `RenderNotFound` said "404 Not Found / Page not found",
+      `addErrContext` said "Error 404 / record not found". Both now title themselves `Error 404`;
+      the catch-all keeps the message "Page not found" (which `plugins/plugin-pages.spec.ts` asserts)
+      and the entity variant names the entity. `RenderNotFound`, `RenderForbidden` and the new
+      `RenderHTMLError` share one `renderErrorPage`.
+- [x] **114 — unmatched `/v1/` paths answer JSON.** Decided on the **path prefix**, not the `Accept`
+      header: `/v1` is the JSON API, so a browser typing a `/v1` URL gets the same answer a client
+      does. A `.json` suffix or a JSON-only `Accept` also qualifies.
+      `server/api_tests/not_found_test.go`'s `TestNotFoundHandler_JSONResponse` was **inverted, not
+      deleted** — its comment used to document the defect — and
+      `TestNotFoundHandler_IncludesNavigation` stays as the control that the HTML branch keeps its
+      chrome.
+- [x] **Recovery links are better than "go to the dashboard".** Every rejected merge and Add Tags
+      form already names where it came from in its `?redirect=`, so the first link on the error page
+      is the page the reader was actually on; the `Referer` covers the rest, and an API path names
+      the entity it acts on (`/v1/tags/merge` → "Back to Tags"). Both are filtered through a
+      same-site path check so a crafted `?redirect=` cannot turn the error page into an open
+      redirect.
+
+#### Half two — guards before submit
+
+- [x] **16/92 (tag merge) and 56/91 (Add Tags).** New `src/components/selectionRequired.js` holds the
+      guard state; `confirmAction` composes it through an optional `requireSelection`, so the
+      destructive confirm is **skipped rather than shown** over an empty selection. The submit is
+      `:disabled` while the selection is empty (`searchButton.tpl` gained `disabledWhen` and
+      `describedBy`), a hint says why, and the submit handler blocks anyway — a disabled button does
+      not stop `form.requestSubmit()`, which the selector itself calls when the user presses Enter in
+      the combobox. Wording: `one or more losers required` → `at least one tag to merge is required`
+      (92's specific complaint), and `at least one tag ID is required` → `at least one tag is
+      required` (91's). Both keep the phrase "is required" because
+      `api_handlers.statusCodeForError` reads it to answer 400 rather than 500.
+      **`compare.tpl:234-246` needed no guard**, contrary to the plan: its `losers` is a hidden input
+      with a fixed resource id, so it can never be empty.
+- [x] **20 — the Custom Property sort is only offered where a meta column exists.**
+      `multiSortInput.tpl` hardcoded the option; the four providers whose model has `Meta types.JSON`
+      (tag, group, note, resource) now publish `sortMetaSupported`, and the timeline providers
+      inherit it from the list provider they delegate to. A hand-typed `?SortBy=meta->>'x'` on
+      `/categories` is still a 400 and still does not leak the driver's message — the option removal
+      is a UI fix, not a silent behaviour change, and a test says so.
+- [x] **34 + 109 — the admin create-user form.** `minlength` and a stated rule now come from
+      `auth.MinPasswordLength` through the context, so the form and the policy cannot drift. A
+      rejection redirects back to `/admin/users` with the values intact instead of rendering a bare
+      page at `/v1/users`, and the page renders the house `form-error-banner`; its own duplicate
+      `{% if errorMessage %}` block is gone (base.tpl was already rendering it, so every failure
+      printed twice). `HandleFormErrorWithStatus` was added so the JSON fallback keeps the status the
+      error deserves — a duplicate username is a 409, not a 400.
+- [x] **115 — numeric runtime settings are number inputs.** `int`/`int64`/`uint64` become
+      `type="number"` with `min`/`max` from the spec's own bounds; `duration` stays text, because it
+      is typed as `30s`, not as a number.
+- [x] **142 — the upload form requires a file.** Conditionally: `:required="!url.trim()"`. A plain
+      `required`, as the plan specified, would have broken the URL-download path, where the picker is
+      deliberately ignored.
+- [x] **157 — the template-partial name rule is stated and checked.** Two separate defects, both
+      recorded below.
+- [x] **100** — the query runner rendered `x.text()`, so the reader saw the literal
+      `{"error":"no such table: nonexistent_table_xyz"}`. New shared `errorMessageFromResponse`
+      (`src/index.js`) reads the `error` key, falls back to plain text, and refuses to quote an HTML
+      body at the reader.
+- [x] **103** — `existing resource (114) with same parent` named an internal reason constant and left
+      the id as bare text. The message is a sentence now, and a single duplicate rejection carries
+      `errorResourceId` back to the form so the banner links to what it collided with. The structured
+      JSON `details[].existingResourceId` that fetch callers read is unchanged, with a test to say so.
+- [x] **106** — the import error printed the same Go call chain twice. The message now comes from
+      `archive.Reader.ReadManifest`, where the file is first found not to be ours
+      (*"this file is not a mahresources export archive: expected a .tar or .tar.gz whose first entry
+      is manifest.json"*), `groupio` stopped re-wrapping it, and the parse-progress line no longer
+      repeats what the red box below it already shows.
+- [x] **111 — `/series` explains itself.** No index page was added: the route is a detail page, there
+      is nothing to list it from except resources, and inventing an index is a larger product change
+      than the finding asks for. A bare `/series` now answers *"A series id is required — open a
+      series from one of its resources."* with a link to `/resources`.
+
+#### Where the plan's diagnosis was wrong
+
+Four of the fourteen, plus one wrong claim about the test suite. Recorded because the record is the
+useful part.
+
+1. **157 is two defects, and the obvious fix for the second one gates nothing.**
+   `createFormTextInput.tpl` accepted a `description` parameter and rendered it **nowhere** — so the
+   kebab-case rule `createTemplatePartial.tpl` had been passing in since the field was written was
+   never on the page. That is the "stated" half. The "checked" half then shipped
+   `pattern="[a-z][a-z0-9-]*"` and was measured doing nothing: browsers compile the `pattern`
+   attribute as a regex **with the `v` flag**, under which a bare hyphen in a character class is
+   `Invalid character class`, and an invalid pattern is **ignored outright**. The form posted, the
+   server rejected it, and the round trip the finding is about happened anyway. The escaped form
+   `[a-z][a-z0-9\-]*` is valid but pongo2 rejects `\-` in a template string, so the pattern is
+   spelled `[a-z](?:[a-z0-9]|-)*`. The spec now compiles `el.pattern` under `v` as its control,
+   because asserting the attribute's text would have passed against the broken version.
+2. **34's misleading message is a decoding bug, not a wording bug.** The report says the message
+   "scope group does not exist" does not explain that a guest requires a scope group. The accurate
+   message already exists — `ErrScopeGroupRequired`, *"this role must be limited to a group"* — and
+   was **unreachable**: the form's empty `scopeGroupId` field decodes through gorilla/schema into a
+   pointer to `0` rather than `nil`, so `validateScopeGroup` treated it as a scope group to verify,
+   found no group 0, and reported it missing. Fixed at the binding.
+3. **Routing 34 through `HandleFormError`, as the plan specifies, would have leaked the password.**
+   The helper's sensitive-field filter was `k == "Password" || k == "Token"` — exact case. The admin
+   form's field is `password`, so the password would have gone into the address bar, the history and
+   any referrer. The filter is case-insensitive and covers more names now.
+4. **142's `required` has to be conditional.** The same form accepts a URL instead of a file, and
+   documents that filling it makes the picker ignored. A plain `required` would have made
+   remote-download uploads unsubmittable.
+5. **"Only one E2E spec references the current markup" was wrong.** The real blast radius, derived by
+   grepping for the *behaviour* rather than the markup: **12** assertions on `record not found`
+   across `template-error-handling.spec.ts` and `entity-not-found-returns-404.spec.ts` (all
+   descriptions of the defect — retargeted, with the JSON-API one kept as the control), **1** on the
+   catch-all's `404 Not Found` title, **3** in `api-error-styled-html.spec.ts` (rewritten to the
+   surface that replaced the inline document, keeping its typo guard), **2** on
+   `expect(page.locator('nav')).toBeVisible()` which a second landmark breaks, and **2** on
+   `input[type="text"]` in `admin-settings.spec.ts` — see below.
+
+#### Two defects found while verifying, that the tests did not catch
+
+Same shape as the WS2 batch: something that looked right and measured nothing.
+
+1. **A getter cannot survive an object spread.** `selectionRequiredState` first exposed
+   `get hasSelection()`, and `confirmAction` composed it with `...selectionGuard`. Spread **invokes**
+   a getter and copies its result, so `hasSelection` froze at `false` for the merge forms: the
+   submit button was permanently disabled and the merge could never be performed. Caught by the
+   positive control in the same spec ("still works once something is chosen"), not by the guard
+   assertions, which were happily green. It is a plain property now, maintained alongside the count.
+2. **`admin-settings.spec.ts` located its input by `input[type="text"]`.** After finding 115 made the
+   value field a number input, that locator matched the **Reason** box instead. One of its two tests
+   went red honestly; the other — "max_upload_size save + reset roundtrip" — kept passing while
+   filling the reason field and saving the value unchanged, which still creates an override. Both are
+   located by id now. A test that still passes after the thing it targets moved is worse than one
+   that fails.
+
+#### One more, found live and outside the findings list
+
+Walking `/group/compare` with no arguments on the seeded instance showed the message printed twice:
+`groupCompare.tpl` and `compare.tpl` each rendered `errorMessage` in their own body *and* inherited
+base.tpl's alert region. Exactly finding 106's shape, on a page the hunt never opened without
+arguments. The duplicate is gone, and since the remaining copy is now the only thing the reader sees,
+both messages were rewritten from *"Group 1 ID (g1) is required"* into something that names what to
+do. `server/api_tests/group_compare_context_test.go` asserted the old string and was updated with the
+reason.
+
+#### Tests
+
+- Go (the tier that actually gates, since CI does not run Playwright):
+  `server/api_tests/ws3_error_surface_test.go` (19 tests/subtests over `HandleError`, `addErrContext`,
+  `RenderNotFound`, the sort options, the user form, the partial form, the upload form, the selection
+  guards and the settings inputs), `server/api_tests/ws3_error_messages_test.go` (100, 103, 106 and
+  the compare duplicate), `archive/reader_message_test.go` (the import message, at the layer that
+  produces it), plus the inverted `not_found_test.go`. **Every one seen red first.**
+- Playwright, for what Go cannot reach: `e2e/tests/regressions/ws3-empty-selection-guards.spec.ts`
+  (the disabled submit, the confirm that must not fire, the keyboard `requestSubmit` path, and both
+  happy paths asserted through the API) and `e2e/tests/regressions/ws3-error-surfaces.spec.ts`
+  (the sort option, the browser-enforced password and pattern guards, the query message, the recovery
+  links, `/series`, and the `/v1` JSON split). Both **seen red against the unfixed templates**: four
+  targeted mutations, four matching failures.
+- Every spec that touches a write asserts the persisted value through `apiClient`, and every spec in
+  the guards file fails on an uncaught `pageerror`.
+
+**Regression risk:** medium-high, concentrated in `HandleError`'s 477 call sites. The JSON branch is
+unchanged and pinned by tests; the HTML branch changed shape for every one of them.
 
 ### WS4 — Focus management and modal semantics ★ a11y, and a11y is a project priority
 
@@ -1183,7 +1336,7 @@ the cheapest high-confidence work clears the ledger early.
       testable in Go; no frontend coupling. **Fix 47 here so WS5 can re-test 6.**
 - [x] **Batch 3** — WS1 image pipeline. Highest impact, four ✅ VERIFIED, data-destroying.
 - [x] **Batch 4** — WS2 silent write failures. Second data-loss cluster.
-- [ ] **Batch 5** — WS3 validation and error surfaces. Start with `HandleError`; the client-side
+- [x] **Batch 5** — WS3 validation and error surfaces. Start with `HandleError`; the client-side
       guards then have a survivable fallback behind them.
 - [ ] **Batch 6** — WS6 empty states. Cheap, and the `{% empty %}` pattern is mechanical.
 - [ ] **Batch 7** — WS4 focus management. Extract `src/utils/focus.js` first as a pure refactor.
@@ -1216,3 +1369,37 @@ the cheapest high-confidence work clears the ledger early.
 ## Review
 
 _To be filled in on completion._
+
+### Batch 5 (WS3) — verification run
+
+| Gate | Result |
+|---|---|
+| `go test --tags 'json1 fts5' ./...` | pass |
+| `staticcheck ./...` | clean |
+| `npm run build` | clean |
+| `npm run test:unit` | 766 passed / 45 files |
+| `cd e2e && npm run test:with-server:all` | **1765 passed, 0 failed, 0 flaky**, 5 skipped |
+| `cd e2e && npm run test:with-server:a11y` | 184 passed, `KNOWN_ISSUES` still `[]` |
+| `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/...` | pass |
+| `cd e2e && npm run test:with-server:postgres` | 1766 passed |
+| `./mr docs lint` | OK (16 pre-existing warnings; no CLI surface changed) |
+
+Live re-verification on a freshly seeded ephemeral instance, on the shipped binary:
+
+| | before | after |
+|---|---|---|
+| `/note?id=999999` | `Error 404` / `record not found`, no links in `<main>` | `That note doesn't exist, or it has been deleted.` + Back to Notes |
+| `/does-not-exist` | `404 Not Found` / `Page not found` | same message, same `Error 404` title as every other 404 |
+| `/series` | `Error 404` / `record not found` | `A series id is required — open a series from one of its resources.` |
+| `/group/compare?g1=1&g2=99999` | `record not found` | names the group, links to Groups |
+| `/group/compare` (no args) | message printed **twice** | printed once, and says what to do |
+| `/categories?SortBy=meta->>'camera'` | full-page 400, no chrome | 400 with chrome + Back to Categories; option no longer offered |
+| `POST /v1/tags/merge` empty | chrome-less page, `one or more losers required`, `history.back()` only | in-app page, `at least one tag to merge is required`, first link back to the tag |
+| `POST /v1/resources/addTags` empty | chrome-less page, `at least one tag ID is required` | in-app page, `at least one tag is required`, first link back to the resource |
+| unmatched `/v1/...` | full HTML 404 document | `{"error":"no such endpoint: GET /v1/..."}` |
+| duplicate upload | `following errors were encountered: existing resource (72) with same parent` | `a resource with identical content already exists (#72)` + a link to it |
+| junk import tar | `read manifest: archive: read first entry: unexpected EOF`, twice | one sentence naming what the file should have been |
+
+All seven guards confirmed present on live pages (`/tag`, `/resource`, `/admin/settings`,
+`/admin/users`, `/resource/new`, `/templatePartial/new`), and `value="__meta__"` present on
+tags/groups/notes/resources and absent on categories.

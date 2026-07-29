@@ -5,26 +5,27 @@ test.describe('Entity Not Found Returns 404', () => {
     const response = await page.goto('/resource?id=99999');
     expect(response?.status()).toBe(404);
 
-    // Should show error message, not crash
-    await expect(page.getByText(/record not found/i).first()).toBeVisible();
+    // Should show error message, not crash. The message is the human one now
+    // (findings 119/132/135); the JSON API below still carries GORM's string.
+    await expect(page.getByText(/That resource doesn.t exist/i).first()).toBeVisible();
   });
 
   test('should return 404 for non-existent note page', async ({ page }) => {
     const response = await page.goto('/note?id=99999');
     expect(response?.status()).toBe(404);
-    await expect(page.getByText(/record not found/i).first()).toBeVisible();
+    await expect(page.getByText(/That note doesn.t exist/i).first()).toBeVisible();
   });
 
   test('should return 404 for non-existent group page', async ({ page }) => {
     const response = await page.goto('/group?id=99999');
     expect(response?.status()).toBe(404);
-    await expect(page.getByText(/record not found/i).first()).toBeVisible();
+    await expect(page.getByText(/That group doesn.t exist/i).first()).toBeVisible();
   });
 
   test('should return 404 for non-existent tag page', async ({ page }) => {
     const response = await page.goto('/tag?id=99999');
     expect(response?.status()).toBe(404);
-    await expect(page.getByText(/record not found/i).first()).toBeVisible();
+    await expect(page.getByText(/That tag doesn.t exist/i).first()).toBeVisible();
   });
 
   test('should not crash server for resource with invalid ID', async ({ page }) => {

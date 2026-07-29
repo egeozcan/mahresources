@@ -4,8 +4,12 @@
 <div class="space-y-8">
   <section>
     <h1 class="text-xl font-mono font-semibold mb-4">Users</h1>
-    {% if errorMessage %}
-    <div class="mb-4 rounded bg-red-50 border border-red-200 p-3 text-sm text-red-800" role="alert">{{ errorMessage }}</div>
+    {# errorMessage is already rendered by layouts/base.tpl's alert region; a #}
+    {# second copy here printed every failure twice. #}
+    {% if queryValues.error.0 %}
+    <div class="mb-4 rounded-md bg-red-50 border border-red-200 p-4" role="alert" data-testid="form-error-banner">
+      <p class="text-sm font-medium text-red-800"><strong>Could not save:</strong> {{ queryValues.error.0 }}</p>
+    </div>
     {% endif %}
     <div class="overflow-x-auto">
       <table class="min-w-full text-sm border-collapse">
@@ -46,29 +50,36 @@
   <section class="max-w-xl">
     <h2 class="text-lg font-mono font-semibold mb-3">Create user</h2>
     <form method="post" action="/v1/users" class="space-y-4">
+      {# Finding 34: a rejection used to land on a bare error page at /v1/users, so #}
+      {# every value below was gone. The handler now redirects back here with them. #}
       <div>
         <label for="u-username" class="block text-sm font-mono mb-1">Username</label>
         <input id="u-username" name="username" type="text" required autocomplete="off"
+               value="{{ queryValues.username.0 }}"
                class="w-full border border-stone-300 rounded px-3 py-2">
       </div>
       <div>
         <label for="u-display" class="block text-sm font-mono mb-1">Display name</label>
-        <input id="u-display" name="displayName" type="text" class="w-full border border-stone-300 rounded px-3 py-2">
+        <input id="u-display" name="displayName" type="text" value="{{ queryValues.displayName.0 }}"
+               class="w-full border border-stone-300 rounded px-3 py-2">
       </div>
       <div>
         <label for="u-password" class="block text-sm font-mono mb-1">Password</label>
         <input id="u-password" name="password" type="password" required autocomplete="new-password"
+               minlength="{{ minPasswordLength }}" aria-describedby="u-password-hint"
                class="w-full border border-stone-300 rounded px-3 py-2">
+        <p id="u-password-hint" class="mt-1 text-xs text-stone-500">Must be at least {{ minPasswordLength }} characters. Never carried back in the URL, so retype it after a rejection.</p>
       </div>
       <div>
         <label for="u-role" class="block text-sm font-mono mb-1">Role</label>
         <select id="u-role" name="role" class="w-full border border-stone-300 rounded px-3 py-2">
-          {% for role in roles %}<option value="{{ role }}">{{ role }}</option>{% endfor %}
+          {% for role in roles %}<option value="{{ role }}"{% if queryValues.role.0 == role %} selected{% endif %}>{{ role }}</option>{% endfor %}
         </select>
       </div>
       <div>
         <label for="u-scope" class="block text-sm font-mono mb-1">Scope group ID <span class="text-stone-500">(required for guest; optional for user)</span></label>
-        <input id="u-scope" name="scopeGroupId" type="number" min="1" class="w-full border border-stone-300 rounded px-3 py-2">
+        <input id="u-scope" name="scopeGroupId" type="number" min="1" value="{{ queryValues.scopeGroupId.0 }}"
+               class="w-full border border-stone-300 rounded px-3 py-2">
       </div>
       <div class="flex items-center gap-2">
         <input id="u-disabled" name="disabled" type="checkbox" value="true">

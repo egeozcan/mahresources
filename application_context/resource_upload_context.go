@@ -43,8 +43,19 @@ type ResourceExistsError struct {
 	Reason     string
 }
 
+// Error describes the collision to whoever is reading it. Finding 103: the old
+// wording — "existing resource (114) with same parent" — named an internal
+// reason constant and left the id as bare text, so the reader could neither tell
+// what had happened nor reach the file it collided with. The id stays in the
+// sentence because API and CLI callers see only this string; the HTML form
+// additionally receives it as ResourceID and renders it as a link.
 func (e *ResourceExistsError) Error() string {
-	return fmt.Sprintf("existing resource (%v) with %s", e.ResourceID, e.Reason)
+	switch e.Reason {
+	case ReasonSameRelation:
+		return fmt.Sprintf("a resource with identical content is already in that group (#%v)", e.ResourceID)
+	default:
+		return fmt.Sprintf("a resource with identical content already exists (#%v)", e.ResourceID)
+	}
 }
 
 // InvalidImageError is returned when an uploaded file is declared as an image

@@ -30,7 +30,7 @@
 
     <div class="sidebar-group">
         <form
-            x-data="confirmAction({ message: 'Selected tags will be deleted and merged to {{ tag.Name|escapejs }}. Are you sure?' })"
+            x-data="confirmAction({ message: 'Selected tags will be deleted and merged to {{ tag.Name|escapejs }}. Are you sure?', requireSelection: { field: 'losers' } })"
             action="/v1/tags/merge"
             :action="'/v1/tags/merge?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)"
             method="post"
@@ -39,7 +39,8 @@
             <input type="hidden" name="winner" value="{{ tag.ID }}">
             <p>Merge others with this tag?</p>
             {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='tag' elName='losers' title='Tags To Merge' id=getNextId("autocompleter") %}
-            <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Merge" %}</div>
+            <p x-show="!hasSelection" x-cloak id="merge-tag-hint" class="mt-2 text-xs text-stone-600">Choose at least one tag to merge into this one.</p>
+            <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Merge" disabledWhen="!hasSelection" describedBy="merge-tag-hint" %}</div>
         </form>
     </div>
 {% endblock %}

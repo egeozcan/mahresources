@@ -121,6 +121,7 @@ func ResourceListContextProvider(context ResourcePageContext) func(request *http
 				Name: "Create",
 				Url:  "/resource/new",
 			},
+			"sortMetaSupported": true,
 			"sortValues": createSortCols([]SortColumn{
 				{Name: "Created", Value: "created_at"},
 				{Name: "Name", Value: "name"},
@@ -285,6 +286,7 @@ func ResourceTimelineContextProvider(context ResourcePageContext) func(request *
 				Name: "Create",
 				Url:  "/resource/new",
 			},
+			"sortMetaSupported": true,
 			"sortValues": createSortCols([]SortColumn{
 				{Name: "Created", Value: "created_at"},
 				{Name: "Name", Value: "name"},

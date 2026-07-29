@@ -25,9 +25,9 @@
                         this.results = json;
                         window.results = json;
                     })
-                    : x.text().then(e => {
+                    : errorMessageFromResponse(x).then(message => {
                         this.results = [];
-                        this.error = { message: e };
+                        this.error = { message };
                         this.updated = null;
                         this.resultTable = document.createElement('div')
                     }))

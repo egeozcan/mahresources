@@ -25,7 +25,7 @@ func groupCompareContextProviderImpl(context contracts.GroupComparer) func(reque
 		if query.Group1ID == 0 {
 			return baseContext.Update(pongo2.Context{
 				"pageTitle":    "Compare Groups",
-				"errorMessage": "Group 1 ID (g1) is required",
+				"errorMessage": "Pick a group to compare — open one and use Compare from its page.",
 				"query":        query,
 			})
 		}

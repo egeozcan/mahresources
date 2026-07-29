@@ -155,7 +155,7 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromResources(query *query_models.
 		return fmt.Errorf("at least one resource ID is required")
 	}
 	if len(query.EditedId) == 0 {
-		return fmt.Errorf("at least one tag ID is required")
+		return fmt.Errorf("at least one tag is required")
 	}
 
 	uniqueResourceIds := deduplicateUints(query.ID)
@@ -348,7 +348,7 @@ func (ctx *MahresourcesContext) BulkAddTagsToResources(query *query_models.BulkE
 		return fmt.Errorf("at least one resource ID is required")
 	}
 	if len(query.EditedId) == 0 {
-		return fmt.Errorf("at least one tag ID is required")
+		return fmt.Errorf("at least one tag is required")
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)

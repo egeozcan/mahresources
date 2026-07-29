@@ -1,61 +1,57 @@
 import { test, expect } from '../fixtures/base.fixture';
 
+// B1's assertion is still "the message appears exactly once"; only the message
+// changed. Findings 119/132/135 of the 2026-07-29 hunt: the page used to render
+// GORM's "record not found" verbatim, which named neither the entity nor a way
+// back. The old string is now asserted absent, with the new one as the control.
 test.describe('B1: Duplicate error message on 404 pages', () => {
-  test('should show the error message exactly once on a 404 page', async ({ page }) => {
-    const response = await page.goto('/group?id=99999');
-    expect(response?.status()).toBe(404);
+  const pages = [
+    { name: 'group', url: '/group?id=99999', noun: 'group' },
+    { name: 'tag', url: '/tag?id=99999', noun: 'tag' },
+    { name: 'note', url: '/note?id=99999', noun: 'note' },
+  ];
 
-    // "record not found" should appear exactly once, not twice
-    const errorElements = page.locator('text=/record not found/i');
-    await expect(errorElements).toHaveCount(1);
-  });
+  for (const entry of pages) {
+    test(`should show the error message exactly once on a 404 ${entry.name} page`, async ({ page }) => {
+      const response = await page.goto(entry.url);
+      expect(response?.status()).toBe(404);
 
-  test('should show the error message exactly once on a 404 tag page', async ({ page }) => {
-    const response = await page.goto('/tag?id=99999');
-    expect(response?.status()).toBe(404);
-
-    const errorElements = page.locator('text=/record not found/i');
-    await expect(errorElements).toHaveCount(1);
-  });
-
-  test('should show the error message exactly once on a 404 note page', async ({ page }) => {
-    const response = await page.goto('/note?id=99999');
-    expect(response?.status()).toBe(404);
-
-    const errorElements = page.locator('text=/record not found/i');
-    await expect(errorElements).toHaveCount(1);
-  });
+      const message = page.locator(`text=/That ${entry.noun} doesn.t exist/i`);
+      await expect(message).toHaveCount(1);
+      await expect(page.locator('text=/record not found/i')).toHaveCount(0);
+    });
+  }
 });
 
 test.describe('B2: Edit pages for non-existent entities return 404', () => {
   test('tag edit with non-existent ID should return 404', async ({ page }) => {
     const response = await page.goto('/tag/edit?id=99999');
     expect(response?.status()).toBe(404);
-    await expect(page.getByText(/record not found/i).first()).toBeVisible();
+    await expect(page.getByText(/doesn.t exist, or it has been deleted/i).first()).toBeVisible();
   });
 
   test('category edit with non-existent ID should return 404', async ({ page }) => {
     const response = await page.goto('/category/edit?id=99999');
     expect(response?.status()).toBe(404);
-    await expect(page.getByText(/record not found/i).first()).toBeVisible();
+    await expect(page.getByText(/doesn.t exist, or it has been deleted/i).first()).toBeVisible();
   });
 
   test('query edit with non-existent ID should return 404', async ({ page }) => {
     const response = await page.goto('/query/edit?id=99999');
     expect(response?.status()).toBe(404);
-    await expect(page.getByText(/record not found/i).first()).toBeVisible();
+    await expect(page.getByText(/doesn.t exist, or it has been deleted/i).first()).toBeVisible();
   });
 
   test('noteType edit with non-existent ID should return 404', async ({ page }) => {
     const response = await page.goto('/noteType/edit?id=99999');
     expect(response?.status()).toBe(404);
-    await expect(page.getByText(/record not found/i).first()).toBeVisible();
+    await expect(page.getByText(/doesn.t exist, or it has been deleted/i).first()).toBeVisible();
   });
 
   test('resourceCategory edit with non-existent ID should return 404', async ({ page }) => {
     const response = await page.goto('/resourceCategory/edit?id=99999');
     expect(response?.status()).toBe(404);
-    await expect(page.getByText(/record not found/i).first()).toBeVisible();
+    await expect(page.getByText(/doesn.t exist, or it has been deleted/i).first()).toBeVisible();
   });
 
   test('tag edit with non-existent ID should NOT show create form', async ({ page }) => {

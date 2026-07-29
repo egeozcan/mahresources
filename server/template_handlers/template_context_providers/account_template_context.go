@@ -22,6 +22,10 @@ func AdminUsersContextProvider(ctx AccountPageContext) func(request *http.Reques
 			c["errorMessage"] = err.Error()
 		}
 		c["roles"] = models.ValidRoles
+		// Finding 109: the form never stated the minimum the server enforces, so
+		// the only way to learn it was to be rejected. Published from the policy
+		// rather than written into the template, so the two cannot drift.
+		c["minPasswordLength"] = auth.MinPasswordLength
 		return c
 	}
 }

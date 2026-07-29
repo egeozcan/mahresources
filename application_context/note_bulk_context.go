@@ -16,7 +16,7 @@ func (ctx *MahresourcesContext) BulkAddTagsToNotes(query *query_models.BulkEditQ
 		return fmt.Errorf("at least one note ID is required")
 	}
 	if len(query.EditedId) == 0 {
-		return fmt.Errorf("at least one tag ID is required")
+		return fmt.Errorf("at least one tag is required")
 	}
 
 	uniqueEditedIds := deduplicateUints(query.EditedId)
@@ -58,7 +58,7 @@ func (ctx *MahresourcesContext) BulkRemoveTagsFromNotes(query *query_models.Bulk
 		return fmt.Errorf("at least one note ID is required")
 	}
 	if len(query.EditedId) == 0 {
-		return fmt.Errorf("at least one tag ID is required")
+		return fmt.Errorf("at least one tag is required")
 	}
 
 	uniqueNoteIds := deduplicateUints(query.ID)

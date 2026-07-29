@@ -3,6 +3,7 @@ package application_context
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -207,8 +208,11 @@ func TestAddResource_ConcurrentSameHash(t *testing.T) {
 			if err == nil {
 				successCount++
 			} else {
-				// Expected error: "existing resource (X) with same parent"
-				if strings.Contains(err.Error(), "existing resource") {
+				// Matched by type rather than by message: the wording is
+				// user-facing (finding 103) and changing it must not silently
+				// turn "duplicate detected" into "unexpected failure" here.
+				var existsErr *ResourceExistsError
+				if errors.As(err, &existsErr) {
 					errorCount++
 				} else {
 					t.Errorf("Unexpected error from goroutine %d: %v", idx, err)
@@ -224,7 +228,7 @@ func TestAddResource_ConcurrentSameHash(t *testing.T) {
 		t.Errorf("Expected exactly 1 successful upload, got %d", successCount)
 	}
 	if errorCount != concurrency-1 {
-		t.Errorf("Expected %d 'existing resource' errors, got %d", concurrency-1, errorCount)
+		t.Errorf("Expected %d duplicate-content errors, got %d", concurrency-1, errorCount)
 	}
 
 	// Verify only one resource exists in the database

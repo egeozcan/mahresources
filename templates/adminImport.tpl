@@ -36,9 +36,10 @@
   <!-- Parse Progress -->
   <section x-show="jobId && !plan" aria-label="Parse progress" class="border-t border-stone-200 pt-5 space-y-3">
     <h2 class="text-sm font-medium font-mono text-stone-700">Parsing Archive</h2>
+    {# Finding 106: this line repeated, verbatim, the message the red box below #}
+    {# already shows. The phase alone is what belongs beside the progress bar. #}
     <div class="text-sm text-stone-600" data-testid="import-parse-progress">
-      <span x-text="job?.phase || 'queued'"></span>
-      <span x-show="job?.status === 'failed'" class="text-red-700 font-medium" x-text="'Error: ' + job?.error"></span>
+      <span x-text="job?.status === 'failed' ? 'failed' : (job?.phase || 'queued')"></span>
     </div>
     <div x-show="job?.status === 'processing'" class="w-full bg-stone-100 rounded-full h-2">
       <div class="bg-emerald-600 h-2 rounded-full transition-all" :style="'width:' + Math.max(5, (job?.progressPercent || 0)) + '%'"></div>

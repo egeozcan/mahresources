@@ -273,8 +273,14 @@ func GetResourceUploadHandler(ctx contracts.ResourceCreator, maxUploadSize func(
 				messages = append(messages, err.Error())
 			}
 
+			// Finding 103: "following errors were encountered: …" is broken
+			// grammar, and a lone failure does not need a preamble at all.
 			messageText := strings.Join(messages, ", ")
-			aggregateError := fmt.Errorf("following errors were encountered: %v", messageText)
+			aggregateError := errors.New(messageText)
+			if len(messages) > 1 {
+				aggregateError = fmt.Errorf("%d of %d files could not be saved: %v",
+					len(messages), len(files), messageText)
+			}
 
 			statusCode := http.StatusInternalServerError
 			if allConflict {
@@ -294,8 +300,15 @@ func GetResourceUploadHandler(ctx contracts.ResourceCreator, maxUploadSize func(
 				return
 			}
 
-			// HTML clients (standard form uploads) get PRG back to the create form
-			http_utils.HandleFormError(writer, request, "/resource/new", aggregateError, request.PostForm)
+			// HTML clients (standard form uploads) get PRG back to the create
+			// form. When exactly one upload was rejected as a duplicate, the
+			// colliding resource travels with it so the banner can link to it
+			// instead of printing a bare id (finding 103).
+			redirectTarget := "/resource/new"
+			if len(details) == 1 && details[0].ResourceID != 0 {
+				redirectTarget = fmt.Sprintf("/resource/new?errorResourceId=%d", details[0].ResourceID)
+			}
+			http_utils.HandleFormError(writer, request, redirectTarget, aggregateError, request.PostForm)
 			return
 		}
 

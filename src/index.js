@@ -130,3 +130,47 @@ export function addMetaToResource(id, val) {
     }
   });
 }
+
+/**
+ * errorMessageFromResponse - read the human message out of a failed response.
+ *
+ * Every API rejection answers `{"error": "..."}` to a JSON-accepting caller
+ * (server/http_utils/http_helpers.go). Finding 100 of the 2026-07-29 UI bug hunt
+ * is what happens when a caller skips that and renders the body: the query page
+ * showed the literal text `{"error":"no such table: nonexistent_table_xyz"}`
+ * under the heading "Something went wrong."
+ *
+ * Falls back to the raw text when the body is not the expected shape, and to the
+ * status line when there is no body at all, so a proxy's HTML error page never
+ * ends up quoted at the reader either.
+ *
+ * @param {Response} response
+ * @returns {Promise<string>}
+ */
+export async function errorMessageFromResponse(response) {
+  let text = '';
+  try {
+    text = await response.text();
+  } catch (_) {
+    text = '';
+  }
+
+  if (text) {
+    try {
+      const parsed = JSON.parse(text);
+      const message = parsed && (parsed.error || parsed.message);
+      if (typeof message === 'string' && message.trim()) {
+        return message.trim();
+      }
+    } catch (_) {
+      // Not JSON. A trimmed plain-text body is still better than nothing, but an
+      // HTML document is noise, so it falls through to the status line.
+      const trimmed = text.trim();
+      if (trimmed && !trimmed.startsWith('<')) {
+        return trimmed;
+      }
+    }
+  }
+
+  return `Request failed with status ${response.status}${response.statusText ? ' ' + response.statusText : ''}`;
+}

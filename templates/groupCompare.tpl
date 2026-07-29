@@ -1,10 +1,9 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
+{# errorMessage is rendered by layouts/base.tpl's alert region; repeating it #}
+{# here printed the same sentence twice on the same screen. #}
 {% if errorMessage %}
-<div class="max-w-7xl mx-auto">
-    <p class="text-stone-600">{{ errorMessage }}</p>
-</div>
 {% else %}
 <div class="max-w-7xl mx-auto" x-data="groupCompareView({
     g1: {{ query.Group1ID }},

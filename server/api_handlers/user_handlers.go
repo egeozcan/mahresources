@@ -29,9 +29,25 @@ func (r userRequest) toInput() *application_context.UserInput {
 		DisplayName:  r.DisplayName,
 		Password:     r.Password,
 		Role:         models.Role(r.Role),
-		ScopeGroupId: r.ScopeGroupId,
+		ScopeGroupId: r.scopeGroupId(),
 		Disabled:     r.Disabled,
 	}
+}
+
+// scopeGroupId distinguishes "no scope group given" from "group 0".
+//
+// The admin form's Scope group ID input submits an empty string when it is left
+// blank, which gorilla/schema decodes into a pointer to 0 rather than nil. The
+// context then read that as a scope group it should verify, found no group 0,
+// and answered "scope group does not exist" — so a guest created without a scope
+// was told the group was missing instead of the accurate "this role must be
+// limited to a group" the validator already has for exactly this case
+// (finding 34).
+func (r userRequest) scopeGroupId() *uint {
+	if r.ScopeGroupId != nil && *r.ScopeGroupId == 0 {
+		return nil
+	}
+	return r.ScopeGroupId
 }
 
 // userErrorStatus maps account-management errors to HTTP status codes.
@@ -95,7 +111,12 @@ func CreateUserHandler(ctx UserAdminContext) func(http.ResponseWriter, *http.Req
 		}
 		user, err := ctx.CreateUser(req.toInput())
 		if err != nil {
-			http_utils.HandleError(err, w, r, userErrorStatus(err))
+			// Finding 34: a rejected create navigated the admin to /v1/users and
+			// showed a bare error page, so every field they had typed was gone.
+			// HandleFormError keeps them on /admin/users with the values intact
+			// (it never echoes the password) and falls back to HandleError for
+			// JSON callers, so the API contract is unchanged.
+			http_utils.HandleFormErrorWithStatus(w, r, "/admin/users", err, r.PostForm, userErrorStatus(err))
 			return
 		}
 		if http_utils.RedirectIfHTMLAccepted(w, r, "/admin/users") {

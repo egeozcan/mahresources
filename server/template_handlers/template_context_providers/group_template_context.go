@@ -128,6 +128,7 @@ func GroupsListContextProvider(context GroupPageContext) func(request *http.Requ
 				Name: "Add",
 				Url:  "/group/new",
 			},
+			"sortMetaSupported": true,
 			"sortValues": createSortCols([]SortColumn{
 				{Name: "Created", Value: "created_at"},
 				{Name: "Name", Value: "name"},
@@ -226,6 +227,7 @@ func GroupTimelineContextProvider(context GroupPageContext) func(request *http.R
 				Name: "Add",
 				Url:  "/group/new",
 			},
+			"sortMetaSupported": true,
 			"sortValues": createSortCols([]SortColumn{
 				{Name: "Created", Value: "created_at"},
 				{Name: "Name", Value: "name"},

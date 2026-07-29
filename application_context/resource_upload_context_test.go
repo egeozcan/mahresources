@@ -13,23 +13,27 @@ func TestResourceExistsError_Error(t *testing.T) {
 		reason     string
 		want       string
 	}{
+		// Finding 103: the wording used to be "existing resource (42) with same
+		// parent" — an internal reason constant, and an id the reader could not
+		// act on. It is a user-facing sentence now; the id stays because API and
+		// CLI callers get nothing but this string.
 		{
 			name:       "same parent reason",
 			resourceID: 42,
 			reason:     ReasonSameParent,
-			want:       "existing resource (42) with same parent",
+			want:       "a resource with identical content already exists (#42)",
 		},
 		{
 			name:       "same relation reason",
 			resourceID: 100,
 			reason:     ReasonSameRelation,
-			want:       "existing resource (100) with same relation",
+			want:       "a resource with identical content is already in that group (#100)",
 		},
 		{
 			name:       "zero resource ID",
 			resourceID: 0,
 			reason:     ReasonSameParent,
-			want:       "existing resource (0) with same parent",
+			want:       "a resource with identical content already exists (#0)",
 		},
 	}
 

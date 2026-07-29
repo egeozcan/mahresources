@@ -4,6 +4,14 @@
 {% if queryValues.error.0 %}
 <div class="mb-4 rounded-md bg-red-50 border border-red-200 p-4" role="alert" data-testid="form-error-banner">
   <p class="text-sm font-medium text-red-800"><strong>Could not save:</strong> {{ queryValues.error.0 }}</p>
+  {# Finding 103: a duplicate upload printed the colliding id as bare text, so #}
+  {# there was no way to go look at what it collided with. #}
+  {% if queryValues.errorResourceId.0 %}
+  <p class="mt-1 text-sm text-red-800">
+    <a href="/resource?id={{ queryValues.errorResourceId.0 }}" class="underline hover:text-red-900">Open the existing resource</a>
+    — or change the file and try again. The file picker is always cleared after a rejection.
+  </p>
+  {% endif %}
 </div>
 {% endif %}
 <form
@@ -71,13 +79,20 @@
                     </label>
                     <div class="mt-1 sm:mt-0 sm:col-span-2">
                         <div class="flex items-center">
+                            {# Finding 142: submitting with no file round-tripped every field #}
+                            {# through the query string. It cannot be plainly required — the #}
+                            {# URL field below is an alternative source, and filling it makes #}
+                            {# the picker deliberately ignored. #}
                             <input
                                 id="resource"
                                 name="resource"
                                 multiple
                                 type="file"
+                                :required="!url.trim()"
+                                aria-describedby="resource-description"
                             >
                         </div>
+                        <p id="resource-description" class="mt-1 text-sm text-stone-500">Choose one or more files, or give a URL below instead.</p>
                     </div>
                     <label for="URL" class="block text-sm font-medium font-mono text-stone-700">
                         URL

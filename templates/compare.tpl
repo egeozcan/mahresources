@@ -1,10 +1,9 @@
 {% extends "/layouts/base.tpl" %}
 
 {% block body %}
+{# See groupCompare.tpl: base.tpl already renders errorMessage, and the copy #}
+{# that lived here said a second, different thing about the same failure. #}
 {% if errorMessage %}
-<div class="max-w-7xl mx-auto">
-    <p class="text-stone-600">Please provide a resource ID to compare versions.</p>
-</div>
 {% else %}
 <div class="max-w-7xl mx-auto" x-data="compareView({
     r1: {{ query.Resource1ID }},

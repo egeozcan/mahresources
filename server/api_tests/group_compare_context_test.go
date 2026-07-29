@@ -20,7 +20,11 @@ func TestGroupCompareContextProvider_MissingG1(t *testing.T) {
 	ctx := provider(req)
 
 	assert.Equal(t, "Compare Groups", ctx["pageTitle"])
-	assert.Equal(t, "Group 1 ID (g1) is required", ctx["errorMessage"])
+	// The wording is a sentence now: groupCompare.tpl used to render this
+	// message itself *and* inherit base.tpl's alert region, so it appeared twice
+	// on the same screen. With the duplicate gone, this string is what the reader
+	// sees, so it names what to do rather than which query parameter is missing.
+	assert.Equal(t, "Pick a group to compare — open one and use Compare from its page.", ctx["errorMessage"])
 }
 
 func TestGroupCompareContextProvider_DefaultsG2ToG1(t *testing.T) {

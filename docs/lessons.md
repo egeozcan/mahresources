@@ -2,6 +2,41 @@
 
 Patterns captured to avoid repeating mistakes. Newest first.
 
+## An HTML `pattern` attribute is compiled with the regex `v` flag, and an invalid pattern is ignored rather than reported
+
+Finding 157 wanted the template-partial name rule "stated *and* checked next to the field". The
+check shipped as `pattern="[a-z][a-z0-9-]*"`, which is a correct regex everywhere else in the
+codebase and does nothing at all in a browser: `pattern` is compiled as `^(?:…)$` **with the `v`
+flag**, under which a bare hyphen in a character class is `Invalid character class`, and the spec
+says an invalid pattern is *ignored*. No console error, no validation, no signal — the form posted,
+the server rejected it, and the round trip the finding is about happened exactly as before. The
+E2E spec caught it only because it asserted the *behaviour* (`validity.patternMismatch`, and that
+the page did not navigate); a spec asserting `toHaveAttribute('pattern', …)` would have been green
+against a guard that gated nothing.
+
+Two follow-ons. The escape that fixes it, `[a-z][a-z0-9\-]*`, is rejected by pongo2 — `\-` is not a
+valid escape in a template string — so the pattern is spelled `[a-z](?:[a-z0-9]|-)*`. And the spec
+now compiles `el.pattern` under `v` inside the page as its control, because that is the only
+assertion that distinguishes "the attribute is present" from "the browser is enforcing it".
+
+The general rule: for any attribute the *browser* interprets, assert the browser's behaviour, not
+the attribute's text. `required`, `pattern`, `minlength`, `min`/`max`, `type=number` all have modes
+where the markup looks right and the constraint is inert.
+
+## Spreading an object literal invokes its getters, so a computed property cannot survive composition
+
+The empty-selection guard exposed `get hasSelection() { return this.selectionCount > 0 }`, and the
+merge form composed it into `confirmAction` with `...selectionGuard`. Spread copies own enumerable
+properties **by value** — it calls the getter once and stores `false` — so the merge button was
+disabled forever and no selection could ever enable it. The guard assertions ("disabled while
+empty") were all green; only the positive control in the same spec ("still works once something is
+chosen") went red.
+
+This is the *reason* the "every negative assertion needs a positive control" rule exists, in its
+purest form: the defect made every negative assertion true. When composing Alpine state by spread,
+use plain properties maintained by a setter method, or compose with `Object.defineProperties`.
+
+
 ## In an Alpine component method, `$el` is the element that called you and `$root` is stale once your subtree is gone
 
 Moving the inline description editor out of an `@click.away` attribute into an `Alpine.data`

@@ -242,7 +242,11 @@ test.describe.serial('Group Compare', () => {
     await page.waitForTimeout(1000);
 
     expect(jsErrors).toEqual([]);
-    await expect(page.getByText(/Group 1 ID \(g1\) is required/i).first()).toBeVisible();
+    // WS3: groupCompare.tpl rendered errorMessage itself as well as inheriting
+    // base.tpl's alert region, so this sentence appeared twice. It is now the
+    // only copy, and says what to do rather than which parameter is missing.
+    await expect(page.getByText(/Pick a group to compare/i).first()).toBeVisible();
+    await expect(page.getByText(/and use Compare from its page/i)).toHaveCount(1);
   });
 
   test.afterAll(async ({ apiClient }) => {

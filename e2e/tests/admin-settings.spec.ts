@@ -16,7 +16,11 @@ test.describe('/admin/settings', () => {
     await expect(row).toBeVisible();
 
     // Save a 1 MiB override
-    await row.locator('input[type="text"]').first().fill('1048576');
+    // Located by id, not by input type: WS3 finding 115 made numeric settings
+    // type="number", so `input[type="text"]` now matches the Reason box first,
+    // and this test would fill that instead — saving the value unchanged and
+    // passing for the wrong reason.
+    await row.locator('#setting-max_upload_size').fill('1048576');
     await row.getByPlaceholder('Reason (optional)').fill('e2e-save');
     await row.getByRole('button', { name: 'Save' }).click();
     await expect(row.getByText(/Saved — took effect/)).toBeVisible({ timeout: 5000 });
@@ -51,7 +55,7 @@ test.describe('/admin/settings', () => {
     }
 
     await page.reload();
-    await row.locator('input[type="text"]').first().fill('1');
+    await row.locator('#setting-max_upload_size').fill('1');
     await row.getByRole('button', { name: 'Save' }).click();
 
     // The status region (role=status, aria-live=polite) shows the error

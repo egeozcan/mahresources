@@ -189,7 +189,8 @@ func (s *applyState) collectAndWriteBlobs(tarPath string) (*importDataCollector,
 	defer r.Close()
 
 	if _, err := r.ReadManifest(); err != nil {
-		return nil, fmt.Errorf("read manifest: %w", err)
+		// See ParseImport: the archive reader's message is already user-facing.
+		return nil, err
 	}
 
 	v := &collectBlobVisitor{

@@ -24,7 +24,9 @@
                 <template x-for="col in getAvailableColumnsForRow(index)" :key="col.Value">
                     <option :value="col.Value" x-text="col.Name"></option>
                 </template>
-                <option value="__meta__">Custom Property</option>
+                {# Finding 20: only entities whose table has a meta column can be sorted #}
+                {# by one. Offering it elsewhere (categories) produced a full-page 400. #}
+                {% if sortMetaSupported %}<option value="__meta__">Custom Property</option>{% endif %}
             </select>
 
             <template x-if="sort.column === '__meta__'">
