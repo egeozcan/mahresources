@@ -13,7 +13,7 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/constants"
-	"mahresources/lib/deferredtoken"
+	"mahresources/deferredtoken"
 	"mahresources/models"
 	"mahresources/mrql"
 	"mahresources/plugin_system"
@@ -171,7 +171,7 @@ type mrqlSavedQueryRequest struct {
 
 // buildPluginRenderer creates a PluginRenderer from the app context's plugin manager.
 // Returns nil if plugins are disabled — shortcodes.Process handles nil gracefully.
-func buildPluginRenderer(appCtx *application_context.MahresourcesContext, reqCtx context.Context) shortcodes.PluginRenderer {
+func buildPluginRenderer(appCtx MRQLAPIContext, reqCtx context.Context) shortcodes.PluginRenderer {
 	pm := appCtx.PluginManager()
 	if pm == nil {
 		return nil
@@ -205,7 +205,7 @@ func resolveAPIScopeFields(data *application_context.MRQLRenderData, entityType 
 	return
 }
 
-func buildMRQLAPIRenderContext(parent context.Context, appCtx *application_context.MahresourcesContext, deferredSigner bool) (context.Context, context.CancelFunc) {
+func buildMRQLAPIRenderContext(parent context.Context, appCtx mrqlRenderContext, deferredSigner bool) (context.Context, context.CancelFunc) {
 	reqCtx, cancel := context.WithTimeout(parent, appCtx.MRQLQueryTimeout())
 	reqCtx = plugin_system.WithMRQLCache(reqCtx)
 	reqCtx = application_context.WithMRQLRenderDataCache(reqCtx)
@@ -254,17 +254,17 @@ func collectAPIRenderIDs(result *application_context.MRQLResult, ids *apiRenderI
 	}
 }
 
-func loadAPIRenderIDs(reqCtx context.Context, appCtx *application_context.MahresourcesContext, ids apiRenderIDs) (*application_context.MRQLRenderData, error) {
+func loadAPIRenderIDs(reqCtx context.Context, appCtx MRQLAPIContext, ids apiRenderIDs) (*application_context.MRQLRenderData, error) {
 	return appCtx.LoadMRQLRenderData(reqCtx, ids.resourceCategories, ids.noteTypes, ids.categories, ids.scopes)
 }
 
-func loadFlatAPIRenderData(reqCtx context.Context, appCtx *application_context.MahresourcesContext, result *application_context.MRQLResult) (*application_context.MRQLRenderData, error) {
+func loadFlatAPIRenderData(reqCtx context.Context, appCtx MRQLAPIContext, result *application_context.MRQLResult) (*application_context.MRQLRenderData, error) {
 	var ids apiRenderIDs
 	collectAPIRenderIDs(result, &ids)
 	return loadAPIRenderIDs(reqCtx, appCtx, ids)
 }
 
-func loadGroupedAPIRenderData(reqCtx context.Context, appCtx *application_context.MahresourcesContext, result *application_context.MRQLGroupedResult) (*application_context.MRQLRenderData, error) {
+func loadGroupedAPIRenderData(reqCtx context.Context, appCtx MRQLAPIContext, result *application_context.MRQLGroupedResult) (*application_context.MRQLRenderData, error) {
 	var ids apiRenderIDs
 	for i := range result.Groups {
 		switch items := result.Groups[i].Items.(type) {
@@ -301,7 +301,7 @@ func mrqlCategoryCSS(reqCtx context.Context, seen map[string]bool, entityType st
 
 // renderMRQLCustomTemplates processes CustomMRQLResult templates for each result entity
 // and populates the RenderedHTML field when a template is configured.
-func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, result *application_context.MRQLResult, parent context.Context) error {
+func renderMRQLCustomTemplates(appCtx MRQLAPIContext, result *application_context.MRQLResult, parent context.Context) error {
 	reqCtx, cancel := buildMRQLAPIRenderContext(parent, appCtx, false)
 	defer cancel()
 	data, err := loadFlatAPIRenderData(reqCtx, appCtx, result)
@@ -376,7 +376,7 @@ func renderMRQLCustomTemplates(appCtx *application_context.MahresourcesContext, 
 
 // renderMRQLGroupedCustomTemplates processes CustomMRQLResult templates for bucketed
 // GROUP BY results. Aggregated results have no entities so they're skipped.
-func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesContext, result *application_context.MRQLGroupedResult, parent context.Context) error {
+func renderMRQLGroupedCustomTemplates(appCtx MRQLAPIContext, result *application_context.MRQLGroupedResult, parent context.Context) error {
 	if result.Mode != "bucketed" {
 		return nil // aggregated results are summary rows, not entities
 	}
@@ -462,7 +462,7 @@ func renderMRQLGroupedCustomTemplates(appCtx *application_context.MahresourcesCo
 }
 
 // GetExecuteMRQLHandler handles POST /v1/mrql — execute an MRQL query.
-func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetExecuteMRQLHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req mrqlExecuteRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
@@ -542,7 +542,7 @@ func GetExecuteMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 }
 
 // GetValidateMRQLHandler handles POST /v1/mrql/validate — validate MRQL syntax.
-func GetValidateMRQLHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetValidateMRQLHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req mrqlValidateRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
@@ -570,7 +570,7 @@ func GetValidateMRQLHandler(ctx *application_context.MahresourcesContext) func(h
 
 // lookupSavedMRQLQuery resolves a saved query by id (preferred) or name,
 // mirroring the saved/run fallback (numeric-only names still resolve).
-func lookupSavedMRQLQuery(ctx *application_context.MahresourcesContext, id uint, name string) (*models.SavedMRQLQuery, error) {
+func lookupSavedMRQLQuery(ctx savedMRQLLookup, id uint, name string) (*models.SavedMRQLQuery, error) {
 	if id != 0 {
 		saved, err := ctx.GetSavedMRQLQuery(id)
 		if err != nil && name != "" {
@@ -586,7 +586,7 @@ func lookupSavedMRQLQuery(ctx *application_context.MahresourcesContext, id uint,
 
 // GetExplainMRQLHandler handles POST /v1/mrql/explain — return the SQL that a
 // query (inline or saved) would run, without executing it.
-func GetExplainMRQLHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetExplainMRQLHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req mrqlExplainRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
@@ -647,7 +647,7 @@ func GetExplainMRQLHandler(ctx *application_context.MahresourcesContext) func(ht
 }
 
 // GetCompleteMRQLHandler handles POST /v1/mrql/complete — get autocompletion suggestions.
-func GetCompleteMRQLHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetCompleteMRQLHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req mrqlCompleteRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
@@ -670,7 +670,7 @@ func GetCompleteMRQLHandler(ctx *application_context.MahresourcesContext) func(h
 }
 
 // GetGenerateMRQLHandler handles POST /v1/mrql/generate — generate an MRQL draft.
-func GetGenerateMRQLHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetGenerateMRQLHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req mrqlGenerateRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
@@ -715,7 +715,7 @@ func GetGenerateMRQLHandler(ctx *application_context.MahresourcesContext) func(h
 
 // GetSavedMRQLQueriesHandler handles GET /v1/mrql/saved — list all saved MRQL queries,
 // or GET /v1/mrql/saved?id=N — get a single saved query.
-func GetSavedMRQLQueriesHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetSavedMRQLQueriesHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := http_utils.GetUIntQueryParameter(request, "id", 0)
 
@@ -773,10 +773,10 @@ func savedQueryWithParams(q *models.SavedMRQLQuery) savedMRQLQueryResponse {
 }
 
 // GetCreateSavedMRQLQueryHandler handles POST /v1/mrql/saved — create a saved MRQL query.
-func GetCreateSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetCreateSavedMRQLQueryHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Request-scope so CreatedByUserId is stamped with the acting user.
-		effectiveCtx := withRequestContext(ctx, request).(*application_context.MahresourcesContext)
+		effectiveCtx := withRequestContext(ctx, request).(MRQLAPIContext)
 		var req mrqlSavedQueryRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusBadRequest)
@@ -796,7 +796,7 @@ func GetCreateSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext
 }
 
 // GetUpdateSavedMRQLQueryHandler handles PUT /v1/mrql/saved?id=N — update a saved MRQL query.
-func GetUpdateSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetUpdateSavedMRQLQueryHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := http_utils.GetUIntQueryParameter(request, "id", 0)
 		if id == 0 {
@@ -822,7 +822,7 @@ func GetUpdateSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext
 }
 
 // GetDeleteSavedMRQLQueryHandler handles POST /v1/mrql/saved/delete?id=N — delete a saved MRQL query.
-func GetDeleteSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetDeleteSavedMRQLQueryHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := getEntityID(request)
 
@@ -847,7 +847,7 @@ func GetDeleteSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext
 }
 
 // GetRunSavedMRQLQueryHandler handles POST /v1/mrql/saved/run?id=N or ?name=X — execute a saved MRQL query.
-func GetRunSavedMRQLQueryHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetRunSavedMRQLQueryHandler(ctx MRQLAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := http_utils.GetUIntQueryParameter(request, "id", 0)
 		name := http_utils.GetQueryParameter(request, "name", "")

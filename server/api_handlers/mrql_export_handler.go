@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"mahresources/application_context"
 	"mahresources/models"
 	"mahresources/models/types"
 	"mahresources/mrql"
@@ -34,7 +33,7 @@ var exportFilenameUnsafe = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
 // GetExportMRQLHandler handles GET|POST /v1/mrql/export — stream query results
 // as a CSV or JSON download. Same inputs as execute plus format=csv|json.
-func GetExportMRQLHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetExportMRQLHandler(ctx MRQLExportContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req mrqlExportRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
@@ -118,7 +117,7 @@ func GetExportMRQLHandler(ctx *application_context.MahresourcesContext) func(htt
 }
 
 // exportFlat runs a non-grouped query and streams it as CSV or JSON.
-func exportFlat(ctx *application_context.MahresourcesContext, writer http.ResponseWriter, request *http.Request, parsed *mrql.Query, entityType mrql.EntityType, format, filename string, req mrqlExportRequest) {
+func exportFlat(ctx MRQLExportContext, writer http.ResponseWriter, request *http.Request, parsed *mrql.Query, entityType mrql.EntityType, format, filename string, req mrqlExportRequest) {
 	// CSV is per-entity; cross-entity mixes column shapes. Reject before running.
 	if format == "csv" && entityType == mrql.EntityUnspecified {
 		http_utils.HandleError(errors.New("CSV export requires a single entity type (add type = \"resource|note|group\"); use format=json for cross-entity results"), writer, request, http.StatusBadRequest)
@@ -160,7 +159,7 @@ func exportFlat(ctx *application_context.MahresourcesContext, writer http.Respon
 }
 
 // exportGrouped runs a GROUP BY query and streams it as CSV or JSON.
-func exportGrouped(ctx *application_context.MahresourcesContext, writer http.ResponseWriter, request *http.Request, parsed *mrql.Query, entityType mrql.EntityType, format, filename string, req mrqlExportRequest) {
+func exportGrouped(ctx MRQLExportContext, writer http.ResponseWriter, request *http.Request, parsed *mrql.Query, entityType mrql.EntityType, format, filename string, req mrqlExportRequest) {
 	if entityType == mrql.EntityUnspecified {
 		http_utils.HandleError(errors.New("GROUP BY requires an explicit entity type"), writer, request, http.StatusBadRequest)
 		return

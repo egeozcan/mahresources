@@ -8,8 +8,8 @@ import (
 
 	"github.com/gorilla/schema"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models/query_models"
-	"mahresources/server/interfaces"
 )
 
 var decoder = schema.NewDecoder()
@@ -20,9 +20,9 @@ var decoder = schema.NewDecoder()
 //
 // Usage in handlers:
 //
-//	effectiveCtx := withRequestContext(ctx, request).(interfaces.TagsWriter)
+//	effectiveCtx := withRequestContext(ctx, request).(contracts.TagsWriter)
 func withRequestContext(ctx any, r *http.Request) any {
-	if setter, ok := ctx.(interfaces.RequestContextSetter); ok {
+	if setter, ok := ctx.(contracts.RequestContextSetter); ok {
 		return setter.WithRequest(r)
 	}
 	return ctx

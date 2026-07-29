@@ -1,0 +1,1427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mahresources Bug Hunt Consolidated Report</title>
+  <style>
+    :root {
+      --bg: #f4ecde;
+      --bg-deep: #eadcc4;
+      --panel: rgba(255, 249, 240, 0.92);
+      --panel-strong: #fff8ef;
+      --ink: #1f1a16;
+      --muted: #6f6258;
+      --line: #d5c1aa;
+      --line-strong: #bfa181;
+      --accent: #8e402d;
+      --accent-soft: #f5d7cd;
+      --high: #9f2f20;
+      --high-soft: #fde2dc;
+      --medium: #a86615;
+      --medium-soft: #f9ead4;
+      --low: #58613a;
+      --low-soft: #edf0df;
+      --verify: #506073;
+      --verify-soft: #e4eaf1;
+      --shadow: 0 22px 48px rgba(66, 41, 19, 0.12);
+      --radius: 22px;
+      --radius-sm: 14px;
+      --font-display: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+      --font-body: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, serif;
+      --font-mono: "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(255, 255, 255, 0.78), transparent 38%),
+        radial-gradient(circle at top right, rgba(247, 211, 177, 0.45), transparent 30%),
+        linear-gradient(180deg, var(--bg), var(--bg-deep));
+      font-family: var(--font-body);
+      line-height: 1.55;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.92em;
+      background: rgba(93, 73, 52, 0.08);
+      border-radius: 0.45rem;
+      padding: 0.12rem 0.36rem;
+    }
+
+    img {
+      display: block;
+      max-width: 100%;
+    }
+
+    .shell {
+      width: min(1320px, calc(100vw - 32px));
+      margin: 24px auto 56px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 34px 34px 28px;
+      border: 1px solid rgba(143, 110, 78, 0.34);
+      border-radius: 28px;
+      background:
+        linear-gradient(135deg, rgba(255, 250, 244, 0.96), rgba(250, 236, 215, 0.92)),
+        var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -60px -80px auto;
+      width: 260px;
+      height: 260px;
+      border-radius: 999px;
+      background: radial-gradient(circle, rgba(166, 102, 21, 0.14), transparent 68%);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      font-family: var(--font-display);
+      font-size: 0.82rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    h1, h2, h3, h4 {
+      margin: 0;
+      line-height: 1.08;
+      font-family: var(--font-display);
+    }
+
+    h1 {
+      font-size: clamp(2rem, 3vw, 3.3rem);
+      max-width: 14ch;
+    }
+
+    h2 {
+      font-size: clamp(1.35rem, 2vw, 2rem);
+      margin-bottom: 14px;
+    }
+
+    h3 {
+      font-size: 1.35rem;
+      margin-bottom: 12px;
+    }
+
+    h4 {
+      font-size: 1rem;
+      margin-bottom: 8px;
+      color: var(--accent);
+    }
+
+    p {
+      margin: 0;
+    }
+
+    .hero-copy {
+      max-width: 78ch;
+      display: grid;
+      gap: 14px;
+    }
+
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.98rem;
+    }
+
+    .hero-meta span {
+      padding: 0.3rem 0.7rem;
+      border: 1px solid rgba(139, 112, 80, 0.28);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.48);
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 14px;
+      margin-top: 26px;
+    }
+
+    .stat {
+      padding: 16px 16px 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(143, 110, 78, 0.26);
+      background: rgba(255, 255, 255, 0.6);
+    }
+
+    .stat strong {
+      display: block;
+      font-family: var(--font-display);
+      font-size: 1.65rem;
+      margin-bottom: 3px;
+    }
+
+    .stat span {
+      color: var(--muted);
+      font-size: 0.94rem;
+    }
+
+    .toolbar,
+    .grid-2,
+    .cluster-grid,
+    .appendix,
+    .method {
+      margin-top: 20px;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      padding: 18px 20px;
+      border-radius: 22px;
+      border: 1px solid rgba(143, 110, 78, 0.24);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .toolbar p {
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin-right: 8px;
+    }
+
+    .filter-btn {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: #fff9f0;
+      color: var(--ink);
+      padding: 0.72rem 0.96rem;
+      border-radius: 999px;
+      font: 600 0.92rem var(--font-display);
+      cursor: pointer;
+      transition: transform 180ms ease, background 180ms ease, border-color 180ms ease;
+    }
+
+    .filter-btn:hover,
+    .filter-btn[aria-pressed="true"] {
+      transform: translateY(-1px);
+      border-color: var(--line-strong);
+      background: #fff3de;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 20px;
+    }
+
+    .card {
+      padding: 22px;
+      border-radius: var(--radius);
+      border: 1px solid rgba(143, 110, 78, 0.24);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .card > * + * {
+      margin-top: 16px;
+    }
+
+    .callouts {
+      display: grid;
+      gap: 12px;
+    }
+
+    .callout {
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(143, 110, 78, 0.24);
+      background: rgba(255, 255, 255, 0.6);
+    }
+
+    .callout strong {
+      display: block;
+      font-family: var(--font-display);
+      margin-bottom: 4px;
+    }
+
+    .nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .nav-links a,
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+      border-radius: 999px;
+      padding: 0.42rem 0.72rem;
+      border: 1px solid rgba(143, 110, 78, 0.24);
+      background: rgba(255, 255, 255, 0.7);
+      color: var(--ink);
+      font: 600 0.88rem var(--font-display);
+    }
+
+    .chip.high {
+      background: var(--high-soft);
+      border-color: rgba(159, 47, 32, 0.25);
+    }
+
+    .chip.medium {
+      background: var(--medium-soft);
+      border-color: rgba(168, 102, 21, 0.24);
+    }
+
+    .chip.low {
+      background: var(--low-soft);
+      border-color: rgba(88, 97, 58, 0.22);
+    }
+
+    .chip.verify {
+      background: var(--verify-soft);
+      border-color: rgba(80, 96, 115, 0.22);
+    }
+
+    .cluster-grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    .cluster {
+      padding: 24px;
+      border-radius: 26px;
+      border: 1px solid rgba(143, 110, 78, 0.26);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      animation: rise 420ms ease both;
+    }
+
+    .cluster[hidden] {
+      display: none;
+    }
+
+    .cluster-head {
+      display: flex;
+      gap: 14px;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 16px;
+    }
+
+    .cluster-subtitle {
+      margin-top: 8px;
+      color: var(--muted);
+    }
+
+    .priority-badge {
+      flex-shrink: 0;
+      padding: 0.45rem 0.8rem;
+      border-radius: 999px;
+      font: 700 0.84rem var(--font-display);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .priority-high {
+      color: var(--high);
+      background: var(--high-soft);
+    }
+
+    .priority-medium {
+      color: var(--medium);
+      background: var(--medium-soft);
+    }
+
+    .priority-low {
+      color: var(--low);
+      background: var(--low-soft);
+    }
+
+    .priority-verify {
+      color: var(--verify);
+      background: var(--verify-soft);
+    }
+
+    .cluster-layout {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 22px;
+      align-items: start;
+    }
+
+    .cluster-layout > div > * + * {
+      margin-top: 14px;
+    }
+
+    .note-box {
+      padding: 14px 16px;
+      border-left: 4px solid var(--accent);
+      border-radius: 14px;
+      background: rgba(245, 215, 205, 0.46);
+    }
+
+    .note-box strong {
+      display: block;
+      margin-bottom: 4px;
+      font-family: var(--font-display);
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 1.1rem;
+    }
+
+    li + li {
+      margin-top: 7px;
+    }
+
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    figure {
+      margin: 0;
+      overflow: hidden;
+      border-radius: 18px;
+      border: 1px solid rgba(143, 110, 78, 0.26);
+      background: rgba(255, 255, 255, 0.75);
+    }
+
+    figure img {
+      aspect-ratio: 16 / 10;
+      object-fit: cover;
+      width: 100%;
+      border-bottom: 1px solid rgba(143, 110, 78, 0.18);
+    }
+
+    figcaption {
+      padding: 11px 12px 12px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .artifact-list {
+      display: grid;
+      gap: 8px;
+      padding-left: 0;
+      list-style: none;
+    }
+
+    .artifact-list a {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      text-decoration: none;
+      padding: 0.8rem 0.95rem;
+      border-radius: 14px;
+      border: 1px solid rgba(143, 110, 78, 0.2);
+      background: rgba(255, 255, 255, 0.68);
+    }
+
+    .artifact-list span:last-child {
+      color: var(--accent);
+      white-space: nowrap;
+      font-family: var(--font-display);
+    }
+
+    .appendix table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.7);
+    }
+
+    .appendix thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      text-align: left;
+      padding: 14px 14px;
+      background: #f7ead8;
+      border-bottom: 1px solid rgba(143, 110, 78, 0.28);
+      font: 700 0.84rem var(--font-display);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .appendix tbody tr {
+      border-bottom: 1px solid rgba(143, 110, 78, 0.18);
+    }
+
+    .appendix tbody tr[hidden] {
+      display: none;
+    }
+
+    .appendix tbody tr.closed {
+      opacity: 0.66;
+    }
+
+    .appendix td {
+      padding: 13px 14px;
+      vertical-align: top;
+    }
+
+    .appendix .id-cell {
+      font: 700 0.93rem var(--font-display);
+      white-space: nowrap;
+    }
+
+    .appendix .title-cell strong {
+      display: block;
+      font-family: var(--font-display);
+      margin-bottom: 4px;
+    }
+
+    .appendix .title-cell span {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.28rem 0.55rem;
+      border-radius: 999px;
+      font: 700 0.76rem var(--font-display);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .sev-major,
+    .status-major {
+      background: var(--high-soft);
+      color: var(--high);
+    }
+
+    .sev-medium {
+      background: var(--medium-soft);
+      color: var(--medium);
+    }
+
+    .sev-minor,
+    .sev-cosmetic,
+    .sev-feature-gap {
+      background: var(--low-soft);
+      color: var(--low);
+    }
+
+    .sev-unverified {
+      background: var(--verify-soft);
+      color: var(--verify);
+    }
+
+    .method {
+      padding: 20px 22px;
+      border-radius: 20px;
+      border: 1px solid rgba(143, 110, 78, 0.24);
+      background: rgba(255, 255, 255, 0.68);
+      color: var(--muted);
+    }
+
+    .method p + p {
+      margin-top: 10px;
+    }
+
+    @keyframes rise {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 980px) {
+      .grid-2,
+      .cluster-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .shell {
+        width: min(100vw - 20px, 1320px);
+      }
+
+      .hero,
+      .cluster,
+      .card {
+        padding: 22px;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .hero {
+        padding: 20px;
+      }
+
+      .toolbar {
+        padding: 14px;
+      }
+
+      .appendix {
+        overflow-x: auto;
+      }
+
+      .appendix table {
+        min-width: 920px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">Mahresources / Bug Hunt / Consolidated Review</p>
+      <div class="hero-copy">
+        <h1>Grouped, deduped, and reality-checked for easier bug review.</h1>
+        <p>This report is based on <code>tasks/bug-hunt-log.md</code>, the linked evidence under <code>tasks/bug-hunt-evidence/</code>, and a code spot-check of the current tree on April 22, 2026. The goal is to collapse repeated themes, surface dependencies, and flag places where the raw log is directionally right but no longer perfectly matches the code.</p>
+        <div class="hero-meta">
+          <span>32 verified unresolved issues</span>
+          <span>1 unverified claim</span>
+          <span>2 archived as not reproduced</span>
+          <span>7 review groups</span>
+        </div>
+      </div>
+      <div class="stat-grid">
+        <div class="stat"><strong>6</strong><span>Major issues still open</span></div>
+        <div class="stat"><strong>7</strong><span>Medium issues still open</span></div>
+        <div class="stat"><strong>19</strong><span>Minor or cosmetic issues still open</span></div>
+        <div class="stat"><strong>10</strong><span>Review-first bugs in the high lane</span></div>
+        <div class="stat"><strong>14</strong><span>Medium-lane bugs after the high lane</span></div>
+        <div class="stat"><strong>8</strong><span>Low-lane cleanup bugs</span></div>
+      </div>
+    </section>
+
+    <section class="toolbar" aria-label="Report filters">
+      <p>Filter both the group cards and the appendix table by review lane:</p>
+      <button class="filter-btn" type="button" data-filter="all" aria-pressed="true">All</button>
+      <button class="filter-btn" type="button" data-filter="high" aria-pressed="false">High (10)</button>
+      <button class="filter-btn" type="button" data-filter="medium" aria-pressed="false">Medium (14)</button>
+      <button class="filter-btn" type="button" data-filter="low" aria-pressed="false">Low (8)</button>
+      <button class="filter-btn" type="button" data-filter="verify" aria-pressed="false">Verify / Archive (3)</button>
+    </section>
+
+    <section class="grid-2">
+      <article class="card">
+        <h2>Review order</h2>
+        <div class="callouts">
+          <div class="callout">
+            <strong>1. Public surface and exposed internals</strong>
+            <p>BH-P05 and BH-031 are the two most important issues because they sit on public or semi-public edges and can be abused without much setup.</p>
+          </div>
+          <div class="callout">
+            <strong>2. Save-flow resilience</strong>
+            <p>BH-006 and BH-009 are the most user-hostile daily workflow bugs: users type real data, hit one validation problem, and lose context or get no error signal.</p>
+          </div>
+          <div class="callout">
+            <strong>3. Export / storage contract</strong>
+            <p>BH-025 + BH-026 are one operator journey, and BH-023 is the deeper contract bug behind the alt-filesystem story.</p>
+          </div>
+          <div class="callout">
+            <strong>4. Data integrity before polish</strong>
+            <p>BH-011, BH-020, BH-024, and BH-018 all allow bad or misleading state to persist and then fan out into secondary UI defects.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>Deduped chains</h2>
+        <div class="callouts">
+          <div class="callout">
+            <strong>BH-025 + BH-026</strong>
+            <p>One export recovery hole: the export page forgets the job after reload, and the jobs panel still cannot finish the story for completed group exports.</p>
+          </div>
+          <div class="callout">
+            <strong>BH-011 -&gt; BH-008</strong>
+            <p>Broken image ingest is the upstream defect. The invisible crop overlay is the downstream symptom that users actually see.</p>
+          </div>
+          <div class="callout">
+            <strong>BH-020 + BH-024</strong>
+            <p>BH-024 is the table/query branch of the bigger "dangling IDs remain in block content" problem.</p>
+          </div>
+          <div class="callout">
+            <strong>BH-023</strong>
+            <p>Not three separate bugs. It is one half-wired feature with three broken layers: create UI, multipart API, and archive contract.</p>
+          </div>
+          <div class="callout">
+            <strong>BH-005</strong>
+            <p>The raw claim looks stale on case sensitivity. Current search code and tests are case-insensitive, so only the typo-tolerance angle still looks like a live product gap.</p>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="grid-2">
+      <article class="card">
+        <h2>Truth maintenance</h2>
+        <div class="note-box">
+          <strong>BH-032 needs a narrower fix description.</strong>
+          <p>The missing-header issue is still real, but the raw log's token-leak example via Google Fonts looks stale. The current <code>templates/shared/base.tpl</code> does not load external fonts, so the share-token leak mechanism should be re-checked while implementing the header middleware.</p>
+        </div>
+        <div class="note-box">
+          <strong>BH-005 should not be treated as a confirmed bug.</strong>
+          <p>Current search code lowercases cache keys, computes case-insensitive relevance, and has tests for case-insensitive prefix matching. Keep the fuzzy-search request as a feature gap, not as a proven regression.</p>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>Jump to group</h2>
+        <div class="nav-links">
+          <a href="#cluster-public">Public surface</a>
+          <a href="#cluster-export">Export and storage</a>
+          <a href="#cluster-validation">Validation and save flow</a>
+          <a href="#cluster-integrity">Data integrity</a>
+          <a href="#cluster-a11y">Accessibility</a>
+          <a href="#cluster-mrql">MRQL and docs drift</a>
+          <a href="#cluster-polish">Polish and destructive UX</a>
+          <a href="#cluster-verify">Verify and archive</a>
+          <a href="#appendix">Full appendix</a>
+        </div>
+      </article>
+    </section>
+
+    <section class="cluster-grid">
+      <article id="cluster-public" class="cluster" data-priority="high">
+        <div class="cluster-head">
+          <div>
+            <h2>Public surface and exposed internals</h2>
+            <p class="cluster-subtitle">5 bugs grouped here: fix these before broader polish because they touch public URLs, raw uploads, and error serialization.</p>
+          </div>
+          <span class="priority-badge priority-high">High lane</span>
+        </div>
+        <p>
+          <a class="chip high" href="#bug-bh-p05">BH-P05</a>
+          <a class="chip medium" href="#bug-bh-031">BH-031</a>
+          <a class="chip low" href="#bug-bh-034">BH-034</a>
+          <a class="chip low" href="#bug-bh-032">BH-032</a>
+          <a class="chip low" href="#bug-bh-033">BH-033</a>
+        </p>
+        <div class="cluster-layout">
+          <div>
+            <p>These five issues all live on boundaries where mistakes are expensive: public share links, unauthenticated JSON error routes, and unbounded multipart uploads. This is the cleanest place to start because the fixes are easy to explain in review and reduce a lot of downstream risk.</p>
+            <h4>Code notes</h4>
+            <ul>
+              <li><code>server/template_handlers/render_template.go</code> strips several internal fields for <code>.json</code> responses, but it still leaves <code>_appContext</code> and <code>_requestContext</code> in the serialized context. That lines up with BH-P05.</li>
+              <li><code>server/share_server.go</code> starts a raw <code>mux.Router</code> with no share-specific hardening middleware, so BH-032 still has a real foundation.</li>
+              <li><code>handleBlockStateUpdate</code> in <code>server/share_server.go</code> verifies token validity and note membership, then writes state immediately. There is no block-type allowlist, which matches BH-031.</li>
+              <li><code>server/template_handlers/template_context_providers/note_template_context.go</code> still builds <code>shareBaseUrl</code> straight from <code>ShareBindAddress</code> and <code>SharePort</code>, which keeps BH-033 alive.</li>
+              <li><code>server/api_handlers/version_api_handlers.go</code> and <code>server/api_handlers/resource_api_handlers.go</code> still parse multipart bodies without <code>http.MaxBytesReader</code>, while <code>server/api_handlers/import_api_handlers.go</code> shows the correct pattern.</li>
+            </ul>
+            <div class="note-box">
+              <strong>Implementation note</strong>
+              <p>BH-P05 and BH-031 are the two bugs to pair in the first hardening pass. BH-032, BH-033, and BH-034 fit naturally behind them in the same review since they touch the same boundary code.</p>
+            </div>
+          </div>
+          <div>
+            <div class="gallery">
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-22-8/02-note282-share-sidebar.png" alt="Share sidebar showing the generated public URL">
+                <figcaption><strong>Share URL generation</strong> BH-033 is visible from the share sidebar because that URL is assembled from the server bind address.</figcaption>
+              </figure>
+            </div>
+            <ul class="artifact-list">
+              <li><a href="bug-hunt-evidence/iter-2026-04-22-2/bhp05-resource-json-error.json"><span>BH-P05 resource.json leak sample</span><span>Open JSON</span></a></li>
+              <li><a href="bug-hunt-evidence/iter-2026-04-22-2/bhp05-note-json-error.json"><span>BH-P05 note.json leak sample</span><span>Open JSON</span></a></li>
+              <li><a href="bug-hunt-evidence/iter-2026-04-22-2/bhp05-group-json-error.json"><span>BH-P05 group.json leak sample</span><span>Open JSON</span></a></li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article id="cluster-export" class="cluster" data-priority="high">
+        <div class="cluster-head">
+          <div>
+            <h2>Export, import, and storage contract</h2>
+            <p class="cluster-subtitle">6 bugs grouped here: one operator journey plus the alt-filesystem contract that can silently drift data onto the wrong backend.</p>
+          </div>
+          <span class="priority-badge priority-high">High lane</span>
+        </div>
+        <p>
+          <a class="chip medium" href="#bug-bh-025">BH-025</a>
+          <a class="chip medium" href="#bug-bh-026">BH-026</a>
+          <a class="chip medium" href="#bug-bh-023">BH-023</a>
+          <a class="chip low" href="#bug-bh-016">BH-016</a>
+          <a class="chip low" href="#bug-bh-017">BH-017</a>
+          <a class="chip low" href="#bug-bh-015">BH-015</a>
+        </p>
+        <div class="cluster-layout">
+          <div>
+            <p>This group is best reviewed as one story: start an export, reload, try to recover from the jobs panel, then archive and re-import. Right now each hop drops important context.</p>
+            <h4>Code notes</h4>
+            <ul>
+              <li><code>src/components/adminExport.js</code> restores only selected groups in <code>init()</code>. It never reconnects to SSE or restores <code>this.job</code> unless <code>submit()</code> was just called, which confirms BH-025.</li>
+              <li><code>templates/partials/downloadCockpit.tpl</code> only shows completion-time links for <code>job.resourceId</code> and plugin-action redirects. There is still no branch for completed group-export jobs, which confirms BH-026.</li>
+              <li><code>src/components/downloadCockpit.js</code> and <code>templates/adminExport.tpl</code> both still display uncapped <code>progressPercent</code>, which matches BH-015.</li>
+              <li><code>archive/manifest.go</code> still has no <code>storage_location</code> field in <code>ResourcePayload</code>, so BH-023's archive-loss claim still stands.</li>
+              <li><code>models/query_models/resource_query.go</code> still omits <code>PathName</code> from <code>ResourceCreator</code>, and <code>templates/createResource.tpl</code> still has no storage selector while <code>templates/adminOverview.tpl</code> advertises available alt filesystems.</li>
+              <li><code>application_context/import_plan.go</code> and <code>templates/adminImport.tpl</code> still report only created/skipped counters, not merged or GUID-relinked outcomes, which preserves BH-016.</li>
+            </ul>
+            <div class="note-box">
+              <strong>Implementation note</strong>
+              <p>Review BH-025 + BH-026 together as one fix set. BH-023 is the deeper contract bug here; if it waits, any alt-filesystem feature work remains risky.</p>
+            </div>
+          </div>
+          <div>
+            <div class="gallery">
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-22-1/import-result-merge.png" alt="Import result screen showing successful merge path">
+                <figcaption><strong>BH-016</strong> The merge flow finishes, but the result summary still fails to explain what was reused or merged.</figcaption>
+              </figure>
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-22-1/import-result-bottom.png" alt="Import result summary at the bottom of the page">
+                <figcaption><strong>BH-016 / BH-017</strong> The summary only shows creation counters, which hides merge and relink work.</figcaption>
+              </figure>
+            </div>
+            <ul class="artifact-list">
+              <li><a href="bug-hunt-evidence/iter-2026-04-22-5/sse-init-state.txt"><span>BH-026 SSE init payload showing completed export jobs</span><span>Open TXT</span></a></li>
+              <li><a href="bug-hunt-evidence/iter-2026-04-22-5/endpoint-matrix.txt"><span>Supporting endpoint matrix for export/import review</span><span>Open TXT</span></a></li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article id="cluster-validation" class="cluster" data-priority="high">
+        <div class="cluster-head">
+          <div>
+            <h2>Validation and save-flow resilience</h2>
+            <p class="cluster-subtitle">3 bugs grouped here: this is the "user typed data and the UI did not help" lane.</p>
+          </div>
+          <span class="priority-badge priority-high">High lane</span>
+        </div>
+        <p>
+          <a class="chip high" href="#bug-bh-006">BH-006</a>
+          <a class="chip high" href="#bug-bh-009">BH-009</a>
+          <a class="chip medium" href="#bug-bh-010">BH-010</a>
+        </p>
+        <div class="cluster-layout">
+          <div>
+            <p>These three bugs belong together because they all erode trust in form submission: the app either navigates away from the form, blocks the save silently, or seeds obviously wrong data into preview.</p>
+            <h4>Code notes</h4>
+            <ul>
+              <li><code>templates/createResource.tpl</code> is still a native <code>&lt;form method="post"&gt;</code>, which is consistent with the state-loss pattern reported in BH-006. The report says that same pattern appears across the create/edit flows.</li>
+              <li><code>src/schema-editor/modes/form-mode.ts</code> still checks only min/max string and numeric bounds in its blur handlers. There is no <code>valueMissing</code> or <code>patternMismatch</code> branch, which keeps BH-009 alive.</li>
+              <li>The preview path still accepts a real numeric <code>0</code> as input; the renderer itself only shows empty when the harness does not preseed the field. That means BH-010 is still most likely a preview-state bug, not a renderer-only bug.</li>
+            </ul>
+            <div class="note-box">
+              <strong>Implementation note</strong>
+              <p>BH-006 and BH-009 should be reviewed in the same pass because both are "submit failed but the page did not guide me" defects. BH-010 is a natural add-on while someone is already in schema-form preview code.</p>
+            </div>
+          </div>
+          <div>
+            <div class="gallery">
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-21-3/group-form-loss.png" alt="Group form error page showing lost form state">
+                <figcaption><strong>BH-006</strong> The user leaves the form context entirely on server-side validation failure.</figcaption>
+              </figure>
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-21-3/note-blank-title-save.png" alt="Note creation form with a blank title and no inline validation message">
+                <figcaption><strong>BH-009</strong> Save is blocked, but the inline error channel stays silent.</figcaption>
+              </figure>
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-21-3/preview-form-year-zero.png" alt="Preview form prefilled with zero for a numeric year field">
+                <figcaption><strong>BH-010</strong> Preview seeds a fake zero value and immediately triggers range validation.</figcaption>
+              </figure>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article id="cluster-integrity" class="cluster" data-priority="medium">
+        <div class="cluster-head">
+          <div>
+            <h2>Data integrity and stale references</h2>
+            <p class="cluster-subtitle">6 bugs grouped here: corrupt or half-valid state gets stored, then shows up later as broken crop flows, bad matches, or 500s.</p>
+          </div>
+          <span class="priority-badge priority-medium">Medium lane</span>
+        </div>
+        <p>
+          <a class="chip high" href="#bug-bh-011">BH-011</a>
+          <a class="chip low" href="#bug-bh-008">BH-008</a>
+          <a class="chip medium" href="#bug-bh-020">BH-020</a>
+          <a class="chip low" href="#bug-bh-024">BH-024</a>
+          <a class="chip medium" href="#bug-bh-018">BH-018</a>
+          <a class="chip medium" href="#bug-bh-019">BH-019</a>
+        </p>
+        <div class="cluster-layout">
+          <div>
+            <p>This is the most "compounding effects" cluster in the report. The same bad rows can create broken crop behavior, stale table queries, misleading similarity suggestions, and invisible cleanup debt.</p>
+            <h4>Code notes</h4>
+            <ul>
+              <li><code>src/components/imageCropper.js</code> still hides the visual selection overlay when natural dimensions are zero, while submit only checks the stored rectangle. That makes BH-008 a downstream symptom of BH-011, not a root cause on its own.</li>
+              <li><code>hash_worker/worker.go</code> still computes both AHash and DHash, stores both, but only caches and compares DHash for similarity lookups. That keeps BH-018 alive exactly as logged.</li>
+              <li><code>server/api_handlers/block_api_handlers.go</code> still returns <code>500</code> on <code>RunReadOnlyQuery</code> failure in the table-block handler instead of routing nested not-found errors through <code>statusCodeForError</code>, which confirms BH-024.</li>
+              <li>The raw log's bigger stale-reference story still makes sense: BH-024 is the table branch of BH-020, and nothing I spot-checked suggests automatic cleanup was added for embedded block IDs.</li>
+              <li>BH-019 was not re-executed here, but it still belongs in this cluster because the consequence is stored invalid data that can later poison exports, logs, or downstream tooling.</li>
+            </ul>
+            <div class="note-box">
+              <strong>Implementation note</strong>
+              <p>Fix BH-011 before spending much energy on BH-008. Review BH-020 and BH-024 together. BH-018 matters more than it looks because the merge action it feeds is destructive.</p>
+            </div>
+          </div>
+          <div>
+            <div class="gallery">
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-21-3/truncated-png-accepted.png" alt="Truncated PNG accepted as uploaded resource">
+                <figcaption><strong>BH-011</strong> Invalid image bytes are still stored as if the upload succeeded normally.</figcaption>
+              </figure>
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-22-3/dangling-resource-gallery-broken.png" alt="Gallery block showing broken resource preview after referenced resource was deleted">
+                <figcaption><strong>BH-020</strong> Broken gallery rendering is the visible symptom of stale embedded resource IDs.</figcaption>
+              </figure>
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-22-1/resource-dup-b-similar-section.png" alt="Resource details page showing visually wrong similarity suggestions">
+                <figcaption><strong>BH-018</strong> Similarity output is visibly wrong for the solid-color case the log describes.</figcaption>
+              </figure>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article id="cluster-a11y" class="cluster" data-priority="high">
+        <div class="cluster-head">
+          <div>
+            <h2>Accessibility on core workflows</h2>
+            <p class="cluster-subtitle">4 bugs grouped here: separate audits, same outcome. Core workflows look fine visually but are under-described semantically.</p>
+          </div>
+          <span class="priority-badge priority-high">High lane</span>
+        </div>
+        <p>
+          <a class="chip high" href="#bug-bh-027">BH-027</a>
+          <a class="chip high" href="#bug-bh-028">BH-028</a>
+          <a class="chip low" href="#bug-bh-029">BH-029</a>
+          <a class="chip low" href="#bug-bh-030">BH-030</a>
+        </p>
+        <div class="cluster-layout">
+          <div>
+            <p>These belong together because they all need the same style of review: keyboard support, semantic roles, and explicit text alternatives instead of visual-only cues.</p>
+            <h4>Code notes</h4>
+            <ul>
+              <li><code>templates/partials/downloadCockpit.tpl</code> still has no dialog role on the panel container, no ARIA progressbar semantics, and only a title attribute on the connection dot. The underlying component also does not move focus on open.</li>
+              <li><code>templates/partials/blockEditor.tpl</code> still shows gallery images without <code>alt</code>, a heading-level <code>&lt;select&gt;</code> without a label, icon buttons that depend on <code>title</code>, and an add-block picker with no disclosure roles.</li>
+              <li><code>src/components/groupTree.js</code> still builds a visual tree out of plain <code>&lt;ul&gt;</code>/<code>&lt;li&gt;</code> elements and click handlers. There is still no ARIA tree model or arrow-key roving focus.</li>
+              <li><code>templates/partials/compareImage.tpl</code> still declares a radiogroup with radio buttons but does not implement the expected keyboard pattern or roving <code>tabindex</code>.</li>
+            </ul>
+            <div class="note-box">
+              <strong>Implementation note</strong>
+              <p>BH-027 and BH-028 are the best first accessibility targets because they affect authoring and recovery surfaces directly. BH-029 and BH-030 are still worth fixing, but they can follow that first pass.</p>
+            </div>
+          </div>
+          <div>
+            <div class="gallery">
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-22-6/01-block-editor-edit-mode.png" alt="Block editor in edit mode with action controls visible">
+                <figcaption><strong>BH-027</strong> The edit surface bundles several missing-name and disclosure problems into one primary workflow.</figcaption>
+              </figure>
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-22-6/02-jobs-panel.png" alt="Slide-in jobs panel">
+                <figcaption><strong>BH-028</strong> The jobs panel is the intended recovery surface, which makes the missing dialog/focus semantics more urgent.</figcaption>
+              </figure>
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-22-6/03-group-tree.png" alt="Group hierarchy tree view">
+                <figcaption><strong>BH-029</strong> The tree is visible and clickable, but current rendering still hides the structure from assistive tech.</figcaption>
+              </figure>
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-22-6/04-compare-view.png" alt="Image comparison view with mode switcher">
+                <figcaption><strong>BH-030</strong> The mode switcher still needs the keyboard model expected from a radiogroup.</figcaption>
+              </figure>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article id="cluster-mrql" class="cluster" data-priority="medium">
+        <div class="cluster-head">
+          <div>
+            <h2>MRQL, editor maturity, and docs drift</h2>
+            <p class="cluster-subtitle">5 bugs grouped here if you count BH-005 as re-test material: all of them affect trust in search, MRQL, or block authoring.</p>
+          </div>
+          <span class="priority-badge priority-medium">Medium lane</span>
+        </div>
+        <p>
+          <a class="chip medium" href="#bug-bh-012">BH-012</a>
+          <a class="chip medium" href="#bug-bh-013">BH-013</a>
+          <a class="chip medium" href="#bug-bh-021">BH-021</a>
+          <a class="chip medium" href="#bug-bh-022">BH-022</a>
+          <a class="chip verify" href="#bug-bh-005">BH-005</a>
+        </p>
+        <div class="cluster-layout">
+          <div>
+            <p>This cluster is less about immediate breakage and more about product trust: users expect saved queries to update, large MRQL results to stay manageable, docs to match live routes, and the block editor to support common text syntax.</p>
+            <h4>Code notes</h4>
+            <ul>
+              <li><code>src/components/mrqlEditor.js</code> still posts to <code>/v1/mrql/saved</code> for save actions and never switches to <code>PUT</code> for update. BH-012 remains straightforward.</li>
+              <li><code>server/routes.go</code> still registers live MRQL and <code>editMeta</code> endpoints, while <code>server/routes_openapi.go</code> still lacks those registrations. That keeps BH-022 confirmed.</li>
+              <li><code>src/components/blockEditor.js</code> still supports only <code>**bold**</code>, <code>*italic*</code>, and links in <code>renderMarkdown()</code>. BH-021 remains accurate.</li>
+              <li>BH-013 was not re-run here, but it still fits this review lane because it is about MRQL result safety at scale rather than isolated UI polish.</li>
+              <li>For BH-005, the current code and tests are case-insensitive. The raw claim should be split into two: case sensitivity looks stale; typo tolerance still looks like a feature request, not a verified defect.</li>
+            </ul>
+            <div class="note-box">
+              <strong>Implementation note</strong>
+              <p>If someone is already in MRQL, pair BH-012 and BH-022 first. BH-013 and BH-021 are good follow-ons in the same product-trust sweep.</p>
+            </div>
+          </div>
+          <div>
+            <div class="gallery">
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-21-4/16-mrql-no-edit-mode.png" alt="MRQL saved query view without an update path">
+                <figcaption><strong>BH-012</strong> Saved queries still behave like create-only UI even though the backend exposes update.</figcaption>
+              </figure>
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-21-4/06-mrql-264-results.png" alt="MRQL result page rendering many rows">
+                <figcaption><strong>BH-013</strong> Large result sets still spill into one long page with no default limit or pager.</figcaption>
+              </figure>
+            </div>
+            <ul class="artifact-list">
+              <li><a href="bug-hunt-evidence/iter-2026-04-22-4/bh9-findings.txt"><span>Supporting MRQL / block findings summary</span><span>Open TXT</span></a></li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article id="cluster-polish" class="cluster" data-priority="low">
+        <div class="cluster-head">
+          <div>
+            <h2>Polish and confusing destructive UX</h2>
+            <p class="cluster-subtitle">4 bugs grouped here: lower severity overall, but still worth cleaning once the higher-risk work is done.</p>
+          </div>
+          <span class="priority-badge priority-low">Low lane</span>
+        </div>
+        <p>
+          <a class="chip low" href="#bug-bh-014">BH-014</a>
+          <a class="chip low" href="#bug-bh-007">BH-007</a>
+          <a class="chip low" href="#bug-bh-001">BH-001</a>
+          <a class="chip low" href="#bug-bh-002">BH-002</a>
+        </p>
+        <div class="cluster-layout">
+          <div>
+            <p>These are not the bugs to lead with, but they are the sort of issues that make the product feel brittle or under-explained, especially around delete flows and metadata display.</p>
+            <h4>Code notes</h4>
+            <ul>
+              <li><code>templates/displayTag.tpl</code> and <code>templates/displayNoteText.tpl</code> still render a manual <code>Meta Data</code> side title and then include <code>json.tpl</code>, which already renders its own heading. BH-001 is still present in the source.</li>
+              <li><code>templates/partials/json.tpl</code> still does <code>appendChild(renderJsonTable(...))</code>, and <code>src/tableMaker.js</code> still returns a string for <code>null</code>/<code>undefined</code>. BH-002 remains plausible from code alone.</li>
+              <li><code>templates/partials/versionPanel.tpl</code> still places compare controls and the upload form in one tight <code>justify-between</code> row, which matches BH-007's layout squeeze.</li>
+              <li>I did not re-run the group delete flow, but template search does not show any child-orphan warning. BH-014 still looks like a generic delete confirmation path rather than a purpose-built destructive flow.</li>
+            </ul>
+            <div class="note-box">
+              <strong>Implementation note</strong>
+              <p>BH-014 is the only item here with meaningful user-expectation risk. The rest fit well into a later cleanup pass.</p>
+            </div>
+          </div>
+          <div>
+            <div class="gallery">
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-21-2/21-version-compare-layout-bug.png" alt="Version compare controls compressing upload button into multiple lines">
+                <figcaption><strong>BH-007</strong> The primary upload CTA looks broken as soon as compare mode adds another action.</figcaption>
+              </figure>
+              <figure>
+                <img loading="lazy" src="bug-hunt-evidence/iter-2026-04-21-1/22-tag-page-null-meta-error.png" alt="Tag page metadata area">
+                <figcaption><strong>BH-001 / BH-002</strong> The metadata panel area carries both the duplicate-heading bug and the null-rendering bug family.</figcaption>
+              </figure>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article id="cluster-verify" class="cluster" data-priority="verify">
+        <div class="cluster-head">
+          <div>
+            <h2>Verify and archive queue</h2>
+            <p class="cluster-subtitle">3 items grouped here: one claim that deserves a fresh repro, plus two that should stay archived unless new evidence appears.</p>
+          </div>
+          <span class="priority-badge priority-verify">Verify</span>
+        </div>
+        <p>
+          <a class="chip verify" href="#bug-bh-005">BH-005</a>
+          <a class="chip verify" href="#bug-bh-003">BH-003</a>
+          <a class="chip verify" href="#bug-bh-004">BH-004</a>
+        </p>
+        <div class="cluster-layout">
+          <div>
+            <p>This queue exists so review time does not get burned on stale or already-disproved reports.</p>
+            <h4>Investigation notes</h4>
+            <ul>
+              <li><strong>BH-005:</strong> current search code and tests are case-insensitive, so the "prefix-only and case-sensitive" claim should not be treated as confirmed. If the team still dislikes search quality, treat it as a product improvement request around typo tolerance or fuzzy ranking.</li>
+              <li><strong>BH-003:</strong> the lightbox/checkbox collision was already closed as not reproduced and nothing in the current evidence suggests reopening it.</li>
+              <li><strong>BH-004:</strong> the bulk-selection keyboard claim was also closed as not reproduced and the current key bindings still exist in source.</li>
+            </ul>
+            <div class="note-box">
+              <strong>Recommendation</strong>
+              <p>Do not schedule BH-003 or BH-004. Re-test BH-005 only if search still feels wrong in the live product.</p>
+            </div>
+          </div>
+          <div>
+            <ul class="artifact-list">
+              <li><a href="bug-hunt-evidence/iter-2026-04-22-7/evidence-summary.txt"><span>Iteration 7 evidence summary</span><span>Open TXT</span></a></li>
+            </ul>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section id="appendix" class="appendix card">
+      <h2>Full appendix</h2>
+      <p>Every active or referenced bug from the log, normalized into one table. The lane column reflects the review order suggested above, not the original log severity.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Severity</th>
+            <th>Lane</th>
+            <th>Status</th>
+            <th>Group</th>
+            <th>Title and review note</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr id="bug-bh-p05" data-lane="high">
+            <td class="id-cell">BH-P05</td>
+            <td><span class="pill sev-major">major</span></td>
+            <td><span class="pill status-major">high</span></td>
+            <td>verified</td>
+            <td>Public surface</td>
+            <td class="title-cell"><strong>.json errors leak internal app context and request context.</strong><span>Current JSON template renderer still drops many fields but not <code>_appContext</code> or <code>_requestContext</code>.</span></td>
+          </tr>
+          <tr id="bug-bh-031" data-lane="high">
+            <td class="id-cell">BH-031</td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td><span class="pill status-major">high</span></td>
+            <td>verified</td>
+            <td>Public surface</td>
+            <td class="title-cell"><strong>Share block-state endpoint accepts arbitrary block types.</strong><span><code>handleBlockStateUpdate()</code> checks token and note membership but still lacks a block-type allowlist.</span></td>
+          </tr>
+          <tr id="bug-bh-025" data-lane="high">
+            <td class="id-cell">BH-025</td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td><span class="pill status-major">high</span></td>
+            <td>verified</td>
+            <td>Export and storage</td>
+            <td class="title-cell"><strong>Export page loses job tracking on reload.</strong><span><code>adminExport.init()</code> restores selected groups only; it never rehydrates the running job.</span></td>
+          </tr>
+          <tr id="bug-bh-026" data-lane="high">
+            <td class="id-cell">BH-026</td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td><span class="pill status-major">high</span></td>
+            <td>verified</td>
+            <td>Export and storage</td>
+            <td class="title-cell"><strong>Jobs panel cannot finish the export recovery flow.</strong><span>Completed group-export jobs still show blank titles and no download branch.</span></td>
+          </tr>
+          <tr id="bug-bh-023" data-lane="high">
+            <td class="id-cell">BH-023</td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td><span class="pill status-major">high</span></td>
+            <td>verified</td>
+            <td>Export and storage</td>
+            <td class="title-cell"><strong>Alternative filesystem is only half-wired.</strong><span>The UI cannot pick it, multipart upload ignores the hint, and archive payloads still drop the storage location.</span></td>
+          </tr>
+          <tr id="bug-bh-006" data-lane="high">
+            <td class="id-cell">BH-006</td>
+            <td><span class="pill sev-major">major</span></td>
+            <td><span class="pill status-major">high</span></td>
+            <td>verified</td>
+            <td>Validation and save flow</td>
+            <td class="title-cell"><strong>Native create/edit forms dump users to bare error pages on validation failure.</strong><span>This is the broadest data-loss workflow bug in the log.</span></td>
+          </tr>
+          <tr id="bug-bh-009" data-lane="high">
+            <td class="id-cell">BH-009</td>
+            <td><span class="pill sev-major">major</span></td>
+            <td><span class="pill status-major">high</span></td>
+            <td>verified</td>
+            <td>Validation and save flow</td>
+            <td class="title-cell"><strong>Schema form blocks save without showing required/pattern errors.</strong><span>The blur handler still omits <code>valueMissing</code> and <code>patternMismatch</code>.</span></td>
+          </tr>
+          <tr id="bug-bh-011" data-lane="high">
+            <td class="id-cell">BH-011</td>
+            <td><span class="pill sev-major">major</span></td>
+            <td><span class="pill status-major">high</span></td>
+            <td>verified</td>
+            <td>Data integrity</td>
+            <td class="title-cell"><strong>Invalid or truncated images are stored as normal resources.</strong><span>This is the upstream cause for later crop, preview, and similarity weirdness.</span></td>
+          </tr>
+          <tr id="bug-bh-027" data-lane="high">
+            <td class="id-cell">BH-027</td>
+            <td><span class="pill sev-major">major</span></td>
+            <td><span class="pill status-major">high</span></td>
+            <td>verified</td>
+            <td>Accessibility</td>
+            <td class="title-cell"><strong>Block editor accessibility failures stack up on the main authoring surface.</strong><span>Missing labels, missing alt text, and undisclosed picker state make this the first a11y fix candidate.</span></td>
+          </tr>
+          <tr id="bug-bh-028" data-lane="high">
+            <td class="id-cell">BH-028</td>
+            <td><span class="pill sev-major">major</span></td>
+            <td><span class="pill status-major">high</span></td>
+            <td>verified</td>
+            <td>Accessibility</td>
+            <td class="title-cell"><strong>Download cockpit is not a real dialog and progress is under-described.</strong><span>This matters more because the jobs panel is supposed to be the recovery surface for BH-025 and BH-026.</span></td>
+          </tr>
+
+          <tr id="bug-bh-034" data-lane="medium">
+            <td class="id-cell">BH-034</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td>verified</td>
+            <td>Public surface</td>
+            <td class="title-cell"><strong>Multipart upload endpoints still lack a hard body-size cap.</strong><span>Import parsing already uses <code>http.MaxBytesReader</code>; resource and version uploads do not.</span></td>
+          </tr>
+          <tr id="bug-bh-032" data-lane="medium">
+            <td class="id-cell">BH-032</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td>verified / narrow re-check</td>
+            <td>Public surface</td>
+            <td class="title-cell"><strong>Share server still lacks header hardening.</strong><span>The missing-header fix is valid, but the log's external-font leak example should be re-verified against the current shared template.</span></td>
+          </tr>
+          <tr id="bug-bh-033" data-lane="medium">
+            <td class="id-cell">BH-033</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td>verified</td>
+            <td>Public surface</td>
+            <td class="title-cell"><strong>Share URLs are built from the server bind address.</strong><span>That still produces unroutable links for safe loopback binds.</span></td>
+          </tr>
+          <tr id="bug-bh-020" data-lane="medium">
+            <td class="id-cell">BH-020</td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td>verified</td>
+            <td>Data integrity</td>
+            <td class="title-cell"><strong>Entity deletes leave stale IDs behind in multiple block types.</strong><span>This is the systemic dangling-reference bug; BH-024 is its table/query branch.</span></td>
+          </tr>
+          <tr id="bug-bh-024" data-lane="medium">
+            <td class="id-cell">BH-024</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td>verified</td>
+            <td>Data integrity</td>
+            <td class="title-cell"><strong>Dangling table query reference returns 500 instead of a translated not-found.</strong><span>The handler still sends nested query errors straight to <code>500</code>.</span></td>
+          </tr>
+          <tr id="bug-bh-018" data-lane="medium">
+            <td class="id-cell">BH-018</td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td>verified</td>
+            <td>Data integrity</td>
+            <td class="title-cell"><strong>Solid-color images collapse to the same DHash.</strong><span>The code calculates AHash too, but similarity storage still ignores it.</span></td>
+          </tr>
+          <tr id="bug-bh-019" data-lane="medium">
+            <td class="id-cell">BH-019</td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td>verified</td>
+            <td>Data integrity</td>
+            <td class="title-cell"><strong>Entity names accept control characters, bidi overrides, and embedded newlines.</strong><span>This is a stored-data sanitation problem more than a search or SQL issue.</span></td>
+          </tr>
+          <tr id="bug-bh-012" data-lane="medium">
+            <td class="id-cell">BH-012</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td>verified</td>
+            <td>MRQL and docs drift</td>
+            <td class="title-cell"><strong>Saved MRQL queries cannot update in place from the UI.</strong><span>The backend route exists; the editor still uses create-only POST.</span></td>
+          </tr>
+          <tr id="bug-bh-013" data-lane="medium">
+            <td class="id-cell">BH-013</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td>verified</td>
+            <td>MRQL and docs drift</td>
+            <td class="title-cell"><strong>MRQL result pages still have no default limit or pagination.</strong><span>This is minor today but dangerous for the large-deployment target the repo already talks about.</span></td>
+          </tr>
+          <tr id="bug-bh-021" data-lane="medium">
+            <td class="id-cell">BH-021</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td>verified</td>
+            <td>MRQL and docs drift</td>
+            <td class="title-cell"><strong>Block-editor markdown support is too narrow for common user expectations.</strong><span><code>_italic_</code> and backtick code still render literally.</span></td>
+          </tr>
+          <tr id="bug-bh-022" data-lane="medium">
+            <td class="id-cell">BH-022</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td>verified</td>
+            <td>MRQL and docs drift</td>
+            <td class="title-cell"><strong>OpenAPI spec generator still omits live MRQL and editMeta routes.</strong><span><code>server/routes.go</code> and <code>server/routes_openapi.go</code> still disagree.</span></td>
+          </tr>
+          <tr id="bug-bh-014" data-lane="medium">
+            <td class="id-cell">BH-014</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td>verified</td>
+            <td>Polish and destructive UX</td>
+            <td class="title-cell"><strong>Deleting a parent group still silently orphans children.</strong><span>This is the only low-severity polish issue that meaningfully changes user expectations around destructive actions.</span></td>
+          </tr>
+          <tr id="bug-bh-010" data-lane="medium">
+            <td class="id-cell">BH-010</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td>verified</td>
+            <td>Validation and save flow</td>
+            <td class="title-cell"><strong>Preview form seeds numeric fields with zero instead of empty.</strong><span>This one is preview-only, but it still makes the form builder feel wrong.</span></td>
+          </tr>
+          <tr id="bug-bh-016" data-lane="medium">
+            <td class="id-cell">BH-016</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-medium">medium</span></td>
+            <td>verified</td>
+            <td>Export and storage</td>
+            <td class="title-cell"><strong>Import result UI hides merge and GUID-relink outcomes.</strong><span>The result object and template still emphasize created counts only.</span></td>
+          </tr>
+
+          <tr id="bug-bh-030" data-lane="low">
+            <td class="id-cell">BH-030</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-minor">low</span></td>
+            <td>verified</td>
+            <td>Accessibility</td>
+            <td class="title-cell"><strong>Compare view uses color-only diff cues and incomplete radio behavior.</strong><span>Important, but still behind the more central block-editor and jobs-panel accessibility work.</span></td>
+          </tr>
+          <tr id="bug-bh-029" data-lane="low">
+            <td class="id-cell">BH-029</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-minor">low</span></td>
+            <td>verified</td>
+            <td>Accessibility</td>
+            <td class="title-cell"><strong>Group hierarchy tree is visual-only from an ARIA perspective.</strong><span>The expand buttons are decent; the tree model around them is still missing.</span></td>
+          </tr>
+          <tr id="bug-bh-017" data-lane="low">
+            <td class="id-cell">BH-017</td>
+            <td><span class="pill sev-cosmetic">cosmetic</span></td>
+            <td><span class="pill sev-minor">low</span></td>
+            <td>verified</td>
+            <td>Export and storage</td>
+            <td class="title-cell"><strong>Missing <code>schema_version</code> error message is misleading.</strong><span>The import rejection is correct; only the wording is wrong.</span></td>
+          </tr>
+          <tr id="bug-bh-015" data-lane="low">
+            <td class="id-cell">BH-015</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-minor">low</span></td>
+            <td>verified</td>
+            <td>Export and storage</td>
+            <td class="title-cell"><strong>Export progress text can exceed 100 percent.</strong><span>The progress bar already caps visually, so this is misleading output rather than broken export logic.</span></td>
+          </tr>
+          <tr id="bug-bh-008" data-lane="low">
+            <td class="id-cell">BH-008</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-minor">low</span></td>
+            <td>verified</td>
+            <td>Data integrity</td>
+            <td class="title-cell"><strong>Crop overlay disappears when image metadata is zero.</strong><span>Still worth fixing, but it should follow BH-011 because it is primarily a downstream symptom.</span></td>
+          </tr>
+          <tr id="bug-bh-007" data-lane="low">
+            <td class="id-cell">BH-007</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-minor">low</span></td>
+            <td>verified</td>
+            <td>Polish and destructive UX</td>
+            <td class="title-cell"><strong>Version compare toolbar squeezes the upload CTA.</strong><span>This is localized layout debt in <code>versionPanel.tpl</code>.</span></td>
+          </tr>
+          <tr id="bug-bh-001" data-lane="low">
+            <td class="id-cell">BH-001</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-minor">low</span></td>
+            <td>verified</td>
+            <td>Polish and destructive UX</td>
+            <td class="title-cell"><strong>Tag and note-text pages still render duplicate Meta Data headings.</strong><span>The extra side title is still in the template source.</span></td>
+          </tr>
+          <tr id="bug-bh-002" data-lane="low">
+            <td class="id-cell">BH-002</td>
+            <td><span class="pill sev-minor">minor</span></td>
+            <td><span class="pill sev-minor">low</span></td>
+            <td>verified</td>
+            <td>Polish and destructive UX</td>
+            <td class="title-cell"><strong><code>renderJsonTable(null)</code> can still blow up the metadata panel.</strong><span><code>json.tpl</code> and <code>tableMaker.js</code> still fit the failure mode described in the log.</span></td>
+          </tr>
+
+          <tr id="bug-bh-005" data-lane="verify">
+            <td class="id-cell">BH-005</td>
+            <td><span class="pill sev-feature-gap">feature-gap</span></td>
+            <td><span class="pill sev-unverified">verify</span></td>
+            <td>unverified</td>
+            <td>Verify and archive</td>
+            <td class="title-cell"><strong>Global search "case-sensitive prefix-only" claim looks stale.</strong><span>Current code and tests are case-insensitive; if anything remains, it likely belongs in a fuzzy-search improvement review.</span></td>
+          </tr>
+          <tr id="bug-bh-003" class="closed" data-lane="verify">
+            <td class="id-cell">BH-003</td>
+            <td><span class="pill sev-unverified">closed</span></td>
+            <td><span class="pill sev-unverified">verify</span></td>
+            <td>closed / not reproduced</td>
+            <td>Verify and archive</td>
+            <td class="title-cell"><strong>Resource checkbox and lightbox hit-target conflict.</strong><span>Already closed. Keep archived unless new targeted evidence appears.</span></td>
+          </tr>
+          <tr id="bug-bh-004" class="closed" data-lane="verify">
+            <td class="id-cell">BH-004</td>
+            <td><span class="pill sev-unverified">closed</span></td>
+            <td><span class="pill sev-unverified">verify</span></td>
+            <td>closed / not reproduced</td>
+            <td>Verify and archive</td>
+            <td class="title-cell"><strong>Bulk selection keyboard Space claim.</strong><span>Already closed. Source still contains the expected key handlers.</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="method">
+      <h2>Method and limits</h2>
+      <p>I did not re-run the app, replay browser scripts, or change the canonical markdown log while making this report. The investigation here is a source-and-evidence pass only.</p>
+      <p>Anything called out as "re-check" is where the current tree no longer matches the raw log verbatim. The biggest examples are BH-032's external-request rationale and BH-005's case-sensitivity claim.</p>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      const buttons = Array.from(document.querySelectorAll('[data-filter]'));
+      const clusters = Array.from(document.querySelectorAll('.cluster[data-priority]'));
+      const rows = Array.from(document.querySelectorAll('tbody tr[data-lane]'));
+
+      function apply(filter) {
+        buttons.forEach((button) => {
+          button.setAttribute('aria-pressed', String(button.dataset.filter === filter));
+        });
+
+        clusters.forEach((cluster) => {
+          cluster.hidden = !(filter === 'all' || cluster.dataset.priority === filter);
+        });
+
+        rows.forEach((row) => {
+          row.hidden = !(filter === 'all' || row.dataset.lane === filter);
+        });
+      }
+
+      buttons.forEach((button) => {
+        button.addEventListener('click', function () {
+          apply(button.dataset.filter || 'all');
+        });
+      });
+
+      apply('all');
+    }());
+  </script>
+</body>
+</html>

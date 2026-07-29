@@ -5,16 +5,16 @@ import (
 	"fmt"
 	"io"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 	"net/http"
 	"net/url"
 	"strings"
 )
 
-func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetGroupsHandler(ctx contracts.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
@@ -52,7 +52,7 @@ func GetGroupsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWrite
 	}
 }
 
-func GetGroupHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetGroupHandler(ctx contracts.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
 		group, err := ctx.GetGroup(id)
@@ -67,7 +67,7 @@ func GetGroupHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter
 	}
 }
 
-func GetGroupsParentsHandler(ctx interfaces.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetGroupsParentsHandler(ctx contracts.GroupReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		id := uint(http_utils.GetIntQueryParameter(request, "id", 0))
 		groups, err := ctx.FindParentsOfGroup(id)
@@ -82,10 +82,10 @@ func GetGroupsParentsHandler(ctx interfaces.GroupReader) func(writer http.Respon
 	}
 }
 
-func GetAddGroupHandler(ctx interfaces.GroupCRUDReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddGroupHandler(ctx contracts.GroupCRUDReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.GroupCRUDReader)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.GroupCRUDReader)
 
 		var editor = query_models.GroupEditor{}
 		var sentFields map[string]bool
@@ -197,10 +197,10 @@ func GetAddGroupHandler(ctx interfaces.GroupCRUDReader) func(writer http.Respons
 	}
 }
 
-func GetRemoveGroupHandler(ctx interfaces.GroupDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveGroupHandler(ctx contracts.GroupDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.GroupDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.GroupDeleter)
 
 		id := getEntityID(request)
 
@@ -224,7 +224,7 @@ func GetRemoveGroupHandler(ctx interfaces.GroupDeleter) func(writer http.Respons
 	}
 }
 
-func GetAddTagsToGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddTagsToGroupsHandler(ctx contracts.BulkGroupTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -247,7 +247,7 @@ func GetAddTagsToGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writer ht
 	}
 }
 
-func GetRemoveTagsFromGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveTagsFromGroupsHandler(ctx contracts.BulkGroupTagEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditQuery{}
 		var err error
@@ -270,10 +270,10 @@ func GetRemoveTagsFromGroupsHandler(ctx interfaces.BulkGroupTagEditor) func(writ
 	}
 }
 
-func GetBulkDeleteGroupsHandler(ctx interfaces.GroupDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetBulkDeleteGroupsHandler(ctx contracts.GroupDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.GroupDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.GroupDeleter)
 
 		var editor = query_models.BulkQuery{}
 		var err error
@@ -301,7 +301,7 @@ func GetBulkDeleteGroupsHandler(ctx interfaces.GroupDeleter) func(writer http.Re
 	}
 }
 
-func GetAddMetaToGroupsHandler(ctx interfaces.BulkGroupMetaEditor) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddMetaToGroupsHandler(ctx contracts.BulkGroupMetaEditor) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BulkEditMetaQuery{}
 		var err error
@@ -324,7 +324,7 @@ func GetAddMetaToGroupsHandler(ctx interfaces.BulkGroupMetaEditor) func(writer h
 	}
 }
 
-func GetGroupMetaKeysHandler(ctx interfaces.GroupMetaReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetGroupMetaKeysHandler(ctx contracts.GroupMetaReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		keys, err := ctx.GroupMetaKeys()
 
@@ -338,10 +338,10 @@ func GetGroupMetaKeysHandler(ctx interfaces.GroupMetaReader) func(writer http.Re
 	}
 }
 
-func GetMergeGroupsHandler(ctx interfaces.GroupMerger) func(writer http.ResponseWriter, request *http.Request) {
+func GetMergeGroupsHandler(ctx contracts.GroupMerger) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.GroupMerger)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.GroupMerger)
 
 		var editor = query_models.MergeQuery{}
 		var err error
@@ -364,7 +364,7 @@ func GetMergeGroupsHandler(ctx interfaces.GroupMerger) func(writer http.Response
 	}
 }
 
-func GetGroupTreeChildrenHandler(ctx interfaces.GroupTreeReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetGroupTreeChildrenHandler(ctx contracts.GroupTreeReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		parentID := uint(http_utils.GetIntQueryParameter(request, "parentId", 0))
 		limit := int(http_utils.GetIntQueryParameter(request, "limit", 50))
@@ -392,10 +392,10 @@ func GetGroupTreeChildrenHandler(ctx interfaces.GroupTreeReader) func(writer htt
 	}
 }
 
-func GetDuplicateGroupHandler(ctx interfaces.GroupDuplicator) func(writer http.ResponseWriter, request *http.Request) {
+func GetDuplicateGroupHandler(ctx contracts.GroupDuplicator) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.GroupDuplicator)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.GroupDuplicator)
 
 		var editor query_models.EntityIdQuery
 

@@ -16,7 +16,7 @@ var errNoAccount = errors.New("account management requires an authenticated user
 // ChangeOwnPasswordHandler lets the authenticated user change their own password.
 // The current password must be supplied; on success all other sessions are
 // revoked.
-func ChangeOwnPasswordHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func ChangeOwnPasswordHandler(ctx AccountContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := principalFor(r)
 		if p == nil || p.SuperUser || p.UserID == 0 {
@@ -49,7 +49,7 @@ func ChangeOwnPasswordHandler(ctx *application_context.MahresourcesContext) func
 }
 
 // ListOwnTokensHandler lists the authenticated user's API tokens.
-func ListOwnTokensHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func ListOwnTokensHandler(ctx AccountContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := principalFor(r)
 		if p == nil || p.SuperUser || p.UserID == 0 {
@@ -67,7 +67,7 @@ func ListOwnTokensHandler(ctx *application_context.MahresourcesContext) func(htt
 
 // CreateOwnTokenHandler mints a new API token for the authenticated user and
 // returns the raw token exactly once.
-func CreateOwnTokenHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func CreateOwnTokenHandler(ctx AccountContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := principalFor(r)
 		if p == nil || p.SuperUser || p.UserID == 0 {
@@ -108,7 +108,7 @@ func CreateOwnTokenHandler(ctx *application_context.MahresourcesContext) func(ht
 }
 
 // RevokeOwnTokenHandler revokes one of the authenticated user's API tokens.
-func RevokeOwnTokenHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func RevokeOwnTokenHandler(ctx AccountContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := principalFor(r)
 		if p == nil || p.SuperUser || p.UserID == 0 {

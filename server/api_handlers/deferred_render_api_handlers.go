@@ -5,9 +5,8 @@ import (
 	"errors"
 	"net/http"
 
-	"mahresources/application_context"
 	"mahresources/constants"
-	"mahresources/lib/deferredtoken"
+	"mahresources/deferredtoken"
 	"mahresources/models"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers/template_filters"
@@ -53,7 +52,7 @@ type deferredRenderResponse struct {
 // inline on the display page (which already happens for every viewer); the caller
 // cannot alter the plugin invocation, so this does not grant the direct plugin-code
 // access that isPluginCodePath denies to group-scoped principals.
-func GetDeferredRenderHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetDeferredRenderHandler(ctx DeferredRenderContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req deferredRenderRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {

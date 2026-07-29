@@ -5,7 +5,6 @@ import (
 	"strconv"
 
 	"github.com/flosch/pongo2/v4"
-	"mahresources/application_context"
 )
 
 // HoverCardContextProvider backs GET /hovercard?type=<group|resource|note>&id=<n>,
@@ -17,7 +16,7 @@ import (
 //
 // The Category/ResourceCategory/NoteType relation is preloaded by each getter,
 // so the fragment's CustomAvatar / CustomSummary shortcodes resolve.
-func HoverCardContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func HoverCardContextProvider(context HoverCardPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		q := request.URL.Query()
 		entityType := q.Get("type")

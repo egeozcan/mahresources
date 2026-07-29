@@ -233,6 +233,67 @@ func (ctx *MahresourcesContext) GroupVisible(id uint) bool {
 	return !ctx.isScopedPrincipal() || ctx.entityVisible(&models.Group{}, id)
 }
 
+// visibleGroupIDs filters ids down to the subset visible under the current
+// scope. Intended for raw-SQL and join-table paths that bypass the GORM scope
+// callbacks and therefore hand back group IDs the principal may not see (e.g.
+// the export BFS reading group_relations, a table scopeColumn() does not map).
+//
+// It reuses the allow-list applyPrincipalScope already materialized onto the db
+// context, so it issues no query at all and runs on the *same snapshot* the
+// GORM scope callbacks enforce — planning and payload loading cannot disagree
+// about the tree even if the hierarchy changes mid-export.
+//
+// Deliberately neither a `WHERE id IN (?)` query nor a subtreeScopeIDs() call:
+//
+//   - A query would have the scope callback append the whole allow-list as a
+//     second IN clause, so a large relation fan-out over a large subtree could
+//     trip SQLite's SQLITE_MAX_VARIABLE_NUMBER or Postgres's 65535-parameter
+//     ceiling and abort a valid export.
+//   - subtreeScopeIDs() re-runs the recursive group-tree CTE on every call, and
+//     callers invoke this once per BFS level with a caller-controlled,
+//     uncapped RelatedDepth — turning a long relation chain into
+//     O(depth × subtree-size) work reachable from the estimate endpoint.
+//
+// Deployments here reach millions of resources, so both are live ceilings.
+//
+// For an unscoped principal every id is visible and no work is done at all.
+func (ctx *MahresourcesContext) visibleGroupIDs(ids []uint) map[uint]bool {
+	visible := make(map[uint]bool, len(ids))
+	if len(ids) == 0 {
+		return visible
+	}
+
+	var sf *scopeFilter
+	if ctx.db != nil && ctx.db.Statement != nil {
+		sf = scopeFromContext(ctx.db.Statement.Context)
+	}
+	if sf == nil {
+		// No filter on the db context. For admins and unscoped users that means
+		// unrestricted. For a principal that IS scoped, it means the filter never
+		// got installed — fail closed rather than silently granting everything.
+		if ctx.isScopedPrincipal() {
+			return visible
+		}
+		for _, id := range ids {
+			visible[id] = true
+		}
+		return visible
+	}
+
+	// An empty allow-list is deny-all, matching scopeReadCallback's fail-closed
+	// branch rather than being read as "no restriction".
+	allowSet := make(map[uint]bool, len(sf.allowed))
+	for _, id := range sf.allowed {
+		allowSet[id] = true
+	}
+	for _, id := range ids {
+		if allowSet[id] {
+			visible[id] = true
+		}
+	}
+	return visible
+}
+
 // NoteVisible reports whether the note is visible under the current scope.
 func (ctx *MahresourcesContext) NoteVisible(id uint) bool {
 	return !ctx.isScopedPrincipal() || ctx.entityVisible(&models.Note{}, id)

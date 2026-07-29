@@ -5,8 +5,8 @@ import (
 	"strconv"
 
 	"github.com/flosch/pongo2/v4"
-	"mahresources/application_context"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
@@ -49,7 +49,7 @@ var entityTypes = []SelectOption{
 }
 
 // LogListContextProvider provides context for the log list template.
-func LogListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func LogListContextProvider(context contracts.LogEntryReader) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
@@ -94,7 +94,7 @@ func LogListContextProvider(context *application_context.MahresourcesContext) fu
 }
 
 // LogContextProvider provides context for displaying a single log entry.
-func LogContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func LogContextProvider(context contracts.LogEntryReader) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())

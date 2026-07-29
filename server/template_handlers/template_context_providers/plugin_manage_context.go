@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/flosch/pongo2/v4"
-	"mahresources/application_context"
 	"mahresources/plugin_system"
 )
 
@@ -20,7 +19,7 @@ type pluginDisplay struct {
 	Values      map[string]any
 }
 
-func PluginManageContextProvider(appCtx *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func PluginManageContextProvider(appCtx PluginManagePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		ctx := StaticTemplateCtx(request)
 		ctx["pageTitle"] = "Manage Plugins"

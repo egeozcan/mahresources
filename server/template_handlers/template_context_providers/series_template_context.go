@@ -4,12 +4,12 @@ import (
 	"net/http"
 
 	"github.com/flosch/pongo2/v4"
-	"mahresources/application_context"
+	"mahresources/contracts"
 	"mahresources/models/query_models"
 	"mahresources/server/template_handlers/template_entities"
 )
 
-func SeriesContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func SeriesContextProvider(context contracts.SeriesReader) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())

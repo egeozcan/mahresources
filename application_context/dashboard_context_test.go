@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"mahresources/constants"
 	"mahresources/models"
-	"mahresources/models/util"
+	"mahresources/models/seed"
 	"testing"
 	"time"
 
@@ -39,7 +39,7 @@ func setupTestContext(t *testing.T) *MahresourcesContext {
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
 	}
-	util.AddInitialData(db)
+	seed.AddInitialData(db)
 
 	sqlDB, _ := db.DB()
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")

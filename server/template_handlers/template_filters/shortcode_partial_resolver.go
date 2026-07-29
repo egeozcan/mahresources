@@ -1,7 +1,6 @@
 package template_filters
 
 import (
-	"mahresources/application_context"
 	"mahresources/shortcodes"
 )
 
@@ -13,7 +12,7 @@ import (
 // threaded. The cache holds nil for names that don't resolve, so repeated
 // misses don't re-hit the DB. A page render is single-goroutine, so the plain
 // map needs no locking.
-func BuildPartialResolver(appCtx *application_context.MahresourcesContext) shortcodes.PartialResolver {
+func BuildPartialResolver(appCtx PartialResolverContext) shortcodes.PartialResolver {
 	if appCtx == nil {
 		return nil
 	}

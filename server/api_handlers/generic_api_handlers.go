@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 	"net/http"
 )
 
-func GetEditEntityNameHandler[T interfaces.BasicEntityReader](ctx interfaces.BasicEntityWriter[T], name string) func(writer http.ResponseWriter, request *http.Request) {
+func GetEditEntityNameHandler[T contracts.BasicEntityReader](ctx contracts.BasicEntityWriter[T], name string) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BasicEntityQuery{}
 		var err error
@@ -41,7 +41,7 @@ func GetEditEntityNameHandler[T interfaces.BasicEntityReader](ctx interfaces.Bas
 	}
 }
 
-func GetEditEntityDescriptionHandler[T interfaces.BasicEntityReader](ctx interfaces.BasicEntityWriter[T], name string) func(writer http.ResponseWriter, request *http.Request) {
+func GetEditEntityDescriptionHandler[T contracts.BasicEntityReader](ctx contracts.BasicEntityWriter[T], name string) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var editor = query_models.BasicEntityQuery{}
 		var err error

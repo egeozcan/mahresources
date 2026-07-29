@@ -545,7 +545,7 @@ func (ctx *MahresourcesContext) GetDataStats() (*DataStats, error) {
 		EphemeralMode:           ctx.Config.EphemeralMode,
 		MemoryDB:                ctx.Config.MemoryDB,
 		MemoryFS:                ctx.Config.MemoryFS,
-		FTSEnabled:              ctx.ftsEnabled,
+		FTSEnabled:              ctx.ftsAvailable(),
 		HashWorkerEnabled:       ctx.Config.HashWorkerEnabled,
 		BindAddress:             ctx.Config.BindAddress,
 		FileSavePath:            ctx.Config.FileSavePath,

@@ -15,7 +15,7 @@ import (
 	"mahresources/constants"
 	"mahresources/internal/testpgutil"
 	"mahresources/models"
-	"mahresources/models/util"
+	"mahresources/models/seed"
 	"mahresources/server"
 )
 
@@ -75,7 +75,7 @@ func SetupPostgresTestEnv(t *testing.T) *TestContext {
 	if err := models.EnsureSupplementalIndexes(db); err != nil {
 		t.Fatalf("Failed to create supplemental indexes: %v", err)
 	}
-	util.AddInitialData(db)
+	seed.AddInitialData(db)
 
 	config := &application_context.MahresourcesConfig{
 		DbType:      constants.DbTypePosgres,

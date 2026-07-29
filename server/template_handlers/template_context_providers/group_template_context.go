@@ -6,17 +6,17 @@ import (
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/mrql"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 	"mahresources/server/template_handlers/template_entities"
 	"net/http"
 	"strconv"
 )
 
-func GroupsListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func GroupsListContextProvider(context GroupPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetPageParameter(request)
 		resultsPerPage := getResultsPerPage(request, constants.MaxResultsPerPage)
@@ -118,12 +118,12 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 			"categories":        categories,
 			"listHeaderCarrier": listHeaderCarrier,
 			"pagination":        pagination,
-			"mrqlError":       mrqlError,
-			"tags":            tags,
-			"popularTags":     popularTags,
-			"notes":           notes,
-			"resources":       resources,
-			"parsedQuery":     query,
+			"mrqlError":         mrqlError,
+			"tags":              tags,
+			"popularTags":       popularTags,
+			"notes":             notes,
+			"resources":         resources,
+			"parsedQuery":       query,
 			"action": template_entities.Entry{
 				Name: "Add",
 				Url:  "/group/new",
@@ -143,7 +143,7 @@ func GroupsListContextProvider(context *application_context.MahresourcesContext)
 	}
 }
 
-func GroupTimelineContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func GroupTimelineContextProvider(context GroupPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.GroupQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -221,7 +221,7 @@ func GroupTimelineContextProvider(context *application_context.MahresourcesConte
 			"popularTags":       popularTags,
 			"notes":             notes,
 			"resources":         resources,
-			"parsedQuery":     query,
+			"parsedQuery":       query,
 			"action": template_entities.Entry{
 				Name: "Add",
 				Url:  "/group/new",
@@ -241,7 +241,7 @@ func GroupTimelineContextProvider(context *application_context.MahresourcesConte
 	}
 }
 
-func GroupCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func GroupCreateContextProvider(context GroupPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Group",
@@ -304,11 +304,11 @@ func GroupCreateContextProvider(context *application_context.MahresourcesContext
 	}
 }
 
-func GroupContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func GroupContextProvider(context GroupPageContext) func(request *http.Request) pongo2.Context {
 	return groupContextProviderImpl(context)
 }
 
-func groupContextProviderImpl(context interfaces.GroupReader) func(request *http.Request) pongo2.Context {
+func groupContextProviderImpl(context contracts.GroupReader) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -384,7 +384,7 @@ func groupContextProviderImpl(context interfaces.GroupReader) func(request *http
 	}
 }
 
-func GroupTreeContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func GroupTreeContextProvider(context GroupPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		baseContext := StaticTemplateCtx(request)
 

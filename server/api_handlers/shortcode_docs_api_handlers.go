@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/mrql"
 	"mahresources/plugin_system"
@@ -34,8 +33,8 @@ type shortcodeDocExampleResponse struct {
 // shortcodeDocResponse is one entry in the /v1/shortcodes/docs response: a
 // built-in or plugin shortcode described uniformly for the editor tooling.
 type shortcodeDocResponse struct {
-	Name        string                        `json:"name"`    // "meta" or "plugin:foo:badge"
-	Syntax      string                        `json:"syntax"`  // one-line usage hint
+	Name        string                        `json:"name"`   // "meta" or "plugin:foo:badge"
+	Syntax      string                        `json:"syntax"` // one-line usage hint
 	Description string                        `json:"description"`
 	IsBlock     string                        `json:"isBlock"` // "no" | "optional" | "required"
 	Source      string                        `json:"source"`  // "builtin" | "plugin"
@@ -46,7 +45,7 @@ type shortcodeDocResponse struct {
 // GetShortcodeDocsHandler handles GET /v1/shortcodes/docs — a machine-readable
 // catalogue of the built-in shortcodes plus every shortcode registered by
 // an enabled plugin. It powers editor lint, autocomplete, and hover docs.
-func GetShortcodeDocsHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetShortcodeDocsHandler(ctx PluginManagerProvider) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		docs := make([]shortcodeDocResponse, 0, 8)
 
@@ -141,7 +140,7 @@ type shortcodeLintResponse struct {
 // of shortcode markup. It never executes shortcodes, plugin code, or the DB;
 // only the MRQL parser is invoked to syntax-check query attributes. Listed in
 // isReadViaPost so read-only principals may lint while authoring templates.
-func GetShortcodeLintHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetShortcodeLintHandler(ctx PluginManagerProvider) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req shortcodeLintRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
@@ -171,7 +170,7 @@ func GetShortcodeLintHandler(ctx *application_context.MahresourcesContext) func(
 // buildKnownShortcodes assembles the linter catalogue from the built-in registry
 // plus every enabled plugin shortcode. A plugin shortcode is treated as
 // "documented" (attribute checks enabled) only when it declares attributes.
-func buildKnownShortcodes(ctx *application_context.MahresourcesContext) shortcodes.KnownShortcodes {
+func buildKnownShortcodes(ctx PluginManagerProvider) shortcodes.KnownShortcodes {
 	known := shortcodes.KnownFromBuiltins()
 
 	pm := ctx.PluginManager()

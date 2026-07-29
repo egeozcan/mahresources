@@ -10,11 +10,11 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"mahresources/constants"
-	"mahresources/lib"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
-	"mahresources/server/interfaces"
+	"slices"
 )
 
 func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) error {
@@ -265,7 +265,7 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 	})
 }
 
-func (ctx *MahresourcesContext) GroupMetaKeys() ([]interfaces.MetaKey, error) {
+func (ctx *MahresourcesContext) GroupMetaKeys() ([]contracts.MetaKey, error) {
 	return metaKeys(ctx, "groups")
 }
 
@@ -415,7 +415,7 @@ func (ctx *MahresourcesContext) FindParentsOfGroup(id uint) ([]models.Group, err
 	}
 
 	sort.Slice(results, func(i, j int) bool {
-		return lib.IndexOf(ids, results[i].ID) > lib.IndexOf(ids, results[j].ID)
+		return slices.Index(ids, results[i].ID) > slices.Index(ids, results[j].ID)
 	})
 
 	return results, nil

@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
-	"mahresources/server/interfaces"
 )
 
 // actorCapturingResourceCreator records whether the worker bound an actor via
@@ -19,7 +19,7 @@ type actorCapturingResourceCreator struct {
 	addResource bool
 }
 
-func (c *actorCapturingResourceCreator) AddResource(file interfaces.File, fileName string, q *query_models.ResourceCreator) (*models.Resource, error) {
+func (c *actorCapturingResourceCreator) AddResource(file contracts.File, fileName string, q *query_models.ResourceCreator) (*models.Resource, error) {
 	_, _ = io.Copy(io.Discard, file)
 	c.addResource = true
 	return &models.Resource{ID: 1, Name: q.Name}, nil

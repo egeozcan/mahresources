@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
-	"mahresources/application_context"
 )
 
 type pluginListItem struct {
@@ -24,7 +23,7 @@ type pluginListItem struct {
 	Values      any    `json:"values,omitempty"`
 }
 
-func GetPluginsManageHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetPluginsManageHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pm := ctx.PluginManager()
 		if pm == nil {
@@ -72,7 +71,7 @@ func GetPluginsManageHandler(ctx *application_context.MahresourcesContext) func(
 	}
 }
 
-func GetPluginEnableHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetPluginEnableHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimSpace(r.FormValue("name"))
 		if name == "" {
@@ -97,7 +96,7 @@ func GetPluginEnableHandler(ctx *application_context.MahresourcesContext) func(h
 	}
 }
 
-func GetPluginDisableHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetPluginDisableHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimSpace(r.FormValue("name"))
 		if name == "" {
@@ -123,7 +122,7 @@ func GetPluginDisableHandler(ctx *application_context.MahresourcesContext) func(
 }
 
 // GetPluginPurgeDataHandler deletes all KV data for a disabled plugin.
-func GetPluginPurgeDataHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetPluginPurgeDataHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimSpace(r.FormValue("name"))
 		if name == "" {
@@ -150,7 +149,7 @@ func GetPluginPurgeDataHandler(ctx *application_context.MahresourcesContext) fun
 	}
 }
 
-func GetPluginSettingsHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetPluginSettingsHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimSpace(r.URL.Query().Get("name"))
 		if name == "" {
@@ -193,7 +192,7 @@ func GetPluginSettingsHandler(ctx *application_context.MahresourcesContext) func
 }
 
 // GetPluginBlockRenderHandler renders a plugin block type's HTML.
-func GetPluginBlockRenderHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetPluginBlockRenderHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pm := ctx.PluginManager()
 		if pm == nil {
@@ -285,7 +284,7 @@ func GetPluginBlockRenderHandler(ctx *application_context.MahresourcesContext) f
 }
 
 // GetPluginDisplayRenderHandler renders a plugin display type's HTML.
-func GetPluginDisplayRenderHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func GetPluginDisplayRenderHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pm := ctx.PluginManager()
 		if pm == nil {
@@ -342,7 +341,7 @@ const pluginAPIMaxBodySize = 1 << 20 // 1MB
 
 // PluginAPIHandler handles JSON API requests to plugin-registered endpoints.
 // Routes: GET/POST/PUT/DELETE /v1/plugins/{pluginName}/{path...}
-func PluginAPIHandler(ctx *application_context.MahresourcesContext) func(http.ResponseWriter, *http.Request) {
+func PluginAPIHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Reject unsupported HTTP methods early
 		switch r.Method {

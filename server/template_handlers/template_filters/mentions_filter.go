@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/flosch/pongo2/v4"
-	"mahresources/lib"
+	"mahresources/mentions"
 )
 
 func renderMentionsFilter(in *pongo2.Value, _ *pongo2.Value) (*pongo2.Value, *pongo2.Error) {
@@ -25,15 +25,15 @@ func renderMentionsFilter(in *pongo2.Value, _ *pongo2.Value) (*pongo2.Value, *po
 		return in, nil
 	}
 
-	mentions := lib.ParseAllMentions(text)
-	if len(mentions) == 0 {
+	parsed := mentions.ParseAll(text)
+	if len(parsed) == 0 {
 		return in, nil
 	}
 
 	// Process each mention occurrence individually so that the card-vs-inline
 	// decision is based on the specific position, not just any line in the text.
 	// Build the result by scanning left-to-right and replacing one marker at a time.
-	for _, m := range mentions {
+	for _, m := range parsed {
 		marker := m.OriginalMatch
 		pos := strings.Index(text, marker)
 		if pos == -1 {
@@ -50,7 +50,7 @@ func renderMentionsFilter(in *pongo2.Value, _ *pongo2.Value) (*pongo2.Value, *po
 		var replacement string
 
 		if m.Type == "resource" {
-			if lib.IsMentionStandaloneAt(text, pos, marker) {
+			if mentions.IsStandaloneAt(text, pos, marker) {
 				replacement = fmt.Sprintf(
 					`<a href="%s?id=%d" class="mention-card">`+
 						`<img src="/v1/resource/preview?id=%d" alt="%s" class="mention-card-thumb" loading="lazy">`+

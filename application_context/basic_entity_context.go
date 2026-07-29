@@ -7,18 +7,18 @@ import (
 	"errors"
 	"fmt"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models"
-	"mahresources/server/interfaces"
 	"strings"
 
 	"gorm.io/gorm"
 )
 
-type EntityWriter[T interfaces.BasicEntityReader] struct {
+type EntityWriter[T contracts.BasicEntityReader] struct {
 	ctx *MahresourcesContext
 }
 
-func NewEntityWriter[T interfaces.BasicEntityReader](ctx *MahresourcesContext) *EntityWriter[T] {
+func NewEntityWriter[T contracts.BasicEntityReader](ctx *MahresourcesContext) *EntityWriter[T] {
 	return &EntityWriter[T]{ctx: ctx}
 }
 

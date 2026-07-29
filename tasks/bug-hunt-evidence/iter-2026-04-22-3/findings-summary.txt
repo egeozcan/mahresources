@@ -1,0 +1,43 @@
+Iter 8 — 2026-04-22 Findings Summary
+
+NOTE: note ID 275, blocks 16-20
+Gallery block 18 references deleted resource 112.
+Console errors: 2x 404 on /v1/resource?id=112
+
+FINDING 1 (NEW BUG): Gallery block holds dangling reference after resource deletion.
+- Block 18 (gallery) stores resourceIds=[112] in its content JSON.
+- Resource 112 was deleted. Block was NOT updated/cleaned.
+- Note page still renders (no crash) but shows broken img link to /v1/resource/view?id=112 (404)
+- Two console errors appear: "Failed to load resource: 404" x2 on page load.
+- The gallery block preview in edit mode still shows the deleted resource thumbnail slot.
+- JSON API confirms: GET /v1/note/blocks?noteId=275 still returns resourceIds=[112].
+
+FINDING 2 (OBSERVATION, possible minor bug): Block editor markdown renderer:
+- Supports **bold** (renders <strong>)
+- Does NOT support _italic_ (underscore) — only *italic* (asterisk)
+- Does NOT support `code` (backtick inline code)
+- Supports [text](url) links with javascript: proto protection
+- Renders full long text content (3161 chars) without truncation — PASS
+
+FINDING 3 (OBSERVATION - NOT a new bug): block order persists correctly after:
+- Multiple move-up clicks
+- Delete of a block
+- Page reload
+All reorder operations confirmed via API (fractional positions: n, t, w, y, z).
+
+XSS RESULT: All probes SAFE. renderMarkdown() escapes HTML before processing
+markdown patterns. <img onerror=...>, <svg onload=...>, <iframe srcdoc=...> 
+all stored as escaped text, not executed as HTML.
+
+OPENAPI SPEC DRIFT:
+- Generator: valid (156 paths, 80 schemas, 20 tags)
+- Live routes: 167
+- Spec routes: 156
+- Missing from spec: 11 routes
+  - /v1/mrql (all 6 routes: base, complete, saved, saved/delete, saved/run, validate)
+  - /v1/group/editMeta
+  - /v1/note/editMeta
+  - /v1/resource/editMeta
+  - /v1/plugins/ (root listing)
+  - /v1/plugins/{pluginName}/display/render
+- In spec but not in code: 0 (no phantom routes)

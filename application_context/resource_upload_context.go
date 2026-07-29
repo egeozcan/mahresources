@@ -9,10 +9,10 @@ import (
 	"image"
 	"io"
 	"log"
+	"mahresources/contracts"
 	"mahresources/hash_worker"
 	"mahresources/models"
 	"mahresources/models/query_models"
-	"mahresources/server/interfaces"
 	"net"
 	"net/http"
 	"os"
@@ -520,7 +520,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 	return res, nil
 }
 
-func (ctx *MahresourcesContext) AddResource(file interfaces.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
+func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error) {
 	if err := ValidateEntityName(resourceQuery.Name, "resource"); err != nil {
 		return nil, err
 	}

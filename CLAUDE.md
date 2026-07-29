@@ -62,10 +62,15 @@ Mahresources is a CRUD application for personal information management written i
 
 **models/** - GORM models and database layer. Entity models are in `*_model.go` files. Query DTOs are in `query_models/`. GORM query scopes are in `database_scopes/`.
 
+**contracts/** - The boundary between the two layers above: the Reader/Writer/Deleter interfaces that `application_context` implements and `server` consumes, plus the few shared response types they exchange (`CalendarEventsResponse`, `MetaKey`, `SuggestedTag`). It depends only on `models/` and `constants/`, so both layers can point at it without pointing at each other.
+
+**groupio/** - Group export and import: export planning, tar streaming, import parsing and apply. Extracted from `application_context`, which now reaches it through a facade (`application_context/groupio_facade.go`) so no caller outside the seam changed.
+
+**search/** - Global search: the cross-entity query, the LIKE and FTS backends, and the process-wide result cache. Extracted likewise, behind `application_context/search_facade.go`.
+
 **server/** - HTTP layer with Gorilla Mux routing.
 - `api_handlers/` - JSON API endpoints
 - `template_handlers/` - HTML template rendering
-- `interfaces/` - Interface definitions for dependency injection (Reader, Writer, Deleter patterns)
 - `openapi/` - OpenAPI 3.0 spec generation from code
 - `routes_openapi.go` - API route definitions with OpenAPI metadata
 
@@ -76,7 +81,7 @@ Mahresources is a CRUD application for personal information management written i
 - `index.js` - Utility functions (abortableFetch, clipboard, etc.)
 - `components/` - Alpine.js data components (globalSearch, bulkSelection, etc.)
 - `selector/` - Headless selector core, sources, and entity profiles. Every entity picker is built
-  from it; see `docs/selector-architecture.md` before adding or changing one.
+  from it; see `docs/architecture/selector-architecture.md` before adding or changing one.
 - `webcomponents/` - Custom elements (expandable-text, inline-edit)
 - `tableMaker.js` - JSON table rendering
 
@@ -92,7 +97,11 @@ Mahresources is a CRUD application for personal information management written i
 
 **Generic Entity Writers**: `EntityWriter[T]` generic type handles common CRUD operations across entities.
 
-**Interface-based DI**: Handlers receive specific interfaces (e.g., `ResourceReader`, `GroupWriter`) rather than concrete implementations.
+**Interface-based DI**: Handlers receive specific interfaces (e.g., `contracts.ResourceReader`, `contracts.GroupWriter`) rather than concrete implementations. `application_context/contract_checks.go` asserts at compile time that `MahresourcesContext` satisfies each one.
+
+**Enforced layering**: the dependency direction is `server/` → `application_context/` → {`groupio/`, `search/`, `contracts/`} → `models/` → `constants/`, and it is checked, not merely documented. `internal/arch/layering_test.go` fails the build if anything below `server/` imports it (only `main`, `cmd/...`, and `internal/...` may), if `models/` reaches outside itself, if `contracts/` depends on either layer that uses it, or if `groupio/` or `search/` reaches back up into `application_context/`, `server/` or `contracts/`. When you need to hand a type across the `application_context`/`server` boundary, put it in `contracts/`.
+
+**Extracted services take the db handle per call, never at construction.** Scope, actor identity, and transaction membership all ride inside the `*gorm.DB` handle: `WithPrincipal` swaps in a handle whose context carries the subtree allow-list and acting user, `WithTransaction` swaps in the transaction's handle, and the GORM callbacks read both off `db.Statement.Context`. A service that captured `db` when it was built would run outside the caller's transaction and outside their subtree — silently, and with no test failing. `groupio` and `search` therefore hold only process-lifetime state (filesystems, the search cache, the FTS provider) and receive `Deps{DB, Scope}` on every entry point; the facades rebuild `Deps` per call. Follow this for any further extraction. See `docs/plans/2026-07-28-application-context-decomposition.md` §2.
 
 ### Entity Relationships
 
@@ -357,7 +366,7 @@ When you add or change a command or flag in `cmd/mr/commands/`, update the corre
 - One tack per subagent for focused execution
 
 ### 3. Self-Improvement Loop
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern
+- After ANY correction from the user: update `docs/lessons.md` with the pattern
 - Write rules for yourself that prevent the same mistake
 - Ruthlessly iterate on these lessons until mistake rate drops
 - Review lessons at session start for relevant project
@@ -382,12 +391,12 @@ When you add or change a command or flag in `cmd/mr/commands/`, update the corre
 
 ## Task Management
 
-1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
+1. **Plan First**: Write plan to `docs/todo.md` with checkable items
 2. **Verify Plan**: Check in before starting implementation
 3. **Track Progress**: Mark items complete as you go
 4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `tasks/todo.md`
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
+5. **Document Results**: Add review section to `docs/todo.md`
+6. **Capture Lessons**: Update `docs/lessons.md` after corrections
 
 ## Core Principles
 

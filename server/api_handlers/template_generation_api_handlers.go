@@ -52,7 +52,7 @@ type templateGenerateRequest struct {
 // template. Mounted under the taxonomy/editor path prefixes, so it inherits the
 // same capability gate as saving the corresponding template (admin for
 // category/resourceCategory, editor for noteType).
-func GetGenerateTemplateHandler(ctx *application_context.MahresourcesContext, entityType string) func(http.ResponseWriter, *http.Request) {
+func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req templateGenerateRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
@@ -153,7 +153,7 @@ func carrierMetaSchema(carrier any) string {
 // loadSampleMeta returns the Meta JSON of the chosen sample entity (the client's
 // entityId, else the first member of the category), or "" when none is available
 // (e.g. the create form). Failures degrade to schema-only.
-func loadSampleMeta(ctx *application_context.MahresourcesContext, entityType string, categoryID, entityID uint) string {
+func loadSampleMeta(ctx TemplateGenerationContext, entityType string, categoryID, entityID uint) string {
 	var entity any
 	if entityID != 0 {
 		if e, _, err := loadPreviewEntity(ctx, entityType, entityID); err == nil {
@@ -175,7 +175,7 @@ func loadSampleMeta(ctx *application_context.MahresourcesContext, entityType str
 
 // firstCategoryMember loads the first member entity of a category, fully
 // preloaded via the preview loader.
-func firstCategoryMember(ctx *application_context.MahresourcesContext, entityType string, categoryID uint) any {
+func firstCategoryMember(ctx TemplateGenerationContext, entityType string, categoryID uint) any {
 	var id uint
 	switch entityType {
 	case "group":
@@ -203,7 +203,7 @@ func firstCategoryMember(ctx *application_context.MahresourcesContext, entityTyp
 
 // templatePartialNames lists existing partial names so the model won't invent
 // [partial name=…] references that render as empty comments.
-func templatePartialNames(ctx *application_context.MahresourcesContext) []string {
+func templatePartialNames(ctx TemplateGenerationContext) []string {
 	partials, err := ctx.GetTemplatePartials(&query_models.TemplatePartialQuery{}, 0, maxTemplatePartialsForPrompt)
 	if err != nil {
 		return nil
@@ -219,7 +219,7 @@ func templatePartialNames(ctx *application_context.MahresourcesContext) []string
 // the built-in and enabled-plugin shortcodes for the generation prompt — one line
 // per shortcode (syntax, block capability, description, attribute summary, one
 // example). It is not the full /v1/shortcodes/docs JSON (that is too large).
-func serializeShortcodeDocsForPrompt(ctx *application_context.MahresourcesContext) string {
+func serializeShortcodeDocsForPrompt(ctx TemplateGenerationContext) string {
 	var b strings.Builder
 	for _, d := range shortcodes.BuiltinDocs() {
 		writeShortcodeDocLine(&b, d.Syntax, string(d.IsBlock), d.Description, builtinAttrSummary(d.Attrs), firstBuiltinExampleCode(d.Examples))

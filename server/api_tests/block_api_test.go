@@ -4,8 +4,8 @@ package api_tests
 import (
 	"encoding/json"
 	"fmt"
+	"mahresources/contracts"
 	"mahresources/models"
-	"mahresources/server/interfaces"
 	"net/http"
 	"testing"
 
@@ -433,7 +433,7 @@ func TestCalendarBlockEventsEndpoint(t *testing.T) {
 		resp := tc.MakeRequest(http.MethodGet, url, nil)
 		assert.Equal(t, http.StatusOK, resp.Code)
 
-		var result interfaces.CalendarEventsResponse
+		var result contracts.CalendarEventsResponse
 		err := json.Unmarshal(resp.Body.Bytes(), &result)
 		assert.NoError(t, err)
 
@@ -459,7 +459,7 @@ func TestCalendarBlockEventsEndpoint(t *testing.T) {
 		resp := tc.MakeRequest(http.MethodGet, url, nil)
 		assert.Equal(t, http.StatusOK, resp.Code)
 
-		var result interfaces.CalendarEventsResponse
+		var result contracts.CalendarEventsResponse
 		err := json.Unmarshal(resp.Body.Bytes(), &result)
 		assert.NoError(t, err)
 
@@ -484,7 +484,7 @@ func TestCalendarBlockEventsEndpoint(t *testing.T) {
 		resp := tc.MakeRequest(http.MethodGet, url, nil)
 		assert.Equal(t, http.StatusOK, resp.Code)
 
-		var result interfaces.CalendarEventsResponse
+		var result contracts.CalendarEventsResponse
 		err := json.Unmarshal(resp.Body.Bytes(), &result)
 		assert.NoError(t, err)
 

@@ -22,7 +22,7 @@ func ffmpegAvailable() bool {
 	return err == nil
 }
 
-const testVideoPath = "../../test_data/pexels-thirdman-5862328.mp4"
+const testVideoPath = "../../e2e/test-assets/sample-video.mp4"
 
 // seedTrimVideoResource reads the test video from disk into the in-memory
 // filesystem and creates a Resource row pointing at it.

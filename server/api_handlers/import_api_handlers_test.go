@@ -26,7 +26,7 @@ type noopImportSink struct {
 	warnings []string
 }
 
-func (n *noopImportSink) SetPhase(string)              {}
+func (n *noopImportSink) SetPhase(string)               {}
 func (n *noopImportSink) SetPhaseProgress(int64, int64) {}
 func (n *noopImportSink) UpdateProgress(int64, int64)   {}
 func (n *noopImportSink) AppendWarning(s string)        { n.warnings = append(n.warnings, s) }
@@ -394,9 +394,9 @@ func TestBuildImportApplyRunFn_DoesNotRestoreLegacyPlan(t *testing.T) {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 	if err := w.WriteGroup(&archive.GroupPayload{
-		ExportID:  "g0001",
-		SourceID:  1,
-		Name:      "LegacyGroup",
+		ExportID: "g0001",
+		SourceID: 1,
+		Name:     "LegacyGroup",
 		// GUID intentionally empty — simulates pre-GUID archive.
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),

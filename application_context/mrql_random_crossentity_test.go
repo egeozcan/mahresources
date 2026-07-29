@@ -11,7 +11,7 @@ import (
 
 	"mahresources/constants"
 	"mahresources/models"
-	"mahresources/models/util"
+	"mahresources/models/seed"
 )
 
 // setupSharedCacheTestContext mirrors setupTestContext but uses a shared-cache
@@ -43,7 +43,7 @@ func setupSharedCacheTestContext(t *testing.T) *MahresourcesContext {
 	); err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
 	}
-	util.AddInitialData(db)
+	seed.AddInitialData(db)
 
 	sqlDB, _ := db.DB()
 	readOnlyDB := sqlx.NewDb(sqlDB, "sqlite3")

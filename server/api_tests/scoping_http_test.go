@@ -108,8 +108,18 @@ func TestScopedUser_SearchAndMRQLConfined(t *testing.T) {
 	f := buildScopingFixture(t, tc)
 	h := map[string]string{"Accept": "application/json", "Authorization": f.bearer}
 
-	search := doReq(tc, http.MethodGet, "/v1/search?query=sf-", h, nil, nil).Body.String()
-	if strings.Contains(search, "sf-rOut") || strings.Contains(search, "sf-nOut") {
+	// The handler reads the "q" parameter. This request previously said
+	// "query=", so the term never arrived: every response was
+	// {"query":"","total":0,"results":[]} and the confinement assertion below
+	// held for free. Scoped search was, in effect, untested. The positive
+	// control now fails loudly if that ever recurs.
+	search := doReq(tc, http.MethodGet, "/v1/search?q=sf", h, nil, nil).Body.String()
+	if !strings.Contains(search, "sf-rIn") || !strings.Contains(search, "sf-nIn") {
+		t.Fatalf("control invalid: scoped search surfaced no in-subtree entities, so the "+
+			"confinement assertion proves nothing, got: %s", search)
+	}
+	if strings.Contains(search, "sf-rOut") || strings.Contains(search, "sf-nOut") ||
+		strings.Contains(search, "sf-outside") {
 		t.Fatalf("search must not surface out-of-subtree entities, got: %s", search)
 	}
 
@@ -159,6 +169,169 @@ func TestScopedUser_ExportConfined(t *testing.T) {
 		strings.NewReader(`{"rootGroupIds":[`+itoa(int(f.outsideID))+`]}`))
 	if outResp.Code != http.StatusNotFound {
 		t.Fatalf("scoped user must not export an out-of-subtree group, got %d", outResp.Code)
+	}
+}
+
+// Template pages are confined by being built against a per-request,
+// principal-scoped context: routes.go calls info.contextFn(sc) inside the
+// request handler, not once at wiring time. Binding the providers to the
+// singleton instead would unscope every HTML page while leaving the /v1 API —
+// and therefore every other test in this file — perfectly correct.
+//
+// e2e covers this through the browser, but only there; this is the fast pin.
+func TestScopedUser_TemplatePagesConfined(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildScopingFixture(t, tc)
+	scopedH := map[string]string{"Accept": "application/json", "Authorization": f.bearer}
+	adminH := map[string]string{"Accept": "application/json", "Authorization": unscopedAdminBearer(t, tc)}
+
+	// The template routes serve their pongo2 context as JSON under .json, which
+	// is the same context the HTML page renders from.
+	for _, path := range []string{"/groups.json", "/notes.json", "/resources.json"} {
+		// Control: an unscoped admin sees the out-of-subtree entities through
+		// this exact route, so their absence below is enforcement and not an
+		// empty or broken page.
+		ctrl := doReq(tc, http.MethodGet, path, adminH, nil, nil).Body.String()
+		if !strings.Contains(ctrl, "sf-outside") && !strings.Contains(ctrl, "sf-rOut") &&
+			!strings.Contains(ctrl, "sf-nOut") {
+			t.Fatalf("control invalid: %s did not surface any out-of-subtree entity for an admin, "+
+				"so the scoped assertion proves nothing, got: %s", path, ctrl)
+		}
+
+		scoped := doReq(tc, http.MethodGet, path, scopedH, nil, nil).Body.String()
+		for _, secret := range []string{"sf-outside", "sf-rOut", "sf-nOut"} {
+			if strings.Contains(scoped, secret) {
+				t.Errorf("%s leaked out-of-subtree entity %q to a group-limited principal; the page "+
+					"context was not built against the request-scoped context", path, secret)
+			}
+		}
+	}
+
+	// Positive: the scoped user's own page still has their in-subtree data.
+	groups := doReq(tc, http.MethodGet, "/groups.json", scopedH, nil, nil).Body.String()
+	if !strings.Contains(groups, "sf-root") || !strings.Contains(groups, "sf-child") {
+		t.Errorf("scoped /groups.json lost in-subtree groups, got: %s", groups)
+	}
+}
+
+// The global search result cache is process-wide and keyed on the lowercased
+// search term alone — it carries no principal in the key. Correctness therefore
+// rests entirely on GlobalSearch bypassing the cache, for both reads and writes,
+// whenever the caller is group-limited. Neither direction was covered.
+//
+// Each sub-test gets its own server so it starts from an empty cache; the two
+// directions fail in different ways and would otherwise share one entry.
+func TestScopedUser_SearchCacheNotSharedAcrossScopes(t *testing.T) {
+	const q = "/v1/search?q=sf"
+
+	t.Run("scoped read does not hit an admin-populated entry", func(t *testing.T) {
+		tc := setupAuthEnv(t)
+		f := buildScopingFixture(t, tc)
+		adminH := map[string]string{"Accept": "application/json", "Authorization": unscopedAdminBearer(t, tc)}
+		scopedH := map[string]string{"Accept": "application/json", "Authorization": f.bearer}
+
+		// Admin first, filling the shared entry with out-of-subtree entities.
+		admin := doReq(tc, http.MethodGet, q, adminH, nil, nil).Body.String()
+		if !strings.Contains(admin, "sf-rOut") {
+			t.Fatalf("control invalid: the admin search did not surface out-of-subtree entities, so "+
+				"the cache entry holds nothing that could leak, got: %s", admin)
+		}
+
+		scoped := doReq(tc, http.MethodGet, q, scopedH, nil, nil).Body.String()
+		if strings.Contains(scoped, "sf-rOut") || strings.Contains(scoped, "sf-nOut") ||
+			strings.Contains(scoped, "sf-outside") {
+			t.Fatalf("a group-limited principal was served another scope's cached results: %s", scoped)
+		}
+		if !strings.Contains(scoped, "sf-rIn") {
+			t.Fatalf("control invalid: the scoped search returned nothing in-subtree, so its lack of "+
+				"out-of-subtree entities proves nothing, got: %s", scoped)
+		}
+	})
+
+	t.Run("scoped write does not poison the entry for an admin", func(t *testing.T) {
+		tc := setupAuthEnv(t)
+		f := buildScopingFixture(t, tc)
+		adminH := map[string]string{"Accept": "application/json", "Authorization": unscopedAdminBearer(t, tc)}
+		scopedH := map[string]string{"Accept": "application/json", "Authorization": f.bearer}
+
+		// Scoped first. If its truncated result set were written to the shared
+		// cache, the admin below would silently lose the out-of-subtree rows.
+		scoped := doReq(tc, http.MethodGet, q, scopedH, nil, nil).Body.String()
+		if !strings.Contains(scoped, "sf-rIn") {
+			t.Fatalf("control invalid: the scoped search returned nothing, so it could not poison "+
+				"anything, got: %s", scoped)
+		}
+
+		admin := doReq(tc, http.MethodGet, q, adminH, nil, nil).Body.String()
+		for _, want := range []string{"sf-rOut", "sf-nOut", "sf-outside"} {
+			if !strings.Contains(admin, want) {
+				t.Errorf("admin search is missing %q after a scoped search ran first; the scoped "+
+					"results were written to the shared cache, got: %s", want, admin)
+			}
+		}
+	})
+}
+
+// unscopedAdminBearer returns a bearer for an admin with no scope group, used as
+// the control that a route's 403 comes from the group-limited deny and not from
+// the route being missing or broken for everyone.
+func unscopedAdminBearer(t *testing.T, tc *TestContext) string {
+	t.Helper()
+	u, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "unscoped-admin", Password: "password1", Role: models.RoleAdmin,
+	})
+	if err != nil {
+		t.Fatalf("create admin: %v", err)
+	}
+	raw, _, err := tc.AppCtx.CreateApiToken(u.ID, "t", nil)
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	return "Bearer " + raw
+}
+
+// Import is denied outright for group-limited principals, not confined. Import
+// creates new top-level groups a scoped principal could not place inside its
+// subtree, and the caller-supplied ShellGroupAction/DanglingAction destination
+// IDs drive association and GroupRelation writes the GORM scope callbacks do not
+// guard. All five import routes are therefore wrapped in denyScopedPrincipal.
+//
+// This is a boundary to preserve across the groupio extraction, not a feature to
+// add: the refactor must not quietly make any import entry point reachable by a
+// scoped principal. Enabling scoped import is its own project.
+func TestScopedUser_ImportRoutesDenied(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildScopingFixture(t, tc)
+	adminBearer := unscopedAdminBearer(t, tc)
+
+	routes := []struct {
+		method, path string
+	}{
+		{http.MethodPost, "/v1/groups/import/parse"},
+		{http.MethodGet, "/v1/imports/job-1/plan"},
+		{http.MethodDelete, "/v1/imports/job-1"},
+		{http.MethodPost, "/v1/imports/job-1/apply"},
+		{http.MethodGet, "/v1/imports/job-1/result"},
+	}
+
+	for _, rt := range routes {
+		scopedH := map[string]string{"Accept": "application/json", "Authorization": f.bearer, "Content-Type": "application/json"}
+		resp := doReq(tc, rt.method, rt.path, scopedH, nil, strings.NewReader(`{}`))
+		if resp.Code != http.StatusForbidden {
+			t.Errorf("%s %s: group-limited principal got %d, want 403 — the import surface must stay fail-closed",
+				rt.method, rt.path, resp.Code)
+		}
+
+		// Control: the same route reached by an unscoped admin must NOT 403.
+		// Without this, a route that 403s for everyone (or a path typo answered
+		// uniformly) would satisfy the assertion above while proving nothing
+		// about the group-limited deny specifically.
+		adminH := map[string]string{"Accept": "application/json", "Authorization": adminBearer, "Content-Type": "application/json"}
+		ctrl := doReq(tc, rt.method, rt.path, adminH, nil, strings.NewReader(`{}`))
+		if ctrl.Code == http.StatusForbidden {
+			t.Errorf("%s %s: control invalid — an unscoped admin also got 403, so the scoped 403 "+
+				"does not demonstrate the group-limited deny", rt.method, rt.path)
+		}
 	}
 }
 

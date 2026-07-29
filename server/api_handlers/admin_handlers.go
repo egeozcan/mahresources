@@ -4,12 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/server/http_utils"
 )
 
-func GetServerStatsHandler(ctx *application_context.MahresourcesContext) http.HandlerFunc {
+func GetServerStatsHandler(ctx AdminStatsContext) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		stats, err := ctx.GetServerStats()
 		if err != nil {
@@ -21,7 +20,7 @@ func GetServerStatsHandler(ctx *application_context.MahresourcesContext) http.Ha
 	}
 }
 
-func GetDataStatsHandler(ctx *application_context.MahresourcesContext) http.HandlerFunc {
+func GetDataStatsHandler(ctx AdminStatsContext) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		stats, err := ctx.GetDataStats()
 		if err != nil {
@@ -33,7 +32,7 @@ func GetDataStatsHandler(ctx *application_context.MahresourcesContext) http.Hand
 	}
 }
 
-func GetExpensiveStatsHandler(ctx *application_context.MahresourcesContext) http.HandlerFunc {
+func GetExpensiveStatsHandler(ctx AdminStatsContext) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		stats, err := ctx.GetExpensiveStats()
 		if err != nil {
@@ -47,7 +46,7 @@ func GetExpensiveStatsHandler(ctx *application_context.MahresourcesContext) http
 
 // GetRecomputeSimilaritiesHandler submits a background job to rebuild all v2
 // similarity pairs from stored hashes (no image decode). Returns the job ID.
-func GetRecomputeSimilaritiesHandler(ctx *application_context.MahresourcesContext) http.HandlerFunc {
+func GetRecomputeSimilaritiesHandler(ctx AdminStatsContext) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		jobID, err := ctx.RecomputeSimilarities()
 		if err != nil {
@@ -61,7 +60,7 @@ func GetRecomputeSimilaritiesHandler(ctx *application_context.MahresourcesContex
 
 // GetRetryFailedHashesHandler resets failed image_hashes rows so the backfill
 // worker retries them. Returns the number of rows reset.
-func GetRetryFailedHashesHandler(ctx *application_context.MahresourcesContext) http.HandlerFunc {
+func GetRetryFailedHashesHandler(ctx AdminStatsContext) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		reset, err := ctx.RetryFailedHashes()
 		if err != nil {

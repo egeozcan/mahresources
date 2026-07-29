@@ -6,29 +6,29 @@ import (
 
 	"mahresources/application_context"
 	"mahresources/auth"
+	"mahresources/contracts"
 	"mahresources/server/api_handlers"
-	"mahresources/server/interfaces"
 )
 
 // scopedEditName / scopedEditDescription / scopedEditMeta build the per-entity
 // edit handlers against a request-scoped EntityWriter, so a group-limited
 // principal cannot rename/redescribe/edit-meta of an entity outside its subtree
 // (the scoped DB filters the update to zero rows).
-func scopedEditName[T interfaces.BasicEntityReader](appCtx *application_context.MahresourcesContext, entityName string) http.HandlerFunc {
+func scopedEditName[T contracts.BasicEntityReader](appCtx *application_context.MahresourcesContext, entityName string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer := application_context.NewEntityWriter[T](scopedCtx(appCtx, r))
 		api_handlers.GetEditEntityNameHandler[T](writer, entityName)(w, r)
 	}
 }
 
-func scopedEditDescription[T interfaces.BasicEntityReader](appCtx *application_context.MahresourcesContext, entityName string) http.HandlerFunc {
+func scopedEditDescription[T contracts.BasicEntityReader](appCtx *application_context.MahresourcesContext, entityName string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer := application_context.NewEntityWriter[T](scopedCtx(appCtx, r))
 		api_handlers.GetEditEntityDescriptionHandler[T](writer, entityName)(w, r)
 	}
 }
 
-func scopedEditMeta[T interfaces.BasicEntityReader](appCtx *application_context.MahresourcesContext, entityName string) http.HandlerFunc {
+func scopedEditMeta[T contracts.BasicEntityReader](appCtx *application_context.MahresourcesContext, entityName string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writer := application_context.NewEntityWriter[T](scopedCtx(appCtx, r))
 		api_handlers.GetEditMetaHandler(writer, entityName)(w, r)

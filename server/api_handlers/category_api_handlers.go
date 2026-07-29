@@ -4,15 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 	"net/http"
 	"strconv"
 )
 
-func GetCategoriesHandler(ctx interfaces.CategoryReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetCategoriesHandler(ctx contracts.CategoryReader) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
@@ -37,10 +37,10 @@ func GetCategoriesHandler(ctx interfaces.CategoryReader) func(writer http.Respon
 	}
 }
 
-func GetAddCategoryHandler(ctx interfaces.CategoryWriter) func(writer http.ResponseWriter, request *http.Request) {
+func GetAddCategoryHandler(ctx contracts.CategoryWriter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.CategoryWriter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.CategoryWriter)
 
 		err := request.ParseForm()
 
@@ -78,10 +78,10 @@ func GetAddCategoryHandler(ctx interfaces.CategoryWriter) func(writer http.Respo
 	}
 }
 
-func GetRemoveCategoryHandler(ctx interfaces.CategoryDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveCategoryHandler(ctx contracts.CategoryDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.CategoryDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.CategoryDeleter)
 
 		id := getEntityID(request)
 
@@ -105,10 +105,10 @@ func GetRemoveCategoryHandler(ctx interfaces.CategoryDeleter) func(writer http.R
 	}
 }
 
-func GetRemoveResourceCategoryHandler(ctx interfaces.ResourceCategoryDeleter) func(writer http.ResponseWriter, request *http.Request) {
+func GetRemoveResourceCategoryHandler(ctx contracts.ResourceCategoryDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
-		effectiveCtx := withRequestContext(ctx, request).(interfaces.ResourceCategoryDeleter)
+		effectiveCtx := withRequestContext(ctx, request).(contracts.ResourceCategoryDeleter)
 
 		id := getEntityID(request)
 

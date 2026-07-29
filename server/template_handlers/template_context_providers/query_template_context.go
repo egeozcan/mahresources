@@ -2,7 +2,6 @@ package template_context_providers
 
 import (
 	"github.com/flosch/pongo2/v4"
-	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
@@ -11,7 +10,7 @@ import (
 	"strconv"
 )
 
-func QueryListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func QueryListContextProvider(context QueryPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetPageParameter(request)
 		resultsPerPage := getResultsPerPage(request, constants.MaxResultsPerPage)
@@ -64,7 +63,7 @@ func QueryListContextProvider(context *application_context.MahresourcesContext) 
 	}
 }
 
-func QueryTimelineContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func QueryTimelineContextProvider(context QueryPageContext) func(request *http.Request) pongo2.Context {
 	listProvider := QueryListContextProvider(context)
 	return func(request *http.Request) pongo2.Context {
 		ctx := listProvider(request)
@@ -73,11 +72,11 @@ func QueryTimelineContextProvider(context *application_context.MahresourcesConte
 	}
 }
 
-func QueryCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func QueryCreateContextProvider(context QueryPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle":        "Create Query",
-			"dbType":           context.Config.DbType,
+			"dbType":           context.DatabaseType(),
 			"readOnlyEnforced": context.IsReadOnlyDBEnforced(),
 		}.Update(StaticTemplateCtx(request))
 
@@ -103,7 +102,7 @@ func QueryCreateContextProvider(context *application_context.MahresourcesContext
 	}
 }
 
-func QueryContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func QueryContextProvider(context QueryPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var entityId query_models.EntityIdQuery
 		err := decoder.Decode(&entityId, request.URL.Query())

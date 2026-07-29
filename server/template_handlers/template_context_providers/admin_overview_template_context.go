@@ -4,10 +4,9 @@ import (
 	"net/http"
 
 	"github.com/flosch/pongo2/v4"
-	"mahresources/application_context"
 )
 
-func AdminOverviewContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func AdminOverviewContextProvider(_ any) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		baseContext := StaticTemplateCtx(request)
 		return pongo2.Context{

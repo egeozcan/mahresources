@@ -2,7 +2,6 @@ package template_context_providers
 
 import (
 	"github.com/flosch/pongo2/v4"
-	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
@@ -11,7 +10,7 @@ import (
 	"strconv"
 )
 
-func ResourceCategoryListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func ResourceCategoryListContextProvider(context ResourceCategoryPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetPageParameter(request)
 		offset := (page - 1) * constants.MaxResultsPerPage
@@ -53,7 +52,7 @@ func ResourceCategoryListContextProvider(context *application_context.Mahresourc
 	}
 }
 
-func ResourceCategoryCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func ResourceCategoryCreateContextProvider(context ResourceCategoryPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Resource Category",
@@ -81,7 +80,7 @@ func ResourceCategoryCreateContextProvider(context *application_context.Mahresou
 	}
 }
 
-func ResourceCategoryContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func ResourceCategoryContextProvider(context ResourceCategoryPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())
@@ -131,7 +130,7 @@ func ResourceCategoryContextProvider(context *application_context.MahresourcesCo
 		}
 
 		// Only show delete action for non-default categories
-		if resourceCategory.ID != context.DefaultResourceCategoryID {
+		if !context.IsDefaultResourceCategory(resourceCategory.ID) {
 			result["deleteAction"] = template_entities.Entry{
 				Name: "Delete",
 				Url:  "/v1/resourceCategory/delete",

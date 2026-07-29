@@ -22,7 +22,7 @@ import (
 	"gorm.io/gorm"
 
 	"mahresources/models"
-	"mahresources/models/util"
+	"mahresources/models/seed"
 )
 
 // routesExcludedFromOpenAPI enumerates endpoints intentionally omitted from
@@ -160,7 +160,7 @@ func newDriftTestContext(t *testing.T) *application_context.MahresourcesContext 
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	util.AddInitialData(db)
+	seed.AddInitialData(db)
 
 	sqlDB, _ := db.DB()
 	roDB := sqlx.NewDb(sqlDB, "sqlite3")

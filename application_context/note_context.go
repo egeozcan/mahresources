@@ -8,13 +8,13 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"mahresources/lib"
+	"mahresources/auth"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/database_scopes"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
 	"mahresources/mrql"
-	"mahresources/server/interfaces"
 )
 
 func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteEditor) (*models.Note, error) {
@@ -322,7 +322,7 @@ func (ctx *MahresourcesContext) ShareNote(noteId uint) (string, error) {
 		return *note.ShareToken, nil
 	}
 
-	token := lib.GenerateShareToken()
+	token := auth.GenerateShareToken()
 	// BH-035: record when this token was minted so the admin /admin/shares
 	// dashboard can sort by age and operators have an audit trail. Kept in
 	// the same Updates call so either both persist or neither does.
@@ -411,7 +411,7 @@ func (ctx *MahresourcesContext) GetNoteByShareToken(token string) (*models.Note,
 	return &note, nil
 }
 
-func (ctx *MahresourcesContext) NoteMetaKeys() ([]interfaces.MetaKey, error) {
+func (ctx *MahresourcesContext) NoteMetaKeys() ([]contracts.MetaKey, error) {
 	return metaKeys(ctx, "notes")
 }
 

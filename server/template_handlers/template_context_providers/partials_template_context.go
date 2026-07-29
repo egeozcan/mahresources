@@ -2,11 +2,10 @@ package template_context_providers
 
 import (
 	"github.com/flosch/pongo2/v4"
-	"mahresources/application_context"
 	"net/http"
 )
 
-func PartialContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func PartialContextProvider(_ any) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		result := StaticTemplateCtx(request)
 		err := request.ParseForm()

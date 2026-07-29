@@ -6,13 +6,12 @@ import (
 	"strings"
 
 	"github.com/flosch/pongo2/v4"
-	"mahresources/application_context"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"net/http"
 )
 
-func CompareContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func CompareContextProvider(context ComparePageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		baseContext := StaticTemplateCtx(request)
 

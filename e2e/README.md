@@ -4,11 +4,28 @@ End-to-end tests for the Mahresources application using Playwright.
 
 ## Test Coverage
 
-- **107 spec files** across browser, CLI, accessibility, and plugin tests
-- **Browser tests** (75 spec files): Tags, Categories, NoteTypes, Queries, RelationTypes, Groups, Notes, Resources, Relations, Bulk Operations, Global Search, Edge Cases, Lightbox, Versioning, Version Compare, Blocks, Note Sharing, Entity Picker, Series, and many regression tests
-- **CLI tests** (20 spec files): Full coverage of the `mr` CLI binary against an ephemeral server
-- **Accessibility tests** (4 spec files): axe-core WCAG compliance checks on pages and components
-- **Plugin tests** (8 spec files): Plugin actions, API, blocks, hooks, injection, KV store, management, and pages
+**274 spec files, 1729 tests.** Specs are grouped by subject, so touching one
+area means running one directory.
+
+| Directory | Specs | Covers |
+|---|---:|---|
+| `regressions/` | 95 | One spec per fixed bug, named for the bug. Grows monotonically; rarely read. |
+| `cli/` | 34 | The `mr` binary against an ephemeral server. |
+| `accessibility/` | 22 | axe-core WCAG checks on pages and components. |
+| `schema/` | 14 | Schema editor, metadata display, section config, display renderers. |
+| `lightbox/` | 13 | Viewer, crop/rotate, zoom, tagging panel, batch pipeline. |
+| `mrql/` | 13 | Query language: counting, hierarchy, reports, similarity, Cmd+K. |
+| `plugins/` | 12 | Actions, API, blocks, hooks, injection, KV store, management, pages. |
+| `entities/` | 9 | Core CRUD for tags, categories, groups, notes, resources, relations. |
+| `blocks/` | 8 | Note blocks: state, calendar, table, backward compatibility. |
+| `selector/` | 7 | Entity pickers, autocompleter, chip input, dropdown anchoring. |
+| `shortcodes/` | 6 | Parsing, linting, autocomplete, deferred rendering. |
+| `auth/` | 4 | Login, sessions, RBAC. |
+| `admin-export/`, `admin-import/` | 6 | Group archive round-trips through the UI. |
+| *(top level)* | 31 | Cross-cutting suites that fit no single area: dashboard, timeline, global search, admin overview. |
+
+The `default` Playwright project runs everything except `cli/` and `auth/` (236
+specs); those two have their own projects.
 
 ## Prerequisites
 
@@ -105,7 +122,10 @@ npm run test:debug
 npm run test:ui
 
 # Run specific test file
-npx playwright test tests/01-tag.spec.ts
+npx playwright test tests/entities/tag.spec.ts
+
+# Run one subject area
+npx playwright test tests/lightbox/
 
 # Run tests matching a pattern
 npx playwright test --grep "should create"
@@ -142,76 +162,42 @@ e2e/
 │   ├── run-tests.js             # Single-project test runner with auto server
 │   └── run-all-tests.js         # Parallel runner for browser + CLI tests
 ├── tests/                       # Test specifications
-│   ├── 01-tag.spec.ts
-│   ├── 02-category.spec.ts
-│   ├── 03-note-type.spec.ts
-│   ├── 04-query.spec.ts
-│   ├── 05-relation-type.spec.ts
-│   ├── 06-group.spec.ts
-│   ├── 07-note.spec.ts
-│   ├── 08-resource.spec.ts
-│   ├── 09-relation.spec.ts
-│   ├── 10-bulk-operations.spec.ts
-│   ├── 11-global-search.spec.ts
-│   ├── 12-edge-cases.spec.ts
-│   ├── 13-lightbox.spec.ts
-│   ├── 14-resource-versioning.spec.ts
-│   ├── 15-version-compare.spec.ts
-│   ├── 16-blocks.spec.ts
-│   ├── 17-block-state.spec.ts
-│   ├── 18-block-backward-compat.spec.ts
-│   ├── 19-block-calendar.spec.ts
-│   ├── 19-note-sharing.spec.ts
-│   ├── 20-entity-picker.spec.ts
-│   ├── 21-resource-category.spec.ts
-│   ├── 22-series.spec.ts
-│   ├── 23-group-delete-preserves-resources.spec.ts
-│   ├── 24-json-table-copy.spec.ts
-│   ├── 25-tag-merge.spec.ts
-│   ├── 26-paste-upload.spec.ts
-│   ├── 27-autocompleter-remove-aria-label.spec.ts
-│   ├── ...                      # (75 browser spec files total)
-│   ├── dashboard.spec.ts
-│   ├── accessibility/           # axe-core accessibility tests
-│   │   ├── 01-a11y-pages.spec.ts
-│   │   ├── 02-a11y-components.spec.ts
-│   │   ├── 03-a11y-heading-and-pagination.spec.ts
-│   │   └── 04-a11y-heading-level-skip.spec.ts
-│   ├── cli/                     # CLI binary tests
-│   │   ├── cli-categories.spec.ts
-│   │   ├── cli-error-handling.spec.ts
-│   │   ├── cli-global-flags.spec.ts
-│   │   ├── cli-groups.spec.ts
-│   │   ├── cli-jobs.spec.ts
-│   │   ├── cli-logs.spec.ts
-│   │   ├── cli-note-blocks.spec.ts
-│   │   ├── cli-note-types.spec.ts
-│   │   ├── cli-notes.spec.ts
-│   │   ├── cli-output-formats.spec.ts
-│   │   ├── cli-plugins.spec.ts
-│   │   ├── cli-queries.spec.ts
-│   │   ├── cli-relation-types.spec.ts
-│   │   ├── cli-relations.spec.ts
-│   │   ├── cli-resource-categories.spec.ts
-│   │   ├── cli-resource-versions.spec.ts
-│   │   ├── cli-resources.spec.ts
-│   │   ├── cli-search.spec.ts
-│   │   ├── cli-series.spec.ts
-│   │   └── cli-tags.spec.ts
-│   └── plugins/                 # Plugin system tests
-│       ├── plugin-actions.spec.ts
-│       ├── plugin-api.spec.ts
-│       ├── plugin-blocks.spec.ts
-│       ├── plugin-hooks.spec.ts
-│       ├── plugin-injection.spec.ts
-│       ├── plugin-kvstore.spec.ts
-│       ├── plugin-manage.spec.ts
-│       └── plugin-pages.spec.ts
+│   ├── entities/                # Core CRUD: tag, category, group, note, resource, relation
+│   ├── lightbox/                # Viewer, crop/rotate, zoom, tagging panel
+│   ├── mrql/                    # Query language: counting, hierarchy, reports, Cmd+K
+│   ├── schema/                  # Schema editor, metadata display, section config
+│   ├── selector/                # Entity pickers, autocompleter, chip input
+│   ├── blocks/                  # Note blocks: state, calendar, table
+│   ├── shortcodes/              # Parsing, linting, autocomplete, deferred render
+│   ├── accessibility/           # axe-core WCAG checks
+│   ├── admin-export/            # Group archive export through the UI
+│   ├── admin-import/            # Group archive import through the UI
+│   ├── auth/                    # Login, sessions, RBAC (own Playwright project)
+│   ├── cli/                     # `mr` binary tests (own Playwright project)
+│   ├── plugins/                 # Plugin actions, API, blocks, hooks, KV, pages
+│   ├── regressions/             # One spec per fixed bug, named for the bug
+│   ├── dashboard.spec.ts        # Cross-cutting suites stay at the top level
+│   ├── timeline.spec.ts
+│   └── ...                      # (31 top-level specs)
 ├── test-assets/                 # Test files (images, etc.)
 ├── playwright.config.ts
 ├── tsconfig.json
 └── package.json
 ```
+
+### Where a new spec goes
+
+Name it for its **subject**, not for the bug or ticket that prompted it, and put
+it in the matching directory. A spec about the lightbox belongs in `lightbox/`
+whether it was born as a feature or as a fix.
+
+The exception is `regressions/`: a spec that exists solely to prove one specific
+bug stays fixed, and that nobody would otherwise read, goes there named after the
+symptom — `inline-edit-no-prefix-in-name.spec.ts`.
+
+Do not add numeric prefixes. They collided (`13-` was used eleven times), they
+implied an execution order Playwright does not honour, and they hid the subject
+behind a number. Specs in a subdirectory import fixtures with `../../`, not `../`.
 
 ## Test Configuration
 
@@ -226,7 +212,7 @@ e2e/
 
 Key settings in `playwright.config.ts`:
 
-- **Projects**: `default` (browser tests, excludes `cli/`) and `cli` (CLI tests under `tests/cli/`)
+- **Projects**: `default` (browser tests; everything under `tests/` except `cli/` and `auth/`), `auth` (`tests/auth/`), `cli` (`tests/cli/`), and `cli-doctest` (the `mr` documentation examples)
 - **Workers**: 4 locally, 1 in CI for browser tests; 2 locally, 1 in CI for CLI tests
 - **Sequential within file**: `fullyParallel: false` ensures tests in a file run sequentially
 - **Retries**: 4 in CI, 2 locally

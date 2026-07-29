@@ -3,14 +3,14 @@ package api_handlers
 import (
 	"encoding/json"
 	"mahresources/constants"
+	"mahresources/contracts"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
-	"mahresources/server/interfaces"
 	"net/http"
 	"strings"
 )
 
-func GetGlobalSearchHandler(ctx interfaces.GlobalSearcher) func(writer http.ResponseWriter, request *http.Request) {
+func GetGlobalSearchHandler(ctx contracts.GlobalSearcher) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		searchQuery := &query_models.GlobalSearchQuery{
 			Query: http_utils.GetQueryParameter(request, "q", ""),

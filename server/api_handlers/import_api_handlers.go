@@ -21,9 +21,10 @@ import (
 )
 
 // GroupImporter is the application_context capability the import handlers depend on.
-// It is defined here (not in server/interfaces) because server/interfaces is already
-// imported by application_context, so adding application_context types to
-// server/interfaces would create an import cycle.
+//
+// It is defined here rather than in contracts/ because contracts/ may import
+// only models/ and constants/ (enforced by internal/arch), and these method
+// signatures name the import DTOs, which live in groupio/.
 type GroupImporter interface {
 	ParseImport(ctx context.Context, jobID, tarPath string) (*application_context.ImportPlan, error)
 	ApplyImport(ctx context.Context, parseJobID string, decisions *application_context.ImportDecisions, sink download_queue.ProgressSink) (*application_context.ImportApplyResult, error)

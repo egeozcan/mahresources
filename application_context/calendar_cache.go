@@ -7,7 +7,7 @@ import (
 	"time"
 
 	ics "github.com/arran4/golang-ical"
-	"mahresources/server/interfaces"
+	"mahresources/contracts"
 )
 
 // ICSCacheEntry represents a cached ICS file with metadata for conditional fetching
@@ -126,13 +126,13 @@ func (c *ICSCache) Clear() {
 // ParseICSEvents parses ICS content and returns events within the specified date range.
 // Note: This parser does not support recurring events (RRULE). Events with RRULE will
 // only show their first occurrence. Full RRULE support would require significant complexity.
-func ParseICSEvents(content []byte, calendarID string, rangeStart, rangeEnd time.Time) ([]interfaces.CalendarEvent, error) {
+func ParseICSEvents(content []byte, calendarID string, rangeStart, rangeEnd time.Time) ([]contracts.CalendarEvent, error) {
 	cal, err := ics.ParseCalendar(strings.NewReader(string(content)))
 	if err != nil {
 		return nil, err
 	}
 
-	var events []interfaces.CalendarEvent
+	var events []contracts.CalendarEvent
 
 	for _, component := range cal.Components {
 		event, ok := component.(*ics.VEvent)
@@ -156,7 +156,7 @@ func ParseICSEvents(content []byte, calendarID string, rangeStart, rangeEnd time
 }
 
 // parseVEvent converts an ICS VEvent to a CalendarEvent
-func parseVEvent(event *ics.VEvent, calendarID string) *interfaces.CalendarEvent {
+func parseVEvent(event *ics.VEvent, calendarID string) *contracts.CalendarEvent {
 	uid := event.GetProperty(ics.ComponentPropertyUniqueId)
 	if uid == nil {
 		return nil
@@ -188,7 +188,7 @@ func parseVEvent(event *ics.VEvent, calendarID string) *interfaces.CalendarEvent
 		}
 	}
 
-	calEvent := &interfaces.CalendarEvent{
+	calEvent := &contracts.CalendarEvent{
 		ID:         uid.Value,
 		CalendarID: calendarID,
 		Start:      startTime,

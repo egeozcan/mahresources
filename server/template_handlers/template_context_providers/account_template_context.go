@@ -5,14 +5,13 @@ import (
 
 	"github.com/flosch/pongo2/v4"
 
-	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/models"
 )
 
 // AdminUsersContextProvider renders the admin user-management page: the list of
 // accounts plus the assignable roles for the create form.
-func AdminUsersContextProvider(ctx *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func AdminUsersContextProvider(ctx AccountPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		c := StaticTemplateCtx(request)
 		c["pageTitle"] = "Users"
@@ -29,7 +28,7 @@ func AdminUsersContextProvider(ctx *application_context.MahresourcesContext) fun
 
 // AccountContextProvider renders the self-service account page for the
 // authenticated user: identity, and their API tokens.
-func AccountContextProvider(ctx *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func AccountContextProvider(ctx AccountPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		c := StaticTemplateCtx(request)
 		c["pageTitle"] = "Account"

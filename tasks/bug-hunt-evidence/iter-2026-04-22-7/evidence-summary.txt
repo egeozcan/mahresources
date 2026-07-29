@@ -1,0 +1,29 @@
+Share server iter-12 evidence summary
+======================================
+Date: 2026-04-22
+Token used: 7959b2f2b35275fe6ec309f1624929a1
+Note ID: 282
+Test entity prefix: [bughunt-2026-04-22-7]
+
+Share server routes confirmed:
+  GET  /s/{token}                                  -> handleSharedNote
+  POST /s/{token}/block/{blockId}/state            -> handleBlockStateUpdate (write - for todos)
+  GET  /s/{token}/block/{blockId}/calendar/events  -> handleCalendarEvents
+  GET  /s/{token}/resource/{hash}                  -> handleSharedResource
+  GET  /public/...                                 -> static assets
+
+Security findings:
+1. NO security headers (CSP, X-Frame-Options, Referrer-Policy) on any responses
+2. Block state writes via share server are NOT restricted to todo blocks - any block type
+3. ShareBaseUrl uses bind address (127.0.0.1 in current config) - URL shown to user is non-routable
+4. POST /s/{token} returns 404 (not 405) - gorilla mux inconsistency
+5. No global request body size limit on /v1/resource multipart upload
+6. 25MB binary accepted and saved in ~56ms (HTTP 200)
+7. Token is 128-bit crypto random hex (adequate entropy)
+8. No expiry on share tokens (permanent until unshared)
+9. References block leaks group names/descriptions to anonymous viewers
+
+Body size probe results:
+  25MB multipart to /v1/resource: HTTP 200, 56ms
+  Garbage tar to /v1/groups/import/parse: HTTP 202 (async, then fails gracefully)
+  50MB JSON to /v1/tag: HTTP 400 (bad JSON, fast)

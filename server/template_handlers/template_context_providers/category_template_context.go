@@ -2,7 +2,6 @@ package template_context_providers
 
 import (
 	"github.com/flosch/pongo2/v4"
-	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/models/query_models"
 	"mahresources/server/http_utils"
@@ -11,7 +10,7 @@ import (
 	"strconv"
 )
 
-func CategoryListContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func CategoryListContextProvider(context CategoryPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		page := http_utils.GetPageParameter(request)
 		resultsPerPage := getResultsPerPage(request, constants.MaxResultsPerPage)
@@ -63,7 +62,7 @@ func CategoryListContextProvider(context *application_context.MahresourcesContex
 	}
 }
 
-func CategoryTimelineContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func CategoryTimelineContextProvider(context CategoryPageContext) func(request *http.Request) pongo2.Context {
 	listProvider := CategoryListContextProvider(context)
 	return func(request *http.Request) pongo2.Context {
 		ctx := listProvider(request)
@@ -72,7 +71,7 @@ func CategoryTimelineContextProvider(context *application_context.MahresourcesCo
 	}
 }
 
-func CategoryCreateContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func CategoryCreateContextProvider(context CategoryPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		tplContext := pongo2.Context{
 			"pageTitle": "Create Category",
@@ -100,7 +99,7 @@ func CategoryCreateContextProvider(context *application_context.MahresourcesCont
 	}
 }
 
-func CategoryContextProvider(context *application_context.MahresourcesContext) func(request *http.Request) pongo2.Context {
+func CategoryContextProvider(context CategoryPageContext) func(request *http.Request) pongo2.Context {
 	return func(request *http.Request) pongo2.Context {
 		var query query_models.EntityIdQuery
 		err := decoder.Decode(&query, request.URL.Query())

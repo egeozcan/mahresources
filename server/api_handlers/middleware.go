@@ -121,4 +121,3 @@ func writeJSONOk(writer http.ResponseWriter) {
 	writer.Header().Set("Content-Type", constants.JSON)
 	_ = json.NewEncoder(writer).Encode(map[string]bool{"ok": true})
 }
-

@@ -389,7 +389,7 @@ func (ctx *MahresourcesContext) rejectSQLiteRegex(q *mrql.Query) error {
 // similarity sidebar (same read path, same live-tunable thresholds).
 func (ctx *MahresourcesContext) mrqlTranslateOptions() mrql.TranslateOptions {
 	pThreshold, aThreshold := ctx.similarityThresholds()
-	ftsAvailable := ctx.ftsEnabled
+	ftsAvailable := ctx.ftsAvailable()
 	return mrql.TranslateOptions{
 		SimilarityThreshold: &pThreshold,
 		AHashThreshold:      aThreshold,

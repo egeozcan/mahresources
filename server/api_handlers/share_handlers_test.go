@@ -27,16 +27,16 @@ func TestParseUintStrict(t *testing.T) {
 	}
 
 	bad := []string{
-		"",                      // empty
-		" 1",                    // leading space
-		"1 ",                    // trailing space
-		"+1",                    // sign
-		"-1",                    // sign
-		"1.0",                   // non-digit
-		"abc",                   // non-digit
-		"18446744073709551616",  // 2^64 — must error, not wrap to 0
-		"18446744073709551617",  // 2^64+1 — must error, not wrap to 1
-		"99999999999999999999",  // far past 2^64
+		"",                     // empty
+		" 1",                   // leading space
+		"1 ",                   // trailing space
+		"+1",                   // sign
+		"-1",                   // sign
+		"1.0",                  // non-digit
+		"abc",                  // non-digit
+		"18446744073709551616", // 2^64 — must error, not wrap to 0
+		"18446744073709551617", // 2^64+1 — must error, not wrap to 1
+		"99999999999999999999", // far past 2^64
 	}
 	for _, s := range bad {
 		if got, err := parseUintStrict(s); err == nil {

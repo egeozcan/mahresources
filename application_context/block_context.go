@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"mahresources/lib"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/block_types"
 	"mahresources/models/query_models"
 	"mahresources/models/types"
+	"mahresources/ordering"
 	"mahresources/plugin_system"
-	"mahresources/server/interfaces"
 )
 
 // maxICSFileSize is the maximum size for ICS calendar files (10MB).
@@ -80,7 +80,7 @@ func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor
 		if lastPos == "" {
 			editor.Position = "n" // middle of alphabet for first block
 		} else {
-			editor.Position = lib.PositionBetween(lastPos, "")
+			editor.Position = ordering.PositionBetween(lastPos, "")
 		}
 	}
 
@@ -490,7 +490,7 @@ func (ctx *MahresourcesContext) maybeRebalanceBlockPositions(noteID uint) bool {
 		log.Printf("Warning: failed to read positions for rebalance check on note %d: %v", noteID, err)
 		return false
 	}
-	if !lib.NeedsRebalancing(positions, rebalanceThreshold) {
+	if !ordering.NeedsRebalancing(positions, rebalanceThreshold) {
 		return false
 	}
 	if err := ctx.RebalanceBlockPositions(noteID); err != nil {
@@ -517,7 +517,7 @@ func (ctx *MahresourcesContext) RebalanceBlockPositions(noteID uint) error {
 	}
 
 	// Generate evenly distributed positions
-	newPositions := lib.GenerateEvenPositions(len(blocks))
+	newPositions := ordering.GenerateEvenPositions(len(blocks))
 
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
 		for i, block := range blocks {
@@ -563,7 +563,7 @@ func (ctx *MahresourcesContext) UpdateBlockStateFromRequest(blockId uint, r *htt
 // This parser does not support recurring events (RRULE). Events with RRULE will
 // only show their first occurrence. Full RRULE expansion would require significant
 // complexity to handle all recurrence patterns correctly.
-func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.Time) (*interfaces.CalendarEventsResponse, error) {
+func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.Time) (*contracts.CalendarEventsResponse, error) {
 	// Get the block
 	block, err := ctx.GetBlock(blockID)
 	if err != nil {
@@ -583,9 +583,9 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 		return nil, fmt.Errorf("failed to parse block content: %w", err)
 	}
 
-	var allEvents []interfaces.CalendarEvent
-	var calendars []interfaces.CalendarInfo
-	var calendarErrors []interfaces.CalendarError
+	var allEvents []contracts.CalendarEvent
+	var calendars []contracts.CalendarInfo
+	var calendarErrors []contracts.CalendarError
 	var cachedAt time.Time
 
 	// Fetch events from each calendar source
@@ -599,7 +599,7 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 			icsContent, fetchTime, fetchErr = ctx.fetchICSFromURL(cal.Source.URL)
 		case "resource":
 			if cal.Source.ResourceID == nil {
-				calendarErrors = append(calendarErrors, interfaces.CalendarError{
+				calendarErrors = append(calendarErrors, contracts.CalendarError{
 					CalendarID: cal.ID,
 					Error:      "resource source missing resourceId",
 				})
@@ -608,7 +608,7 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 			}
 			icsContent, fetchTime, fetchErr = ctx.fetchICSFromResource(*cal.Source.ResourceID)
 		default:
-			calendarErrors = append(calendarErrors, interfaces.CalendarError{
+			calendarErrors = append(calendarErrors, contracts.CalendarError{
 				CalendarID: cal.ID,
 				Error:      fmt.Sprintf("unknown source type: %s", cal.Source.Type),
 			})
@@ -617,7 +617,7 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 		}
 
 		if fetchErr != nil {
-			calendarErrors = append(calendarErrors, interfaces.CalendarError{
+			calendarErrors = append(calendarErrors, contracts.CalendarError{
 				CalendarID: cal.ID,
 				Error:      fmt.Sprintf("failed to fetch: %v", fetchErr),
 			})
@@ -633,7 +633,7 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 		// Parse events from ICS content
 		events, parseErr := ParseICSEvents(icsContent, cal.ID, start, end)
 		if parseErr != nil {
-			calendarErrors = append(calendarErrors, interfaces.CalendarError{
+			calendarErrors = append(calendarErrors, contracts.CalendarError{
 				CalendarID: cal.ID,
 				Error:      fmt.Sprintf("failed to parse: %v", parseErr),
 			})
@@ -644,7 +644,7 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 		allEvents = append(allEvents, events...)
 
 		// Add calendar info
-		calendars = append(calendars, interfaces.CalendarInfo{
+		calendars = append(calendars, contracts.CalendarInfo{
 			ID:    cal.ID,
 			Name:  cal.Name,
 			Color: cal.Color,
@@ -659,7 +659,7 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 		}
 		// Add "custom" calendar info if there are any custom events defined
 		if hasCustom {
-			calendars = append(calendars, interfaces.CalendarInfo{
+			calendars = append(calendars, contracts.CalendarInfo{
 				ID:    "custom",
 				Name:  "My Events",
 				Color: "#6366f1", // Indigo - distinct from the palette
@@ -677,7 +677,7 @@ func (ctx *MahresourcesContext) GetCalendarEvents(blockID uint, start, end time.
 		cachedAt = time.Now()
 	}
 
-	return &interfaces.CalendarEventsResponse{
+	return &contracts.CalendarEventsResponse{
 		Events:    allEvents,
 		Calendars: calendars,
 		Errors:    calendarErrors,
@@ -841,7 +841,7 @@ func (ctx *MahresourcesContext) fetchICSFromResource(resourceID uint) ([]byte, t
 
 // parseCustomEventsFromState parses custom events from block state and filters to the date range.
 // Returns the filtered events and whether any custom events exist in the state (for calendar info).
-func (ctx *MahresourcesContext) parseCustomEventsFromState(stateJSON []byte, start, end time.Time) ([]interfaces.CalendarEvent, bool) {
+func (ctx *MahresourcesContext) parseCustomEventsFromState(stateJSON []byte, start, end time.Time) ([]contracts.CalendarEvent, bool) {
 	var state struct {
 		CustomEvents []block_types.CustomCalendarEvent `json:"customEvents"`
 	}
@@ -854,7 +854,7 @@ func (ctx *MahresourcesContext) parseCustomEventsFromState(stateJSON []byte, sta
 		return nil, false
 	}
 
-	var filtered []interfaces.CalendarEvent
+	var filtered []contracts.CalendarEvent
 	for _, ce := range state.CustomEvents {
 		eventStart, err := time.Parse(time.RFC3339, ce.Start)
 		if err != nil {
@@ -869,7 +869,7 @@ func (ctx *MahresourcesContext) parseCustomEventsFromState(stateJSON []byte, sta
 
 		// Filter to date range (same logic as ICS events)
 		if eventStart.Before(end) && eventEnd.After(start) {
-			filtered = append(filtered, interfaces.CalendarEvent{
+			filtered = append(filtered, contracts.CalendarEvent{
 				ID:          ce.ID,
 				CalendarID:  ce.CalendarID, // "custom"
 				Title:       ce.Title,
