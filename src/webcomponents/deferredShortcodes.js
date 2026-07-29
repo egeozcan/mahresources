@@ -42,7 +42,29 @@ async function fetchDeferred(token) {
   });
   if (!resp.ok) throw new Error(`deferred render failed: ${resp.status}`);
   const data = await resp.json();
-  return data && typeof data.html === 'string' ? data.html : '';
+  return {
+    html: data && typeof data.html === 'string' ? data.html : '',
+    entity: data ? data.entity : null,
+  };
+}
+
+// The body was rendered against a freshly loaded entity, but the Alpine scope
+// around it is the one the display page built at load. Custom templates bind to
+// it directly — x-text="entity.Meta.status" is a documented way to write them —
+// so without this a reload would refresh everything the server expanded and leave
+// every Alpine binding beside it showing the snapshot it was asked to replace.
+//
+// Only a scope that already exposes an entity is touched: surfaces that never had
+// one (a share page, the authoring preview) must not have one invented for them.
+function applyEntity(el, entity) {
+  const alpine = window.Alpine;
+  if (!entity || !alpine || typeof alpine.$data !== 'function') return;
+  try {
+    const scope = alpine.$data(el);
+    if (scope && 'entity' in scope) scope.entity = entity;
+  } catch (e) {
+    /* a scope we cannot reach must never break the swap */
+  }
 }
 
 function hydrate(container) {
@@ -166,10 +188,11 @@ export function reloadInto(host, contentEl, token, isStale) {
   };
 
   const settled = fetchDeferred(token).then(
-    (html) => {
+    ({ html, entity }) => {
       if (!current() || !contentEl.isConnected) return false;
       if (typeof isStale === 'function' && isStale()) return false;
       contentEl.innerHTML = html;
+      applyEntity(contentEl, entity);
       hydrate(contentEl);
       return true;
     },
@@ -294,11 +317,12 @@ class LazyShortcode extends HTMLElement {
     const token = this._token;
     const reqId = ++this._requestId;
     fetchDeferred(token)
-      .then((html) => {
+      .then(({ html, entity }) => {
         if (reqId !== this._requestId || token !== this._token || !this.isConnected) return;
         this._loaded = true;
         this._loading = false;
         this._content.innerHTML = html;
+        applyEntity(this._content, entity);
         hydrate(this._content);
         this.removeAttribute('aria-busy');
       })
@@ -417,11 +441,12 @@ class DetailsShortcode extends HTMLElement {
     const token = this._token;
     const reqId = ++this._requestId;
     fetchDeferred(token)
-      .then((html) => {
+      .then(({ html, entity }) => {
         if (reqId !== this._requestId || token !== this._token || !this.isConnected) return;
         this._loaded = true;
         this._loading = false;
         this._content.innerHTML = html;
+        applyEntity(this._content, entity);
         hydrate(this._content);
         this._content.removeAttribute('aria-busy');
       })

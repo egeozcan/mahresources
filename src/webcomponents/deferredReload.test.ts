@@ -42,10 +42,11 @@ function fakeEl(descendants: any[] = []) {
 
 // Each fetch call parks its settle function so a test can land responses in any
 // order it likes.
-let pending: Array<{ resolve: (html: string) => void; reject: (err: Error) => void }>;
+let pending: Array<{ resolve: (html: string) => void; resolveWith: (payload: any) => void; reject: (err: Error) => void }>;
 
 beforeEach(() => {
   pending = [];
+  (globalThis as any).window.Alpine = undefined;
   vi.stubGlobal(
     'fetch',
     vi.fn(
@@ -53,6 +54,7 @@ beforeEach(() => {
         new Promise((res, rej) => {
           pending.push({
             resolve: (html: string) => res({ ok: true, json: async () => ({ html }) }),
+            resolveWith: (payload: any) => res({ ok: true, json: async () => payload }),
             reject: (err: Error) => rej(err),
           });
         }),
@@ -277,6 +279,48 @@ describe('reloadInto supersession releases the caller', () => {
 
     pending[0].resolve('payload');
     await expect(only).resolves.toBe(true);
+  });
+});
+
+describe('reloadInto and the Alpine entity scope', () => {
+  it('refreshes the entity so bindings do not stay on the page-load snapshot', async () => {
+    const el = fakeEl();
+    // What the display page put in scope when it was first rendered.
+    const scope: any = { entity: { Name: 'old', Meta: { status: 'active' } } };
+    (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
+
+    const run = reloadInto(el, el, 'token-a');
+    pending[0].resolveWith({ html: 'fresh markup', entity: { Name: 'new', Meta: { status: 'archived' } } });
+
+    await expect(run).resolves.toBe(true);
+    // x-text="entity.Meta.status" is a documented way to write custom content, and
+    // re-rendering the HTML beside it does nothing for those bindings.
+    expect(scope.entity).toEqual({ Name: 'new', Meta: { status: 'archived' } });
+  });
+
+  it('leaves a scope alone when the response carries no entity', async () => {
+    const el = fakeEl();
+    const scope: any = { entity: { Name: 'old' } };
+    (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
+
+    const run = reloadInto(el, el, 'token-a');
+    pending[0].resolve('fresh markup');
+
+    await expect(run).resolves.toBe(true);
+    expect(scope.entity).toEqual({ Name: 'old' });
+  });
+
+  it('does not invent an entity on a surface that has no such scope', async () => {
+    const el = fakeEl();
+    // A share page or the authoring preview: no entity in scope at all.
+    const scope: any = {};
+    (globalThis as any).window.Alpine = { $data: () => scope, initTree: () => {} };
+
+    const run = reloadInto(el, el, 'token-a');
+    pending[0].resolveWith({ html: 'fresh markup', entity: { Name: 'new' } });
+
+    await expect(run).resolves.toBe(true);
+    expect('entity' in scope).toBe(false);
   });
 });
 

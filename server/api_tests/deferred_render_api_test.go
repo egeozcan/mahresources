@@ -140,3 +140,49 @@ func TestDeferredRender_ScopedPrincipal(t *testing.T) {
 		t.Errorf("scoped user → out-of-subtree entity: expected 404, got %d (body: %s)", rr.Code, rr.Body.String())
 	}
 }
+
+// The rendered HTML is only half of what a custom template shows: Alpine
+// bindings written against the `entity` scope (x-text="entity.Meta.status") are a
+// documented way to author them, and they resolve against the scope the display
+// page built at load. Returning the freshly loaded entity is what lets a reload
+// bring those bindings up to date instead of leaving them on the page-load
+// snapshot beside newly rendered markup.
+func TestDeferredRender_ReturnsFreshEntityForAlpineScope(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	g := &models.Group{Name: "Before"}
+	if err := tc.DB.Create(g).Error; err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	token := signToken(tc, "group", g.ID, `<h2>[property path="Name"]</h2>`)
+
+	// The entity changes after the page that minted the token was rendered.
+	if err := tc.DB.Model(g).Update("name", "After").Error; err != nil {
+		t.Fatalf("rename group: %v", err)
+	}
+
+	rr := tc.MakeRequest(http.MethodPost, "/v1/shortcodes/deferred", map[string]any{"token": token})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+
+	var resp struct {
+		HTML   string         `json:"html"`
+		Entity map[string]any `json:"entity"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.Contains(resp.HTML, "After") {
+		t.Errorf("server-expanded shortcodes should show the new name, got %q", resp.HTML)
+	}
+	if resp.Entity == nil {
+		t.Fatal("no entity returned; Alpine bindings would keep the page-load snapshot")
+	}
+	if got := resp.Entity["Name"]; got != "After" {
+		t.Errorf("entity.Name = %v, want %q", got, "After")
+	}
+	if got := resp.Entity["ID"]; got == nil {
+		t.Error("entity should carry the same fields the display page embeds, including ID")
+	}
+}

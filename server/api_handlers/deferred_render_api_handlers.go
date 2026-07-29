@@ -19,6 +19,17 @@ type deferredRenderRequest struct {
 
 type deferredRenderResponse struct {
 	HTML string `json:"html"`
+	// Entity is the entity this body was just rendered against, in the same shape
+	// the display page embeds as its Alpine `entity` scope. Custom templates bind
+	// to it directly (x-text="entity.Meta.status" is a documented way to write
+	// them), and those bindings resolve against the scope the page created at
+	// load: re-rendering the HTML beside them would otherwise leave every one of
+	// them showing a snapshot the reload was asked to replace.
+	//
+	// This exposes nothing new. It is the same entity, loaded through the same
+	// request-scoped context, that the display page already serialises in full for
+	// this principal.
+	Entity any `json:"entity,omitempty"`
 }
 
 // GetDeferredRenderHandler handles POST /v1/shortcodes/deferred: it renders the
@@ -86,6 +97,6 @@ func GetDeferredRenderHandler(ctx *application_context.MahresourcesContext) func
 		html := shortcodes.Process(reqCtx, body, *metaCtx, renderer, executor)
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(deferredRenderResponse{HTML: html})
+		_ = json.NewEncoder(writer).Encode(deferredRenderResponse{HTML: html, Entity: entity})
 	}
 }

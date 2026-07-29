@@ -2039,9 +2039,17 @@ Request body fields:
     template body the server itself produced; no client-supplied template text is
     trusted.
 
-Response: {"html"}. The entity is reloaded through the request-scoped context, so
-an out-of-subtree id returns 404. Semantically a read: gated at capRead (any
-authenticated principal) and CSRF-exempt.`,
+Response fields:
+  - html (string) — the rendered body.
+  - entity (object) — the entity the body was rendered against, in the same shape
+    the display page embeds as its Alpine "entity" scope. Custom templates bind to
+    it directly, and those bindings resolve against the scope the page built at
+    load, so the frontend refreshes it before hydrating the new markup. It is the
+    same entity the display page already serialises for this principal.
+
+The entity is reloaded through the request-scoped context, so an out-of-subtree id
+returns 404. Semantically a read: gated at capRead (any authenticated principal)
+and CSRF-exempt.`,
 		Tags:                 shortcodesTag,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},

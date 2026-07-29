@@ -743,6 +743,7 @@ Because this is a proximity walk, a `[reload]` placed inside a `[lazy]` body ref
 ### During a reload
 
 - The content being replaced stays on screen and is dimmed while the request is in flight, rather than collapsing to a loading placeholder. A `[lazy]` or `[details]` block *inside* a reloaded slot does come back unrevealed, and loads again on its own terms.
+- The Alpine `entity` scope is refreshed along with the markup, so bindings written against it (`x-text="entity.Meta.status"` and friends, see [Custom Templates](./custom-templates.md)) show current values rather than the snapshot the page was loaded with. Shortcodes are expanded server-side against the same fresh entity, so both halves of a template stay in step.
 - `aria-busy` is set on the content being refreshed and on the button, and the button greys out. On the icon form the glyph also spins, which `prefers-reduced-motion` suppresses.
 - Activation announces "Reloading" politely, then "Content reloaded" on success. A fast reload coalesces the two.
 - On failure the previous content is left exactly as it was, "Could not reload the content" is announced assertively, and a "Reload failed." marker appears beside the button so the stale content is not mistaken for fresh.
