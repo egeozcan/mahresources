@@ -61,7 +61,7 @@ type ResourceMerger interface {
 
 // ResourceMediaProcessor handles media operations on resources
 type ResourceMediaProcessor interface {
-	RotateResource(resourceId uint, degrees int) error
+	RotateResource(httpContext context.Context, resourceId uint, degrees int) error
 	CropResource(httpContext context.Context, resourceId uint, x, y, width, height int, comment string) error
 	TrimVideo(httpContext context.Context, resourceId uint, start, end, comment string) error
 	RecalculateResourceDimensions(query *query_models.EntityIdQuery) error

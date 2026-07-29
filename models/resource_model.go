@@ -112,6 +112,55 @@ func (r Resource) IsImage() bool {
 	return strings.HasPrefix(r.ContentType, "image/")
 }
 
+// RasterImageContentTypes is the single allowlist of image content types the
+// pixel-editing pipeline can actually decode and re-encode: rotate, crop and
+// dimension recalculation. It is deliberately narrower than IsImage, which is
+// a bare "image/" prefix test and therefore also matches vector formats.
+//
+// image/svg+xml is absent on purpose. An SVG has no pixels to rotate, and
+// feeding one to a Go image decoder yields "image: unknown format" — which is
+// how it reached users as an HTTP 500 (findings 10 and 11).
+//
+// Keep this in sync with CROPPABLE_CONTENT_TYPES in
+// src/components/lightbox/cropPanel.js and the allowlist in
+// templates/displayResource.tpl.
+var RasterImageContentTypes = []string{
+	"image/jpeg",
+	"image/png",
+	"image/gif",
+	"image/webp",
+	"image/bmp",
+	"image/tiff",
+	"image/heic",
+	"image/heif",
+	"image/avif",
+}
+
+var rasterImageContentTypeSet = func() map[string]struct{} {
+	set := make(map[string]struct{}, len(RasterImageContentTypes))
+	for _, ct := range RasterImageContentTypes {
+		set[ct] = struct{}{}
+	}
+	return set
+}()
+
+// BaseContentType strips any parameters and normalises case, so that
+// "text/plain; charset=utf-8" compares as "text/plain".
+func BaseContentType(contentType string) string {
+	if i := strings.IndexByte(contentType, ';'); i >= 0 {
+		contentType = contentType[:i]
+	}
+	return strings.ToLower(strings.TrimSpace(contentType))
+}
+
+// IsRasterImage reports whether this resource holds pixels the image transform
+// pipeline can decode. Use it — not IsImage — to gate rotate, crop and
+// dimension recalculation.
+func (r Resource) IsRasterImage() bool {
+	_, ok := rasterImageContentTypeSet[BaseContentType(r.ContentType)]
+	return ok
+}
+
 func (r Resource) IsVideo() bool {
 	return strings.HasPrefix(r.ContentType, "video/")
 }

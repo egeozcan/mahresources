@@ -2,6 +2,7 @@ package api_tests
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -70,7 +71,7 @@ func TestRotateResourceSyncsHashType(t *testing.T) {
 	require.NoError(t, tc.DB.Create(resource).Error)
 
 	// Rotate the resource (any angle is fine; 90° is standard)
-	err = tc.AppCtx.RotateResource(resource.ID, 90)
+	err = tc.AppCtx.RotateResource(context.Background(), resource.ID, 90)
 	require.NoError(t, err, "RotateResource should succeed")
 
 	// Reload the resource from the database

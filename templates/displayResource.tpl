@@ -323,7 +323,8 @@
     </div>
 
     {% if sc.ImageOperations %}
-    {% if isImage %}
+    {# Gated on the raster allowlist, not isImage: isImage also matches SVG, so this group offered rotate/recalculate actions the server answered with a 500 (finding 86). #}
+    {% if isRasterImage %}
     <div class="sidebar-group">
         {% include "/partials/sideTitle.tpl" with title="Update Dimensions" %}
         <form action="/v1/resource/recalculateDimensions?redirect={{ url|urlencode }}" method="post" class="mb-3">
@@ -336,7 +337,6 @@
             <input type="hidden" name="degrees" value="90">
             <button type="submit" class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">Rotate</button>
         </form>
-        {% if resource.ContentType in "image/jpeg,image/png,image/gif,image/webp,image/bmp,image/tiff,image/heic,image/heif,image/avif" %}
         {% include "/partials/sideTitle.tpl" with title="Crop" %}
         <button
             type="button"
@@ -344,11 +344,8 @@
             class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
             onclick="document.getElementById('crop-modal-{{ resource.ID }}').showModal()"
         >Crop…</button>
-        {% endif %}
     </div>
-    {% if resource.ContentType in "image/jpeg,image/png,image/gif,image/webp,image/bmp,image/tiff,image/heic,image/heif,image/avif" %}
     {% include "/partials/cropModal.tpl" with resource=resource %}
-    {% endif %}
     {% endif %}
     {% endif %}
 

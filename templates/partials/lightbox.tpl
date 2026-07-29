@@ -283,7 +283,7 @@
 
         <!-- Rotate 90° (raster images only) -->
         <button
-            x-show="$store.lightbox.isImage($store.lightbox.getCurrentItem()?.contentType)"
+            x-show="$store.lightbox._isRasterImage($store.lightbox.getCurrentItem()?.contentType)"
             @click.stop="$store.lightbox.rotateCurrent(90)"
             :disabled="$store.lightbox.rotating"
             :aria-busy="$store.lightbox.rotating"
@@ -300,7 +300,7 @@
 
         <!-- Crop (raster images only) -->
         <button
-            x-show="$store.lightbox._isCroppable($store.lightbox.getCurrentItem()?.contentType)"
+            x-show="$store.lightbox._isRasterImage($store.lightbox.getCurrentItem()?.contentType)"
             @click.stop="$store.lightbox.openCrop()"
             class="bg-black/50 px-3 py-1.5 rounded hover:bg-white/20 transition-colors focus:outline-none focus:ring-2 focus:ring-white/50 flex items-center gap-1.5"
             title="Crop image"

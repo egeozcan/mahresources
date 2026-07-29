@@ -347,6 +347,7 @@ func ResourceContextProvider(context ResourcePageContext) func(request *http.Req
 				ID:   resource.ID,
 			},
 			"isImage":        resource.IsImage(),
+			"isRasterImage":  resource.IsRasterImage(),
 			"isVideo":        resource.IsVideo(),
 			"videoDuration":  0.0,
 			"mainEntity":     resource,

@@ -968,7 +968,7 @@ func GetRotateResourceHandler(ctx contracts.ResourceMediaProcessor) func(writer 
 			return
 		}
 
-		err = ctx.RotateResource(editor.ID, editor.Degrees)
+		err = ctx.RotateResource(request.Context(), editor.ID, editor.Degrees)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusInternalServerError))
@@ -1059,7 +1059,15 @@ func GetBulkCalculateDimensionsHandler(ctx contracts.ResourceMediaProcessor) fun
 		}
 
 		if len(encounteredErrors) > 0 {
-			http_utils.HandleError(errors.New("encountered errors during dimension calculation"), writer, request, http.StatusInternalServerError)
+			// Report what actually went wrong instead of collapsing every
+			// cause into one opaque 500. A resource whose format simply
+			// cannot be measured is a 415, not a server fault (finding 10).
+			http_utils.HandleError(
+				joinErrors(encounteredErrors),
+				writer,
+				request,
+				aggregateStatusCode(encounteredErrors, http.StatusInternalServerError),
+			)
 			return
 		}
 

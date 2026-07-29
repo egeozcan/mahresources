@@ -210,9 +210,9 @@ Statuses are filled in during Phase 1.
 | 7 | high | bug | ✅ VERIFIED | WS13 | accept | |
 | 8 | high | bug | recovered | WS7 | verify | |
 | 9 | high | bug | verified-run | WS2 | spot | |
-| 10 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — HTTP 500 `encountered errors during dimension calculation` |
-| 11 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — HTTP 500 `image: unknown format` |
-| 12 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — png 1392B → jpeg 10217B (7.3× inflation) |
+| 10 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — HTTP 500 `encountered errors during dimension calculation`  · **FIXED** — gated on `IsRasterImage()`, now 415 naming the format |
+| 11 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — HTTP 500 `image: unknown format`  · **FIXED** — rotate gated on `IsRasterImage()`, now 415 |
+| 12 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — png 1392B → jpeg 10217B (7.3× inflation)  · **FIXED** — rotate shares crop's encoder table; live re-check png 1392B → png 1390B, RGBA intact |
 | 13 | high | a11y | recovered | WS5 | verify | |
 | 14 | high | a11y | recovered | WS5 | verify | |
 | 15 | high | bug | recovered | WS2 | verify | |
@@ -269,11 +269,11 @@ Statuses are filled in during Phase 1.
 | 66 | med | a11y | verified-run | WS4 | spot | |
 | 67 | med | design | verified-run | WS7 | spot | |
 | 68 | med | ux | verified-run | WS6 | spot | |
-| 69 | med | bug | verified-run | WS1 | spot | |
+| 69 | med | bug | verified-run | WS1 | spot | **CONFIRMED** — 0×0 preview served 200  · **FIXED** — Dup → 72 |
 | 70 | med | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — simple p1=75, p2=4; grid p2=25  · **FIXED** |
 | 71 | med | bug | recovered | WS8 | verify |  · **FIXED** |
-| 72 | med | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED, cause corrected** — see below |
-| 73 | med | bug | recovered | WS1 | verify | **CAUSE WRONG** — see below |
+| 72 | med | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED, cause corrected** — see below  · **FIXED** — zero-dim previews never persisted, 0×0 rows no longer canonical, SVG viewBox read at upload, poisoned rows repaired on read |
+| 73 | med | bug | recovered | WS1 | verify | **CAUSE WRONG** — see below  · **FIXED by 72's fix**; rotate confirmed atomic (it fails before any write) |
 | 74 | med | a11y | recovered | WS4 | verify | |
 | 75 | med | design | recovered | WS7 | verify | |
 | 76 | med | a11y | recovered | WS5 | Dup → 139 | |
@@ -286,7 +286,7 @@ Statuses are filled in during Phase 1.
 | 83 | med | design | verified-run | WS10 | spot | |
 | 84 | med | bug | verified-run | WS8 | spot |  · **FIXED** |
 | 85 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — `filename="v2_9b998df6"`  · **FIXED** |
-| 86 | med | bug | verified-run | WS1 | Dup → 10/11 + gating | |
+| 86 | med | bug | verified-run | WS1 | Dup → 10/11 + gating | **CONFIRMED** — actions offered for SVG  · **FIXED** — `isRasterImage` gates the details sidebar and the lightbox Rotate/Crop buttons |
 | 87 | med | a11y | verified-run | WS2 | Dup → 15 | |
 | 88 | med | ux | verified-run | WS2 | Dup → 21 | |
 | 89 | med | design | verified-run | WS7 | spot | |
@@ -402,43 +402,87 @@ Root cause, three separate defects sharing one pipeline:
    (`:199-201`) → `resource_api_handlers.go:602` 307s to `/public/placeholders/file.jpg`. SVG never
    reaches it because `case isSVG:` (`:143`) succeeds with garbage instead of failing.
 
+   **Corrected while fixing.** Two claims above are wrong, and both mattered. SVG dimensions *can*
+   be computed — the viewBox carries them, which is exactly what the fix now reads at upload. And
+   the defect is not SVG-specific: `imaging.Resize(img, 0, 0)` returning a 0×0 image is the whole
+   mechanism, so **any** resource with unknown dimensions is affected, and one dimensionless request
+   is enough. Treating it as "the SVG rasteriser" would have left the class open. See "Phase 1
+   results that changed the plan".
+
 Tasks:
 
-- [ ] **Red:** `server/api_tests/image_transform_test.go` — table-driven over `image/svg+xml`,
+- [x] **Red:** `server/api_tests/image_transform_test.go` — table-driven over `image/svg+xml`,
       `text/plain`, `application/json`, a zero-byte file: assert `POST /v1/resources/rotate` and
       `POST /v1/resource/recalculateDimensions` return **4xx with a JSON error naming the format**,
-      never 5xx.
-- [ ] **Red:** same file — upload a PNG (and an RGBA PNG), rotate, assert `ContentType` is still
-      `image/png`, the stored extension is `.png`, and the alpha channel survives a decode.
-- [ ] **Red:** `server/api_tests/preview_fallback_test.go` — for every non-rasterisable type, assert
+      never 5xx. Seen red (all ten cases 500) before the fix. A zero-byte file *claiming* `image/png`
+      was added, since the allowlist alone does not catch it. Positive control:
+      `TestImageTransforms_AcceptRasterFormats` asserts both endpoints still succeed on a PNG.
+- [x] **Red:** same file — upload a PNG (and an RGBA PNG), rotate, assert `ContentType` is still
+      `image/png`, the stored extension is `.png`, and the alpha channel survives a decode. Seen red.
+      `TestRotateResource_PreservesJPEGFormat` is the counterpart control, so the fix is
+      format-preserving rather than PNG-forcing.
+- [x] **Red:** `server/api_tests/preview_fallback_test.go` — for every non-rasterisable type, assert
       `GET /v1/resource/preview` either 307s to the placeholder **or** returns an image whose decoded
-      dimensions are both > 0. Never a 200 with a 0×0 body.
-- [ ] **Green 1:** give `RotateResource` crop's encoder switch. Extract the shared
-      `format → encoder + extension` mapping out of `CropResource` so there is one table.
-- [ ] **Green 2:** gate both rotate and recalculate on decodability, not on the `image/` prefix.
-      Add `models.Resource.IsRasterImage()` beside `IsImage()` and use it at `:1315` and `:1258`;
-      return a 415 with a clear message for everything else.
+      dimensions are both > 0. Never a 200 with a 0×0 body. Seen red. Adds the *sequence* test
+      (`TestPreview_DimensionlessRequestDoesNotPoisonCache`), a repair test built on a real
+      `imaging.Resize(img, 0, 0)` artifact, and a raster positive control asserting previews are
+      genuinely served rather than redirected away.
+- [x] **Green 1:** extracted `encodeInSourceFormat` into `application_context/image_format.go`;
+      `CropResource` and `RotateResource` now share the one table. Rotate takes its extension from
+      the format it just encoded instead of `getExtensionFromFilename`, which preferred the
+      resource's *name* — the source of the `.png` path holding JPEG bytes. Rotate also gained
+      crop's ImageMagick fallback decoder, so the allowlist can honestly include HEIC/AVIF.
+- [x] **Green 2:** added `models.RasterImageContentTypes` + `models.Resource.IsRasterImage()` and
+      gated both entry points on it. New 415 tier in `statusCodeForError`, checked *before* the
+      validation patterns whose "must be"/"cannot be" wording would otherwise claim these first.
+      `GetBulkCalculateDimensionsHandler` no longer collapses every per-item cause into one opaque
+      500: `joinErrors` + `aggregateStatusCode` report the real status and message.
 - [ ] **Green 3 (revised after verification — this is the real defect):** break the preview
       cache-poisoning loop. Verification showed the 0×0 preview is not SVG-specific and not caused by
       a failed rotate; see "Phase 1 results that changed the plan" above. Three changes:
-  - [ ] `LoadOrCreateThumbnailForResource` must **refuse to persist** a `models.Preview` whose
-        decoded width or height is 0, and return `nil, nil` instead so the handler 307s to the
-        placeholder.
-  - [ ] Stop overloading Width=0/Height=0 as the "custom null thumbnail" sentinel (`:71-76`), or at
-        minimum require the stored bytes to decode to non-zero dimensions before treating a row as
-        the canonical source.
-  - [ ] Compute and store SVG intrinsic dimensions at upload (from the viewBox), so `knownAspect` is
-        true and `computeActualTargetDims` never returns `(0, 0)`.
-  - [ ] Add a one-off repair that deletes already-poisoned 0×0 preview rows on read.
-- [ ] **Green 4 (finding 86, UI gating):** hide Rotate / Recalculate Dimensions for non-raster
-      resources in `templates/displayResource.tpl`. The app already knows how — the lightbox crop
-      panel correctly hides itself and explains why for SVG/ICO/AVIF/HEIC. Reuse that predicate.
-- [ ] **73 is closed by Green 3** — verification showed the failed rotate is incidental; any
-      dimensionless preview request poisons the cache. Still worth confirming `RotateResource` does
-      not mutate state before its encode error (it deletes all `models.Preview` rows at `:1424`), and
-      making the transform atomic if it does.
-- [ ] **Proof:** the new Go tests; then in a browser, an SVG card in `/resources` and
-      `/resources/details` shows the file placeholder, and a rotated transparent PNG is still a PNG.
+  - [x] `LoadOrCreateThumbnailForResource` refuses to persist any derived `models.Preview` with a
+        zero dimension and returns `nil, nil`, so the handler 307s to the placeholder. Applied to
+        both save sites (the custom-null resize branch and the main one).
+  - [x] A (0, 0) row is only treated as canonical if its bytes decode to a non-empty raster
+        (`hasPixels`). This keeps the legitimate video/office null thumbnails working while making
+        the degenerate rows unusable as a source.
+  - [x] `svgIntrinsicDimensions` reads the viewBox at upload and in the shared
+        `getDimensionsFromContent`, so SVGs land with real dimensions (verified live: 120×60).
+        Belt-and-braces, `resizeForThumbnail` replaces every `imaging.Resize(img, 0, 0)` call — that
+        single library behaviour is what manufactured the 0×0 image — deriving the missing axis from
+        the source instead. This also fixes *existing* rows whose dimensions are unknown.
+  - [x] `discardPoisonedPreviews` deletes the degenerate rows on read, so the next request
+        regenerates from the original file.
+- [x] **Green 4 (finding 86, UI gating):** the details sidebar's image-operations group is gated on
+      a new `isRasterImage` template variable, which also let the two duplicated inline allowlist
+      strings go. The lightbox had the same defect in its **Rotate** button — gated on a bare
+      `image/` prefix, so it still offered rotate for ICO — so `cropPanel.js` now exposes one
+      `_isRasterImage` predicate and both buttons use it.
+- [x] **73 is closed by Green 3** — verification showed the failed rotate is incidental; any
+      dimensionless preview request poisons the cache. `RotateResource` checked against the plan's
+      specific worry and found clean: the gate, the decode and the encode all return **before** the
+      first write (the `storeVersionFile` call), so a failed rotate cannot degrade anything — which
+      is why the report's stated cause could not have been right. The version insert, resource
+      update and preview delete then run inside one transaction. Not made fully atomic: the lazy v1
+      back-fill `Create` still sits outside that transaction, as it does in `CropResource` too. That
+      is pre-existing, affects only resources predating the versioning system, and is out of scope
+      here — noted rather than fixed.
+- [x] **Proof:** 42 new subtests, each seen red first. Re-verified live on a reseeded instance —
+      the defects that only appear in request *sequences* were replayed end to end:
+
+      | | before | after |
+      |---|---|---|
+      | rotate SVG | 500 `image: unknown format` | 415 naming the format and the supported list |
+      | recalculate txt/json/csv/empty/SVG | 500 ×5 | 415 ×5 |
+      | rotate alpha PNG | `image/png` 1392B → `image/jpeg` 10243B | `image/png` 1392B → **1390B**, file magic `PNG … 8-bit/color RGBA` |
+      | rotate JPEG (control) | — | stays `image/jpeg`, `.jpg` |
+      | SVG stored dims | 0×0 | 120×60 from the viewBox |
+      | preview `?id=64&height=300` | 9777B 600×300 | 10959B 600×300 |
+      | preview `?id=64` (poison trigger) | 591B **0×0** | 1718B 120×60 |
+      | preview `?id=64&height=300` again | 591B **0×0** | 10959B 600×300, byte-identical to the baseline |
+      | preview `?id=64&height=400` | 591B **0×0** | 15902B 800×400 |
+      | preview txt/json/csv/empty | — | 307 → placeholder |
+      | details page, SVG | rotate + recalculate offered | neither offered; PNG still offers both |
 
 **Regression risk:** medium. Rotate's extension/`content_type` handling is load-bearing for the
 versions table; `resource-versioning.spec.ts` and `version-compare.spec.ts` must stay green.

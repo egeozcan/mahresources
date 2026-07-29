@@ -20,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anthonynsimon/bild/imgio"
 	"github.com/anthonynsimon/bild/transform"
 	"github.com/disintegration/imaging"
 	"github.com/spf13/afero"
@@ -73,7 +72,17 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(
 		Where("resource_id = ? AND width = 0 AND height = 0", resourceId).
 		Omit(clause.Associations).
 		First(&customNull).Error; err == nil {
-		hasCustomNull = true
+		// A (0, 0) row only means "canonical source" if its bytes really are
+		// an image. Deployments that ran the old pipeline have rows whose
+		// data decodes to 0x0 — the degenerate output of
+		// imaging.Resize(img, 0, 0) — and treating those as canonical is what
+		// made the breakage permanent: every size resized from a 0x0 source
+		// and produced another 0x0 (findings 72, 73). Repair them on read.
+		if hasPixels(customNull.Data) {
+			hasCustomNull = true
+		} else {
+			ctx.discardPoisonedPreviews(resourceId, httpContext)
+		}
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("error checking for custom thumbnail: %w", err)
 	}
@@ -116,6 +125,10 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(
 		saveW, saveH := targetW, targetH
 		if aw, ah, decErr := decodeImageDimensions(fileBytes); decErr == nil {
 			saveW, saveH = aw, ah
+		}
+		if saveW == 0 || saveH == 0 {
+			// Never cache a degenerate variant; fall back to the placeholder.
+			return nil, nil
 		}
 		preview := &models.Preview{
 			Data:        fileBytes,
@@ -216,6 +229,24 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(
 		}
 	} else {
 		saveW, saveH = width, height
+		// A dimensionless request leaves both at zero, which would write a row
+		// indistinguishable from the canonical-source sentinel. Record what we
+		// actually produced instead.
+		if saveW == 0 || saveH == 0 {
+			if aw, ah, decErr := decodeImageDimensions(fileBytes); decErr == nil {
+				saveW, saveH = aw, ah
+			}
+		}
+	}
+
+	// Invariant: a Preview row never carries a zero dimension unless it is a
+	// deliberate canonical-source row written by getOrCreateNullThumbnail.
+	// Persisting a derived 0-width or 0-height preview is what poisoned the
+	// cache, because such a row is indistinguishable from that sentinel.
+	// Returning nil here makes the handler redirect to the placeholder, the
+	// same answer .txt and .csv resources already get.
+	if saveW == 0 || saveH == 0 {
+		return nil, nil
 	}
 
 	preview := &models.Preview{
@@ -231,6 +262,18 @@ func (ctx *MahresourcesContext) LoadOrCreateThumbnailForResource(
 	}
 
 	return preview, nil
+}
+
+// discardPoisonedPreviews removes the degenerate rows left behind by the old
+// pipeline for a resource, so the next request regenerates from the original
+// file. Best effort: a failure here only costs a placeholder instead of a
+// preview, so it is logged rather than propagated.
+func (ctx *MahresourcesContext) discardPoisonedPreviews(resourceId uint, httpContext context.Context) {
+	if err := ctx.db.WithContext(httpContext).
+		Where("resource_id = ? AND (width = 0 OR height = 0)", resourceId).
+		Delete(&models.Preview{}).Error; err != nil {
+		log.Printf("warning: could not clear degenerate preview rows for resource %d: %v", resourceId, err)
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -406,8 +449,9 @@ func (ctx *MahresourcesContext) generateImageThumbnail(
 		return nil, fmt.Errorf("failed to decode image data: %w", err)
 	}
 
-	// Use imaging library for faster, high-quality resize with Lanczos filter
-	newImage := imaging.Resize(originalImage, int(width), int(height), imaging.Lanczos)
+	// Derive any axis the caller left at zero from the source image rather
+	// than passing the zero to imaging.Resize, which returns a 0x0 image.
+	newImage := resizeForThumbnail(originalImage, width, height)
 
 	// Use adaptive JPEG quality based on dimensions
 	quality := getJPEGQuality(width, height)
@@ -646,8 +690,10 @@ func (ctx *MahresourcesContext) generateSVGThumbnailFromFile(
 		return nil, fmt.Errorf("failed to decode SVG file: %w", err)
 	}
 
-	// Resize using imaging library with Lanczos filter
-	newImage := imaging.Resize(originalImage, int(width), int(height), imaging.Lanczos)
+	// Derive any axis the caller left at zero from the rasterised SVG. An
+	// SVG's stored Width/Height are 0 unless the upload path read its viewBox,
+	// so this path is the one that produced the 591-byte 0x0 JPEG.
+	newImage := resizeForThumbnail(originalImage, width, height)
 
 	// Encode as JPEG with adaptive quality
 	quality := getJPEGQuality(width, height)
@@ -678,8 +724,9 @@ func (ctx *MahresourcesContext) generateImageThumbnailFromFile(
 		return nil, fmt.Errorf("failed to decode image file: %w", err)
 	}
 
-	// Use imaging library for faster, high-quality resize with Lanczos filter
-	newImage := imaging.Resize(originalImage, int(width), int(height), imaging.Lanczos)
+	// Derive any axis the caller left at zero from the source image rather
+	// than passing the zero to imaging.Resize, which returns a 0x0 image.
+	newImage := resizeForThumbnail(originalImage, width, height)
 
 	// Use adaptive JPEG quality based on dimensions
 	quality := getJPEGQuality(width, height)
@@ -1194,7 +1241,7 @@ func (ctx *MahresourcesContext) generateOfficeDocumentThumbnail(
 				return fmt.Errorf("failed to decode generated PNG: %w", err)
 			}
 
-			newImage := imaging.Resize(img, int(width), int(height), imaging.Lanczos)
+			newImage := resizeForThumbnail(img, width, height)
 
 			quality := getJPEGQuality(width, height)
 			var buf bytes.Buffer
@@ -1262,6 +1309,13 @@ func (ctx *MahresourcesContext) RecalculateResourceDimensions(query *query_model
 		return err
 	}
 
+	// This had no content-type check at all, so text, JSON and zero-byte
+	// resources ran straight into the decoder and came back as a 500
+	// (finding 10).
+	if !resource.IsRasterImage() {
+		return errNotRasterImage("dimension recalculation", resource.ContentType)
+	}
+
 	fs, storageErr := ctx.GetFsForStorageLocation(resource.StorageLocation)
 
 	if storageErr != nil {
@@ -1279,7 +1333,7 @@ func (ctx *MahresourcesContext) RecalculateResourceDimensions(query *query_model
 	img, _, err := image.Decode(file)
 
 	if err != nil {
-		return err
+		return errUndecodableImage("dimension recalculation", resource.ContentType, err)
 	}
 
 	bounds := img.Bounds()
@@ -1303,7 +1357,7 @@ func (ctx *MahresourcesContext) SetResourceDimensions(resourceId uint, width, he
 	return ctx.db.Save(&resource).Error
 }
 
-func (ctx *MahresourcesContext) RotateResource(resourceId uint, degrees int) error {
+func (ctx *MahresourcesContext) RotateResource(httpContext context.Context, resourceId uint, degrees int) error {
 	// Acquire version lock to prevent concurrent version operations
 	ctx.locks.VersionUploadLock.Acquire(resourceId)
 	defer ctx.locks.VersionUploadLock.Release(resourceId)
@@ -1313,8 +1367,11 @@ func (ctx *MahresourcesContext) RotateResource(resourceId uint, degrees int) err
 		return err
 	}
 
-	if !resource.IsImage() {
-		return errors.New("not an image")
+	// Gate on what we can actually decode, not on a bare "image/" prefix.
+	// IsImage() also matches image/svg+xml, which reached the decoder below
+	// and surfaced as a 500 carrying "image: unknown format" (finding 11).
+	if !resource.IsRasterImage() {
+		return errNotRasterImage("rotation", resource.ContentType)
 	}
 
 	// Use correct filesystem for this resource's storage location
@@ -1327,32 +1384,44 @@ func (ctx *MahresourcesContext) RotateResource(resourceId uint, degrees int) err
 	if err != nil {
 		return err
 	}
-
-	img, _, err := image.Decode(f)
-	if err != nil {
-		f.Close()
-		return err
-	}
+	srcBytes, readErr := io.ReadAll(f)
 	f.Close()
+	if readErr != nil {
+		return fmt.Errorf("failed to read source image: %w", readErr)
+	}
+
+	img, format, decodeErr := image.Decode(bytes.NewReader(srcBytes))
+	if decodeErr != nil {
+		// Same fallback CropResource uses, so the allowlist above can honestly
+		// include the formats Go has no native decoder for (HEIC, AVIF, …).
+		fallbackImg, fbErr := ctx.decodeImageWithFallback(httpContext, bytes.NewReader(srcBytes))
+		if fbErr != nil {
+			return errUndecodableImage("rotation", resource.ContentType, decodeErr)
+		}
+		img = fallbackImg
+		format = decodeFallbackFormat
+	}
 
 	rotatedImage := transform.Rotate(img, float64(degrees), &transform.RotationOptions{ResizeBounds: true})
 
-	var buf bytes.Buffer
-	if err := imgio.JPEGEncoder(100)(&buf, rotatedImage); err != nil {
-		return err
+	// Preserve the source format. This used to be an unconditional
+	// imgio.JPEGEncoder(100), so rotating a 1.4 KB transparent PNG produced a
+	// 10 KB JPEG with its alpha channel flattened onto black (finding 12).
+	encoded, encodeErr := encodeInSourceFormat(rotatedImage, format)
+	if encodeErr != nil {
+		return fmt.Errorf("failed to encode rotated image: %w", encodeErr)
 	}
 
 	// Create a new version with the rotated content instead of overwriting in place.
 	// This preserves the original, updates the hash, and respects the versioning system.
-	rotatedBytes := buf.Bytes()
+	rotatedBytes := encoded.Data
 	hash := computeSHA1(rotatedBytes)
 	contentType := detectContentType(rotatedBytes)
 	width, height := getDimensionsFromContent(rotatedBytes, contentType)
-	ext := getExtensionFromFilename(resource.Name, contentType)
-	if ext == "" {
-		ext = ".jpg" // Rotation always re-encodes as JPEG
-	}
-	location := buildVersionResourcePath(hash, ext)
+	// Take the extension from the format we just encoded, never from the
+	// resource's name: getExtensionFromFilename prefers path.Ext(name), so a
+	// re-encoded "foo.png" kept a .png path while holding JPEG bytes.
+	location := buildVersionResourcePath(hash, encoded.Ext)
 
 	// Store the rotated file (deduplication: skip if already exists)
 	if exists, _ := afero.Exists(ctx.fs, location); !exists {
@@ -1397,7 +1466,7 @@ func (ctx *MahresourcesContext) RotateResource(resourceId uint, degrees int) err
 		Width:         width,
 		Height:        height,
 		Location:      location,
-		Comment:       fmt.Sprintf("Rotated %d degrees", degrees),
+		Comment:       fmt.Sprintf("Rotated %d degrees", degrees) + encoded.Note,
 	}
 
 	tx := ctx.db.Begin()
@@ -1499,7 +1568,7 @@ func (ctx *MahresourcesContext) CropResource(
 			return fmt.Errorf("image cannot be cropped: decode failed (source %d bytes, content-type %q): %w", len(srcBytes), resource.ContentType, decodeErr)
 		}
 		img = fallbackImg
-		format = "fallback"
+		format = decodeFallbackFormat
 	}
 
 	bounds := img.Bounds()
@@ -1516,57 +1585,14 @@ func (ctx *MahresourcesContext) CropResource(
 	cropRect := image.Rect(bounds.Min.X+x, bounds.Min.Y+y, bounds.Min.X+x+width, bounds.Min.Y+y+height)
 	cropped := imaging.Crop(img, cropRect)
 
-	var outBuf bytes.Buffer
-	var outExt string
-	var formatNote string
-	switch format {
-	case "jpeg":
-		if err := imaging.Encode(&outBuf, cropped, imaging.JPEG, imaging.JPEGQuality(95)); err != nil {
-			return fmt.Errorf("failed to encode cropped JPEG: %w", err)
-		}
-		outExt = ".jpg"
-	case "png":
-		if err := imaging.Encode(&outBuf, cropped, imaging.PNG); err != nil {
-			return fmt.Errorf("failed to encode cropped PNG: %w", err)
-		}
-		outExt = ".png"
-	case "gif":
-		if err := imaging.Encode(&outBuf, cropped, imaging.PNG); err != nil {
-			return fmt.Errorf("failed to encode cropped GIF as PNG: %w", err)
-		}
-		outExt = ".png"
-		formatNote = " (animation dropped, re-encoded as PNG)"
-	case "webp":
-		if err := imaging.Encode(&outBuf, cropped, imaging.PNG); err != nil {
-			return fmt.Errorf("failed to encode cropped WebP as PNG: %w", err)
-		}
-		outExt = ".png"
-		formatNote = " (re-encoded as PNG)"
-	case "bmp":
-		if err := imaging.Encode(&outBuf, cropped, imaging.PNG); err != nil {
-			return fmt.Errorf("failed to encode cropped BMP as PNG: %w", err)
-		}
-		outExt = ".png"
-		formatNote = " (re-encoded as PNG)"
-	case "tiff":
-		if err := imaging.Encode(&outBuf, cropped, imaging.PNG); err != nil {
-			return fmt.Errorf("failed to encode cropped TIFF as PNG: %w", err)
-		}
-		outExt = ".png"
-		formatNote = " (re-encoded as PNG)"
-	case "fallback":
-		// Anything that needed ImageMagick (HEIC/AVIF/…) goes out as PNG
-		// to preserve transparency and avoid lossy re-encoding.
-		if err := imaging.Encode(&outBuf, cropped, imaging.PNG); err != nil {
-			return fmt.Errorf("failed to encode fallback-decoded image as PNG: %w", err)
-		}
-		outExt = ".png"
-		formatNote = " (decoded via ImageMagick, re-encoded as PNG)"
-	default:
-		return fmt.Errorf("image format %q cannot be cropped", format)
+	encoded, encodeErr := encodeInSourceFormat(cropped, format)
+	if encodeErr != nil {
+		return fmt.Errorf("failed to encode cropped image: %w", encodeErr)
 	}
+	outExt := encoded.Ext
+	formatNote := encoded.Note
 
-	croppedBytes := outBuf.Bytes()
+	croppedBytes := encoded.Data
 	hash := computeSHA1(croppedBytes)
 	contentType := detectContentType(croppedBytes)
 	outW, outH := getDimensionsFromContent(croppedBytes, contentType)

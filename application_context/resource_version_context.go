@@ -273,6 +273,13 @@ func getDimensionsFromContent(content []byte, contentType string) (uint, uint) {
 	if !strings.HasPrefix(contentType, "image/") {
 		return 0, 0
 	}
+	// SVG has no raster header to read; its size lives in the viewBox.
+	if models.BaseContentType(contentType) == "image/svg+xml" {
+		if w, h, ok := svgIntrinsicDimensions(content); ok {
+			return w, h
+		}
+		return 0, 0
+	}
 	reader := bytes.NewReader(content)
 	config, _, err := image.DecodeConfig(reader)
 	if err != nil {

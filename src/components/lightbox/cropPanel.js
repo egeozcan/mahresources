@@ -17,9 +17,11 @@ export const cropPanelState = {
   rotating: false,
 };
 
-// Content types the crop tool supports, mirroring the raster allowlist used on
-// the resource details page (displayResource.tpl). Excludes SVG and video.
-const CROPPABLE_CONTENT_TYPES = new Set([
+// Content types the pixel editors (crop and rotate) support, mirroring
+// models.RasterImageContentTypes on the server and the `isRasterImage` gate on
+// the resource details page. Excludes SVG, ICO and video: the server answers
+// those with a 415, so offering the buttons only produces a failed request.
+const RASTER_EDITABLE_CONTENT_TYPES = new Set([
   'image/jpeg',
   'image/png',
   'image/gif',
@@ -32,13 +34,18 @@ const CROPPABLE_CONTENT_TYPES = new Set([
 ]);
 
 export const cropPanelMethods = {
+  // Canonical predicate for both pixel-editing actions.
+  _isRasterImage(contentType) {
+    return RASTER_EDITABLE_CONTENT_TYPES.has(contentType);
+  },
+
   _isCroppable(contentType) {
-    return CROPPABLE_CONTENT_TYPES.has(contentType);
+    return this._isRasterImage(contentType);
   },
 
   openCrop() {
     const item = this.getCurrentItem();
-    if (!item || !this._isCroppable(item.contentType)) return;
+    if (!item || !this._isRasterImage(item.contentType)) return;
     // On narrow viewports the side panels and the crop overlay compete for the
     // same space; close them so the crop UI gets the full width.
     if (window.innerWidth < 1024) {

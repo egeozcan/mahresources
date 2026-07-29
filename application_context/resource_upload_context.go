@@ -602,6 +602,16 @@ func (ctx *MahresourcesContext) AddResource(file contracts.File, fileName string
 			if errors.Is(decErr, image.ErrFormat) {
 				preWidth = 0
 				preHeight = 0
+				// An SVG does carry its natural size, in its viewBox. Reading
+				// it keeps the resource out of the "unknown aspect" state that
+				// the preview pipeline handles worst (findings 72, 73).
+				if models.BaseContentType(fileMime.String()) == "image/svg+xml" {
+					if _, seekErr := tempFile.Seek(0, io.SeekStart); seekErr == nil {
+						if w, h, ok := svgIntrinsicDimensionsFromReader(tempFile); ok {
+							preWidth, preHeight = int(w), int(h)
+						}
+					}
+				}
 			} else {
 				// BH-011 regression guard: genuine decode failure
 				// (truncated PNG, corrupted JPEG, etc.) — reject.
