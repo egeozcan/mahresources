@@ -1,0 +1,1 @@
+A plain text resource. Preview should 307 to the file placeholder.
