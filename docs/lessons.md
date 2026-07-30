@@ -392,3 +392,42 @@ opened at the viewport origin (top-left). Nothing threw, and no test covered the
 Diagnose it by comparing `el._x_refs` (correct) against `el._x_refs_proxy` (empty). Fix: resolve
 refs through the field's own subtree (`this.$refs?.[name] || this.$el.querySelector('[x-ref=…]')`)
 so a lookup is correct whenever it happens, instead of depending on init ordering.
+
+## `locator.focus()` manufactures the state you meant to test for
+A test for "this scrollable region is keyboard operable" called `wrap.focus()` and then asserted
+that ArrowRight moved `scrollLeft`. It passed against the unfixed page. Playwright's
+`locator.focus()` calls `element.focus()`, and Chromium honours that on a `<div>` with no
+`tabindex` at all — so `document.activeElement` became the wrapper, the arrow key scrolled it
+(measured `scrollLeft` 0 → 80), and the assertion was green while **60 consecutive Tab presses
+never landed on the element once**. Programmatic focus is not keyboard operability. When the
+subject is "can a keyboard user reach this", drive the key that reaches it: loop `Tab` and assert
+the element becomes `document.activeElement`. This is the existing "assert the browser's behaviour,
+not the attribute's text" lesson one level further out — the *test API* can also fabricate the
+precondition.
+
+## `<tag[^>]*>` is wrong on Alpine markup, and it fails open
+Alpine attribute values routinely contain a literal `>`:
+`:aria-expanded="groupResults.length > 0"`. A `[^>]*` attribute run stops inside that value, so
+every attribute after it looks absent. Four Go assertions reported missing `aria-label` /
+`aria-controls` on markup that had them. The direction matters: for a *presence* check this is a
+false negative that shows up as a confusing failure, but for an *absence* check ("this page no
+longer ships X") it is a false positive that passes forever. Use a quote-aware scan that walks to
+the real tag boundary — `findOpenTag`/`openTagsWithin` in
+`server/api_tests/ws5_keyboard_names_headings_test.go`.
+
+## A fixture that omits the field under test makes the whole spec vacuous
+`04-a11y-heading-level-skip.spec.ts` has always checked `/note?id=` for heading-level skips, and
+the skip it was written to catch comes from the owner-group card in the sidebar disclosure. But
+`a11y.fixture.ts` creates its note *without* an owner — "without tags/groups to avoid GORM
+association issues" — so the card never rendered and the outline was clean by construction. The
+test could not fail for the entire time the bug existed. When a spec asserts something about an
+optional relationship, check that the fixture actually creates the relationship, and say in the
+fixture why the field is there.
+
+## An `$el` bug is rarely alone in its component
+`this.$el` in an Alpine method is the element whose directive is evaluating, which this file already
+records twice. The third occurrence came with a corollary: once found in `focusPickerItem()`, the
+identical call shape was in two more methods of the same component, both invoked from a button
+inside an `x-for` row, and one of them sat directly under a comment claiming it kept focus off
+`<body>`. Measured, it did not. After fixing one `$el`-scoping bug, grep the whole component for
+`this.$el` and check each remaining one against the element that actually invokes the method.

@@ -12,9 +12,9 @@
                 {% endif %}
             </div>
             <div class="card-title-section">
-                <h3 class="card-title">
+                <h2 class="card-title">
                     <a href="/note?id={{ entity.ID }}">{{ entity.Name }}</a>
-                </h3>
+                </h2>
                 {% process_shortcodes entity.NoteType.CustomSummary entity %}
             </div>
         </header>

@@ -4,9 +4,9 @@
     <div class="list-container">
         {% for resourceCategory in resourceCategories %}
             <article class="card resource-category-card">
-                <h3 class="card-title card-title--simple">
+                <h2 class="card-title card-title--simple">
                     <a href="/resourceCategory?id={{ resourceCategory.ID }}">{{ resourceCategory.Name }}</a>
-                </h3>
+                </h2>
                 {% if resourceCategory.Description %}
                 <div class="card-description">
                     {% include "/partials/description.tpl" with description=resourceCategory.Description preview=true %}

@@ -4,9 +4,9 @@
     <div class="list-container">
         {% for partial in partials %}
             <article class="card template-partial-card">
-                <h3 class="card-title card-title--simple">
+                <h2 class="card-title card-title--simple">
                     <a href="/templatePartial?id={{ partial.ID }}">{{ partial.Name }}</a>
-                </h3>
+                </h2>
                 {% if partial.Description %}
                 <div class="card-description">
                     {% include "/partials/description.tpl" with description=partial.Description preview=true %}

@@ -3,7 +3,10 @@
 {% block body %}
 <section class="space-y-5" data-testid="admin-shares">
   <header class="space-y-1">
-    <h1 class="text-lg font-semibold font-mono text-stone-800">Shared Notes</h1>
+    {# Finding 110: partials/title.tpl already renders an <h1> from pageTitle #}
+    {# ("Shared Notes"), so this was the page's second <h1> with identical text and #}
+    {# heading navigation reported two page titles. #}
+    <h2 class="text-lg font-semibold font-mono text-stone-800">Shared Notes</h2>
     <p class="text-sm text-stone-500">Every note currently reachable via a public share token. Revoke a single share with the button on the row; bulk-revoke with the selection checkboxes.</p>
   </header>
 

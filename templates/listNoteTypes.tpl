@@ -4,9 +4,9 @@
     <div class="list-container">
         {% for noteType in noteTypes %}
             <article class="card note-type-card">
-                <h3 class="card-title card-title--simple">
+                <h2 class="card-title card-title--simple">
                     <a href="/noteType?id={{ noteType.ID }}">{{ noteType.Name }}</a>
-                </h3>
+                </h2>
                 {% if noteType.Description %}
                 <div class="card-description">
                     {% include "/partials/description.tpl" with description=noteType.Description preview=true %}

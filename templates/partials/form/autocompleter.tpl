@@ -15,9 +15,18 @@
         data-selector-profile="{{ profile }}"
         class="relative w-full"
 >
+    {# Finding 58: min=1 already told this partial the field is required — the #}
+    {# relation-type form passes it for both From Category and To Category, and the #}
+    {# server rejects a submit without them — but nothing was ever marked. Only the #}
+    {# Name field (a different partial) rendered the "*"/Required pair, so a #}
+    {# screen-reader user got no warning before submitting and no aria-invalid #}
+    {# afterwards. The marker is derived from min rather than a new parameter so #}
+    {# every existing call site that already declares a minimum gets it. #}
+    {% with isRequired=min|default:0 %}
     {% if title %}
-    <label class="block text-xs font-mono font-medium text-stone-600 mt-2" id="{{ id }}-label" for="{{ id }}">{{ title }}</label>
+    <label class="block text-xs font-mono font-medium text-stone-600 mt-2" id="{{ id }}-label" for="{{ id }}">{{ title }}{% if isRequired %} <span class="text-red-700" aria-hidden="true">*</span>{% endif %}</label>
     {% endif %}
+    {% if isRequired %}<span class="text-xs font-sans text-stone-500" id="{{ id }}-required">Required</span>{% endif %}
     {% include "/partials/form/formParts/errorMessage.tpl" %}
     <template x-if="!addModeForTag">
         <div>
@@ -34,7 +43,11 @@
                     :aria-expanded="dropdownActive && (results.length > 0 || createCandidate)"
                     aria-controls="{{ id }}-listbox"
                     {% if title %}aria-labelledby="{{ id }}-label"{% endif %}
-                    :aria-describedby="errorMessage ? '{{ id }}-error' : null"
+                    {% if isRequired %}aria-required="true"{% endif %}
+                    {# aria-invalid is bound, not static: it has to become true when the #}
+                    {# server rejects the submit and errorMessage is populated. #}
+                    :aria-invalid="errorMessage ? 'true' : null"
+                    :aria-describedby="errorMessage ? '{{ id }}-error' : {% if isRequired %}'{{ id }}-required'{% else %}null{% endif %}"
                     aria-owns="{{ id }}-listbox"
                     :aria-activedescendant="selectedIndex >= 0 ? '{{ id }}-result-' + selectedIndex : null"
             >
@@ -74,3 +87,4 @@
     </template>
     <input type="hidden" name="{{ elName }}" value="" :disabled="selectedResults.length > 0">
 </div>
+{% endwith %}

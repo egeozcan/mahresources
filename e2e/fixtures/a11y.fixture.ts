@@ -90,11 +90,21 @@ async function createTestData(baseURL: string): Promise<A11yTestData & { cleanup
   });
   createdIds.group2Id = group2.ID;
 
-  // 6. Note (without tags/groups to avoid GORM association issues)
+  // 6. Note (no tags/groups many-to-many associations, to avoid GORM issues — but it
+  // does carry an ownerId).
+  //
+  // ownerId is load-bearing, not incidental. The note-detail heading-order test below
+  // renders the owner group's card in the sidebar's "Owner:" disclosure, and that card
+  // is where the H1 -> H3 level skip came from (UI bug hunt 2026-07-29, finding 127).
+  // Without an owner the note has no owner card, the outline is clean by construction,
+  // and '04-a11y-heading-level-skip.spec.ts' passed against the bug for the entire time
+  // it existed. ownerId is a scalar foreign key, not one of the associations the
+  // original comment was avoiding.
   const note = await client.createNote({
     name: `A11y Test Note ${uniqueSuffix}`,
     description: 'This is a note created for accessibility testing. It contains enough text to test expandable text components and other UI elements.',
     noteTypeId: noteType.ID,
+    ownerId: group1.ID,
   });
   createdIds.noteId = note.ID;
 

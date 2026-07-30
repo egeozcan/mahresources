@@ -12,7 +12,7 @@
             <div x-ref="modalContent" x-trap.noscroll.noreturn="open" class="relative bg-white rounded-lg shadow-2xl flex flex-col" style="width:90vw;max-width:1400px;height:80vh;max-height:100vh;overflow-x:auto;" role="dialog" aria-modal="true" aria-label="Meta JSON Schema Editor">
                 <!-- Header -->
                 <div class="flex items-center border-b border-stone-200 px-4 bg-stone-50 rounded-t-lg">
-                    <h3 class="text-sm font-medium font-mono text-stone-700 py-3 mr-6">Meta JSON Schema</h3>
+                    <h2 class="text-sm font-medium font-mono text-stone-700 py-3 mr-6">Meta JSON Schema</h2>
                     <div role="tablist" aria-label="Schema editor views" class="flex gap-0 -mb-px" @keydown="handleTabKeydown($event)">
                         <button type="button" role="tab" :aria-selected="tab === 'edit'" :tabindex="tab === 'edit' ? 0 : -1" id="tab-edit" aria-controls="panel-edit" class="px-4 py-2.5 text-xs font-medium font-mono" :class="tab === 'edit' ? 'text-indigo-700 border border-stone-200 border-b-white bg-white rounded-t-md' : 'text-stone-500 bg-transparent border-none'" @click="tab = 'edit'">Edit Schema</button>
                         <button type="button" role="tab" :aria-selected="tab === 'preview'" :tabindex="tab === 'preview' ? 0 : -1" id="tab-preview" aria-controls="panel-preview" class="px-4 py-2.5 text-xs font-medium font-mono" :class="tab === 'preview' ? 'text-indigo-700 border border-stone-200 border-b-white bg-white rounded-t-md' : 'text-stone-500 bg-transparent border-none'" @click="tab = 'preview'">Preview Form</button>

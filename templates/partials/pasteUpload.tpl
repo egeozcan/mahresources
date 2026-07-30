@@ -25,8 +25,15 @@
              x-trap.noscroll="$store.pasteUpload.isOpen">
             {# Header #}
             <div class="flex items-center justify-between px-4 py-3 border-b border-stone-200">
+                {# Finding 144: this read "Upload to " + (name || 'Unknown'), and the #}
+                {# store's context is null until a paste actually happens — so the #}
+                {# heading was the literal "Upload to Unknown" on every page that #}
+                {# includes this partial (resource, group and note detail alike), and #}
+                {# stayed that way for any paste context that carries no name. There #}
+                {# is no target to name in that state, so the heading does not invent #}
+                {# one. #}
                 <h2 id="paste-upload-title" class="text-lg font-semibold text-stone-900">
-                    Upload to <span x-text="$store.pasteUpload.context?.name || 'Unknown'"></span>
+                    <span x-text="$store.pasteUpload.context?.name ? 'Upload to ' + $store.pasteUpload.context.name : 'Upload files'"></span>
                 </h2>
                 <button @click="$store.pasteUpload.state !== 'uploading' && $store.pasteUpload.close()"
                         :disabled="$store.pasteUpload.state === 'uploading'"

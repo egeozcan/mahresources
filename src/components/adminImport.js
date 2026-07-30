@@ -24,6 +24,10 @@ export function adminImport() {
     parentGroupQuery: '',
     parentGroupResults: [],
     parentGroupName: '',
+    // -1 = no option marked. Drives aria-activedescendant (findings 36/105).
+    parentActiveIndex: -1,
+    // Monotonic counter so a slow earlier search cannot overwrite a newer one.
+    _parentSearchGeneration: 0,
     flattenedItems: [],  // pre-computed flat list with depth for rendering
 
     // Apply state
@@ -466,19 +470,64 @@ export function adminImport() {
 
     // --- Parent group search ---
 
+    /**
+     * Move the active-descendant marker in the parent-group listbox.
+     *
+     * Findings 36/105: ArrowDown used to leave focus in the input and do nothing.
+     * Focus stays on the input by design (the combobox pattern); the options carry
+     * tabindex="-1" and only aria-activedescendant moves.
+     */
+    moveParentActive(delta) {
+      if (!this.parentGroupResults.length) return;
+      const last = this.parentGroupResults.length - 1;
+      let next = this.parentActiveIndex + delta;
+      if (next < 0) next = last;
+      if (next > last) next = 0;
+      this.parentActiveIndex = next;
+    },
+
+    commitParentActive() {
+      const g = this.parentGroupResults[this.parentActiveIndex];
+      if (g) this.selectParentGroup(g);
+    },
+
+    /** One place that applies a selection, so the click and Enter paths cannot drift. */
+    selectParentGroup(g) {
+      this.decisions.parent_group_id = g.id;
+      this.parentGroupName = g.name;
+      this.parentGroupQuery = '';
+      this.parentGroupResults = [];
+      this.parentActiveIndex = -1;
+    },
+
+    /**
+     * Search groups for the parent picker.
+     *
+     * Generation-guarded for the same reason as adminExport.searchGroups: with two
+     * requests in flight, a slow earlier one resolving last overwrote the newer
+     * results. No abort, no ordering check — the race src/selector/ was built to
+     * eliminate. Found while adding the ARIA for findings 36/105.
+     */
     async searchParentGroups() {
+      const generation = ++this._parentSearchGeneration;
       if (!this.parentGroupQuery) {
         this.parentGroupResults = [];
+        this.parentActiveIndex = -1;
         return;
       }
       try {
         const res = await fetch('/v1/groups?name=' + encodeURIComponent(this.parentGroupQuery) + '&maxResults=10');
+        if (generation !== this._parentSearchGeneration) return;
         if (!res.ok) return;
         const data = await res.json();
+        if (generation !== this._parentSearchGeneration) return;
         const list = Array.isArray(data) ? data : (data.items || []);
         this.parentGroupResults = list.map(g => ({ id: g.ID || g.id, name: g.Name || g.name }));
+        this.parentActiveIndex = -1;
       } catch (e) {
+        if (generation !== this._parentSearchGeneration) return;
         this.parentGroupResults = [];
+        this.parentActiveIndex = -1;
       }
     },
 

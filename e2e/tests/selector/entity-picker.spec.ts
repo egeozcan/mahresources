@@ -491,10 +491,17 @@ test.describe('Entity Picker - Group Selection', () => {
 
     await page.locator('button:has-text("Edit Blocks")').click();
 
-    // Find any remove button for the Selectable Test Group and click the first one
-    // (multiple blocks may have this group, but removing from any one proves the feature works)
-    const removeButtons = page.locator('button[title="Remove"]');
+    // Locate the remove control by its accessible name.
+    //
+    // This used to be `button[title="Remove"]`, which matched every remove control in
+    // the block editor regardless of what it removed — a locator wider than its
+    // subject, in a test whose own comment says it is about the Selectable Test Group.
+    // WS5 finding 48 replaced those undescriptive `title="Remove"` names with
+    // aria-labels that say what is being removed, so the locator can now be scoped to
+    // the group this test names.
+    const removeButtons = page.locator('button[aria-label="Remove Selectable Test Group"]');
     const initialCount = await removeButtons.count();
+    expect(initialCount, 'the reference chip for the group must be present to remove').toBeGreaterThan(0);
     await removeButtons.first().click();
 
     // Wait for the removal to take effect by checking the button count decreased

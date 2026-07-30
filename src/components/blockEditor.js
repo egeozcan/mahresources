@@ -107,6 +107,22 @@ export function blockEditor(noteId, initialBlocks = []) {
 
 
     async init() {
+      // The component root, captured once.
+      //
+      // UI bug hunt 2026-07-29, finding 6: `this.$el` inside an Alpine component
+      // method is the element whose directive is evaluating — not the component
+      // root. focusPickerItem() is invoked from @keydown on an <li role="option">,
+      // so `this.$el.querySelector('#add-block-listbox')` looked for the listbox
+      // *inside one of its own options*, got null, and skipped the .focus() call
+      // without erroring. Measured: activePickerIndex walked 0→1→2→1→7→0 and the
+      // roving tabindex/aria-selected followed it perfectly, while
+      // document.activeElement never left option 0 — so a keyboard user could
+      // only ever insert the first block type. The $watch below worked because a
+      // watcher registered in init() evaluates with $el === the root.
+      //
+      // Same trap as descriptionEditor.js and adminExport.js in docs/lessons.md.
+      this._root = this.$el;
+
       // Load block types from API if not already loaded
       if (!this._blockTypesLoaded) {
         await this.loadBlockTypes();
@@ -119,19 +135,22 @@ export function blockEditor(noteId, initialBlocks = []) {
       this.$watch('addBlockPickerOpen', (open) => {
         if (open) {
           this.activePickerIndex = 0;
-          this.$nextTick(() => {
-            const listbox = this.$el.querySelector('#add-block-listbox');
-            if (listbox) {
-              const first = listbox.querySelector('[role="option"][tabindex="0"]');
-              if (first) first.focus();
-            }
-          });
+          this.$nextTick(() => this._focusActivePickerOption());
         } else {
-          // Restore focus to the trigger when the picker closes (Esc, click-away,
-          // Tab, or after a selection) so keyboard users are not stranded at <body>.
+          // Restore focus to the trigger when the picker closes (Esc, click-away
+          // or after a selection) so keyboard users are not stranded at <body> —
+          // but only when focus is still inside the listbox that is going away.
+          // Tab no longer preventDefaults (finding 6), so the browser has already
+          // moved focus onward by the time this runs, and pulling it back to the
+          // trigger would make Tab appear not to work.
           this.$nextTick(() => {
-            const trigger = this.$el.querySelector('[data-testid="add-block-trigger"]');
-            if (trigger && this.editMode) trigger.focus();
+            const root = this._root;
+            if (!root || !this.editMode) return;
+            const active = document.activeElement;
+            const focusEscaped = active && active !== document.body && !root.contains(active);
+            if (focusEscaped) return;
+            const trigger = root.querySelector('[data-testid="add-block-trigger"]');
+            if (trigger) trigger.focus();
           });
         }
       });
@@ -182,16 +201,26 @@ export function blockEditor(noteId, initialBlocks = []) {
       }
     },
 
-    // Move roving focus within the add-block picker listbox
+    // Move roving focus within the add-block picker listbox.
     focusPickerItem(newIndex) {
       this.activePickerIndex = newIndex;
-      this.$nextTick(() => {
-        const listbox = this.$el.querySelector('#add-block-listbox');
-        if (listbox) {
-          const active = listbox.querySelector('[role="option"][tabindex="0"]');
-          if (active) active.focus();
-        }
-      });
+      this.$nextTick(() => this._focusActivePickerOption());
+    },
+
+    /**
+     * Put DOM focus on whichever option the roving tabindex currently marks.
+     *
+     * Reads `this._root` rather than `this.$el` — see the note in init(). Both the
+     * open-watcher and focusPickerItem() go through here so the two paths cannot
+     * drift apart again: it was the watcher working and focusPickerItem() not that
+     * produced finding 6's signature, a listbox whose ARIA state was correct and
+     * whose focus never moved.
+     */
+    _focusActivePickerOption() {
+      const listbox = this._root?.querySelector('#add-block-listbox');
+      if (!listbox) return;
+      const option = listbox.querySelector('[role="option"][tabindex="0"]');
+      if (option) option.focus();
     },
 
     async loadBlockTypes() {
@@ -271,7 +300,9 @@ export function blockEditor(noteId, initialBlocks = []) {
     // is re-rendered, so keyboard users are not dropped to <body> on reorder/add.
     focusBlockControls(blockId) {
       this.$nextTick(() => {
-        const card = this.$el.querySelector(`[data-block-id="${blockId}"]`);
+        // this._root, not this.$el — see the note in init(). $el here is whichever
+        // block control was clicked, and a control contains no [data-block-id].
+        const card = this._root?.querySelector(`[data-block-id="${blockId}"]`);
         if (!card) return;
         const btn = card.querySelector('[data-block-control]:not([disabled])');
         if (btn) btn.focus();
@@ -413,11 +444,18 @@ export function blockEditor(noteId, initialBlocks = []) {
         // Move focus to a sensible neighbor (the block now occupying the deleted
         // slot, else the add-block trigger) so keyboard users are not stranded.
         this.$nextTick(() => {
-          const cards = this.$el.querySelectorAll('[data-block-id]');
+          // this._root, not this.$el: this method is invoked from the deleted block's
+          // own Delete button, so $el was that button — querySelectorAll returned an
+          // empty list, the trigger lookup returned null, and focus was left on
+          // <body> while this comment claimed otherwise. Measured after the finding-6
+          // fix exposed the pattern.
+          const root = this._root;
+          if (!root) return;
+          const cards = root.querySelectorAll('[data-block-id]');
           const target = cards[Math.min(removedIdx, cards.length - 1)];
           const btn = target && target.querySelector('[data-block-control]:not([disabled])');
           if (btn) { btn.focus(); return; }
-          const trigger = this.$el.querySelector('[data-testid="add-block-trigger"]');
+          const trigger = root.querySelector('[data-testid="add-block-trigger"]');
           if (trigger) trigger.focus();
         });
       } catch (err) {

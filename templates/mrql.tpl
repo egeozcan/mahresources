@@ -773,9 +773,13 @@
                             <span class="text-sm font-medium text-stone-900 truncate block" x-text="q.name"></span>
                             <span class="text-xs text-stone-500 font-mono truncate block" x-text="q.query"></span>
                         </button>
+                        {# Finding 99: this was opacity-0 until :hover/:focus, so on a touch #}
+                        {# device the only way to delete a saved query was invisible and     #}
+                        {# unreachable, and the button measured 35x16 against the WCAG 2.2   #}
+                        {# SC 2.5.8 24x24 minimum. Always painted, and 24px tall.            #}
                         <button type="button"
                                 @click="deleteSavedQuery(q.id, q.name)"
-                                class="ml-2 text-xs text-red-600 hover:text-red-800 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex-shrink-0 cursor-pointer"
+                                class="saved-query-delete ml-2 text-xs text-stone-500 hover:text-red-700 focus-visible:text-red-700 transition-colors cursor-pointer"
                                 :aria-label="'Delete saved query: ' + q.name">
                             Delete
                         </button>

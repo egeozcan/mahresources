@@ -38,7 +38,7 @@
         <div x-show="showTemplateDocs" x-collapse id="rc-template-docs-panel"
              class="text-sm text-stone-600 bg-white border border-stone-200 rounded-md p-4 space-y-3 font-sans">
             <div>
-                <h3 class="font-semibold text-stone-700">Slot Locations</h3>
+                <h2 class="font-semibold text-stone-700">Slot Locations</h2>
                 <dl class="mt-1 space-y-1 text-xs">
                     <div class="flex gap-2">
                         <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Header</dt>
@@ -71,7 +71,7 @@
                 </dl>
             </div>
             <div>
-                <h3 class="font-semibold text-stone-700">Shortcodes</h3>
+                <h2 class="font-semibold text-stone-700">Shortcodes</h2>
                 <p class="text-xs text-stone-400 mt-1">Type <code class="bg-stone-100 px-1 rounded">[</code> in any template editor for autocomplete; hover a shortcode for its full attribute list.</p>
                 <div class="mt-1 space-y-3 text-xs">
                     <div>
@@ -201,11 +201,11 @@
                 </div>
             </div>
             <div>
-                <h3 class="font-semibold text-stone-700">HTML &amp; Styling</h3>
+                <h2 class="font-semibold text-stone-700">HTML &amp; Styling</h2>
                 <p class="text-xs">Raw HTML and <a href="https://tailwindcss.com/docs" target="_blank" rel="noopener" class="text-amber-700 hover:text-amber-900 underline">Tailwind CSS</a> utility classes are fully supported.</p>
             </div>
             <div>
-                <h3 class="font-semibold text-stone-700">Alpine.js</h3>
+                <h2 class="font-semibold text-stone-700">Alpine.js</h2>
                 <p class="text-xs">
                     An <code class="bg-stone-100 px-1 rounded">entity</code> variable with the full resource object is available at render time, e.g.
                     <code class="bg-stone-100 px-1 rounded">x-text="entity.Name"</code> or

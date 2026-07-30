@@ -3,7 +3,7 @@
      x-data="templatePreview({ entityType: '{{ entityType }}', previewPath: '{{ previewPath }}', generatePath: '{{ generatePath }}', categoryId: {{ categoryId|default:"null" }} })">
     <div class="border border-stone-300 rounded-md overflow-hidden">
         <div class="flex flex-wrap items-end gap-3 p-3 border-b border-stone-200 bg-stone-50">
-            <h3 class="w-full text-sm font-mono font-semibold text-stone-700">Live preview</h3>
+            <h2 class="w-full text-sm font-mono font-semibold text-stone-700">Live preview</h2>
 
             <div class="relative" x-show="!isCarrierSlot()">
                 <label for="tp-entity-{{ entityType }}" class="block text-xs font-mono text-stone-600 mb-0.5">Preview against</label>

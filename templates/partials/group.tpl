@@ -22,9 +22,9 @@
                     </a>
                 {% endif %}
 
-                <h3 class="card-title">
+                <h2 class="card-title">
                     <a href="/group?id={{ entity.ID }}" title="{{ entity.GetName() }}">{{ entity.GetName() }}</a>
-                </h3>
+                </h2>
 
                 {% if relation && !reverse %}
                     <a href="/relation?id={{ relation.ID }}" class="card-badge card-badge--relation mt-1">

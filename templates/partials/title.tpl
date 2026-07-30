@@ -7,7 +7,14 @@
         <h1 class="flex flex-col items-start gap-1 flex-1 min-w-0 text-2xl font-bold leading-7 text-stone-900 sm:text-3xl">
             {% if prefix %}<small class="break-words px-2 text-xs leading-5 font-semibold font-mono rounded-full bg-amber-100 text-amber-700">{{ prefix }}</small>{% endif %}
             {% if mainEntityType && mainEntity %}
-                <span class="break-words"><inline-edit post="/v1/{{ mainEntityType }}/editName?id={{ mainEntity.ID }}" name="name">{{ mainEntity.Name }}</inline-edit></span>
+                {# Finding 64/59: an entity whose Name is empty — a relation, because #}
+                {# the create form does not require one — left this <h1> holding only #}
+                {# an empty <inline-edit>, so the page had a blank top-level heading #}
+                {# next to a floating pencil. pageTitle is what <title> already #}
+                {# computes ("Relation from X to Y"), so the heading falls back to it. #}
+                {# inline-edit shows the placeholder but keeps its value empty, so #}
+                {# opening the editor does not prefill the fallback as a real name. #}
+                <span class="break-words"><inline-edit post="/v1/{{ mainEntityType }}/editName?id={{ mainEntity.ID }}" name="name"{% if mainEntity.Name %}{% else %} value-is-placeholder{% endif %}>{% if mainEntity.Name %}{{ mainEntity.Name }}{% else %}{{ pageTitle }}{% endif %}</inline-edit></span>
             {% else %}
                 <span class="break-words">{{ pageTitle }}</span>
             {% endif %}

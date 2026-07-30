@@ -21,9 +21,9 @@
 
         <header class="card-header card-header--compact">
             <div class="card-title-section">
-                <h3 class="card-title">
+                <h2 class="card-title">
                     <a href="/resource?id={{ entity.ID }}" title="{{ entity.Name }}">{{ entity.Name }}</a>
-                </h3>
+                </h2>
                 <div class="card-meta">
                     <span class="card-meta-item">{{ entity.FileSize | humanReadableSize }}</span>
                     {% if entity.Owner %}

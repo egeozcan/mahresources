@@ -34,7 +34,7 @@ document.addEventListener('inline-edit:saved', (event) => {
 
 class InlineEdit extends HTMLElement {
     static get observedAttributes() {
-        return ['multiline', 'post', 'name', 'label'];
+        return ['multiline', 'post', 'name', 'label', 'value-is-placeholder'];
     }
 
     constructor() {
@@ -147,7 +147,55 @@ class InlineEdit extends HTMLElement {
     }
 
     connectedCallback() {
-        this.displayText.textContent = this.textContent.trim();
+        // `value-is-placeholder` means the slot text is a *fallback label*, not the
+        // stored value — the server rendered it so the heading is not blank with
+        // JS disabled, and the editor must still open empty. See _renderValue.
+        const slotText = this.textContent.trim();
+        if (this.hasAttribute('value-is-placeholder')) {
+            this._value = '';
+            this._placeholder = slotText;
+        } else {
+            this._value = slotText;
+            this._placeholder = '';
+        }
+        this._renderValue();
+    }
+
+    /**
+     * Paint the current value, falling back to the `placeholder` attribute when
+     * there is none.
+     *
+     * UI bug hunt 2026-07-29, finding 64/59: a relation created without a Name —
+     * which the create form permits — rendered an <h1> containing only an empty
+     * <inline-edit>, so the page had a blank top-level heading and did not
+     * identify itself, while <title> already computed "Relation from X to Y".
+     *
+     * The placeholder is display only. `_value` stays empty, so opening the
+     * editor does not prefill the fallback as if it were the stored name, and
+     * the change check below still sees "" -> "something" as a change.
+     *
+     * It is signalled by an explicit `value-is-placeholder` attribute rather than
+     * inferred from "slot text equals some fallback": for almost every entity the
+     * page title *is* the name, so inferring it would make a real name open an
+     * empty editor.
+     */
+    _renderValue() {
+        const placeholder = this._placeholder || '';
+        if (this._value) {
+            this.displayText.textContent = this._value;
+            this.displayText.removeAttribute('data-placeholder');
+            this.displayText.style.opacity = '';
+        } else if (placeholder) {
+            this.displayText.textContent = placeholder;
+            this.displayText.setAttribute('data-placeholder', 'true');
+            // Dimmed, but only to 0.75: this is the page's <h1>, and the text has
+            // to keep 4.5:1 against white (WCAG 1.4.3).
+            this.displayText.style.opacity = '0.75';
+        } else {
+            this.displayText.textContent = '';
+            this.displayText.removeAttribute('data-placeholder');
+            this.displayText.style.opacity = '';
+        }
     }
 
     disconnectedCallback() {
@@ -223,7 +271,7 @@ class InlineEdit extends HTMLElement {
         if (this.isEditing) return;
         this.clearError();
         this.isEditing = true;
-        this._originalValue = this.displayText.textContent;
+        this._originalValue = this._value ?? '';
         this.inputElement.value = this._originalValue;
         this.shadowRoot.replaceChild(this.inputElement, this.displayContainer);
         this.inputElement.focus();
@@ -278,14 +326,22 @@ class InlineEdit extends HTMLElement {
         if (this._cancelled) {
             this._cancelled = false;
             this.clearError();
-            this.displayText.textContent = this._originalValue;
+            this._value = this._originalValue;
+            this._renderValue();
             this.shadowRoot.replaceChild(this.displayContainer, this.inputElement);
             if (keyboardExit) this.editButton.focus();
             return;
         }
 
         const newValue = this.inputElement.value.trim();
-        this.displayText.textContent = newValue;
+        this._value = newValue;
+        if (newValue) {
+            // A real name now exists; the fallback heading must not come back if a
+            // later edit is cancelled or rejected.
+            this._placeholder = '';
+            this.removeAttribute('value-is-placeholder');
+        }
+        this._renderValue();
         this.textContent = newValue;
         this.shadowRoot.replaceChild(this.displayContainer, this.inputElement);
         if (keyboardExit) this.editButton.focus();
@@ -340,7 +396,8 @@ class InlineEdit extends HTMLElement {
                 console.error('Error posting data:', error);
                 const message = (error && error.message) || `Could not save ${this.label}`;
                 // The stored value is unchanged, so every *display* of it reverts…
-                this.displayText.textContent = this._originalValue;
+                this._value = this._originalValue;
+                this._renderValue();
                 this.textContent = this._originalValue;
                 this.displayText.style.transition = 'background-color 0.3s';
                 this.displayText.style.backgroundColor = '#fee2e2';

@@ -4,6 +4,11 @@ export function adminExport(initial = {}) {
     selectedGroups: [],
     groupQuery: '',
     groupResults: [],
+    // -1 = no option marked. Drives aria-activedescendant on the combobox input
+    // (findings 36/105).
+    groupActiveIndex: -1,
+    // Monotonic counter so a slow earlier search cannot overwrite a newer one.
+    _groupSearchGeneration: 0,
     scope: {
       subtree: true,
       owned_resources: true,
@@ -53,6 +58,29 @@ export function adminExport(initial = {}) {
       }
     },
 
+    /**
+     * Move the active-descendant marker within the results listbox.
+     *
+     * Findings 36/105: the picker had no active-descendant model at all, so ArrowDown
+     * left focus in the input and did nothing. Focus deliberately stays on the input
+     * (the combobox pattern) — only aria-activedescendant moves, which is why the
+     * option buttons carry tabindex="-1".
+     */
+    moveGroupActive(delta) {
+      if (!this.groupResults.length) return;
+      const last = this.groupResults.length - 1;
+      let next = this.groupActiveIndex + delta;
+      if (next < 0) next = last;
+      if (next > last) next = 0;
+      this.groupActiveIndex = next;
+    },
+
+    /** Enter on the marked option adds it, matching a click. */
+    commitGroupActive() {
+      const g = this.groupResults[this.groupActiveIndex];
+      if (g) this.addGroup(g);
+    },
+
     addGroup(g) {
       const searchInput = this.$refs.groupSearch;
       if (!this.selectedGroups.some(sel => sel.id === g.id)) {
@@ -60,6 +88,7 @@ export function adminExport(initial = {}) {
       }
       this.groupQuery = '';
       this.groupResults = [];
+      this.groupActiveIndex = -1;
       // WS4 finding 35: emptying groupResults tears the x-for <li> — and with it
       // the button that was just activated — out of the DOM, so focus fell to
       // <body> and adding a second group meant tabbing from the top of the page.
@@ -79,20 +108,37 @@ export function adminExport(initial = {}) {
       this.selectedGroups = this.selectedGroups.filter(g => g.id !== id);
     },
 
+    /**
+     * Search groups for the picker.
+     *
+     * `_groupSearchGeneration` is a stale-response guard, and it is not theoretical:
+     * this had no generation check and no abort, so with two requests in flight a
+     * slow earlier one resolving last overwrote the newer results — the exact race
+     * `src/selector/` exists to prevent ("the latest query always wins even when a
+     * source ignores cancellation", docs/architecture/selector-architecture.md).
+     * Found while adding the ARIA for findings 36/105.
+     */
     async searchGroups() {
+      const generation = ++this._groupSearchGeneration;
       if (!this.groupQuery) {
         this.groupResults = [];
+        this.groupActiveIndex = -1;
         return;
       }
       const url = '/v1/groups?name=' + encodeURIComponent(this.groupQuery) + '&maxResults=10';
       try {
         const res = await fetch(url);
+        if (generation !== this._groupSearchGeneration) return;
         if (!res.ok) return;
         const data = await res.json();
+        if (generation !== this._groupSearchGeneration) return;
         const list = Array.isArray(data) ? data : (data.items || []);
         this.groupResults = list.map(g => ({ id: g.ID || g.id, name: g.Name || g.name }));
+        this.groupActiveIndex = -1;
       } catch (e) {
+        if (generation !== this._groupSearchGeneration) return;
         this.groupResults = [];
+        this.groupActiveIndex = -1;
       }
     },
 

@@ -17,13 +17,38 @@
         </span>
       </template>
     </div>
+    {# Findings 36/105: this was a bare <input> plus an unlabelled <ul> of buttons — #}
+    {# role, aria-expanded, aria-controls, aria-autocomplete and aria-activedescendant #}
+    {# were all absent, so a screen reader was never told results had appeared, and #}
+    {# ArrowDown did nothing (only blind Tabbing reached the list). It now carries the #}
+    {# same combobox contract the app's own selector exposes. #}
+    {# See docs/todo.md WS5 for why this is not routed through src/selector/ yet. #}
     <input type="text" x-ref="groupSearch" x-model="groupQuery" @input.debounce.250ms="searchGroups()"
+           @keydown.arrow-down.prevent="moveGroupActive(1)"
+           @keydown.arrow-up.prevent="moveGroupActive(-1)"
+           @keydown.enter.prevent="commitGroupActive()"
+           @keydown.escape="groupResults = []; groupActiveIndex = -1"
+           role="combobox"
+           aria-autocomplete="list"
+           aria-controls="export-group-listbox"
+           aria-owns="export-group-listbox"
+           :aria-expanded="groupResults.length > 0"
+           :aria-activedescendant="groupActiveIndex >= 0 ? 'export-group-option-' + groupActiveIndex : null"
            placeholder="Search to add groups..." class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded"
            aria-label="Search groups to add" />
-    <ul x-show="groupResults.length > 0" class="mt-2 max-h-48 overflow-y-auto border border-stone-200 rounded">
-      <template x-for="g in groupResults" :key="g.id">
-        <li>
-          <button type="button" @click="addGroup(g)" class="w-full text-left px-3 py-1 hover:bg-stone-100">
+    {# A polite live region: without it the appearance of results is silent, which is #}
+    {# the half of the finding that aria-expanded alone does not cover. #}
+    <span class="sr-only" aria-live="polite" aria-atomic="true"
+          x-text="groupResults.length ? groupResults.length + ' groups found' : ''"></span>
+    <ul x-show="groupResults.length > 0" id="export-group-listbox" role="listbox" aria-label="Matching groups"
+        class="mt-2 max-h-48 overflow-y-auto border border-stone-200 rounded">
+      <template x-for="(g, idx) in groupResults" :key="g.id">
+        <li role="option"
+            :id="'export-group-option-' + idx"
+            :aria-selected="idx === groupActiveIndex">
+          <button type="button" tabindex="-1" @click="addGroup(g)"
+                  class="w-full text-left px-3 py-1 hover:bg-stone-100"
+                  :class="idx === groupActiveIndex ? 'bg-stone-100' : ''">
             <span x-text="g.name"></span>
           </button>
         </li>

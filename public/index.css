@@ -398,10 +398,17 @@ html {
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 }
 
+/* .card-title is named explicitly alongside the element selectors: it was an <h3>
+   until finding 127 promoted it to <h2> (an h3 directly under the page h1 skipped a
+   level on every note that has an owner group), and this is the only rule in the
+   stylesheet that reached the card heading by element name. Both are listed so a
+   future level change cannot silently drop card titles out of it again. */
 .list-container p,
 .list-container span,
 .list-container a,
-.list-container h3 {
+.list-container h2,
+.list-container h3,
+.list-container .card-title {
     word-wrap: break-word;
     text-overflow: ellipsis;
 }
@@ -897,14 +904,23 @@ html {
 }
 
 .detail-table td:first-child {
-    width: 2rem;
+    width: 2.5rem;
     padding: 0.375rem 0.5rem;
     text-align: center;
 }
 
+/*
+ * Findings 76/139: this was 0.875rem (14px) with no padding and no wrapping
+ * label, so the only control that selects a row for a bulk operation was a
+ * 14x14 target inside a 30x45 cell — under the WCAG 2.2 SC 2.5.8 24px minimum
+ * and 40% smaller than .card-checkbox, which is the same control in the grid
+ * view of the same list. It is now the same 1.5rem as the grid. The row is
+ * already 45px tall, so this does not change row height; td:first-child grows
+ * from 2rem to 2.5rem to fit 24px plus the cell's 0.5rem side padding.
+ */
 .detail-table .detail-table-checkbox {
-    width: 0.875rem;
-    height: 0.875rem;
+    width: 1.5rem;
+    height: 1.5rem;
     border-radius: 3px;
     cursor: pointer;
 }
@@ -2613,4 +2629,64 @@ reload-shortcode {
   .reload-shortcode-button[data-reloading] .reload-shortcode-icon {
     animation: none;
   }
+}
+
+/* ── WS5 finding 48: small "remove" icon buttons ─────────────────────────────
+   The "×" buttons were 9.6x24 (block-editor to-do items) and 8.4x20 (reference
+   chips, table columns and rows, entity-picker chips, lightbox tag pills) —
+   every one under the WCAG 2.2 SC 2.5.8 24x24 minimum, and several named only
+   "×" or "Remove". The names are on the buttons; this is the target size,
+   applied through one class so the call sites cannot drift apart again.
+
+   The class is not block-editor specific because the shape is not: the same
+   undersized chip "×" appears in partials/entityPicker.tpl and
+   partials/lightbox.tpl.
+
+   min-width/min-height rather than width/height: the buttons keep whatever
+   visual size their own utilities give them (the gallery tile's red disc, the
+   chip's amber pill) while the *target* reaches 24px. */
+.remove-target {
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+/* ── WS5 finding 99: saved-query delete ──────────────────────────────────────
+   The button was `opacity-0 group-hover:opacity-100`, so on a touch device —
+   where there is no hover — it was invisible with no way to reveal it, and it
+   measured 35x16. It is now always painted and 24px tall. Kept visually quiet
+   (small, muted until hover) so an always-visible destructive control does not
+   dominate the list. */
+.saved-query-delete {
+  min-height: 1.5rem;
+  min-width: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding-inline: 0.375rem;
+}
+
+/* ── WS5 finding 49: the calendar day cell's keyboard control ────────────────
+   The cell cannot be the button — it holds the event chips, the "+N more"
+   toggle and the expanded-day popover, and interactive elements may not nest.
+   The day number carries the control instead, so it needs a real target. */
+.calendar-day-number {
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.25rem;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.calendar-day-number:hover {
+  background: #fef3c7;
 }

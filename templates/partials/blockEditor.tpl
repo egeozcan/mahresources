@@ -20,7 +20,7 @@
     <div x-show="error" x-cloak role="alert" class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm font-sans">
         <div class="flex items-center justify-between">
             <span x-text="error"></span>
-            <button @click="error = null" class="text-red-500 hover:text-red-800">&times;</button>
+            <button @click="error = null" aria-label="Dismiss error" class="remove-target text-red-500 hover:text-red-800">&times;</button>
         </div>
     </div>
 
@@ -92,9 +92,14 @@
                                             aria-autocomplete="list"
                                             :aria-expanded="mentionActive && mentionResults.length > 0"
                                             aria-haspopup="listbox"
+                                            {# Finding 133: aria-controls was absent. The id is per block  #}
+                                            {# because a note renders one mention textarea per text block, #}
+                                            {# and a shared id would be a duplicate-id axe violation.      #}
+                                            :aria-controls="'block-' + block.id + '-mention-listbox'"
+                                            :aria-owns="'block-' + block.id + '-mention-listbox'"
                                             :aria-activedescendant="activeDescendantId"
                                         ></textarea>
-                                        {% include "/partials/form/mentionDropdown.tpl" %}
+                                        {% include "/partials/form/mentionDropdown.tpl" with dynamicListboxId=true %}
                                     </div>
                                 </div>
                             </template>
@@ -176,14 +181,20 @@
                                 <div class="space-y-2">
                                     <template x-for="(item, idx) in items" :key="item.id">
                                         <div class="flex items-center gap-2">
+                                            {# Finding 48: this input had no aria-label, no wrapping label and no #}
+                                            {# placeholder, so a screen reader announced only "edit text". The     #}
+                                            {# name is positional because the value is what is being edited.       #}
                                             <input
                                                 type="text"
                                                 x-model="item.label"
                                                 @input="saveContentDebounced()"
                                                 @blur="saveContent()"
+                                                :aria-label="'To-do item ' + (idx + 1)"
                                                 class="flex-1 p-1 border border-stone-300 rounded"
                                             >
-                                            <button @click="removeItem(idx)" class="text-red-700 hover:text-red-800">&times;</button>
+                                            <button @click="removeItem(idx)"
+                                                    :aria-label="'Remove to-do item ' + (idx + 1) + (item.label ? ': ' + item.label : '')"
+                                                    class="remove-target text-red-700 hover:text-red-800">&times;</button>
                                         </div>
                                     </template>
                                     <button @click="addItem()" class="text-sm text-amber-700 hover:underline">+ Add item</button>
@@ -235,10 +246,12 @@
                                                     <img :src="'/v1/resource/preview?id=' + resId"
                                                          :alt="(resourceMeta[resId]?.name) || ('Resource ' + resId)"
                                                          class="w-full h-full object-cover" loading="lazy">
+                                                    {# Finding 48/99: named "Remove" with no object, and a 20x20 target #}
+                                                    {# revealed only on hover — unreachable on a touch device.          #}
                                                     <button
                                                         @click="removeResource(resId)"
-                                                        class="absolute top-1 right-1 w-5 h-5 bg-red-700 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                                                        title="Remove"
+                                                        :aria-label="'Remove ' + ((resourceMeta[resId]?.name) || ('resource ' + resId))"
+                                                        class="remove-target absolute top-1 right-1 bg-red-700 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                                                     >&times;</button>
                                                 </div>
                                             </template>
@@ -294,8 +307,8 @@
                                                     </svg>
                                                     <span class="font-medium" x-text="getGroupDisplay(gId).name"></span>
                                                     <button @click="removeGroup(gId)"
-                                                            class="ml-1 w-4 h-4 rounded-full bg-amber-200 text-amber-700 hover:bg-amber-300 flex items-center justify-center text-xs"
-                                                            title="Remove">&times;</button>
+                                                            :aria-label="'Remove ' + getGroupDisplay(gId).name"
+                                                            class="remove-target ml-1 rounded-full bg-amber-200 text-amber-700 hover:bg-amber-300 text-xs">&times;</button>
                                                 </div>
                                             </template>
                                         </div>
@@ -462,7 +475,9 @@
                                                                 <template x-for="item in selectedResults" :key="item.ID">
                                                                     <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 rounded text-xs">
                                                                         <span x-text="item.Name" class="truncate max-w-[150px]"></span>
-                                                                        <button type="button" @click="removeItem(item)" class="hover:text-amber-700">&times;</button>
+                                                                        <button type="button" @click="removeItem(item)"
+                                                                                :aria-label="'Remove ' + item.Name"
+                                                                                class="remove-target hover:text-amber-700">&times;</button>
                                                                     </span>
                                                                 </template>
                                                             </div>
@@ -526,8 +541,11 @@
                                                                 @blur="saveContent()"
                                                                 class="flex-1 p-1 border border-stone-300 rounded text-sm"
                                                                 placeholder="Column label"
+                                                                :aria-label="'Label for column ' + (idx + 1)"
                                                             >
-                                                            <button @click="removeColumn(idx)" class="text-red-700 hover:text-red-800 text-sm">&times;</button>
+                                                            <button @click="removeColumn(idx)"
+                                                                    :aria-label="'Remove column ' + (idx + 1) + (col.label ? ': ' + col.label : '')"
+                                                                    class="remove-target text-red-700 hover:text-red-800 text-sm">&times;</button>
                                                         </div>
                                                     </template>
                                                     <button @click="addColumn()" class="text-sm text-amber-700 hover:underline">+ Add column</button>
@@ -546,9 +564,12 @@
                                                                     @blur="saveContent()"
                                                                     class="flex-1 p-1 border border-stone-300 rounded text-sm"
                                                                     :placeholder="col.label"
+                                                                    :aria-label="(col.label || 'Column') + ', row ' + (rowIdx + 1)"
                                                                 >
                                                             </template>
-                                                            <button @click="removeRow(rowIdx)" class="text-red-700 hover:text-red-800 text-sm">&times;</button>
+                                                            <button @click="removeRow(rowIdx)"
+                                                                    :aria-label="'Remove row ' + (rowIdx + 1)"
+                                                                    class="remove-target text-red-700 hover:text-red-800 text-sm">&times;</button>
                                                         </div>
                                                     </template>
                                                     <button @click="addRow()" class="text-sm text-amber-700 hover:underline">+ Add row</button>
@@ -627,25 +648,48 @@
                                                 <template x-for="day in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']">
                                                     <div class="bg-stone-50 py-2 text-center text-xs font-medium text-stone-500" x-text="day"></div>
                                                 </template>
+                                                {# Finding 49: all 35 day cells were bare <div>s with a click handler —   #}
+                                                {# 0 focusable, 0 with a role — so the only keyboard route to "add an     #}
+                                                {# event on this day" did not exist; the generic "+ Add Event" button     #}
+                                                {# cannot target a day.                                                   #}
+                                                {#                                                                        #}
+                                                {# The cell itself must NOT become the button. It contains the event      #}
+                                                {# chips, the "+N more" toggle and the expanded-day popover with its own  #}
+                                                {# close and "add" buttons — a <button> (or role=button) may not contain  #}
+                                                {# interactive descendants, and the parser hoists a nested <button> out   #}
+                                                {# of its parent entirely. So the *day number* is the control, the chips  #}
+                                                {# and the toggle become buttons in their own right, and the cell keeps   #}
+                                                {# its click handler purely as a redundant mouse affordance.              #}
+                                                {# type=button throughout: a bare <button> submits the enclosing form.    #}
                                                 <template x-for="day in monthDays" :key="day.date.toISOString()">
                                                     <div class="bg-white min-h-[80px] p-1 relative cursor-pointer hover:bg-amber-50 transition-colors"
                                                          @click="openEventModalForDay(day.date)"
                                                          :class="{ 'bg-stone-50 hover:bg-stone-100': !day.isCurrentMonth, 'ring-2 ring-amber-600 ring-inset': isToday(day.date) }">
-                                                        <span class="text-xs" :class="day.isCurrentMonth ? 'text-stone-700' : 'text-stone-400'" x-text="day.date.getDate()"></span>
+                                                        <button type="button"
+                                                                @click.stop="openEventModalForDay(day.date)"
+                                                                :aria-label="'Add an event on ' + day.date.toLocaleDateString('default', { weekday: 'long', month: 'long', day: 'numeric' })"
+                                                                class="calendar-day-number text-xs"
+                                                                :class="day.isCurrentMonth ? 'text-stone-700' : 'text-stone-400'"
+                                                                x-text="day.date.getDate()"></button>
                                                         <div class="mt-1 space-y-0.5">
                                                             <template x-for="event in getEventsForDay(day.date).slice(0, 3)" :key="event.id">
-                                                                <div @click.stop="isCustomEvent(event) ? openEventModalForEdit(event) : null"
-                                                                     class="text-xs px-1 py-0.5 rounded truncate"
-                                                                     :class="isCustomEvent(event) ? 'cursor-pointer hover:opacity-80' : ''"
+                                                                <button type="button"
+                                                                     @click.stop="isCustomEvent(event) ? openEventModalForEdit(event) : null"
+                                                                     :disabled="!isCustomEvent(event)"
+                                                                     class="text-xs px-1 py-0.5 rounded truncate block w-full text-left"
+                                                                     :class="isCustomEvent(event) ? 'cursor-pointer hover:opacity-80' : 'cursor-default'"
                                                                      :style="'background-color: ' + getCalendarColor(event.calendarId) + '20; color: ' + getCalendarColor(event.calendarId)"
                                                                      :title="event.title + (event.location ? ' @ ' + event.location : '') + (isCustomEvent(event) ? ' (click to edit)' : '')"
                                                                      x-text="event.allDay ? event.title : formatEventTime(event) + ' ' + event.title">
-                                                                </div>
+                                                                </button>
                                                             </template>
                                                             <template x-if="getEventsForDay(day.date).length > 3">
-                                                                <div @click.stop="toggleExpandedDay(day.date)"
+                                                                <button type="button"
+                                                                     @click.stop="toggleExpandedDay(day.date)"
+                                                                     :aria-expanded="isExpanded(day.date)"
+                                                                     :aria-label="'Show all ' + getEventsForDay(day.date).length + ' events on ' + day.date.toLocaleDateString('default', { month: 'long', day: 'numeric' })"
                                                                      class="text-xs text-amber-700 hover:text-amber-800 px-1 cursor-pointer"
-                                                                     x-text="'+' + (getEventsForDay(day.date).length - 3) + ' more'"></div>
+                                                                     x-text="'+' + (getEventsForDay(day.date).length - 3) + ' more'"></button>
                                                             </template>
                                                         </div>
                                                         {# Expanded events popover #}
@@ -655,7 +699,7 @@
                                                                  @click.away="closeExpandedDay()">
                                                                 <div class="flex justify-between items-center mb-2 pb-1 border-b">
                                                                     <span class="text-sm font-medium" x-text="day.date.toLocaleDateString('default', { weekday: 'short', month: 'short', day: 'numeric' })"></span>
-                                                                    <button @click="closeExpandedDay()" class="text-stone-400 hover:text-stone-600">
+                                                                    <button type="button" @click="closeExpandedDay()" aria-label="Close day details" class="remove-target text-stone-400 hover:text-stone-600">
                                                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                                                                         </svg>
@@ -663,16 +707,18 @@
                                                                 </div>
                                                                 <div class="space-y-1 max-h-48 overflow-y-auto">
                                                                     <template x-for="event in getEventsForDay(day.date)" :key="event.id">
-                                                                        <div @click.stop="if (isCustomEvent(event)) { openEventModalForEdit(event); closeExpandedDay(); }"
-                                                                             class="text-xs px-2 py-1 rounded"
-                                                                             :class="isCustomEvent(event) ? 'cursor-pointer hover:opacity-80' : ''"
+                                                                        <button type="button"
+                                                                             @click.stop="if (isCustomEvent(event)) { openEventModalForEdit(event); closeExpandedDay(); }"
+                                                                             :disabled="!isCustomEvent(event)"
+                                                                             class="text-xs px-2 py-1 rounded block w-full text-left"
+                                                                             :class="isCustomEvent(event) ? 'cursor-pointer hover:opacity-80' : 'cursor-default'"
                                                                              :style="'background-color: ' + getCalendarColor(event.calendarId) + '20; color: ' + getCalendarColor(event.calendarId)">
                                                                             <div class="font-medium" x-text="event.title"></div>
                                                                             <div class="opacity-75" x-text="formatEventTime(event)"></div>
-                                                                        </div>
+                                                                        </button>
                                                                     </template>
                                                                 </div>
-                                                                <button @click="openEventModalForDay(day.date); closeExpandedDay()"
+                                                                <button type="button" @click="openEventModalForDay(day.date); closeExpandedDay()"
                                                                         class="w-full mt-2 pt-1 border-t text-xs text-amber-700 hover:text-amber-800">
                                                                     + Add event
                                                                 </button>
@@ -956,7 +1002,11 @@
                             @click="addBlock(bt.type); addBlockPickerOpen = false"
                             @keydown.enter.prevent="addBlock(bt.type); addBlockPickerOpen = false"
                             @keydown.space.prevent="addBlock(bt.type); addBlockPickerOpen = false"
-                            @keydown.tab.prevent="addBlockPickerOpen = false"
+                            {# Finding 6: .prevent swallowed Tab, so leaving the listbox took two #}
+                            {# presses. Dismiss the popup and let the browser move focus onward — #}
+                            {# the close watcher in blockEditor.js only restores focus to the #}
+                            {# trigger when focus is still inside the component. #}
+                            @keydown.tab="addBlockPickerOpen = false"
                             @keydown.arrow-down.prevent="focusPickerItem(Math.min(activePickerIndex + 1, blockTypes.length - 1))"
                             @keydown.arrow-up.prevent="focusPickerItem(Math.max(activePickerIndex - 1, 0))"
                             @keydown.home.prevent="focusPickerItem(0)"

@@ -1,4 +1,14 @@
+{# Finding 133: the textarea that owns this dropdown declares role=combobox but #}
+{# had no aria-controls to point at, because this element had no id. The id is #}
+{# derived from the field so several mention textareas on one page (the note #}
+{# block editor renders one per text block) do not collide. `field_id` is set by #}
+{# createFormTextareaInput.tpl; blockEditor.tpl passes mentionListboxId. #}
+{# dynamicListboxId=true is the block-editor case: the id has to come from the #}
+{# Alpine scope (one mention textarea per text block), so it is bound rather than #}
+{# interpolated server-side. #}
+{% with mention_listbox_id=mentionListboxId|default:field_id|default:"mention" %}
 <div x-ref="mentionDropdown"
+     {% if dynamicListboxId %}:id="'block-' + block.id + '-mention-listbox'"{% else %}id="{{ mention_listbox_id }}-mention-listbox"{% endif %}
      x-show="mentionActive && mentionResults.length > 0"
      x-cloak
      :style="getDropdownStyle()"
@@ -39,3 +49,4 @@
      :style="getDropdownStyle()">
     Searching...
 </div>
+{% endwith %}

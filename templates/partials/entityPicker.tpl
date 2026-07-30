@@ -101,7 +101,10 @@
                                             <template x-for="item in selectedResults" :key="item.ID">
                                                 <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 rounded text-xs">
                                                     <span x-text="item.Name" class="truncate max-w-[100px]"></span>
-                                                    <button type="button" @click="removeItem(item)" class="hover:text-amber-700">&times;</button>
+                                                    {# Finding 48: named only "×" and sized to the glyph. #}
+                                                    <button type="button" @click="removeItem(item)"
+                                                            :aria-label="'Remove ' + item.Name"
+                                                            class="remove-target hover:text-amber-700">&times;</button>
                                                 </span>
                                             </template>
                                         </div>

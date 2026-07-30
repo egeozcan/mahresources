@@ -18,6 +18,13 @@
                     aria-autocomplete="list"
                     :aria-expanded="mentionActive && mentionResults.length > 0"
                     aria-haspopup="listbox"
+                    {# Finding 133: this declared role=combobox, aria-autocomplete,   #}
+                    {# aria-haspopup and aria-activedescendant but never named the    #}
+                    {# listbox it controls, so assistive tech could not follow the    #}
+                    {# suggestion list. autocompleter.tpl, in this directory, sets    #}
+                    {# both aria-controls and aria-owns; this matches it.             #}
+                    aria-controls="{{ field_id }}-mention-listbox"
+                    aria-owns="{{ field_id }}-mention-listbox"
                     :aria-activedescendant="activeDescendantId"
                     class="{% if big %}{% else %}max-w-lg{% endif %} shadow-sm block w-full focus:ring-amber-600 focus:border-amber-600 sm:text-sm border-stone-300 rounded-md"
             >{{ value }}</textarea>

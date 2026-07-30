@@ -3,7 +3,9 @@
 {% block body %}
 <div class="space-y-6" data-testid="admin-settings">
   <header class="space-y-1">
-    <h1 class="text-lg font-semibold font-mono text-stone-800">Runtime Settings</h1>
+    {# Finding 110: partials/title.tpl renders the page <h1> from pageTitle #}
+    {# ("Settings"); this was a second, differently-worded <h1>. #}
+    <h2 class="text-lg font-semibold font-mono text-stone-800">Runtime Settings</h2>
     <p class="text-sm text-stone-500">
       Changes take effect immediately without a restart. Boot defaults are shown as reference and can be restored with Reset.
       {% if docsLinksEnabled %}

@@ -10,9 +10,9 @@
         {% for tag in tags %}
             <article class="card tag-card card--selectable" x-data="selectableItem({ itemId: {{ tag.ID }} })">
                 <input type="checkbox" :checked="selected() ? 'checked' : null" x-bind="events" aria-label="Select {{ tag.Name }}" class="card-checkbox focus:ring-amber-600 h-6 w-6 text-amber-700 border-stone-300 rounded">
-                <h3 class="card-title card-title--simple">
+                <h2 class="card-title card-title--simple">
                     <a href="/tag?id={{ tag.ID }}">{{ tag.Name }}</a>
-                </h3>
+                </h2>
                 {% if tag.Description %}
                 <div class="card-description">
                     {% include "/partials/description.tpl" with description=tag.Description preview=true %}

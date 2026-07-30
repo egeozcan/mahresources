@@ -8,9 +8,9 @@
     <div class="list-container">
         {% for category in categories %}
             <article class="card category-card">
-                <h3 class="card-title card-title--simple">
+                <h2 class="card-title card-title--simple">
                     <a href="/category?id={{ category.ID }}">{{ category.Name }}</a>
-                </h3>
+                </h2>
                 {% if category.Description %}
                 <div class="card-description">
                     {% include "/partials/description.tpl" with description=category.Description preview=true %}

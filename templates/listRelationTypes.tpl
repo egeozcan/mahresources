@@ -4,9 +4,9 @@
     <div class="list-container">
         {% for relationType in relationTypes %}
             <article class="card relation-type-card">
-                <h3 class="card-title card-title--simple">
+                <h2 class="card-title card-title--simple">
                     <a href="/relationType?id={{ relationType.ID }}">{{ relationType.Name }}</a>
-                </h3>
+                </h2>
                 {% if relationType.Description %}
                 <div class="card-description">
                     {% include "/partials/description.tpl" with description=relationType.Description preview=true %}

@@ -13,7 +13,11 @@
     {# data-list-container is the JS hook the bulk-operation refresh morphs into. #}
     {# It is an attribute and not the .list-container class, which carries a CSS #}
     {# grid this table must not inherit (finding 9). #}
-    <div class="detail-table-wrap" data-list-container>
+    {# tabindex/role/aria-label make the horizontal scroller keyboard operable: #}
+    {# the table is ~2000px wide inside an 822px viewport and focusing a cell    #}
+    {# control never moved scrollLeft, so the right-hand columns could not be    #}
+    {# reached without a pointer (finding 13, WCAG 2.1.1).                       #}
+    <div class="detail-table-wrap" data-list-container tabindex="0" role="region" aria-label="Resources table, scrolls horizontally">
         <table class="gallery detail-table" aria-label="Resources">
             <thead>
                 <tr>

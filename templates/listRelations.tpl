@@ -7,7 +7,7 @@
                 <header class="card-header">
                     <div class="card-title-section">
                         <a href="/relation?id={{ relation.ID }}">
-                            <h3 class="card-title">{% if relation.Name %}{{ relation.Name }}{% else %}Relation{% endif %}</h3>
+                            <h2 class="card-title">{% if relation.Name %}{{ relation.Name }}{% else %}Relation{% endif %}</h2>
                         </a>
                     </div>
                 </header>

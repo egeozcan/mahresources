@@ -63,10 +63,13 @@
                                 aria-autocomplete="list"
                                 :aria-expanded="mentionActive && mentionResults.length > 0"
                                 aria-haspopup="listbox"
+                                {# Finding 133: aria-controls was absent here too. #}
+                                aria-controls="description-mention-listbox"
+                                aria-owns="description-mention-listbox"
                                 :aria-activedescendant="activeDescendantId"
                                 class="max-w-lg shadow-sm block w-full focus:ring-amber-600 focus:border-amber-600 sm:text-sm border-stone-300 rounded-md font-sans"
                             >{{ queryValues.Description.0|default:resource.Description }}</textarea>
-                            {% include "/partials/form/mentionDropdown.tpl" %}
+                            {% include "/partials/form/mentionDropdown.tpl" with mentionListboxId="description" %}
                         </div>
                         <p class="mt-2 text-sm text-stone-500 font-sans">Describe the resource.</p>
                     </div>

@@ -98,21 +98,45 @@
         <h2 class="text-sm font-medium font-mono text-stone-700">Import Options</h2>
         <div class="grid grid-cols-2 gap-6">
           <div>
-            <label class="block text-sm font-medium text-stone-700 mb-1">Parent Group</label>
-            <p class="text-xs text-stone-500 mb-2">Imported root groups will be created under this group. Leave empty for top-level.</p>
+            {# Findings 36/105: this input had no combobox ARIA and — unlike the export #}
+            {# page's — no accessible name at all, only a placeholder. It escaped the #}
+            {# a11y audit because /admin/import is scanned with no plan uploaded, so #}
+            {# this is one of the few controls rendered at that point. #}
+            <label class="block text-sm font-medium text-stone-700 mb-1" for="import-parent-group">Parent Group</label>
+            <p class="text-xs text-stone-500 mb-2" id="import-parent-group-help">Imported root groups will be created under this group. Leave empty for top-level.</p>
             <div class="relative">
-              <input type="text" x-model="parentGroupQuery" @input.debounce.300ms="searchParentGroups()"
+              <input type="text" id="import-parent-group" x-model="parentGroupQuery" @input.debounce.300ms="searchParentGroups()"
+                     @keydown.arrow-down.prevent="moveParentActive(1)"
+                     @keydown.arrow-up.prevent="moveParentActive(-1)"
+                     @keydown.enter.prevent="commitParentActive()"
+                     @keydown.escape="parentGroupResults = []; parentActiveIndex = -1"
+                     role="combobox"
+                     aria-autocomplete="list"
+                     aria-controls="import-parent-group-listbox"
+                     aria-owns="import-parent-group-listbox"
+                     aria-label="Search parent group"
+                     aria-describedby="import-parent-group-help"
+                     :aria-expanded="parentGroupResults.length > 0"
+                     :aria-activedescendant="parentActiveIndex >= 0 ? 'import-parent-option-' + parentActiveIndex : null"
                      placeholder="Search groups..."
                      class="mt-0.5 focus:ring-1 focus:ring-amber-600 focus:border-amber-600 block w-full text-sm border-stone-300 rounded">
-              <div x-show="parentGroupResults.length > 0" class="absolute z-10 w-full bg-white border border-stone-200 rounded shadow-lg mt-1 max-h-48 overflow-y-auto">
-                <button x-show="decisions.parent_group_id" @click="decisions.parent_group_id = null; parentGroupName = ''; parentGroupResults = []"
+              <span class="sr-only" aria-live="polite" aria-atomic="true"
+                    x-text="parentGroupResults.length ? parentGroupResults.length + ' groups found' : ''"></span>
+              <div x-show="parentGroupResults.length > 0" id="import-parent-group-listbox" role="listbox" aria-label="Matching groups"
+                   class="absolute z-10 w-full bg-white border border-stone-200 rounded shadow-lg mt-1 max-h-48 overflow-y-auto">
+                <button x-show="decisions.parent_group_id" type="button" tabindex="-1" @click="decisions.parent_group_id = null; parentGroupName = ''; parentGroupResults = []; parentActiveIndex = -1"
                         class="w-full text-left px-3 py-2 text-sm text-stone-400 hover:bg-stone-50 border-b">
                   (none - top level)
                 </button>
-                <template x-for="g in parentGroupResults" :key="g.id">
-                  <button @click="decisions.parent_group_id = g.id; parentGroupName = g.name; parentGroupQuery = ''; parentGroupResults = []"
-                          class="w-full text-left px-3 py-2 text-sm hover:bg-stone-50"
-                          x-text="g.name + ' (#' + g.id + ')'"></button>
+                <template x-for="(g, idx) in parentGroupResults" :key="g.id">
+                  <div role="option"
+                       :id="'import-parent-option-' + idx"
+                       :aria-selected="idx === parentActiveIndex">
+                    <button type="button" tabindex="-1" @click="selectParentGroup(g)"
+                            class="w-full text-left px-3 py-2 text-sm hover:bg-stone-50"
+                            :class="idx === parentActiveIndex ? 'bg-stone-50' : ''"
+                            x-text="g.name + ' (#' + g.id + ')'"></button>
+                  </div>
                 </template>
               </div>
             </div>

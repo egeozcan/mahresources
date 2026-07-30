@@ -640,7 +640,7 @@
                                             <span x-text="t.name" class="truncate max-w-[6rem]"></span>
                                             <button
                                                 @click.stop="$store.lightbox.removeTagFromSlot(idx, t.id)"
-                                                class="hover:text-red-400 focus:outline-none focus:text-red-400"
+                                                class="remove-target hover:text-red-400 focus:outline-none focus:text-red-400"
                                                 :aria-label="'Remove ' + t.name + ' from slot'"
                                             >&times;</button>
                                         </span>

@@ -4552,9 +4552,19 @@
       background-color: var(--color-amber-100);
     }
   }
+  .focus-visible\:text-red-700 {
+    &:focus-visible {
+      color: var(--color-red-700);
+    }
+  }
   .focus-visible\:text-stone-950 {
     &:focus-visible {
       color: var(--color-stone-950);
+    }
+  }
+  .focus-visible\:opacity-100 {
+    &:focus-visible {
+      opacity: 100%;
     }
   }
   .focus-visible\:ring-2 {

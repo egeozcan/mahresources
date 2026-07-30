@@ -228,29 +228,29 @@ Statuses are filled in during Phase 1.
 |---|---|---|---|---|---|---|
 | 1 | high | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — resource named `'205'`, Description survived  · **FIXED** |
 | 2 | high | bug | recovered | WS9 | verify | |
-| 3 | high | bug | recovered | WS7 | verify | |
+| 3 | high | bug | recovered | WS7 | verify | **CONFIRMED** — after opening at 390×844: `aria-expanded=true`, panel `display:block visibility:visible opacity:1` at 390×844, `elementFromPoint` over the hamburger returns `navbar-mobile-panel`, and the panel contains **zero** buttons. After Escape every value is byte-identical — Escape is a no-op |
 | 4 | high | a11y | recovered | WS4 | verify | **CONFIRMED, worse than reported** — with an empty query the **first** Tab leaves; Shift+Tab leaves immediately too  · **FIXED** — `x-trap.noscroll.noreturn` |
 | 5 | high | a11y | verified-run | WS4 | spot | **CONFIRMED** — `BODY` at all 8 samples over 1.4s after ArrowRight  · **FIXED** — `render()` restores the roving target when focus was inside |
-| 6 | high | a11y | verified-run | WS5 | verify after 47 | |
+| 6 | high | a11y | verified-run | WS5 | verify after 47 | **CONFIRMED, cause corrected** — order is now deterministic (47 fixed) and the handlers do fire: `activePickerIndex` walks 0→1→2→1→7→0 and `tabindex`/`aria-selected` rove correctly, but `document.activeElement` stays on option 0 for every key. `focusPickerItem`'s `this.$el` is the **`<li>`** that handled the key, so `$el.querySelector('#add-block-listbox')` is null and the focus call is skipped silently. Not the randomised order — see below · **FIXED, cause corrected** — `focusPickerItem`'s `this.$el` was the `<li>`; the component root is captured in `init()` and both focus paths share one `_focusActivePickerOption()`. `.prevent` dropped from the Tab handler and the close-restore made conditional |
 | 7 | high | bug | ✅ VERIFIED | WS13 | accept | |
-| 8 | high | bug | recovered | WS7 | verify | |
+| 8 | high | bug | recovered | WS7 | verify | **CONFIRMED, and the repro needs breadth, not depth** — a pure 1-child chain never overflows (`scrollWidth == clientWidth`), so `?containing=70` alone shows nothing. With one level made wider than the container, at 390 px: `.tree-chart` `scrollLeft:0 scrollWidth:613 clientWidth:358`, all six `.tree-chart-list`s `justify-content:center`, `minX: -191.4` and two nodes whose **right edge is also negative** (-42.6) — entirely unreachable, worse than the reported -18. Desktop clean (`minX 41.6`) |
 | 9 | high | bug | verified-run | WS2 | spot | **CONFIRMED** — alert on addTags/removeTags/addMeta/recalculate, write already landed  · **FIXED, cause corrected** — the plan's `list-container` class breaks the table layout; hook decoupled instead |
 | 10 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — HTTP 500 `encountered errors during dimension calculation`  · **FIXED** — gated on `IsRasterImage()`, now 415 naming the format |
 | 11 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — HTTP 500 `image: unknown format`  · **FIXED** — rotate gated on `IsRasterImage()`, now 415 |
 | 12 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — png 1392B → jpeg 10217B (7.3× inflation)  · **FIXED** — rotate shares crop's encoder table; live re-check png 1392B → png 1390B, RGBA intact |
-| 13 | high | a11y | recovered | WS5 | verify | |
-| 14 | high | a11y | recovered | WS5 | verify | |
+| 13 | high | a11y | recovered | WS5 | verify | **CONFIRMED** — rendered `<div class="detail-table-wrap" data-list-container>`: no `tabindex`, no `role`, no `aria-label`; wrap `clientWidth` 822 against `scrollWidth` 2005 · **FIXED** — `tabindex="0" role="region" aria-label` on `.detail-table-wrap` |
+| 14 | high | a11y | recovered | WS5 | verify | **REJECTED — not reproducible as filed.** Every row checkbox carries `aria-label="Select <name>"` (52 of them on page 1). The nameless checkboxes in the report's audit are the sidebar filter controls from `partials/form/checkboxInput.tpl`, which are wrapped in `<label for=…>` with visible text — named. The plan's instruction to check this first was right · **NOT FIXED — rejected**, and pinned by `TestDetailsRowCheckboxes_AreNamedAfterTheirRow` so the name cannot be lost later |
 | 15 | high | bug | recovered | WS2 | verify | **CONFIRMED** — no Save control, `@click.away` the only trigger  · **FIXED** — Save/Cancel + Ctrl/Cmd+Enter + keyboard focus-out commit |
 | 16 | high | bug | recovered | WS3 | verify | **CONFIRMED** — destructive confirm fired over an empty selection  · **FIXED** — submit disabled, confirm skipped, `losers` jargon gone |
 | 17 | high | bug | ✅ VERIFIED | WS12 | accept | |
 | 18 | high | ux | recovered | WS12 | verify | **CONFIRMED** — Visual Editor blank on an unparseable schema; `rawJsonError` computed in `schemaEditorModal.ts:67-75` but rendered only inside the Raw tabpanel  · **FIXED** — hoisted above the tab body |
-| 19 | high | design | recovered | WS7 | verify | |
+| 19 | high | design | recovered | WS7 | verify | **CONFIRMED** — `/category/new` `body.scrollWidth` 483 vs `innerWidth` 390 with `html`/`body` both `overflow-x:hidden` and `window.scrollX` pinned at 0; "Apply" at 398-466 and "Copy" at 406-466 fully offscreen. `/category/edit?id=72` is 1198 wide with **30** offscreen elements including "Generate" (880-974) and "Format HTML" (885-983). Zero scrollable ancestors. `/templatePartial/new` is clean at 390 — matching the report |
 | 20 | high | bug | ✅ VERIFIED | WS3 | accept | **CONFIRMED** — /categories 400, /tags 200, same SortBy  · **FIXED** — the option is only offered where the model has a meta column |
 | 21 | high | bug | recovered | WS2 | verify | **CONFIRMED** — only signal a 1×1 clipped region  · **FIXED** — visible inline error, editor stays open holding the input |
 | 22 | high | ux | recovered | WS11 | verify | |
 | 23 | high | bug | recovered | WS11 | verify | |
 | 24 | high | design | recovered | WS11 | verify | |
-| 25 | med | design | verified-run | WS7 | spot | |
+| 25 | med | design | verified-run | WS7 | spot | **CONFIRMED** — first card at y=1745 on `/groups`, viewport 844, sidebar 1455 px tall with `order:-1` and **no** disclosure element |
 | 26 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — live, `/log?id=521`  · **FIXED** |
 | 27 | med | bug | verified-run | WS8 | spot | **CONFIRMED** — `runtime_setting` missing from dropdown  · **FIXED** |
 | 28 | med | bug | verified-run | WS12 | spot | |
@@ -261,10 +261,10 @@ Statuses are filled in during Phase 1.
 | 33 | med | ux | recovered | WS10 | verify | |
 | 34 | med | ux | recovered | WS3 | verify | **CONFIRMED** — bare page at /v1/users, every field lost  · **FIXED, cause corrected** — the empty `scopeGroupId` decodes to `*uint(0)`, which made the accurate message unreachable; and `HandleFormError` would have echoed the password (exact-case filter) |
 | 35 | med | a11y | recovered | WS4 | verify | **CONFIRMED** — `BODY` immediately, not a transition artefact  · **FIXED** — focus the search input; ref captured **before** the x-for teardown |
-| 36 | med | a11y | recovered | WS5 | verify | |
+| 36 | med | a11y | recovered | WS5 | verify | **CONFIRMED** — `/admin/export` group input has `aria-label` only: `role`/`aria-expanded`/`aria-controls`/`aria-autocomplete` all absent; `/admin/import`'s parent-group input has **no `aria-label` either**; three further raw search inputs on `/admin/import` (`searchMappingDest`, `searchDanglingDest`, `searchShellDest`). The 3 `role=combobox` nodes on both pages belong to hidden global modals · **FIXED, scope reduced deliberately** — combobox ARIA + a live region + roving `aria-activedescendant` added in place on both pickers; the import picker also gained the `aria-label` it never had. Routing through `src/selector/` is deferred — see below |
 | 37 | med | bug | recovered | WS8 | Dup → 27 | **CONFIRMED** — `?EntityType=runtime_setting` → select shows `''`  · **FIXED** |
 | 38 | med | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — seriesId=1 / 999999 / none all return 50  · **FIXED** |
-| 39 | med | a11y | recovered | WS5 | verify | |
+| 39 | med | a11y | recovered | WS5 | verify | **REJECTED — works as intended.** `outline-style: none` is real, but a ring **is** painted by `box-shadow`: the settings input computes `oklch(0.769 0.188 70.08) 0px 0px 0px 2px` (2px amber) and Save computes `oklch(0.666 0.179 58.318) 0 0 0 3px` + a 1px white offset ring. `/admin/users` is *thinner* — 1px blue. The original probe captured only `outline`; the plan flagged exactly this possibility · **NOT FIXED — rejected**, and pinned by a Playwright assertion that an *opaque* ring is painted, so removing `focus:ring-2` would fail |
 | 40 | med | ux | verified-run | WS9 | spot | |
 | 41 | med | ux | verified-run | WS9 | spot | |
 | 42 | med | bug | verified-run | WS8 | spot |  · **FIXED** |
@@ -273,26 +273,26 @@ Statuses are filled in during Phase 1.
 | 45 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — relative `href="groups"` in rendered page  · **FIXED** |
 | 46 | med | bug | verified-run | WS11 | Dup → 23 | |
 | 47 | med | bug | verified-run | WS8 | spot | **CONFIRMED** — 8 distinct orders in 20 calls  · **FIXED** |
-| 48 | med | a11y | verified-run | WS5 | spot | |
-| 49 | med | a11y | verified-run | WS5 | spot | |
+| 48 | med | a11y | verified-run | WS5 | spot | **CONFIRMED, numbers corrected** — todo-item inputs have no name of any kind (`aria-label`/`aria-labelledby`/`title`/`<label>`/placeholder all absent). The `×` buttons measure **9.6×24** (todos) and **8.4×20** (chips), not the reported 10×24/16×16. The block-level Move/Delete buttons are already 24×24 and named ("Delete block 1") · **FIXED** — positional `aria-label`s on the todo/table inputs, object-naming `aria-label`s on all seven `×` buttons, and one shared `.remove-target` 24×24 class. Two more unnamed `×` buttons found in `entityPicker.tpl` and `lightbox.tpl` by the test |
+| 49 | med | a11y | verified-run | WS5 | spot | **CONFIRMED** — 35 day cells, all `DIV`, 0 focusable, 0 with a role. A nested `@click.stop="openEventModalForEdit(event)"` event chip is click-only too · **FIXED, design corrected** — the cell cannot become a `<button>` (it holds the event chips and the expanded-day popover, and the parser hoists nested buttons out); the day *number* is the control, and the chips and "+N more" became buttons too |
 | 50 | med | bug | verified-run | WS2 | spot | **CONFIRMED** — and two more blur/change-only controls found  · **FIXED** — debounced `@input` on all five |
 | 51 | med | bug | verified-run | WS13 | spot | |
 | 52 | med | bug | recovered | WS8 | Dup → 44 |  · **FIXED** |
 | 53 | med | bug | recovered | WS2 | Dup → 15 |  · **FIXED** |
 | 54 | med | ux | recovered | WS6 | verify | **CONFIRMED** — zero articles, main text is chrome only  · **FIXED** |
-| 55 | med | ux | recovered | WS7 | verify | |
+| 55 | med | ux | recovered | WS7 | verify | **CONFIRMED, worse than filed** — at 390 px **both** view-toggle buttons are offscreen: Month 343-407 and Agenda 407-479, against `innerWidth` 390 and `document.scrollWidth` 390. The immediate ancestor is `overflow-x:hidden` with `clientWidth` 110 against `scrollWidth` 136 |
 | 56 | med | ux | recovered | WS3 | verify | **CONFIRMED** — full-page 400 at /v1/groups/addTags  · **FIXED** — guard + `tag ID` → `tag` |
 | 57 | med | ux | recovered | WS14 | verify | |
-| 58 | med | a11y | recovered | WS5 | verify | |
-| 59 | med | a11y | recovered | WS5 | Dup → 64 | |
+| 58 | med | a11y | recovered | WS5 | verify | **CONFIRMED** — the two category fields pass `min=1` (so the form knows they are required) yet `autocompleter.tpl` emits no `aria-required`, no `*`/Required marker and no `aria-invalid`; only Name is marked · **FIXED** — `autocompleter.tpl` derives the `*`/Required marker and `aria-required` from the `min` it is already passed, and binds `aria-invalid` to `errorMessage` |
+| 59 | med | a11y | recovered | WS5 | Dup → 64 | **CONFIRMED** — Dup → 64 · **FIXED** — Dup → 64 |
 | 60 | med | ux | recovered | WS14 | Dup → 65 | |
 | 61 | med | ux | recovered | WS14 | product | **PARTLY REJECTED** — see below |
-| 62 | med | ux | recovered | WS7 | Dup → 25 | |
-| 63 | med | design | verified-run | WS7 | spot | |
-| 64 | med | a11y | verified-run | WS5 | spot | |
+| 62 | med | ux | recovered | WS7 | Dup → 25 | **CONFIRMED** — Dup → 25; first card y=1574 on `/notes` |
+| 63 | med | design | verified-run | WS7 | spot | **CONFIRMED** — Dup → 25 |
+| 64 | med | a11y | verified-run | WS5 | spot | **CONFIRMED, one claim corrected** — a relation created with no Name renders `<h1>` whose text is `''` (only an empty `<inline-edit>`), while `<title>` computes "Relation from BugHunt Second Person to BugHunt Reykjavik Studio". The report's #199 claim that a **named** relation also has an empty h1 is wrong at HEAD: its h1 carries the name (it is duplicated into the h2 instead) · **FIXED** — `inline-edit` gained `value-is-placeholder`; `title.tpl` renders `pageTitle` as the fallback **server-side**, so the heading is correct with JS off and the editor still opens empty |
 | 65 | med | ux | verified-run | WS14 | spot | |
 | 66 | med | a11y | verified-run | WS4 | spot | **CONFIRMED** — `BUTTON` at 0/200ms, `BODY` from 400ms  · **FIXED** — focus follows to the control that replaces it |
-| 67 | med | design | verified-run | WS7 | spot | |
+| 67 | med | design | verified-run | WS7 | spot | **CONFIRMED** — table 2005 px inside an 822 px `overflow-x:auto` wrap; the Name column alone spans 85-1305 (1220 px); Preview/Size/Created/Updated/Original all beyond 1305 |
 | 68 | med | ux | verified-run | WS6 | spot | **CONFIRMED** — both halves  · **FIXED** — `{% empty %}`, Select All gated, out-of-range page 302s |
 | 69 | med | bug | verified-run | WS1 | spot | **CONFIRMED** — 0×0 preview served 200  · **FIXED** — Dup → 72 |
 | 70 | med | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — simple p1=75, p2=4; grid p2=25  · **FIXED** |
@@ -300,13 +300,13 @@ Statuses are filled in during Phase 1.
 | 72 | med | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED, cause corrected** — see below  · **FIXED** — zero-dim previews never persisted, 0×0 rows no longer canonical, SVG viewBox read at upload, poisoned rows repaired on read |
 | 73 | med | bug | recovered | WS1 | verify | **CAUSE WRONG** — see below  · **FIXED by 72's fix**; rotate confirmed atomic (it fails before any write) |
 | 74 | med | a11y | recovered | WS4 | verify | **CONFIRMED, cause corrected** — the restore already existed and was stomped twice; see below  · **FIXED** — blur deleted, `.noreturn`, restore deferred two frames |
-| 75 | med | design | recovered | WS7 | verify | |
-| 76 | med | a11y | recovered | WS5 | Dup → 139 | |
+| 75 | med | design | recovered | WS7 | verify | **CONFIRMED** — two cards at **1721 px** against a median card height of **416 px**; the second is the tall image's row neighbour, dragged up by row height-matching |
+| 76 | med | a11y | recovered | WS5 | Dup → 139 | **CONFIRMED** — Dup → 139 · **FIXED** — Dup → 139 |
 | 77 | med | ux | recovered | WS6 | Dup → 68 | **CONFIRMED** — Dup → 68  · **FIXED** |
 | 78 | med | ux | recovered | WS14 | verify | |
 | 79 | med | bug | recovered | WS2 | verify (suspect) | **REJECTED — not reproducible** in 9 runs; the invisible checked boxes are the header settings toggles and the zero-checked Select All is a `nth=1` locator hitting hidden "Deselect All". See WS2 |
-| 80 | med | ux | recovered | WS7 | Dup → 25 | |
-| 81 | med | design | recovered | WS7 | verify | |
+| 80 | med | ux | recovered | WS7 | Dup → 25 | **CONFIRMED** — Dup → 25; `mainTop` 1978, first card 2124, sidebar 1834 px tall |
+| 81 | med | design | recovered | WS7 | verify | **CONFIRMED** — the visible `input[name=mrql]` measures **149 px** at a 390 px viewport (the hidden desktop copy measures 0) |
 | 82 | med | bug | ✅ VERIFIED | WS11 | accept | **CONFIRMED** — `&ldquo; &ndash; &hellip; &lsquo; &rsquo;` |
 | 83 | med | design | verified-run | WS10 | spot | |
 | 84 | med | bug | verified-run | WS8 | spot |  · **FIXED** |
@@ -314,7 +314,7 @@ Statuses are filled in during Phase 1.
 | 86 | med | bug | verified-run | WS1 | Dup → 10/11 + gating | **CONFIRMED** — actions offered for SVG  · **FIXED** — `isRasterImage` gates the details sidebar and the lightbox Rotate/Crop buttons |
 | 87 | med | a11y | verified-run | WS2 | Dup → 15 |  · **FIXED** |
 | 88 | med | ux | verified-run | WS2 | Dup → 21 |  · **FIXED** |
-| 89 | med | design | verified-run | WS7 | spot | |
+| 89 | med | design | verified-run | WS7 | spot | **CONFIRMED** — `h1` 166×500 inside a 358 px parent whose computed `flex-wrap` is `nowrap`; no page overflow (`scrollWidth == innerWidth == 390`) |
 | 90 | med | a11y | verified-run | WS4 | spot | **CONFIRMED** — `role=null`, `aria-modal=null`, Escape inert, Tab onto covered controls  · **FIXED** — conditional dialog semantics + `x-trap` + explicit restore |
 | 91 | med | ux | verified-run | WS3 | Dup → 56 | **CONFIRMED**  · **FIXED** — Dup → 56 |
 | 92 | med | ux | verified-run | WS3 | Dup → 16 | **CONFIRMED**  · **FIXED** — Dup → 16 |
@@ -324,18 +324,18 @@ Statuses are filled in during Phase 1.
 | 96 | med | ux | recovered | WS12 | verify | |
 | 97 | med | a11y | recovered | WS4 | verify | **CONFIRMED, cause corrected** — the restore existed and `$el` scoping broke it; x-trap was already present  · **FIXED** |
 | 98 | med | ux | recovered | WS14 | verify | |
-| 99 | med | a11y | recovered | WS5 | verify | |
+| 99 | med | a11y | recovered | WS5 | verify | **CONFIRMED** — three Delete buttons at **35.3×16** with `opacity: 0` at both 1280 and 390 px; `aria-label="Delete saved query: …"` is already correct, so this is target size + hover-only reveal · **FIXED** — always painted, muted until hover, 24px tall |
 | 100 | med | ux | recovered | WS3 | verify | **CONFIRMED** — raw JSON body rendered as the message  · **FIXED** — shared `errorMessageFromResponse` |
-| 101 | med | design | verified-run | WS7 | Dup → 19 | |
+| 101 | med | design | verified-run | WS7 | Dup → 19 | **CONFIRMED** — Dup → 19 |
 | 102 | low | design | verified-run | WS10 | spot | |
 | 103 | low | ux | verified-run | WS3 | spot | **CONFIRMED** — bare id, broken grammar, internal reason  · **FIXED** — sentence + link to the colliding resource; JSON `details[]` contract kept |
 | 104 | low | design | verified-run | WS14 | spot | |
-| 105 | low | a11y | verified-run | WS5 | Dup → 36 | |
+| 105 | low | a11y | verified-run | WS5 | Dup → 36 | **CONFIRMED** — Dup → 36 · **FIXED** — Dup → 36 |
 | 106 | low | ux | verified-run | WS3 | spot | **CONFIRMED** — internal Go chain, printed twice  · **FIXED** — message moved to `archive.Reader`, printed once |
 | 107 | low | ux | verified-run | WS14 | product | |
-| 108 | low | a11y | verified-run | WS5 | spot | |
+| 108 | low | a11y | verified-run | WS5 | spot | **CONFIRMED** — `/category/edit?id=72` renders H1 "Edit Category" then **14 consecutive H3s** with no content H2 anywhere; two of them are the identical string "Associations" · **FIXED** — the whole h3 run promoted to h2 across the three taxonomy templates and `sectionConfigForm`/`templatePreviewPane`/`schemaEditorModal`; no h4 exists in any of them, so nothing new can skip |
 | 109 | low | ux | recovered | WS3 | verify | **CONFIRMED** — `minLength: -1`  · **FIXED** — `minlength` and the rule, both from `auth.MinPasswordLength` |
-| 110 | low | a11y | recovered | WS5 | verify | |
+| 110 | low | a11y | recovered | WS5 | verify | **CONFIRMED** — `/admin/shares` → `H1: Shared Notes`, `H1: Shared Notes`; `/admin/settings` → `H1: Settings`, `H1: Runtime Settings` · **FIXED** — the body heading demoted to h2 on both pages; `title.tpl`'s h1 is the page's. `admin-settings.spec.ts` updated from `level: 1` to `level: 2` |
 | 111 | low | ux | recovered | WS3 | verify | **CONFIRMED** — `Error 404 / record not found`  · **FIXED** — says an id is required and links to /resources; no index page added, deliberately |
 | 112 | low | design | recovered | WS14 | verify | |
 | 113 | low | a11y | recovered | WS9 | verify | |
@@ -352,30 +352,30 @@ Statuses are filled in during Phase 1.
 | 124 | low | a11y | verified-run | WS4 | spot | **CONFIRMED** — `BODY` after the x-for rebuild  · **FIXED** — lands on the row that took the deleted one's place |
 | 125 | low | ux | verified-run | WS11 | spot | |
 | 126 | low | design | verified-run | WS6 | spot | **CONFIRMED** — todos alone has no zero-length branch  · **FIXED** |
-| 127 | low | a11y | verified-run | WS5 | spot | |
+| 127 | low | a11y | verified-run | WS5 | spot | **CONFIRMED, the report's own URL does not show it** — `/note?id=61` has no owner group and its outline is clean (H1 → H2). On `/note?id=1` it reproduces exactly: `H1: Note Weekly Engineering Standup` → **`H3: Engineering Backend`** (`<h3 class="card-title">`) → `H2: Note Type` · **FIXED** — `card-title` promoted h3→h2 in all eleven card templates, and `.card-title` added by name to the one `.list-container … h3` CSS rule that reached it by element name |
 | 128 | low | ux | verified-run | WS13 | spot | |
 | 129 | low | ux | recovered | WS14 | verify | |
 | 130 | low | design | recovered | WS14 | product | |
 | 131 | low | ux | recovered | WS14 | verify | |
 | 132 | low | ux | recovered | WS3 | Dup → 119 | **CONFIRMED**  · **FIXED** — Dup → 119 |
-| 133 | low | a11y | recovered | WS5 | verify | |
+| 133 | low | a11y | recovered | WS5 | verify | **CONFIRMED** — `createFormTextareaInput.tpl:17-24` declares `role=combobox` + `aria-autocomplete=list` + `aria-haspopup=listbox` + `:aria-activedescendant` but no `aria-controls`/`aria-owns`, and `mentionDropdown.tpl` has no `id` to point at. `autocompleter.tpl` in the same directory sets both · **FIXED** — `aria-controls`/`aria-owns` on all three mention textareas, and `mentionDropdown.tpl` gained a per-field id (bound per block in the block editor, so a note with several text blocks has no duplicate ids) |
 | 134 | low | ux | recovered | WS11 | verify | |
 | 135 | low | ux | verified-run | WS3 | Dup → 119 | **CONFIRMED**  · **FIXED** — Dup → 119 |
 | 136 | low | bug | verified-run | WS14 | spot | |
 | 137 | low | ux | verified-run | WS14 | spot | |
 | 138 | low | design | verified-run | WS14 | spot | |
-| 139 | low | a11y | verified-run | WS5 | spot | |
+| 139 | low | a11y | verified-run | WS5 | spot | **CONFIRMED** — 14×14, `padding: 0px`, no wrapping `<label>`, inside a 30×45 `<td>`; grid `card-checkbox` is 24×24; still 14×14 at 390 px · **FIXED** — `.detail-table-checkbox` 14px → 24px, matching `.card-checkbox`; the first column grew 2rem → 2.5rem and row height is unchanged |
 | 140 | low | ux | recovered | WS14 | verify | |
-| 141 | low | ux | recovered | WS7 | verify | |
+| 141 | low | ux | recovered | WS7 | verify | **CONFIRMED, worse than filed** — the shadow-root input measures **166 px** with `scrollWidth` 1774 for a 166-character value: ~9 % visible, not the reported 15 % |
 | 142 | low | ux | recovered | WS3 | verify | **CONFIRMED** — no `required`, whole form in the query string  · **FIXED, cause corrected** — plain `required` breaks the URL-download path; the guard is conditional |
 | 143 | low | bug | recovered | WS8 | verify (suspect) | |
-| 144 | low | ux | recovered | WS5 | verify | |
+| 144 | low | ux | recovered | WS5 | verify | **CONFIRMED, broader than filed** — the dialog reads "Upload to Unknown" on `/resource?id=63`, `/group?id=78` **and** `/note?id=61`; `$store.pasteUpload.context?.name` is null on every one, so the `|| 'Unknown'` fallback always wins. Not resource-specific · **FIXED** — the heading reads "Upload to <name>" when a target is known and "Upload files" otherwise; it no longer invents one |
 | 145 | low | ux | recovered | WS14 | product | |
 | 146 | low | ux | recovered | WS6 | Dup → 68 | **CONFIRMED** — `/resources?page=99` 200s blank, Previous → page 98  · **FIXED** — 302 to the last real page; JSON/.body routes deliberately exempt |
 | 147 | low | bug | verified-run | WS11 | spot | |
-| 148 | low | design | verified-run | WS7 | spot | |
+| 148 | low | design | verified-run | WS7 | spot | **CONFIRMED, broader than filed** — `word-break:break-all` with `overflow-wrap:normal` on six `.compare-meta-card-value` nodes (including "Jul 30, 2026 04:16 → Jul 3…"), on the resource Metadata `dd.break-all` cards, on the GUID span, on the hash/path cards **and** on `h3.card-title` + its `<a>` in the grid list |
 | 149 | low | ux | verified-run | WS14 | spot | |
-| 150 | low | design | verified-run | WS7 | spot | |
+| 150 | low | design | verified-run | WS7 | spot | **CONFIRMED** — breadcrumb nav is 88 px tall at 390 px against 44 px at 1280 px, and the second `flex-shrink-0 w-6 h-full` arrow sits at `top:96 left:40` — stranded at the left margin on its own row, connecting nothing. At 1280 px both arrows share `top:52` |
 | 151 | low | bug | verified-run | WS2 | spot | **CONFIRMED**  · **FIXED** — `inline-edit:saved` → `[data-entity-field]`; the card's Copy button is left stale on purpose (see WS2) |
 | 152 | low | ux | verified-run | WS2 | spot | **CONFIRMED** — `UNIQUE constraint failed: tags.name` reached the client  · **FIXED** — server message humanised, client stops swallowing it |
 | 153 | low | ux | recovered | WS14 | verify | |
@@ -1220,40 +1220,193 @@ Same shape as the earlier batches: something that measured nothing.
 ### WS5 — Keyboard operability, accessible names, headings, target sizes
 
 Findings **6, 13, 14, 36/105, 39, 48, 49, 58, 64/59, 76/139, 99, 108, 110, 127, 133, 144**.
+Fourteen confirmed, **two rejected** (14 and 39), and the two most-discussed items in the
+plan — 6's cause and 36/105's scope — both came out differently. See the two subsections at the
+end of this workstream.
 
-- [ ] **6** — re-test **after fixing 47**. `blockEditor.tpl:947-950` already implements
-      ArrowDown/ArrowUp/Home/End with a roving `:tabindex`; the reported state (`activePickerIndex`
-      on index 7 while focus sat on index 0) is consistent with the randomised order desynchronising
-      the watcher, not with missing handlers. Also: `@keydown.tab.prevent` at `:946` swallows Tab
-      rather than letting it leave the listbox — decide deliberately.
-- [ ] **13** — `.detail-table-wrap` (`listResourcesDetails.tpl:13`) is an `overflow-x: auto` region
-      with no `tabindex`, `role` or label, holding 1325px of off-screen table. Add
-      `tabindex="0" role="region" aria-label="Resources table"` so arrow keys scroll it. WCAG 2.1.1.
-- [ ] **14** — the details row checkbox already has `aria-label="Select {{ entity.Name }}"` in the
-      template (`:32`); the finding reports `aria-label: null`. **Verify whether the reported nameless
-      checkboxes are the hidden bulk-selection duplicates rather than the row controls** before
-      changing anything.
-- [ ] **76/139 + 48 — target sizes.** `public/index.css:898-903` sets
-      `.detail-table .detail-table-checkbox { width: .875rem; height: .875rem }` — 14px, against 24px
-      for the grid's `card-checkbox`. Raise to 24px or add a padded label wrapper. Same for the block
-      editor's `×` buttons (10×24 and 16×16) and the saved-query delete buttons (35×16, and rendered
-      at `opacity: 0` until hover, so unusable on touch). WCAG 2.2 SC 2.5.8.
-- [ ] **49** — calendar day cells (`blockEditor.tpl:618-620`) are bare `<div>`s with a click handler,
-      0 of 35 focusable. Make them `<button>`s.
-- [ ] **36/105** — the export/import group pickers are plain `<input>` + `<ul>` of `<button>`s with
-      `role`, `aria-expanded`, `aria-controls`, `aria-autocomplete` all null. The app's own selector
-      already exposes all of them. Route these pickers through the headless selector core
-      (`src/selector/`, see `docs/architecture/selector-architecture.md`) rather than re-implementing.
-- [ ] **58, 133, 144** — `aria-required`/`aria-invalid` on the relation-type category comboboxes;
-      `aria-controls` on the description textarea that declares `role=combobox`; a real target name in
-      the paste-upload dialog instead of "Upload to Unknown".
-- [ ] **64/59** — relation detail pages render an empty `<h1>` (only an empty `<inline-edit>`). Fall
-      back to what `document.title` already computes: "Relation from X to Y".
-- [ ] **108, 110, 127** — heading order: taxonomy forms go H1 → H3 with no H2; `/admin/shares` and
-      `/admin/settings` each render two visible `<h1>`s; note detail goes H1 → H3 because the reusable
-      group card uses `<h3 class="card-title">`.
-- [ ] **39** — settings controls compute `outline-style: none`. Confirm no `box-shadow` ring is
-      standing in (the original probe only captured `outline`), then fix.
+- [x] **6 — the listbox keyboard was never the problem; DOM focus was.** With 47 fixed the option
+      order is deterministic (Calendar, Divider, Gallery, Heading, References, Table, Text, Todos)
+      and the handlers fire correctly: `activePickerIndex` walks 0→1→2→7→0 and the roving
+      `tabindex`/`aria-selected` follow it exactly. `document.activeElement` never left option 0.
+      `focusPickerItem()`'s `this.$el` is the `<li>` that handled the key, so
+      `$el.querySelector('#add-block-listbox')` searched *inside one of the listbox's own options*,
+      returned null, and the `.focus()` call was skipped with no error. The component root is now
+      captured once in `init()` (`this._root`) and both focus paths go through one
+      `_focusActivePickerOption()`, so the watcher-works/method-doesn't split cannot recur.
+      - `@keydown.tab.prevent` decided deliberately: **`.prevent` dropped.** Dismissing the popup
+        and letting the browser move focus on is the APG listbox-popup behaviour; with `.prevent`
+        the close-watcher pulled focus back to the trigger and leaving took two presses. The
+        watcher's restore is now conditional on focus still being inside the component, which is
+        what makes the un-prevented Tab safe.
+- [x] **13** — `tabindex="0" role="region" aria-label="Resources table, scrolls horizontally"` on
+      `.detail-table-wrap`. Measured precondition: `scrollWidth` 2005 against `clientWidth` 822.
+- [x] **14 — REJECTED.** The row checkboxes carry `aria-label="Select <name>"` and always have; the
+      nameless controls in the report's audit are the sidebar filter checkboxes from
+      `partials/form/checkboxInput.tpl`, which are wrapped in a `<label for=…>` with visible text.
+      The plan's instruction to check this before changing anything was right, and it saved a
+      change that would have been pure churn. Pinned by a test so the name cannot be lost later.
+- [x] **76/139 + 48 — target sizes.** `.detail-table-checkbox` 14px → 24px, matching the grid's
+      `.card-checkbox` (which was half the point of 139 — the two views of one list disagreed).
+      `.detail-table td:first-child` grew 2rem → 2.5rem to fit it; **row height is unchanged**,
+      because the row was already 45px tall for other reasons, so the table's vertical rhythm and
+      the `colspan="9"` empty row from Batch 6 are untouched. The block editor's `×` buttons measured
+      **9.6×24** and **8.4×20**, not the reported 10×24/16×16, and all seven now share one
+      `.remove-target` class that sets a 24px *minimum* while leaving each button's own visual size
+      alone. The block-level Move/Delete controls were already 24×24 and named.
+- [x] **49** — the day cell **cannot** become a `<button>`, which is where the plan's one-line
+      framing breaks: the cell contains the event chips, the "+N more" toggle and the expanded-day
+      popover with its own close and add buttons, and a `<button>` may not contain interactive
+      descendants — the parser hoists a nested `<button>` clean out of its parent. The day *number*
+      carries the control instead (named "Add an event on <date>", 24×24), the event chips and the
+      "+N more" toggle became buttons in their own right, and the cell keeps its click handler as a
+      redundant mouse affordance.
+- [x] **36/105 — scope reduced, deliberately.** The plan says to route the export/import pickers
+      through `src/selector/` rather than re-implement ARIA. That is the right end state and it is
+      **not** this batch: see "Why 36/105 was not routed through the selector core" below. What
+      shipped is the ARIA and the keyboard, in place, on both pickers — `role=combobox`,
+      `aria-autocomplete`, `aria-controls`/`aria-owns`, bound `aria-expanded`, roving
+      `aria-activedescendant`, `role=listbox`/`role=option`/`aria-selected`, a polite live region
+      announcing the result count, and ArrowUp/ArrowDown/Enter/Escape. The import picker also gained
+      the `aria-label` it never had at all.
+- [x] **58** — `autocompleter.tpl` already knew: the relation-type form passes `min=1` for both
+      category fields. The `*`/Required marker and `aria-required` are now derived from `min`, and
+      `aria-invalid` is bound to `errorMessage` so a rejected submit is announced. Every existing
+      call site that declares a minimum gets it.
+- [x] **64/59** — `inline-edit` gained a `value-is-placeholder` attribute and `title.tpl` renders
+      `pageTitle` as the slot text when the entity has no name. It is **server-rendered**, so the
+      heading is correct with JS disabled, and the flag is explicit rather than inferred from
+      "slot text equals the page title" — for almost every entity the title *is* the name, so
+      inferring it would make a real name open an empty editor. The report's claim that a *named*
+      relation also has an empty h1 is wrong at HEAD.
+- [x] **108, 110, 127 — heading order.** All three are shared markup, and the spec sweep before
+      touching any of it found one hard conflict and one silent coupling; both are recorded below.
+      - **108**: the whole h3 run promoted to h2 across `createCategory`/`createNoteType`/
+        `createResourceCategory` plus `sectionConfigForm`, `templatePreviewPane` and
+        `schemaEditorModal`. They all carry the same visual weight, i.e. the author treated them as
+        one level, and no h4 exists in any of those templates, so promoting the run cannot create a
+        new forward skip.
+      - **110**: the *body* heading demoted to h2 on `/admin/shares` and `/admin/settings`.
+        `partials/title.tpl` renders every page's h1 from `pageTitle`, so demoting that one instead
+        would have left the whole app without an h1.
+      - **127**: `card-title` promoted h3→h2 in all eleven card templates. The class is kept —
+        seven E2E specs and a Go positive control key on it.
+- [x] **133** — `aria-controls`/`aria-owns` on all three mention textareas, pointing at a
+      `mentionDropdown.tpl` that now has an id. The block editor's id is *bound* per block, because
+      a note renders one mention textarea per text block and a server-interpolated id would be a
+      duplicate-id violation on any note with two.
+- [x] **144** — "Upload to Unknown" was on every page including the partial, not just resources.
+      The heading now reads "Upload to <name>" when a target is known and "Upload files" otherwise.
+- [x] **39 — REJECTED.** See below.
+
+**Tests.** `server/api_tests/ws5_keyboard_names_headings_test.go` (15 tests: the attributes and
+heading levels the server writes, plus the two rejections as controls) and
+`e2e/tests/regressions/ws5-keyboard-and-target-sizes.spec.ts` (10 tests: DOM focus, computed
+opacity, and measured boxes). **Both seen red first** — the Go file failed on 13 of 15 with the
+fixes stashed, and the Playwright file on 9 of 10, with the finding-39 rejection control passing in
+both directions, which is what a rejection control is for.
+
+#### Where the plan was wrong
+
+1. **Finding 6's diagnosis was wrong, and the plan said the right thing for the wrong reason.** It
+   predicted "the randomised order desynchronising the watcher" and told the fixer to re-test after
+   47. Re-testing after 47 was correct advice; the conclusion was not. Measured, the order is
+   deterministic and every handler fires — the desync is between the component's state (correct at
+   every step) and DOM focus (frozen on option 0), caused by the `$el`-is-the-calling-element trap
+   that `docs/lessons.md` already records twice. A fixer who trusted the plan would have re-run the
+   picker, seen the option order was fine, and closed 6 as not-reproducible.
+2. **The `$el` bug was not confined to finding 6.** Fixing it exposed the same call shape in two
+   more methods of the same component, `focusBlockControls()` and `deleteBlock()`, both invoked from
+   a button *inside* a block card. Measured: deleting a block left focus on `<body>`, directly under
+   a comment reading "Move focus to a sensible neighbor … so keyboard users are not stranded".
+   Batch 7 wrote that comment and its tests did not catch that it was false.
+3. **49 cannot be done the way it is written.** "Make them `<button>`s" produces invalid HTML here —
+   the cell has interactive descendants, and the parser silently hoists a nested `<button>` out of
+   its parent, which would have broken the calendar rather than fixed it.
+4. **Two of the sixteen findings are not defects.** 14 and 39 both come from probes that measured
+   the wrong thing — a checkbox audit that swept in the sidebar filter controls, and a focus probe
+   that read `outline` and not `box-shadow`. The plan flagged the second possibility explicitly
+   ("Confirm no `box-shadow` ring is standing in") and was right to.
+
+#### Finding 39, in detail, because "outline-style: none" is true and the conclusion is not
+
+`/admin/settings` really does compute `outline-style: none` on its inputs and its Save button. It
+also paints a ring:
+
+    /admin/settings input  box-shadow: … oklch(0.769 0.188 70.08) 0px 0px 0px 2px …   (2px amber)
+    /admin/settings Save   box-shadow: … oklch(0.666 0.179 58.318) 0px 0px 0px 3px …  (3px amber)
+    /admin/users   input   box-shadow: … oklch(0.546 0.245 262.881) 0px 0px 0px 1px … (1px blue)
+
+The settings page's indicator is *thicker* than the one the report holds up as correct. The
+Playwright guard asserts an **opaque** ring specifically, because Tailwind emits
+`rgba(0, 0, 0, 0) 0px 0px 0px 0px` placeholder segments whenever `focus:ring-*` is absent — so
+`boxShadow !== 'none'` would pass against a genuinely missing ring.
+
+One thing this rejection does **not** settle: amber-500 on white is roughly 2:1, below the 3:1 that
+WCAG 1.4.11 wants of a focus indicator. That is a different defect from the one filed, it is the
+app's global focus colour rather than anything about `/admin/settings`, and changing it would move
+axe results on every page. Recorded here, not fixed here.
+
+#### Why 36/105 was not routed through the selector core
+
+The plan calls this "a real refactor — scope it deliberately and say so if you reduce it". Reduced,
+and here is the reason. Three things make it bigger than one workstream item:
+
+1. **Neither admin page has a `<form>`.** `selectorFieldAdapter.js` registers a selector against
+   `this.$el.closest('form')`, and `adminExport.tpl`/`adminImport.tpl` are plain
+   `<div x-data="adminExport(…)">`. So the documented integration surface — the registry, and
+   `observeSelectorField`, which returns a no-op when there is no form — is unavailable. What is
+   left is `onChange`, which `autocompleter.tpl` does not expose; reaching it means hand-writing
+   markup around an inline factory, exactly what `compare.tpl` and `blockEditor.tpl` do. **Both of
+   those have no `role=combobox`, no `role=listbox`, no `role=option` and no
+   `aria-activedescendant`** — the full ARIA lives only in `autocompleter.tpl` + `dropDownResults.tpl`.
+   The cheap version of "use the core" buys concurrency and arrow keys and *not* the ARIA this
+   finding is about.
+2. **The export preselect crosses into Go.** `?groups=` is hydrated client-side by N
+   `fetch('/v1/group?id=')` calls. Once the core owns the selection that write has to come through a
+   registry handle (needs the form) or be rendered server-side — which means changing
+   `AdminExportContextProvider` from `_ any` to a real reader.
+3. **It would fix one of four pickers on `/admin/import`.** `searchMappingDest`,
+   `searchDanglingDest` and `searchShellDest` live inside `x-for` loops, and `dropDownResults.tpl`
+   bakes `id="{{ id }}-listbox"` server-side — stamped N times by an `x-for`, every row would share
+   one listbox id. Routing those three through the shared partial would **introduce** a duplicate-id
+   violation. So the page would end the batch with one core-driven picker and three hand-rolled ones,
+   and the a11y complaint would still stand for three of them.
+
+The refactor is worth doing with its own charter: wrap each picker section in a non-submitting
+`<form>` (`bulkSelection.js` already does this) to unlock the registry, move the export preselect
+into the context provider via `GroupQuery.Ids`, give `dropDownResults.tpl` an id-prefix parameter so
+the looped pickers can use it, and rewrite the five E2E touchpoints in the same commit.
+
+#### Defects the tests did not catch, and one this batch nearly shipped
+
+1. **`locator.focus()` is not keyboard operability, and a test written with it passes against the
+   bug.** The first cut of the finding-13 test called `wrap.focus()` and asserted the arrow key
+   scrolled. It went green against the *unfixed* page: Playwright's `locator.focus()` calls
+   `element.focus()`, and Chromium honours that on a `<div>` with no `tabindex` at all, so
+   `document.activeElement` became the wrapper and ArrowRight duly scrolled it — measured
+   `scrollLeft` 0 → 80 — while **60 consecutive Tab presses never landed on it once**. The test now
+   Tabs to it. This is the same family as the existing lesson about asserting the browser's
+   behaviour rather than an attribute's text, one level further out: the *test API* can also
+   manufacture the state you meant to be testing for.
+2. **The a11y suite's note-detail heading test has never been able to see finding 127.**
+   `04-a11y-heading-level-skip.spec.ts` checks `/note?id=` for level skips, and the level skip comes
+   from the owner-group card in the sidebar disclosure — but `a11y.fixture.ts` creates its note
+   *without* an owner ("without tags/groups to avoid GORM association issues"), so the card never
+   renders and the outline is clean by construction. The fixture now passes `ownerId`, which is a
+   scalar FK and not one of the associations that comment was avoiding.
+3. **A `<tag[^>]*>` regex is wrong on this codebase's markup, and it fails open.** Alpine attribute
+   values routinely contain a literal `>` (`:aria-expanded="groupResults.length > 0"`), so the
+   attribute run stops inside the value and every attribute after it looks absent. Four assertions
+   reported missing `aria-label`/`aria-controls` on markup that had them. A quote-aware scanner
+   replaced it. The direction of the failure matters: for a *presence* check this is a false
+   negative you notice, but for an *absence* check it is a false positive you do not.
+4. **Two more unnamed `×` buttons, found by the test rather than by the report.** Finding 48 names
+   only the block editor's, but the page-level assertion caught the same unnamed destructive control
+   in `partials/entityPicker.tpl` and an undersized one in `partials/lightbox.tpl`.
+5. **A multi-line `{# #}` comment took the whole app down mid-batch**, exactly as
+   `docs/lessons.md` says it does — eight of them, written in one pass, and every page returned
+   `ERR_EMPTY_RESPONSE` until they were split. The lesson was already written; it needs a check, not
+   another paragraph. Noted as a candidate guard in Phase 3.
 
 ### WS7 — Mobile and layout
 
@@ -1519,7 +1672,7 @@ the cheapest high-confidence work clears the ledger early.
       guards then have a survivable fallback behind them.
 - [x] **Batch 6** — WS6 empty states. Cheap, and the `{% empty %}` pattern is mechanical.
 - [x] **Batch 7** — WS4 focus management. Extract `src/utils/focus.js` first as a pure refactor.
-- [ ] **Batch 8** — WS5 keyboard, names, headings, target sizes.
+- [x] **Batch 8** — WS5 keyboard, names, headings, target sizes.
 - [ ] **Batch 9** — WS7 mobile and layout. Start with finding 3 (nav trap) and 8 (one-line CSS).
 - [ ] **Batch 10** — WS10 global chrome, WS9 jobs cockpit.
 - [ ] **Batch 11** — WS11 MRQL and query surfaces, WS12 taxonomy authoring, WS13 sharing.
