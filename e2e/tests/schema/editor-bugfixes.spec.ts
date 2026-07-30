@@ -85,13 +85,92 @@ test.describe('Bug 1: MetaSchema injection into Alpine x-data', () => {
     }
   });
 
-  // The two "stored MetaSchema is not JSON at all" cases that used to live here
-  // (the group edit page, and dynamic category selection through the
-  // autocompleter) moved to TestFormsSurviveALegacyNonJSONMetaSchema in
-  // server/api_tests/ws12_taxonomy_authoring_test.go. Findings 17/93 made the API
-  // refuse to create such a category, so the fixture has to plant the row
-  // directly — which Go can do and a browser cannot. The escaping the browser
-  // tests were really about is asserted there on the served markup.
+  // The server-rendered half of "stored MetaSchema is not JSON at all" — the group
+  // edit page and /group/new returning 200, and the value reaching the page escaped
+  // — moved to TestFormsSurviveALegacyNonJSONMetaSchema in
+  // server/api_tests/ws12_taxonomy_authoring_test.go, where the row can be planted
+  // directly and where CI actually runs it.
+  //
+  // The *dynamic* half cannot move there and did not: selecting such a category
+  // through the autocompleter is a path only a browser walks — the selector fetches
+  // the entity, hands the raw object to schemaMetaFields, and Alpine swaps the
+  // <template x-if> between <schema-form-mode> and the freeform editor. A Go test
+  // issuing GETs sees none of that, and schemaFollowers.test.ts drives
+  // schemaMetaFields with a synthetic registry notification, so neither one proves
+  // the selector really delivers MetaSchema or that the swap survives it. It is
+  // restored below.
+  test('dynamic category selection handles a legacy invalid MetaSchema without crashing', async ({ page, apiClient }) => {
+    // Findings 17/93 stopped the API accepting an unparseable schema, so the
+    // legacy row is injected where the client meets it: the category search the
+    // autocompleter issues. That is exactly the shape a pre-validation row, a
+    // plugin write (mah.db.* bypasses validation) or a hand-edited database hands
+    // this code, and it keeps the test about the client's resilience rather than
+    // about a write path that no longer exists.
+    const stamp = Date.now();
+    const goodName = `Legacy Good ${stamp}`;
+    const brokenName = `Legacy Broken ${stamp}`;
+
+    // Real categories, so everything but the schema string is genuine.
+    const good = await apiClient.createCategory(goodName, 'valid object schema', {
+      MetaSchema: JSON.stringify({
+        type: 'object',
+        properties: { isbn: { type: 'string' } },
+      }),
+    });
+    const broken = await apiClient.createCategory(brokenName, 'legacy row');
+
+    await page.route('**/v1/categories?*', async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      const patched = (Array.isArray(body) ? body : []).map((c: { ID: number; MetaSchema?: string }) =>
+        c.ID === broken.ID ? { ...c, MetaSchema: 'this is not json' } : c,
+      );
+      await route.fulfill({ response, json: patched });
+    });
+
+    try {
+      const jsErrors: string[] = [];
+      page.on('pageerror', (err) => jsErrors.push(err.message));
+
+      await page.goto('/group/new');
+      await page.waitForLoadState('load');
+
+      const categoryInput = page.getByRole('combobox', { name: 'Category' });
+      // The two branches of the <template x-if> pair in createGroup.tpl. Both are
+      // unique on this page: one <schema-form-mode> and one freeFields group.
+      const schemaForm = page.locator('schema-form-mode');
+      const freeform = page.getByRole('group', { name: 'Meta' });
+
+      async function select(name: string) {
+        await categoryInput.click();
+        await categoryInput.fill(name);
+        const option = page.locator('div[role="option"]:visible').filter({ hasText: name }).first();
+        await option.waitFor({ timeout: 10000 });
+        await option.click();
+        await option.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
+      }
+
+      // Positive control first: a category with a real object schema swaps the
+      // schema-driven editor in. Without it, "the broken one shows the freeform
+      // editor" is satisfied by a page where the dynamic path never runs at all —
+      // which is precisely the hole a server-side GET leaves.
+      await select(goodName);
+      await expect(schemaForm).toBeVisible({ timeout: 10000 });
+
+      // Now the legacy row. objectSchemaOrNull must reject it, so the form falls
+      // back to freeform meta rather than handing garbage to schema-form-mode.
+      await select(brokenName);
+      await expect(schemaForm).toHaveCount(0, { timeout: 10000 });
+      await expect(freeform).toBeVisible();
+
+      expect(jsErrors, 'selecting a category with an unparseable schema threw').toHaveLength(0);
+      await expect(page.locator('button[type="submit"]').first()).toBeVisible();
+    } finally {
+      await page.unroute('**/v1/categories?*');
+      await apiClient.deleteCategory(broken.ID);
+      await apiClient.deleteCategory(good.ID);
+    }
+  });
 });
 
 // ── Bug 2: Category/schema change drops in-progress Meta edits ─────────────

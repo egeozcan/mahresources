@@ -20,6 +20,7 @@ func TestShareNoteMultipartFormData(t *testing.T) {
 		c.SharePort = "18391"
 		c.ShareBindAddress = "127.0.0.1"
 	})
+	tc.AppCtx.MarkShareServerListening() // a configured port is not a running server
 	note := tc.CreateDummyNote("Multipart Share Note")
 
 	t.Run("Share via multipart/form-data", func(t *testing.T) {

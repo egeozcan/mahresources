@@ -83,39 +83,7 @@ function generateObjectTable(obj, path = ["$"]) {
     table.classList.add("objectTable", "jsonTable");
     table.appendChild(tbody);
 
-    // Event delegation for copy-on-click with flash + tooltip feedback
-    table.addEventListener("click", (e) => {
-        if (e.target.closest("button") || e.target.closest("expandable-text") || e.target.closest("a")) {
-            return;
-        }
-        const titled = findTitledAncestor(e.target, table);
-        if (titled) {
-            updateClipboard(titled.title);
-            e.stopPropagation();
-
-            // Flash animation
-            const cell = e.target.closest("th, td") || titled;
-            cell.classList.remove("copy-flash");
-            void cell.offsetWidth;
-            cell.classList.add("copy-flash");
-            cell.addEventListener("animationend", () => cell.classList.remove("copy-flash"), { once: true });
-
-            // Tooltip
-            const existing = cell.querySelector(".copyTooltip");
-            if (existing) existing.remove();
-            const tooltip = document.createElement("div");
-            tooltip.className = "copyTooltip";
-            tooltip.textContent = "Copied!";
-            tooltip.setAttribute("role", "status");
-            tooltip.setAttribute("aria-live", "polite");
-            cell.appendChild(tooltip);
-            requestAnimationFrame(() => tooltip.classList.add("show"));
-            setTimeout(() => {
-                tooltip.classList.remove("show");
-                setTimeout(() => tooltip.remove(), 150);
-            }, 1500);
-        }
-    });
+    attachCopyDelegation(table);
 
     objKeys.forEach(key => {
         const row = tbody.insertRow(-1);
@@ -210,19 +178,11 @@ function generateObjectTable(obj, path = ["$"]) {
     return table;
 }
 
-function generateArrayTable(arr, path = ["$"]) {
-    const table = document.createElement("table");
-    const tbody = document.createElement("tbody");
-
-    table.classList.add("arrayTable", "jsonTable");
-    table.appendChild(tbody);
-
-    if (arr.length === 0) {
-        table.classList.add("emptyTable");
-        return table;
-    }
-
-    // Event delegation for copy-on-click with flash + tooltip feedback
+/**
+ * Copy-on-click with flash + tooltip feedback, delegated from the table root.
+ * Clicking any cell copies the JSON path recorded in the nearest titled ancestor.
+ */
+function attachCopyDelegation(table) {
     table.addEventListener("click", (e) => {
         if (e.target.closest("button") || e.target.closest("expandable-text") || e.target.closest("a")) {
             return;
@@ -253,6 +213,88 @@ function generateArrayTable(arr, path = ["$"]) {
             }, 1500);
         }
     });
+}
+
+/**
+ * Render a SQL result set — the `{columns, rows}` body of POST /v1/query/run —
+ * as a table.
+ *
+ * This exists rather than reusing generateArrayTable because that function
+ * derives its header from `Object.keys()` over the row objects, which is exactly
+ * what could not carry column order: ECMAScript enumerates integer-like keys
+ * first and in numeric order, so a query selecting columns named `2024` and
+ * `2023` came back re-sorted no matter what the server wrote. Here the header is
+ * the server's own array and the cells are read by index, so nothing can reorder
+ * them and two columns with the same name stay two columns.
+ *
+ * @param {string[]} columns
+ * @param {Array<Array<unknown>>} rows
+ * @param {string[]} path JSON path prefix, for the copy-on-click affordance.
+ */
+export function renderResultSetTable(columns, rows, path = ["$"]) {
+    const table = document.createElement("table");
+    const tbody = document.createElement("tbody");
+    const cols = Array.isArray(columns) ? columns : [];
+    const data = Array.isArray(rows) ? rows : [];
+
+    table.classList.add("arrayTable", "jsonTable");
+    table.appendChild(tbody);
+
+    if (cols.length === 0) {
+        table.classList.add("emptyTable");
+        return table;
+    }
+
+    attachCopyDelegation(table);
+
+    const titleRow = tbody.insertRow(-1);
+    cols.forEach((title, colIndex) => {
+        const header = document.createElement("th");
+        header.innerHTML = escapeHTML(String(title));
+        header.title = [...path, ".columns", escapeKey(colIndex)].join("");
+        titleRow.appendChild(header);
+    });
+
+    data.forEach((row, rowIndex) => {
+        const tr = tbody.insertRow();
+        const cellClass = rowIndex % 2 === 0 ? "even" : "odd";
+        tr.title = [...path, ".rows", escapeKey(rowIndex)].join("");
+
+        cols.forEach((title, colIndex) => {
+            const contentCell = tr.insertCell();
+            const subPath = [...path, ".rows", escapeKey(rowIndex), escapeKey(colIndex)];
+            const pathText = subPath.join("");
+            const value = Array.isArray(row) ? row[colIndex] : undefined;
+            const content = renderJsonTable(value, subPath, String(title));
+
+            contentCell.classList.add(cellClass);
+            contentCell.title = pathText;
+
+            if (typeof content === "string") {
+                contentCell.innerHTML = escapeHTML(content);
+            } else if (content instanceof HTMLElement) {
+                contentCell.appendChild(content);
+                content.title = pathText;
+            }
+        });
+    });
+
+    return table;
+}
+
+function generateArrayTable(arr, path = ["$"]) {
+    const table = document.createElement("table");
+    const tbody = document.createElement("tbody");
+
+    table.classList.add("arrayTable", "jsonTable");
+    table.appendChild(tbody);
+
+    if (arr.length === 0) {
+        table.classList.add("emptyTable");
+        return table;
+    }
+
+    attachCopyDelegation(table);
 
     const titles = getAllKeysFromObjArray(arr);
 

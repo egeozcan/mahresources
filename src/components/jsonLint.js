@@ -39,6 +39,23 @@ export function jsonParseDiagnostics(doc) {
   }
 }
 
+// jsonLintMessage is the same diagnosis as a plain sentence, for the parts of the
+// UI that are not a gutter marker.
+//
+// The lint above paints a marker in the gutter and underlines a range. Both are
+// visual only: a screen reader gets no announcement, the editor carries no
+// aria-invalid, and there is nothing for aria-describedby to point at — so the one
+// user who most needs to be told the schema is broken is the one who is not told.
+// (The "Format JSON" button's error is fine: it is a painted role="alert", because
+// a user asked for it. This is the automatic lint, which fires while typing, so it
+// belongs in a polite live region instead.)
+//
+// Returns '' when the document is valid or empty.
+export function jsonLintMessage(doc) {
+  const diagnostics = jsonParseDiagnostics(doc);
+  return diagnostics.length > 0 ? diagnostics[0].message : '';
+}
+
 export function jsonLintExtensions() {
   return [linter((view) => jsonParseDiagnostics(view.state.doc.toString()), { delay: 400 }), lintGutter()];
 }

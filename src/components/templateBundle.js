@@ -37,8 +37,18 @@ const PAGE_SIZE = 50;
 // turn opening a form into an unbounded fetch loop. Hitting it is reported.
 const SOURCE_PAGE_LIMIT = 20;
 
-// fetchAllPages walks ?page=1..N until a short page arrives, and reports whether
-// it reached the end or stopped at the page cap.
+// fetchAllPages walks ?page=1..N until a short page arrives.
+//
+// `complete` means "the list really ends here", and it is the only thing that
+// decides whether the caller warns the user that sources are missing. A page that
+// 500s or a fetch that throws is not the end of the list — it is the walk giving
+// up part way — so both report complete:false. Reporting them as complete
+// recreated finding 28 exactly: the picker offered a truncated list of copy
+// sources with nothing on screen saying so, which is the defect the paging was
+// added to fix.
+//
+// The items collected so far are always kept: a partial list the user is told
+// about beats an empty one.
 export async function fetchAllPages(url, fetchImpl = fetch) {
   const items = [];
   for (let page = 1; page <= SOURCE_PAGE_LIMIT; page++) {
@@ -46,17 +56,17 @@ export async function fetchAllPages(url, fetchImpl = fetch) {
     try {
       const sep = url.includes('?') ? '&' : '?';
       const resp = await fetchImpl(`${url}${sep}page=${page}`, { headers: { Accept: 'application/json' } });
-      if (!resp.ok) return { items, complete: true };
+      if (!resp.ok) return { items, complete: false, reason: 'error' };
       const data = await resp.json();
       batch = Array.isArray(data) ? data : [];
     } catch {
       // Network failure mid-walk: keep what arrived rather than losing the lot.
-      return { items, complete: true };
+      return { items, complete: false, reason: 'error' };
     }
     items.push(...batch);
-    if (batch.length < PAGE_SIZE) return { items, complete: true };
+    if (batch.length < PAGE_SIZE) return { items, complete: true, reason: null };
   }
-  return { items, complete: false };
+  return { items, complete: false, reason: 'cap' };
 }
 
 export function templateBundle({ carrier } = {}) {
@@ -183,15 +193,36 @@ export function templateBundle({ carrier } = {}) {
     //
     // Returns true when the caller may proceed. Empty slots need no prompt at
     // all, which is the common case on a create form.
-    confirmOverwrite(sourceLabel) {
+    //
+    // `bundle` is what is about to be applied, and it is needed because
+    // applyBundle does not write the same set of fields every time: the slots and
+    // MetaSchema always go, but SectionConfig goes only for a same-carrier bundle
+    // that carries one (setSectionConfig no-ops on an empty string). Counting the
+    // slots alone meant a form whose *only* authored content was the section
+    // layout scored zero fields at risk, returned true without prompting, and had
+    // that layout replaced silently — finding 154 surviving for exactly one field.
+    confirmOverwrite(sourceLabel, bundle = null) {
       const filled = Object.values(SLOT_FIELDS)
         .filter((field) => this.getEditor(field).trim() !== '');
       if (this.getEditor('MetaSchema').trim() !== '') filled.push('MetaSchema');
+      if (this.willReplaceSectionConfig(bundle) && this.getEditor('SectionConfig').trim() !== '') {
+        filled.push('SectionConfig');
+      }
       if (filled.length === 0) return true;
       const what = filled.length === 1 ? '1 template field' : `${filled.length} template fields`;
       return window.confirm(
         `Replace ${what} with ${sourceLabel}? The current content is discarded (undo in the editor still works, and nothing is saved until you press Save).`,
       );
+    },
+
+    // willReplaceSectionConfig mirrors the branch in applyBundle exactly: the
+    // section layout is overwritten only by a same-carrier bundle that actually
+    // carries one. Kept as its own predicate so the confirmation and the write
+    // cannot drift apart.
+    willReplaceSectionConfig(bundle) {
+      if (!bundle || typeof bundle !== 'object') return false;
+      if (!bundle.sectionConfig) return false;
+      return !bundle.carrier || bundle.carrier === this.carrier;
     },
 
     // applyBundle fills the form from a bundle. Slots and metaSchema always
@@ -235,19 +266,30 @@ export function templateBundle({ carrier } = {}) {
     // The endpoints do honour ?page=, so page until a short page arrives.
     async loadSources() {
       const entries = Object.entries(CARRIERS);
-      const truncated = [];
+      const cappedAt = [];
+      const failed = [];
       await Promise.all(
         entries.map(async ([key, cfg]) => {
-          const { items, complete } = await fetchAllPages(cfg.list);
+          const { items, complete, reason } = await fetchAllPages(cfg.list);
           this.sources[key] = items;
-          if (!complete) truncated.push(cfg.label);
+          if (complete) return;
+          (reason === 'cap' ? cappedAt : failed).push(cfg.label);
         }),
       );
-      if (truncated.length) {
-        this.notify(
-          `Showing the first ${SOURCE_PAGE_LIMIT * PAGE_SIZE} of the available ${truncated.join(' / ')} templates. Copy from a more specific one if the source you want is missing.`,
-          'warn',
-        );
+      // Two different incomplete lists, and they need different words: one hit a
+      // bound this code chose, the other lost a request. Both have to say
+      // something, because an incomplete picker with nothing on screen is
+      // finding 28.
+      const messages = [];
+      if (cappedAt.length) {
+        messages.push(`Showing the first ${SOURCE_PAGE_LIMIT * PAGE_SIZE} of the available ${cappedAt.join(' / ')} templates.`);
+      }
+      if (failed.length) {
+        messages.push(`Could not load the whole ${failed.join(' / ')} list — a request failed, so some copy sources are missing. Reload to try again.`);
+      }
+      if (messages.length) {
+        messages.push('Copy from a more specific one if the source you want is missing.');
+        this.notify(messages.join(' '), 'warn');
       }
     },
 
@@ -263,8 +305,9 @@ export function templateBundle({ carrier } = {}) {
         return;
       }
       // Finding 154: copy clobbers exactly as hard as a preset does.
-      if (!this.confirmOverwrite(`the template from "${obj.Name || 'the selected source'}"`)) return;
-      this.applyBundle(this.entityToBundle(obj, sourceCarrier));
+      const bundle = this.entityToBundle(obj, sourceCarrier);
+      if (!this.confirmOverwrite(`the template from "${obj.Name || 'the selected source'}"`, bundle)) return;
+      this.applyBundle(bundle);
     },
 
     // ---- Export ------------------------------------------------------------
@@ -300,7 +343,7 @@ export function templateBundle({ carrier } = {}) {
           return;
         }
         // Finding 154: import is the third path into applyBundle.
-        if (!this.confirmOverwrite(`the imported bundle "${file.name}"`)) return;
+        if (!this.confirmOverwrite(`the imported bundle "${file.name}"`, bundle)) return;
         this.applyBundle(bundle);
       };
       reader.readAsText(file);
@@ -337,7 +380,7 @@ export function templateBundle({ carrier } = {}) {
       const preset = this.presets.find((p) => p.name === this.presetChoice);
       if (!preset) return;
       // Finding 154: this is the path the report reproduced on.
-      if (!this.confirmOverwrite(`the "${preset.name}" preset`)) return;
+      if (!this.confirmOverwrite(`the "${preset.name}" preset`, preset)) return;
       this.applyBundle(preset);
     },
 

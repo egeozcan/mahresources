@@ -175,6 +175,12 @@ func (g *SchemaGenerator) generateSchemaInternal(t reflect.Type, asPartial bool,
 		arraySchema := openapi3.NewArraySchema()
 		arraySchema.Items = itemSchema
 		return openapi3.NewSchemaRef("", arraySchema)
+	case reflect.Interface:
+		// `any` is any JSON value at all — a SQL result cell is a string, a
+		// number, a boolean, null, or an embedded JSON document. The empty schema
+		// is how OpenAPI spells that; `type: object` (the default below) would
+		// claim every cell is an object.
+		return openapi3.NewSchemaRef("", openapi3.NewSchema())
 	case reflect.Map:
 		schema := openapi3.NewObjectSchema()
 		schema.AdditionalProperties = openapi3.AdditionalProperties{

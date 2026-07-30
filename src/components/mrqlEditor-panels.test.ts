@@ -126,7 +126,7 @@ describe('findings 23/46 — the panels are invalidated per query', () => {
     })) as unknown as typeof fetch;
 
     e.explainResult = { entityType: 'note', statements: [{ label: 'notes', sql: 'SELECT 1' }] };
-    e.explainQuery = 'type = note LIMIT 3';
+    e.explainQuery = e.panelStamp('type = note LIMIT 3');
     e.showExplain = true;
 
     await e.execute({ pushState: false });
@@ -136,7 +136,7 @@ describe('findings 23/46 — the panels are invalidated per query', () => {
     // Positive control: the run itself worked, so the assertions above are not
     // being satisfied by an execute() that bailed before doing anything.
     expect(e.result).not.toBeNull();
-    expect(e.resultQuery).toBe('type = group LIMIT 3');
+    expect(e.resultQuery).toBe(e.panelStamp('type = group LIMIT 3'));
   });
 
   it('an Explain of the SAME query is kept, because that is the workflow', async () => {
@@ -151,13 +151,104 @@ describe('findings 23/46 — the panels are invalidated per query', () => {
 
     const plan = { entityType: 'note', statements: [{ label: 'notes', sql: 'SELECT 1' }] };
     e.explainResult = plan;
-    e.explainQuery = 'type = note LIMIT 3';
+    e.explainQuery = e.panelStamp('type = note LIMIT 3');
     e.showExplain = true;
 
     await e.execute({ pushState: false });
 
     expect(e.explainResult).toBe(plan);
     expect(e.showExplain).toBe(true);
+  });
+
+  // A parameterised query is one query *text* and any number of requests. Stamping
+  // the panels with the text alone therefore left finding 23 unfixed for every
+  // query with a parameter: explain with $t=photo, change $t to video, Run, and
+  // the plan for photo sat beside the rows for video with nothing saying so.
+  it('a plan for the same text but different parameter values does not survive a Run', async () => {
+    const e = editor();
+    e.getQuery = () => 'type = resource AND tags.name = $t';
+    e.addToHistory = () => {};
+    e.$nextTick = (fn: () => void) => fn();
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => ({ entityType: 'resource', resources: [{ ID: 1 }] }),
+    })) as unknown as typeof fetch;
+
+    e.params = ['t'];
+    e.paramValues = { t: 'photo' };
+    e.explainResult = { entityType: 'resource', statements: [{ label: 'resources', sql: 'SELECT 1' }] };
+    e.explainQuery = e.panelStamp('type = resource AND tags.name = $t');
+    e.showExplain = true;
+
+    // Precondition: with the value unchanged the plan is kept, which is what makes
+    // the assertion below about the parameter and not about clearing always.
+    expect(e.explainQuery).toBe(e.panelStamp(e.getQuery()));
+
+    e.paramValues = { t: 'video' };
+    await e.execute({ pushState: false });
+
+    expect(e.explainResult).toBeNull();
+    expect(e.showExplain).toBe(false);
+    // Positive control: the run landed, and its stamp carries the new value.
+    expect(e.result).not.toBeNull();
+    expect(e.resultQuery).toBe(e.panelStamp('type = resource AND tags.name = $t'));
+  });
+
+  it('a plan for the same text AND the same parameter values is kept', async () => {
+    const e = editor();
+    e.getQuery = () => 'type = resource AND tags.name = $t';
+    e.addToHistory = () => {};
+    e.$nextTick = (fn: () => void) => fn();
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => ({ entityType: 'resource', resources: [{ ID: 1 }] }),
+    })) as unknown as typeof fetch;
+
+    e.params = ['t'];
+    e.paramValues = { t: 'photo' };
+    const plan = { entityType: 'resource', statements: [{ label: 'resources', sql: 'SELECT 1' }] };
+    e.explainResult = plan;
+    e.explainQuery = e.panelStamp('type = resource AND tags.name = $t');
+    e.showExplain = true;
+
+    await e.execute({ pushState: false });
+
+    expect(e.explainResult).toBe(plan);
+    expect(e.showExplain).toBe(true);
+  });
+
+  it('rows for one parameter value do not survive an Explain with another', async () => {
+    const e = editor();
+    e.getQuery = () => 'type = group AND name ~ $n';
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => ({ entityType: 'group', statements: [{ label: 'groups', sql: 'SELECT 1' }] }),
+    })) as unknown as typeof fetch;
+
+    e.params = ['n'];
+    e.paramValues = { n: 'alpha' };
+    e.result = { entityType: 'group', groups: [{ ID: 1 }] };
+    e.resultQuery = e.panelStamp('type = group AND name ~ $n');
+
+    e.paramValues = { n: 'beta' };
+    await e.explain();
+
+    expect(e.result).toBeNull();
+    expect(e.resultQuery).toBe('');
+    // Positive control: the explain landed.
+    expect(e.explainResult).not.toBeNull();
+  });
+
+  it('an empty parameter box does not invalidate a panel, because it is never sent', async () => {
+    // paramsPayload() omits empty values so the server reports them missing rather
+    // than binding "". A stamp that counted them would clear the panels on every
+    // keystroke in a box the request never carried.
+    const e = editor();
+    e.params = ['t'];
+    e.paramValues = { t: '' };
+    const emptyStamp = e.panelStamp('type = resource AND tags.name = $t');
+    e.paramValues = {};
+    expect(e.panelStamp('type = resource AND tags.name = $t')).toBe(emptyStamp);
   });
 
   it('a fresh plan clears a previous query’s rows', async () => {
@@ -169,7 +260,7 @@ describe('findings 23/46 — the panels are invalidated per query', () => {
     })) as unknown as typeof fetch;
 
     e.result = { entityType: 'group', groups: [{ ID: 1 }] };
-    e.resultQuery = 'type = group LIMIT 3';
+    e.resultQuery = e.panelStamp('type = group LIMIT 3');
 
     await e.explain();
 
@@ -177,6 +268,6 @@ describe('findings 23/46 — the panels are invalidated per query', () => {
     expect(e.resultQuery).toBe('');
     // Positive control: the explain landed.
     expect(e.explainResult).not.toBeNull();
-    expect(e.explainQuery).toBe('type = note LIMIT 3');
+    expect(e.explainQuery).toBe(e.panelStamp('type = note LIMIT 3'));
   });
 });

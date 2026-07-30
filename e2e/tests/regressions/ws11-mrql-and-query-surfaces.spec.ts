@@ -362,3 +362,68 @@ test.describe('finding 134 — REJECTED: the MRQL filter bar does report a synta
     await expect(page.locator('.mrql-bar [role="alert"]')).toBeHidden();
   });
 });
+
+// ------------------------------------------------------ finding 147, browser half
+
+test.describe('finding 147 — the results table renders the query\'s own column order', () => {
+  test('columns appear in SELECT order, and a repeated name stays two columns', async ({ page, apiClient }) => {
+    // The browser half of the shape change. An array of row objects could not carry
+    // this: ECMAScript enumerates integer-like keys first and in ascending numeric
+    // order, so Object.keys() over a row with columns named "2024" and "2023"
+    // returned them sorted whatever the server wrote — and two columns with the
+    // same name cannot both exist in one object at all.
+    const query = await apiClient.createQuery({
+      name: `ws11-order-${Date.now()}`,
+      // Numeric-looking aliases are the case the object shape could not express.
+      // Quoted so SQLite reads them as identifiers, and no colon anywhere: the
+      // saved-query runner treats `:name` as a bind placeholder.
+      text: 'SELECT 10 AS "2024", 20 AS "2023", 30 AS dup, 40 AS dup',
+    });
+
+    await page.setViewportSize(DESKTOP);
+    await page.goto(`/query?id=${query.ID}`);
+    await page.getByRole('button', { name: 'Run' }).click();
+    await page.waitForSelector('.query-results table', { timeout: 15_000 });
+
+    const headers = await page
+      .locator('.query-results table tr')
+      .first()
+      .locator('th')
+      .allTextContents();
+
+    expect(headers.map((h) => h.trim())).toEqual(['2024', '2023', 'dup', 'dup']);
+
+    const cells = await page
+      .locator('.query-results table tr')
+      .nth(1)
+      .locator('td')
+      .allTextContents();
+    expect(cells.map((c) => c.trim())).toEqual(['10', '20', '30', '40']);
+  });
+
+  test('a query that matches nothing still draws its header row', async ({ page, apiClient }) => {
+    // The old shape sent `[]` for an empty result, so the table had no columns to
+    // draw and the user was shown an empty box with no indication of what the
+    // query even selected.
+    const query = await apiClient.createQuery({
+      name: `ws11-empty-${Date.now()}`,
+      text: 'SELECT name AS zebra, id AS apple FROM tags WHERE 1 = 0',
+    });
+
+    await page.setViewportSize(DESKTOP);
+    await page.goto(`/query?id=${query.ID}`);
+    await page.getByRole('button', { name: 'Run' }).click();
+    await page.waitForSelector('.query-results table', { timeout: 15_000 });
+
+    const headers = await page
+      .locator('.query-results table tr')
+      .first()
+      .locator('th')
+      .allTextContents();
+    expect(headers.map((h) => h.trim())).toEqual(['zebra', 'apple']);
+
+    // Positive control: there really are no data rows, so the header above is not
+    // being read off a table that quietly returned rows.
+    await expect(page.locator('.query-results table tr')).toHaveCount(1);
+  });
+});

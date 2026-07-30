@@ -298,3 +298,58 @@ test.describe('finding 154 — applying a preset over authored content asks firs
     expect(await page.locator('input[name="CustomHeader"]').inputValue()).not.toBe('');
   });
 });
+
+// --------------------------------------------- findings 17/93, the a11y half
+
+test.describe('findings 17/93 — the JSON lint is reported to assistive technology, not only painted', () => {
+  test('an unparseable schema sets aria-invalid and announces the reason; fixing it clears both', async ({ page, apiClient }) => {
+    // Batch 11's lint is `linter()` + `lintGutter()`, which is a gutter marker and
+    // an underlined range — pixels. A screen reader got nothing: no aria-invalid on
+    // the editor, no description, no announcement. Driven through the real editor
+    // because what carries the state is CodeMirror's own contentDOM, which only
+    // exists once the component has mounted.
+    const cat = await apiClient.createCategory(`ws12-a11y-lint-${Date.now()}`, 'schema lint a11y');
+
+    await page.setViewportSize(DESKTOP);
+    await page.goto(`/category/edit?id=${cat.ID}`);
+    await editorReady(page, 'MetaSchema');
+
+    const editorContent = page.locator('input[name="MetaSchema"]')
+      .locator('xpath=ancestor::*[@x-data][1]')
+      .locator('.cm-content');
+    const region = page.getByTestId('json-lint-MetaSchema');
+
+    // Positive control first: a valid schema reports nothing, so the assertions
+    // below cannot be satisfied by an editor that is permanently invalid.
+    await setEditor(page, 'MetaSchema', '{"type":"object","properties":{"camera":{"type":"string"}}}');
+    await expect.poll(() => editorContent.getAttribute('aria-invalid'), { timeout: 5_000 }).toBeNull();
+    await expect(region).toBeHidden();
+
+    await setEditor(page, 'MetaSchema', INVALID_SCHEMA);
+
+    await expect(editorContent).toHaveAttribute('aria-invalid', 'true', { timeout: 5_000 });
+    await expect(region).toBeVisible();
+    await expect(region).toContainText('Invalid JSON');
+
+    // The description has to actually resolve: aria-describedby pointing at an id
+    // that is not on the page is the same silence with extra markup.
+    const described = await page.evaluate(() => {
+      const content = document.querySelector('input[name="MetaSchema"]')
+        ?.closest('[x-data]')?.querySelector('.cm-content');
+      const id = content?.getAttribute('aria-describedby') || '';
+      const target = id ? document.getElementById(id) : null;
+      return { id, resolved: !!target, text: target?.textContent?.trim() || '' };
+    });
+    expect(described.id, 'the editor has no aria-describedby').not.toBe('');
+    expect(described.resolved, `aria-describedby="${described.id}" points at no element`).toBe(true);
+    expect(described.text).toContain('Invalid JSON');
+
+    // And it is polite, not assertive: this fires on a debounce while typing.
+    await expect(region).toHaveAttribute('aria-live', 'polite');
+
+    // Fixing the schema takes both away again.
+    await setEditor(page, 'MetaSchema', '{"type":"object"}');
+    await expect.poll(() => editorContent.getAttribute('aria-invalid'), { timeout: 5_000 }).toBeNull();
+    await expect(region).toBeHidden();
+  });
+});

@@ -6,6 +6,7 @@ import (
 	"reflect"
 
 	"mahresources/application_context"
+	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/server/api_handlers"
@@ -205,9 +206,9 @@ func registerUserAccountRoutes(r *openapi.Registry) {
 
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/account/settings", OperationID: "listOwnSettings",
-		Summary:     "List the authenticated user's UI settings",
-		Description: "Returns all per-user UI preferences (e.g. lightbox quick tags) as a key → JSON value object.",
-		Tags:        []string{"account"},
+		Summary:              "List the authenticated user's UI settings",
+		Description:          "Returns all per-user UI preferences (e.g. lightbox quick tags) as a key → JSON value object.",
+		Tags:                 []string{"account"},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 	r.Register(openapi.RouteInfo{
@@ -1664,16 +1665,22 @@ func registerQueryRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
-		Method:       http.MethodPost,
-		Path:         "/v1/query/run",
-		OperationID:  "runQuery",
-		Summary:      "Run a saved query",
+		Method:      http.MethodPost,
+		Path:        "/v1/query/run",
+		OperationID: "runQuery",
+		Summary:     "Run a saved query",
+		Description: "Returns the result set as a column list plus one array of values per row, " +
+			"index-aligned with it. Columns appear in the order the query's SELECT names them, " +
+			"repeated column names are preserved, and the column list is populated even when no " +
+			"rows matched.",
 		Tags:         []string{"queries"},
 		IDQueryParam: "id",
 		IDRequired:   false,
 		ExtraQueryParams: []openapi.QueryParam{
 			{Name: "name", Type: "string", Description: "Name of the query to run (alternative to id)"},
 		},
+		ResponseType:         reflect.TypeOf(contracts.SQLResultSet{}),
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 
 	r.Register(openapi.RouteInfo{

@@ -225,6 +225,63 @@ func newQueryEditDescriptionCmd(c *client.Client, opts *output.Options) *cobra.C
 	}
 }
 
+// sqlResultSet mirrors contracts.SQLResultSet, the body of POST /v1/query/run:
+// the column list in the query's own order and one array of values per row.
+type sqlResultSet struct {
+	Columns []string `json:"columns"`
+	Rows    [][]any  `json:"rows"`
+}
+
+// printQueryResult renders a saved query's result set. --json passes the body
+// through untouched; otherwise the columns become the table header and each row
+// its own line, which is what output.Print has always taken. Before the response
+// carried its column list, `run` had nothing to build a header from and fell back
+// to printing the raw JSON in both modes.
+func printQueryResult(opts output.Options, raw json.RawMessage) {
+	var result sqlResultSet
+	if opts.JSON || json.Unmarshal(raw, &result) != nil {
+		output.PrintSingle(opts, nil, raw)
+		return
+	}
+
+	rows := make([][]string, 0, len(result.Rows))
+	for _, values := range result.Rows {
+		cells := make([]string, 0, len(result.Columns))
+		for i := range result.Columns {
+			if i < len(values) {
+				cells = append(cells, formatCell(values[i]))
+			} else {
+				cells = append(cells, "")
+			}
+		}
+		rows = append(rows, cells)
+	}
+
+	output.Print(opts, result.Columns, rows, nil)
+}
+
+// formatCell renders one result cell for the text table. Strings print as
+// themselves — quoting every one would make the common case unreadable — and
+// anything structured is re-encoded as compact JSON.
+func formatCell(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return output.Truncate(v, 80)
+	case bool:
+		return strconv.FormatBool(v)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	default:
+		encoded, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return output.Truncate(string(encoded), 80)
+	}
+}
+
 func newQueryRunCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	help := helptext.Load(queriesHelpFS, "queries_help/query_run.md")
 	return &cobra.Command{
@@ -243,7 +300,7 @@ func newQueryRunCmd(c *client.Client, opts *output.Options) *cobra.Command {
 				return err
 			}
 
-			output.PrintSingle(*opts, nil, raw)
+			printQueryResult(*opts, raw)
 			return nil
 		},
 	}
@@ -268,7 +325,7 @@ func newQueryRunByNameCmd(c *client.Client, opts *output.Options) *cobra.Command
 				return err
 			}
 
-			output.PrintSingle(*opts, nil, raw)
+			printQueryResult(*opts, raw)
 			return nil
 		},
 	}

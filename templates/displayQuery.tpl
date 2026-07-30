@@ -13,20 +13,40 @@
             updated: null,
             loading: false,
             results: [],
+            columns: [],
+            rows: [],
             queryParams: {},
             query() {
                 this.loading = true
                 fetch('/v1/query/run?id={{ query.ID }}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.queryParams) })
                 .then(x => x.ok
                     ? x.json().then(json => {
-                        this.resultTable = renderJsonTable(json);
+                        // Finding 147: the response is {columns, rows} — the SELECT
+                        // list in its own order and one array of values per row. The
+                        // header comes from the server's array rather than from
+                        // Object.keys() over row objects, which is what could not
+                        // carry column order (integer-like keys enumerate first, in
+                        // numeric order, whatever the server wrote).
+                        const columns = json.columns || [];
+                        const rows = json.rows || [];
+                        this.resultTable = renderResultSetTable(columns, rows);
                         this.error = null;
                         this.updated = new Date();
-                        this.results = json;
-                        window.results = json;
+                        this.columns = columns;
+                        // `results` stays an array of row objects: a saved query's
+                        // Template is user-authored HTML that iterates it, and those
+                        // templates predate this endpoint's shape. It is a lossy
+                        // convenience view — a repeated column name keeps only its
+                        // last value — so anything that needs the exact result set
+                        // reads `columns` and `rows`.
+                        this.rows = rows;
+                        this.results = rows.map(row => Object.fromEntries(columns.map((c, i) => [c, row[i]])));
+                        window.results = this.results;
                     })
                     : errorMessageFromResponse(x).then(message => {
                         this.results = [];
+                        this.columns = [];
+                        this.rows = [];
                         this.error = { message };
                         this.updated = null;
                         this.resultTable = document.createElement('div')
@@ -83,11 +103,14 @@
                     {# the finding-13 pattern the scroller is reachable by Tab and  #}
                     {# named, but only once it holds a table: a permanently         #}
                     {# focusable empty box is a tab stop that leads nowhere.        #}
+                    {# Gated on columns, not rows: finding 147's shape names the    #}
+                    {# columns even for an empty result, so a header-only table is  #}
+                    {# drawn — and a wide one still needs to scroll.                #}
                     <div class="query-results output mt-2"
                          x-ref="output"
-                         :tabindex="results && results.length > 0 ? '0' : null"
-                         :role="results && results.length > 0 ? 'region' : null"
-                         :aria-label="results && results.length > 0 ? 'Query results table, scrolls horizontally' : null"></div>
+                         :tabindex="columns && columns.length > 0 ? '0' : null"
+                         :role="columns && columns.length > 0 ? 'region' : null"
+                         :aria-label="columns && columns.length > 0 ? 'Query results table, scrolls horizontally' : null"></div>
                     <template x-if="error">
                         <div>
                             <h2>Something went wrong.</h2>

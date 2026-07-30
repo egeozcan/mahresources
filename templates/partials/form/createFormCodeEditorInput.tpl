@@ -74,6 +74,23 @@
                class="text-xs text-red-600 font-mono"
                role="alert"
                x-text="formatError"></p>
+            {% if mode == "json" %}
+            {# Findings 17/93, a11y half: the automatic JSON lint was gutter       #}
+            {# markers and an underlined range, which a screen reader cannot see.  #}
+            {# This is the same diagnosis in text, and it is what the editor's      #}
+            {# aria-describedby points at — codeEditor.js derives the same id from  #}
+            {# the field name. role=status/aria-live=polite rather than alert:      #}
+            {# unlike the Format JSON button's error, this fires while typing, and  #}
+            {# an assertive region would interrupt on every pause.                  #}
+            <p id="json-lint-{{ name }}"
+               data-testid="json-lint-{{ name }}"
+               x-show="lintError"
+               x-cloak
+               class="text-xs text-red-600 font-mono"
+               role="status"
+               aria-live="polite"
+               x-text="lintError ? 'Invalid JSON: ' + lintError : ''"></p>
+            {% endif %}
         </div>
         {% endif %}
     </div>

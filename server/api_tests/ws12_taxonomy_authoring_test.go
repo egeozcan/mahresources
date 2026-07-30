@@ -29,6 +29,16 @@ const validSchema = `{"type":"object","properties":{"camera":{"type":"string"}}}
 // HTTP 200 and reloaded verbatim, and every group form in that category silently
 // fell back to the freeform meta editor. SectionConfig, declared right beside it,
 // has always been types.JSON and so has always been parse-checked.
+// Two of the three update paths this used to post to do not exist. `/v1/category/edit`
+// and `/v1/resourceCategory/edit` are GET *template* routes (routes.go), not API
+// endpoints — the API updates through the create path with an `ID` — so both POSTs
+// answered 404, and an assertion that only rejected HTTP 200 was satisfied by the
+// 404. Two of the three carriers' update validators were never exercised at all,
+// in the batch whose commit message claims all six write paths are covered.
+//
+// Fixed here two ways: the real paths, and assertions that demand the *specific*
+// rejection (400, naming JSON) plus a valid update on the same path as a positive
+// control. A test that accepts any non-200 accepts a typo'd URL.
 func TestInvalidMetaSchemaIsRejectedOnEveryCarrier(t *testing.T) {
 	type carrier struct {
 		name       string
@@ -37,9 +47,9 @@ func TestInvalidMetaSchemaIsRejectedOnEveryCarrier(t *testing.T) {
 		nameField  string
 	}
 	carriers := []carrier{
-		{"category", "/v1/category", "/v1/category/edit", "Name"},
-		{"resourceCategory", "/v1/resourceCategory", "/v1/resourceCategory/edit", "Name"},
-		{"noteType", "/v1/note/noteType", "/v1/note/noteType", "Name"},
+		{"category", "/v1/category", "/v1/category", "Name"},
+		{"resourceCategory", "/v1/resourceCategory", "/v1/resourceCategory", "Name"},
+		{"noteType", "/v1/note/noteType", "/v1/note/noteType/edit", "Name"},
 	}
 
 	for _, c := range carriers {
@@ -78,6 +88,21 @@ func TestInvalidMetaSchemaIsRejectedOnEveryCarrier(t *testing.T) {
 					bad.Body.String())
 			}
 
+			// Positive control on the update path itself: a valid schema must go
+			// through it with a 200, or "the invalid one was rejected" is satisfied
+			// by a URL that does not resolve. This is the assertion that was
+			// missing — the two paths this test used to post to were 404s.
+			okUpdate := tc.MakeRequest(http.MethodPost, c.updatePath, map[string]any{
+				"ID":         id,
+				c.nameField:  "ws12-valid-" + c.name,
+				"MetaSchema": validSchema,
+			})
+			if okUpdate.Code != http.StatusOK {
+				t.Fatalf("POST %s with a VALID schema returned %d, want 200: %s — "+
+					"the update path is wrong, so the rejection below measures nothing",
+					c.updatePath, okUpdate.Code, okUpdate.Body.String())
+			}
+
 			// Update the valid one with an unparseable schema — the path the report
 			// actually reproduced on.
 			badUpdate := tc.MakeRequest(http.MethodPost, c.updatePath, map[string]any{
@@ -85,11 +110,52 @@ func TestInvalidMetaSchemaIsRejectedOnEveryCarrier(t *testing.T) {
 				c.nameField:  "ws12-valid-" + c.name,
 				"MetaSchema": invalidSchema,
 			})
-			if badUpdate.Code == http.StatusOK {
-				t.Errorf("update accepted an invalid Meta JSON Schema (HTTP 200): %s", badUpdate.Body.String())
+			if badUpdate.Code != http.StatusBadRequest {
+				t.Errorf("POST %s with an invalid Meta JSON Schema returned %d, want 400: %s",
+					c.updatePath, badUpdate.Code, badUpdate.Body.String())
+			}
+			if !strings.Contains(strings.ToLower(badUpdate.Body.String()), "json") {
+				t.Errorf("the update rejection does not mention JSON, so it cannot tell the "+
+					"author what is wrong: %s", badUpdate.Body.String())
+			}
+
+			// And nothing unparseable reached the column.
+			stored := metaSchemaOf(t, tc, c.name, "ws12-valid-"+c.name)
+			if stored != validSchema {
+				t.Errorf("stored MetaSchema = %q, want the last valid value %q — the "+
+					"rejected update wrote anyway", stored, validSchema)
 			}
 		})
 	}
+}
+
+// metaSchemaOf reads a carrier row's MetaSchema straight out of the database, so
+// the assertion is about what was persisted rather than about what a handler
+// echoed back.
+func metaSchemaOf(t *testing.T, tc *TestContext, carrier, name string) string {
+	t.Helper()
+	switch carrier {
+	case "category":
+		var row models.Category
+		if err := tc.DB.Where("name = ?", name).First(&row).Error; err != nil {
+			t.Fatalf("reload category %q: %v", name, err)
+		}
+		return row.MetaSchema
+	case "resourceCategory":
+		var row models.ResourceCategory
+		if err := tc.DB.Where("name = ?", name).First(&row).Error; err != nil {
+			t.Fatalf("reload resource category %q: %v", name, err)
+		}
+		return row.MetaSchema
+	case "noteType":
+		var row models.NoteType
+		if err := tc.DB.Where("name = ?", name).First(&row).Error; err != nil {
+			t.Fatalf("reload note type %q: %v", name, err)
+		}
+		return row.MetaSchema
+	}
+	t.Fatalf("unknown carrier %q", carrier)
+	return ""
 }
 
 // Findings 17/93, the storage half: nothing unparseable may reach the column, and
@@ -423,5 +489,72 @@ func TestHostileButValidMetaSchemaIsEscapedInMarkup(t *testing.T) {
 	// The unescaped sequence would close the attribute and start a statement.
 	if strings.Contains(body, `'; alert('xss'); '`) {
 		t.Error("the hostile quote sequence reached the page unescaped")
+	}
+}
+
+// Findings 17/93, a11y half. The automatic JSON lint added in Batch 11 is
+// `linter()` plus `lintGutter()`: a marker in the gutter and an underlined range,
+// both of which are pixels. The editor carried no aria-invalid, there was nothing
+// for aria-describedby to point at, and nothing was announced — so a screen-reader
+// user editing a Meta JSON Schema got the *same* silence the finding is about,
+// while the sighted user got a marker.
+//
+// (The "Format JSON" button's error is a painted role="alert" and is correct as it
+// stands, because a user asked for it. This is the automatic lint, which fires
+// while typing, so it belongs in a polite live region.)
+//
+// Go can see that the server wrote the region and that its id is the one
+// codeEditor.js derives from the field name; whether aria-invalid actually toggles
+// as the document changes is asserted in Playwright.
+func TestJSONEditorRendersAPoliteLintRegion(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	resp := tc.MakeRequest(http.MethodGet, "/category/new", nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("GET /category/new = %d, want 200", resp.Code)
+	}
+	body := resp.Body.String()
+
+	// Positive control: the Meta JSON Schema editor is on this page at all.
+	if !strings.Contains(body, `name="MetaSchema"`) {
+		t.Fatal("no MetaSchema field on /category/new — this test measured nothing")
+	}
+
+	tag := findOpenTag(body, `id="json-lint-MetaSchema"`, "p")
+	if tag == "" {
+		t.Fatal(`no <p id="json-lint-MetaSchema"> — the editor's aria-describedby points at nothing`)
+	}
+	// The id has to be exactly what codeEditor.js builds from the field name
+	// (`json-lint-${fieldName}`), or aria-describedby dangles.
+	for _, want := range []string{`aria-live="polite"`, `role="status"`, `x-text="lintError`} {
+		if !strings.Contains(tag, want) {
+			t.Errorf("the lint region is missing %s\ntag: %s", want, tag)
+		}
+	}
+	// Not an alert: this fires on a debounce while the author is typing, and an
+	// assertive region would interrupt on every pause.
+	if strings.Contains(tag, `role="alert"`) {
+		t.Errorf("the automatic lint region is assertive; it fires while typing\ntag: %s", tag)
+	}
+}
+
+// The control for the test above: an editor that is not JSON gets no lint region,
+// so "the region is present" is not satisfied by markup that is emitted for every
+// code editor on the page.
+func TestNonJSONEditorsHaveNoLintRegion(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// The saved-query form's editor is SQL.
+	resp := tc.MakeRequest(http.MethodGet, "/query/new", nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("GET /query/new = %d, want 200", resp.Code)
+	}
+	body := resp.Body.String()
+
+	if !strings.Contains(body, `x-ref="editorContainer"`) {
+		t.Fatal("no code editor on /query/new — this test measured nothing")
+	}
+	if strings.Contains(body, "json-lint-") {
+		t.Error("a non-JSON editor rendered a JSON lint region")
 	}
 }

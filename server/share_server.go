@@ -168,6 +168,7 @@ func (s *ShareServer) Start(bindAddress string, port string) error {
 		return fmt.Errorf("share server could not bind %s: %w", addr, err)
 	}
 
+	s.appContext.MarkShareServerListening()
 	log.Printf("Share server listening on %s", addr)
 	go func() {
 		if err := s.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {

@@ -858,3 +858,68 @@ flakes. Adding a readiness signal alone made it worse, because the test then hov
 what it needed was to wait for the page to stop moving. **A readiness signal has to be the thing you
 depend on** — the listener, the settled layout — and not the earliest observable symptom of the
 bundle having run.
+
+## A JSON object cannot express column order to a JavaScript consumer, so an ordered result set has to be an array
+
+A saved query's result columns came back alphabetised, because the handler returned `[]map[string]any`
+and `encoding/json` sorts map keys. I fixed it by keeping the object shape and writing a custom
+marshaller that emits members in the query's own order, and I wrote down why: the endpoint is
+documented, has an OpenAPI entry and a CLI consumer, the defect is entirely about order, and "every
+JSON parser in practice preserves insertion order for string keys".
+
+The qualifier *for string keys* is load-bearing and I glossed it. ECMAScript specifies that
+integer-like keys are enumerated **first, in ascending numeric order**, before any string key, in
+`Object.keys()`, `for...in`, and `JSON.parse` round-trips. A result whose columns are named `2024`
+and `2023` — `SELECT extract(year from created_at) AS "2024", …` is not exotic — comes back re-sorted
+no matter what the server wrote. Measured in a browser against my own ordered marshaller:
+`SELECT 10 AS "2024", 20 AS "2023", 30 AS dup, 40 AS dup` rendered its header as `2023, 2024, dup`.
+
+The second half of that measurement is the other rule. A JSON object cannot hold two members with the
+same name, and SQL column names repeat — `SELECT id, id`, or any join of two tables that both have
+`id`. I had patched that by suffixing later occurrences (`id`, `id:2`), which introduces a collision
+with a column genuinely named `id:2` and silently drops a value when both appear.
+
+- **When a wire format has to carry order or duplicates, use an array.** `{columns: [...], rows:
+  [[...]]}` makes both properties structural instead of conventional, and it turned out to be the
+  shape both consumers already wanted: the browser draws a header row and then cells, and the CLI's
+  table printer takes `(columns, rows)` literally. It also expresses something the array of objects
+  could not — a query that matched nothing still names its columns, so an empty result can still draw
+  a header.
+- **One breaking change beats two mitigations.** Take it once, and move the OpenAPI entry, the CLI,
+  the prose docs and the doctests in the same commit.
+
+## A test that asserts "not 200" passes against a route that does not exist
+
+A test posted an invalid payload to three endpoints and asserted `if code == 200 { error }`. Two of
+the three URLs were not API routes at all — they were GET template paths — so both POSTs 404'd and
+the assertion was satisfied. Two of three write-path validators were unverified, in a commit whose
+message claims all six write paths are covered.
+
+This is the negative-assertion rule with a sharper edge on it. "Every negative assertion needs a
+positive control in the same test" is already in this file; what this adds is *which* control. The
+control has to run **the same request against the same URL** and prove it succeeds — a valid payload
+returning 200 on that exact path. A control that merely proves the *create* endpoint works, or that
+some other request 400s, does not distinguish a working validator from a typo'd URL.
+
+Two habits follow:
+
+- **Assert the specific rejection, not the absence of success.** `want 400` plus a substring of the
+  message the user would read. `!= 200` accepts 404, 405, 500 and a proxy error equally.
+- **Prove the effect, not just the status.** Reading the column back and asserting it still holds the
+  last valid value catches a handler that answers 400 and writes anyway.
+
+## A gate that runs the wrong driver is not a gate
+
+The Postgres-only half of a bug was "asserted on both drivers" according to a test comment. It was
+not: the test called the SQLite setup helper, which is SQLite under every build tag, so `--tags
+postgres` ran it against SQLite. And the Postgres harness built the read-only handle by wrapping
+GORM's **pgx** connection, while production builds it with lib/pq — two drivers that disagree about
+the Go type of a Postgres value (`numeric`, `uuid` and arrays are `[]byte` on lib/pq and `string` on
+pgx). So the one code path where the defect existed had no coverage from either direction, and the
+suite was green.
+
+- **A test harness has to open its connections the way production opens them.** Reusing a handle
+  because it is already there changes what the test is testing. Where production calls a factory,
+  the harness should call the same factory.
+- **When a comment claims cross-driver coverage, check which setup function the test calls.** Build
+  tags gate which *files* compile, not which database a given helper connects to.

@@ -67,6 +67,21 @@ func (c *Container) DSN() string {
 // connection. The database is dropped in t.Cleanup.
 func (c *Container) CreateTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	db, _ := c.CreateTestDBWithDSN(t)
+	return db
+}
+
+// CreateTestDBWithDSN is CreateTestDB plus the DSN of the database it made, for
+// callers that need a second connection to the same database opened with a
+// different driver. The production read-only handle is one: it is built by
+// models.CreateReadOnlyDatabaseConnection, which goes through lib/pq, while the
+// GORM handle above is pgx. The two drivers disagree about the Go type of a
+// Postgres value — lib/pq returns numeric, uuid and array columns as []byte and
+// pgx returns them as strings — so a test harness that reuses the GORM handle for
+// the read-only connection cannot see anything a saved query does on a real
+// deployment.
+func (c *Container) CreateTestDBWithDSN(t *testing.T) (*gorm.DB, string) {
+	t.Helper()
 
 	dbName := fmt.Sprintf("test_%d_%d", time.Now().UnixNano(), rand.Intn(100000))
 
@@ -106,7 +121,7 @@ func (c *Container) CreateTestDB(t *testing.T) *gorm.DB {
 		}
 	})
 
-	return db
+	return db, testDSN
 }
 
 func replaceDatabaseInDSN(dsn, newDB string) string {

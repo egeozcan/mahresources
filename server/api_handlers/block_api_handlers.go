@@ -356,35 +356,32 @@ func GetTableBlockQueryDataHandler(ctx contracts.TableBlockQueryRunner) func(htt
 		}
 		defer rows.Close()
 
-		// Get column names in database order (before consuming rows)
-		colNames, err := rows.Columns()
-		if err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
-			return
-		}
-
-		// Transform results using the existing sQLToMap helper
-		resultMap, err := sQLToMap(rows)
+		resultSet, err := sQLToResultSet(rows)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
 		// Build column definitions preserving database order
-		columns := make([]map[string]string, 0, len(colNames))
-		for _, colName := range colNames {
+		columns := make([]map[string]string, 0, len(resultSet.Columns))
+		for _, colName := range resultSet.Columns {
 			columns = append(columns, map[string]string{
 				"id":    colName,
 				"label": colName,
 			})
 		}
 
-		// Add row IDs to each row
-		// This response carries its own ordered `columns` list, so the rows do
-		// not depend on JSON member order and a plain map is fine here.
-		rowsWithIDs := make([]map[string]any, len(resultMap))
-		for i, row := range resultMap {
-			rowWithID := row.Map()
+		// This endpoint's own response shape is unchanged: it already carries an
+		// ordered `columns` list of its own, so its rows never depended on JSON
+		// member order and stay keyed objects.
+		rowsWithIDs := make([]map[string]any, len(resultSet.Rows))
+		for i, row := range resultSet.Rows {
+			rowWithID := make(map[string]any, len(resultSet.Columns)+1)
+			for j, colName := range resultSet.Columns {
+				if j < len(row) {
+					rowWithID[colName] = row[j]
+				}
+			}
 			rowWithID["id"] = "row_" + strconv.Itoa(i)
 			rowsWithIDs[i] = rowWithID
 		}

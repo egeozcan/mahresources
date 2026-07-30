@@ -406,10 +406,11 @@ curl -X POST "http://localhost:8181/v1/query/run?name=Recent%20Resources" \
   -H "Accept: application/json"
 ```
 
-The response is a JSON array of row objects whose members appear in the order the
-query's `SELECT` list names them. See
+The response is `{"columns": [...], "rows": [[...], ...]}` — the `SELECT` list in
+its own order, and one array of values per row, index-aligned with it. See
 [Saved Queries](../features/saved-queries.md#run-a-query) for the repeated-column
-and column-type rules.
+and column-type rules, and for what changed from the previous array-of-objects
+shape.
 
 ### Get Database Schema
 

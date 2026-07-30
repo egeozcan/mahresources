@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jmoiron/sqlx"
 	"mahresources/constants"
@@ -18,22 +19,22 @@ import (
 	"mahresources/server/http_utils"
 )
 
-// sQLToMap converts a raw-SQL result set into rows that serialize with their
-// columns in the query's own order (finding 147 — see contracts.OrderedRow for
-// why the response shape is unchanged).
-func sQLToMap(rows *sqlx.Rows) ([]contracts.OrderedRow, error) {
+// sQLToResultSet converts a raw-SQL result set into the columns-and-rows body
+// POST /v1/query/run returns. See contracts.SQLResultSet for why the shape is an
+// array of arrays and not an array of objects (finding 147).
+func sQLToResultSet(rows *sqlx.Rows) (*contracts.SQLResultSet, error) {
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, fmt.Errorf("column error: %v", err)
 	}
 
-	data := make([]contracts.OrderedRow, 0)
+	out := contracts.NewSQLResultSet(cols)
 
 	for rows.Next() {
-		columns := make([]any, len(cols))
 		columnPointers := make([]any, len(cols))
-		for i := range columns {
-			columnPointers[i] = &columns[i]
+		scanned := make([]any, len(cols))
+		for i := range scanned {
+			columnPointers[i] = &scanned[i]
 		}
 
 		if err := rows.Scan(columnPointers...); err != nil {
@@ -42,35 +43,62 @@ func sQLToMap(rows *sqlx.Rows) ([]contracts.OrderedRow, error) {
 
 		values := make([]any, len(cols))
 		for i := range cols {
-			val := *(columnPointers[i].(*any))
-			if raw, ok := val.([]uint8); ok {
-				if embedded, ok := embeddedJSON(raw); ok {
-					val = embedded
-				}
-			}
-			values[i] = val
+			values[i] = cellValue(*(columnPointers[i].(*any)))
 		}
 
-		data = append(data, contracts.NewOrderedRow(cols, values))
+		out.Rows = append(out.Rows, values)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("row iteration error: %v", err)
 	}
 
-	return data, nil
+	return out, nil
 }
 
-// embeddedJSON decides whether a text/blob column holds a JSON document that
-// should be re-emitted as structure rather than as a string. Several columns
-// really are JSON (`meta`, `section_config`), and inlining them keeps a saved
-// query's output usable.
+// cellValue decides how one scanned column value is represented in JSON.
 //
-// Finding 147, second half: this used to attempt json.Unmarshal on *every*
-// []uint8 value, so a text column containing `123` came back as the number 123,
-// `true` as a boolean and `null` as null — a silent type change driven by the
-// contents of the cell. Only an object or an array is treated as embedded JSON
-// now; a bare scalar keeps the type the column has.
+// The only case that needs a decision is []byte, which encoding/json base64s.
+// Whether a driver hands a value back as a []byte or as a typed Go value is a
+// property of the driver, not of the data: go-sqlite3 returns TEXT as a string,
+// and lib/pq — the driver behind the production read-only handle on Postgres —
+// returns numeric, uuid, arrays, json and jsonb as []byte while returning text,
+// int, bool and timestamps as typed values. So on Postgres, `SELECT sum(file_size)`
+// came back as `"MS41"`: base64 of the number the query existed to read.
+//
+// Three cases, in order:
+//
+//   - An object or an array is a JSON document (`meta`, `section_config`, and any
+//     jsonb column) and is inlined as structure so a reader can address into it.
+//   - Anything else that is valid UTF-8 is the driver's *text representation* of
+//     the value, and is emitted as the string it spells. A bare JSON scalar is
+//     deliberately included here: a text column containing `123` is the string
+//     "123", and re-parsing it would make the value's type depend on what the
+//     cell happens to spell.
+//   - Bytes that are not valid UTF-8 have no text form, so they keep the base64
+//     encoding. That is what a bytea column of real binary gets, and it is the
+//     only honest answer for it.
+func cellValue(val any) any {
+	raw, ok := val.([]uint8)
+	if !ok {
+		return val
+	}
+	if embedded, ok := embeddedJSON(raw); ok {
+		return embedded
+	}
+	if utf8.Valid(raw) {
+		return string(raw)
+	}
+	return raw
+}
+
+// embeddedJSON reports whether a text/blob column holds a JSON object or array
+// that should be re-emitted as structure rather than as a string.
+//
+// Only an object or an array counts. Attempting json.Unmarshal on every value
+// would make a text column containing `123` come back as the number 123, `true`
+// as a boolean and `null` as null — a silent type change driven by the contents
+// of the cell rather than by its column.
 func embeddedJSON(raw []byte) (json.RawMessage, bool) {
 	trimmed := bytes.TrimLeft(raw, " \t\r\n")
 	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
@@ -178,7 +206,7 @@ func GetRunQueryHandler(ctx contracts.QueryRunner) func(writer http.ResponseWrit
 		}
 		defer result.Close()
 
-		resultMap, err := sQLToMap(result)
+		resultSet, err := sQLToResultSet(result)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
@@ -186,7 +214,7 @@ func GetRunQueryHandler(ctx contracts.QueryRunner) func(writer http.ResponseWrit
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(resultMap)
+		_ = json.NewEncoder(writer).Encode(resultSet)
 	}
 }
 

@@ -13,6 +13,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// decodeResultSet decodes the columns-and-rows body POST /v1/query/run returns
+// (finding 147 — see contracts.SQLResultSet).
+func decodeResultSet(t *testing.T, body []byte) (columns []string, rows [][]any) {
+	t.Helper()
+	var out struct {
+		Columns []string `json:"columns"`
+		Rows    [][]any  `json:"rows"`
+	}
+	require.NoError(t, json.Unmarshal(body, &out), "response must be a {columns, rows} object")
+	return out.Columns, out.Rows
+}
+
 func TestQueryRun_FormEncoded(t *testing.T) {
 	tc := SetupTestEnv(t)
 
@@ -40,11 +52,9 @@ func TestQueryRun_FormEncoded(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code,
 		"form-encoded query/run should return 200 with results")
 
-	// Response should be valid JSON array
-	var results []map[string]any
-	err := json.Unmarshal(rr.Body.Bytes(), &results)
-	require.NoError(t, err, "response must be valid JSON array")
-	assert.Len(t, results, 1)
+	columns, rows := decodeResultSet(t, rr.Body.Bytes())
+	assert.Equal(t, []string{"result"}, columns)
+	assert.Len(t, rows, 1)
 }
 
 func TestQueryRun_NoContentType(t *testing.T) {
@@ -70,11 +80,9 @@ func TestQueryRun_NoContentType(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code,
 		"no-content-type query/run should return 200 with results")
 
-	// Response should be valid JSON array
-	var results []map[string]any
-	err := json.Unmarshal(rr.Body.Bytes(), &results)
-	require.NoError(t, err, "response must be valid JSON array")
-	assert.Len(t, results, 1)
+	columns, rows := decodeResultSet(t, rr.Body.Bytes())
+	assert.Equal(t, []string{"answer"}, columns)
+	assert.Len(t, rows, 1)
 }
 
 func TestQueryRun_FormEncodedWithParams(t *testing.T) {
@@ -100,12 +108,11 @@ func TestQueryRun_FormEncodedWithParams(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
-	var results []map[string]any
-	err := json.Unmarshal(rr.Body.Bytes(), &results)
-	require.NoError(t, err, "response must be valid JSON array")
-	require.Len(t, results, 1)
+	columns, rows := decodeResultSet(t, rr.Body.Bytes())
+	require.Equal(t, []string{"echoed"}, columns)
+	require.Len(t, rows, 1)
 	// The parameter should have been passed through
-	assert.Equal(t, "hello", results[0]["echoed"],
+	assert.Equal(t, "hello", rows[0][0],
 		"form parameters should be passed as query parameters")
 }
 
@@ -126,10 +133,9 @@ func TestQueryRun_JSONBody(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.Code)
 
-	var results []map[string]any
-	err := json.Unmarshal(resp.Body.Bytes(), &results)
-	require.NoError(t, err, "response must be valid JSON array")
-	require.Len(t, results, 1)
-	assert.Equal(t, "world", results[0]["echoed"],
+	columns, rows := decodeResultSet(t, resp.Body.Bytes())
+	require.Equal(t, []string{"echoed"}, columns)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "world", rows[0][0],
 		"JSON parameters should be passed as query parameters")
 }

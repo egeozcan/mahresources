@@ -22,7 +22,7 @@ Names must be unique across all Queries.
 
 1. The SQL in `text` is executed via `sqlx` using the configured query connection
 2. Named parameters (`:paramName` syntax) are substituted from user input
-3. Results are returned as a JSON array of row objects
+3. Results are returned as `{columns, rows}` — the `SELECT` list in its own order, and one array of values per row
 4. If a `template` is defined, results render through it; otherwise a default table is used
 
 If `DB_READONLY_DSN` points to a database-enforced read-only connection, writes are blocked at the database level. Without that, queries still run, but they are not database-enforced read-only.
@@ -75,7 +75,14 @@ Results display as a sortable table with clickable ID links and JSON formatting 
 
 ## Custom Result Templates
 
-The `template` field accepts HTML with Alpine.js. The `results` variable contains the row array.
+The `template` field accepts HTML with Alpine.js. The `results` variable contains the rows as
+objects keyed by column name, which is what these templates have always iterated.
+
+Two further variables carry the response exactly as the API sends it: `columns` (the `SELECT` list
+in order) and `rows` (one array of values per row, index-aligned with `columns`). `results` is a
+convenience projection built from those, and it is lossy in one case — when a column name appears
+twice, the object keeps only the last of the two values. Read `columns` and `rows` when that
+matters.
 
 ```html
 <div class="grid grid-cols-3 gap-4">
@@ -225,16 +232,44 @@ curl -X POST "http://localhost:8181/v1/query/run?id=3" \
   -d '{"tagName": "photography"}'
 ```
 
-Response is a JSON array of row objects. The members of each object appear in the
-order the query's `SELECT` list names them, not alphabetically — so
-`SELECT name AS zebra, id AS apple` returns `{"zebra": …, "apple": …}`. A column
-name that repeats (`SELECT id, id`, or a join of two tables that both have `id`)
-is disambiguated with a `:2`, `:3` suffix on the later occurrences so no value is
-dropped.
+The response is an object with a `columns` list and a `rows` list:
 
-A text column whose contents happen to spell a number or a boolean keeps its
-string type. Only a value that begins with `{` or `[` is inlined as a JSON
-document.
+```json
+{
+  "columns": ["zebra", "apple"],
+  "rows": [
+    ["Sunset over the pier", 41],
+    ["Harbour at dawn", 58]
+  ]
+}
+```
+
+`columns` is the query's `SELECT` list in the order it was written, and each
+entry of `rows` is index-aligned with it. Three consequences:
+
+- Column order is exact. `SELECT name AS zebra, id AS apple` returns
+  `["zebra", "apple"]` in that order, not alphabetically.
+- A repeated column name (`SELECT id, id`, or a join of two tables that both
+  have `id`) appears twice in `columns` and keeps both values.
+- `columns` is populated even when the query matched nothing, so a client can
+  still draw the table header for an empty result.
+
+Cell values keep the type the column has. A text column whose contents happen to
+spell a number or a boolean stays a string; only a value that begins with `{` or
+`[` and parses is inlined as a JSON document. A column holding bytes that are not
+valid UTF-8 — a `bytea` of real binary — is base64-encoded, which is the only
+representation JSON has for it.
+
+:::note Changed response shape
+
+This endpoint used to return a bare JSON array of row objects
+(`[{"zebra": …, "apple": …}]`). It changed to `{columns, rows}` because a JSON
+object cannot carry column order: JavaScript's `Object.keys()` enumerates
+integer-like keys first and in numeric order, so a query selecting columns named
+`2024` and `2023` came back re-sorted whatever the server wrote. Update any
+client that indexes rows by key.
+
+:::
 
 ### Get Database Schema
 

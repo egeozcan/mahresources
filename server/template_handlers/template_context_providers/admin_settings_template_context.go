@@ -23,7 +23,7 @@ func AdminSettingsContextProvider(ctx AdminSettingsPageContext) func(r *http.Req
 			"pageTitle":       "Settings",
 			"hideSidebar":     true,
 			"settingsByGroup": groups,
-			"bootOnly":        bootOnlyFields(ctx.Configuration(), ctx.ShareServerFailed()),
+			"bootOnly":        bootOnlyFields(ctx.Configuration(), !ctx.ShareServerListening()),
 		}.Update(baseContext)
 	}
 }

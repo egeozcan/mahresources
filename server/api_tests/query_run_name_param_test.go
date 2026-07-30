@@ -1,7 +1,6 @@
 package api_tests
 
 import (
-	"encoding/json"
 	"fmt"
 	"mahresources/models"
 	"net/http"
@@ -36,10 +35,8 @@ func TestQueryRun_FormEncodedNameParam(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.Code,
 		"form-encoded query/run with :name bind parameter should succeed")
 
-	var results []map[string]any
-	err := json.Unmarshal(resp.Body.Bytes(), &results)
-	require.NoError(t, err, "response must be valid JSON array")
-	require.Len(t, results, 1, "query should find the one matching group")
+	_, rows := decodeResultSet(t, resp.Body.Bytes())
+	require.Len(t, rows, 1, "query should find the one matching group")
 }
 
 func TestQueryRun_FormEncodedIdParam(t *testing.T) {
@@ -65,11 +62,10 @@ func TestQueryRun_FormEncodedIdParam(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.Code,
 		"form-encoded query/run with :id bind parameter should succeed")
 
-	var results []map[string]any
-	err := json.Unmarshal(resp.Body.Bytes(), &results)
-	require.NoError(t, err, "response must be valid JSON array")
-	require.Len(t, results, 1, "query should find the one matching group")
-	assert.Equal(t, "Specific Group", results[0]["name"],
+	columns, rows := decodeResultSet(t, resp.Body.Bytes())
+	require.Equal(t, []string{"name"}, columns)
+	require.Len(t, rows, 1, "query should find the one matching group")
+	assert.Equal(t, "Specific Group", rows[0][0],
 		"the returned row should be the group we looked up by id")
 }
 

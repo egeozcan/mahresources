@@ -64,14 +64,18 @@ describe('finding 28 — the copy-from picker pages past the 50-row cap', () => 
       ok: true,
       json: async () => Array.from({ length: 50 }, (_, i) => ({ ID: i, Name: `x${i}` })),
     }));
-    const { items, complete } = await fetchAllPages('/v1/categories', impl as never);
+    const { items, complete, reason } = await fetchAllPages('/v1/categories', impl as never);
 
     expect(complete).toBe(false);
+    expect(reason).toBe('cap');
     expect(items).toHaveLength(20 * 50);
     expect(impl).toHaveBeenCalledTimes(20);
   });
 
-  it('keeps what arrived when a later page fails', async () => {
+  // A failed page is not the end of the list. Reporting it as complete suppressed
+  // the truncation warning, which is finding 28 again: a picker missing sources
+  // with nothing on screen saying so.
+  it('keeps what arrived when a later page fails, and says the list is incomplete', async () => {
     let n = 0;
     const impl = vi.fn(async () => {
       n++;
@@ -80,10 +84,27 @@ describe('finding 28 — the copy-from picker pages past the 50-row cap', () => 
       }
       return { ok: false, json: async () => [] };
     });
-    const { items, complete } = await fetchAllPages('/v1/categories', impl as never);
+    const { items, complete, reason } = await fetchAllPages('/v1/categories', impl as never);
 
     expect(items).toHaveLength(50);
-    expect(complete).toBe(true); // no more pages are coming; do not claim truncation
+    expect(complete).toBe(false);
+    expect(reason).toBe('error');
+  });
+
+  it('says the list is incomplete when the fetch itself throws', async () => {
+    let n = 0;
+    const impl = vi.fn(async () => {
+      n++;
+      if (n === 1) {
+        return { ok: true, json: async () => Array.from({ length: 50 }, (_, i) => ({ ID: i })) };
+      }
+      throw new TypeError('Failed to fetch');
+    });
+    const { items, complete, reason } = await fetchAllPages('/v1/categories', impl as never);
+
+    expect(items).toHaveLength(50);
+    expect(complete).toBe(false);
+    expect(reason).toBe('error');
   });
 
   it('appends page= correctly to a url that already has a query string', async () => {
@@ -190,5 +211,94 @@ describe('finding 154 — a clobber is confirmed, and only when there is somethi
     expect(editors.CustomHeader).toBe('<div>authored</div>');
     const msg = confirmSpy.mock.calls[0][0] as string;
     expect(msg).toContain('Person');
+  });
+
+  // applyBundle writes SectionConfig too, for a same-carrier bundle that carries
+  // one, and the confirmation counted only the slots and MetaSchema. A form whose
+  // only authored content was the section layout therefore scored zero fields at
+  // risk, returned true without prompting, and lost the layout silently.
+  it('counts SectionConfig when a same-carrier bundle will replace it', () => {
+    const b = bundleWith({ SectionConfig: '{"showMeta":true}' });
+    const incoming = { carrier: 'category', slots: {}, sectionConfig: '{"showMeta":false}' };
+
+    expect(b.confirmOverwrite('the "contact-card" preset', incoming)).toBe(true);
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(confirmSpy.mock.calls[0][0] as string).toContain('1 template field');
+  });
+
+  it('applyPreset prompts when the section layout is the only thing at risk', () => {
+    stubConfirm(false);
+    const applied: string[] = [];
+    const b = bundleWith({ SectionConfig: '{"showMeta":true}' });
+    b.setSectionConfig = (json: string) => { applied.push(json); };
+    b.presets = [{ name: 'contact-card', carrier: 'category', slots: {}, sectionConfig: '{"showMeta":false}' }];
+    b.presetChoice = 'contact-card';
+
+    b.applyPreset();
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(applied).toEqual([]);
+  });
+
+  it('does not count SectionConfig for a cross-carrier bundle, which never writes it', () => {
+    // Positive control on the branch: applyBundle skips setSectionConfig when the
+    // carriers differ, so counting it there would prompt about a field that is
+    // not at risk.
+    const b = bundleWith({ SectionConfig: '{"showMeta":true}' });
+    const incoming = { carrier: 'noteType', slots: {}, sectionConfig: '{"showMeta":false}' };
+
+    expect(b.confirmOverwrite('the template from "A Note Type"', incoming)).toBe(true);
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not count SectionConfig when the incoming bundle has none', () => {
+    // setSectionConfig no-ops on an empty string, so nothing is replaced.
+    const b = bundleWith({ SectionConfig: '{"showMeta":true}' });
+    const incoming = { carrier: 'category', slots: {}, sectionConfig: '' };
+
+    expect(b.confirmOverwrite('the "contact-card" preset', incoming)).toBe(true);
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('finding 28 — an incomplete source list always says so', () => {
+  let notices: string[];
+
+  function bundleWithFetch(impl: unknown) {
+    const b = templateBundle({ carrier: 'category' });
+    notices = [];
+    b.notify = (msg: string) => { notices.push(msg); };
+    vi.stubGlobal('fetch', impl);
+    return b;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('warns that sources are missing when a page request fails', async () => {
+    let n = 0;
+    await bundleWithFetch(async () => {
+      n++;
+      // First page full for every carrier, then a 500 — the walk gives up part way.
+      if (n <= 3) {
+        return { ok: true, json: async () => Array.from({ length: 50 }, (_, i) => ({ ID: i, Name: `c${i}` })) };
+      }
+      return { ok: false, json: async () => [] };
+    }).loadSources();
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('a request failed');
+  });
+
+  it('says nothing when every list ends cleanly', async () => {
+    // Positive control: the warning is about the failure, not about loading.
+    await bundleWithFetch(async () => ({
+      ok: true,
+      json: async () => [{ ID: 1, Name: 'Person' }],
+    })).loadSources();
+
+    expect(notices).toEqual([]);
   });
 });

@@ -49,7 +49,7 @@ import {
 } from './index.js';
 
 // Import tableMaker
-import { renderJsonTable } from './tableMaker.js';
+import { renderJsonTable, renderResultSetTable } from './tableMaker.js';
 
 // Import Alpine components
 import {
@@ -131,6 +131,7 @@ window.parseQueryParams = parseQueryParams;
 window.addMetaToGroup = addMetaToGroup;
 window.addMetaToResource = addMetaToResource;
 window.renderJsonTable = renderJsonTable;
+window.renderResultSetTable = renderResultSetTable;
 window.errorMessageFromResponse = errorMessageFromResponse;
 window.generateParamNameForMeta = generateParamNameForMeta;
 window.renderMentions = renderMentions;

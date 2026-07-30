@@ -8,7 +8,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jmoiron/sqlx"
 	"github.com/spf13/afero"
 
 	"mahresources/application_context"
@@ -39,7 +38,7 @@ func TestMain(m *testing.M) {
 
 // SetupPostgresTestEnv creates a fresh Postgres database and application context.
 func SetupPostgresTestEnv(t *testing.T) *TestContext {
-	db := pgContainer.CreateTestDB(t)
+	db, testDSN := pgContainer.CreateTestDBWithDSN(t)
 
 	err := db.AutoMigrate(
 		&models.Query{},
@@ -85,8 +84,18 @@ func SetupPostgresTestEnv(t *testing.T) *TestContext {
 	fs := afero.NewMemMapFs()
 	altFsPaths := make(map[string]string)
 
-	sqlDB, _ := db.DB()
-	readOnlyDB := sqlx.NewDb(sqlDB, "postgres")
+	// Open the read-only handle the way production does — through
+	// models.CreateReadOnlyDatabaseConnection, i.e. lib/pq — rather than wrapping
+	// GORM's pgx handle. Saved queries are the only thing that runs on this
+	// connection, and the two drivers return different Go types for the same
+	// column: with the pgx handle a numeric, uuid or array column arrives as a
+	// string and with lib/pq it arrives as []byte. Reusing the GORM handle made
+	// every value-encoding defect in POST /v1/query/run invisible to this suite.
+	readOnlyDB, err := models.CreateReadOnlyDatabaseConnection("postgres", testDSN)
+	if err != nil {
+		t.Fatalf("Failed to open the read-only connection: %v", err)
+	}
+	t.Cleanup(func() { readOnlyDB.Close() })
 
 	appCtx := application_context.NewMahresourcesContext(fs, db, readOnlyDB, config)
 

@@ -1564,6 +1564,18 @@ components:
                 ID:
                     type: integer
             type: object
+        SQLResultSet:
+            properties:
+                columns:
+                    items:
+                        type: string
+                    type: array
+                rows:
+                    items:
+                        items: {}
+                        type: array
+                    type: array
+            type: object
         SavedMRQLQuery:
             properties:
                 createdAt:
@@ -1672,10 +1684,8 @@ components:
             properties:
                 allowZero:
                     type: boolean
-                bootDefault:
-                    type: object
-                current:
-                    type: object
+                bootDefault: {}
+                current: {}
                 description:
                     type: string
                 group:
@@ -5200,6 +5210,7 @@ paths:
                 - queries
     /v1/query/run:
         post:
+            description: Returns the result set as a column list plus one array of values per row, index-aligned with it. Columns appear in the order the query's SELECT names them, repeated column names are preserved, and the column list is populated even when no rows matched.
             operationId: runQuery
             parameters:
                 - in: query
@@ -5213,6 +5224,10 @@ paths:
                     type: string
             responses:
                 "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/SQLResultSet'
                     description: Successful response
             summary: Run a saved query
             tags:

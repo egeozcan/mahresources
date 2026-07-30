@@ -65,9 +65,9 @@ type AccountPageContext interface {
 type AdminSettingsPageContext interface {
 	Settings() *application_context.RuntimeSettings
 	Configuration() *application_context.MahresourcesConfig
-	// ShareServerFailed distinguishes "share port 8383" from "share port 8383 and
+	// ShareServerListening distinguishes "share port 8383" from "share port 8383 and
 	// nothing is listening on it" (finding 51).
-	ShareServerFailed() bool
+	ShareServerListening() bool
 }
 
 // AdminSharesPageContext serves /admin/shares.

@@ -6,11 +6,17 @@ sidebar_label: run
 
 # mr query run
 
-Execute a saved query by ID and return the rows as JSON. The query
+Execute a saved query by ID and return the result set. The query
 runs against a read-only database handle: any attempt to write
-(INSERT/UPDATE/DELETE/DDL) is rejected. Column names in the result
-come verbatim from the SELECT list, so use explicit column aliases
-(`select count(*) as n ...`) to produce predictable keys.
+(INSERT/UPDATE/DELETE/DDL) is rejected. Column names come verbatim
+from the SELECT list, so use explicit column aliases (`select
+count(*) as n ...`) to produce predictable ones.
+
+The response is `{"columns": [...], "rows": [[...], ...]}`. Columns
+keep the order the SELECT list names them, a repeated column name
+appears twice rather than being merged, and `columns` is populated
+even when no rows matched. Without `--json` the columns become the
+header of a text table.
 
 Returns `400 Bad Request` if the SQL fails to execute and `404 Not
 Found` if the given ID does not exist. For templated queries, the
@@ -29,16 +35,22 @@ Positional arguments:
 
 ## Examples
 
-**Run a query by ID and print the raw JSON array**
+**Run a query by ID and print a text table**
 
 ```bash
 mr query run 42
 ```
 
-**Run and extract the first row's count column with jq**
+**Run and extract the first row's first column with jq**
 
 ```bash
-mr query run 42 --json | jq '.[0].n'
+mr query run 42 --json | jq '.rows[0][0]'
+```
+
+**Address a column by name rather than by position**
+
+```bash
+mr query run 42 --json | jq '.rows[0][(.columns|index("n"))]'
 ```
 
 
@@ -56,7 +68,7 @@ This command has no local flags.
 | `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
 ## Output
 
-Array of row objects; each object's keys are the query's selected column names
+An object with `columns` (the selected column names, in SELECT order) and `rows` (one array of values per row, index-aligned with columns)
 
 ## Exit Codes
 

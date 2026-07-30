@@ -42,10 +42,12 @@ export function mrqlEditor() {
     defaultLimitApplied: false,
     appliedLimit: 0,
 
-    // Findings 23/46: the query text each panel belongs to. Neither panel was
-    // ever invalidated, so an Explain of one query sat above the results of
-    // another and nothing on screen said which was which. Whichever panel does
-    // not describe the query being run is cleared before the request goes out.
+    // Findings 23/46: the stamp of the request each panel belongs to — see
+    // panelStamp(), which is the query text *and* the parameter values it was
+    // bound with. Neither panel was ever invalidated, so an Explain of one query
+    // sat above the results of another and nothing on screen said which was
+    // which. Whichever panel does not describe the request going out is cleared
+    // before it does.
     resultQuery: '',
     explainQuery: '',
 
@@ -550,8 +552,22 @@ export function mrqlEditor() {
       }
     },
 
+    // Findings 23/46: what a panel describes is the query *and* the parameter
+    // values it was run with, not the query text alone. A parameterised query is
+    // one query text and any number of result sets: explain `type = resource AND
+    // tags.name = $t` with t=photo, change t to video, Run, and the text is
+    // unchanged — so a text-only stamp kept the photo plan beside the video rows,
+    // which is finding 23 exactly, unfixed for every query with a parameter.
+    //
+    // Only bound values count. paramsPayload() drops empty inputs (the server
+    // rejects those with a 400 rather than binding an empty string), so a panel is
+    // not invalidated by a keystroke in a box the request never carried.
+    panelStamp(query) {
+      return JSON.stringify([query, this.paramsPayload()]);
+    },
+
     // Findings 23/46: one place each panel is reset, so every caller clears the
-    // same state. The panels are addressed by their own query text, not by a
+    // same state. The panels are addressed by their own stamp, not by a
     // generation counter, because "Explain then Run the same query" must keep
     // both — that is the workflow the Explain button exists for.
     clearResult() {
@@ -590,9 +606,10 @@ export function mrqlEditor() {
       // BH-013: clears the banner state at the start of each request too.
       this.clearResult();
       // Findings 23/46: an Explain of a different query must not survive this
-      // run. Explaining and then running the *same* text is a normal workflow,
-      // so that plan is kept.
-      if (this.explainQuery !== query) this.clearExplain();
+      // run. Explaining and then running the *same* query with the *same*
+      // parameter values is a normal workflow, so that plan is kept.
+      const stamp = this.panelStamp(query);
+      if (this.explainQuery !== stamp) this.clearExplain();
 
       try {
         const resp = await fetch('/v1/mrql?render=1', {
@@ -613,7 +630,7 @@ export function mrqlEditor() {
         const result = await resp.json();
         if (requestId !== this._executeRequestId || controller.signal.aborted) return;
         this.result = result;
-        this.resultQuery = query;
+        this.resultQuery = stamp;
         // BH-013: capture the default-limit signal from the response payload.
         this.defaultLimitApplied = !!(this.result && this.result.default_limit_applied);
         this.appliedLimit = (this.result && this.result.applied_limit) || 0;
@@ -661,7 +678,8 @@ export function mrqlEditor() {
       this.explainQuery = '';
       // Findings 23/46, the other direction: the report saw a fresh plan sitting
       // on top of a previous query's result rows too.
-      if (this.resultQuery !== query) this.clearResult();
+      const stamp = this.panelStamp(query);
+      if (this.resultQuery !== stamp) this.clearResult();
       try {
         const resp = await fetch('/v1/mrql/explain', {
           method: 'POST',
@@ -679,7 +697,7 @@ export function mrqlEditor() {
         const explainResult = await resp.json();
         if (requestId !== this._explainRequestId || controller.signal.aborted) return;
         this.explainResult = explainResult;
-        this.explainQuery = query;
+        this.explainQuery = stamp;
         this.showExplain = true;
       } catch (err) {
         if (err?.name !== 'AbortError' && requestId === this._explainRequestId) {

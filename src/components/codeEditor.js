@@ -5,6 +5,15 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
     formatError: '',
     _formatErrorTimer: null,
 
+    // Findings 17/93, a11y half: the automatic JSON lint was gutter markers and an
+    // underlined range and nothing else — no aria-invalid on the editor, nothing
+    // for aria-describedby to point at, no announcement. lintError carries the
+    // parse message to a polite live region (polite, not alert: it fires while
+    // typing) and drives aria-invalid on the editor's own content element.
+    lintError: '',
+    _lintTimer: null,
+    _lintMessage: null,
+
     // Natural-language generation state (only meaningful when generate is true).
     generate,
     generationPrompt: '',
@@ -49,6 +58,7 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
         try {
           const jsonLintMod = await import('./jsonLint.js');
           jsonExtensions = jsonLintMod.jsonLintExtensions();
+          this._lintMessage = jsonLintMod.jsonLintMessage;
         } catch (e) {
           console.error('json lint failed to load', e);
         }
@@ -112,6 +122,10 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             hiddenInput.value = update.state.doc.toString();
+            // Same 400ms as the linter's own delay, so the announcement and the
+            // gutter marker land together rather than the reader being told
+            // "invalid" about a document mid-keystroke.
+            this.scheduleLint(update.state.doc.toString());
             // Notify a live preview pane (if present) that this slot changed.
             if (shortcodes) {
               container.dispatchEvent(
@@ -144,6 +158,17 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
 
       // Expose the view on the container for test automation
       container._cmView = this.view;
+
+      // Findings 17/93, a11y half. The editor's content element is the thing a
+      // screen reader lands on, so aria-invalid and the description belong there —
+      // not on the wrapper. The description id is derived from the field name on
+      // both sides (here and in createFormCodeEditorInput.tpl) so it stays a
+      // pointer to a real element without either side inventing an id.
+      if (this._lintMessage) {
+        this._lintDescriptionId = `json-lint-${fieldName}`;
+        this.view.contentDOM.setAttribute('aria-describedby', this._lintDescriptionId);
+        this.applyLint(initialValue);
+      }
 
       // Soft-warn on submit when a shortcode template — or, findings 17/93, a
       // JSON editor — holds error diagnostics.
@@ -211,6 +236,31 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
       });
     },
 
+    // Findings 17/93, a11y half. scheduleLint debounces to the linter's own 400ms
+    // so the announcement and the gutter marker land together; applyLint is the
+    // state change, separated out so it can be driven directly from init() for the
+    // value the server rendered (a schema that was already broken before this
+    // editor opened must announce itself too).
+    scheduleLint(doc) {
+      if (!this._lintMessage) return;
+      if (this._lintTimer) clearTimeout(this._lintTimer);
+      this._lintTimer = setTimeout(() => this.applyLint(doc), 400);
+    },
+
+    applyLint(doc) {
+      if (!this._lintMessage) return;
+      this.lintError = this._lintMessage(doc);
+      if (this.view) {
+        // aria-invalid is set and removed, never left as "false" on an element
+        // that has no validity to report.
+        if (this.lintError) {
+          this.view.contentDOM.setAttribute('aria-invalid', 'true');
+        } else {
+          this.view.contentDOM.removeAttribute('aria-invalid');
+        }
+      }
+    },
+
     async formatContent() {
       if (!this.view) return;
       const content = this.view.state.doc.toString();
@@ -230,7 +280,8 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
         }
       } catch (err) {
         this.formatError = err.message || 'Formatting failed';
-        if (this._formatErrorTimer) clearTimeout(this._formatErrorTimer);
+        if (this._lintTimer) clearTimeout(this._lintTimer);
+      if (this._formatErrorTimer) clearTimeout(this._formatErrorTimer);
         this._formatErrorTimer = setTimeout(() => { this.formatError = ''; }, 4000);
         return;
       }

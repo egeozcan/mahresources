@@ -28,12 +28,19 @@ import (
 // configured, and SetupTestEnv leaves SharePort empty — so every test that shares
 // a note as *setup* has to say it wants sharing. The port is never bound; only
 // ShareEnabled() reads it.
+// setupShareEnabledTestEnv stands in for a running share server: a configured port
+// *and* the listening marker server.ShareServer.Start sets once net.Listen has
+// succeeded. Both are needed, because ShareEnabled() is not the absence of an
+// observed failure — a context that merely has a port configured has no share
+// server, and minting a token for it is finding 7.
 func setupShareEnabledTestEnv(t *testing.T) *TestContext {
 	t.Helper()
-	return setupTestEnvWithConfig(t, func(c *application_context.MahresourcesConfig) {
+	tc := setupTestEnvWithConfig(t, func(c *application_context.MahresourcesConfig) {
 		c.SharePort = "18399"
 		c.ShareBindAddress = "127.0.0.1"
 	})
+	tc.AppCtx.MarkShareServerListening()
+	return tc
 }
 
 // Finding 7. share_handlers.go called ShareNote and returned "/s/" + token with no
@@ -84,6 +91,7 @@ func TestShareEndpointStillWorksWhenSharingIsConfigured(t *testing.T) {
 		c.SharePort = "18384"
 		c.ShareBindAddress = "127.0.0.1"
 	})
+	tc.AppCtx.MarkShareServerListening()
 	note := tc.CreateDummyNote("ws13 shareable note")
 
 	if !tc.AppCtx.ShareEnabled() {
@@ -113,6 +121,49 @@ func TestShareEndpointStillWorksWhenSharingIsConfigured(t *testing.T) {
 	if unshare.Code != http.StatusOK {
 		t.Errorf("DELETE /v1/note/share = %d after a share-server failure, want 200: %s",
 			unshare.Code, unshare.Body.String())
+	}
+}
+
+// Finding 7, the door Batch 11 left open. ShareEnabled() was
+// `ShareConfigured() && !ShareServerFailed()`, and the failure flag starts false —
+// so a context built with SharePort set whose share server was never started
+// reported "no failure observed" and enabled sharing. main.go is not the only
+// caller of CreateServer (tests, tooling, and any embedder are others), and for
+// every one of them the endpoint would mint a token for a /s/ route no process
+// serves, which is finding 7 word for word.
+//
+// The predicate is positive now: a share server must have said it is listening.
+func TestShareIsRefusedWhenAPortIsConfiguredButNoServerWasStarted(t *testing.T) {
+	tc := setupTestEnvWithConfig(t, func(c *application_context.MahresourcesConfig) {
+		c.SharePort = "18397"
+		c.ShareBindAddress = "127.0.0.1"
+	})
+	note := tc.CreateDummyNote("ws13 configured-but-unstarted")
+
+	if !tc.AppCtx.ShareConfigured() {
+		t.Fatal("the port did not reach the config — this test measured nothing")
+	}
+	if tc.AppCtx.ShareEnabled() {
+		t.Error("ShareEnabled() is true for a share server that was never started")
+	}
+
+	resp := tc.MakeRequest(http.MethodPost, fmt.Sprintf("/v1/note/share?noteId=%d", note.ID), nil)
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Errorf("POST /v1/note/share = %d, want 503 — a token whose /s/ URL nothing "+
+			"serves must not be minted: %s", resp.Code, resp.Body.String())
+	}
+
+	// Positive control: the same context with the listening marker set — which is
+	// what ShareServer.Start does after net.Listen succeeds — shares fine. Without
+	// it, "503" is satisfied by an endpoint that refuses unconditionally.
+	tc.AppCtx.MarkShareServerListening()
+	if !tc.AppCtx.ShareEnabled() {
+		t.Fatal("ShareEnabled() is false with a configured port and a listening server")
+	}
+	ok := tc.MakeRequest(http.MethodPost, fmt.Sprintf("/v1/note/share?noteId=%d", note.ID), nil)
+	if ok.Code != http.StatusOK {
+		t.Errorf("POST /v1/note/share = %d once the share server is listening, want 200: %s",
+			ok.Code, ok.Body.String())
 	}
 }
 
@@ -154,8 +205,9 @@ func TestShareServerStartReturnsABindFailure(t *testing.T) {
 		t.Errorf("the error does not name the port it could not bind: %v", startErr)
 	}
 
-	if !tc.AppCtx.ShareServerFailed() {
-		t.Error("the context was not marked failed, so the UI cannot know sharing is dead")
+	if tc.AppCtx.ShareServerListening() {
+		t.Error("the context reports a listening share server after a bind failure, " +
+			"so the UI cannot know sharing is dead")
 	}
 	if tc.AppCtx.ShareEnabled() {
 		t.Error("ShareEnabled() is true after a bind failure")
@@ -190,8 +242,8 @@ func TestShareServerStartSucceedsOnAFreePort(t *testing.T) {
 	}
 	defer ss.Stop()
 
-	if tc.AppCtx.ShareServerFailed() {
-		t.Error("the context was marked failed after a successful bind")
+	if !tc.AppCtx.ShareServerListening() {
+		t.Error("the context was not marked listening after a successful bind")
 	}
 	if !tc.AppCtx.ShareEnabled() {
 		t.Error("ShareEnabled() is false after a successful bind")
@@ -207,6 +259,7 @@ func TestNotePageExplainsADeadShareServer(t *testing.T) {
 		c.SharePort = "18385"
 		c.ShareBindAddress = "127.0.0.1"
 	})
+	tc.AppCtx.MarkShareServerListening()
 	note := tc.CreateDummyNote("ws13 dead share note")
 
 	// Share it while sharing works, then kill the share server.
@@ -249,6 +302,7 @@ func TestNotePageOffersSharingWhenTheShareServerIsHealthy(t *testing.T) {
 		c.SharePort = "18386"
 		c.ShareBindAddress = "127.0.0.1"
 	})
+	tc.AppCtx.MarkShareServerListening()
 	note := tc.CreateDummyNote("ws13 healthy share note")
 
 	resp := tc.MakeRequest(http.MethodGet, fmt.Sprintf("/note?id=%d", note.ID), nil)

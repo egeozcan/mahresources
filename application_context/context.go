@@ -378,31 +378,43 @@ type MahresourcesContext struct {
 	// [lazy]/[details] deferred-render shortcodes (lib/deferredtoken). Derived from
 	// Config.TemplateSigningKey when set, otherwise a per-boot random 32 bytes.
 	deferredSigningKey []byte
-	// shareServerFailed records that the public share server could not bind, or
-	// stopped serving. Finding 51: a bind failure was logged and swallowed, so
-	// /admin/settings went on advertising the share port and the note sidebar went
-	// on minting tokens for URLs nothing would ever answer. A pointer for the same
-	// reason as rootAdmin — WithRequest/WithPrincipal/WithTransaction shallow-copy
-	// the struct, and every copy has to see the same flag.
+	// shareServerListening records that the public share server bound its port and
+	// has not stopped serving. Finding 51: a bind failure was logged and swallowed,
+	// so /admin/settings went on advertising the share port and the note sidebar
+	// went on minting tokens for URLs nothing would ever answer. A pointer for the
+	// same reason as rootAdmin — WithRequest/WithPrincipal/WithTransaction
+	// shallow-copy the struct, and every copy has to see the same flag.
 	//
-	// It starts *false* deliberately: "no failure observed" is the right default
-	// for a context whose share server was never started (tests, tooling), and the
-	// boot path cannot reach a running-but-dead state any more because Start now
-	// binds synchronously and main.go exits on the error.
-	shareServerFailed *atomic.Bool
+	// It is a positive fact, not the absence of a negative one. Batch 11 spelled
+	// this as `shareServerFailed`, which starts false — so a context whose share
+	// server was never started at all reported "no failure observed" and
+	// ShareEnabled() answered true for a port nothing was listening on. That is
+	// finding 7 again, through a different door: main.go's boot path is not the
+	// only caller of CreateServer, and the endpoint would happily mint tokens for
+	// a `/s/` route no process serves.
+	shareServerListening *atomic.Bool
+}
+
+// MarkShareServerListening records that the share server bound its port and is
+// serving. Called by server.ShareServer.Start once net.Listen has succeeded, and
+// by test setups that stand in for it.
+func (ctx *MahresourcesContext) MarkShareServerListening() {
+	if ctx != nil && ctx.shareServerListening != nil {
+		ctx.shareServerListening.Store(true)
+	}
 }
 
 // MarkShareServerFailed records that the share server is not serving. Called by
 // server.ShareServer on a bind failure and if Serve ever returns unexpectedly.
 func (ctx *MahresourcesContext) MarkShareServerFailed() {
-	if ctx != nil && ctx.shareServerFailed != nil {
-		ctx.shareServerFailed.Store(true)
+	if ctx != nil && ctx.shareServerListening != nil {
+		ctx.shareServerListening.Store(false)
 	}
 }
 
-// ShareServerFailed reports whether a share-server failure has been observed.
-func (ctx *MahresourcesContext) ShareServerFailed() bool {
-	return ctx != nil && ctx.shareServerFailed != nil && ctx.shareServerFailed.Load()
+// ShareServerListening reports whether a share server is known to be serving.
+func (ctx *MahresourcesContext) ShareServerListening() bool {
+	return ctx != nil && ctx.shareServerListening != nil && ctx.shareServerListening.Load()
 }
 
 // DeferredSigningKey returns the HMAC key used to sign and verify deferred-render
@@ -504,7 +516,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		DefaultResourceCategoryID: 1,
 		rootAdmin:                 newRootAdminCache(),
 		deferredSigningKey:        deriveDeferredSigningKey(config.TemplateSigningKey),
-		shareServerFailed:         &atomic.Bool{},
+		shareServerListening:      &atomic.Bool{},
 	}
 
 	// Install RBAC group-subtree scoping + CreatedByUserId stamping callbacks.
