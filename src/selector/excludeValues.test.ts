@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
     createMultiEntityFieldProfile,
     createSingleEntityFieldProfile,
+    createTagFieldProfile,
 } from './index';
 
 /**
@@ -116,22 +117,60 @@ describe('selector excludeValues', () => {
     });
 
     test('a creatable profile keeps its create path when a filter is wrapped around it', async () => {
+        // Exercised end to end, because the wrapper builds a *new* source object and
+        // the only thing carrying creation across is one line forwarding
+        // `source.create`. Asserting that the profile still has a dispatch function
+        // (which it would either way) could not detect losing it — the wrapped source
+        // would simply have no `create`, the core would offer no candidate, and every
+        // tag field in the app would silently stop creating tags.
         vi.useFakeTimers();
+        const created: EntityValue = { ID: 12, Name: 'fresh' };
         const fetch = vi.fn()
             .mockResolvedValueOnce(response([]))
-            .mockResolvedValueOnce(response({ ID: 12, Name: 'fresh' }));
+            .mockResolvedValueOnce(response(created));
         vi.stubGlobal('fetch', fetch);
 
-        const profile = createMultiEntityFieldProfile<EntityValue>({
-            entity: 'tag',
+        const profile = createTagFieldProfile<EntityValue>({
+            usage: 'resources',
             excludeValues: () => [99],
         });
 
         profile.selector.dispatch({ type: 'set-query', query: 'fresh' });
         await completeSearch();
         expect(profile.selector.getSnapshot().options).toEqual([]);
-        // The wrapper must forward `create` rather than shadow it: a tag field that
-        // silently lost creation would be a regression the finding never asked for.
-        expect(typeof profile.selector.dispatch).toBe('function');
+        // The core only offers to create when its source can: this is the first thing
+        // a lost `create` would take away.
+        expect(profile.selector.getSnapshot().createCandidate).toEqual({ label: 'fresh' });
+
+        const result = profile.selector.dispatch({ type: 'commit-token', token: 'fresh' });
+        expect(result).toMatchObject({ ok: true, consumed: true, creation: { label: 'fresh' } });
+        if (!result.ok || !result.creation) throw new Error('the creation was not queued');
+        expect(await result.creation.outcome).toMatchObject({ status: 'success' });
+
+        expect(fetch).toHaveBeenNthCalledWith(
+            2,
+            '/v1/tag',
+            expect.objectContaining({ method: 'POST', body: expect.stringContaining('"Name":"fresh"') }),
+        );
+        expect(profile.selector.getSnapshot().selected).toEqual([
+            { key: 12, label: 'fresh', raw: created },
+        ]);
+    });
+
+    test('the exclusion still applies to a creatable profile', async () => {
+        // The control for the test above: forwarding `create` must not have been done
+        // by handing back the unwrapped source.
+        vi.useFakeTimers();
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+            response([{ ID: 99, Name: 'stale' }, { ID: 100, Name: 'staler' }])));
+
+        const profile = createTagFieldProfile<EntityValue>({
+            usage: 'resources',
+            excludeValues: () => [99],
+        });
+
+        profile.selector.dispatch({ type: 'set-query', query: 'stal' });
+        await completeSearch();
+        expect(profile.selector.getSnapshot().options.map((o) => o.key)).toEqual([100]);
     });
 });

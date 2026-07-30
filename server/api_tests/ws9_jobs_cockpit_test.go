@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -212,6 +214,51 @@ func TestClearCompletedJobs_RemovesFinishedAndKeepsActive(t *testing.T) {
 	}
 }
 
+// TestClearCompletedJobs_NamesWhatItCleared is review remediation finding 2.
+//
+// The panel used to decide what to dismiss from its *own* snapshot of the queue,
+// taken before the request went out. The server decides at handling time, so a job
+// that reached a terminal state inside that window was removed server-side, was
+// absent from the client's dismissed set, and the `removed` handler — whose job is
+// to retain finished jobs for display — put it straight back as a phantom row that
+// survived until the next reconnect.
+//
+// The client cannot close that window on its own; only the server knows what it
+// actually cleared. So the response names the ids.
+func TestClearCompletedJobs_NamesWhatItCleared(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	finishedID := finishedTestJob(t, tc)
+	pausedID := pausedDownloadJob(t, tc)
+
+	res := tc.MakeRequest(http.MethodPost, "/v1/jobs/clearCompleted", nil)
+	if res.Code != http.StatusOK {
+		t.Fatalf("POST /v1/jobs/clearCompleted answered %d %s", res.Code, res.Body.String())
+	}
+	var payload struct {
+		Cleared int      `json:"cleared"`
+		IDs     []string `json:"ids"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("clearCompleted response is not JSON: %v (%s)", err, res.Body.String())
+	}
+
+	if len(payload.IDs) != payload.Cleared {
+		t.Errorf("clearCompleted reported %d cleared but named %d ids (%v) — the client dismisses what this list says",
+			payload.Cleared, len(payload.IDs), payload.IDs)
+	}
+	if !slices.Contains(payload.IDs, finishedID) {
+		t.Errorf("review finding 2: the cleared job %s is not in the response's ids %v, so the panel cannot know it went",
+			finishedID, payload.IDs)
+	}
+	// The positive control: the list is what was cleared, not everything the caller
+	// can see. A paused job stays, so naming it would make the panel drop a row the
+	// server still has.
+	if slices.Contains(payload.IDs, pausedID) {
+		t.Errorf("the paused job %s was named as cleared, but it was kept: %v", pausedID, payload.IDs)
+	}
+}
+
 // ------------------------------------------------------- findings 41 and 113
 
 // TestJobsPanel_PausedJobKeepsItsProgressAndCancel is findings 41 and 2's UI half.
@@ -314,4 +361,107 @@ func templateCondition(body, marker string) string {
 		return ""
 	}
 	return rest[:end]
+}
+
+// ------------------------------------ review remediation findings 3 and 5
+
+// TestJobsPanel_RowCarriesItsJobID pins the hook every locator in
+// ws9-jobs-cockpit.spec.ts is scoped by.
+//
+// Review remediation finding 5: without it a row could only be found by its
+// rendered text, and `getJobTitle` renders every stalled test download as "events"
+// (the filename of the URL they all share, since DownloadJob has no name field to
+// serialise). Three assertions were scoped that way and could not fail. This is the
+// CI-visible half — CI runs `go test` and does not run the browser suite — so if the
+// attribute is ever dropped, the failure arrives here rather than silently turning
+// those locators back into "whichever row happens to match".
+func TestJobsPanel_RowCarriesItsJobID(t *testing.T) {
+	tc := SetupTestEnv(t)
+	_, body := tc.getHTML(t, "/dashboard")
+
+	row := findOpenTag(body, `data-testid="cockpit-job"`, "li")
+	if row == "" {
+		t.Fatalf("the cockpit job row is not in the page — this test measured nothing")
+	}
+	if !strings.Contains(row, `:data-job-id="job.id"`) {
+		t.Errorf("review finding 5: the job row does not carry :data-job-id, so a row can only be located by text every row shares: %s", row)
+	}
+}
+
+// TestHeaderDialogs_StackAboveHeaderDropdowns is review remediation finding 3.
+//
+// `.header` is position:sticky with z-index:40, so it is a stacking context and its
+// descendants are ordered against each other rather than against the page. Two of
+// them are dialogs (the global search dialog and the jobs panel, both `fixed
+// inset-0`) and two are dropdowns (settings, account). The dropdowns are the later
+// siblings, so at equal z-index they painted over an aria-modal dialog and stayed
+// clickable through it.
+//
+// What the browser does with these numbers is asserted by hit-testing in
+// ws9-jobs-cockpit.spec.ts, which is the assertion that can actually fail against
+// the bug. This is the drift guard for the invariant behind it, in the suite CI
+// runs: every full-viewport overlay in the header outranks every other z-index
+// class in the header.
+func TestHeaderDialogs_StackAboveHeaderDropdowns(t *testing.T) {
+	tc := SetupTestEnv(t)
+	_, body := tc.getHTML(t, "/dashboard")
+
+	header := between(body, "<header", "</header>")
+	if header == "" {
+		t.Fatalf("no <header> in the page — this test measured nothing")
+	}
+
+	zClass := regexp.MustCompile(`(?:^|\s)z-(?:\[(\d+)\]|(\d+))(?:\s|"|$)`)
+	dialogs := map[string]int{}
+	others := map[string]int{}
+	for _, tag := range openTagsWithin(header, "div") {
+		m := zClass.FindStringSubmatch(tag)
+		if m == nil {
+			continue
+		}
+		raw := m[1]
+		if raw == "" {
+			raw = m[2]
+		}
+		z, err := strconv.Atoi(raw)
+		if err != nil {
+			continue
+		}
+		// A full-viewport overlay is a dialog layer; anything else in the header is
+		// chrome that must not paint over one.
+		if strings.Contains(tag, "fixed inset-0") {
+			dialogs[tag] = z
+		} else {
+			others[tag] = z
+		}
+	}
+
+	if len(dialogs) < 2 {
+		t.Fatalf("expected the search dialog and the jobs panel overlay in the header, found %d full-viewport overlays", len(dialogs))
+	}
+	if len(others) == 0 {
+		t.Fatalf("expected the settings and account dropdowns to carry a z-index class — this test measured nothing")
+	}
+
+	for tag, z := range dialogs {
+		for otherTag, otherZ := range others {
+			if z <= otherZ {
+				t.Errorf("review finding 3: a header dialog at z-index %d does not outrank header chrome at z-index %d, so the chrome paints over an aria-modal dialog.\n dialog: %s\n chrome: %s", z, otherZ, tag, otherTag)
+			}
+		}
+	}
+}
+
+// between returns the substring of body from the first occurrence of from to the
+// first following occurrence of to.
+func between(body, from, to string) string {
+	start := strings.Index(body, from)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(body[start:], to)
+	if end < 0 {
+		return ""
+	}
+	return body[start : start+end]
 }

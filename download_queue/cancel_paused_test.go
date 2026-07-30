@@ -2,6 +2,7 @@ package download_queue
 
 import (
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -161,9 +162,12 @@ func TestClearFinished_RemovesTerminalJobsAndKeepsTheRest(t *testing.T) {
 	addTestJob(dm, "pending", JobStatusPending)
 	addTestJob(dm, "paused", JobStatusPaused)
 
+	// The ids and not a count: the panel dismisses exactly the rows named here, so
+	// which ones went is part of the contract (review remediation finding 2).
 	cleared := dm.ClearFinished(func(*uint) bool { return true })
-	if cleared != 3 {
-		t.Errorf("expected 3 terminal jobs cleared, got %d", cleared)
+	slices.Sort(cleared)
+	if !slices.Equal(cleared, []string{"cancelled", "completed", "failed"}) {
+		t.Errorf("expected the three terminal jobs to be named as cleared, got %v", cleared)
 	}
 
 	remaining := map[string]bool{}
@@ -204,8 +208,8 @@ func TestClearFinished_HonoursVisibility(t *testing.T) {
 	b.SetOwnerUserID(theirs)
 
 	cleared := dm.ClearFinished(func(owner *uint) bool { return owner != nil && *owner == mine })
-	if cleared != 1 {
-		t.Fatalf("expected only the caller's own job cleared, got %d", cleared)
+	if !slices.Equal(cleared, []string{"mine"}) {
+		t.Fatalf("expected only the caller's own job cleared, got %v", cleared)
 	}
 	if _, ok := dm.GetJob("theirs"); !ok {
 		t.Error("another user's completed job was cleared")

@@ -321,11 +321,16 @@ func GetJobsClearCompletedHandler(ctx JobsClearer) func(writer http.ResponseWrit
 
 		cleared := ctx.DownloadManager().ClearFinished(visible)
 		if pm := ctx.PluginManager(); pm != nil {
-			cleared += pm.ClearFinishedActionJobs(visible)
+			cleared = append(cleared, pm.ClearFinishedActionJobs(visible)...)
 		}
 
+		// The ids and not just the count: the panel dismisses exactly what this says
+		// went. Deciding that from its own pre-request snapshot left a phantom row
+		// for any job that finished while the request was in flight — it was cleared
+		// here, the client never knew, and its retain-for-display path put the row
+		// back (review remediation finding 2).
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(map[string]any{"cleared": cleared})
+		_ = json.NewEncoder(writer).Encode(map[string]any{"cleared": len(cleared), "ids": cleared})
 	}
 }
 

@@ -1,5 +1,5 @@
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
-import { captureTrigger, focusFirstIn, restoreFocus } from '../utils/focus.js';
+import { captureTrigger, focusedElement, focusFirstIn, restoreFocus } from '../utils/focus.js';
 
 export function downloadCockpit() {
     return {
@@ -48,6 +48,11 @@ export function downloadCockpit() {
         init() {
             this._liveRegion = createLiveRegion();
             this._lastTrigger = null;
+            // The floor for focus restore, captured here because $el in init() is the
+            // component root — in a method it would be whichever element called it.
+            // The trigger always exists (it is header chrome, not inside an x-if), so
+            // it is somewhere real to land whenever there was no trigger to capture.
+            this._trigger = this.$el.querySelector('.cockpit-trigger');
 
             // BH-036: pick up the retention window from the meta tag emitted by base.tpl.
             const metaEl = document.querySelector('meta[name="x-export-retention-ms"]');
@@ -75,8 +80,15 @@ export function downloadCockpit() {
                 if (value) {
                     this.announce('Jobs panel opened. Shows background job progress.');
                     this.$nextTick(() => focusFirstIn(this.$refs.panel));
-                } else if (this._lastTrigger) {
-                    restoreFocus(this._lastTrigger);
+                } else {
+                    // Unconditionally, which is review remediation finding 4: this was
+                    // gated on _lastTrigger, and the panel opens three ways that leave
+                    // it null — the Cmd/Ctrl+Shift+D shortcut (toggle() with no
+                    // event), the `jobs-panel-open` window event, and an incoming
+                    // plugin action job. The panel is x-trap.noreturn and its contents
+                    // are torn down by the x-if, so nothing else was standing between
+                    // the reader and <body>.
+                    restoreFocus(this._lastTrigger, this._trigger);
                     this._lastTrigger = null;
                 }
             });
@@ -96,7 +108,14 @@ export function downloadCockpit() {
 
         toggle(event) {
             if (!this.isOpen) {
-                this._lastTrigger = captureTrigger(event) ?? this._lastTrigger;
+                // Read before the flip, because opening moves focus into the panel.
+                // The keyboard shortcut calls this with no event, so there is no
+                // currentTarget to return to — whatever had focus when it was pressed
+                // is the honest answer, and the trigger is the floor when focus was
+                // nowhere (review remediation finding 4). The floor is the trigger and
+                // not a trigger captured on some earlier open: that one may be long
+                // gone from the page, while this is header chrome that always exists.
+                this._lastTrigger = captureTrigger(event) ?? focusedElement() ?? this._trigger;
             }
             this.isOpen = !this.isOpen;
         },
@@ -174,23 +193,7 @@ export function downloadCockpit() {
 
             this.eventSource.addEventListener('removed', (e) => {
                 const { job } = JSON.parse(e.data);
-                const existingJob = this.jobs.find(j => j.id === job.id);
-
-                // Retain completed/failed/cancelled jobs (non-active), unless the
-                // user asked for them to go (finding 40).
-                if (existingJob && !this.isActive(existingJob) && !this._dismissedIds.has(job.id)) {
-                    // Avoid duplicates
-                    if (!this.retainedCompletedJobs.some(j => j.id === existingJob.id)) {
-                        this.retainedCompletedJobs.unshift(existingJob);
-                        // Keep only the last 5
-                        if (this.retainedCompletedJobs.length > 5) {
-                            this.retainedCompletedJobs = this.retainedCompletedJobs.slice(0, 5);
-                        }
-                    }
-                }
-
-                // Remove from main jobs array
-                this.jobs = this.jobs.filter(j => j.id !== job.id);
+                this.handleJobRemoved(job);
             });
 
             this.eventSource.addEventListener('action_added', (e) => {
@@ -218,17 +221,7 @@ export function downloadCockpit() {
 
             this.eventSource.addEventListener('action_removed', (e) => {
                 const { job } = JSON.parse(e.data);
-                const existingJob = this.jobs.find(j => j.id === job.id);
-                if (existingJob && (existingJob.status === 'completed' || existingJob.status === 'failed')) {
-                    if (!this.retainedCompletedJobs.some(j => j.id === existingJob.id)) {
-                        existingJob._isAction = true;
-                        this.retainedCompletedJobs.unshift(existingJob);
-                        if (this.retainedCompletedJobs.length > 5) {
-                            this.retainedCompletedJobs = this.retainedCompletedJobs.slice(0, 5);
-                        }
-                    }
-                }
-                this.jobs = this.jobs.filter(j => j.id !== job.id);
+                this.handleJobRemoved(job, { isAction: true });
             });
 
             this.eventSource.onerror = () => {
@@ -273,27 +266,71 @@ export function downloadCockpit() {
          * handler's job is to retain finished jobs for display — it would put every
          * row straight back. Nothing is dismissed unless the server said it went,
          * so a rejected clear leaves the panel honest.
+         *
+         * The dismissed ids come from the *response*, not from the snapshot taken
+         * before the request (review remediation finding 2). Which rows are finished
+         * is decided server-side at handling time, so a job that crossed into a
+         * terminal state while the request was in flight was cleared there, was
+         * missing from this set, and came back as a phantom finished row that
+         * survived until the next reconnect.
          */
         async clearCompleted() {
-            const ids = this.displayJobs.filter(j => this.isFinished(j)).map(j => j.id);
-            if (ids.length === 0) return;
+            const snapshot = this.displayJobs.filter(j => this.isFinished(j)).map(j => j.id);
+            if (snapshot.length === 0) return;
 
+            let cleared = null;
             try {
                 const res = await fetch('/v1/jobs/clearCompleted', { method: 'POST' });
                 if (!res.ok) {
                     this.announce('Could not clear finished jobs.');
                     return;
                 }
+                const payload = await res.json().catch(() => null);
+                cleared = Array.isArray(payload?.ids) ? payload.ids : null;
             } catch (err) {
                 console.error('Clear completed failed:', err);
                 this.announce('Could not clear finished jobs.');
                 return;
             }
 
-            ids.forEach(id => this._dismissedIds.add(id));
+            // A 2xx means the server did clear them, so an unreadable body must not
+            // leave the panel showing rows that are gone; the snapshot is the best
+            // guess left in that case.
+            const dismissed = cleared ?? snapshot;
+            dismissed.forEach(id => this._dismissedIds.add(id));
             this.jobs = this.jobs.filter(j => !this._dismissedIds.has(j.id));
             this.retainedCompletedJobs = this.retainedCompletedJobs.filter(j => !this._dismissedIds.has(j.id));
-            this.announce(`Cleared ${ids.length} finished job${ids.length === 1 ? '' : 's'}.`);
+            this.announce(`Cleared ${dismissed.length} finished job${dismissed.length === 1 ? '' : 's'}.`);
+        },
+
+        /**
+         * A job the server removed: keep it on screen if it finished, drop it if the
+         * user dismissed it.
+         *
+         * Jobs leave the queue for three reasons — eviction, the retention sweep,
+         * and "Clear completed" — and only the last is the user asking. So a finished
+         * row is retained for display unless its id is in `_dismissedIds`.
+         *
+         * One method for both `removed` and `action_removed` because the dismissal
+         * check was missing from the action branch entirely: clearing a finished
+         * plugin action row left it on screen (review remediation finding 2).
+         */
+        handleJobRemoved(job, { isAction = false } = {}) {
+            const existingJob = this.jobs.find(j => j.id === job.id);
+
+            if (existingJob && !this.isActive(existingJob) && !this._dismissedIds.has(job.id)) {
+                if (isAction) existingJob._isAction = true;
+                // Avoid duplicates
+                if (!this.retainedCompletedJobs.some(j => j.id === existingJob.id)) {
+                    this.retainedCompletedJobs.unshift(existingJob);
+                    // Keep only the last 5
+                    if (this.retainedCompletedJobs.length > 5) {
+                        this.retainedCompletedJobs = this.retainedCompletedJobs.slice(0, 5);
+                    }
+                }
+            }
+
+            this.jobs = this.jobs.filter(j => j.id !== job.id);
         },
 
         pauseJob(jobId) {

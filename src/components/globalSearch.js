@@ -1,6 +1,6 @@
 import { abortableFetch } from '../index.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
-import { captureTrigger, restoreFocus } from '../utils/focus.js';
+import { captureTrigger, focusedElement, restoreFocus } from '../utils/focus.js';
 
 // Client-side search cache with TTL
 const searchCache = new Map();
@@ -140,6 +140,10 @@ export function globalSearch() {
 
         init() {
             this._liveRegion = createLiveRegion();
+            // Where focus goes when Cmd+K was pressed with focus nowhere. Captured in
+            // init(), where $el is the component root; in a method it would be
+            // whichever element called it.
+            this._trigger = this.$el.querySelector('button');
 
             this._keydownHandler = (e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -155,10 +159,12 @@ export function globalSearch() {
                         this.$refs.searchInput?.focus();
                     });
                     this.announce('Search dialog opened. Type to search resources, notes, groups, and tags.');
-                } else if (this._lastTrigger) {
+                } else {
                     // The x-if teardown has already detached the input, so this
                     // is the only thing standing between the reader and <body>.
-                    restoreFocus(this._lastTrigger);
+                    // Unconditional, with the trigger as the floor: Cmd+K pressed
+                    // with focus nowhere left nothing to capture.
+                    restoreFocus(this._lastTrigger, this._trigger);
                     this._lastTrigger = null;
                 }
             });
@@ -190,8 +196,11 @@ export function globalSearch() {
                 // Read before the flip: once the x-if mounts and the $nextTick
                 // above runs, document.activeElement is the dialog's own input.
                 // The activeElement fallback is what makes Cmd+K work — that
-                // path calls toggle() with no event at all.
-                this._lastTrigger = captureTrigger(event) ?? document.activeElement;
+                // path calls toggle() with no event at all. focusedElement()
+                // rather than document.activeElement, which is <body> when focus
+                // is nowhere: restoring to <body> "succeeds" by borrowing a
+                // tabindex and leaves the reader exactly where losing focus would.
+                this._lastTrigger = captureTrigger(event) ?? focusedElement();
             }
             this.isOpen = !this.isOpen;
             if (this.isOpen) {

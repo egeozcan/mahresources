@@ -717,3 +717,85 @@ all of it:
 The rule: when a new guard makes a fixture impossible, ask what each affected test is
 *for* before touching it. A fixture is not a requirement, and "the test used to be able
 to create this" is not a reason to keep allowing it.
+
+## "N of M tests failed with the fixes stashed" is not evidence the tests are sound
+
+Batch 10 of the UI bug hunt reported "all seen red first; Playwright failed 3 of 6 with the
+fixes stashed" as its proof. An independent review then found that three of those six
+assertions could not fail under any circumstances — one was a negative assertion on text the
+panel never renders, one asserted "some row exists" in a test whose subject was the *order* of
+two rows, and one located its subject by text that every row in a shared queue shares.
+
+The reasoning error is worth naming precisely, because the run really was red. Stashing the
+fixes reverts the **product**, and a vacuous assertion fails right along with a sound one
+whenever the feature it sits beside disappears: `expect(row).toHaveCount(0)` fails for the
+right reason only if the row could have been there, and with the clear button gone the test
+died two lines earlier. A bulk red run tells you the *file* touches the changed code. It says
+nothing about any individual assertion.
+
+What does work is reverting one behaviour at a time, keeping the whole test, and reading the
+message:
+
+- Revert only the ordering (`displayJobs` to insertion order) and the ordering assertion must
+  fail *naming the positions* — "newest-first: row 1 must come before row 0".
+- Revert only the dismissed-id bookkeeping and the clear assertion must fail on the row count,
+  with the button still present.
+- For a locator, add a second, deliberately confusable row to the fixture. If the test still
+  passes, the locator is scoped; if it was `.first()` over shared text, it fails on the decoy.
+
+And when a revert would break compilation rather than behaviour — a test calling a method the
+fix introduced, a Go test referencing a new field — that run has proven nothing at all. Either
+revert surgically, one declaration at a time, or say plainly which assertions were proven and
+which were only written.
+
+## A control that reads state, decides, and then writes is one operation, and guarding each half separately guards nothing
+
+`DownloadJob.SetStatus` and `GetStatus` were each correctly mutex-guarded, and `Cancel` still
+had a race: it read the status through `CanCancel()`, read it *again* to decide whether the job
+was paused, and then acted. A `Pause` arriving between the second read and the act wrote
+`paused`, cancelled the context, and left the worker returning early on `paused` without
+stamping a terminal state — while `Cancel` had already returned nil and the handler had
+answered `200 {"status":"cancelled"}`. Per-accessor locks make each *field* safe; they do
+nothing for a decision made across two of them.
+
+Three things generalise:
+
+- **Name the transition, not the setter.** The fix is one `claim*` method per control, each a
+  single critical section that checks and writes together, with the predicate (`can*Locked`)
+  defined once so the check and the act cannot drift. A worker's `if paused { return }` before
+  its terminal write is the same operation and belongs in the same family (`finish`).
+- **Where a state change is not expressible as a write, record the intent.** An *active* job's
+  cancel is completed by its worker, not by the caller, so there is nothing to write under the
+  lock — hence a `cancelRequested` flag set inside the claim, which makes every later control
+  refuse. Without it the cancel is only a context cancellation, and context cancellation is
+  invisible to anything that has not looked yet.
+- **Put the lock where the state is.** These transitions are per-job, so they take the job's own
+  mutex; promoting them to the manager's would have serialised every download's per-chunk
+  progress write against every other job's control calls, and inverted an existing lock order.
+
+Testing it needed no injected hook, which is worth remembering before reaching for one:
+cancelling a download does not stop its worker instantly, so *cancel then pause* as two
+ordinary sequential API calls lands in the same window, deterministically, once the worker is
+parked somewhere the test controls. The assertion is the agreement between answer and outcome —
+"if Cancel reported success the job must not be sitting in a state that offers Resume" — not
+the mechanism.
+
+## A modal inside a stacking context is ordered against its siblings, not against the page
+
+Moving the jobs cockpit trigger out of a fixed corner and into the header (a good fix: no fixed
+corner can be safe, since the page scrolls underneath it) moved the *panel* with it. `.header`
+is `position: sticky` with `z-index: 40`, so it is a stacking context, and every descendant
+paints inside that one layer. The panel's `z-50` was therefore competing with the settings and
+account dropdowns — later siblings in the same header, also `z-50` — and later wins. An
+`aria-modal="true"` dialog had a menu painted over it and clickable through it.
+
+The batch had reasoned about the *other* direction and got it right: `.overlays` went to
+`z-index: 41` so the true modals still stack above the whole z-40 header. That is why the defect
+survived review — the stacking question had been asked and answered, for a different pair of
+elements. When something moves into a stacking context, both relations have to be re-checked:
+against the page (which the context settles for you) and against its new siblings (which it
+does not).
+
+Assert it with `elementFromPoint` over a point inside the element that should be covered, plus
+the same probe with the modal closed as the precondition. Reading the computed `z-index` back
+passes against the bug, because both values were 50 and the defect was the DOM order.

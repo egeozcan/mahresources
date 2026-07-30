@@ -101,6 +101,26 @@ export function captureTrigger(event) {
 }
 
 /**
+ * The element that currently has focus, or null when nothing meaningful does.
+ *
+ * `document.activeElement` is `<body>` whenever focus is nowhere, and `<body>` is
+ * not a focus *target*: focusOn would borrow a tabindex, report success, and leave
+ * the reader on `<body>` — the exact state these helpers exist to avoid, plus a
+ * stray `tabindex="-1"` on the body element. Callers use this to tell "the reader
+ * was somewhere" from "the reader was nowhere", and fall back to something real in
+ * the second case.
+ *
+ * Needed because a dialog opened by a keyboard shortcut has no trigger event to
+ * capture: `captureTrigger` reads `currentTarget`, and a document-level keydown
+ * handler calls the component's own toggle() with no event at all.
+ */
+export function focusedElement() {
+  const active = document.activeElement;
+  if (!active || active === document.body || active === document.documentElement) return null;
+  return active;
+}
+
+/**
  * Send focus back to `trigger` after a dialog or overlay closes.
  *
  * Returns true if focus landed. A trigger that has been re-rendered away since

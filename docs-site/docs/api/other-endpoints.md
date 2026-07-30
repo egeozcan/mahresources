@@ -669,7 +669,7 @@ Legacy alias: `GET /v1/download/queue`
 | `POST /v1/jobs/pause?id={job_id}` | Pause a download job. A job in a state that cannot be paused answers `409 Conflict`. |
 | `POST /v1/jobs/resume?id={job_id}` | Resume a paused download (restarts from the beginning) |
 | `POST /v1/jobs/retry?id={job_id}` | Retry a failed or cancelled download |
-| `POST /v1/jobs/clearCompleted` | Dismiss every finished job the caller can see; active and paused jobs are kept. Answers `{"cleared": N}`. |
+| `POST /v1/jobs/clearCompleted` | Dismiss every finished job the caller can see; active and paused jobs are kept. Answers `{"cleared": N, "ids": ["<job id>", ...]}`, naming the jobs that were removed — which rows are finished is decided when the request is handled, so a caller cannot work it out from its own earlier view of the queue. |
 
 Downloads can fail due to network errors, connection timeouts (default 30s), idle timeouts (default 60s), or exceeding the overall timeout (default 30m). Configure these with the `-remote-connect-timeout`, `-remote-idle-timeout`, and `-remote-overall-timeout` flags.
 

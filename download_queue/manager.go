@@ -340,10 +340,9 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	case dm.semaphore <- struct{}{}:
 		defer func() { <-dm.semaphore }()
 	case <-job.GetContext().Done():
-		// Check if job was paused (don't override paused status)
-		if job.GetStatus() != JobStatusPaused {
-			job.SetStatus(JobStatusCancelled)
-			job.SetError("Cancelled before starting")
+		// finish is a no-op on a paused job: Pause cancels the context too, and a
+		// paused job waits for Resume rather than being retired here.
+		if job.finish(JobStatusCancelled, "Cancelled before starting", 0, time.Now()) {
 			dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
 		}
 		return
@@ -357,25 +356,22 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	// Perform the download with progress tracking
 	resource, err := dm.downloadWithProgress(job)
 
-	// Check if job was paused during download (don't set completion status)
-	if job.GetStatus() == JobStatusPaused {
-		return
+	status, errMsg, resourceID := JobStatusCompleted, "", uint(0)
+	switch {
+	case err != nil && job.GetContext().Err() != nil:
+		status, errMsg = JobStatusCancelled, "Download cancelled"
+	case err != nil:
+		status, errMsg = JobStatusFailed, err.Error()
+	default:
+		resourceID = resource.ID
 	}
 
-	now = time.Now()
-	job.SetCompletedAt(now)
-
-	if err != nil {
-		if job.GetContext().Err() != nil {
-			job.SetStatus(JobStatusCancelled)
-			job.SetError("Download cancelled")
-		} else {
-			job.SetStatus(JobStatusFailed)
-			job.SetError(err.Error())
-		}
-	} else {
-		job.SetStatus(JobStatusCompleted)
-		job.SetResourceID(resource.ID)
+	// One atomic terminal write. Reading the status to see whether the job was paused
+	// and then writing the terminal one is the same check-then-act the controls had:
+	// a Pause landing between the two was silently overwritten, and a Pause landing
+	// just before the read stranded the job (see DownloadJob.finish).
+	if !job.finish(status, errMsg, resourceID, time.Now()) {
+		return
 	}
 
 	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
@@ -522,58 +518,50 @@ func (dm *DownloadManager) downloadWithProgress(job *DownloadJob) (*models.Resou
 // is cancellable now, and the two refusals are typed so the handler can tell a
 // missing job from a state conflict.
 func (dm *DownloadManager) Cancel(jobID string) error {
-	dm.mu.RLock()
-	job, exists := dm.jobs[jobID]
-	dm.mu.RUnlock()
-
-	if !exists {
-		return &NotFoundError{JobID: jobID}
+	job, err := dm.lookup(jobID)
+	if err != nil {
+		return err
 	}
 
-	if !job.CanCancel() {
-		return &StateConflictError{JobID: jobID, Action: "cancelled", Status: job.GetStatus()}
+	// One atomic step: whether the job may be cancelled, whether it was paused, and
+	// the terminal write the paused case needs are all decided under the job's own
+	// lock. Deciding from a second status read is what let a concurrent Pause land in
+	// between and overwrite an accepted cancellation — see DownloadJob.claimCancel.
+	prev, ok := job.claimCancel(time.Now())
+	if !ok {
+		return &StateConflictError{JobID: jobID, Action: "cancelled", Status: prev}
 	}
 
-	// A paused job has no goroutine left to observe the cancellation: Pause already
-	// cancelled the context and processJob returned. So the terminal transition and
-	// the notification have to happen here, or the panel would keep showing
-	// "Paused" with a Cancel button that appeared to do nothing.
-	//
-	// CompletedAt is set for the same reason the ordinary path sets it: it is what
-	// cleanupOldJobs uses to retire the row.
-	if job.GetStatus() == JobStatusPaused {
-		job.SetStatus(JobStatusCancelled)
-		job.SetError("Download cancelled")
-		job.SetCompletedAt(time.Now())
-		job.Cancel()
+	// The context cancellation happens outside the job's lock, because a CancelFunc
+	// can run arbitrary registered work. That is safe now: claimCancel has already
+	// recorded the intent, so a Pause arriving here is refused rather than winning.
+	job.Cancel()
+
+	// A paused job has no goroutine left to notice any of this — Pause cancelled its
+	// context and processJob returned — so the notification has to happen here, or
+	// the panel would keep showing "Paused" with a Cancel button that appeared to do
+	// nothing. An active job's worker notifies when it unwinds.
+	if prev == JobStatusPaused {
 		dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
-		return nil
 	}
-
-	job.Cancel() // This triggers context cancellation
 	return nil
 }
 
 // Pause pauses a download job by ID
 func (dm *DownloadManager) Pause(jobID string) error {
-	dm.mu.RLock()
-	job, exists := dm.jobs[jobID]
-	dm.mu.RUnlock()
-
-	if !exists {
-		return &NotFoundError{JobID: jobID}
+	job, err := dm.lookup(jobID)
+	if err != nil {
+		return err
 	}
 
-	if !job.CanPause() {
-		return &StateConflictError{JobID: jobID, Action: "paused", Status: job.GetStatus()}
+	// The status is written before the context is cancelled, and both the check and
+	// that write are one step, so the goroutine cannot see the cancellation before
+	// the status — nor can a Cancel slip between them.
+	status, ok := job.claimPause()
+	if !ok {
+		return &StateConflictError{JobID: jobID, Action: "paused", Status: status}
 	}
 
-	// Mark as paused BEFORE cancelling context to avoid race condition
-	// where goroutine sees cancellation before status change
-	job.SetStatus(JobStatusPaused)
-	job.SetError("") // Clear any previous error
-
-	// Now cancel the download context
 	job.Cancel()
 
 	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
@@ -583,35 +571,21 @@ func (dm *DownloadManager) Pause(jobID string) error {
 
 // Resume resumes a paused download job by ID
 func (dm *DownloadManager) Resume(jobID string) error {
-	dm.mu.Lock()
-	job, exists := dm.jobs[jobID]
-	if !exists {
-		dm.mu.Unlock()
-		return &NotFoundError{JobID: jobID}
+	job, err := dm.lookup(jobID)
+	if err != nil {
+		return err
 	}
 
-	if !job.CanResume() {
-		dm.mu.Unlock()
-		return &StateConflictError{JobID: jobID, Action: "resumed", Status: job.GetStatus()}
-	}
-
-	// Create a new context for the resumed download
+	// The context is built before the claim and discarded if the claim loses, so the
+	// status change and the context installation stay one atomic step.
 	ctx, cancel := context.WithCancel(context.Background())
-	job.SetContext(ctx, cancel)
-
-	// Reset progress and mark as pending (all under lock)
-	job.SetStatus(JobStatusPending)
-	job.UpdateProgress(0, -1)
-	job.SetStartedAt(time.Time{})
-
-	dm.mu.Unlock()
-
-	// Start download in background — dispatch to the correct processor.
-	if job.runFn != nil {
-		go dm.processGenericJob(job)
-	} else {
-		go dm.processJob(job)
+	status, ok := job.claimResume(ctx, cancel)
+	if !ok {
+		cancel() // don't leak the context we just built
+		return &StateConflictError{JobID: jobID, Action: "resumed", Status: status}
 	}
+
+	dm.startWorker(job)
 
 	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
 
@@ -620,42 +594,46 @@ func (dm *DownloadManager) Resume(jobID string) error {
 
 // Retry retries a failed or cancelled download job by ID
 func (dm *DownloadManager) Retry(jobID string) error {
-	dm.mu.Lock()
-	job, exists := dm.jobs[jobID]
-	if !exists {
-		dm.mu.Unlock()
-		return &NotFoundError{JobID: jobID}
+	job, err := dm.lookup(jobID)
+	if err != nil {
+		return err
 	}
 
-	if !job.CanRetry() {
-		dm.mu.Unlock()
-		return &StateConflictError{JobID: jobID, Action: "retried", Status: job.GetStatus()}
-	}
-
-	// Create a new context for the retried download
 	ctx, cancel := context.WithCancel(context.Background())
-	job.SetContext(ctx, cancel)
+	status, ok := job.claimRetry(ctx, cancel)
+	if !ok {
+		cancel()
+		return &StateConflictError{JobID: jobID, Action: "retried", Status: status}
+	}
 
-	// Reset progress and error, mark as pending (all under lock)
-	job.SetStatus(JobStatusPending)
-	job.SetError("")
-	job.UpdateProgress(0, -1)
-	job.SetStartedAt(time.Time{})
-	job.SetCompletedAt(time.Time{})
-	job.SetResourceID(0)
+	dm.startWorker(job)
 
-	dm.mu.Unlock()
+	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
 
-	// Start download in background — dispatch to the correct processor.
+	return nil
+}
+
+// lookup resolves a job id against the registry. The manager's lock covers the map
+// only; the job's own state is claimed separately by the caller.
+func (dm *DownloadManager) lookup(jobID string) (*DownloadJob, error) {
+	dm.mu.RLock()
+	job, exists := dm.jobs[jobID]
+	dm.mu.RUnlock()
+
+	if !exists {
+		return nil, &NotFoundError{JobID: jobID}
+	}
+	return job, nil
+}
+
+// startWorker dispatches a job to the processor its kind needs. runFn is set at
+// construction and never reassigned, so it needs no lock.
+func (dm *DownloadManager) startWorker(job *DownloadJob) {
 	if job.runFn != nil {
 		go dm.processGenericJob(job)
 	} else {
 		go dm.processJob(job)
 	}
-
-	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
-
-	return nil
 }
 
 // GetJobs returns all jobs in order
@@ -800,9 +778,15 @@ func (dm *DownloadManager) Shutdown() {
 }
 
 // ClearFinished removes every terminal job (completed, failed or cancelled) the
-// caller may see and returns how many went. Pending, downloading, processing and
+// caller may see and returns the ids that went. Pending, downloading, processing and
 // **paused** jobs are kept: a paused job is not finished, and dropping one would
 // discard a half-transferred download silently.
+//
+// It returns the ids rather than a count because the caller has to tell its own
+// panel what to stop showing, and only this function knows: the browser decides
+// which rows are finished before the request goes out, while this decides at
+// handling time. A job that crossed into a terminal state inside that window is
+// cleared here and unknown to the client — review remediation finding 2.
 //
 // UI bug hunt 2026-07-29, finding 40: there was no way at all to dismiss a
 // finished job. The panel accumulated 20 permanent entries across sessions
@@ -812,8 +796,9 @@ func (dm *DownloadManager) Shutdown() {
 // visible is the caller's RBAC predicate, given each job's owner id: with -auth on
 // a non-admin sees only the jobs it submitted, so "Clear completed" must not reach
 // anyone else's.
-func (dm *DownloadManager) ClearFinished(visible func(owner *uint) bool) int {
+func (dm *DownloadManager) ClearFinished(visible func(owner *uint) bool) []string {
 	var removed []*DownloadJob
+	ids := make([]string, 0)
 
 	dm.mu.Lock()
 	newOrder := make([]string, 0, len(dm.jobOrder))
@@ -827,6 +812,8 @@ func (dm *DownloadManager) ClearFinished(visible func(owner *uint) bool) int {
 		if terminal && (visible == nil || visible(job.GetOwnerUserID())) {
 			delete(dm.jobs, id)
 			removed = append(removed, job)
+			// The map key rather than job.ID: same value, and it needs no lock.
+			ids = append(ids, id)
 			continue
 		}
 		newOrder = append(newOrder, id)
@@ -842,7 +829,7 @@ func (dm *DownloadManager) ClearFinished(visible func(owner *uint) bool) int {
 		dm.notifySubscribers(JobEvent{Type: "removed", Job: job})
 	}
 
-	return len(removed)
+	return ids
 }
 
 // ActiveCount returns the number of active (non-completed) jobs

@@ -50,12 +50,155 @@ type DownloadJob struct {
 	Warnings   []string `json:"warnings,omitempty"`
 
 	// Internal fields (not serialized to JSON)
-	creator     *query_models.ResourceFromRemoteCreator
-	runFn       func(ctx context.Context, j *DownloadJob, p ProgressSink) error
-	ctx         context.Context
-	cancel      context.CancelFunc
-	mu          sync.RWMutex
-	ownerUserID *uint // RBAC: user that created the job (export download ownership)
+	creator *query_models.ResourceFromRemoteCreator
+	runFn   func(ctx context.Context, j *DownloadJob, p ProgressSink) error
+	ctx     context.Context
+	cancel  context.CancelFunc
+	mu      sync.RWMutex
+	// cancelRequested records that a cancel has been accepted for this job. It is
+	// set under mu by claimCancel and makes claimPause and claimResume refuse, so a
+	// cancellation the caller was told about cannot be overwritten by a later
+	// control. Cleared by claimRetry, which is the user asking for the job again.
+	cancelRequested bool
+	ownerUserID     *uint // RBAC: user that created the job (export download ownership)
+}
+
+// Status transitions
+//
+// Every control (Cancel, Pause, Resume, Retry) and the worker's terminal write go
+// through one of the claim*/finish methods below, and each of those is a *single*
+// critical section over j.mu. That is the point of them: SetStatus and GetStatus
+// are each safe on their own, but a control that reads the status, decides from
+// that read, and then writes holds no lock across the two — and another control can
+// land in between.
+//
+// UI bug hunt 2026-07-29, review remediation finding 1: Cancel read `downloading`
+// and so skipped its paused branch; Pause then wrote `paused` and cancelled the
+// context; Cancel's job.Cancel() was a no-op on the already-cancelled context; and
+// processJob saw `paused` and returned without stamping a terminal state. The job
+// sat at `paused` — offering Resume — while the caller had been told 200
+// {"status":"cancelled"}. Re-reading the status once more would not have fixed it;
+// only one atomic claim does.
+//
+// The lock is the job's own rather than the manager's because the state being
+// guarded is per-job. The manager's mu guards the registry (jobs, jobOrder), and
+// promoting status transitions to it would serialise every job's per-chunk progress
+// write against every other job's control calls, and would invert the manager -> job
+// lock order that Resume and Retry already take.
+
+// claimCancel atomically decides whether the job may be abandoned and records the
+// intent. It returns the status observed, so the caller can tell a paused job from
+// an active one, and the two are handled differently:
+//
+//   - paused: the terminal transition happens here, because Pause already cancelled
+//     the context and no goroutine is left to observe a second cancellation.
+//   - active: the status is left to the worker, which stamps it when it unwinds.
+//
+// Once claimed, claimPause and claimResume refuse.
+func (j *DownloadJob) claimCancel(completedAt time.Time) (JobStatus, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	prev := j.Status
+	if !j.canCancelLocked() {
+		return prev, false
+	}
+	j.cancelRequested = true
+	if prev == JobStatusPaused {
+		j.Status = JobStatusCancelled
+		j.Error = "Download cancelled"
+		// CompletedAt for the same reason the ordinary path sets it: it is what
+		// cleanupOldJobs uses to retire the row.
+		j.CompletedAt = &completedAt
+	}
+	return prev, true
+}
+
+// claimPause atomically transitions a pausable job to paused. It refuses a job
+// whose cancel has already been accepted: the user asked for that download to be
+// abandoned, and a pause winning here would leave a job its worker has given up on
+// sitting in a state that offers Resume.
+func (j *DownloadJob) claimPause() (JobStatus, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	if j.cancelRequested {
+		// The status the caller is told about is the one the job is heading for, not
+		// the `downloading` it still reads: "cannot be paused (status: downloading)"
+		// would be a puzzle, and the cancel is already guaranteed.
+		return JobStatusCancelled, false
+	}
+	if !j.canPauseLocked() {
+		return j.Status, false
+	}
+	j.Status = JobStatusPaused
+	j.Error = "" // Clear any previous error
+	return JobStatusPaused, true
+}
+
+// claimResume atomically transitions a paused job back to pending and installs the
+// context the new attempt will run under. Both halves have to be one step: a resume
+// that set the status and then installed the context could be cancelled in between,
+// and the cancellation would apply to a context nothing is using.
+func (j *DownloadJob) claimResume(ctx context.Context, cancel context.CancelFunc) (JobStatus, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	if j.cancelRequested {
+		return JobStatusCancelled, false
+	}
+	if !j.canResumeLocked() {
+		return j.Status, false
+	}
+	j.ctx, j.cancel = ctx, cancel
+	j.Status = JobStatusPending
+	j.Progress, j.TotalSize, j.ProgressPercent = 0, -1, -1
+	j.StartedAt = nil
+	return JobStatusPending, true
+}
+
+// claimRetry atomically resets a terminal job for another attempt. It clears
+// cancelRequested — the user has explicitly asked for this job to run again, so the
+// cancel that ended it no longer stands, and without clearing it a retried download
+// could never be paused.
+func (j *DownloadJob) claimRetry(ctx context.Context, cancel context.CancelFunc) (JobStatus, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	if !j.canRetryLocked() {
+		return j.Status, false
+	}
+	j.cancelRequested = false
+	j.ctx, j.cancel = ctx, cancel
+	j.Status = JobStatusPending
+	j.Error = ""
+	j.Progress, j.TotalSize, j.ProgressPercent = 0, -1, -1
+	j.StartedAt, j.CompletedAt, j.ResourceID = nil, nil, nil
+	return JobStatusPending, true
+}
+
+// finish stamps the job's terminal state in one step and reports whether it took.
+//
+// It returns false when the job has been paused meanwhile: a paused download keeps
+// its progress and waits for Resume, so the worker must not retire it. That check
+// used to live in the worker as a separate read followed by a separate write, which
+// is the same check-then-act the controls had.
+func (j *DownloadJob) finish(status JobStatus, errMsg string, resourceID uint, completedAt time.Time) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	if j.Status == JobStatusPaused {
+		return false
+	}
+	j.Status = status
+	if errMsg != "" {
+		j.Error = errMsg
+	}
+	j.CompletedAt = &completedAt
+	if resourceID != 0 {
+		j.ResourceID = &resourceID
+	}
+	return true
 }
 
 // UpdateProgress safely updates the job's progress fields
@@ -187,9 +330,9 @@ func (j *DownloadJob) IsActive() bool {
 // treating it as finished is UI bug hunt 2026-07-29 finding 2. IsActive() is left
 // alone because ActiveCount() and Shutdown() both mean "is running" by it.
 func (j *DownloadJob) CanCancel() bool {
-	status := j.GetStatus()
-	return status == JobStatusPending || status == JobStatusDownloading ||
-		status == JobStatusProcessing || status == JobStatusPaused
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.canCancelLocked()
 }
 
 // CanPause returns true if the job can be paused.
@@ -198,21 +341,45 @@ func (j *DownloadJob) CanCancel() bool {
 func (j *DownloadJob) CanPause() bool {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
+	return j.canPauseLocked()
+}
+
+// CanResume returns true if the job can be resumed
+func (j *DownloadJob) CanResume() bool {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.canResumeLocked()
+}
+
+// CanRetry returns true if the job can be retried
+func (j *DownloadJob) CanRetry() bool {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.canRetryLocked()
+}
+
+// The four predicates, defined once, for callers that already hold j.mu. The
+// exported Can* wrappers above and the claim* transitions below share them, so a
+// control's check and its act cannot drift apart.
+
+func (j *DownloadJob) canCancelLocked() bool {
+	return j.Status == JobStatusPending || j.Status == JobStatusDownloading ||
+		j.Status == JobStatusProcessing || j.Status == JobStatusPaused
+}
+
+func (j *DownloadJob) canPauseLocked() bool {
 	if j.runFn != nil {
 		return false
 	}
 	return j.Status == JobStatusPending || j.Status == JobStatusDownloading
 }
 
-// CanResume returns true if the job can be resumed
-func (j *DownloadJob) CanResume() bool {
-	return j.GetStatus() == JobStatusPaused
+func (j *DownloadJob) canResumeLocked() bool {
+	return j.Status == JobStatusPaused
 }
 
-// CanRetry returns true if the job can be retried
-func (j *DownloadJob) CanRetry() bool {
-	status := j.GetStatus()
-	return status == JobStatusFailed || status == JobStatusCancelled
+func (j *DownloadJob) canRetryLocked() bool {
+	return j.Status == JobStatusFailed || j.Status == JobStatusCancelled
 }
 
 // SetPhase safely sets the job's current phase name.

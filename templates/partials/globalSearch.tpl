@@ -21,7 +21,11 @@
     </button>
 
     <template x-if="isOpen">
-        <div class="fixed inset-0 z-50 overflow-y-auto">
+        {# z-[60] for the reason downloadCockpit.tpl spells out: this dialog is inside #}
+        {# the sticky z-index:40 header, so it is ordered against its header siblings,  #}
+        {# and the settings and account dropdowns are later siblings at z-50. At z-50   #}
+        {# an open dropdown painted over this dialog and stayed clickable through it.   #}
+        <div class="fixed inset-0 z-[60] overflow-y-auto">
             <div
                 class="fixed inset-0 bg-black/40 backdrop-blur-sm transition-opacity"
                 @click="close()"

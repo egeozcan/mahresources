@@ -1,18 +1,23 @@
 /**
- * UI bug hunt 2026-07-29, WS9: findings 2, 40, 41 and 113.
+ * UI bug hunt 2026-07-29, WS9: findings 2, 40, 41 and 113, plus review remediation
+ * findings 3, 4 and 5.
  *
  * Finding 2 is the last high-severity row in the campaign. Its server half is in
  * server/api_tests/ws9_jobs_cockpit_test.go and download_queue/cancel_paused_test.go;
  * its predicates are unit-tested in src/components/downloadCockpit.test.ts. What is
  * here is the part that needs a real browser and a real job: which controls a paused
- * row offers, and what the progress bar announces.
+ * row offers, what the progress bar announces, which element wins a hit test over an
+ * open modal, and where focus lands.
  *
- * The jobs the panel shows come from a process-wide queue that the whole worker
- * shares, so every assertion is scoped to a job this spec created and nothing counts
- * rows.
+ * Every row is addressed by `[data-job-id]` — review remediation finding 5. The jobs
+ * the panel shows come from a process-wide queue that the whole worker shares, and
+ * every test download stalls against the same URL (`/v1/jobs/events`), so
+ * `getJobTitle` renders every one of them as "events". Locating a row by that text
+ * found *a* stalled download, not this test's own, and one negative assertion keyed
+ * on a Name the panel never renders at all: it could not fail.
  */
 import { test, expect } from '../../fixtures/base.fixture';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 /** Submits a background download that will never finish on its own. */
 async function submitStalledDownload(page: Page, label: string): Promise<string> {
@@ -33,6 +38,23 @@ async function jobStatus(page: Page, id: string): Promise<string> {
   return (await res.json()).status;
 }
 
+/** The panel row for one specific job. */
+function rowFor(page: Page, id: string): Locator {
+  return page.locator(`[data-testid="cockpit-panel"] [data-job-id="${id}"]`);
+}
+
+/** The position of each job's row in the rendered list, or -1 when it is absent. */
+async function rowPositions(page: Page, ids: string[]): Promise<number[]> {
+  return page.evaluate((wanted) => {
+    const panel = document.querySelector('[data-testid="cockpit-panel"]');
+    if (!panel) return wanted.map(() => -1);
+    const rendered = [...panel.querySelectorAll('[data-job-id]')].map(
+      (el) => el.getAttribute('data-job-id') ?? '',
+    );
+    return wanted.map((id) => rendered.indexOf(id));
+  }, ids);
+}
+
 test.describe('findings 2 and 41 — a paused download keeps its readout and can be abandoned', () => {
   test('the paused row offers Cancel, keeps its progress bar, and cancelling works', async ({ page }) => {
     const errors: string[] = [];
@@ -46,13 +68,20 @@ test.describe('findings 2 and 41 — a paused download keeps its readout and can
     expect(paused.status()).toBe(200);
     await expect.poll(() => jobStatus(page, id), { timeout: 10_000 }).toBe('paused');
 
+    // A second, *running* download submitted after the paused one. The panel sorts
+    // newest first, so this decoy is row 1 — which is what the old locator
+    // (`.filter({ hasText: 'events' }).first()`) would have picked, and a running row
+    // offers no Resume. It is here to keep the assertions below honest about which
+    // row they are reading.
+    const decoy = await submitStalledDownload(page, `ws9 paused decoy ${Date.now()}`);
+    await expect.poll(() => jobStatus(page, decoy), { timeout: 10_000 }).toBe('downloading');
+
     await page.locator('[data-testid="cockpit-trigger"]').click();
     const panel = page.locator('[data-testid="cockpit-panel"]');
     await expect(panel).toBeVisible();
 
-    // The row for *this* job, found by its title rather than by position.
-    const row = panel.locator('[data-testid="cockpit-job"]').filter({ hasText: 'events' }).first();
-    await expect(row).toBeVisible({ timeout: 10_000 });
+    const row = rowFor(page, id);
+    await expect(row).toHaveCount(1, { timeout: 10_000 });
 
     // Finding 41: the row used to collapse to "⏸ … Paused … Resume" — no bytes, no
     // percentage, no bar. Measured on the server, a paused job still reports its
@@ -61,13 +90,20 @@ test.describe('findings 2 and 41 — a paused download keeps its readout and can
     // Finding 2's UI half.
     await expect(row.getByRole('button', { name: 'Cancel' })).toBeVisible();
     await expect(row.getByRole('button', { name: 'Resume' })).toBeVisible();
+    // The decoy is the control for the two assertions above: a running row must not
+    // offer Resume, so they are reading the paused row and not just any row.
+    await expect(rowFor(page, decoy).getByRole('button', { name: 'Resume' })).toHaveCount(0);
 
     await row.getByRole('button', { name: 'Cancel' }).click();
 
     // Asserted through the API: the panel updating is necessary and not sufficient.
     await expect.poll(() => jobStatus(page, id), { timeout: 10_000 }).toBe('cancelled');
     await expect(row.getByRole('button', { name: 'Retry' })).toBeVisible();
+    // The decoy is untouched — cancelling one row must not reach another.
+    expect(await jobStatus(page, decoy)).toBe('downloading');
     expect(errors).toEqual([]);
+
+    await page.request.post(`/v1/jobs/cancel?id=${decoy}`);
   });
 
   test('a running download is unchanged: Pause and Cancel, and no Resume', async ({ page }) => {
@@ -78,9 +114,8 @@ test.describe('findings 2 and 41 — a paused download keeps its readout and can
     await expect.poll(() => jobStatus(page, id), { timeout: 10_000 }).toBe('downloading');
 
     await page.locator('[data-testid="cockpit-trigger"]').click();
-    const row = page.locator('[data-testid="cockpit-panel"] [data-testid="cockpit-job"]')
-      .filter({ hasText: 'events' }).first();
-    await expect(row).toBeVisible({ timeout: 10_000 });
+    const row = rowFor(page, id);
+    await expect(row).toHaveCount(1, { timeout: 10_000 });
     await expect(row.getByRole('button', { name: 'Pause' })).toBeVisible();
     await expect(row.getByRole('button', { name: 'Cancel' })).toBeVisible();
     await expect(row.getByRole('button', { name: 'Resume' })).toHaveCount(0);
@@ -95,9 +130,7 @@ test('finding 113 — the progress bar is named after its job and is indetermina
   await expect.poll(() => jobStatus(page, id), { timeout: 10_000 }).toBe('downloading');
 
   await page.locator('[data-testid="cockpit-trigger"]').click();
-  const bar = page.locator('[data-testid="cockpit-panel"] [data-testid="cockpit-job"]')
-    .filter({ hasText: 'events' }).first()
-    .locator('[data-testid="cockpit-progressbar"]');
+  const bar = rowFor(page, id).locator('[data-testid="cockpit-progressbar"]');
   await expect(bar).toBeVisible({ timeout: 10_000 });
 
   const announced = await bar.evaluate((el) => ({
@@ -119,37 +152,39 @@ test('finding 113 — the progress bar is named after its job and is indetermina
 });
 
 test.describe('finding 40 — newest first, and finished jobs can be dismissed', () => {
-  test('a job just submitted is the first row, not the last', async ({ page }) => {
+  test('a job just submitted sorts above one submitted before it', async ({ page }) => {
     await page.goto('/dashboard');
-    const first = await submitStalledDownload(page, `ws9 order one ${Date.now()}`);
-    await expect.poll(() => jobStatus(page, first), { timeout: 10_000 }).toBe('downloading');
-    await page.request.post(`/v1/jobs/cancel?id=${first}`);
+    const older = await submitStalledDownload(page, `ws9 order one ${Date.now()}`);
+    await expect.poll(() => jobStatus(page, older), { timeout: 10_000 }).toBe('downloading');
+    await page.request.post(`/v1/jobs/cancel?id=${older}`);
 
-    // A second job, submitted later, must sort above the first.
-    const second = await submitStalledDownload(page, `ws9 order two ${Date.now()}`);
-    await expect.poll(() => jobStatus(page, second), { timeout: 10_000 }).toBe('downloading');
+    const newer = await submitStalledDownload(page, `ws9 order two ${Date.now()}`);
+    await expect.poll(() => jobStatus(page, newer), { timeout: 10_000 }).toBe('downloading');
 
     await page.locator('[data-testid="cockpit-trigger"]').click();
-    const rows = page.locator('[data-testid="cockpit-panel"] [data-testid="cockpit-job"]');
-    await expect(rows.first()).toBeVisible({ timeout: 10_000 });
+    await expect(rowFor(page, newer)).toHaveCount(1, { timeout: 10_000 });
+    await expect(rowFor(page, older)).toHaveCount(1);
 
-    // Positions of our two jobs relative to each other, so other specs' jobs in the
-    // same queue cannot decide the outcome.
-    const order = await page.evaluate(() => {
-      const panel = document.querySelector('[data-testid="cockpit-panel"]')!;
-      return [...panel.querySelectorAll('[data-testid="cockpit-job"]')]
-        .map(el => (el.textContent || '').replace(/\s+/g, ' ').trim());
-    });
-    const firstIdx = order.findIndex(t => t.includes('order two') || t.includes('events'));
-    expect(firstIdx, 'neither job is in the panel').toBeGreaterThanOrEqual(0);
-    // The panel opens scrolled to the top, so "first row" is what the reader sees.
-    const scrolled = await page.evaluate(() => {
-      const list = document.querySelector('[data-testid="cockpit-panel"] .overflow-y-auto') as HTMLElement | null;
-      return list ? list.scrollTop : 0;
-    });
-    expect(scrolled).toBe(0);
+    // Both jobs' actual positions, compared with each other, so the rest of the
+    // worker's queue cannot decide the outcome. The old assertion asked only whether
+    // *some* row existed, which is true under either ordering.
+    const [newerAt, olderAt] = await rowPositions(page, [newer, older]);
+    expect(newerAt, 'the job submitted second is not in the panel').toBeGreaterThanOrEqual(0);
+    expect(olderAt, 'the job submitted first is not in the panel').toBeGreaterThanOrEqual(0);
+    expect(newerAt, `newest-first: row ${newerAt} must come before row ${olderAt}`).toBeLessThan(olderAt);
 
-    await page.request.post(`/v1/jobs/cancel?id=${second}`);
+    // And it is above the fold: the panel opens scrolled to the top, so the newest
+    // row being first only helps if it is on screen. Before the fix the newest row
+    // was last, measured ~1340px below the fold with 20 rows above it.
+    const onScreen = await rowFor(page, newer).evaluate((el) => {
+      const list = el.closest('.overflow-y-auto') as HTMLElement;
+      const row = el.getBoundingClientRect();
+      const box = list.getBoundingClientRect();
+      return { visible: row.top >= box.top - 1 && row.bottom <= box.bottom + 1, scrollTop: list.scrollTop };
+    });
+    expect(onScreen.visible, `the newest row is not within the list's visible box (scrollTop ${onScreen.scrollTop})`).toBe(true);
+
+    await page.request.post(`/v1/jobs/cancel?id=${newer}`);
   });
 
   test('Clear completed removes finished jobs and they stay gone', async ({ page }) => {
@@ -159,7 +194,17 @@ test.describe('finding 40 — newest first, and finished jobs can be dismissed',
     await page.request.post(`/v1/jobs/cancel?id=${id}`);
     await expect.poll(() => jobStatus(page, id), { timeout: 10_000 }).toBe('cancelled');
 
+    // A second job left running, as the positive control for the clear: an unfinished
+    // row must survive it. Without this, a "Clear completed" that emptied the panel
+    // entirely would pass.
+    const kept = await submitStalledDownload(page, `ws9 clear kept ${Date.now()}`);
+    await expect.poll(() => jobStatus(page, kept), { timeout: 10_000 }).toBe('downloading');
+
     await page.locator('[data-testid="cockpit-trigger"]').click();
+    // The precondition, asserted rather than assumed: the row is on screen before the
+    // button is pressed, so its absence afterwards means something.
+    await expect(rowFor(page, id)).toHaveCount(1, { timeout: 10_000 });
+
     const clear = page.locator('[data-testid="cockpit-clear-completed"]');
     await expect(clear).toBeVisible({ timeout: 10_000 });
     await clear.click();
@@ -167,16 +212,61 @@ test.describe('finding 40 — newest first, and finished jobs can be dismissed',
     // Gone from the queue, which is what makes it durable: a client-only hide is
     // undone by the next SSE init event.
     await expect.poll(() => jobStatus(page, id), { timeout: 10_000 }).toBe('http-404');
-    await expect(
-      page.locator('[data-testid="cockpit-panel"] [data-testid="cockpit-job"]').filter({ hasText: 'ws9 clear' }),
-    ).toHaveCount(0);
+    await expect(rowFor(page, id)).toHaveCount(0);
+    await expect(rowFor(page, kept)).toHaveCount(1);
 
     await page.reload();
     await page.locator('[data-testid="cockpit-trigger"]').click();
     await expect(page.locator('[data-testid="cockpit-panel"]')).toBeVisible();
-    await expect(
-      page.locator('[data-testid="cockpit-panel"] [data-testid="cockpit-job"]').filter({ hasText: 'ws9 clear' }),
-    ).toHaveCount(0);
+    await expect(rowFor(page, kept)).toHaveCount(1, { timeout: 10_000 });
+    await expect(rowFor(page, id)).toHaveCount(0);
+
+    await page.request.post(`/v1/jobs/cancel?id=${kept}`);
+  });
+
+  test('a job that finishes while the clear is in flight does not come back', async ({ page }) => {
+    // Review remediation finding 2. The panel used to dismiss the ids *it* thought
+    // were finished, snapshotted before the request; the server decides at handling
+    // time. A job that crossed into a terminal state inside that window was cleared
+    // server-side, was missing from the dismissed set, and the `removed` handler —
+    // whose job is to retain finished jobs for display — put it straight back.
+    //
+    // The window is widened deliberately by holding the response: the clear is
+    // routed through a handler that waits until the second job has been cancelled.
+    await page.goto('/dashboard');
+    const finished = await submitStalledDownload(page, `ws9 window one ${Date.now()}`);
+    const racer = await submitStalledDownload(page, `ws9 window two ${Date.now()}`);
+    await expect.poll(() => jobStatus(page, finished), { timeout: 10_000 }).toBe('downloading');
+    await expect.poll(() => jobStatus(page, racer), { timeout: 10_000 }).toBe('downloading');
+    await page.request.post(`/v1/jobs/cancel?id=${finished}`);
+    await expect.poll(() => jobStatus(page, finished), { timeout: 10_000 }).toBe('cancelled');
+
+    await page.locator('[data-testid="cockpit-trigger"]').click();
+    await expect(rowFor(page, racer)).toHaveCount(1, { timeout: 10_000 });
+
+    // The racer reaches its terminal state *after* the browser has decided what to
+    // dismiss and before the server handles the clear.
+    await page.route('**/v1/jobs/clearCompleted', async (route) => {
+      await page.request.post(`/v1/jobs/cancel?id=${racer}`);
+      // The cancel is only the request. A downloading job's worker stamps the
+      // terminal state when it unwinds, and the clear only takes finished jobs — so
+      // hold the request until the server would really clear this one, or the window
+      // being tested is not open yet.
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline && (await jobStatus(page, racer)) !== 'cancelled') {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      await route.continue();
+    });
+
+    await page.locator('[data-testid="cockpit-clear-completed"]').click();
+
+    await expect.poll(() => jobStatus(page, racer), { timeout: 10_000 }).toBe('http-404');
+    // The row must not be retained for display: the server has no such job, so the
+    // panel would be showing a job that does not exist until the next reconnect.
+    await expect(rowFor(page, racer)).toHaveCount(0);
+    await expect(rowFor(page, finished)).toHaveCount(0);
+    await page.unroute('**/v1/jobs/clearCompleted');
   });
 
   test('Clear completed is not offered when nothing is finished', async ({ page }) => {
@@ -199,4 +289,126 @@ test.describe('finding 40 — newest first, and finished jobs can be dismissed',
 
     await expect(page.locator('[data-testid="cockpit-clear-completed"]')).toHaveCount(0);
   });
+});
+
+// ------------------------------------------------- review remediation finding 3
+
+test('review finding 3 — an open header dropdown must not paint or click through the jobs modal', async ({ page }) => {
+  // Moving the trigger into the header (findings 83/102) put the panel inside the
+  // header's stacking context: .header is position:sticky with z-index 40, so its
+  // descendants are ordered against each other, not against the page. The settings
+  // and account dropdowns are *later* siblings at z-50, so at z-50 the panel painted
+  // below them and they stayed hit-testable over an aria-modal dialog.
+  //
+  // Asserted with elementFromPoint over a point inside the dropdown, not with the
+  // computed z-index: reading the z-index back would pass against the bug.
+  await page.goto('/dashboard');
+
+  const settings = page.locator('.settings button').first();
+  await settings.click();
+  const dropdown = page.locator('.settings [x-show="active"]');
+  await expect(dropdown).toBeVisible();
+
+  // The precondition: with no modal open, the dropdown owns its own pixels. If this
+  // ever stopped being true the assertion below would pass for the wrong reason.
+  const before = await dropdown.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(12, r.height / 2));
+    return hit?.closest('.settings') !== null;
+  });
+  expect(before, 'the dropdown does not win a hit test over itself, so this test measures nothing').toBe(true);
+
+  // Opened by the keyboard shortcut, which is how the report reproduced it.
+  await page.keyboard.press('ControlOrMeta+Shift+KeyD');
+  const panel = page.locator('[data-testid="cockpit-panel"]');
+  await expect(panel).toBeVisible();
+
+  const covered = await dropdown.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const y = r.top + Math.min(12, r.height / 2);
+    const hit = document.elementFromPoint(x, y) as HTMLElement | null;
+    return {
+      inDropdown: hit?.closest('.settings') !== null,
+      inCockpit: hit?.closest('.download-cockpit') !== null,
+      tag: hit?.tagName.toLowerCase() ?? 'null',
+      point: [Math.round(x), Math.round(y)],
+    };
+  });
+
+  expect(
+    covered.inDropdown,
+    `the settings dropdown still wins the hit test at ${covered.point} while an aria-modal dialog is open (hit ${covered.tag})`,
+  ).toBe(false);
+  expect(covered.inCockpit, `the point at ${covered.point} belongs to the modal (hit ${covered.tag})`).toBe(true);
+});
+
+// ------------------------------------------------- review remediation finding 4
+
+test('review finding 4 — closing the panel opened by its shortcut returns focus', async ({ page }) => {
+  // toggle(event) captures event.currentTarget, and the Cmd/Ctrl+Shift+D handler
+  // calls toggle() with no event — so with no prior click there was nothing to
+  // return to, the restore was gated on having something, and the panel is
+  // x-trap.noreturn. Focus fell to <body>.
+  //
+  // Tab rather than locator.focus(): focus() succeeds on things the browser would
+  // never give focus to, so it proves nothing about the Tab order.
+  await page.goto('/dashboard');
+  await page.waitForSelector('[data-testid="cockpit-trigger"]');
+
+  await page.keyboard.press('Tab');
+  const opener = await page.evaluate(() => {
+    const el = document.activeElement as HTMLElement | null;
+    return { tag: el?.tagName.toLowerCase() ?? 'null', text: (el?.textContent || '').trim() };
+  });
+  expect(opener.tag, 'one Tab from a fresh page should land on a real control').not.toBe('body');
+
+  await page.keyboard.press('ControlOrMeta+Shift+KeyD');
+  const panel = page.locator('[data-testid="cockpit-panel"]');
+  await expect(panel).toBeVisible();
+  // The trap arms on a setTimeout and recomputes when the contents change, so wait
+  // for focus to be inside before closing — otherwise the close races the open.
+  await expect
+    .poll(() => page.evaluate(() => document.activeElement?.closest('[data-testid="cockpit-panel"]') !== null))
+    .toBe(true);
+
+  await page.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+
+  // Poll for focus to settle, then assert once: expect.poll returns on its first
+  // matching sample, so polling for the answer cannot say where focus ended up.
+  await expect
+    .poll(() => page.evaluate(() => document.activeElement?.tagName.toLowerCase() ?? 'null'))
+    .not.toBe('body');
+  const landed = await page.evaluate(() => {
+    const el = document.activeElement as HTMLElement | null;
+    return { tag: el?.tagName.toLowerCase() ?? 'null', text: (el?.textContent || '').trim() };
+  });
+  expect(landed, 'focus must come back to whatever had it when the shortcut was pressed').toEqual(opener);
+});
+
+test('review finding 4 — with focus nowhere, the panel still hands it back to the trigger', async ({ page }) => {
+  // The other half: pressing the shortcut on a freshly loaded page, where
+  // document.activeElement is <body> and there is nothing to capture at all. The
+  // trigger is the floor — <body> is not a focus target, it is the bug.
+  await page.goto('/dashboard');
+  await page.waitForSelector('[data-testid="cockpit-trigger"]');
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+
+  await page.keyboard.press('ControlOrMeta+Shift+KeyD');
+  await expect(page.locator('[data-testid="cockpit-panel"]')).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => document.activeElement?.closest('[data-testid="cockpit-panel"]') !== null))
+    .toBe(true);
+
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-testid="cockpit-panel"]')).toHaveCount(0);
+
+  await expect
+    .poll(() => page.evaluate(() => document.activeElement?.tagName.toLowerCase() ?? 'null'))
+    .not.toBe('body');
+  const onTrigger = await page.evaluate(
+    () => document.activeElement?.closest('[data-testid="cockpit-trigger"]') !== null,
+  );
+  expect(onTrigger, 'focus was left on <body>, which is where the bug left it').toBe(true);
 });

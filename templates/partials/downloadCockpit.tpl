@@ -32,7 +32,20 @@
 
     <!-- Panel overlay and content -->
     <template x-if="isOpen">
-        <div class="fixed inset-0 z-50 overflow-hidden">
+        {# z-[60] and not the app's usual z-50 for a dialog, because this dialog is    #}
+        {# *inside* the header. .header is position:sticky with z-index:40, so it is a  #}
+        {# stacking context and every descendant paints inside its layer — the panel   #}
+        {# is ordered against its header siblings, not against the page. The settings  #}
+        {# and account dropdowns are later siblings at z-50, so at z-50 they painted   #}
+        {# above an aria-modal dialog and stayed hit-testable over it: open Settings,   #}
+        {# then press Cmd/Ctrl+Shift+D, and elementFromPoint over the dropdown         #}
+        {# returned the dropdown. Raising .overlays does nothing for header-local       #}
+        {# siblings. Pinned by the hit test in ws9-jobs-cockpit.spec.ts.               #}
+        {#                                                                            #}
+        {# The true modals still stack above this panel, and for a reason that is not  #}
+        {# this number: they live in .overlays at z-index 41 in the *root* stacking     #}
+        {# context, above the whole z-40 header layer.                                 #}
+        <div class="fixed inset-0 z-[60] overflow-hidden">
             <!-- Backdrop -->
             <div class="fixed inset-0 bg-black/20" @click="close()"></div>
 
@@ -103,7 +116,12 @@
 
                     <ul class="divide-y divide-stone-100">
                         <template x-for="job in displayJobs" :key="job.id">
-                            <li class="px-4 py-3 hover:bg-stone-50" data-testid="cockpit-job">
+                            {# data-job-id so a row can be addressed by the job it is: the queue is #}
+                            {# process-wide and every test and reader shares it, so "the row that   #}
+                            {# says events" is whichever row happens to say that. Review            #}
+                            {# remediation finding 5 — three assertions were scoped that way and    #}
+                            {# could not fail.                                                      #}
+                            <li class="px-4 py-3 hover:bg-stone-50" data-testid="cockpit-job" :data-job-id="job.id">
                                 <div class="flex items-start gap-3">
                                     <!-- Status icon -->
                                     <span class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-lg"

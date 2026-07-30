@@ -100,8 +100,9 @@ func (m *DownloadManager) processGenericJob(j *DownloadJob) {
 	select {
 	case m.semaphore <- struct{}{}:
 	case <-j.ctx.Done():
-		j.SetStatus(JobStatusCancelled)
-		m.notifySubscribers(JobEvent{Type: "updated", Job: j.Snapshot()})
+		if j.finish(JobStatusCancelled, "", 0, time.Now()) {
+			m.notifySubscribers(JobEvent{Type: "updated", Job: j.Snapshot()})
+		}
 		return
 	}
 	defer func() { <-m.semaphore }()
@@ -113,22 +114,21 @@ func (m *DownloadManager) processGenericJob(j *DownloadJob) {
 
 	sink := &managedSink{m: m, j: j}
 	err := j.runFn(j.ctx, j, sink)
-	completedAt := time.Now()
-	j.SetCompletedAt(completedAt)
 
-	if j.GetStatus() == JobStatusPaused {
-		return
+	status, errMsg := JobStatusCompleted, ""
+	switch {
+	case err != nil && j.ctx.Err() != nil:
+		status = JobStatusCancelled
+	case err != nil:
+		status, errMsg = JobStatusFailed, err.Error()
 	}
 
-	if err != nil {
-		if j.ctx.Err() != nil {
-			j.SetStatus(JobStatusCancelled)
-		} else {
-			j.SetStatus(JobStatusFailed)
-			j.SetError(err.Error())
-		}
-	} else {
-		j.SetStatus(JobStatusCompleted)
+	// One atomic terminal write, as in processJob. A generic job can never be paused
+	// (CanPause refuses anything with a runFn), so this only ever returns false if
+	// that changes — and if it does, CompletedAt must not have been stamped on a job
+	// that is still going, which is why the stamp now lives inside finish.
+	if !j.finish(status, errMsg, 0, time.Now()) {
+		return
 	}
 	m.notifySubscribers(JobEvent{Type: "updated", Job: j.Snapshot()})
 }

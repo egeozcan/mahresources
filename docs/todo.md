@@ -1765,6 +1765,17 @@ failed 8 of 10 with the fixes stashed.
 3. **The paused row said "Paused" twice** — once in the status pill and once where the speed
    goes. Caught by reading the live row rather than by any assertion. The speed cell is empty
    for a paused job now.
+4. **Moving the panel into the header put it under two of the header's own dropdowns, and no
+   test could see it.** Found by an independent review of the batch, not by this batch. `.header`
+   is `position:sticky` with `z-index:40`, so it is a stacking context and the panel is ordered
+   against its *header siblings* rather than against the page — and the settings and account
+   dropdowns are later siblings at the same `z-50`. Measured: with the Settings dropdown open,
+   `elementFromPoint` in the middle of it returned a `<label>` inside the dropdown while an
+   `aria-modal="true"` dialog was open over it, at (1160, 52). The four WS10 checks that touched
+   the panel's stacking asked the opposite question — whether the panel covers the *page* — and
+   raising `.overlays` to 41, which that section explains at length, does nothing for a sibling
+   inside the same header. The dialogs in the header are `z-[60]` now; see the remediation
+   section below.
 
 ### WS11 — MRQL and query surfaces
 
@@ -1929,9 +1940,14 @@ keep/clear split and its RBAC predicate), `server/api_tests/ws9_jobs_cockpit_tes
 over the HTTP layer and the served markup, driving a **real** download against a trickling
 `httptest` server because a generic runFn job can never be paused),
 `src/components/downloadCockpit.test.ts` (14 unit tests over the predicates, the ordering and
-the clear) and `e2e/tests/regressions/ws9-jobs-cockpit.spec.ts` (6 tests). **All seen red
-first**; Playwright failed 3 of 6 with the fixes stashed, and the three that passed are the
-controls (a running row is unchanged, the clear button is absent when nothing is finished).
+the clear) and `e2e/tests/regressions/ws9-jobs-cockpit.spec.ts` (6 tests).
+
+**On "all seen red first", which this batch claimed on the strength of "Playwright failed 3 of 6
+with the fixes stashed": that sentence was not evidence, and three of those six assertions turned
+out to be unable to fail at all.** Stashing the fixes reverts the *product*, and a vacuous
+assertion fails right along with a sound one when the feature it sits next to disappears — the
+clear-completed assertions failed because the button was gone, not because they could see a row.
+See the review remediation below, and the lesson recorded for it.
 
 #### Where the plan was wrong
 
@@ -1952,6 +1968,113 @@ controls (a running row is unchanged, the clear button is absent when nothing is
    worth recording: `"already finished"` was a single sentence covering both "there is nothing
    left to cancel" and "this job is paused", which is *how* the defect was expressible. The
    refusal names the status it saw now, matching what pause/resume/retry already said.
+
+#### Defects the tests did not catch — five, from an independent review of the batch
+
+An independent review of `2cc4d4f6` found five real defects, every one of them in code this
+batch wrote or moved. **Three of them are tests that could not fail**, which is the part worth
+sitting with: this batch reported "Playwright failed 3 of 6 with the fixes stashed" as evidence
+the specs were sound, and that sentence is not evidence of anything — see the lesson added for
+it. The remediation is `docs/todo.md`'s WS9-fix entry below and the commit that follows
+`8772ab96`.
+
+1. **`Cancel` was not atomic, so it could answer 200 "cancelled" and leave the job `paused`
+   (high).** The fix for finding 2 put the paused transition inside `Cancel` — correctly — but
+   `Cancel` decided *which* branch to take by reading `job.GetStatus()` a second time, after
+   `CanCancel()` had already read it. A `Pause` landing between that read and `job.Cancel()` wrote
+   `paused`, cancelled the context, and left `processJob` returning early on `paused` without
+   stamping anything. Reproduced deterministically as two ordinary sequential API calls — cancel,
+   then pause, while the worker is still unwinding — and the job settled at `paused` with `Cancel`
+   having returned nil. `download_queue/cancel_paused_test.go` could not see it because every job
+   in it is in a settled state and only one control ever touches it.
+2. **"Clear completed" could resurrect a job it had just cleared.** The client snapshotted which
+   rows were finished *before* `await fetch(...)`; the server decides at handling time. A job that
+   crossed into a terminal state inside that window was cleared server-side, was missing from the
+   client's dismissed set, and the `removed` handler — whose whole job is to retain finished jobs
+   for display — put it back as a row for a job that no longer exists. The `action_removed`
+   handler never consulted the dismissed set at all, so the same thing happened to any plugin
+   action row that was cleared.
+3. **Moving the panel into the header created a modal stacking defect.** WS10's item 4 above.
+4. **The keyboard shortcut had no focus-return target (a11y).** `toggle(event)` captures
+   `event.currentTarget`, and the Cmd/Ctrl+Shift+D handler calls `toggle()` with no event; the
+   restore was gated on having captured something, and the panel is `x-trap.noreturn`. So opening
+   the panel by its own shortcut and closing it dropped focus to `<body>`. Two more paths open the
+   panel without an event — the `jobs-panel-open` window event and an incoming plugin action job —
+   and both had the same hole. The app had already solved exactly this for Cmd+K (ledger row 30),
+   and that fix has the same latent weakness in the other direction: it falls back to
+   `document.activeElement`, which is `<body>` when focus is nowhere, and "restoring" to `<body>`
+   succeeds by borrowing a `tabindex`.
+5. **Three of the six new E2E assertions could not fail.** One cause: `getJobTitle` returns
+   `getFilename(job.url) || job.name`, and every stalled test download posts the same URL
+   (`/v1/jobs/events`), so every row renders as `events` and the `Name` the spec passes is never
+   displayed at all — `DownloadJob` has no `name` field to serialise.
+   - `.filter({ hasText: 'ws9 clear' }).toHaveCount(0)` was a negative assertion on text that is
+     never rendered, in the batch that cites "every negative assertion needs a positive control".
+   - The ordering test computed `findIndex(t => t.includes('order two') || t.includes('events'))`
+     and asserted `>= 0` — "some row exists" — which is true under either ordering. Confirmed by
+     reverting `displayJobs` to insertion order: the rewritten assertion fails with "newest-first:
+     row 1 must come before row 0"; the old one passed.
+   - `.filter({ hasText: 'events' }).first()` is not necessarily the spec's own job on a worker
+     server the whole suite shares.
+
+### WS9-fix — the review remediation
+
+Five findings, all five confirmed against the code before any fix, all five fixed with a test
+seen failing first. Each red check reverted the *product* and kept the test, and where a revert
+would have broken compilation instead of behaviour it was done surgically, one declaration at a
+time — a test that fails because the package no longer builds has proven nothing.
+
+- [x] **1 (high) — one claim, one lock, for every status transition.** `DownloadJob` grew four
+      `claim*` methods and a `finish`, each a single critical section over the job's own `mu`, and
+      `Cancel`/`Pause`/`Resume`/`Retry` plus both workers' terminal writes now go through them.
+      The four `Can*` predicates are defined once as `can*Locked` helpers so a control's check and
+      its act cannot drift apart.
+      - **The lock is the job's, not the manager's**, and deliberately: the manager's `mu` guards
+        the registry (`jobs`, `jobOrder`), so promoting status transitions to it would serialise
+        every job's per-chunk progress write against every other job's control calls, and would
+        invert the manager → job lock order that `Resume` and `Retry` already take.
+      - **A `cancelRequested` flag decides who wins**, because an *active* job's cancel cannot be
+        expressed as a status write — the worker owns that. So the claim records the intent, and
+        `claimPause`/`claimResume` refuse afterwards; `claimRetry` clears it, since the user asking
+        for the job again is the one case where an earlier cancel should not stand.
+      - The worker's `if job.GetStatus() == JobStatusPaused { return }` was the same check-then-act
+        as the controls', one layer down. It is `job.finish(...)` now, which also means
+        `CompletedAt` is stamped inside the same critical section — a paused generic job used to
+        get a `CompletedAt` before the paused check.
+      - Two states that could never be retired are fixed as a side effect: "Cancelled before
+        starting" and a cancelled generic job both had `CompletedAt` nil, and `cleanupOldJobs` only
+        retires rows that have one.
+- [x] **2 — the server names the jobs it cleared.** `ClearFinished` and
+      `ClearFinishedActionJobs` return `[]string` instead of a count, and
+      `POST /v1/jobs/clearCompleted` answers `{"cleared": N, "ids": [...]}`. The client dismisses
+      exactly those ids; its own snapshot survives only as the fallback for an unreadable 2xx body,
+      because a 2xx means the rows really are gone and showing them would be worse than guessing.
+      The two SSE removal handlers are one `handleJobRemoved` method now, which is how the action
+      branch stopped ignoring the dismissed set.
+- [x] **3 — the header's dialogs sit above the header's dropdowns.** `z-[60]` on both the jobs
+      panel and the global search dialog (the same defect, one sibling earlier). Raising the
+      dialogs rather than lowering the dropdowns: the dropdowns are also above `.navbar-mobile`
+      (`z-index: 39`, `fixed inset-0`), and lowering them would have changed which of the two wins
+      at phone widths, which is a layout Batch 10 had just finished fixing. `.overlays` at 41 still
+      keeps the true modals above the whole header layer, so the property WS10 asserts is intact.
+- [x] **4 — the panel always hands focus back.** `focusedElement()` in `utils/focus.js` reports
+      what has focus *unless* that is `<body>` or `<html>`, `toggle()` falls back to it, and the
+      trigger — header chrome that always exists — is the floor. The restore is unconditional now.
+      The same treatment went to `globalSearch`, where the `document.activeElement` fallback had
+      the `<body>` weakness described above.
+- [x] **5 — rows are addressed by `data-job-id`.** `:data-job-id="job.id"` on the row, and every
+      locator in the spec is scoped by the id the submit response returned. The ordering test
+      compares the two jobs' actual positions and asserts the newest row is inside the list's
+      visible box; the clear test asserts the row is present before the button is pressed and
+      keeps a second, running job as the positive control; and the paused test now submits a
+      *running decoy* after the paused job, so the row it reads is unambiguous — with the old
+      `hasText: 'events'` locator that decoy is row 1 and the test fails on the missing Resume.
+- [x] **Minor — the selector's create-path test asserted `typeof dispatch === 'function'`**, which
+      is true either way. It builds a real creatable profile (`createTagFieldProfile`) with an
+      exclusion around it and creates a tag: `createCandidate`, the queued creation's outcome, the
+      POST body and the resulting selection. With the wrapper's one `create`-forwarding line
+      removed it fails at `createCandidate` — which is what losing tag creation app-wide would
+      have looked like.
 
 ### WS12 — Taxonomy and template authoring
 
@@ -2258,6 +2381,8 @@ the cheapest high-confidence work clears the ledger early.
 - [x] **Batch 9** — WS7 mobile and layout. Start with finding 3 (nav trap) and 8 (one-line CSS).
 - [x] **Batch 10** — WS10 global chrome, WS9 jobs cockpit, and WS8's two stragglers (94, 143).
 - [x] **Batch 11** — WS11 MRQL and query surfaces, WS12 taxonomy authoring, WS13 sharing.
+- [x] **Batch 10-fix** — the five findings an independent review of Batch 10 turned up, three of
+      them tests that could not fail. See WS9-fix.
 - [ ] **Batch 12** — WS14 long tail; bring the four product decisions back for sign-off.
 - [ ] **Batch 13** — Phase 3 guards.
 - [ ] **Batch 14** — final verification, docs, and a lessons entry.
@@ -2283,6 +2408,46 @@ the cheapest high-confidence work clears the ledger early.
 ## Review
 
 _To be filled in on completion._
+
+### Batch 10-fix (the review remediation) — verification run
+
+| Gate | Result |
+|---|---|
+| `go test --tags 'json1 fts5' ./...` | pass (37 packages) |
+| `go test -race --tags 'json1 fts5' ./download_queue/...` | pass — the new gate for finding 1 |
+| `staticcheck ./...` | clean |
+| `npm run build` | clean |
+| `npm run test:unit` | **831 passed / 51 files** (817 → 831: 6 cockpit clear/removal, 4 cockpit focus, 3 `focusedElement`, 1 selector exclusion) |
+| `cd e2e && npm run test:with-server:all` | **1846 passed, 0 failed, 0 flaky**, 6 skipped (1842 → 1846: the WS9 spec went from 6 tests to 10) |
+| `cd e2e && npm run test:with-server:a11y` | **184 passed**, `KNOWN_ISSUES` still `[]` |
+| `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/...` | pass |
+| `./mr docs lint` | OK (16 pre-existing warnings) |
+
+The first a11y run reported 1 flaky — `20-a11y-hover-cards.spec.ts`'s aria-describedby test, whose
+hover popover did not appear inside 5s. Not called flaky on that basis: 35/35 for the whole file at
+`--repeat-each=5 --retries=0`, and 184/184 with 0 flaky on a clean re-run of the gate. Contention
+against a hover-open delay, the same shape as the Batch 6 note above. Nothing this pass touches is
+on that path.
+
+`go test -race ./plugin_system/...` fails, and does so at `8772ab96` too — four `TestRunActionAsync_*`
+subtests race between `PluginManager.Close()` closing the Lua state and an in-flight async action
+goroutine. Verified in a clean worktree checked out at HEAD before touching anything: same four
+tests, same `gopher-lua (*LState).Close` write. Pre-existing, unrelated to this pass, and never a
+gate.
+
+Each finding's red check, since a bulk "N of M failed with the fixes stashed" run is what let three
+unfalsifiable assertions through in the first place:
+
+| Finding | How it was seen red |
+|---|---|
+| 1 — atomic cancel | Against the committed `Cancel`: `cancel_atomicity_test.go` reported `Cancel returned nil but the job settled at "paused"`, `Pause` returned `<nil>` where a `StateConflictError` was required, and `CompletedAt` was nil. The concurrent form failed on iteration 1 of 25. Its three positive controls passed unchanged. |
+| 2 — clear resurrects a row | Server: the new `ids` assertion reported `1 cleared but named 0 ids`. Client: the phantom row itself — `expected [ 'racer' ] to deeply equal []`. Browser: `toHaveCount(0)` received 1, with the dismissed-id line removed. |
+| 3 — modal stacking | `z-[60]` → `z-50` in the template only (Pongo2 re-reads per request, so no rebuild): `the settings dropdown still wins the hit test at 1160,52 while an aria-modal dialog is open (hit label)`. |
+| 4 — focus return | Unit: the two capture assertions returned `undefined` with the old `captureTrigger(event) ?? this._lastTrigger`; the click control passed. Browser: both focus tests reported `Expected: not "body"` against the whole file reverted to `8772ab96`. |
+| 5 — ordering | `displayJobs` reverted to insertion order: `newest-first: row 1 must come before row 0`. |
+| 5 — clear | The `_dismissedIds` bookkeeping removed from Batch 10's `clearCompleted`, button intact: the row is still there. |
+| 5 — row scoping | `rowFor` reverted to `.filter({ hasText: 'events' }).first()` against the *fixed* product: the paused test fails on the running decoy's missing Resume, which is the wrong-row failure the id scoping prevents. |
+| minor — selector create | The wrapper's one `create`-forwarding line removed: `expected null to deeply equal { label: 'fresh' }`. |
 
 ### Batch 10 (WS10 + WS9 + WS8's two stragglers) — verification run
 

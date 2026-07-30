@@ -81,6 +81,17 @@ html {
     padding: 0;
 }
 
+/*
+ * The header is a stacking context (position:sticky + z-index), and that has a
+ * consequence worth stating where the z-index is: every descendant paints inside
+ * this one z-40 layer, ordered against its header siblings and not against the
+ * page. Two of those descendants are dialogs (the global search dialog and the jobs
+ * panel) and two are dropdowns (settings, account). The dropdowns are the *later*
+ * siblings, so at equal z-index they win — an open dropdown painted over an
+ * aria-modal dialog and stayed clickable through it. The dialogs are therefore
+ * z-[60] and the dropdowns z-50; see the comment in templates/partials/downloadCockpit.tpl.
+ * A new dialog in this header needs to sit above 50 as well.
+ */
 .header {
     grid-row: 1 / 2;
     background: linear-gradient(135deg, var(--bg-accent) 0%, var(--bg-accent-dark) 100%);

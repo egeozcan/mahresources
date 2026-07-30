@@ -387,16 +387,21 @@ func (pm *PluginManager) notifyActionJobSubscribers(eventType string, job *Actio
 }
 
 // ClearFinishedActionJobs removes every completed or failed action job the caller
-// may see and returns how many went. Running and pending jobs are kept.
+// may see and returns the ids that went. Running and pending jobs are kept.
 //
 // UI bug hunt 2026-07-29, finding 40: the jobs panel shows download jobs and
 // plugin action jobs in one list, so a "Clear completed" that only reached the
 // download queue would leave rows the button visibly failed to remove.
 //
+// The ids and not a count, for the reason DownloadManager.ClearFinished gives: the
+// panel has to dismiss exactly what the server cleared, and its own idea of which
+// rows were finished is a snapshot taken before the request went out.
+//
 // visible is the caller's RBAC predicate over the job's owner, matching the
 // filtering the queue and the SSE stream already apply.
-func (pm *PluginManager) ClearFinishedActionJobs(visible func(owner *uint) bool) int {
+func (pm *PluginManager) ClearFinishedActionJobs(visible func(owner *uint) bool) []string {
 	var removed []*ActionJob
+	ids := make([]string, 0)
 
 	pm.actionJobsMu.Lock()
 	for id, job := range pm.actionJobs {
@@ -413,6 +418,8 @@ func (pm *PluginManager) ClearFinishedActionJobs(visible func(owner *uint) bool)
 		}
 		delete(pm.actionJobs, id)
 		removed = append(removed, job)
+		// The map key rather than job.ID: same value, and it needs no lock.
+		ids = append(ids, id)
 	}
 	pm.actionJobsMu.Unlock()
 
@@ -420,7 +427,7 @@ func (pm *PluginManager) ClearFinishedActionJobs(visible func(owner *uint) bool)
 		pm.notifyActionJobSubscribers("removed", job)
 	}
 
-	return len(removed)
+	return ids
 }
 
 // cleanupOldActionJobs removes completed/failed action jobs older than actionJobRetention.
