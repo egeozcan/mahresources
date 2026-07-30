@@ -107,9 +107,12 @@ func (m *DownloadManager) processGenericJob(j *DownloadJob) {
 	}
 	defer func() { <-m.semaphore }()
 
-	now := time.Now()
-	j.SetStartedAt(now)
-	j.SetStatus(JobStatusProcessing)
+	// Claimed for the same reason processJob claims its own start. A generic job can
+	// never be paused, so the refusal is unreachable today; it is here so the one
+	// discipline covers both workers rather than only the one that needed it.
+	if !j.claimStart(JobStatusProcessing, time.Now()) {
+		return
+	}
 	m.notifySubscribers(JobEvent{Type: "updated", Job: j.Snapshot()})
 
 	sink := &managedSink{m: m, j: j}

@@ -114,6 +114,35 @@ func (j *DownloadJob) claimCancel(completedAt time.Time) (JobStatus, bool) {
 	return prev, true
 }
 
+// claimStart atomically hands the job to its worker: pending -> the running status
+// the worker is about to report, stamped with its start time.
+//
+// It refuses when the job is no longer pending, which means a control took it while
+// the goroutine was starting: a Pause (the job is paused and waiting for Resume) or
+// the cancel of a paused job (already terminal). The worker's *forward* writes used
+// to be unconditional, and a job's goroutine starts while the job is `pending` —
+// which is pausable — so a Pause landing between the semaphore acquisition and the
+// first status write was silently overwritten. The caller had been told 200
+// "paused"; the job then downloaded under an already-cancelled context and ended up
+// cancelled with its progress discarded. That is claimCancel's defect in mirror
+// image.
+//
+// It deliberately does *not* refuse a job whose cancel has been accepted. An active
+// job's terminal state is its worker's to stamp, so refusing here would leave the
+// job pending forever with nobody left to retire it. The worker starts, the
+// cancelled context fails the download immediately, and finish stamps `cancelled`.
+func (j *DownloadJob) claimStart(running JobStatus, startedAt time.Time) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	if j.Status != JobStatusPending {
+		return false
+	}
+	j.Status = running
+	j.StartedAt = &startedAt
+	return true
+}
+
 // claimPause atomically transitions a pausable job to paused. It refuses a job
 // whose cancel has already been accepted: the user asked for that download to be
 // abandoned, and a pause winning here would leave a job its worker has given up on

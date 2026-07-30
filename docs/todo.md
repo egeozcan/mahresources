@@ -2044,6 +2044,21 @@ time — a test that fails because the package no longer builds has proven nothi
       - Two states that could never be retired are fixed as a side effect: "Cancelled before
         starting" and a cancelled generic job both had `CompletedAt` nil, and `cleanupOldJobs` only
         retires rows that have one.
+      - **The worker's *forward* writes were the hole the first pass left**, found by re-reading the
+        finished fix rather than by the review. A job's goroutine starts while the job is `pending`,
+        and `pending` is pausable — so a Pause landing between the semaphore acquisition and
+        `SetStatus(JobStatusDownloading)` was overwritten by it. The caller was told 200 `paused`;
+        the job then downloaded under an already-cancelled context and ended `cancelled` with its
+        progress discarded. That is finding 1 in mirror image, and `claimStart` closes it. It
+        deliberately does *not* refuse a job whose cancel has been accepted: an active job's
+        terminal state is its worker's to stamp, so refusing there would leave the job `pending`
+        with nobody left to retire it.
+      - **A fencing token (a per-run generation on the job) was considered and left out.** It would
+        stop a stale worker retiring a job that Resume or Retry had restarted — but no path can
+        produce one: `Retry` needs `failed`/`cancelled` and `Resume` needs `paused`, and every one
+        of those states is written either by the worker's own last act (`finish`) or by a control on
+        a job whose worker has already returned. Version fields for an unreachable interleaving are
+        speculation, so the reasoning is recorded here instead of in the struct.
 - [x] **2 — the server names the jobs it cleared.** `ClearFinished` and
       `ClearFinishedActionJobs` return `[]string` instead of a count, and
       `POST /v1/jobs/clearCompleted` answers `{"cleared": N, "ids": [...]}`. The client dismisses
@@ -2441,6 +2456,7 @@ unfalsifiable assertions through in the first place:
 | Finding | How it was seen red |
 |---|---|
 | 1 — atomic cancel | Against the committed `Cancel`: `cancel_atomicity_test.go` reported `Cancel returned nil but the job settled at "paused"`, `Pause` returned `<nil>` where a `StateConflictError` was required, and `CompletedAt` was nil. The concurrent form failed on iteration 1 of 25. Its three positive controls passed unchanged. |
+| 1 — the worker's forward write | With only the `claimStart` call reverted to the two unconditional writes: `the worker took over a paused job and left it "failed"; the pause was reported as done`, and `the paused job was retired, so Resume can never pick it up again`. Its positive control (a pending job with an accepted cancel still settles `cancelled`, not `failed`) passes in both states. |
 | 2 — clear resurrects a row | Server: the new `ids` assertion reported `1 cleared but named 0 ids`. Client: the phantom row itself — `expected [ 'racer' ] to deeply equal []`. Browser: `toHaveCount(0)` received 1, with the dismissed-id line removed. |
 | 3 — modal stacking | `z-[60]` → `z-50` in the template only (Pongo2 re-reads per request, so no rebuild): `the settings dropdown still wins the hit test at 1160,52 while an aria-modal dialog is open (hit label)`. |
 | 4 — focus return | Unit: the two capture assertions returned `undefined` with the old `captureTrigger(event) ?? this._lastTrigger`; the click control passed. Browser: both focus tests reported `Expected: not "body"` against the whole file reverted to `8772ab96`. |

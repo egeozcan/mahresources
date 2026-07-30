@@ -348,9 +348,13 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 		return
 	}
 
-	now := time.Now()
-	job.SetStartedAt(now)
-	job.SetStatus(JobStatusDownloading)
+	// The forward transition is claimed too, or a Pause landing in the moment
+	// between the semaphore acquisition and this write would be overwritten by it
+	// (see DownloadJob.claimStart). A refusal means a control owns the job now and
+	// has already notified subscribers.
+	if !job.claimStart(JobStatusDownloading, time.Now()) {
+		return
+	}
 	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
 
 	// Perform the download with progress tracking

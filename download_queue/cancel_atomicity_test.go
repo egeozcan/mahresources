@@ -295,3 +295,59 @@ func TestRetry_ClearsAnAcceptedCancel(t *testing.T) {
 	}
 	blocker.releaseOne(t)
 }
+
+// The other half of the same discipline, and a hole the first pass left: the
+// worker's *forward* status writes were unconditional.
+//
+// A job's goroutine starts while the job is `pending`, and `pending` is pausable.
+// So a Pause landing between the worker acquiring its semaphore slot and its
+// `SetStatus(JobStatusDownloading)` was overwritten — the caller was told 200
+// `paused`, the worker then downloaded under an already-cancelled context, and the
+// job ended `cancelled` with its progress discarded. That is finding 1 in mirror
+// image: the answer and the outcome disagree, in the other direction.
+//
+// processJob is called directly here because that is exactly the state the race
+// produces — a worker reaching its first write on a job a control has already taken
+// away — and it needs no injected hook to reach it.
+func TestProcessJob_DoesNotTakeOverAPausedJob(t *testing.T) {
+	dm := createTestManager()
+	job := addTestJob(dm, "held", JobStatusPaused)
+	job.UpdateProgress(196608, 52428800)
+
+	dm.processJob(job)
+
+	if got := job.GetStatus(); got != JobStatusPaused {
+		t.Errorf("the worker took over a paused job and left it %q; the pause was reported as done", got)
+	}
+	if got := job.Progress; got != 196608 {
+		t.Errorf("the paused job's progress is %d, want it untouched at 196608", got)
+	}
+	if job.GetCompletedAt() != nil {
+		t.Error("the paused job was retired, so Resume can never pick it up again")
+	}
+}
+
+// The positive control: a worker whose job is still pending does start, and an
+// accepted cancel still ends the job cancelled rather than failed — so refusing to
+// start a paused job did not turn into refusing to start anything.
+func TestProcessJob_StartsAPendingJobAndHonoursAnAcceptedCancel(t *testing.T) {
+	dm := createTestManager()
+	dm.settings = NewStaticDownloadSettings(TimeoutConfig{
+		ConnectTimeout: time.Second, IdleTimeout: time.Second, OverallTimeout: time.Second,
+	}, 0)
+	job := addTestJob(dm, "doomed", JobStatusPending)
+	job.creator = &query_models.ResourceFromRemoteCreator{}
+	job.URL = "http://127.0.0.1:1/nothing-here"
+
+	if err := dm.Cancel("doomed"); err != nil {
+		t.Fatalf("cancelling a pending job failed: %v", err)
+	}
+	dm.processJob(job)
+
+	if got := job.GetStatus(); got != JobStatusCancelled {
+		t.Errorf("a pending job with an accepted cancel settled at %q, want %q", got, JobStatusCancelled)
+	}
+	if job.GetCompletedAt() == nil {
+		t.Error("the cancelled job has no CompletedAt, so job retention will never retire it")
+	}
+}
