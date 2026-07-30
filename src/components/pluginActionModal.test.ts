@@ -139,6 +139,33 @@ describe('round 4 — a stale run does not destroy the modal that replaced it', 
         expect(dispatched, 'a stale run opened the jobs panel for an abandoned submission').toHaveLength(0);
     });
 
+    test("a superseded run's delayed reload does not close the modal that replaced it", async () => {
+        // A synchronous result schedules close()+reload() 1.5 s out. The reader can
+        // dismiss that result and open another action well inside a second and a half.
+        let delayed: () => void = () => {};
+        vi.stubGlobal('setTimeout', (fn: () => void) => { delayed = fn; return 0; });
+        const reload = vi.fn();
+        vi.stubGlobal('window', {
+            dispatchEvent: (e: CustomEvent) => { dispatched.push(e); return true; },
+            location: { reload, href: '' },
+        });
+        vi.stubGlobal('document', { activeElement: null, body: {}, documentElement: {} });
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+            new Response('{"message":"done"}', { status: 200 })));
+
+        await component.submit();
+
+        // The reader moves on before the timer fires.
+        component.open({ plugin: 'p', action: 'b', entityIds: [2], entityType: 'resource' });
+        component.formValues = { note: 'half typed' };
+
+        delayed();
+
+        expect(component.isOpen, 'a stale timer closed the modal that replaced it').toBe(true);
+        expect(reload, 'a stale timer reloaded the page out from under a form').not.toHaveBeenCalled();
+        expect(component.formValues).toEqual({ note: 'half typed' });
+    });
+
     test('the control: the run the modal is actually showing still hands over', async () => {
         vi.stubGlobal('document', { activeElement: null, body: {}, documentElement: {} });
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
@@ -176,5 +203,45 @@ describe('round 4 — the opener a caller names wins over focus', () => {
         component.open({ plugin: 'p', action: 'a', entityIds: [1], entityType: 'resource' });
 
         expect(component._opener).toBe(button);
+    });
+
+    test('cancelling the modal puts focus back on the opener', () => {
+        // Round 5. close() left focus to x-trap, which returns it to whatever had it
+        // when the trap armed — the menu item the menu has since hidden. Cancel and
+        // Escape therefore dropped the reader on <body>.
+        const opener = {
+            tagName: 'BUTTON', isConnected: true, focused: false,
+            matches: () => true,
+            focus() { this.focused = true; docStub.activeElement = this; },
+        };
+        const docStub: any = { activeElement: null, body: {}, documentElement: {} };
+        vi.stubGlobal('document', docStub);
+        component._opener = opener;
+        component.isOpen = true;
+
+        component.close();
+        flushTicks();
+
+        expect(opener.focused, 'Cancel left the reader with nowhere to be').toBe(true);
+    });
+
+    test('the control: the jobs-panel hand-off does not restore, because the panel will', async () => {
+        const opener = {
+            tagName: 'BUTTON', isConnected: true, focused: false,
+            matches: () => true,
+            focus() { this.focused = true; },
+        };
+        vi.stubGlobal('document', { activeElement: null, body: {}, documentElement: {} });
+        component._opener = opener;
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+            new Response('{"job_id":"abc"}', { status: 200 })));
+
+        await component.submit();
+        flushTicks();
+
+        // The panel is given the opener and moves focus into itself; restoring here
+        // too would be a visible flicker through a control the reader is leaving.
+        expect(opener.focused).toBe(false);
+        expect((dispatched[0] as any).detail.returnFocusTo).toBe(opener);
     });
 });

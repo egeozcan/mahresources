@@ -1054,3 +1054,29 @@ Before believing a red, ask what *else* could produce it. In particular:
 - **A red that appears on the first iteration of a race you have just described as narrow.** Those
   two facts do not fit together, and the mismatch is the signal.
 
+
+## `omitempty` makes a snapshot's absent fields meaningful, so merging one over stale state is wrong
+
+Two ways to apply a server snapshot to a local row: replace it, or spread it over what you had.
+Spreading looks safer — you keep anything the payload did not mention. But with `json:"...,omitempty"`
+the payload does not mention a field precisely when the field is *empty*, and that emptiness is the
+news. A job whose retry cleared its error has no `error` key; merging keeps the failed attempt's
+message, and the row reads "Completed" beside "boom".
+
+Replace when the payload is a complete snapshot, and keep a local field only when you can point at
+the reason the sender could not have known it. The test for whether you have this backwards: ask
+what a *cleared* field looks like on the wire. If the answer is "the same as a field the sender
+omitted for another reason", you cannot merge.
+
+## Deciding "who gets focus back" is not the same as doing it
+
+A round of review found that a modal captured the right element to return focus to and then used it
+on exactly one of its two exit paths — the hand-off to another panel — while Cancel and Escape still
+left the reader on `<body>`. The capture was the interesting part and the wiring was not, so the
+wiring is where it stopped.
+
+Whenever a component gains a focus-return target, enumerate every way it can close: the primary
+action, the cancel button, Escape, a backdrop click, and being torn down by a parent. Each one is a
+separate path through the code and each one needs the restore, or needs a documented reason it does
+not (here: the hand-off, because the receiving panel moves focus itself and restoring first would
+flicker through a control the reader is leaving).

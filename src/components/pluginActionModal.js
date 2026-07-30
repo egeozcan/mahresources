@@ -1,4 +1,4 @@
-import { focusedElement } from '../utils/focus.js';
+import { focusedElement, restoreFocus } from '../utils/focus.js';
 
 export function pluginActionModal() {
     return {
@@ -126,9 +126,24 @@ export function pluginActionModal() {
             }
         },
 
-        close() {
+        /**
+         * Close the modal, and put focus back where the reader came from.
+         *
+         * `x-trap` returns focus to whatever had it when the trap armed, and for a
+         * card action that is a menu item the menu has since hidden — connected,
+         * `display:none`, unfocusable — so Cancel and Escape dropped the reader on
+         * `<body>`. `_opener` is the menu's own trigger button, which is still on
+         * screen.
+         *
+         * `handOff` is the one caller that must not restore: it is passing the opener
+         * to the jobs panel, which will move focus itself once it has mounted.
+         */
+        close({ handOff = false } = {}) {
+            const opener = this._opener;
             this.isOpen = false;
             this.action = null;
+            if (handOff) return;
+            this.$nextTick(() => restoreFocus(opener));
         },
 
         isParamVisible(param) {
@@ -224,7 +239,7 @@ export function pluginActionModal() {
                     // to its own header trigger, so the reader ended a plugin action
                     // somewhere they had never been.
                     const opener = this._opener;
-                    this.close();
+                    this.close({ handOff: true });
                     // Asked for after this modal has actually gone, not in the same
                     // tick as close(). The panel declines to open underneath an open
                     // dialog — two aria-modal dialogs at once is the defect either way
@@ -241,6 +256,12 @@ export function pluginActionModal() {
                 } else {
                     this.result = data;
                     setTimeout(() => {
+                        // Guarded like the rest of the continuation: this fires a
+                        // second and a half later, by which time the reader may have
+                        // closed this result and opened another action. Closing *that*
+                        // modal and reloading the page discards a form they are in the
+                        // middle of filling in.
+                        if (superseded()) return;
                         this.close();
                         window.location.reload();
                     }, 1500);

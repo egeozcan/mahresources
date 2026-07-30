@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 )
@@ -216,5 +217,43 @@ func TestReaderContract_ACancelledTransferNeverDeliversMoreBytes(t *testing.T) {
 	if delivered > 0 {
 		t.Errorf("a cancelled transfer handed over its final chunk in %d of %d attempts — that chunk carries io.EOF, so the download completes after the user was told it would not",
 			delivered, iterations)
+	}
+}
+
+// The idle watchdog does not discard bytes that had already arrived.
+//
+// An idle timeout asserts that nothing came for N seconds. If a result is already
+// waiting when it fires, that assertion is false — the read completed and the
+// delivering goroutine was simply descheduled past the deadline — so the result
+// branch checks cancellation only and lets the bytes through. If the remote really
+// has gone quiet, the next read says so, which is what the control below pins.
+//
+// **Not seen red.** Reaching it means the watchdog's ticker firing between the select
+// waking on a ready result and the check a few instructions later. The change is
+// right on its own terms and ships without a test that could only pass for the wrong
+// reason; the first attempt at one fired the watchdog before any read was
+// outstanding, so it exercised the top-of-function error check instead and proved
+// nothing about the branch it named.
+
+// The control: a remote that really has gone quiet still times out.
+func TestReaderContract_AnIdleRemoteStillTimesOut(t *testing.T) {
+	gate := make(chan struct{})
+	defer close(gate)
+	src := &abandonedReader{
+		entered: make(chan struct{}),
+		release: gate,
+		wrote:   make(chan struct{}),
+	}
+
+	tr := NewTimeoutReaderWithContext(src, 50*time.Millisecond, context.Background())
+	defer tr.Close()
+
+	p := make([]byte, 32)
+	n, err := tr.Read(p)
+	if n != 0 || err == nil {
+		t.Fatalf("a read against a silent remote returned %d bytes and err=%v, want a timeout", n, err)
+	}
+	if !strings.Contains(err.Error(), "idle timeout") {
+		t.Errorf("err = %v, want the idle timeout", err)
 	}
 }

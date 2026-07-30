@@ -451,14 +451,22 @@ export function downloadCockpit() {
          */
         handleJobRemoved(job, { isAction = false } = {}) {
             const existingJob = this.jobs.find(j => j.id === job.id);
-            // The removal event is the server's last word about this job, and it wins
-            // over the local row. Deciding from the local copy alone assumes the panel
-            // saw every update, and it does not: notifySubscribers drops an event
-            // rather than blocking on a slow subscriber, so a missed terminal
-            // `updated` left the row reading "downloading" — not finished, therefore
-            // not retained — and the completion, its warnings and an export's download
-            // link vanished at the moment they became useful.
-            const finalJob = existingJob ? { ...existingJob, ...job } : job;
+            // The removal event is the server's last word about this job, and it
+            // replaces the local row rather than being merged into it. Deciding from
+            // the local copy alone assumes the panel saw every update, and it does
+            // not: notifySubscribers drops an event rather than blocking on a slow
+            // subscriber, so a missed terminal `updated` left the row reading
+            // "downloading" — not finished, therefore not retained — and the
+            // completion, its warnings and an export's download link vanished at the
+            // moment they became useful.
+            //
+            // Replaces rather than merges, because a snapshot's *absent* fields are
+            // meaningful: `error`, `warnings`, `resultPath` and the rest are
+            // `omitempty`, so a job whose retry cleared its error simply has no
+            // `error` key. Spreading the event over the old row would keep the failed
+            // attempt's message and show "Completed" beside "boom".
+            const authoritative = job && job.status !== undefined;
+            const finalJob = authoritative ? job : existingJob;
 
             if (existingJob && this.isFinished(finalJob) && !this._dismissedIds.has(job.id)) {
                 if (isAction) finalJob._isAction = true;

@@ -482,6 +482,29 @@ describe('round 4 — a removed job is judged by what the server said, not by th
 
         expect(component.retainedCompletedJobs).toEqual([]);
     });
+
+    test('a field the retry cleared stays cleared', () => {
+        // Round 5. `error`, `warnings` and `resultPath` are omitempty, so a job whose
+        // retry cleared its error simply has no `error` key in the snapshot. Spreading
+        // the event over the old row kept the failed attempt's message, and the
+        // retained row read "Completed" beside "boom".
+        component.jobs = [job({ id: 'r', status: 'failed', error: 'boom' })];
+
+        component.handleJobRemoved({ id: 'r', status: 'completed' });
+
+        expect(component.retainedCompletedJobs[0].status).toBe('completed');
+        expect(component.retainedCompletedJobs[0].error).toBeUndefined();
+    });
+
+    test('the control: a removal with no status at all leaves the local row alone', () => {
+        // Not every caller has a full snapshot to give, and an event that says nothing
+        // must not blank the row it is about.
+        component.jobs = [job({ id: 'k', status: 'completed', error: 'kept' })];
+
+        component.handleJobRemoved({ id: 'k' });
+
+        expect(component.retainedCompletedJobs[0].error).toBe('kept');
+    });
 });
 
 describe('round 3 — a plugin action returns focus to the control that started it', () => {

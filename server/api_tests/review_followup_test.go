@@ -173,7 +173,7 @@ func TestImportLifecycle_OwnershipEnforced(t *testing.T) {
 // somebody else's import from that moment on.
 func TestImportLifecycle_OwnershipSurvivesTheJobBeingCleared(t *testing.T) {
 	tc := setupAuthEnv(t)
-	_, aID := plainUserBearer(t, tc, "impc-a")
+	aBearer, aID := plainUserBearer(t, tc, "impc-a")
 	bBearer, _ := plainUserBearer(t, tc, "impc-b")
 
 	job, err := tc.AppCtx.DownloadManager().SubmitJob(download_queue.JobSourceGroupImportParse, "queued",
@@ -213,7 +213,19 @@ func TestImportLifecycle_OwnershipSurvivesTheJobBeingCleared(t *testing.T) {
 		}
 	}
 
-	// The positive control: an admin is not locked out by the fail-closed reading,
+	// The positive control the fail-closed rule has to survive: while the job is in
+	// the queue — which is the whole of the parse/review/apply flow these endpoints
+	// exist for — its owner is unaffected by any of this. Round 5 caught this test
+	// discarding A's token and never checking it.
+	// DELETE and not the plan read, for the reason the test above uses it: the plan
+	// endpoint 404s for a job with no plan file on disk, so it cannot tell a refused
+	// gate from a missing artefact. Delete works from disk and answers 204.
+	if code := doReq(tc, http.MethodDelete, "/v1/imports/"+ownedJobID(t, tc, aID),
+		map[string]string{"Authorization": aBearer}, nil, nil).Code; code == http.StatusNotFound {
+		t.Errorf("the owner of a live import job was refused by the ownership gate with 404")
+	}
+
+	// A second positive control: an admin is not locked out by the fail-closed reading,
 	// because an admin may see every job whatever its owner. Without it, denying
 	// every unknown id outright would pass everything above.
 	admin, err := tc.AppCtx.EnsureAdminUser("admin", "adminpw1")
@@ -230,3 +242,20 @@ func TestImportLifecycle_OwnershipSurvivesTheJobBeingCleared(t *testing.T) {
 	}
 }
 
+
+
+// ownedJobID enqueues a parse job owned by uid and returns its id, for assertions
+// about a job that is still in the queue.
+func ownedJobID(t *testing.T, tc *TestContext, uid uint) string {
+	t.Helper()
+	job, err := tc.AppCtx.DownloadManager().SubmitJob(download_queue.JobSourceGroupImportParse, "queued",
+		func(ctx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
+			<-ctx.Done()
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("submit parse job: %v", err)
+	}
+	job.SetOwnerUserID(uid)
+	return job.ID
+}

@@ -227,11 +227,18 @@ func (tr *TimeoutReaderWithContext) Read(p []byte) (n int, err error) {
 		tr.pending = nil
 		// Checked once more, because the select above does not rank its cases: a
 		// result and a cancellation that become ready together are a coin flip, and
-		// the priority check before the select only covers the ones that were already
-		// ready when this call reached it. Measured with the pre-check alone: 1 of 60
-		// cancelled transfers still handed over its final chunk, and that chunk is the
-		// one carrying io.EOF.
-		if err := tr.abandoned(); err != nil {
+		// the priority check before the select only covers what was already ready when
+		// this call reached it. Measured with the pre-check alone: 1 of 60 cancelled
+		// transfers still handed over its final chunk, and that chunk is the one
+		// carrying io.EOF.
+		//
+		// Cancellation only, and deliberately not the idle watchdog. An idle timeout
+		// asserts that nothing arrived for N seconds — and something did arrive, we
+		// simply had not handed it over yet, so the assertion is false in this instant.
+		// Discarding these bytes would fail a download that finished on the boundary,
+		// on the strength of a claim the bytes themselves disprove. If the remote
+		// really has gone quiet, the *next* read says so.
+		if err := tr.cancelled(); err != nil {
 			return 0, err
 		}
 		if result.n > 0 {
@@ -270,11 +277,31 @@ func (tr *TimeoutReaderWithContext) Read(p []byte) (n int, err error) {
 // their last chunk. That is a different thing from the argued case in docs/todo.md,
 // where AddResource had already succeeded before the cancel was accepted; here the
 // cancel is accepted first and the transfer finishes anyway.
-func (tr *TimeoutReaderWithContext) abandoned() error {
+// cancelled reports whether the transfer has been given up on by *decision* — a
+// Cancel, a Pause, or a Shutdown — as opposed to by inactivity.
+//
+// Note what this cannot promise, and does not try to. Reading a context and then
+// acting on it is check-then-act by construction; nothing at this layer can make the
+// two atomic against another goroutine's cancel(), because a cancellation that lands
+// between them is indistinguishable from one that lands a nanosecond later. What the
+// checks here remove is the part that was *not* a race: a `select` between a ready
+// result and an already-cancelled context, which Go resolves by coin flip and which
+// delivered the final chunk 37 times in 60. With them, 0 in 20 000. The remainder is
+// the ordinary meaning of asynchronous cancellation, and it is the same thing
+// docs/todo.md argues about AddResource: a cancel that lands too late has landed too
+// late.
+func (tr *TimeoutReaderWithContext) cancelled() error {
 	select {
 	case <-tr.ctx.Done():
 		return fmt.Errorf("download cancelled")
 	default:
+		return nil
+	}
+}
+
+func (tr *TimeoutReaderWithContext) abandoned() error {
+	if err := tr.cancelled(); err != nil {
+		return err
 	}
 	select {
 	case <-tr.done:

@@ -2499,6 +2499,61 @@ evidence, and it is more dangerous than no test, because it certifies the fix.**
 decision, and fixing it makes the argued case *narrower* rather than wrong. The decision stands as
 recorded, and the open half of it is still the wording of Cancel's reply, carried to Batch 12.
 
+
+#### Round 5 — five real, one argued down, one already recorded
+
+Seven findings against `f3f79582`. Four were fixed, one was argued down with a measurement, one
+was accepted in part, and one was something round 4 had already written down.
+
+- [x] **1 (medium, not the reported high) — `abandoned()` is check-then-act.** True, and
+      irreducible: reading a context and then acting on it cannot be made atomic against another
+      goroutine's `cancel()`, because a cancellation landing between the two is indistinguishable
+      from one landing a nanosecond later. Every consumer of a `context.Context` has this property.
+      What round 4 removed was the part that was *not* a race — a `select` between a ready result
+      and an **already-cancelled** context, which Go resolves by coin flip and which delivered the
+      final chunk **37 times in 60**. **Measured after: 0 in 20 000.** The remainder is the ordinary
+      meaning of asynchronous cancellation and the same thing `docs/todo.md` already argues about
+      `AddResource`: a cancel that lands too late has landed too late. Recorded in the code, not
+      "fixed".
+- [x] **2 (medium) — the second check discarded bytes that had arrived on time.** It tested for
+      abandonment of any kind, including the idle watchdog. But an idle timeout asserts that
+      *nothing came for N seconds*, and something had come — the read completed and the delivering
+      goroutine was simply descheduled past the deadline. Discarding those bytes fails a download
+      that finished on the boundary, on the strength of a claim the bytes themselves disprove. The
+      result branch checks cancellation only now; a remote that really has gone quiet still times
+      out on the next read. **Not seen red**, and the first attempt at a test for it fired the
+      watchdog before any read was outstanding, so it exercised the top-of-function error check and
+      proved nothing about the branch it named. Removed rather than shipped.
+- [x] **3 (medium) — the merge preserved fields the sender had deliberately dropped.** `error`,
+      `warnings`, `resultPath` and the rest are `omitempty`, so a job whose retry cleared its error
+      simply has no `error` key. Spreading the removal event over the local row therefore kept the
+      *failed* attempt's message, and the retained row read "Completed" beside "boom". The event
+      replaces the row when it carries a status, since a snapshot's absent fields are as meaningful
+      as its present ones.
+- [x] **4 (medium) — the superseded-run guard did not cover the delayed reload.** A synchronous
+      plugin result schedules `close()` + `location.reload()` 1.5 s out, and a reader can dismiss
+      that result and open another action well inside a second and a half. The timer then closed
+      the replacement and reloaded the page out from under a half-filled form.
+- [x] **5 (medium, a11y) — Cancel and Escape still dropped the reader on `<body>`.** Round 4 taught
+      the modal *who* to return focus to and then only used it on the jobs-panel hand-off.
+      `close()` restores to the opener now, except on the hand-off, where the panel moves focus
+      itself.
+- [~] **6 (reported high) — the fail-closed import rule locks a legitimate owner out.** Accepted as
+      a consequence, not reversed. The choice is between an authorization check that expires — a
+      non-owner measurably got **204 on `DELETE`** once the job was cleared — and an owner who
+      clears their own job losing the ability to delete their own leftover tar. Security wins, and
+      the flow the endpoints exist for (parse, review, apply) happens while the job is in the queue,
+      which the new positive control asserts. The residual is real and is recorded here rather than
+      hidden: **an owner who presses "Clear completed" before deleting their import files can no
+      longer delete them.** The proper fix is to persist import ownership beside the files instead
+      of relying on an in-memory queue record, which is a design change and belongs in its own pass.
+      Round 5 was right that the test discarded A's bearer token and never checked the positive
+      path; it does now, through `DELETE` rather than the plan read, because the plan endpoint 404s
+      for a job with no plan file and so cannot tell a refused gate from a missing artefact.
+- [x] **7 (minor) — the ordering test has no barrier.** Already recorded, in exactly those terms,
+      under round 4 finding 3: it is an invariant guard that passed before the fix as well, not a
+      regression detector. Agreed and unchanged.
+
 #### The a11y "flake" was a real defect, and my first explanation of it was wrong
 
 The first a11y run of this pass reported 1 flaky in `20-a11y-hover-cards.spec.ts` and I wrote it
