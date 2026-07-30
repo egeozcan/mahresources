@@ -97,15 +97,26 @@ func GetExportSubmitHandler(ctx GroupExporterWithManager, fs afero.Fs) func(http
 			return
 		}
 
+		// The owner is recorded at construction, not on the returned job: SubmitJob
+		// broadcasts "added" and starts the worker, and under -auth the SSE stream
+		// drops every event whose job the principal may not see — which an ownerless
+		// job is, for a non-admin. Setting it afterwards meant the submitter's own
+		// export never appeared in their panel until the next reconnect.
+		var owner *uint
+		if p := ctx.Principal(); p != nil && !p.SuperUser && p.UserID != 0 {
+			id := p.UserID
+			owner = &id
+		}
+
 		runFn := buildExportRunFn(ctx, fs, &req)
-		job, err := ctx.DownloadManager().SubmitJob(download_queue.JobSourceGroupExport, "queued", runFn)
+		job, err := ctx.DownloadManager().SubmitJobWithOptions(download_queue.JobOptions{
+			Source:       download_queue.JobSourceGroupExport,
+			InitialPhase: "queued",
+			OwnerUserID:  owner,
+		}, runFn)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
-		}
-		// Record the owner so only they (or an admin) can download the archive.
-		if p := ctx.Principal(); p != nil && !p.SuperUser && p.UserID != 0 {
-			job.SetOwnerUserID(p.UserID)
 		}
 
 		w.Header().Set("Content-Type", constants.JSON)

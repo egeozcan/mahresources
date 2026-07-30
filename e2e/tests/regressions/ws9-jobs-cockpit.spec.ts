@@ -439,3 +439,59 @@ test('review finding 4 — with focus nowhere, the panel still hands it back to 
   );
   expect(onTrigger, 'focus was left on <body>, which is where the bug left it').toBe(true);
 });
+
+/**
+ * Round-3 audit: the panel must not open underneath a true modal.
+ *
+ * `.header` is position:sticky with z-index 40, so it is a stacking context and the
+ * panel's z-[60] only orders it against its header siblings. The app's four modals
+ * live in `.overlays` at z-index 41 in the *root* stacking context — above the whole
+ * header layer — so the panel opened behind one, moved focus inside itself and
+ * x-trap held it there. Two aria-modal dialogs open at once is the defect whichever
+ * one paints on top, so the panel declines.
+ *
+ * A browser test because it depends on which `<template x-if>` branch Alpine
+ * instantiated and on where focus actually is; the decision itself is unit-tested in
+ * downloadCockpit.test.ts and the markup contract in ws9_jobs_cockpit_test.go.
+ */
+test('round 3 — the jobs panel declines to open underneath an open modal', async ({ page }) => {
+  await page.goto('/dashboard');
+  await page.waitForSelector('[data-testid="cockpit-trigger"]');
+  await page.waitForFunction(() => (window as any).Alpine !== undefined);
+
+  // filter({ visible }) rather than a `:visible` suffix: Tailwind scans this
+  // directory, and the suffixed form makes it emit an arbitrary-variant rule into
+  // the committed stylesheet.
+  const modals = page.locator('.overlays [aria-modal="true"]').filter({ visible: true });
+  const panel = page.locator('[data-testid="cockpit-panel"]');
+
+  await page.evaluate(() => {
+    (window as any).Alpine.store('entityPicker').open({
+      entityType: 'note', existingIds: [], multiSelect: false, onConfirm: () => {},
+    });
+  });
+  await expect(modals).toHaveCount(1);
+  await expect
+    .poll(() => page.evaluate(
+      () => document.activeElement?.closest('.overlays [aria-modal="true"]') !== null))
+    .toBe(true);
+
+  await page.keyboard.press('ControlOrMeta+Shift+KeyD');
+  // Long enough for the panel's x-if to have rendered had it been going to.
+  await page.waitForTimeout(300);
+
+  await expect(panel, 'the panel opened behind a modal that paints over it').toHaveCount(0);
+  await expect(modals, 'a second aria-modal dialog is open at the same time').toHaveCount(1);
+  expect(
+    await page.evaluate(
+      () => document.activeElement?.closest('.overlays [aria-modal="true"]') !== null),
+    'focus left the dialog the reader is in',
+  ).toBe(true);
+
+  // The positive control: with the modal closed, the very same key opens the panel.
+  // Without it, a guard that simply broke the shortcut would pass everything above.
+  await page.keyboard.press('Escape');
+  await expect(modals).toHaveCount(0);
+  await page.keyboard.press('ControlOrMeta+Shift+KeyD');
+  await expect(panel).toBeVisible();
+});

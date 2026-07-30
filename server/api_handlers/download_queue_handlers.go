@@ -95,7 +95,7 @@ func GetDownloadSubmitHandler(ctx DownloadSubmitter) func(writer http.ResponseWr
 		// (before processing starts), so there is no owner-visibility/attribution
 		// race.
 		owner := principalOwnerID(auth.PrincipalFromContext(request.Context()))
-		jobs, err := ctx.DownloadManager().SubmitMultiple(&creator, owner)
+		live, err := ctx.DownloadManager().SubmitMultiple(&creator, owner)
 		if err != nil {
 			// "no valid URLs provided" is a client validation error (400),
 			// while "download queue is full" is a capacity issue (503).
@@ -105,6 +105,14 @@ func GetDownloadSubmitHandler(ctx DownloadSubmitter) func(writer http.ResponseWr
 			}
 			http_utils.HandleError(err, writer, request, status)
 			return
+		}
+
+		// Snapshots, because the workers are already running by the time this encodes:
+		// SubmitMultiple hands back the live jobs so its caller can drive them, and
+		// marshalling one without its lock races the worker writing progress into it.
+		jobs := make([]*download_queue.DownloadJob, 0, len(live))
+		for _, job := range live {
+			jobs = append(jobs, job.Snapshot())
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)

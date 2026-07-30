@@ -128,21 +128,25 @@ func GetImportParseHandler(ctx GroupImporter, maxSize func() int64) func(http.Re
 		}
 
 		runFn := buildImportParseRunFn(ctx, finalPath)
-		job, err := ctx.DownloadManager().SubmitJob(download_queue.JobSourceGroupImportParse, "queued", runFn)
+		// Both the owner and the staging path are given at construction rather than
+		// set on the returned job. SubmitJob broadcasts "added" and starts the worker
+		// before it returns, so a setter afterwards races both: under -auth the
+		// ownerless "added" is filtered out of the submitter's own SSE stream, and a
+		// cancel landing in that moment would find no source path to clean up.
+		//
+		// URL is unused for generic jobs; it is repurposed as "source file path" so
+		// the delete handler can find the tar by job id even before the worker has
+		// renamed it to <jobID>.tar.
+		job, err := ctx.DownloadManager().SubmitJobWithOptions(download_queue.JobOptions{
+			Source:       download_queue.JobSourceGroupImportParse,
+			InitialPhase: "queued",
+			URL:          finalPath,
+			OwnerUserID:  principalOwnerID(auth.PrincipalFromContext(r.Context())),
+		}, runFn)
 		if err != nil {
 			_ = fs.Remove(finalPath)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
-		}
-
-		// Store the staging tar path so the delete handler can clean it up
-		// even if the worker hasn't renamed it to <jobID>.tar yet (e.g. the
-		// job was cancelled while still queued). URL is unused for generic
-		// jobs; we repurpose it as "source file path".
-		job.SetURL(finalPath)
-
-		if owner := principalOwnerID(auth.PrincipalFromContext(r.Context())); owner != nil {
-			job.SetOwnerUserID(*owner)
 		}
 
 		w.Header().Set("Content-Type", constants.JSON)
@@ -318,16 +322,17 @@ func GetImportApplyHandler(ctx GroupImporter) func(http.ResponseWriter, *http.Re
 			importCtx = binder.WithPrincipal(auth.PrincipalFromContext(r.Context()))
 		}
 		runFn := buildImportApplyRunFn(importCtx, parseJobID, consumedPath, &decisions)
-		job, err := ctx.DownloadManager().SubmitJob(download_queue.JobSourceGroupImportApply, "queued", runFn)
+		// Owner at construction, for the reason the parse handler gives above.
+		job, err := ctx.DownloadManager().SubmitJobWithOptions(download_queue.JobOptions{
+			Source:       download_queue.JobSourceGroupImportApply,
+			InitialPhase: "queued",
+			OwnerUserID:  principalOwnerID(auth.PrincipalFromContext(r.Context())),
+		}, runFn)
 		if err != nil {
 			// Restore the plan file on enqueue failure.
 			_ = fs.Rename(consumedPath, planPath)
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
-		}
-
-		if owner := principalOwnerID(auth.PrincipalFromContext(r.Context())); owner != nil {
-			job.SetOwnerUserID(*owner)
 		}
 
 		w.Header().Set("Content-Type", constants.JSON)

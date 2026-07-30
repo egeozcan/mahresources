@@ -73,6 +73,24 @@ type TimeoutReaderWithContext struct {
 	mu          sync.Mutex
 	lastRead    time.Time
 	err         error
+
+	// The underlying read runs on a goroutine this reader may walk away from — on
+	// cancellation, or on the idle timeout — and that goroutine keeps writing wherever
+	// it was told to for as long as the remote takes to answer. It used to be told to
+	// write into the caller's own p, so a cancelled download scribbled into a buffer
+	// the caller had taken back. Not theoretical: `io.Copy` gets its buffer from a
+	// pool for some destinations, so that memory can already belong to an unrelated
+	// transfer by then. Found by -race under load in the 2026-07-29 round-3 audit,
+	// as two downloads writing to one address.
+	//
+	// buf is this reader's own landing pad; pending is the read still outstanding on
+	// it, kept so a caller that reads again after an abandoned attempt waits for that
+	// read rather than starting a second concurrent one on the same body; and ready is
+	// what has arrived and not yet been handed over.
+	buf        []byte
+	pending    chan readResult
+	ready      []byte
+	pendingErr error
 }
 
 // NewTimeoutReaderWithContext creates a new timeout reader with context cancellation
@@ -126,8 +144,24 @@ type readResult struct {
 	err error
 }
 
-// Read implements io.Reader with timeout and cancellation support
+// Read implements io.Reader with timeout and cancellation support.
+//
+// Called from one goroutine at a time — it is the body of a single download — so the
+// pending-read bookkeeping needs no lock of its own. tr.mu guards only the fields the
+// timeout watcher also touches.
 func (tr *TimeoutReaderWithContext) Read(p []byte) (n int, err error) {
+	// Anything already delivered goes out first, even after a cancellation: those
+	// bytes came off the wire before it and throwing them away would be a corrupt
+	// transfer rather than an abandoned one.
+	if len(tr.ready) > 0 {
+		n = tr.drain(p)
+		if len(tr.ready) > 0 {
+			return n, nil
+		}
+		err, tr.pendingErr = tr.pendingErr, nil
+		return n, err
+	}
+
 	// Check for existing error or cancellation
 	tr.mu.Lock()
 	if tr.err != nil {
@@ -143,23 +177,45 @@ func (tr *TimeoutReaderWithContext) Read(p []byte) (n int, err error) {
 	default:
 	}
 
-	// Run read in goroutine so we can interrupt it on timeout or cancellation
-	resultCh := make(chan readResult, 1)
-	go func() {
-		n, err := tr.reader.Read(p)
-		resultCh <- readResult{n, err}
-	}()
+	// Run read in goroutine so we can interrupt it on timeout or cancellation. It
+	// reads into tr.buf and never into p: this call may return before the goroutine
+	// does, and p belongs to the caller again the moment it does.
+	if tr.pending == nil {
+		if cap(tr.buf) < len(p) {
+			tr.buf = make([]byte, len(p))
+		}
+		into := tr.buf[:len(p)]
+		resultCh := make(chan readResult, 1)
+		tr.pending = resultCh
+		go func() {
+			n, err := tr.reader.Read(into)
+			resultCh <- readResult{n, err}
+		}()
+	}
 
 	// Wait for read to complete, timeout, or cancellation
 	for {
 		select {
-		case result := <-resultCh:
+		case result := <-tr.pending:
+			tr.pending = nil
 			if result.n > 0 {
 				tr.mu.Lock()
 				tr.lastRead = time.Now()
 				tr.mu.Unlock()
+				tr.ready = tr.buf[:result.n]
+				tr.pendingErr = result.err
+				n = tr.drain(p)
+				if len(tr.ready) > 0 {
+					// The caller asked for less than the outstanding read delivered,
+					// which only a caller that shrank its buffer after an abandoned
+					// attempt can do. The rest waits for the next call.
+					return n, nil
+				}
+				err = tr.pendingErr
+				tr.pendingErr = nil
+				return n, err
 			}
-			return result.n, result.err
+			return 0, result.err
 		case <-tr.ctx.Done():
 			return 0, fmt.Errorf("download cancelled")
 		case <-tr.done:
@@ -174,6 +230,13 @@ func (tr *TimeoutReaderWithContext) Read(p []byte) (n int, err error) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
+}
+
+// drain hands over as much of what has arrived as p will hold.
+func (tr *TimeoutReaderWithContext) drain(p []byte) int {
+	n := copy(p, tr.ready)
+	tr.ready = tr.ready[n:]
+	return n
 }
 
 // Close signals the reader to stop monitoring

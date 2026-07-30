@@ -57,7 +57,7 @@ func TestDownloadWorker_BindsSubmitterActor(t *testing.T) {
 		ctx:         context.Background(),
 		ownerUserID: &owner,
 	}
-	if _, err := dm.downloadWithProgress(job.GetContext(), job); err != nil {
+	if _, err := dm.downloadWithProgress(job.GetContext(), 0, job); err != nil {
 		t.Fatalf("downloadWithProgress: %v", err)
 	}
 	if !rc.addResource {
@@ -87,7 +87,7 @@ func TestDownloadWorker_NoOwnerDoesNotBind(t *testing.T) {
 		ctx:     context.Background(),
 		// ownerUserID nil
 	}
-	if _, err := dm.downloadWithProgress(job.GetContext(), job); err != nil {
+	if _, err := dm.downloadWithProgress(job.GetContext(), 0, job); err != nil {
 		t.Fatalf("downloadWithProgress: %v", err)
 	}
 	if !rc.addResource {

@@ -61,7 +61,7 @@ export function downloadCockpit() {
             }
 
             // Listen for jobs-panel-open event (e.g., from pluginActionModal)
-            window.addEventListener('jobs-panel-open', () => this.openFromEvent());
+            window.addEventListener('jobs-panel-open', (e) => this.openFromEvent(e.detail));
 
             // Listen for keyboard shortcut: Cmd/Ctrl+Shift+D
             this._keydownHandler = (e) => {
@@ -107,6 +107,40 @@ export function downloadCockpit() {
         },
 
         /**
+         * The dialog, if any, that is currently painted above this panel.
+         *
+         * The panel is header chrome: `.header` is a stacking context at z-index 40,
+         * so the panel's own z-[60] only orders it against its *header* siblings. The
+         * app's true modals — lightbox, paste-upload, the plugin action modal, the
+         * entity picker — live in `.overlays` at z-index 41 in the root stacking
+         * context, above the whole header layer. Opening the panel underneath one of
+         * them puts an aria-modal dialog behind an aria-modal dialog and moves focus
+         * into the one nobody can see: x-trap then holds it there, and Escape closes
+         * whichever component hears it first.
+         *
+         * Two aria-modal dialogs open at once is the defect whichever way it renders,
+         * so the panel declines rather than fighting for the top.
+         */
+        blockingModal() {
+            const candidates = document.querySelectorAll('.overlays [aria-modal="true"]');
+            for (const el of candidates) {
+                if (this.isRendered(el)) return el;
+            }
+            return null;
+        },
+
+        /**
+         * Whether an element is actually painted. Three of the four overlays use
+         * x-show, so they stay in the document with `display: none` and querying for
+         * them is not enough on its own.
+         */
+        isRendered(el) {
+            if (!el || !el.isConnected) return false;
+            if (typeof el.checkVisibility === 'function') return el.checkVisibility();
+            return !!(el.offsetWidth || el.offsetHeight || el.getClientRects?.().length);
+        },
+
+        /**
          * Open the panel from something that is not the trigger: the
          * `jobs-panel-open` window event, or a plugin action job arriving over SSE.
          *
@@ -114,15 +148,32 @@ export function downloadCockpit() {
          * and the reader came back to the panel's trigger instead of the control they
          * were actually on. Where they were is knowable — read it before the panel
          * mounts and moves focus inside.
+         *
+         * `returnFocusTo` is for the one caller that knows better than
+         * `focusedElement()` can: pluginActionModal closes itself and then asks for
+         * the panel, so what has focus at that moment is the modal's own Run button,
+         * which is about to be torn down by its x-if. Restoring to a detached node
+         * lands on <body>, so the fallback took over and the reader was returned to
+         * the header trigger rather than to the action button they pressed.
          */
-        openFromEvent() {
+        openFromEvent(detail = null) {
+            const blocker = this.blockingModal();
+            if (blocker) {
+                this.announce('A dialog is open, so the jobs panel was not opened. Close the dialog, then press Control or Command, Shift and D.');
+                return;
+            }
             if (!this.isOpen) {
-                this._lastTrigger = focusedElement() ?? this._trigger;
+                const requested = detail?.returnFocusTo;
+                this._lastTrigger = (requested?.isConnected ? requested : null) ?? focusedElement() ?? this._trigger;
             }
             this.isOpen = true;
         },
 
         toggle(event) {
+            if (!this.isOpen && this.blockingModal()) {
+                this.announce('A dialog is open, so the jobs panel was not opened. Close the dialog first.');
+                return;
+            }
             if (!this.isOpen) {
                 // Read before the flip, because opening moves focus into the panel.
                 // The keyboard shortcut calls this with no event, so there is no
@@ -161,7 +212,7 @@ export function downloadCockpit() {
 
             this.eventSource.addEventListener('added', (e) => {
                 const { job } = JSON.parse(e.data);
-                this.jobs.push(job);
+                if (!this.upsertJob(job)) return;
                 this.announce(`Download queued: ${this.truncateUrl(job.url, 30)}`);
             });
 
@@ -215,9 +266,9 @@ export function downloadCockpit() {
             this.eventSource.addEventListener('action_added', (e) => {
                 const { job } = JSON.parse(e.data);
                 job._isAction = true;
-                this.jobs.push(job);
+                const isNew = this.upsertJob(job);
                 this.openFromEvent();
-                this.announce(`Action started: ${job.label}`);
+                if (isNew) this.announce(`Action started: ${job.label}`);
             });
 
             this.eventSource.addEventListener('action_updated', (e) => {
@@ -262,12 +313,63 @@ export function downloadCockpit() {
             this.connectionStatus = 'disconnected';
         },
 
+        /**
+         * Add a job the stream has just announced, or fold it into the row that is
+         * already there. Returns whether the row is new, so an announcement is only
+         * made for a job the reader has not been told about.
+         *
+         * Push alone produced two rows for one job. The SSE handler subscribes first
+         * and *then* lists the queue — correct, or a job created between the two would
+         * be missed entirely — so a job submitted in that window appears both in the
+         * buffered `added` event and in the `init` listing. The second row was never
+         * updated afterwards, because `updated` resolves a job by the first id it
+         * matches, so it sat at "Pending" for the rest of the session with live
+         * controls on it.
+         */
+        upsertJob(job) {
+            const index = this.jobs.findIndex(j => j.id === job.id);
+            if (index !== -1) {
+                this.jobs[index] = { ...this.jobs[index], ...job };
+                return false;
+            }
+            this.jobs.push(job);
+            return true;
+        },
+
+        /**
+         * Ask the server to change a job's state, and say so when it refuses.
+         *
+         * All four controls were `fetch(...).catch(console.error)`, and fetch does not
+         * reject on 4xx — so a refusal was discarded in silence. Every refusal these
+         * endpoints produce is one the reader can provoke: the row's state is a
+         * snapshot from the last SSE event, so pressing Cancel on a download that
+         * finished a moment ago answers 409, and pressing anything on a row the
+         * retention sweep has removed answers 404. Nothing moved and nothing was said,
+         * which for a screen-reader user is indistinguishable from a dead button.
+         */
+        async control(path, jobId, refusal) {
+            try {
+                const res = await fetch(path, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Accept': 'application/json',
+                    },
+                    body: `id=${encodeURIComponent(jobId)}`
+                });
+                if (res.ok) return true;
+                const payload = await res.json().catch(() => null);
+                this.announce(payload?.error || refusal);
+                return false;
+            } catch (err) {
+                console.error(`${path} failed:`, err);
+                this.announce(refusal);
+                return false;
+            }
+        },
+
         cancelJob(jobId) {
-            fetch('/v1/jobs/cancel', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: `id=${encodeURIComponent(jobId)}`
-            }).catch(err => console.error('Cancel failed:', err));
+            return this.control('/v1/jobs/cancel', jobId, 'That job could not be cancelled.');
         },
 
         /**
@@ -330,11 +432,17 @@ export function downloadCockpit() {
          * One method for both `removed` and `action_removed` because the dismissal
          * check was missing from the action branch entirely: clearing a finished
          * plugin action row left it on screen (review remediation finding 2).
+         *
+         * "Finished" and not "not active", which is what the code said while this
+         * comment said the other thing. `paused` is deliberately neither, so a paused
+         * download the 24-hour retention sweep removed was kept on screen as a row
+         * whose Resume and Cancel buttons addressed a job the server no longer had —
+         * and both answered 404 in silence until the controls learned to say so.
          */
         handleJobRemoved(job, { isAction = false } = {}) {
             const existingJob = this.jobs.find(j => j.id === job.id);
 
-            if (existingJob && !this.isActive(existingJob) && !this._dismissedIds.has(job.id)) {
+            if (existingJob && this.isFinished(existingJob) && !this._dismissedIds.has(job.id)) {
                 if (isAction) existingJob._isAction = true;
                 // Avoid duplicates
                 if (!this.retainedCompletedJobs.some(j => j.id === existingJob.id)) {
@@ -350,27 +458,15 @@ export function downloadCockpit() {
         },
 
         pauseJob(jobId) {
-            fetch('/v1/jobs/pause', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: `id=${encodeURIComponent(jobId)}`
-            }).catch(err => console.error('Pause failed:', err));
+            return this.control('/v1/jobs/pause', jobId, 'That job could not be paused.');
         },
 
         resumeJob(jobId) {
-            fetch('/v1/jobs/resume', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: `id=${encodeURIComponent(jobId)}`
-            }).catch(err => console.error('Resume failed:', err));
+            return this.control('/v1/jobs/resume', jobId, 'That job could not be resumed.');
         },
 
         retryJob(jobId) {
-            fetch('/v1/jobs/retry', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: `id=${encodeURIComponent(jobId)}`
-            }).catch(err => console.error('Retry failed:', err));
+            return this.control('/v1/jobs/retry', jobId, 'That job could not be retried.');
         },
 
         formatProgress(job) {

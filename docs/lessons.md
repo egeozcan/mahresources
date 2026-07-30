@@ -923,3 +923,77 @@ suite was green.
   the harness should call the same factory.
 - **When a comment claims cross-driver coverage, check which setup function the test calls.** Build
   tags gate which *files* compile, not which database a given helper connects to.
+
+## A steady defect rate across review rounds means the space was sampled, not covered
+
+Three independent reviews of one small package found five, then six, then five real defects. Each
+round was competent and each fix was right; what none of them did was enumerate. A rate that does
+not fall is the tell — if the reviews were converging on a shrinking set of problems, the third
+round would have found one or two.
+
+The fix is to stop reviewing and build the table: every state × every operation × every point the
+worker can be interrupted at, with three columns per cell — what should happen, what does happen,
+and whether a test says so. It took an hour and turned up six defects the three review rounds had
+all walked past, including two in the states nobody thinks about (what a *retry* carries forward
+from the attempt that failed; what the panel does with a row the retention sweep removed).
+
+Two things make the table worth more than its findings. It records what was **cleared**, so the next
+round does not re-derive that the lock order is consistent or that the semaphore is released on
+every path. And filling it in forces a single sentence that decides every cell — here, "a job in an
+active status belongs to its attempt; a paused or terminal job belongs to whichever control put it
+there, and only the owner may write". Three of the six new defects were the same sentence being
+violated in three places, which is invisible when you look at them one at a time.
+
+## Fixing a data race can expose an ordering bug the race was hiding
+
+Handing subscribers a live pointer to a mutable job and marshalling it without the lock is a race,
+and the fix is a snapshot. But the live pointer was also doing something else: an `added` event that
+went out *after* its worker had already started still serialised the job's **current** state, so a
+late announcement looked correct on screen. Snapshotting freezes the payload at announcement time,
+and the same late `added` now carries a stale status that the panel draws over the real one it had
+already dropped as an unknown id.
+
+So the ordering had to be fixed in the same commit — announce before the worker exists, and under
+the lock that guards the registry. The general shape: **when you replace a shared mutable value with
+a copy, look for the callers that were quietly depending on it being live.** Reading through a
+pointer is a form of lateness-tolerance, and taking it away is a behaviour change even when the
+change is obviously correct.
+
+## A test that can fail for a reason other than its subject is as uninformative as one that cannot fail
+
+The rule already here is that a negative assertion needs a positive control, and that an assertion
+whose locator is wider than its subject passes for unrelated reasons. This is the mirror: an
+assertion whose *window* is wider than its subject **fails** for unrelated reasons.
+
+The case: a concurrency test ran Retry and ClearFinished against one job and asserted that a
+successful Retry leaves the job in the registry. It retried a real download against a refused port
+with 1 ms timeouts — so the new attempt reached `failed` within microseconds, and a ClearFinished
+landing after that removed a job that was legitimately terminal again. It failed 2 of 10 under
+`-race -count=10`, and the failure said nothing about the gap it was written to pin.
+
+Both directions have the same cure: make the test unable to pass or fail except through its subject.
+Here that meant holding the retried run open for the whole window, so the job is only ever in states
+the clear must keep, and the sole route to the failure is a delete between the lookup and the start.
+And note where it surfaced — a single `-count=1` run had reported it green for a whole review round.
+Repetition under load is not only for finding product races; it is how you find out whether your
+tests mean what they say.
+
+## A read you can walk away from must not read into the caller's buffer
+
+The pattern is common enough to be worth naming: to make a blocking `Read` cancellable, run it on a
+goroutine and `select` on the result against a context. The trap is what you hand the goroutine. If
+it reads into the caller's `p`, then the moment the `select` takes the cancellation branch and
+returns, a goroutine you no longer track is writing into memory the caller owns again — for however
+long the remote takes to answer. `io.Copy` takes its buffer from a pool for some destinations, so
+that memory can already belong to an unrelated operation by then.
+
+This survived three review rounds and was green at `go test -race`. It took `-race -count=10` to
+show it, as one address written by two downloads that had nothing to do with each other.
+
+- **The goroutine reads into a buffer the wrapper owns**, and the wrapper copies into `p` only on
+  the path that actually returns those bytes.
+- **Keep the outstanding read**, or the next call spawns a second goroutine reading the same
+  underlying reader concurrently — undefined for an `http.Body`, and a fresh bug in place of the
+  old one.
+- More generally: **abandoning a goroutine is a decision about memory ownership, not just about
+  latency.** Returning early from a `select` does not stop what you started.

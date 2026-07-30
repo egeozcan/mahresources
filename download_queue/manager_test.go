@@ -73,7 +73,7 @@ func TestDownloadWithProgressTrimsDerivedResourceName(t *testing.T) {
 		ctx:     context.Background(),
 	}
 
-	_, err := dm.downloadWithProgress(job.GetContext(), job)
+	_, err := dm.downloadWithProgress(job.GetContext(), 0, job)
 	if err != nil {
 		t.Fatalf("downloadWithProgress returned error: %v", err)
 	}

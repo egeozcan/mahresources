@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -464,4 +465,70 @@ func between(body, from, to string) string {
 		return ""
 	}
 	return body[start : start+end]
+}
+
+// The jobs panel declines to open while a true modal is up, and it recognises one by
+// querying `.overlays [aria-modal="true"]`. That selector is a contract with the
+// markup, and the markup is where it can silently stop being true: a fifth overlay
+// added without the attribute would be a dialog the panel happily opens underneath,
+// with focus trapped in the panel nobody can see.
+//
+// CI does not run the browser suite, so the drift guard lives here.
+func TestOverlayModals_AreAllReachableByTheJobsPanelsGuard(t *testing.T) {
+	tc := SetupTestEnv(t)
+	_, body := tc.getHTML(t, "/dashboard")
+
+	overlays := between(body, `<div class="overlays">`, "</body>")
+	if overlays == "" {
+		t.Fatalf("no .overlays layer in the page — this test measured nothing")
+	}
+
+	dialogs := 0
+	for _, tag := range openTagsWithin(overlays, "div") {
+		if !strings.Contains(tag, `role="dialog"`) {
+			continue
+		}
+		dialogs++
+		if !strings.Contains(tag, `aria-modal="true"`) {
+			t.Errorf("an overlay dialog carries no aria-modal, so downloadCockpit.blockingModal() cannot see it and the jobs panel will open underneath it:\n %s", tag)
+		}
+	}
+	// The lightbox, paste-upload, the plugin action modal and the entity picker. A
+	// count of zero would satisfy every assertion above without measuring anything.
+	if dialogs < 4 {
+		t.Errorf("found %d dialogs in the overlays layer, expected at least 4 — either the layer changed or this test stopped finding it", dialogs)
+	}
+}
+
+// The premise the guard rests on: the overlays layer really does paint above the
+// whole header, so raising the panel's own z-index could never have fixed this. The
+// header is a stacking context, so its descendants are ordered inside its layer no
+// matter what number they carry.
+func TestOverlaysLayer_OutranksTheEntireHeaderLayer(t *testing.T) {
+	css, err := os.ReadFile("../../public/index.css")
+	if err != nil {
+		t.Fatalf("read index.css: %v", err)
+	}
+
+	zOf := func(selector string) int {
+		t.Helper()
+		rule := between(string(css), selector+" {", "}")
+		if rule == "" {
+			t.Fatalf("no %s rule in public/index.css — this test measured nothing", selector)
+		}
+		m := regexp.MustCompile(`z-index:\s*(\d+)`).FindStringSubmatch(rule)
+		if m == nil {
+			t.Fatalf("%s carries no z-index — this test measured nothing", selector)
+		}
+		n, convErr := strconv.Atoi(m[1])
+		if convErr != nil {
+			t.Fatalf("%s z-index %q is not a number", selector, m[1])
+		}
+		return n
+	}
+
+	overlays, header := zOf(".overlays"), zOf(".header")
+	if overlays <= header {
+		t.Errorf("the overlays layer is z-index %d and the header layer is %d, so a true modal no longer paints above the jobs panel", overlays, header)
+	}
 }

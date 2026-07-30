@@ -254,6 +254,207 @@ describe('review finding 2 — the clear dismisses what the server actually clea
 });
 
 /**
+ * Round-3 audit of the jobs cockpit. The matrix in docs/todo.md crossed every job
+ * state with every control; these are the cells whose failure is decidable here
+ * rather than in Go — the panel's own reading of what the server told it.
+ */
+describe('round 3 — the panel and the server agree about which rows exist', () => {
+    test('a job named by both the init listing and its own added event is one row', () => {
+        // The SSE handler subscribes and *then* lists the queue, which is the right
+        // order — a job created between the two would otherwise be missed entirely.
+        // The cost is that a job created in that window arrives twice. Pushing both
+        // left a second row that no `updated` ever reached, because updates resolve a
+        // job by the first id that matches: it sat at "Pending" with live controls on
+        // it for the rest of the session.
+        component.jobs = [job({ id: 'racer', status: 'pending' })];
+
+        const isNew = component.upsertJob(job({ id: 'racer', status: 'downloading', progress: 4096 }));
+
+        expect(isNew).toBe(false);
+        expect(component.jobs).toHaveLength(1);
+        expect(component.jobs[0].status).toBe('downloading');
+        expect(component.jobs[0].progress).toBe(4096);
+    });
+
+    test('the control: a job the panel has not seen is added as a new row', () => {
+        component.jobs = [job({ id: 'other' })];
+
+        const isNew = component.upsertJob(job({ id: 'fresh' }));
+
+        expect(isNew).toBe(true);
+        expect(component.jobs.map(j => j.id)).toEqual(['other', 'fresh']);
+    });
+
+    test('a paused row the retention sweep removed is not kept on screen', () => {
+        // Paused is neither active nor finished, and the retain-for-display path
+        // tested for "not active" while its comment said "finished". A paused
+        // download the 24-hour sweep removed stayed as a row whose Resume and Cancel
+        // addressed a job the server no longer had.
+        component.jobs = [job({ id: 'held', status: 'paused' })];
+
+        component.handleJobRemoved({ id: 'held' });
+
+        expect(component.retainedCompletedJobs).toEqual([]);
+        expect(component.displayJobs).toEqual([]);
+    });
+});
+
+describe('round 3 — a refused control says so', () => {
+    /**
+     * All four controls were `fetch(...).catch(console.error)`, and fetch does not
+     * reject on 4xx. Every refusal these endpoints produce is reachable from the
+     * panel, because a row's state is a snapshot from the last event that arrived:
+     * Cancel on a download that has just completed answers 409, anything on a row the
+     * sweep removed answers 404. Nothing moved and nothing was said.
+     */
+    test('a 409 is announced with the server\'s own words', async () => {
+        const announced: string[] = [];
+        component.announce = (m: string) => announced.push(m);
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+            new Response('{"error":"job a1 cannot be cancelled (status: completed)"}', { status: 409 })));
+
+        const ok = await component.cancelJob('a1');
+
+        expect(ok).toBe(false);
+        expect(announced).toEqual(['job a1 cannot be cancelled (status: completed)']);
+    });
+
+    test('a refusal with no readable body still says something', async () => {
+        const announced: string[] = [];
+        component.announce = (m: string) => announced.push(m);
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>', { status: 404 })));
+
+        await component.resumeJob('a1');
+
+        expect(announced).toEqual(['That job could not be resumed.']);
+    });
+
+    test('the control: an accepted control announces nothing, because the row will say it', async () => {
+        const announced: string[] = [];
+        component.announce = (m: string) => announced.push(m);
+        const fetchMock = vi.fn().mockResolvedValue(new Response('{"status":"paused"}', { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const ok = await component.pauseJob('a1');
+
+        expect(ok).toBe(true);
+        expect(announced).toEqual([]);
+        expect(fetchMock).toHaveBeenCalledWith('/v1/jobs/pause', expect.objectContaining({
+            method: 'POST',
+            body: 'id=a1',
+        }));
+    });
+});
+
+describe('round 3 — the panel declines to open underneath a modal', () => {
+    /**
+     * `.header` is a stacking context at z-index 40, so the panel's z-[60] orders it
+     * against header siblings only. The app's true modals live in `.overlays` at
+     * z-index 41 in the root stacking context — above the entire header layer — so
+     * the panel opens *behind* one, moves focus inside it and traps it there with
+     * x-trap. Whether it renders behind or in front, two aria-modal dialogs open at
+     * once is the defect, so the panel declines.
+     *
+     * Which element wins the hit test is a browser question and is asserted in
+     * ws9-jobs-cockpit.spec.ts. What is decidable here is the decision.
+     */
+    function stubOverlays(modals: any[]) {
+        vi.stubGlobal('document', {
+            querySelectorAll: (sel: string) =>
+                sel === '.overlays [aria-modal="true"]' ? modals : [],
+            activeElement: null,
+            body: {},
+            documentElement: {},
+        });
+    }
+
+    const shown = { isConnected: true, checkVisibility: () => true };
+    const hidden = { isConnected: true, checkVisibility: () => false };
+
+    test('the keyboard shortcut does not open the panel while a dialog is up', () => {
+        stubOverlays([hidden, shown]);
+        const announced: string[] = [];
+        component.announce = (m: string) => announced.push(m);
+
+        component.toggle();
+
+        expect(component.isOpen).toBe(false);
+        expect(announced[0]).toContain('A dialog is open');
+    });
+
+    test('an incoming plugin action job does not open it either', () => {
+        stubOverlays([shown]);
+        component.announce = () => {};
+
+        component.openFromEvent();
+
+        expect(component.isOpen).toBe(false);
+    });
+
+    test('the control: overlays that exist but are not rendered do not block it', () => {
+        // Three of the four overlays use x-show, so they stay in the document with
+        // display:none. Querying for them is not enough on its own — a guard that
+        // counted those would leave the panel permanently unopenable.
+        stubOverlays([hidden, hidden]);
+        component._trigger = { tagName: 'BUTTON' };
+
+        component.toggle();
+
+        expect(component.isOpen).toBe(true);
+        expect(component.blockingModal()).toBeNull();
+    });
+
+    test('an already-open panel still closes while a dialog is up', () => {
+        // The guard is on opening. Refusing to *close* would be a trap of its own.
+        stubOverlays([shown]);
+        component.isOpen = true;
+
+        component.toggle();
+
+        expect(component.isOpen).toBe(false);
+    });
+});
+
+describe('round 3 — a plugin action returns focus to the control that started it', () => {
+    test('openFromEvent prefers the opener the request names', () => {
+        // pluginActionModal closes itself and then asks for the panel, so what has
+        // focus at that moment is its own Run button — which its x-if is about to
+        // remove. The panel's restore rejects a detached node and falls back to the
+        // header trigger, so the reader ended a plugin action somewhere they had
+        // never been.
+        const runButton = { tagName: 'BUTTON', isConnected: true };
+        const actionButton = { tagName: 'BUTTON', isConnected: true };
+        vi.stubGlobal('document', {
+            querySelectorAll: () => [],
+            activeElement: runButton,
+            body: {},
+            documentElement: {},
+        });
+        component._trigger = { tagName: 'BUTTON' };
+
+        component.openFromEvent({ returnFocusTo: actionButton });
+
+        expect(component._lastTrigger).toBe(actionButton);
+    });
+
+    test('an opener that is already gone falls back to where focus is', () => {
+        const detached = { tagName: 'BUTTON', isConnected: false };
+        const live = { tagName: 'INPUT' };
+        vi.stubGlobal('document', {
+            querySelectorAll: () => [],
+            activeElement: live,
+            body: {},
+            documentElement: {},
+        });
+        component._trigger = { tagName: 'BUTTON' };
+
+        component.openFromEvent({ returnFocusTo: detached });
+
+        expect(component._lastTrigger).toBe(live);
+    });
+});
+
+/**
  * Review remediation finding 4: the Cmd/Ctrl+Shift+D handler calls toggle() with no
  * event, so captureTrigger had nothing to read and _lastTrigger stayed null — and
  * the restore was gated on it being truthy. The panel is x-trap.noreturn and its
@@ -270,7 +471,7 @@ describe('review finding 4 — the keyboard shortcut has somewhere to return foc
 
     test('with no event, whatever had focus is captured', () => {
         const input = { tagName: 'INPUT' };
-        vi.stubGlobal('document', { activeElement: input, body: {}, documentElement: {} });
+        vi.stubGlobal('document', { querySelectorAll: () => [], activeElement: input, body: {}, documentElement: {} });
         component._trigger = { tagName: 'BUTTON' };
 
         component.toggle();
@@ -280,7 +481,7 @@ describe('review finding 4 — the keyboard shortcut has somewhere to return foc
 
     test('with focus nowhere, the trigger is the floor rather than <body>', () => {
         const body = { tagName: 'BODY' };
-        vi.stubGlobal('document', { activeElement: body, body, documentElement: {} });
+        vi.stubGlobal('document', { querySelectorAll: () => [], activeElement: body, body, documentElement: {} });
         const trigger = { tagName: 'BUTTON' };
         component._trigger = trigger;
 
@@ -293,7 +494,7 @@ describe('review finding 4 — the keyboard shortcut has somewhere to return foc
     test('the control: a click still returns to the button that was clicked', () => {
         const clicked = { tagName: 'BUTTON' };
         const somethingElse = { tagName: 'A' };
-        vi.stubGlobal('document', { activeElement: somethingElse, body: {}, documentElement: {} });
+        vi.stubGlobal('document', { querySelectorAll: () => [], activeElement: somethingElse, body: {}, documentElement: {} });
         component._trigger = { tagName: 'BUTTON' };
 
         component.toggle({ currentTarget: clicked, target: {} });
@@ -311,14 +512,14 @@ describe('review finding 4 — the keyboard shortcut has somewhere to return foc
         const trigger = { tagName: 'BUTTON' };
         component._trigger = trigger;
 
-        vi.stubGlobal('document', { activeElement: stale, body: {}, documentElement: {} });
+        vi.stubGlobal('document', { querySelectorAll: () => [], activeElement: stale, body: {}, documentElement: {} });
         component.toggle();
         component.toggle();
         expect(component.isOpen).toBe(false);
 
         // Second open, with focus nowhere: the stale capture must not be reused.
         const body = { tagName: 'BODY' };
-        vi.stubGlobal('document', { activeElement: body, body, documentElement: {} });
+        vi.stubGlobal('document', { querySelectorAll: () => [], activeElement: body, body, documentElement: {} });
         component.toggle();
 
         expect(component._lastTrigger).toBe(trigger);
@@ -329,7 +530,7 @@ describe('review finding 4 — the keyboard shortcut has somewhere to return foc
         // openFromEvent is what those paths call so the reader is returned to the
         // control they were on, rather than to the panel's own trigger.
         const input = { tagName: 'INPUT' };
-        vi.stubGlobal('document', { activeElement: input, body: {}, documentElement: {} });
+        vi.stubGlobal('document', { querySelectorAll: () => [], activeElement: input, body: {}, documentElement: {} });
         component._trigger = { tagName: 'BUTTON' };
 
         component.openFromEvent();

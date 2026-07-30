@@ -520,6 +520,16 @@ func TestClearFinishedActionJobs_NamesWhatItCleared(t *testing.T) {
 	if !slices.Equal(sorted, []string{"done", "failed"}) {
 		t.Errorf("expected the two finished jobs to be named as cleared, got %v", ids)
 	}
+	// Naming them is not clearing them. Round 3 of the audit: this test asserted the
+	// returned ids and that the *running* job survived, and never that the two
+	// finished ones actually went — an implementation that answered with the right
+	// list and deleted nothing passed, and the panel would have dismissed two rows
+	// the server still had and replayed on the next reconnect.
+	for _, id := range []string{"done", "failed"} {
+		if _, ok := pm.actionJobs[id]; ok {
+			t.Errorf("action job %q was named as cleared but is still in the registry", id)
+		}
+	}
 	// The positive control: a running job is neither cleared nor named, or the panel
 	// would drop a row the server still has.
 	if _, ok := pm.actionJobs["running"]; !ok {
@@ -543,6 +553,9 @@ func TestClearFinishedActionJobs_HonoursVisibility(t *testing.T) {
 
 	if !slices.Equal(ids, []string{"mine"}) {
 		t.Errorf("expected only the caller's own job named as cleared, got %v", ids)
+	}
+	if _, ok := pm.actionJobs["mine"]; ok {
+		t.Error("the caller's own job was named as cleared but is still in the registry")
 	}
 	if _, ok := pm.actionJobs["theirs"]; !ok {
 		t.Error("another user's completed action job was cleared")

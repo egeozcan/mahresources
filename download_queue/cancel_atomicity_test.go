@@ -494,15 +494,25 @@ func TestClaims_CancelTheContextTheyObserved(t *testing.T) {
 //
 // Concurrent rather than sequenced, because the gap is a few instructions wide; the
 // invariant holds for every interleaving.
+//
+// The retried attempt is held open for the whole window, and that is what makes the
+// assertion mean the gap. Round 3 of the audit found this test failing 2 of 10 under
+// `-race -count=10`, for a reason that is not the defect: it retried a real download
+// against a refused port with 1 ms timeouts, so the new attempt reached `failed`
+// within microseconds, and a `ClearFinished` landing *after that* removed a job that
+// was terminal again — correctly. The assertion window was wider than its subject.
+// With a run that cannot finish on its own the job is `cancelled`, `pending` or
+// `processing` throughout, and only `cancelled` is clearable — so the sole way to
+// reach the failure is a delete between the lookup and the start.
 func TestRetry_AStartedJobIsAlwaysStillInTheRegistry(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		dm := createTestManager()
-		dm.settings = NewStaticDownloadSettings(TimeoutConfig{
-			ConnectTimeout: time.Millisecond, IdleTimeout: time.Millisecond, OverallTimeout: time.Millisecond,
-		}, 0)
+		held := make(chan struct{})
 		job := addTestJob(dm, "gone", JobStatusCancelled)
-		job.creator = &query_models.ResourceFromRemoteCreator{}
-		job.URL = "http://127.0.0.1:1/nothing-here"
+		job.runFn = func(ctx context.Context, _ *DownloadJob, _ ProgressSink) error {
+			<-held
+			return nil
+		}
 		completedAt := time.Now()
 		job.CompletedAt = &completedAt
 
@@ -515,10 +525,14 @@ func TestRetry_AStartedJobIsAlwaysStillInTheRegistry(t *testing.T) {
 		close(start)
 		wg.Wait()
 
+		missing := false
 		if retryErr == nil {
-			if _, ok := dm.GetJob("gone"); !ok {
-				t.Fatalf("iteration %d: Retry reported success and the job is not in the queue — nothing can list, cancel or retire it now", i)
-			}
+			_, ok := dm.GetJob("gone")
+			missing = !ok
+		}
+		close(held)
+		if missing {
+			t.Fatalf("iteration %d: Retry reported success and the job is not in the queue — nothing can list, cancel or retire it now", i)
 		}
 	}
 }

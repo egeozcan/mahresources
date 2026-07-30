@@ -146,6 +146,68 @@ func (j *DownloadJob) attempt() (uint64, context.Context) {
 	return j.runID, j.ctx
 }
 
+// Ownership
+//
+// One sentence decides every remaining question in this file:
+//
+//	a job in pending, downloading or processing belongs to the attempt running it;
+//	a job that is paused or terminal belongs to whichever control put it there.
+//
+// runID says *which* attempt, because a paused-then-resumed job has two alive for a
+// moment. activeLocked says whether an attempt owns the job at all, and the two
+// together are ownedByRunLocked — the single predicate every attempt-owned write is
+// gated on. Splitting the second half out is what the 2026-07-29 audit's finding 1
+// needed: runID guarded only claimStart and finish, so a control could take a job
+// and the attempt's *other* writes — progress, and the `processing` its EOF callback
+// reports — would still land on it.
+
+func (j *DownloadJob) activeLocked() bool {
+	return j.Status == JobStatusPending || j.Status == JobStatusDownloading ||
+		j.Status == JobStatusProcessing
+}
+
+// ownedByRunLocked reports whether the given attempt may still write to the job.
+func (j *DownloadJob) ownedByRunLocked(runID uint64) bool {
+	return j.runID == runID && j.activeLocked()
+}
+
+// updateProgressForRun records progress on an attempt's behalf, and reports whether
+// the write took so the caller can skip a notification for state it did not change.
+//
+// Unconditional here was audit finding 1's second half: a stale attempt's in-flight
+// read completing after a Resume overwrote the *new* attempt's progress, and a
+// straggler landing on a paused job moved a readout the pause exists to freeze.
+func (j *DownloadJob) updateProgressForRun(runID uint64, downloaded, total int64) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	if !j.ownedByRunLocked(runID) {
+		return false
+	}
+	j.setProgressLocked(downloaded, total)
+	return true
+}
+
+// setStatusForRun moves the job to a status its own attempt reports — today only
+// `processing`, when the transfer hits EOF and the resource write begins.
+//
+// Unconditional here was audit finding 1's first half, and it silently undid a
+// control that had already answered 200: EOF fires, the callback notifies
+// subscribers, a Pause claims `paused` and cancels the context in that gap, and the
+// callback then writes `processing` over it. finish accepted the same attempt
+// afterwards — it *is* the same attempt — so the job was retired and the pause had
+// simply never happened.
+func (j *DownloadJob) setStatusForRun(runID uint64, status JobStatus) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	if !j.ownedByRunLocked(runID) {
+		return false
+	}
+	j.Status = status
+	return true
+}
+
 // claimStart atomically hands the job to its worker: pending -> the running status
 // the worker is about to report, stamped with its start time.
 //
@@ -238,26 +300,38 @@ func (j *DownloadJob) claimRetry(ctx context.Context, cancel context.CancelFunc)
 	j.Error = ""
 	j.Progress, j.TotalSize, j.ProgressPercent = 0, -1, -1
 	j.StartedAt, j.CompletedAt, j.ResourceID = nil, nil, nil
+	// The previous attempt's *reported* leftovers go too, which the counters and the
+	// error already did and these three did not. A retried import re-reports every
+	// warning it hits, so keeping the failed run's list showed each one twice and
+	// climbing; ResultPath still named a tar the retry has not written yet; and the
+	// phase counters read as a run that was part-way through something.
+	j.Warnings, j.ResultPath = nil, ""
+	j.PhaseCount, j.PhaseTotal = 0, 0
 	return JobStatusPending, true
 }
 
 // finish stamps the job's terminal state in one step and reports whether it took.
 //
-// It returns false when the job has been paused meanwhile: a paused download keeps
-// its progress and waits for Resume, so the worker must not retire it. That check
-// used to live in the worker as a separate read followed by a separate write, which
-// is the same check-then-act the controls had.
+// It is ownedByRunLocked and nothing else, which covers three refusals that used to
+// be two separate reads or no read at all:
+//
+//   - a stale attempt speaks for nobody. Pause makes a job resumable while its worker
+//     is still unwinding, so the previous attempt can reach this while the next one is
+//     already downloading — and its terminal state would land on a live job.
+//   - a paused download keeps its progress and waits for Resume, so the worker must
+//     not retire it.
+//   - a job a control has already retired stays retired. This is the third one, and
+//     it was open: the check was `Status == paused` alone, so an attempt whose
+//     AddResource succeeded after a Pause-then-Cancel wrote `completed` over the
+//     `cancelled` the user had already been shown, resource id and all. Whether a
+//     *live* download should report `completed` despite an accepted cancel is a
+//     separate question (see processJob) — writing over a terminal state that is
+//     already on screen is not.
 func (j *DownloadJob) finish(runID uint64, status JobStatus, errMsg string, resourceID uint, completedAt time.Time) bool {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	// A stale attempt speaks for nobody. Pause makes a job resumable while its worker
-	// is still unwinding, so the previous attempt can reach this while the next one is
-	// already downloading — and its terminal state would land on a live job.
-	if j.runID != runID {
-		return false
-	}
-	if j.Status == JobStatusPaused {
+	if !j.ownedByRunLocked(runID) {
 		return false
 	}
 	j.Status = status
@@ -271,10 +345,17 @@ func (j *DownloadJob) finish(runID uint64, status JobStatus, errMsg string, reso
 	return true
 }
 
-// UpdateProgress safely updates the job's progress fields
+// UpdateProgress safely updates the job's progress fields. Used by generic jobs
+// through ProgressSink, whose runFn is the job's only writer; a download attempt
+// goes through updateProgressForRun instead, because it may not be the job's only
+// writer any more.
 func (j *DownloadJob) UpdateProgress(downloaded, total int64) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	j.setProgressLocked(downloaded, total)
+}
+
+func (j *DownloadJob) setProgressLocked(downloaded, total int64) {
 	j.Progress = downloaded
 	j.TotalSize = total
 	if total > 0 {
@@ -387,10 +468,12 @@ func (j *DownloadJob) GetStatus() JobStatus {
 	return j.Status
 }
 
-// IsActive returns true if the job is still in progress
+// IsActive returns true if the job is still in progress — which is the same thing
+// as "owned by its attempt rather than by a control", so it shares that predicate.
 func (j *DownloadJob) IsActive() bool {
-	status := j.GetStatus()
-	return status == JobStatusPending || status == JobStatusDownloading || status == JobStatusProcessing
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.activeLocked()
 }
 
 // CanCancel returns true if the job can still be abandoned.

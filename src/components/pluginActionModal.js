@@ -1,3 +1,5 @@
+import { focusedElement } from '../utils/focus.js';
+
 export function pluginActionModal() {
     return {
         isOpen: false,
@@ -6,12 +8,17 @@ export function pluginActionModal() {
         errors: {},
         submitting: false,
         result: null,
+        // The control the reader pressed to get here. Captured at open, because by
+        // the time this modal hands over to the jobs panel its own Run button has
+        // focus and is about to be removed by the x-if — see submit().
+        _opener: null,
 
         init() {
             window.addEventListener('plugin-action-open', (e) => this.open(e.detail));
         },
 
         open(detail) {
+            this._opener = focusedElement();
             const action = {
                 plugin: detail.plugin,
                 action: detail.action,
@@ -190,8 +197,26 @@ export function pluginActionModal() {
                 }
 
                 if (data.job_id || data.job_ids) {
+                    // The opener travels with the request to open the panel. Closing
+                    // this modal and asking for the panel in the same tick leaves the
+                    // panel reading `document.activeElement`, which is this modal's Run
+                    // button — still connected for one more tick, then torn down by the
+                    // x-if. The panel's restore rejects a detached node and falls back
+                    // to its own header trigger, so the reader ended a plugin action
+                    // somewhere they had never been.
+                    const opener = this._opener;
                     this.close();
-                    window.dispatchEvent(new CustomEvent('jobs-panel-open'));
+                    // Asked for after this modal has actually gone, not in the same
+                    // tick as close(). The panel declines to open underneath an open
+                    // dialog — two aria-modal dialogs at once is the defect either way
+                    // round — and until Alpine flushes, the x-if still has this one
+                    // mounted, so a synchronous request would be refused by the guard
+                    // that exists to protect the reader from it.
+                    this.$nextTick(() => {
+                        window.dispatchEvent(new CustomEvent('jobs-panel-open', {
+                            detail: { returnFocusTo: opener },
+                        }));
+                    });
                 } else if (data.redirect) {
                     window.location.href = data.redirect;
                 } else {

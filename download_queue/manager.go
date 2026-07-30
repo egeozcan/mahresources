@@ -253,7 +253,7 @@ func (dm *DownloadManager) evictJob(id string, job *DownloadJob) {
 	}
 	dm.jobOrder = newOrder
 
-	dm.notifySubscribers(JobEvent{Type: "removed", Job: job})
+	dm.notifyJob("removed", job)
 }
 
 // Submit adds a new download job to the queue
@@ -264,9 +264,9 @@ func (dm *DownloadManager) evictJob(id string, job *DownloadJob) {
 // race, and so queue-visibility RBAC is applied before processing.
 func (dm *DownloadManager) Submit(creator *query_models.ResourceFromRemoteCreator, ownerUserID *uint) (*DownloadJob, error) {
 	dm.mu.Lock()
-	defer dm.mu.Unlock()
 
 	if !dm.makeRoomForNewJob() {
+		dm.mu.Unlock()
 		return nil, fmt.Errorf("download queue is full (max %d jobs) - all jobs are active or paused", MaxQueueSize)
 	}
 
@@ -290,11 +290,21 @@ func (dm *DownloadManager) Submit(creator *query_models.ResourceFromRemoteCreato
 	dm.jobs[job.ID] = job
 	dm.jobOrder = append(dm.jobOrder, job.ID)
 
-	// Start download in background. The go statement happens-before the
-	// goroutine's execution, so ownerUserID (set above) is visible to the worker.
-	go dm.processJob(job)
+	// "added" goes out before the worker exists, and while the registry lock is still
+	// held, so nothing can describe this job to a subscriber that has not been told it
+	// exists. The go statement used to come first: the worker could claim its start
+	// and broadcast "updated" before this line ran, and the panel applies "updated" by
+	// looking the row up — so it dropped the real status on the floor and then drew
+	// the row from the late "added". Live pointers hid it, because the late event
+	// marshalled the job's *current* state; snapshots do not, which is why the
+	// ordering and the snapshot had to be fixed together.
+	dm.notifyJob("added", job)
 
-	dm.notifySubscribers(JobEvent{Type: "added", Job: job})
+	dm.mu.Unlock()
+
+	// The go statement happens-before the goroutine's execution, so ownerUserID (set
+	// above) is visible to the worker.
+	go dm.processJob(job)
 
 	return job, nil
 }
@@ -350,7 +360,7 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 		// finish is a no-op on a paused job: Pause cancels the context too, and a
 		// paused job waits for Resume rather than being retired here.
 		if job.finish(runID, JobStatusCancelled, "Cancelled before starting", 0, time.Now()) {
-			dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+			dm.notifyJob("updated", job)
 		}
 		return
 	}
@@ -362,10 +372,10 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	if !job.claimStart(runID, JobStatusDownloading, time.Now()) {
 		return
 	}
-	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+	dm.notifyJob("updated", job)
 
 	// Perform the download with progress tracking
-	resource, err := dm.downloadWithProgress(ctx, job)
+	resource, err := dm.downloadWithProgress(ctx, runID, job)
 
 	status, errMsg, resourceID := JobStatusCompleted, "", uint(0)
 	switch {
@@ -389,7 +399,7 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 		return
 	}
 
-	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+	dm.notifyJob("updated", job)
 }
 
 // createHTTPClient creates an HTTP client with context support.
@@ -408,8 +418,61 @@ func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
 	}
 }
 
-// downloadWithProgress performs the HTTP download with progress tracking
-func (dm *DownloadManager) downloadWithProgress(ctx context.Context, job *DownloadJob) (*models.Resource, error) {
+// attemptReporter is the pair of callbacks one download attempt reports through.
+//
+// It is a named type and not two closures because that is what makes the guard
+// below testable: what has to hold is that a write from an attempt which no longer
+// owns the job is dropped, and driving that through a live HTTP transfer means
+// landing a control inside the few instructions between EOF and the status write.
+// As a type, the same production code the transfer uses can be handed a job a
+// control has already taken and asked what it does.
+type attemptReporter struct {
+	dm    *DownloadManager
+	job   *DownloadJob
+	runID uint64
+	total int64
+
+	// Only ever read and written by the single goroutine performing the reads, which
+	// is the one AddResource runs on.
+	lastNotify time.Time
+}
+
+// progressNotifyInterval throttles per-chunk updates so a fast transfer does not
+// flood every SSE client.
+const progressNotifyInterval = 500 * time.Millisecond
+
+// onProgress is called on each chunk read.
+func (r *attemptReporter) onProgress(downloaded int64) {
+	if !r.job.updateProgressForRun(r.runID, downloaded, r.total) {
+		return
+	}
+	if time.Since(r.lastNotify) >= progressNotifyInterval {
+		r.lastNotify = time.Now()
+		r.dm.notifyJob("updated", r.job)
+	}
+}
+
+// onComplete is called when the transfer reaches EOF: the bytes are all in, and
+// what remains is writing the resource.
+//
+// The status change comes first and the notification second, which is the order the
+// rest of the manager uses and the order this did not: it flushed the final progress
+// under the *old* status, then wrote `processing`, then notified again. Two events
+// for one transition, the first of them describing a state the job had already left.
+func (r *attemptReporter) onComplete() {
+	if !r.job.setStatusForRun(r.runID, JobStatusProcessing) {
+		return
+	}
+	r.dm.notifyJob("updated", r.job)
+}
+
+// downloadWithProgress performs the HTTP download with progress tracking.
+//
+// runID is the attempt this download belongs to. Everything it reports about the
+// job is stamped with it, so a control that takes the job away mid-transfer — or a
+// Resume that starts a second attempt beside this one — is not overwritten by
+// callbacks still unwinding.
+func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint64, job *DownloadJob) (*models.Resource, error) {
 	// Snapshot settings once so all timeout values are consistent for this
 	// download and the read-lock is held only briefly.
 	s := dm.currentSettings()
@@ -432,36 +495,17 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, job *Downlo
 
 	// Get content length if available
 	contentLength := resp.ContentLength
-	job.UpdateProgress(0, contentLength)
-	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+	if job.updateProgressForRun(runID, 0, contentLength) {
+		dm.notifyJob("updated", job)
+	}
 
 	// Wrap with timeout reader for idle detection and cancellation
 	timeoutBody := NewTimeoutReaderWithContext(resp.Body, s.IdleTimeout(), ctx)
 	defer timeoutBody.Close()
 
-	// Throttle progress updates to avoid flooding SSE clients
-	var lastNotify time.Time
-	const notifyInterval = 500 * time.Millisecond
-
 	// Wrap with progress reader
-	progressBody := NewProgressReader(timeoutBody,
-		// onProgress - called on each chunk read
-		func(downloaded int64) {
-			job.UpdateProgress(downloaded, contentLength)
-			// Only notify if enough time has passed
-			if time.Since(lastNotify) >= notifyInterval {
-				lastNotify = time.Now()
-				dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
-			}
-		},
-		// onComplete - called when download finishes (EOF)
-		func() {
-			// Send final progress update, then switch to processing
-			dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
-			job.SetStatus(JobStatusProcessing)
-			dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
-		},
-	)
+	reporter := &attemptReporter{dm: dm, job: job, runID: runID, total: contentLength}
+	progressBody := NewProgressReader(timeoutBody, reporter.onProgress, reporter.onComplete)
 
 	// The stored file name and the resource's display name are different things,
 	// and conflating them lost the Name the user typed: the worker built one
@@ -556,7 +600,7 @@ func (dm *DownloadManager) Cancel(jobID string) error {
 	// the panel would keep showing "Paused" with a Cancel button that appeared to do
 	// nothing. An active job's worker notifies when it unwinds.
 	if prev == JobStatusPaused {
-		dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+		dm.notifyJob("updated", job)
 	}
 	return nil
 }
@@ -576,7 +620,7 @@ func (dm *DownloadManager) Pause(jobID string) error {
 		return &StateConflictError{JobID: jobID, Action: "paused", Status: status}
 	}
 
-	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+	dm.notifyJob("updated", job)
 
 	return nil
 }
@@ -607,7 +651,7 @@ func (dm *DownloadManager) Resume(jobID string) error {
 
 	dm.startWorker(job)
 
-	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+	dm.notifyJob("updated", job)
 
 	return nil
 }
@@ -635,7 +679,7 @@ func (dm *DownloadManager) Retry(jobID string) error {
 
 	dm.startWorker(job)
 
-	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+	dm.notifyJob("updated", job)
 
 	return nil
 }
@@ -663,7 +707,12 @@ func (dm *DownloadManager) startWorker(job *DownloadJob) {
 	}
 }
 
-// GetJobs returns all jobs in order
+// GetJobs returns a point-in-time copy of every job, in order.
+//
+// Copies and not the live jobs: both callers are HTTP handlers that JSON-encode the
+// result on their own goroutine, holding no job lock, while workers write progress
+// and status. GetJob still hands back the live job, because its caller needs the
+// object rather than a listing of it.
 func (dm *DownloadManager) GetJobs() []*DownloadJob {
 	dm.mu.RLock()
 	defer dm.mu.RUnlock()
@@ -671,7 +720,7 @@ func (dm *DownloadManager) GetJobs() []*DownloadJob {
 	result := make([]*DownloadJob, 0, len(dm.jobOrder))
 	for _, id := range dm.jobOrder {
 		if job, exists := dm.jobs[id]; exists {
-			result = append(result, job)
+			result = append(result, job.Snapshot())
 		}
 	}
 	return result
@@ -701,6 +750,20 @@ func (dm *DownloadManager) Subscribe() (<-chan JobEvent, func()) {
 	}
 
 	return ch, unsubscribe
+}
+
+// notifyJob broadcasts a change to one job as a point-in-time copy.
+//
+// The copy is the point. JobEvent.Job used to be the live job on every download
+// path — generic_job.go already snapshotted, which is how the inconsistency was
+// visible — and the SSE handler marshals it on its own goroutine with no lock. That
+// is a data race in the plain sense (the -race detector flags it), and its readable
+// consequence is a payload assembled from two different instants: a Progress from
+// after an update beside the TotalSize and ProgressPercent from before it. Warnings
+// is worse, because marshalling a slice header while another goroutine appends to it
+// can read a length that does not match the array.
+func (dm *DownloadManager) notifyJob(eventType string, job *DownloadJob) {
+	dm.notifySubscribers(JobEvent{Type: eventType, Job: job.Snapshot()})
 }
 
 // notifySubscribers sends an event to all subscribers
@@ -772,7 +835,7 @@ func (dm *DownloadManager) cleanupOldJobs() {
 
 		if shouldRemove {
 			delete(dm.jobs, id)
-			dm.notifySubscribers(JobEvent{Type: "removed", Job: job})
+			dm.notifyJob("removed", job)
 		} else {
 			newOrder = append(newOrder, id)
 		}
@@ -853,7 +916,7 @@ func (dm *DownloadManager) ClearFinished(visible func(owner *uint) bool) []strin
 	// place that removes jobs — it notifies under the lock, which this deliberately
 	// does not copy.
 	for _, job := range removed {
-		dm.notifySubscribers(JobEvent{Type: "removed", Job: job})
+		dm.notifyJob("removed", job)
 	}
 
 	return ids

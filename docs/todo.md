@@ -2068,6 +2068,18 @@ it. The remediation is `docs/todo.md`'s WS9-fix entry below and the commit that 
    - `.filter({ hasText: 'events' }).first()` is not necessarily the spec's own job on a worker
      server the whole suite shares.
 
+**Round 3 adds a sixth, and it is one of round 2's own tests.**
+`TestRetry_AStartedJobIsAlwaysStillInTheRegistry` was written to pin the registry gap that round 2
+fixed on inspection, and it failed **2 of 10** under `-race -count=10` — not because of the gap,
+but because it retried a real download against a refused port with 1 ms timeouts. The new attempt
+reached `failed` within microseconds, and a `ClearFinished` landing *after* that removed a job that
+was legitimately terminal again. The assertion window was wider than its subject, which is the same
+family as the three above: a test that can fail for a reason other than its subject is no more
+informative than one that cannot fail at all. The retried run is held open for the whole window
+now, so `cancelled` -> deleted between the lookup and the start is the only path to the failure.
+Round 2's "not seen red, 200 iterations" claim was therefore made against a test that was noisy in
+one direction and, as far as this run can tell, still silent in the other.
+
 ### WS9-fix — the review remediation
 
 Five findings, all five confirmed against the code before any fix, all five fixed with a test
@@ -2212,6 +2224,189 @@ through) was wrong. Two claims did not hold up and are argued rather than accept
    `x-teleport` into `.overlays` — which is a structural change with its own risk to `x-ref`,
    `x-trap` and fifteen tests, and does not belong in a remediation pass. **Carried to Batch 12 as
    a product decision.**
+
+#### Round 3 — the matrix, because three rounds at a steady rate is not convergence
+
+Rounds 1, 2 and 3 of review found **5, then 6, then 5** real defects in this one package. A rate
+that does not fall is the signature of sampling: every round was somebody noticing a specific bad
+interleaving, and nobody had enumerated the space. So this pass builds the table first and fixes
+what it exposes, rather than working the five findings it arrived with.
+
+The table turns on one sentence, which is now the comment at the head of `job.go`:
+
+> a job in `pending`, `downloading` or `processing` belongs to the attempt running it; a job that
+> is `paused` or terminal belongs to whichever control put it there. **Only the owner may write.**
+
+`runID` says *which* attempt (a paused-then-resumed job has two alive for a moment). `activeLocked`
+says whether an attempt owns the job at all. `ownedByRunLocked` is the two together, and it is now
+the single predicate on every attempt-owned write — `finish`, `setStatusForRun`,
+`updateProgressForRun`. Before this pass `runID` reached only `claimStart` and `finish`, and
+`finish` tested for `paused` alone.
+
+##### Job state × control
+
+Read as: what the control does, and whether the cell was already right. `409` is
+`StateConflictError`; the panel hides the button, but the endpoint is reachable regardless.
+
+| | Cancel | Pause | Resume | Retry | ClearFinished | retention sweep | Shutdown |
+|---|---|---|---|---|---|---|---|
+| **pending** | accept, record intent, cancel ctx; the worker stamps | accept → `paused`; `claimStart` refuses | 409 | 409 | kept | kept (no `CompletedAt`) | ctx cancelled → worker stamps `cancelled` |
+| **downloading** | accept; the worker stamps | accept → `paused` | 409 | 409 | kept | kept | as above |
+| **processing** | accept; the worker stamps | 409 — a resource write cannot be suspended | 409 | 409 | kept | kept | as above |
+| **paused** | accept, and the terminal write happens *here*: no goroutine is left to do it | 409 | accept → `pending`, `runID++` | 409 | kept — a paused job is not finished | removed after 24 h from `CreatedAt` **‡** | untouched (not active, holds no slot) |
+| **completed** | 409 **†** | 409 **†** | 409 **†** | 409 **†** | removed | removed after retention | — |
+| **failed** | 409 **†** | 409 **†** | 409 **†** | accept → `pending`, `runID++` **§** | removed | removed | — |
+| **cancelled** | 409 **†** | 409 **†** | 409 **†** | accept, clearing `cancelRequested` **§** | removed | removed | — |
+
+- **†** — finding 5. The server was right; the panel discarded every one of these in silence.
+- **‡** — finding 6. The server was right; the panel kept the row on screen with live controls.
+- **§** — finding 4. The retry cleared the error, the progress, the timings and the resource id,
+  and carried the previous attempt's warnings, result path and phase counters forward.
+
+##### Worker phase × control
+
+The rows are the points a download attempt can be interrupted at. This is where findings 1 and 2
+live: every cell in the *state* table above assumes the attempt is not writing at the same moment,
+and for four of these rows it was.
+
+| phase | Cancel | Pause | Resume / Retry | ClearFinished / sweep |
+|---|---|---|---|---|
+| queued, before the semaphore | `ctx.Done` branch; `finish` on a `pending` job is owned, so it stamps | `claimStart` refuses — `ab3c4b49` | not reachable (needs paused/terminal) | not terminal, kept |
+| semaphore held, before `claimStart` | proceeds deliberately: an active job's terminal state is its worker's | `claimStart` refuses | not reachable | kept |
+| mid-download read in flight | **the abandoned read kept writing into the caller's buffer — finding 12** | same | same | kept |
+| mid-download progress callback | fine | **progress written on a paused job — finding 1** | **a stale attempt overwrote the live one's progress — finding 1** | kept |
+| EOF / `onComplete` | fine | **`processing` written over `paused` — finding 1** | **stale attempt's `processing` — finding 1** | kept |
+| inside `AddResource` | accepted; a subsequent *success* still reports `completed` — **open, see below** | `claimPause` refuses (`processing`) | not reachable | kept |
+| `finish` | `runID` + active guard | **could overwrite a `cancelled` a control had already written — finding 2** | guarded by `runID` | `Resume`/`Retry` hold `dm.mu.RLock()` across claim+start |
+
+##### What the matrix cleared
+
+Enumerated, checked, and found already correct — worth recording so round 4 does not re-derive
+them: the `dm.mu` → `j.mu` order is consistent everywhere (no job method touches the manager);
+`evictJob` and `cleanupOldJobs` notifying under `dm.mu` is that same order, not an inversion; the
+semaphore is released on every exit path including both `ctx.Done` branches; concurrent
+`Resume`+`Resume` and `Retry`+`Retry` are serialised by their claims so only one worker ever
+starts; `makeRoomForNewJob` never evicts an active or paused job; a paused job holds no semaphore
+slot; and `Shutdown` has exactly one call site (a `defer` in `main.go`), so its non-idempotent
+`close(dm.done)` is not reachable twice and is left alone rather than guarded speculatively.
+
+##### The twelve findings
+
+- [x] **1 (high) — `runID` did not protect attempt-owned writes.** The transfer's two callbacks
+      wrote unconditionally: progress on every chunk, and `processing` at EOF. The damaging order
+      is EOF → the callback notifies subscribers → a `Pause` claims `paused` and cancels the
+      context in that gap → the callback writes `processing` over it → `finish` accepts, because it
+      *is* the same attempt, and retires the job. The caller had been answered 200
+      `{"status":"paused"}` and nothing about the job says it was ever paused. The mirror case:
+      after a Resume, a stale attempt's in-flight read moves the *new* attempt's progress.
+      `setStatusForRun` and `updateProgressForRun` are the guarded forms.
+- [x] **2 (high) — `finish` refused only `paused`, so a worker could un-retire a job.** Pause a
+      download, cancel it, watch the row settle on "Cancelled" — and then watch it become
+      "Completed", with a resource id, because the attempt's `AddResource` happened to succeed
+      after the cancel landed. Two answered controls and neither of them holds. `finish` is
+      `ownedByRunLocked` now, which is the same predicate as the other two.
+- [x] **3 (medium) — the queue and the SSE stream serialised live jobs.** `JobEvent.Job` was the
+      live job on every download path while `generic_job.go` already snapshotted, which is how the
+      inconsistency was visible; `GetJobs` handed live pointers to two handlers that JSON-encode
+      them holding no job lock. A data race in the plain sense — the detector flags it — whose
+      readable consequence is a payload assembled from two instants, and whose worst is
+      marshalling `Warnings`' slice header while a worker appends to it. Everything the manager
+      hands out is a `Snapshot()` now. **That change made an ordering hazard observable and it is
+      fixed in the same breath**: `Submit` started the worker *before* broadcasting `added`, so an
+      early `updated` could arrive first — dropped by the panel as an unknown id — and the row
+      then drawn from the late `added`. Live pointers hid it, because the late event marshalled
+      the job's current state.
+- [x] **4 — a retry carried the previous attempt's report.** Warnings, `ResultPath` and the phase
+      counters survived `claimRetry`. A retried import re-reports every warning it hits, so the
+      failed run's list sat underneath and the count climbed with each retry.
+- [x] **5 (medium, a11y) — the four job controls swallowed every refusal.** All of them were
+      `fetch(...).catch(console.error)`, and `fetch` does not reject on 4xx. Every refusal these
+      endpoints produce is one the reader can provoke, because a row's state is a snapshot from the
+      last event that arrived: Cancel on a download that finished a moment ago is 409, anything on
+      a row the sweep removed is 404. Nothing moved and nothing was said, which is indistinguishable
+      from a dead button.
+- [x] **6 — a retention-swept paused row stayed on screen.** `handleJobRemoved` retained anything
+      "not active" while its own comment said "finished", and `paused` is deliberately neither. The
+      24-hour sweep therefore left a row whose Resume and Cancel addressed a job the server no
+      longer had.
+- [x] **7 (medium) — a job could become two rows.** The SSE handler subscribes and *then* lists the
+      queue, which is the right order — the other way round would miss a job created between the
+      two — so a job created in that window arrives in both the buffered `added` event and the
+      `init` listing. The panel pushed both. The second row was never updated again, because
+      updates resolve a job by the first matching id, so it sat at "Pending" with live controls for
+      the rest of the session.
+- [x] **8 (medium) — a generic job's owner was set after the event that is filtered on it.** The
+      export and import handlers called `SetOwnerUserID` on the job `SubmitJob` returned, by which
+      point `added` had been broadcast and the worker started. Under `-auth` the SSE stream drops
+      any event whose job the principal may not see, and an ownerless job is exactly that for a
+      non-admin: **their own export never appeared in their own panel** until the next reconnect.
+      `JobOptions` describes the job at construction, and carries the import staging path for the
+      same reason.
+- [x] **9 (medium, a11y) — the panel could trap focus underneath a modal.** `.header` is a stacking
+      context at z-index 40, so the panel's `z-[60]` orders it against header siblings only; the
+      four true modals live in `.overlays` at z-index 41 in the root stacking context, above the
+      whole header layer. Pressing Cmd/Ctrl+Shift+D behind the lightbox, paste-upload or a plugin
+      modal opened an aria-modal dialog behind an aria-modal dialog and moved focus into the one
+      nobody can see, where `x-trap` held it. Two modals open at once is the defect whichever way
+      it paints, so the panel declines and says so. Round 2 carried "get the panel out of the
+      header with `x-teleport`" to Batch 12 as a product decision; **this does not replace that** —
+      it removes the a11y consequence without the structural change.
+- [x] **10 — the plugin clear tests never asserted deletion.** They checked the returned ids and
+      that the *running* and *foreign* jobs survived. An implementation that answered with the
+      right list and deleted nothing passed both.
+- [x] **12 (high) — an abandoned read wrote into the caller's buffer.** Found by the load run this
+      pass added, not by the matrix: `-race -count=10` reported one address written by two
+      unrelated downloads. `TimeoutReaderWithContext.Read` runs the underlying read on a goroutine
+      so it can walk away on cancellation or an idle timeout — and it handed that goroutine the
+      **caller's** `p`. When it walks away, `p` belongs to the caller again, and `io.Copy` takes its
+      buffer from a pool for some destinations, so that memory can already be part of a different
+      transfer. Reading into the reader's own buffer and copying on delivery closes it; the
+      outstanding read is kept across calls so a caller that reads again after an abandoned attempt
+      waits for it rather than starting a second concurrent read on the same body.
+
+- [x] **11 — the async plugin action still lost its focus origin.** The modal closed itself and
+      asked for the jobs panel in the same tick, so the panel read `document.activeElement` and got
+      the modal's own Run button — connected for one more tick, then removed by the `x-if`. The
+      restore rejects a detached node and fell back to the header trigger. The opener is captured
+      at `open()` and travels on the event; the request is made from `$nextTick`, which is also
+      what keeps finding 9's guard from refusing it.
+
+##### Where the brief's diagnosis needed correcting
+
+The brief asked whether a successful `AddResource` should still report `completed` after an
+accepted Cancel, and said not to pick quietly. Splitting it in two is what the matrix showed:
+
+- **Writing over a terminal state a control has already written is not that question**, and it was
+  a separate defect (finding 2). The row said "Cancelled" and then said "Completed". No reading of
+  the trade-off endorses that, so it is simply fixed.
+- **What remains** is a live download, cancel accepted, `AddResource` then returns successfully.
+  `4cb3bb50` argued for `completed` on the grounds that the resource exists and the user can see
+  it, so reporting `cancelled` would orphan a file. That still holds. **The lie is not in the
+  status — it is in the answer Cancel gave.** `POST /v1/jobs/cancel` replies
+  `{"status":"cancelled"}` for an active job, which is not a fact but a request: the worker has to
+  observe it. Reporting `{"status":"cancelling"}` would make both honest and change nothing about
+  the file. That is an API response change with the CLI, the OpenAPI spec and the panel behind it,
+  so it is **carried to Batch 12 as a product decision** rather than taken here.
+
+##### Not driven red, and said so
+
+- **The exact window in finding 1** — a Pause landing between EOF and the status write. Every
+  control that takes a job from a live attempt also cancels that attempt's context, so an
+  attempt-owned write *after* the control lands requires a read that was already in flight when it
+  did. That is a real window (`TimeoutReaderWithContext.Read` selects between a ready `resultCh`
+  and a done context, so it is a coin flip, not a rarity) but it is not one a test can promise to
+  hit. The guard is instead driven through the production callbacks themselves — `attemptReporter`
+  is a named type for exactly that reason — and all four of its subtests fail against the
+  unconditional writes.
+- **Finding 12 was not in the matrix at all.** It is a cell the table has no column for — the
+  transfer's own plumbing rather than a job state or a control — and it took `-race -count=10` to
+  surface it, having been green at `-count=1` through three review rounds. Worth saying plainly:
+  the matrix is a method for finding what you can reason about, and repetition under the detector
+  is the method for the rest. Neither substitutes for the other.
+- **The `added`-before-`updated` ordering in finding 3.** The worker has to be scheduled, take the
+  semaphore and claim its start before the *next statement* in `Submit` executes. Not seen red;
+  fixed because the snapshot change is what makes it observable, and shipped in the same commit for
+  that reason.
 
 #### The a11y "flake" was a real defect, and my first explanation of it was wrong
 
@@ -2584,6 +2779,18 @@ Findings **57, 60/65, 65, 78, 98, 104, 107, 112, 117, 129, 130, 131, 136, 137, 1
     accessible in-app modal as a follow-up.
   - **145** — the main preview link 302s to the raw file while card thumbnails open the in-app
     lightbox. *Proposed default:* make the main preview open the lightbox too.
+  - **Cancelling an in-flight download answers with a fact it cannot promise** (round-3 audit
+    finding, carried here). `POST /v1/jobs/cancel` replies `{"status":"cancelled"}` the moment the
+    intent is recorded, but for an active job the terminal state belongs to the worker: if
+    `AddResource` returns successfully a moment later, the resource exists and the job correctly
+    reports `completed`. Reporting `cancelled` instead would orphan a file the user can already see
+    in the UI, so the *status* is right. *Proposed default:* answer `{"status":"cancelling"}` for an
+    active job and keep `{"status":"cancelled"}` for a paused one, where the transition really is
+    complete at reply time. Deferred because it is a public API change with the `mr` CLI, the
+    OpenAPI spec, the panel and the CLI doctests behind it.
+  - **The jobs panel still lives inside the header** (round 2's `x-teleport` decision, unchanged).
+    Round 3 removed the a11y consequence — the panel declines to open while a modal is up — but not
+    the cause. `x-teleport` into `.overlays` remains the structural answer.
 
 ---
 

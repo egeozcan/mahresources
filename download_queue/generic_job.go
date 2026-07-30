@@ -29,31 +29,57 @@ type managedSink struct {
 
 func (s *managedSink) SetPhase(phase string) {
 	s.j.SetPhase(phase)
-	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j.Snapshot()})
+	s.m.notifyJob("updated", s.j)
 }
 
 func (s *managedSink) SetPhaseProgress(current, total int64) {
 	s.j.SetPhaseProgress(current, total)
-	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j.Snapshot()})
+	s.m.notifyJob("updated", s.j)
 }
 
 func (s *managedSink) UpdateProgress(done, total int64) {
 	s.j.UpdateProgress(done, total)
-	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j.Snapshot()})
+	s.m.notifyJob("updated", s.j)
 }
 
 func (s *managedSink) AppendWarning(msg string) {
 	s.j.AppendWarning(msg)
-	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j.Snapshot()})
+	s.m.notifyJob("updated", s.j)
 }
 
 func (s *managedSink) SetResultPath(path string) {
 	s.j.SetResultPath(path)
-	s.m.notifySubscribers(JobEvent{Type: "updated", Job: s.j.Snapshot()})
+	s.m.notifyJob("updated", s.j)
 }
 
-// SubmitJob enqueues a generic background job.
+// JobOptions describes a generic background job at construction.
+//
+// Everything a subscriber has to know about a job on the "added" event belongs
+// here rather than in a setter called on the returned job. The setters ran after
+// SubmitJob had already broadcast "added" *and* started the worker, and the owner is
+// not cosmetic: under -auth the SSE stream drops any event whose job the principal
+// may not see, and a job with no owner yet is one a non-admin may not see. Their own
+// export or import therefore never appeared in their panel — the "added" was
+// filtered out, the early "updated" events were dropped by the panel as unknown ids,
+// and the row only turned up on the next reconnect.
+type JobOptions struct {
+	Source       string
+	InitialPhase string
+	// URL is optional. Generic jobs have no URL and the import handlers repurpose the
+	// field as "source file path", which the delete handler reads back by job id.
+	URL string
+	// OwnerUserID is the submitting user, or nil for the auth-off super-user.
+	OwnerUserID *uint
+}
+
+// SubmitJob enqueues an unowned generic background job.
 func (m *DownloadManager) SubmitJob(source, initialPhase string, runFn JobRunFn) (*DownloadJob, error) {
+	return m.SubmitJobWithOptions(JobOptions{Source: source, InitialPhase: initialPhase}, runFn)
+}
+
+// SubmitJobWithOptions enqueues a generic background job fully described at
+// construction. See JobOptions.
+func (m *DownloadManager) SubmitJobWithOptions(opts JobOptions, runFn JobRunFn) (*DownloadJob, error) {
 	if runFn == nil {
 		return nil, fmt.Errorf("download_queue: SubmitJob requires non-nil runFn")
 	}
@@ -69,24 +95,29 @@ func (m *DownloadManager) SubmitJob(source, initialPhase string, runFn JobRunFn)
 
 	job := &DownloadJob{
 		ID:              generateShortID(),
+		URL:             opts.URL,
 		Status:          JobStatusPending,
 		Progress:        0,
 		TotalSize:       -1,
 		ProgressPercent: -1,
 		CreatedAt:       time.Now(),
-		Source:          source,
-		Phase:           initialPhase,
+		Source:          opts.Source,
+		Phase:           opts.InitialPhase,
 		ctx:             ctx,
 		cancel:          cancel,
 		runFn:           runFn,
+		ownerUserID:     opts.OwnerUserID,
 	}
 
 	m.jobs[job.ID] = job
 	m.jobOrder = append(m.jobOrder, job.ID)
 
-	m.mu.Unlock()
+	// Announced under the registry lock and before the worker exists, for the reason
+	// Submit gives: no event about this job may reach a subscriber ahead of the one
+	// that says it exists.
+	m.notifyJob("added", job)
 
-	m.notifySubscribers(JobEvent{Type: "added", Job: job.Snapshot()})
+	m.mu.Unlock()
 
 	go m.processGenericJob(job)
 
@@ -105,8 +136,11 @@ func (m *DownloadManager) processGenericJob(j *DownloadJob) {
 	select {
 	case m.semaphore <- struct{}{}:
 	case <-ctx.Done():
-		if j.finish(runID, JobStatusCancelled, "", 0, time.Now()) {
-			m.notifySubscribers(JobEvent{Type: "updated", Job: j.Snapshot()})
+		// Worded, like the download path's, because the panel renders Error as the
+		// row's reason: a cancelled job with an empty one just says "Cancelled" and
+		// leaves the reader to guess whether anything ran.
+		if j.finish(runID, JobStatusCancelled, "Cancelled before starting", 0, time.Now()) {
+			m.notifyJob("updated", j)
 		}
 		return
 	}
@@ -118,7 +152,7 @@ func (m *DownloadManager) processGenericJob(j *DownloadJob) {
 	if !j.claimStart(runID, JobStatusProcessing, time.Now()) {
 		return
 	}
-	m.notifySubscribers(JobEvent{Type: "updated", Job: j.Snapshot()})
+	m.notifyJob("updated", j)
 
 	sink := &managedSink{m: m, j: j}
 	err := j.runFn(ctx, j, sink)
@@ -132,7 +166,7 @@ func (m *DownloadManager) processGenericJob(j *DownloadJob) {
 	status, errMsg := JobStatusCompleted, ""
 	switch {
 	case ctx.Err() != nil:
-		status = JobStatusCancelled
+		status, errMsg = JobStatusCancelled, "Cancelled"
 	case err != nil:
 		status, errMsg = JobStatusFailed, err.Error()
 	}
@@ -141,5 +175,5 @@ func (m *DownloadManager) processGenericJob(j *DownloadJob) {
 	if !j.finish(runID, status, errMsg, 0, time.Now()) {
 		return
 	}
-	m.notifySubscribers(JobEvent{Type: "updated", Job: j.Snapshot()})
+	m.notifyJob("updated", j)
 }
