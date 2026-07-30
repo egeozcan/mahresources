@@ -80,14 +80,14 @@ func TestJobVisibilityByOwner(t *testing.T) {
 	bBearer, _ := plainUserBearer(t, tc, "job-user-b")
 	adminBearer := roleBearer(t, tc, models.RoleAdmin)
 
-	job, err := tc.AppCtx.DownloadManager().SubmitJob("test", "queued",
+	job, err := tc.AppCtx.DownloadManager().SubmitJobWithOptions(
+		download_queue.JobOptions{Source: "test", InitialPhase: "queued", OwnerUserID: &aID},
 		func(ctx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
 			return nil
 		})
 	if err != nil {
 		t.Fatalf("submit job: %v", err)
 	}
-	job.SetOwnerUserID(aID)
 	jobID := job.ID
 
 	qa := doReq(tc, http.MethodGet, "/v1/jobs/queue", map[string]string{"Accept": "application/json", "Authorization": aBearer}, nil, nil).Body.String()

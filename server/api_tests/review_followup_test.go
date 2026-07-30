@@ -103,7 +103,8 @@ func TestDownloadMutation_OwnershipEnforced(t *testing.T) {
 	aBearer, aID := plainUserBearer(t, tc, "dlm-a")
 	bBearer, _ := plainUserBearer(t, tc, "dlm-b")
 
-	job, err := tc.AppCtx.DownloadManager().SubmitJob("test", "queued",
+	job, err := tc.AppCtx.DownloadManager().SubmitJobWithOptions(
+		download_queue.JobOptions{Source: "test", InitialPhase: "queued", OwnerUserID: &aID},
 		func(ctx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
 			<-ctx.Done() // stay cancellable until the test cancels it
 			return nil
@@ -111,7 +112,6 @@ func TestDownloadMutation_OwnershipEnforced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("submit job: %v", err)
 	}
-	job.SetOwnerUserID(aID)
 	jobID := job.ID
 
 	// Non-owner cannot cancel — 404 (not 403, to prevent ID enumeration).
@@ -133,14 +133,14 @@ func TestImportLifecycle_OwnershipEnforced(t *testing.T) {
 	aBearer, aID := plainUserBearer(t, tc, "imp-a")
 	bBearer, _ := plainUserBearer(t, tc, "imp-b")
 
-	job, err := tc.AppCtx.DownloadManager().SubmitJob(download_queue.JobSourceGroupImportParse, "queued",
+	job, err := tc.AppCtx.DownloadManager().SubmitJobWithOptions(
+		download_queue.JobOptions{Source: download_queue.JobSourceGroupImportParse, InitialPhase: "queued", OwnerUserID: &aID},
 		func(ctx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
 			return nil
 		})
 	if err != nil {
 		t.Fatalf("submit parse job: %v", err)
 	}
-	job.SetOwnerUserID(aID)
 	jobID := job.ID
 
 	bH := map[string]string{"Authorization": bBearer, "Content-Type": "application/json"}
@@ -176,14 +176,14 @@ func TestImportLifecycle_OwnershipSurvivesTheJobBeingCleared(t *testing.T) {
 	aBearer, aID := plainUserBearer(t, tc, "impc-a")
 	bBearer, _ := plainUserBearer(t, tc, "impc-b")
 
-	job, err := tc.AppCtx.DownloadManager().SubmitJob(download_queue.JobSourceGroupImportParse, "queued",
+	job, err := tc.AppCtx.DownloadManager().SubmitJobWithOptions(
+		download_queue.JobOptions{Source: download_queue.JobSourceGroupImportParse, InitialPhase: "queued", OwnerUserID: &aID},
 		func(ctx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
 			return nil
 		})
 	if err != nil {
 		t.Fatalf("submit parse job: %v", err)
 	}
-	job.SetOwnerUserID(aID)
 	jobID := job.ID
 
 	// The control: while the job is in the queue, the gate is known to work — this is
@@ -248,7 +248,8 @@ func TestImportLifecycle_OwnershipSurvivesTheJobBeingCleared(t *testing.T) {
 // about a job that is still in the queue.
 func ownedJobID(t *testing.T, tc *TestContext, uid uint) string {
 	t.Helper()
-	job, err := tc.AppCtx.DownloadManager().SubmitJob(download_queue.JobSourceGroupImportParse, "queued",
+	job, err := tc.AppCtx.DownloadManager().SubmitJobWithOptions(
+		download_queue.JobOptions{Source: download_queue.JobSourceGroupImportParse, InitialPhase: "queued", OwnerUserID: &uid},
 		func(ctx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
 			<-ctx.Done()
 			return nil
@@ -256,6 +257,5 @@ func ownedJobID(t *testing.T, tc *TestContext, uid uint) string {
 	if err != nil {
 		t.Fatalf("submit parse job: %v", err)
 	}
-	job.SetOwnerUserID(uid)
 	return job.ID
 }

@@ -236,11 +236,16 @@
                                                x-text="job.message"></p>
                                         </template>
 
-                                        <!-- Resource link on completion -->
-                                        <template x-if="job.status === 'completed' && job.resourceId">
+                                        {# Keyed on the resource id alone, not on `completed`. A cancel that   #}
+                                        {# lands after the file was saved reports `cancelled` and keeps the id #}
+                                        {# (see DownloadJob.finish), so gating this on the status would hide a #}
+                                        {# file that exists — which is the orphaned-file objection the status  #}
+                                        {# decision had to answer, not create. If the row names a resource,   #}
+                                        {# the reader can reach it.                                           #}
+                                        <template x-if="job.resourceId">
                                             <a :href="'/resource?id=' + job.resourceId"
                                                class="mt-1 inline-block text-xs text-amber-700 hover:text-amber-900 hover:underline">
-                                                View resource &rarr;
+                                                <span x-text="job.status === 'cancelled' ? 'View the file that was saved' : 'View resource'"></span> &rarr;
                                             </a>
                                         </template>
 

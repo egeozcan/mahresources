@@ -2388,6 +2388,35 @@ accepted Cancel, and said not to pick quietly. Splitting it in two is what the m
   the file. That is an API response change with the CLI, the OpenAPI spec and the panel behind it,
   so it is **carried to Batch 12 as a product decision** rather than taken here.
 
+###### RESOLVED — user decision, 2026-07-30: `cancelled`
+
+The user chose the status, not the response rename: **a cancel accepted while the attempt was
+running reports `cancelled`, even when `AddResource` then succeeded.** The reasoning the audit had
+not weighed properly is that this is the same defect the audit opened with — a control answered
+`200` and then contradicted by the state — and every other control in the package was fixed to stop
+doing exactly that. Two rounds argued for protecting the file and gave up on the control; the file
+did not actually need the status to protect it.
+
+- [x] **The orphan objection is answered by the row, not by the status.** The resource id survives
+      the conversion, so the file the transfer saved is still named by the job that saved it, and
+      `templates/partials/downloadCockpit.tpl` now keys the resource link on `job.resourceId` alone
+      rather than on `job.status === 'completed'` — the link had been gated on the status, so
+      honouring the control without this change would have *hidden* a file that exists. Nothing is
+      deleted to make the status true: a control pressed to stop work is not a request to destroy a
+      file that already exists, and rolling back here would turn Cancel into a delete.
+- [x] **Taken inside `finish`'s lock**, not by the caller reading `cancelRequested` and then calling
+      `finish`. That split is check-then-act, and a cancel landing in the gap would be answered and
+      then contradicted exactly as before, only in a narrower window — the same mistake in
+      miniature.
+- [x] **Both halves guarded, both driven red.** `TestCancel_AcceptedWhileTheFileWasSaved_...` failed
+      with `settled at "completed"` before the change; `TestJobsCockpit_LinksASavedFileWhateverTheJobsFinalStatus`
+      fired both its assertions when the template was reverted. `TestCancel_NotRequested_...` is the
+      positive control, so a fix that reported `cancelled` for every successful download would not
+      pass.
+
+The `{"status":"cancelling"}` response rename is **not** taken: with the status now honest, the
+reply is no longer a lie that needs renaming around. It stays available if the API is revisited.
+
 ##### Not driven red, and said so
 
 - **The exact window in finding 1** — a Pause landing between EOF and the status write. Every
@@ -2968,15 +2997,12 @@ Findings **57, 60/65, 65, 78, 98, 104, 107, 112, 117, 129, 130, 131, 136, 137, 1
     accessible in-app modal as a follow-up.
   - **145** — the main preview link 302s to the raw file while card thumbnails open the in-app
     lightbox. *Proposed default:* make the main preview open the lightbox too.
-  - **Cancelling an in-flight download answers with a fact it cannot promise** (round-3 audit
-    finding, carried here). `POST /v1/jobs/cancel` replies `{"status":"cancelled"}` the moment the
-    intent is recorded, but for an active job the terminal state belongs to the worker: if
-    `AddResource` returns successfully a moment later, the resource exists and the job correctly
-    reports `completed`. Reporting `cancelled` instead would orphan a file the user can already see
-    in the UI, so the *status* is right. *Proposed default:* answer `{"status":"cancelling"}` for an
-    active job and keep `{"status":"cancelled"}` for a paused one, where the transition really is
-    complete at reply time. Deferred because it is a public API change with the `mr` CLI, the
-    OpenAPI spec, the panel and the CLI doctests behind it.
+  - ~~**Cancelling an in-flight download answers with a fact it cannot promise**~~ — **RESOLVED by
+    user decision, 2026-07-30: the status honours the control.** A cancel accepted while the attempt
+    was running now reports `cancelled` even when `AddResource` then succeeded, and the job keeps
+    the id of whatever it saved so the file stays reachable rather than hidden. The proposed
+    `{"status":"cancelling"}` rename was **not** taken — with the status honest, the reply is no
+    longer a promise the worker can break. Full reasoning under the round-3 section above.
   - **The jobs panel still lives inside the header** (round 2's `x-teleport` decision, unchanged).
     Round 3 removed the a11y consequence — the panel declines to open while a modal is up — but not
     the cause. `x-teleport` into `.overlays` remains the structural answer.

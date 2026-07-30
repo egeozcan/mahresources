@@ -570,3 +570,25 @@ func TestPluginActionModal_LeavesTheFocusReturnToItsComponent(t *testing.T) {
 		t.Errorf("the plugin action modal's trap restores focus as well as its own close(), and the two disagree: the trap returns to the control that opened the modal, which for a card action is a menu item the menu has since hidden.\n %s", modal)
 	}
 }
+
+// A cancelled job that saved a file still links it.
+//
+// USER DECISION, 2026-07-30: a cancel accepted after AddResource succeeded reports
+// `cancelled` rather than `completed`, because the control was answered 200 and a job
+// that then says `completed` contradicts it. The resource id is kept on the row so the
+// file is not hidden — that is the half of the decision this guard protects, and it is
+// the easier half to lose, because "show the link when the download completed" is the
+// obvious thing to write and was what the template said before.
+//
+// A markup assertion because CI does not run the browser suite.
+func TestJobsCockpit_LinksASavedFileWhateverTheJobsFinalStatus(t *testing.T) {
+	tc := SetupTestEnv(t)
+	_, body := tc.getHTML(t, "/dashboard")
+
+	if !strings.Contains(body, `x-if="job.resourceId"`) {
+		t.Errorf("the jobs panel has no status-independent resource link. A cancel that lands after the file was saved keeps the resource id precisely so the reader can still reach the file; gating the link on `completed` hides it instead.")
+	}
+	if strings.Contains(body, `x-if="job.status === 'completed' && job.resourceId"`) {
+		t.Errorf("the jobs panel links a saved resource only when the job completed, so a job cancelled after its file was saved names a resource the reader cannot open")
+	}
+}

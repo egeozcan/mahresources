@@ -48,6 +48,11 @@ type blockingResourceCreator struct {
 	mu     sync.Mutex
 	gates  []chan struct{} // parked and not yet released, oldest first
 	parked chan chan struct{}
+
+	// succeedWith makes the parked call return a saved resource instead of an
+	// error, which is the only way to reach the window where a cancel is accepted
+	// while the file is already on disk. Nil keeps the original behaviour.
+	succeedWith *models.Resource
 }
 
 func newBlockingResourceCreator() *blockingResourceCreator {
@@ -59,6 +64,9 @@ func (b *blockingResourceCreator) AddResource(file contracts.File, _ string, _ *
 	gate := make(chan struct{})
 	b.parked <- gate
 	<-gate
+	if b.succeedWith != nil {
+		return b.succeedWith, nil
+	}
 	return nil, errors.New("aborted while the test held the worker")
 }
 
@@ -133,8 +141,17 @@ func trickleServer(t *testing.T) *httptest.Server {
 // AddResource with the job in `downloading`.
 func inFlightJob(t *testing.T) (*DownloadManager, *DownloadJob, *blockingResourceCreator) {
 	t.Helper()
+	return inFlightJobSaving(t, nil)
+}
+
+// inFlightJobSaving is inFlightJob with the parked AddResource set to succeed. The
+// worker is held at the one instant that matters for what Cancel means: the bytes
+// are down and the resource row is about to exist.
+func inFlightJobSaving(t *testing.T, succeedWith *models.Resource) (*DownloadManager, *DownloadJob, *blockingResourceCreator) {
+	t.Helper()
 
 	blocker := newBlockingResourceCreator()
+	blocker.succeedWith = succeedWith
 	dm := createTestManager()
 	dm.resourceCtx = blocker
 	// A zero IdleTimeout makes the timeout watcher fail the read after ~100ms, which
@@ -560,5 +577,69 @@ func TestRetry_AStartedJobIsAlwaysStillInTheRegistry(t *testing.T) {
 		if missing {
 			t.Fatalf("iteration %d: Retry reported success and the job is not in the queue — nothing can list, cancel or retire it now", i)
 		}
+	}
+}
+
+// What Cancel means once the file has already been saved.
+//
+// USER DECISION, 2026-07-30. Rounds 3 and 5 of this audit both argued the other way:
+// a successful AddResource was allowed to report `completed` even though a cancel had
+// been accepted, on the grounds that saying `cancelled` would orphan a file the user
+// can see. That reasoning protects the file and gives up on the control — Cancel was
+// answered 200 and then contradicted, which is the same defect this whole audit began
+// with, and the one thing every other control in this package was fixed to stop doing.
+//
+// So: the status honours the control, and the *row* solves the orphan. A cancelled job
+// keeps the id of whatever it managed to save, and the panel links it. Nothing is
+// deleted to make the status true — cancelling a download is not a request to destroy
+// a file that already exists, and rolling back here would turn a control the user
+// pressed to stop work into one that removes data.
+//
+// The decision has to be taken inside finish's lock rather than by reading
+// cancelRequested and then calling finish: that is check-then-act, and a cancel landing
+// in the gap would be answered and then contradicted exactly as before, just in a
+// narrower window.
+func TestCancel_AcceptedWhileTheFileWasSaved_ReportsCancelledAndStillNamesTheFile(t *testing.T) {
+	saved := &models.Resource{}
+	saved.ID = 4242
+
+	dm, job, blocker := inFlightJobSaving(t, saved)
+
+	// The worker is parked inside AddResource: the bytes are down and the resource is
+	// about to exist, which is the only window this decision is about.
+	if err := dm.Cancel(job.ID); err != nil {
+		t.Fatalf("cancelling a downloading job failed: %v", err)
+	}
+	blocker.releaseOne(t)
+
+	status := settle(t, job)
+	if status != JobStatusCancelled {
+		t.Errorf("Cancel was answered 200 and the job settled at %q — a control that returns success must produce the state it promised", status)
+	}
+
+	snap := job.Snapshot()
+	if snap.ResourceID == nil || *snap.ResourceID != saved.ID {
+		t.Errorf("the cancelled job names resource %v, want %d — the file was saved either way, and a row that does not name it hides it instead of un-creating it", snap.ResourceID, saved.ID)
+	}
+	if snap.CompletedAt == nil {
+		t.Errorf("the cancelled job has no CompletedAt, so job retention will never retire it")
+	}
+}
+
+// The positive control: with no cancel in play the same parked-and-successful path
+// still reports `completed`. Without this, a fix that reported `cancelled` for every
+// successful download would pass the test above.
+func TestCancel_NotRequested_ASavedDownloadStillCompletes(t *testing.T) {
+	saved := &models.Resource{}
+	saved.ID = 777
+
+	_, job, blocker := inFlightJobSaving(t, saved)
+	blocker.releaseOne(t)
+
+	if status := settle(t, job); status != JobStatusCompleted {
+		t.Errorf("a download nobody cancelled settled at %q, want %q", status, JobStatusCompleted)
+	}
+	if snap := job.Snapshot(); snap.ResourceID == nil || *snap.ResourceID != saved.ID {
+		t.Errorf("a completed download names resource %v, want %d", snap.ResourceID, saved.ID)
 	}
 }

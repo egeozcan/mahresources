@@ -1097,3 +1097,29 @@ weakened can be restored.
 The tell is worth naming: **a fix that trades one failure mode for its mirror image is a fix at the
 wrong altitude.** When you find yourself deciding which of two wrong behaviours to prefer, look for
 the input both of them read.
+
+## A control that returned success must produce the state it promised, and protecting the side effect is not a reason to break that
+
+Three rounds of an audit argued that a download whose cancel was accepted could still report
+`completed` if the file had already been saved, because saying `cancelled` would leave a file the
+user can see with no job claiming it. The argument is about a real problem and it reached the wrong
+answer, twice, because it treated the status as the only place the file could be accounted for.
+
+The status is a claim about what the control did. The row is where the side effect gets accounted
+for. Once those are separated the conflict dissolves: report `cancelled`, and keep the resource id
+on the cancelled job so the file is still named and still reachable. Nothing has to be deleted to
+make the status true — and deleting it would have been worse, because a control pressed to *stop
+work* is not a request to *destroy data that already exists*.
+
+Two things generalise:
+
+**When honouring a control seems to require losing information, check whether the information has
+somewhere else to live.** It usually does, and the alternative — leaving the control's answer false
+— is the more expensive lie, because every other caller now has to know the answer is unreliable.
+
+**The UI half is easy to miss and easy to get backwards.** The panel gated its "View resource" link
+on `status === 'completed'`, which is the obvious thing to write and was correct until the status
+could be `cancelled` with a resource attached. Making the status honest without that change would
+have hidden the file — creating the exact orphan the old behaviour was defending against. A
+decision like this is not done when the state machine agrees; it is done when everything that reads
+the state agrees.

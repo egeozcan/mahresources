@@ -76,10 +76,16 @@ type DownloadJob struct {
 //
 // Every control (Cancel, Pause, Resume, Retry) and the worker's terminal write go
 // through one of the claim*/finish methods below, and each of those is a *single*
-// critical section over j.mu. That is the point of them: SetStatus and GetStatus
-// are each safe on their own, but a control that reads the status, decides from
-// that read, and then writes holds no lock across the two — and another control can
-// land in between.
+// critical section over j.mu. That is the point of them: a plain status setter and
+// GetStatus are each safe on their own, but a control that reads the status, decides
+// from that read, and then writes holds no lock across the two — and another control
+// can land in between.
+//
+// There is deliberately no exported plain setter any more. `SetStatus` survived the
+// ownership rewrite unused, and an unguarded exported write is how the rule gets
+// broken next: it skips both j.mu-spanning decisions and the runID check, so any
+// future caller would reintroduce finding 1 without touching any of the code that
+// documents it. Attempt-owned writes go through setStatusForRun.
 //
 // UI bug hunt 2026-07-29, review remediation finding 1: Cancel read `downloading`
 // and so skipped its paused branch; Pause then wrote `paused` and cancelled the
@@ -342,6 +348,29 @@ func (j *DownloadJob) finish(runID uint64, status JobStatus, errMsg string, reso
 	if !j.ownedByRunLocked(runID) {
 		return false
 	}
+
+	// A cancel accepted while this attempt was running outranks its success. The
+	// transfer finished, the resource row exists — and the user was answered 200
+	// {"status":"cancelled"} before any of that landed. Reporting `completed` makes
+	// that answer a lie, which is the defect this whole audit started from and the one
+	// thing every other control here was fixed to stop doing.
+	//
+	// The resource id survives the conversion, and that is what makes honouring the
+	// control safe: the file was saved either way, so dropping the id would hide it
+	// rather than un-create it. The row says both things — cancelled, and here is what
+	// had already been written. Nothing is deleted to make the status true; a control
+	// pressed to stop work is not a request to destroy a file that already exists.
+	//
+	// Decided here rather than by the caller because reading cancelRequested and then
+	// calling finish is check-then-act: a cancel landing in that gap would be answered
+	// and then contradicted exactly as before, only in a narrower window.
+	if status == JobStatusCompleted && j.cancelRequested {
+		status = JobStatusCancelled
+		if errMsg == "" {
+			errMsg = "Cancelled after the file had been saved"
+		}
+	}
+
 	j.Status = status
 	if errMsg != "" {
 		j.Error = errMsg
@@ -371,13 +400,6 @@ func (j *DownloadJob) setProgressLocked(downloaded, total int64) {
 	} else {
 		j.ProgressPercent = -1
 	}
-}
-
-// SetStatus safely updates the job's status
-func (j *DownloadJob) SetStatus(status JobStatus) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	j.Status = status
 }
 
 // SetError safely sets the job's error message
@@ -586,13 +608,13 @@ func (j *DownloadJob) GetResultPath() string {
 	return j.ResultPath
 }
 
-// SetOwnerUserID records the user that created the job. Used for RBAC ownership
-// checks (e.g. only the creator or an admin may download a group-export tar).
-func (j *DownloadJob) SetOwnerUserID(id uint) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	j.ownerUserID = &id
-}
+// The owner is named at construction (JobOptions.OwnerUserID) and never set
+// afterwards. The setter that used to live here was how the export and import
+// handlers did it, and setting it on the job SubmitJob had already returned meant
+// the "added" event went out ownerless — which under -auth is an event the SSE
+// stream drops for its own submitter, so a user's export never appeared in their own
+// panel until the next reconnect. Removing the setter keeps that from being written
+// again.
 
 // GetOwnerUserID returns the user that created the job, or nil if unset.
 func (j *DownloadJob) GetOwnerUserID() *uint {

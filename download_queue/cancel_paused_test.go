@@ -202,10 +202,14 @@ func TestClearFinished_HonoursVisibility(t *testing.T) {
 	mine := uint(7)
 	theirs := uint(9)
 
+	// Written directly rather than through a setter: production names the owner at
+	// construction (JobOptions.OwnerUserID), because a job whose owner arrives after
+	// its "added" event is invisible to its own submitter under -auth. There is no
+	// exported setter to reach for any more, and this test is in-package.
 	a := addTestJob(dm, "mine", JobStatusCompleted)
-	a.SetOwnerUserID(mine)
+	a.ownerUserID = &mine
 	b := addTestJob(dm, "theirs", JobStatusCompleted)
-	b.SetOwnerUserID(theirs)
+	b.ownerUserID = &theirs
 
 	cleared := dm.ClearFinished(func(owner *uint) bool { return owner != nil && *owner == mine })
 	if !slices.Equal(cleared, []string{"mine"}) {
