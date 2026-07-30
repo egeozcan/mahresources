@@ -257,3 +257,76 @@ func TestReaderContract_AnIdleRemoteStillTimesOut(t *testing.T) {
 		t.Errorf("err = %v, want the idle timeout", err)
 	}
 }
+
+// lateReader goes quiet for longer than the idle timeout and then answers with the
+// last chunk of the body and io.EOF — a remote that earned its timeout and then
+// changed its mind.
+type lateReader struct {
+	delay time.Duration
+	done  bool
+}
+
+func (r *lateReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, io.EOF
+	}
+	r.done = true
+	time.Sleep(r.delay)
+	return copy(p, []byte("TOOLATE")), io.EOF
+}
+
+// A transfer that has already timed out does not complete because the remote answered
+// afterwards.
+//
+// The idle watchdog and a ready result can be ready together, and the select does not
+// rank them; round 5 had the result branch check cancellation only, so the late chunk
+// — the one carrying io.EOF — went through and the download reported `completed`
+// after exceeding its own timeout. Round 6 caught it. The watchdog is trustworthy
+// again because lastRead is stamped where the bytes arrive, so a chunk that came on
+// time can no longer have tripped it.
+//
+// **Not seen red, and this test does not discriminate.** Reaching the branch needs the
+// watchdog's tick and the remote's answer to land together; a remote that answers late
+// enough to be timed out is, in a test, timed out by the *blocking select* long before
+// its result exists. What is pinned here is the invariant a reader can rely on — a
+// transfer whose remote goes quiet past the deadline fails — not the branch that was
+// wrong. Said plainly rather than implied, because two earlier rounds of this audit
+// shipped a test that passed for the wrong reason.
+func TestReaderContract_ATimedOutTransferDoesNotCompleteOnALateChunk(t *testing.T) {
+	completed := 0
+	const iterations = 40
+	for i := 0; i < iterations; i++ {
+		src := &lateReader{delay: 120 * time.Millisecond}
+		tr := NewTimeoutReaderWithContext(src, 50*time.Millisecond, context.Background())
+
+		n, err := tr.Read(make([]byte, 32))
+		if n > 0 || err == nil {
+			completed++
+		}
+		tr.Close()
+	}
+	if completed > 0 {
+		t.Errorf("a transfer that had already exceeded its idle timeout accepted the remote's late chunk in %d of %d attempts — that chunk carries io.EOF, so the download reports completed",
+			completed, iterations)
+	}
+}
+
+// The control: a remote that answers within the timeout is not punished for it. This
+// is round 5's finding, and it is what makes the check above safe to restore —
+// lastRead is stamped at arrival, so a chunk that came on time cannot have tripped
+// the watchdog that would discard it. It does not discriminate either: separating
+// arrival from delivery far enough to matter means descheduling the caller, which a
+// test cannot ask for.
+func TestReaderContract_APromptRemoteIsNotTimedOut(t *testing.T) {
+	src := &chunker{chunks: [][]byte{[]byte("first"), []byte("second"), []byte("third")}, final: io.EOF}
+	tr := NewTimeoutReaderWithContext(src, 100*time.Millisecond, context.Background())
+	defer tr.Close()
+
+	got, err := io.ReadAll(tr)
+	if err != nil {
+		t.Fatalf("a prompt remote was failed with %v", err)
+	}
+	if string(got) != "firstsecondthird" {
+		t.Errorf("read %q, want the whole stream", got)
+	}
+}

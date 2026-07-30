@@ -199,6 +199,19 @@ func (tr *TimeoutReaderWithContext) Read(p []byte) (n int, err error) {
 		tr.pending = resultCh
 		go func() {
 			n, err := tr.reader.Read(into)
+			if n > 0 {
+				// Stamped where the bytes *arrive*, not where they are handed over.
+				// The watchdog's question is "has the remote gone quiet", and
+				// answering it from the delivery time makes it two questions: a chunk
+				// that arrived on time but whose delivery was descheduled past the
+				// deadline used to trip a timeout the remote had not earned, and a
+				// remote that really had gone quiet could clear one by answering late.
+				// Both were reported in round 6, as opposite symptoms of this one line
+				// being in the wrong place.
+				tr.mu.Lock()
+				tr.lastRead = time.Now()
+				tr.mu.Unlock()
+			}
 			resultCh <- readResult{n, err}
 		}()
 	}
@@ -232,19 +245,19 @@ func (tr *TimeoutReaderWithContext) Read(p []byte) (n int, err error) {
 		// transfers still handed over its final chunk, and that chunk is the one
 		// carrying io.EOF.
 		//
-		// Cancellation only, and deliberately not the idle watchdog. An idle timeout
-		// asserts that nothing arrived for N seconds — and something did arrive, we
-		// simply had not handed it over yet, so the assertion is false in this instant.
-		// Discarding these bytes would fail a download that finished on the boundary,
-		// on the strength of a claim the bytes themselves disprove. If the remote
-		// really has gone quiet, the *next* read says so.
-		if err := tr.cancelled(); err != nil {
+		// The full check, including the idle watchdog, which round 5 removed from here
+		// and round 6 was right to want back. Round 5's reason was sound — an idle
+		// timeout asserts that nothing arrived for N seconds, and discarding bytes that
+		// had in fact arrived contradicts it — but the remedy was aimed at the symptom.
+		// With lastRead stamped at arrival the watchdog can no longer fire over a
+		// chunk that came on time, so the two are no longer in conflict: if it has
+		// fired, the remote really did go quiet, and a chunk arriving afterwards has
+		// missed its deadline. Letting that one through completed downloads that had
+		// already exceeded their idle timeout.
+		if err := tr.abandoned(); err != nil {
 			return 0, err
 		}
 		if result.n > 0 {
-			tr.mu.Lock()
-			tr.lastRead = time.Now()
-			tr.mu.Unlock()
 			tr.ready = tr.buf[:result.n]
 			tr.pendingErr = result.err
 			n = tr.drain(p)

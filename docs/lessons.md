@@ -1080,3 +1080,20 @@ action, the cancel button, Escape, a backdrop click, and being torn down by a pa
 separate path through the code and each one needs the restore, or needs a documented reason it does
 not (here: the hand-off, because the receiving panel moves focus itself and restoring first would
 flicker through a control the reader is leaving).
+
+## When two symptoms are opposites, the bug is upstream of both
+
+One round of review reported that a timed-out download could still complete, and that an active
+download could fail with a timeout it had not earned. Opposite complaints about the same watchdog —
+and the previous round had already fixed one of them, by making the timeout weaker, which is what
+created the other.
+
+The shared cause was a single line in the wrong place: the "last activity" timestamp was stamped
+where bytes were handed to the consumer rather than where they arrived from the remote. So the
+watchdog was answering "has the consumer been busy lately" while every comment around it said "has
+the remote gone quiet". Move the stamp and both symptoms disappear, and the check that had been
+weakened can be restored.
+
+The tell is worth naming: **a fix that trades one failure mode for its mirror image is a fix at the
+wrong altitude.** When you find yourself deciding which of two wrong behaviours to prefer, look for
+the input both of them read.

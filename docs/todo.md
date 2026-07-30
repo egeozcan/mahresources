@@ -2554,6 +2554,49 @@ was accepted in part, and one was something round 4 had already written down.
       under round 4 finding 3: it is an invariant guard that passed before the fix as well, not a
       regression detector. Agreed and unchanged.
 
+
+#### Round 6 — three findings, and round 5's fix was aimed at the symptom
+
+The rate is falling: 10, then 7, then 3, with the highs gone. Two of the three are opposite
+symptoms of one line being in the wrong place, and that line was one round 5 had looked straight at.
+
+- [x] **1 (medium) — a timed-out transfer completed because the remote answered afterwards.** The
+      watchdog and a ready result can be ready together and the select does not rank them; round 5
+      had the result branch check *cancellation only*, so the late chunk went through — and it is
+      the chunk carrying `io.EOF`, so the download reported `completed` after exceeding its own
+      idle timeout.
+- [x] **2 (medium) — an active download could fail with a timeout it had not earned.** The mirror:
+      a chunk that arrived before the deadline but whose delivery was descheduled past it left
+      `tr.err` set, so the *next* read failed with "idle timeout" against a remote that was sending
+      perfectly well.
+- [x] **The single cause, and why round 5's fix was the wrong shape.** `lastRead` was stamped where
+      bytes were *handed over*, not where they *arrived* — so the watchdog was answering "has the
+      consumer been busy" while claiming to answer "has the remote gone quiet". Round 5 saw symptom
+      2, correctly reasoned that an idle timeout must not discard bytes that disprove it, and
+      removed the watchdog from the result branch. That fixed the symptom and created symptom 1.
+      Stamping `lastRead` in the read goroutine makes the watchdog trustworthy, and the full
+      abandonment check goes back on the result branch: if it has fired, the remote really did go
+      quiet, and a chunk arriving afterwards has missed its deadline.
+
+      **Neither is seen red, and the two tests added do not discriminate** — said plainly, because
+      rounds 4 and 5 each shipped a test that passed for the wrong reason. Reaching branch 1 needs
+      the watchdog's tick and the remote's answer to land together, and a remote late enough to be
+      timed out is timed out by the blocking select long before its result exists; separating
+      arrival from delivery far enough to reach branch 2 means descheduling the caller, which a
+      test cannot ask for. What the two tests pin is the pair of invariants a reader can rely on: a
+      remote that goes quiet past the deadline fails, and a prompt one is not punished.
+- [x] **3 (minor, a11y) — the modal's trap and its own `close()` both restored focus.** Round 5
+      taught `close()` to return focus and left `x-trap` doing the same thing to a different
+      element: the trap restores to whatever had focus when it armed, which for a card action is a
+      menu item the menu has since hidden. On the hand-off path, where `close()` deliberately does
+      not restore, the trap moved focus through that stale control on its way out — a focus stop a
+      screen reader announces, on a control the reader is leaving. `x-trap.noreturn` now, with a Go
+      markup guard, since every close path already goes through `close()`.
+
+Round 6 confirmed clean: the removal-snapshot replacement and its `_isAction` handling, `_opener`
+being replaced on every open, the reload supersession guard, and the positive control added in
+round 5.
+
 #### The a11y "flake" was a real defect, and my first explanation of it was wrong
 
 The first a11y run of this pass reported 1 flaky in `20-a11y-hover-cards.spec.ts` and I wrote it

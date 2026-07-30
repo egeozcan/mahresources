@@ -1,7 +1,14 @@
 <div x-data="pluginActionModal()" x-cloak>
     <template x-if="isOpen">
+        {# .noreturn because close() owns the focus return, and the two disagreed.     #}
+        {# x-trap restores to whatever had focus when it armed — for a card action     #}
+        {# that is a menu item the menu has since hidden, so it cannot take focus and  #}
+        {# the reader landed on <body>. And on the jobs-panel hand-off the trap moved  #}
+        {# focus through that stale control on its way out, which a screen reader      #}
+        {# announces. Every way this dialog closes (backdrop, Escape, the x, Cancel)   #}
+        {# calls close(), so nothing is left without a restore.                        #}
         <div class="plugin-action-overlay" @click.self="close()" @keydown.escape.window="isOpen && close()">
-            <div class="plugin-action-modal" role="dialog" aria-modal="true" aria-labelledby="plugin-action-modal-title" x-trap.noscroll="isOpen && !$store.entityPicker.isOpen">
+            <div class="plugin-action-modal" role="dialog" aria-modal="true" aria-labelledby="plugin-action-modal-title" x-trap.noreturn.noscroll="isOpen && !$store.entityPicker.isOpen">
                 <header class="plugin-action-modal-header">
                     <h3 x-text="action?.label" id="plugin-action-modal-title" class="plugin-action-modal-title"></h3>
                     <button @click="close()" class="plugin-action-modal-close" aria-label="Close">&times;</button>

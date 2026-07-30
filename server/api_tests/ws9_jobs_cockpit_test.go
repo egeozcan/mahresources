@@ -532,3 +532,41 @@ func TestOverlaysLayer_OutranksTheEntireHeaderLayer(t *testing.T) {
 		t.Errorf("the overlays layer is z-index %d and the header layer is %d, so a true modal no longer paints above the jobs panel", overlays, header)
 	}
 }
+
+// The plugin action modal returns focus itself, so its trap must not also try.
+//
+// x-trap restores to whatever had focus when it armed. For an action started from a
+// card menu that is a menu item the menu has since hidden — connected, display:none,
+// unfocusable — so the reader was dropped on <body>; and on the jobs-panel hand-off
+// the trap moved focus through that stale control on its way out, which a screen
+// reader announces. `close()` owns the return now, and every way the dialog closes
+// goes through it, so the trap must be `.noreturn` or the two fight.
+//
+// A markup assertion because CI does not run the browser suite, and because the whole
+// contract is one modifier that is easy to drop in a refactor.
+func TestPluginActionModal_LeavesTheFocusReturnToItsComponent(t *testing.T) {
+	tc := SetupTestEnv(t)
+	_, body := tc.getHTML(t, "/dashboard")
+
+	overlays := between(body, `<div class="overlays">`, "</body>")
+	if overlays == "" {
+		t.Fatalf("no .overlays layer in the page — this test measured nothing")
+	}
+
+	var modal string
+	for _, tag := range openTagsWithin(overlays, "div") {
+		if strings.Contains(tag, "plugin-action-modal") && strings.Contains(tag, `role="dialog"`) {
+			modal = tag
+			break
+		}
+	}
+	if modal == "" {
+		t.Fatalf("no plugin action modal dialog in the overlays layer — this test measured nothing")
+	}
+	if !strings.Contains(modal, "x-trap") {
+		t.Fatalf("the plugin action modal has no focus trap at all:\n %s", modal)
+	}
+	if !strings.Contains(modal, "x-trap.noreturn") {
+		t.Errorf("the plugin action modal's trap restores focus as well as its own close(), and the two disagree: the trap returns to the control that opened the modal, which for a card action is a menu item the menu has since hidden.\n %s", modal)
+	}
+}
