@@ -2,6 +2,7 @@ package api_handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mahresources/auth"
 	"mahresources/constants"
@@ -152,6 +153,31 @@ func jobMutationDenied(ctx DownloadQueueReader, r *http.Request, jobID string) b
 	return !jobVisibleToPrincipal(auth.PrincipalFromContext(r.Context()), job.GetOwnerUserID())
 }
 
+// statusCodeForJobError maps a download-manager refusal to an HTTP status.
+//
+// UI bug hunt 2026-07-29, finding 2: the cancel handler mapped *every* manager
+// error to 404, so "job X already finished" — a state conflict — was reported as a
+// missing job, and a client could not tell the two apart. Pause/resume/retry went
+// through statusCodeForError instead, whose "cannot be" validation pattern claimed
+// them as 400 Bad Request, which is equally wrong: the request was fine, the job's
+// state was not.
+//
+// Both refusals are typed at the manager now, so this reads the type rather than
+// the message. 409 is the state conflict; 404 stays for a job that is not there.
+func statusCodeForJobError(err error) int {
+	var missing *download_queue.NotFoundError
+	if errors.As(err, &missing) {
+		return http.StatusNotFound
+	}
+	var conflict *download_queue.StateConflictError
+	if errors.As(err, &conflict) {
+		return http.StatusConflict
+	}
+	// Anything else is unexpected from these four entry points; fall back to the
+	// shared classifier rather than inventing a code.
+	return statusCodeForError(err, http.StatusBadRequest)
+}
+
 // GetDownloadCancelHandler handles POST /v1/download/cancel
 // Cancels a download job by ID
 func GetDownloadCancelHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
@@ -172,7 +198,7 @@ func GetDownloadCancelHandler(ctx DownloadQueueReader) func(writer http.Response
 		}
 
 		if err := ctx.DownloadManager().Cancel(jobID); err != nil {
-			http_utils.HandleError(err, writer, request, http.StatusNotFound)
+			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}
 
@@ -201,7 +227,7 @@ func GetDownloadPauseHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 		}
 
 		if err := ctx.DownloadManager().Pause(jobID); err != nil {
-			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}
 
@@ -230,7 +256,7 @@ func GetDownloadResumeHandler(ctx DownloadQueueReader) func(writer http.Response
 		}
 
 		if err := ctx.DownloadManager().Resume(jobID); err != nil {
-			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}
 
@@ -259,12 +285,47 @@ func GetDownloadRetryHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 		}
 
 		if err := ctx.DownloadManager().Retry(jobID); err != nil {
-			http_utils.HandleError(err, writer, request, statusCodeForError(err, http.StatusBadRequest))
+			http_utils.HandleError(err, writer, request, statusCodeForJobError(err))
 			return
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(map[string]string{"status": "retrying"})
+	}
+}
+
+// JobsClearer is the capability the "Clear completed" control needs: the download
+// queue plus, when the plugin system is available, the action-job registry. The
+// panel shows both kinds in one list, so clearing only one of them would leave
+// rows the button visibly failed to remove.
+type JobsClearer interface {
+	DownloadQueueReader
+	PluginManager() *plugin_system.PluginManager
+}
+
+// GetJobsClearCompletedHandler handles POST /v1/jobs/clearCompleted.
+//
+// UI bug hunt 2026-07-29, finding 40: finished jobs could not be dismissed. The
+// panel had accumulated 20 permanent entries — completed downloads, completed
+// exports, failed imports — and the only thing that ever removed one was the
+// retention sweep, hours later.
+//
+// Terminal jobs only: pending, downloading, processing and paused rows stay, since
+// clearing a paused download would silently discard a half-transferred file.
+// Scoped to what the caller may see, so a non-admin cannot clear another user's
+// jobs (the same predicate the queue and SSE listings use).
+func GetJobsClearCompletedHandler(ctx JobsClearer) func(writer http.ResponseWriter, request *http.Request) {
+	return func(writer http.ResponseWriter, request *http.Request) {
+		p := auth.PrincipalFromContext(request.Context())
+		visible := func(owner *uint) bool { return jobVisibleToPrincipal(p, owner) }
+
+		cleared := ctx.DownloadManager().ClearFinished(visible)
+		if pm := ctx.PluginManager(); pm != nil {
+			cleared += pm.ClearFinishedActionJobs(visible)
+		}
+
+		writer.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(writer).Encode(map[string]any{"cleared": cleared})
 	}
 }
 

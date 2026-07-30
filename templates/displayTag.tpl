@@ -38,7 +38,9 @@
         >
             <input type="hidden" name="winner" value="{{ tag.ID }}">
             <p>Merge others with this tag?</p>
-            {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='tag' elName='losers' title='Tags To Merge' id=getNextId("autocompleter") %}
+            {# Finding 94: this offered the tag itself, so /tag?id=78 could construct       #}
+            {# "merge modern into modern" and get a 400 back.                               #}
+            {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='tag' elName='losers' title='Tags To Merge' excludeIds=tag.ID id=getNextId("autocompleter") %}
             <p x-show="!hasSelection" x-cloak id="merge-tag-hint" class="mt-2 text-xs text-stone-600">Choose at least one tag to merge into this one.</p>
             <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Merge" disabledWhen="!hasSelection" describedBy="merge-tag-hint" %}</div>
         </form>

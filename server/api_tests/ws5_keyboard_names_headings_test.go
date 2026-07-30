@@ -121,21 +121,28 @@ type heading struct {
 	Text  string
 }
 
-// visibleHeadings returns the page's headings in document order.
+// visibleHeadings returns the page's headings in document order, with the ones
+// belonging to the global modal partials (Edit Tags, Info, Crop image, Jobs,
+// Select…) removed. Those partials are included on every page, they are
+// display:none until opened, and a Go test cannot evaluate offsetParent. Callers
+// that need the whole list use allHeadings.
 //
-// It deliberately keeps headings that sit inside the global modal partials
-// (Edit Tags, Info, Crop image, Jobs, Select…) out of the way by taking only
-// the run before the first of them: those partials are appended to every page
-// by layouts/base.tpl, they are display:none until opened, and a Go test cannot
-// evaluate offsetParent. Callers that need the whole list use allHeadings.
+// This used to *truncate* at the first such heading, on the assumption that the
+// global modals are the last thing in the document. WS10 broke that assumption:
+// the download cockpit's `<h2>Jobs</h2>` moved into the header (findings 83/102),
+// so the truncation point became the *first* heading on every page and seven
+// subtests reported "no <h1> at all — this test measured nothing". The assumption
+// was never a contract, so the filter is positional-independent now.
 func visibleHeadings(body string) []heading {
 	all := allHeadings(body)
-	for i, h := range all {
+	out := make([]heading, 0, len(all))
+	for _, h := range all {
 		if h.Level == 2 && isGlobalModalHeading(h.Text) {
-			return all[:i]
+			continue
 		}
+		out = append(out, h)
 	}
-	return all
+	return out
 }
 
 // globalModalHeadings are the h2s that layouts/base.tpl appends to every page.

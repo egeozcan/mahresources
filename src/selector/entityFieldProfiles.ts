@@ -4,7 +4,7 @@ import {
     type SelectorHttpParameter,
 } from './httpSelectorSource';
 import { createSelector } from './selectorCore';
-import type { SelectorHandle, SelectorKey, SelectorOption } from './types';
+import type { SelectorHandle, SelectorKey, SelectorOption, SelectorSource } from './types';
 
 const PROFILE_SEARCH_DELAY_MS = 200;
 
@@ -75,6 +75,24 @@ export interface EntityFieldProfileOptions<TRaw extends SelectorEntityValue> {
     readonly form?: EntityFieldFormInput;
     readonly parameters?: () => Readonly<Record<string, SelectorHttpParameter>>;
     readonly categoryDecoration?: boolean;
+    /**
+     * Ids this field must never offer, read at search time.
+     *
+     * UI bug hunt 2026-07-29, finding 94: a tag's own page offered *the tag itself*
+     * in its "Tags To Merge" picker, so an impossible merge could be constructed and
+     * the server answered `winner cannot also be the loser` with HTTP 400. The same
+     * holds for the group and resource merge forms, and for the bulk toolbar's
+     * "Merge Winner" picker, where the excluded set is the rows currently ticked.
+     *
+     * A callback rather than a value because that dynamic case has to be read per
+     * search: the selection changes while the field is on screen.
+     *
+     * Filtered client-side, after mapping: the search endpoints take no exclusion
+     * parameter, and adding one to /v1/tags, /v1/groups and /v1/resources for a UI
+     * affordance would be a wider change than the finding warrants. The server-side
+     * refusal is the real guard and stays.
+     */
+    readonly excludeValues?: () => readonly (string | number)[];
 }
 
 export interface TagSuggestionSourceInput {
@@ -101,6 +119,7 @@ export interface DynamicEntitySelectorProfileOptions<TRaw extends SelectorEntity
     readonly selected?: readonly TRaw[];
     readonly maximum?: number;
     readonly parameters?: () => Readonly<Record<string, SelectorHttpParameter>>;
+    readonly excludeValues?: () => readonly (string | number)[];
 }
 
 export interface TagFieldProfileOptions<TRaw extends SelectorEntityValue>
@@ -144,17 +163,46 @@ interface BuildSelectorProfileOptions<TRaw extends SelectorEntityValue> {
     readonly maximum?: number;
     readonly form?: EntityFieldFormInput;
     readonly categoryDecoration?: boolean;
+    readonly excludeValues?: () => readonly (string | number)[];
+}
+
+/**
+ * Wraps a source so `search` drops options whose key is excluded (finding 94).
+ *
+ * It wraps the source rather than filtering inside the core, so `create` is
+ * untouched and the debounce/abort behaviour is whatever the wrapped source does.
+ * Keys are compared as strings because a form-supplied exclusion list arrives from
+ * a template as numbers while an option key may be either.
+ */
+function withExcludedValues<TRaw>(
+    source: SelectorSource<TRaw>,
+    excludeValues: () => readonly (string | number)[],
+): SelectorSource<TRaw> {
+    const wrapped: SelectorSource<TRaw> = {
+        search: async (query, signal) => {
+            const results = await source.search(query, signal);
+            const excluded = new Set((excludeValues() ?? []).map(String));
+            if (excluded.size === 0) return results;
+            return results.filter((option) => !excluded.has(String(option.key)));
+        },
+    };
+    if (source.create) wrapped.create = source.create.bind(source);
+    return wrapped;
 }
 
 function buildSelectorProfile<TRaw extends SelectorEntityValue>(
     options: BuildSelectorProfileOptions<TRaw>,
 ): EntityFieldProfile<TRaw> {
-    const source = createDebouncedSelectorSource(createHttpSelectorSource({
+    const http = createHttpSelectorSource({
         searchUrl: options.searchUrl,
         createUrl: options.createUrl,
         parameters: options.parameters,
         mapOption: mapEntityOption<TRaw>,
-    }), PROFILE_SEARCH_DELAY_MS);
+    });
+    const filtered = options.excludeValues
+        ? withExcludedValues(http, options.excludeValues)
+        : http;
+    const source = createDebouncedSelectorSource(filtered, PROFILE_SEARCH_DELAY_MS);
     const selector = createSelector({
         source,
         selected: options.selected?.map(mapEntityOption),
@@ -211,6 +259,7 @@ function buildEntityFieldProfile<TRaw extends SelectorEntityValue>(
         maximum: options.maximum,
         form: options.form,
         categoryDecoration: options.categoryDecoration,
+        excludeValues: options.excludeValues,
     });
 }
 
@@ -249,6 +298,7 @@ export function createDynamicEntitySelectorProfile<TRaw extends SelectorEntityVa
         selected: options.selected,
         multiple: options.multiple,
         maximum: options.maximum,
+        excludeValues: options.excludeValues,
     });
 }
 

@@ -10,6 +10,12 @@
         {% if max %}maximum: parseInt('{{ max }}') || 0,{% endif %}
         {% if categoryDecoration %}categoryDecoration: true,{% endif %}
         {% if parameters %}parameters: () => ({{ parameters }}),{% endif %}
+        {# Finding 94: a merge form offered the entity being merged *into* as one of #}
+        {# the things to merge, so an impossible merge could be built and the server #}
+        {# answered `winner cannot also be the loser` with a 400. `excludeIds` is a  #}
+        {# JS list expression, evaluated per search — the bulk toolbar's winner      #}
+        {# picker has to exclude whatever rows are ticked right now.                 #}
+        {% if excludeIds %}excludeValues: () => ([{{ excludeIds }}]),{% endif %}
     })"
         data-selector-field="{{ elName }}"
         data-selector-profile="{{ profile }}"

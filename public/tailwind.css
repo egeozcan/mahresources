@@ -2597,6 +2597,9 @@
   .bg-stone-300 {
     background-color: var(--color-stone-300);
   }
+  .bg-stone-400 {
+    background-color: var(--color-stone-400);
+  }
   .bg-stone-500 {
     background-color: var(--color-stone-500);
   }

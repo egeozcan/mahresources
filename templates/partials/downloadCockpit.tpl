@@ -4,12 +4,21 @@
     @keydown.escape.window="close()"
     class="download-cockpit"
 >
-    <!-- Floating trigger button (always visible in corner) -->
+    {# Findings 83 and 102: this was a `fixed bottom-4 right-4 z-40` FAB, and the  #}
+    {# bottom-right corner is where real controls live. It won the hit test over   #}
+    {# the pagination "Next" link on every paginated page (measured at 1280x900 on #}
+    {# /queries: the link spans x 1194-1264 and only x<=1220 reached it), and at   #}
+    {# 1280x720 it sat on top of the /logs "After" date picker.                    #}
+    {#                                                                            #}
+    {# No fixed corner can be safe: the page scrolls underneath a fixed overlay,   #}
+    {# so whatever is in that corner at a given scroll offset is covered. The      #}
+    {# trigger lives in the header instead — which finding 120's fix makes         #}
+    {# genuinely sticky, so it is *more* reachable than the FAB was, not less.     #}
     <button
         @click="toggle($event)"
         data-testid="cockpit-trigger"
-        class="fixed bottom-4 right-4 z-40 flex items-center gap-2 px-3 py-2 bg-amber-700 text-white rounded-full shadow-lg hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:ring-offset-2 transition-all"
-        :class="{ 'animate-pulse': hasActiveJobs }"
+        class="cockpit-trigger p-1 flex items-center gap-1 rounded focus:outline-none focus:ring-2 focus:ring-amber-600"
+        :class="{ 'cockpit-trigger--busy': hasActiveJobs }"
         title="Jobs (Ctrl+Shift+D / Cmd+Shift+D)"
         :aria-label="isOpen ? 'Close jobs panel' : 'Open jobs panel'"
         :aria-expanded="isOpen.toString()"
@@ -18,7 +27,7 @@
         <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
         </svg>
-        <span x-show="activeCount > 0" x-text="activeCount" class="px-1.5 py-0.5 text-xs bg-white text-amber-700 rounded-full font-bold"></span>
+        <span x-show="activeCount > 0" x-text="activeCount" class="cockpit-trigger-count"></span>
     </button>
 
     <!-- Panel overlay and content -->
@@ -62,11 +71,22 @@
                                   'bg-red-500': connectionStatus === 'disconnected'
                               }"></span>
                     </div>
-                    <button @click="close()" class="p-1 text-stone-500 hover:text-stone-700 rounded focus:outline-none focus:ring-2 focus:ring-amber-600" aria-label="Close jobs panel">
-                        <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                    </button>
+                    <div class="flex items-center gap-2">
+                        {# Finding 40: there was no way to dismiss a finished job. The #}
+                        {# panel accumulated 20 permanent rows across sessions.        #}
+                        <template x-if="hasFinishedJobs">
+                            <button @click="clearCompleted()"
+                                    data-testid="cockpit-clear-completed"
+                                    class="text-xs text-stone-600 hover:text-stone-900 underline rounded focus:outline-none focus:ring-2 focus:ring-amber-600">
+                                Clear completed
+                            </button>
+                        </template>
+                        <button @click="close()" class="p-1 text-stone-500 hover:text-stone-700 rounded focus:outline-none focus:ring-2 focus:ring-amber-600" aria-label="Close jobs panel">
+                            <svg aria-hidden="true" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Job list -->
@@ -118,22 +138,32 @@
                                         <!-- URL preview / action subtitle -->
                                         <p class="text-xs text-stone-600 truncate mt-0.5" x-text="getJobSubtitle(job)"></p>
 
-                                        <!-- Progress bar (for downloading) -->
-                                        <template x-if="job.status === 'downloading'">
+                                        {# Progress readout. Finding 41: this branch was       #}
+                                        {# `job.status === 'downloading'` only, so pausing     #}
+                                        {# collapsed the row to "Paused <url> Resume" — bytes, #}
+                                        {# percent, speed and bar all gone, though the server  #}
+                                        {# keeps every one of them.                            #}
+                                        {# Finding 113: the bar's name was the bare prefix     #}
+                                        {# "Download progress: " and aria-valuenow was pinned  #}
+                                        {# at 0 for an unknown total.                          #}
+                                        <template x-if="showsProgress(job)">
                                             <div class="mt-2">
                                                 <div class="flex justify-between text-xs text-stone-500 mb-1">
                                                     <span x-text="formatProgress(job)"></span>
-                                                    <span x-text="formatSpeed(job)" class="text-amber-700 font-medium"></span>
+                                                    {# No speed for a paused job: it is not moving, and the #}
+                                                    {# status pill beside the title already says "Paused".   #}
+                                                    <span x-text="job.status === 'paused' ? '' : formatSpeed(job)" class="text-amber-700 font-medium"></span>
                                                 </div>
                                                 <div class="w-full bg-stone-200 rounded-full h-2"
                                                      data-testid="cockpit-progressbar"
                                                      role="progressbar"
-                                                     :aria-valuenow="Math.round(getProgressPercent(job))"
+                                                     :aria-valuenow="progressValueNow(job)"
+                                                     :aria-valuetext="progressValueText(job)"
                                                      aria-valuemin="0"
                                                      aria-valuemax="100"
-                                                     :aria-label="'Download progress: ' + formatProgress(job)">
-                                                    <div class="bg-amber-700 h-2 rounded-full transition-all duration-300"
-                                                         :class="{ 'animate-pulse': job.totalSize <= 0 }"
+                                                     :aria-label="progressLabel(job)">
+                                                    <div class="h-2 rounded-full transition-all duration-300"
+                                                         :class="{ 'animate-pulse': job.totalSize <= 0 && job.status !== 'paused', 'bg-stone-400': job.status === 'paused', 'bg-amber-700': job.status !== 'paused' }"
                                                          :style="'width: ' + (job.totalSize > 0 ? getProgressPercent(job) : 100) + '%'"></div>
                                                 </div>
                                             </div>
@@ -249,8 +279,11 @@
                                                 </button>
                                             </template>
 
-                                            <!-- Cancel button (for active jobs, not paused) -->
-                                            <template x-if="isActive(job)">
+                                            {# Cancel. Finding 2: gated on isActive(job), which  #}
+                                            {# excludes `paused`, so a paused 1 GB download      #}
+                                            {# offered only Resume and the API answered a cancel #}
+                                            {# with 404 "already finished".                      #}
+                                            <template x-if="canCancel(job)">
                                                 <button @click="cancelJob(job.id)"
                                                         class="text-xs text-red-700 hover:text-red-800 focus:outline-none focus:underline">
                                                     Cancel

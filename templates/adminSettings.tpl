@@ -30,7 +30,24 @@
           </template>
         </label>
         <p class="text-xs text-stone-500 mt-0.5">{{ s.Description }}</p>
-        <div class="mt-2 flex flex-wrap gap-2 items-start">
+        {# Finding 33: typing a value and pressing Enter did nothing at all — no    #}
+        {# save, no message — because these controls were not inside a <form>, so   #}
+        {# there was nothing for Enter to submit. The value simply sat there looking #}
+        {# edited (measured: hash_ahash_threshold current=5 overridden=False after   #}
+        {# filling 6 and pressing Enter).                                           #}
+        {#                                                                         #}
+        {# Note the Save button is type="submit" below, and has to be: a form with   #}
+        {# no submit button does not submit on Enter once more than one field blocks #}
+        {# implicit submission, and this row has two text inputs (value and reason). #}
+        {# novalidate, and it is load-bearing. Finding 115 made these number inputs   #}
+        {# with min/max, so wrapping them in a form put native constraint validation  #}
+        {# in front of Save: an out-of-bounds value was blocked with a browser bubble  #}
+        {# and save() never ran, which took away the app's own inline message (the one #}
+        {# that names the bounds and is announced through the row's live region) and    #}
+        {# broke admin-settings.spec.ts's "out-of-bounds value shows inline error".     #}
+        {# The min/max attributes stay — they drive the spinner and are exposed to      #}
+        {# assistive tech — but the validation that speaks stays in charge.             #}
+        <form class="mt-2 flex flex-wrap gap-2 items-start" novalidate @submit.prevent="save()">
           {# Finding 115: every setting rendered as a text box, so "abc" in an #}
           {# int64 field went to the server and came back 400 in the console. #}
           <input :id="'setting-' + key"
@@ -46,8 +63,7 @@
                  x-model="reason"
                  class="border border-stone-300 rounded px-2 py-1 text-sm w-48 focus:outline-none focus:ring-2 focus:ring-amber-500"
                  :aria-label="'Reason for ' + label" />
-          <button type="button"
-                  @click="save()"
+          <button type="submit"
                   class="inline-flex items-center px-3 py-1 text-sm font-medium text-white bg-amber-700 rounded hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600">
             Save
           </button>
@@ -58,7 +74,7 @@
               Reset
             </button>
           </template>
-        </div>
+        </form>
         <p :id="'hint-' + key" class="text-xs text-stone-500 mt-1 font-mono">
           Boot default: <span x-text="bootDefaultDisplay"></span>
           <template x-if="minDisplay">

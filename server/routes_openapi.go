@@ -2298,6 +2298,18 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 	})
 
+	// UI bug hunt finding 40: the jobs panel had no way to dismiss a finished job.
+	// Clears completed/failed/cancelled jobs the caller may see; active and paused
+	// jobs are kept.
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/jobs/clearCompleted",
+		OperationID:          "jobsClearCompleted",
+		Summary:              "Dismiss every finished job (completed, failed or cancelled)",
+		Tags:                 []string{"jobs"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
 	r.Register(openapi.RouteInfo{
 		Method:              http.MethodPost,
 		Path:                "/v1/jobs/pause",

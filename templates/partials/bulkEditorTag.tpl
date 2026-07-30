@@ -15,7 +15,11 @@
             <input type="hidden" name="losers" :value="id">
         </template>
         <div class="flex gap-2 items-start">
-            {% include "/partials/form/autocompleter.tpl" with profile='single' entity='tag' max=1 elName='winner' title='Merge Winner' id=getNextId("tag_autocompleter") %}
+            {# Finding 94's other surface: the winner picker offered the rows that are    #}
+            {# ticked as losers, which is the same impossible merge from the other side. #}
+            {# The exclusion is read per search because the ticked set changes while    #}
+            {# the field is on screen.                                                 #}
+            {% include "/partials/form/autocompleter.tpl" with profile='single' entity='tag' max=1 elName='winner' title='Merge Winner' excludeIds='...$store.bulkSelection.selectedIds' id=getNextId("tag_autocompleter") %}
             <div class="mt-7">{% include "/partials/form/searchButton.tpl" with text="Merge" %}</div>
         </div>
     </form>

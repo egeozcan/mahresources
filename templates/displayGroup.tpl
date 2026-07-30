@@ -112,7 +112,9 @@
         >
             <input type="hidden" name="winner" value="{{ group.ID }}">
             <p>Merge others with this group?</p>
-            {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='group' categoryDecoration=true elName='losers' title='Groups To Merge' id=getNextId("autocompleter") %}
+            {# Finding 94, same shape as the tag page: the group being merged into was      #}
+            {# offered as one of the groups to merge.                                       #}
+            {% include "/partials/form/autocompleter.tpl" with profile='multi' entity='group' categoryDecoration=true elName='losers' title='Groups To Merge' excludeIds=group.ID id=getNextId("autocompleter") %}
             <p x-show="!hasSelection" x-cloak id="merge-group-hint" class="mt-2 text-xs text-stone-600">Choose at least one group to merge into this one.</p>
             <div class="mt-2">{% include "/partials/form/searchButton.tpl" with text="Merge" disabledWhen="!hasSelection" describedBy="merge-group-hint" %}</div>
         </form>

@@ -167,6 +167,7 @@ Removed jobs trigger `"removed"` SSE events so clients can update their UI.
 | `POST` | `/v1/jobs/pause` | Pause a download |
 | `POST` | `/v1/jobs/resume` | Resume a download |
 | `POST` | `/v1/jobs/retry` | Retry a download |
+| `POST` | `/v1/jobs/clearCompleted` | Dismiss every finished job (completed, failed, cancelled) |
 
 ## Related Pages
 

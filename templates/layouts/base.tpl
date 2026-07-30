@@ -41,6 +41,13 @@
         {% include "/partials/menu.tpl" %}
         <div class="flex items-center gap-1 flex-shrink-0">
             {% include "/partials/globalSearch.tpl" %}
+            {# Findings 83/102: the jobs trigger used to be a fixed bottom-right FAB #}
+            {# that won the hit test over the pagination "Next" link on every        #}
+            {# paginated page and over the /logs date picker at 1280x720. It is      #}
+            {# header chrome now. The panel it opens is still position:fixed, so it   #}
+            {# renders over the page from here — see .overlays' z-index note in       #}
+            {# public/index.css for why the true modals still stack above it.        #}
+            {% include "/partials/downloadCockpit.tpl" %}
             <div x-cloak x-data="{ active: false }" class="settings relative">
                 <button class="p-1 text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)" title="Settings" aria-label="Settings" :aria-expanded="active.toString()" aria-haspopup="true"><span aria-hidden="true">⚙</span></button>
                 <div x-show="active" x-cloak class="absolute right-0 top-full mt-1 w-48 bg-white shadow-lg ring-1 ring-black/5 z-50 p-3 rounded">
@@ -139,7 +146,16 @@
             {% block body %}{% endblock %}
         </main>
     </div>
-    <footer class="footer sticky bottom-0 bg-white">
+    {# The `sticky bottom-0` here was as inert as the header's declaration, for the #}
+    {# identical reason (finding 120), and activating it was measured re-creating   #}
+    {# finding 102: with the footer pinned, `elementFromPoint` over the /logs        #}
+    {# "After" date input at 1280x720 returned an <a> from the pagination row        #}
+    {# instead of the input. A bar pinned to the viewport bottom covers page content #}
+    {# at *every* scroll offset, which is the same objection that moved the jobs     #}
+    {# trigger out of the corner — so the declaration is dropped rather than made    #}
+    {# to work. Pinned as a Go assertion, with this reason, in                       #}
+    {# server/api_tests/ws10_global_chrome_test.go.                                  #}
+    <footer class="footer bg-white">
         {% include "/partials/pagination.tpl" %}
         {% block footer %}{% endblock %}
         {% plugin_slot "page_bottom" %}
@@ -147,7 +163,6 @@
     <div class="overlays">
         {% include "/partials/lightbox.tpl" %}
         {% include "/partials/pasteUpload.tpl" %}
-        {% include "/partials/downloadCockpit.tpl" %}
         {% include "/partials/pluginActionModal.tpl" %}
         {% include "partials/entityPicker.tpl" %}
         {% plugin_slot "scripts" %}

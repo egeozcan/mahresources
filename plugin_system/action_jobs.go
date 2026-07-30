@@ -386,6 +386,43 @@ func (pm *PluginManager) notifyActionJobSubscribers(eventType string, job *Actio
 	}
 }
 
+// ClearFinishedActionJobs removes every completed or failed action job the caller
+// may see and returns how many went. Running and pending jobs are kept.
+//
+// UI bug hunt 2026-07-29, finding 40: the jobs panel shows download jobs and
+// plugin action jobs in one list, so a "Clear completed" that only reached the
+// download queue would leave rows the button visibly failed to remove.
+//
+// visible is the caller's RBAC predicate over the job's owner, matching the
+// filtering the queue and the SSE stream already apply.
+func (pm *PluginManager) ClearFinishedActionJobs(visible func(owner *uint) bool) int {
+	var removed []*ActionJob
+
+	pm.actionJobsMu.Lock()
+	for id, job := range pm.actionJobs {
+		job.mu.RLock()
+		status := job.Status
+		owner := job.ownerUserID
+		job.mu.RUnlock()
+
+		if status != "completed" && status != "failed" {
+			continue
+		}
+		if visible != nil && !visible(owner) {
+			continue
+		}
+		delete(pm.actionJobs, id)
+		removed = append(removed, job)
+	}
+	pm.actionJobsMu.Unlock()
+
+	for _, job := range removed {
+		pm.notifyActionJobSubscribers("removed", job)
+	}
+
+	return len(removed)
+}
+
 // cleanupOldActionJobs removes completed/failed action jobs older than actionJobRetention.
 func (pm *PluginManager) cleanupOldActionJobs() {
 	var removed []*ActionJob

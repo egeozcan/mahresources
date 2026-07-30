@@ -39,14 +39,38 @@ html {
     min-height: 100%;
     grid-gap: 1rem;
     max-width: 100vw;
-    overflow-x: hidden;
+    /* Finding 120: this was `overflow-x: hidden`, and the header's
+       `position: sticky; top: 0` never did anything — measured, the header scrolled
+       clean off (bottom = -1464px at scrollY 1500). `overflow-x: hidden` forces the
+       other axis to `auto`, which makes <body> a scroll container, and a sticky box
+       sticks to its nearest scroll container's scrollport rather than to the
+       viewport. <body>'s box is exactly as tall as its content, so that scrollport
+       never moves.
+
+       `clip` clips the same overflow — the guard above still holds — without
+       creating a scroll container, so the header (and the footer, which declared
+       `sticky bottom-0` and was inert for the identical reason) pin as intended.
+       Measured after: headerTop 0 and footerTop 674 of a 720px viewport at
+       scrollY 1200, at 1280x720 and at 390x844.
+
+       Note what this is *not*: the report and the plan both blamed <body> being
+       display:grid — a grid item's containing block being its own row. Changing this
+       one declaration with the grid untouched is what fixes it. */
+    overflow-x: clip;
 }
 
+/*
+ * Findings 83/102: the jobs cockpit moved out of here and into the header, so its
+ * panel now paints inside the header's stacking context (z-index 40). The overlays
+ * layer is raised one step so the true modals — the lightbox, paste-upload, the
+ * plugin action modal and the entity picker — still stack above that panel, which
+ * is the order they had when the cockpit was the third of five includes here.
+ */
 .overlays {
     position: fixed;
     inset: 0;
     pointer-events: none;
-    z-index: 40;
+    z-index: 41;
 }
 
 .overlays > * {
@@ -102,6 +126,45 @@ html {
 .navbar-toggle:hover {
     background-color: rgba(0, 0, 0, 0.06);
     color: var(--nav-hover);
+}
+
+/*
+ * Findings 83/102: the jobs trigger is header chrome now, not a floating corner
+ * button. It reads like the ⚙ and ⌘K controls beside it; the only extra state it
+ * needs is "something is running", which the old FAB expressed with animate-pulse
+ * over an amber circle. Here the icon takes the accent colour and the count badge
+ * carries the emphasis, because a pulsing element in the header is a distraction
+ * on every page rather than a glance at a corner.
+ */
+.cockpit-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    height: 36px;
+    color: var(--nav-text);
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+.cockpit-trigger:hover {
+    background-color: rgba(0, 0, 0, 0.06);
+    color: var(--nav-hover);
+}
+
+.cockpit-trigger--busy {
+    color: var(--nav-active-text, #b45309);
+}
+
+.cockpit-trigger-count {
+    padding: 0 0.35rem;
+    border-radius: 999px;
+    background: #b45309;
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1.35;
 }
 
 .navbar-links {

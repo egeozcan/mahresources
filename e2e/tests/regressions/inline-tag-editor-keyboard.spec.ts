@@ -66,6 +66,19 @@ test.describe('Inline tag editor keyboard accessibility', () => {
     fs.unlinkSync(tmpFile);
   });
 
+  /**
+   * The resources list, scoped to this file's own owner group.
+   *
+   * Unscoped, `/resources` is every resource on a server the whole worker shares and
+   * `openTagEditor` clicks the *first* card — so which resource these tests edit, and
+   * which tag the suggestion list ranks first, were both decided by whatever another
+   * spec happened to create last. That produced a 1-in-1823 failure in the WS10 run:
+   * the highlighted suggestion was `erg-<runId>`, a tag `tests/mrql/ergonomics.spec.ts`
+   * puts on four resources, and the pill for it never appeared. Scoping makes the card
+   * this file's own.
+   */
+  const resourcesUrl = () => `/resources?OwnerId=${ownerGroupId}`;
+
   /** Click the first Edit Tags button and return the tag editor combobox. */
   async function openTagEditor(page: import('@playwright/test').Page) {
     const editBtn = page.locator('button.edit-in-list').first();
@@ -80,7 +93,7 @@ test.describe('Inline tag editor keyboard accessibility', () => {
   test('Enter selects the first matching tag without navigating away', async ({
     page,
   }) => {
-    await page.goto('/resources');
+    await page.goto(resourcesUrl());
 
     const combobox = await openTagEditor(page);
 
@@ -104,7 +117,7 @@ test.describe('Inline tag editor keyboard accessibility', () => {
   });
 
   test('ArrowDown reopens a closed dropdown', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(resourcesUrl());
 
     const combobox = await openTagEditor(page);
 
@@ -124,7 +137,7 @@ test.describe('Inline tag editor keyboard accessibility', () => {
   test('Enter with empty input selects the first tag without navigating', async ({
     page,
   }) => {
-    await page.goto('/resources');
+    await page.goto(resourcesUrl());
 
     const combobox = await openTagEditor(page);
 
@@ -149,7 +162,7 @@ test.describe('Inline tag editor keyboard accessibility', () => {
   });
 
   test('ArrowDown and Enter navigate to and commit the virtual create row', async ({ page }) => {
-    await page.goto('/resources');
+    await page.goto(resourcesUrl());
 
     const combobox = await openTagEditor(page);
     const name = `kbtag_virtual_${Date.now()}`;
@@ -180,7 +193,7 @@ test.describe('Inline tag editor keyboard accessibility', () => {
     fs.unlinkSync(tmpFile);
 
     try {
-      await page.goto('/resources');
+      await page.goto(resourcesUrl());
 
       // Find the Edit Tags button for our specific resource
       const article = page.locator('article', {
@@ -241,7 +254,7 @@ test.describe('Inline tag editor keyboard accessibility', () => {
     fs.unlinkSync(tmpFile);
 
     try {
-      await page.goto('/resources');
+      await page.goto(resourcesUrl());
 
       const combobox = await openTagEditor(page);
       // Wait for the search this query actually triggered rather than for a fixed delay, so a

@@ -6,14 +6,15 @@ relatedCmds: job submit, job pause, jobs list
 
 # Long
 
-Stop an active download job. Cancel only works while the job is still
-in progress (pending, downloading, or processing); the server rejects
-cancellation of jobs that have already finished, been cancelled, or are
-paused. On success the server marks the job `cancelled` and leaves it
-in the queue for inspection.
+Stop a job that has not finished. Cancel works while the job is pending,
+downloading, processing, or **paused**; the server rejects cancellation of
+jobs that have already completed, failed, or been cancelled, answering
+HTTP 409 Conflict. On success the server marks the job `cancelled` and
+leaves it in the queue for inspection.
 
 Use `jobs list` to see which jobs are eligible — any job with a status
-other than pending, downloading, or processing cannot be cancelled.
+other than pending, downloading, processing, or paused cannot be
+cancelled.
 
 # Example
 

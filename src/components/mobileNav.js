@@ -24,6 +24,13 @@ export function mobileNav() {
     adminOpen: false,
     pluginsOpen: false,
     currentPath: '',
+    /**
+     * The nav section the current URL belongs to (findings 116/121), which is not
+     * the same as currentPath: /log?id=5 belongs to the Logs entry. The Admin
+     * dropdown button compares against this so it stays lit on a detail page,
+     * matching the links inside it, which the server marks.
+     */
+    activeNav: '',
 
     /** The control that opened the panel, so focus can go back to it. */
     _trigger: null,
@@ -33,6 +40,7 @@ export function mobileNav() {
     initMobileNav() {
       this._root = this.$el;
       this.currentPath = this.$el.dataset.currentPath || '';
+      this.activeNav = this.$el.dataset.activeNav || '';
 
       this.$watch('mobileOpen', (open) => {
         if (open) return;

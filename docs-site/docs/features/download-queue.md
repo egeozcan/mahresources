@@ -107,6 +107,7 @@ These are the canonical routes. Plugin action jobs appear only in the SSE event 
 | `POST` | `/v1/jobs/pause` | Pause a download |
 | `POST` | `/v1/jobs/resume` | Resume a download |
 | `POST` | `/v1/jobs/retry` | Retry a download |
+| `POST` | `/v1/jobs/clearCompleted` | Dismiss every finished job (completed, failed, cancelled) |
 | `GET` | `/v1/jobs/events` | SSE event stream (all job types) |
 
 ## SSE Event Format

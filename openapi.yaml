@@ -3352,6 +3352,17 @@ paths:
             summary: Cancel a job (canonical path)
             tags:
                 - jobs
+    /v1/jobs/clearCompleted:
+        post:
+            operationId: jobsClearCompleted
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Dismiss every finished job (completed, failed or cancelled)
+            tags:
+                - jobs
     /v1/jobs/download/submit:
         post:
             operationId: jobsSubmitDownload

@@ -227,7 +227,7 @@ Statuses are filled in during Phase 1.
 | # | Sev | Kind | Provenance | WS | Verify | Status |
 |---|---|---|---|---|---|---|
 | 1 | high | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — resource named `'205'`, Description survived  · **FIXED** |
-| 2 | high | bug | recovered | WS9 | verify | |
+| 2 | high | bug | recovered | WS9 | verify | **CONFIRMED** — live: pause 200 `{"status":"paused"}`, then `POST /v1/jobs/cancel` → HTTP 404 `{"error":"job 7b3477b3 already finished"}`, and the panel offered only Resume  · **FIXED, third cause found** — `CanCancel()` includes `paused`, the paused transition happens in `Cancel` itself (no goroutine is left to observe the context), and the refusals are typed so 404/409 are told apart. After: cancel-while-paused 200 → status `cancelled`; cancel-when-finished **409**; unknown id still 404 |
 | 3 | high | bug | recovered | WS7 | verify | **CONFIRMED** — after opening at 390×844: `aria-expanded=true`, panel `display:block visibility:visible opacity:1` at 390×844, `elementFromPoint` over the hamburger returns `navbar-mobile-panel`, and the panel contains **zero** buttons. After Escape every value is byte-identical — Escape is a no-op · **FIXED** — Escape via `@keydown.escape.window`, a 44px Close button that x-trap lands focus on, and the toggle raised above the panel's z-index so it stays hit-testable. Focus returns to the toggle, deferred two frames past the trap teardown. Deliberately **not** `role="dialog"` — see below |
 | 4 | high | a11y | recovered | WS4 | verify | **CONFIRMED, worse than reported** — with an empty query the **first** Tab leaves; Shift+Tab leaves immediately too  · **FIXED** — `x-trap.noscroll.noreturn` |
 | 5 | high | a11y | verified-run | WS4 | spot | **CONFIRMED** — `BODY` at all 8 samples over 1.4s after ArrowRight  · **FIXED** — `render()` restores the roving target when focus was inside |
@@ -258,15 +258,15 @@ Statuses are filled in during Phase 1.
 | 30 | med | a11y | recovered | WS4 | verify | **CONFIRMED** — `BODY` at all 5 samples after Escape  · **FIXED** — `captureTrigger` + `restoreFocus`, `document.activeElement` fallback for Cmd+K |
 | 31 | med | bug | recovered | WS6 | verify | **PARTLY CONFIRMED, symptom stale** — the reported "No results found" has not been shown since 652917e5 (already on master); at HEAD the dialog body is **blank**  · **FIXED** — new below-threshold state |
 | 32 | med | ux | recovered | WS6 | verify | **CONFIRMED** — 15 shown, nothing said, `/search` 404  · **FIXED** — `totalCapped` + "See all N+" row + a real `/search` page. Report's `total=50` reading corrected: 50 is the service ceiling, not the match count |
-| 33 | med | ux | recovered | WS10 | verify | |
+| 33 | med | ux | recovered | WS10 | verify | **CONFIRMED** — `{"inForm":false}`, and filling `hash_ahash_threshold=6` + Enter left `current=5 overridden=False`  · **FIXED** — the row's controls are a `<form novalidate @submit.prevent="save()">` with Save as `type="submit"`. Both halves are load-bearing — see WS10 |
 | 34 | med | ux | recovered | WS3 | verify | **CONFIRMED** — bare page at /v1/users, every field lost  · **FIXED, cause corrected** — the empty `scopeGroupId` decodes to `*uint(0)`, which made the accurate message unreachable; and `HandleFormError` would have echoed the password (exact-case filter) |
 | 35 | med | a11y | recovered | WS4 | verify | **CONFIRMED** — `BODY` immediately, not a transition artefact  · **FIXED** — focus the search input; ref captured **before** the x-for teardown |
 | 36 | med | a11y | recovered | WS5 | verify | **CONFIRMED** — `/admin/export` group input has `aria-label` only: `role`/`aria-expanded`/`aria-controls`/`aria-autocomplete` all absent; `/admin/import`'s parent-group input has **no `aria-label` either**; three further raw search inputs on `/admin/import` (`searchMappingDest`, `searchDanglingDest`, `searchShellDest`). The 3 `role=combobox` nodes on both pages belong to hidden global modals · **FIXED, scope reduced deliberately** — combobox ARIA + a live region + roving `aria-activedescendant` added in place on both pickers; the import picker also gained the `aria-label` it never had. Routing through `src/selector/` is deferred — see below |
 | 37 | med | bug | recovered | WS8 | Dup → 27 | **CONFIRMED** — `?EntityType=runtime_setting` → select shows `''`  · **FIXED** |
 | 38 | med | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — seriesId=1 / 999999 / none all return 50  · **FIXED** |
 | 39 | med | a11y | recovered | WS5 | verify | **REJECTED — works as intended.** `outline-style: none` is real, but a ring **is** painted by `box-shadow`: the settings input computes `oklch(0.769 0.188 70.08) 0px 0px 0px 2px` (2px amber) and Save computes `oklch(0.666 0.179 58.318) 0 0 0 3px` + a 1px white offset ring. `/admin/users` is *thinner* — 1px blue. The original probe captured only `outline`; the plan flagged exactly this possibility · **NOT FIXED — rejected**, and pinned by a Playwright assertion that an *opaque* ring is painted, so removing `focus:ring-2` would fail |
-| 40 | med | ux | verified-run | WS9 | spot | |
-| 41 | med | ux | verified-run | WS9 | spot | |
+| 40 | med | ux | verified-run | WS9 | spot | **CONFIRMED** — oldest-first, no dismiss control  · **FIXED** — `displayJobs` sorts newest-first with the id as tie-breaker, plus a conditional "Clear completed" backed by a new `POST /v1/jobs/clearCompleted` that clears the download queue *and* the plugin action jobs, scoped to what the caller may see |
+| 41 | med | ux | verified-run | WS9 | spot | **CONFIRMED, and the data was never lost** — a paused job still reports `progress:196608 totalSize:52428800` over the API; only the panel stopped rendering it (`x-if="job.status === 'downloading'"`)  · **FIXED** — `showsProgress(job)` covers paused; live after: `240 KB / 50 MB (0.5%)` with a grey bar, and a Cancel button |
 | 42 | med | bug | verified-run | WS8 | spot |  · **FIXED** |
 | 43 | med | bug | verified-run | WS8 | **confirmed (source)** | **CONFIRMED** — level-6 absent, level-2 renders  · **FIXED** |
 | 44 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — exactly 50 root links  · **FIXED** |
@@ -308,7 +308,7 @@ Statuses are filled in during Phase 1.
 | 80 | med | ux | recovered | WS7 | Dup → 25 | **CONFIRMED** — Dup → 25; `mainTop` 1978, first card 2124, sidebar 1834 px tall · **FIXED** — Dup → 25; first card 2124 → 420 |
 | 81 | med | design | recovered | WS7 | verify | **CONFIRMED** — the visible `input[name=mrql]` measures **149 px** at a 390 px viewport (the hidden desktop copy measures 0) · **FIXED** — `basis-full sm:basis-0` makes the row wrap; 149 → 358 px at a 390 px viewport |
 | 82 | med | bug | ✅ VERIFIED | WS11 | accept | **CONFIRMED** — `&ldquo; &ndash; &hellip; &lsquo; &rsquo;` |
-| 83 | med | design | verified-run | WS10 | spot | |
+| 83 | med | design | verified-run | WS10 | spot | **CONFIRMED** — `/queries` at 1280×900: the Next link spans x 1194-1264 and `elementFromPoint` returned the FAB from x=1226 on; only x≤1220 reached the link  · **FIXED** — the trigger is header chrome now, not a fixed corner. After: all 12 sweep samples return `next`, and a real click goes to `?page=2` |
 | 84 | med | bug | verified-run | WS8 | spot |  · **FIXED** |
 | 85 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — `filename="v2_9b998df6"`  · **FIXED** |
 | 86 | med | bug | verified-run | WS1 | Dup → 10/11 + gating | **CONFIRMED** — actions offered for SVG  · **FIXED** — `isRasterImage` gates the details sidebar and the lightbox Rotate/Crop buttons |
@@ -319,7 +319,7 @@ Statuses are filled in during Phase 1.
 | 91 | med | ux | verified-run | WS3 | Dup → 56 | **CONFIRMED**  · **FIXED** — Dup → 56 |
 | 92 | med | ux | verified-run | WS3 | Dup → 16 | **CONFIRMED**  · **FIXED** — Dup → 16 |
 | 93 | med | bug | verified-run | WS12 | Dup → 17 | |
-| 94 | med | bug | recovered | WS8 | verify | |
+| 94 | med | bug | recovered | WS8 | verify | **CONFIRMED** — on `/tag?id=78` ("modern") the loser picker offered `["modern"]`, and submitting produced `Error 400 / winner cannot also be the loser`  · **FIXED, in the selector after all** — an `excludeValues` callback on the profiles, wired as `excludeIds` from `displayTag`/`displayGroup` and from the bulk toolbar (where it reads `$store.bulkSelection.selectedIds` per search). After: own name → 0 options, other queries → 5 |
 | 95 | med | bug | recovered | WS12 | verify | |
 | 96 | med | ux | recovered | WS12 | verify | |
 | 97 | med | a11y | recovered | WS4 | verify | **CONFIRMED, cause corrected** — the restore existed and `$el` scoping broke it; x-trap was already present  · **FIXED** |
@@ -327,7 +327,7 @@ Statuses are filled in during Phase 1.
 | 99 | med | a11y | recovered | WS5 | verify | **CONFIRMED** — three Delete buttons at **35.3×16** with `opacity: 0` at both 1280 and 390 px; `aria-label="Delete saved query: …"` is already correct, so this is target size + hover-only reveal · **FIXED** — always painted, muted until hover, 24px tall |
 | 100 | med | ux | recovered | WS3 | verify | **CONFIRMED** — raw JSON body rendered as the message  · **FIXED** — shared `errorMessageFromResponse` |
 | 101 | med | design | verified-run | WS7 | Dup → 19 | **CONFIRMED** — Dup → 19 · **FIXED** — Dup → 19 |
-| 102 | low | design | verified-run | WS10 | spot | |
+| 102 | low | design | verified-run | WS10 | spot | **CONFIRMED** — `/logs` at 1280×720: the "After" input is at `[864,665,400,38]` and the hit test over its picker icon returned the FAB's `svg`. The report's "unreachable by mouse" is too strong — the page scrolls (`scrollHeight` 2187) — but the corner is genuinely covered  · **FIXED** — Dup → 83; after: the hit returns `INPUT` |
 | 103 | low | ux | verified-run | WS3 | spot | **CONFIRMED** — bare id, broken grammar, internal reason  · **FIXED** — sentence + link to the colliding resource; JSON `details[]` contract kept |
 | 104 | low | design | verified-run | WS14 | spot | |
 | 105 | low | a11y | verified-run | WS5 | Dup → 36 | **CONFIRMED** — Dup → 36 · **FIXED** — Dup → 36 |
@@ -338,15 +338,15 @@ Statuses are filled in during Phase 1.
 | 110 | low | a11y | recovered | WS5 | verify | **CONFIRMED** — `/admin/shares` → `H1: Shared Notes`, `H1: Shared Notes`; `/admin/settings` → `H1: Settings`, `H1: Runtime Settings` · **FIXED** — the body heading demoted to h2 on both pages; `title.tpl`'s h1 is the page's. `admin-settings.spec.ts` updated from `level: 1` to `level: 2` |
 | 111 | low | ux | recovered | WS3 | verify | **CONFIRMED** — `Error 404 / record not found`  · **FIXED** — says an id is required and links to /resources; no index page added, deliberately |
 | 112 | low | design | recovered | WS14 | verify | |
-| 113 | low | a11y | recovered | WS9 | verify | |
+| 113 | low | a11y | recovered | WS9 | verify | **CONFIRMED** — `formatProgress` returns `''` for an unknown total, so the name was the bare prefix  · **FIXED** — `progressLabel/progressValueNow/progressValueText`: named after the job, `aria-valuenow` omitted (bound to `null`) when the total is unknown, `aria-valuetext` describing it instead |
 | 114 | low | bug | ✅ VERIFIED | WS3 | accept | **CONFIRMED** — HTTP 404, `text/html`  · **FIXED** — /v1 answers JSON; `not_found_test.go` inverted, not deleted |
 | 115 | low | ux | recovered | WS3 | verify | **CONFIRMED** — role textbox on an int64 setting  · **FIXED** — int types become number inputs; found `admin-settings.spec.ts` locating by `input[type="text"]` |
-| 116 | low | a11y | recovered | WS10 | verify | |
+| 116 | low | a11y | recovered | WS10 | verify | **CONFIRMED** — `/resource?id=63`, `/note?id=61`, `/group?id=70` all highlighted **nothing**; `aria-current` absent on every nav link on all 8 pages checked  · **FIXED** — a `activeNavURL` section table server-side; a detail page lights its section with `aria-current="true"` and a list page with `aria-current="page"` |
 | 117 | low | ux | verified-run | WS14 | spot | |
 | 118 | low | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — `datetime="…13:59:40Z"` at local 13:59+03:00  · **FIXED** |
 | 119 | low | ux | verified-run | WS3 | spot | **CONFIRMED** — two 404 presentations, `record not found` as the body  · **FIXED** — one presentation, a message per entity, and a recovery link |
-| 120 | low | design | verified-run | WS10 | spot | |
-| 121 | low | a11y | verified-run | WS10 | Dup → 116 | |
+| 120 | low | design | verified-run | WS10 | spot | **CONFIRMED, cause corrected** — the body grid is not the binding constraint; `overflow-x: hidden` on `.site` computes `overflow-y: auto`, which makes `<body>` a scroll container that never scrolls. One declaration (`clip`) with the grid untouched took the header from `bottom:-1464` to `top:0` at scrollY 1500  · **FIXED** — and the footer's equally-inert `sticky bottom-0` was **dropped**, not activated: pinning it measurably re-created finding 102 |
+| 121 | low | a11y | verified-run | WS10 | Dup → 116 | **CONFIRMED** — Dup → 116 · **FIXED** — Dup → 116 |
 | 122 | low | ux | verified-run | WS6 | spot | **CONFIRMED** — every step of the report reproduces verbatim  · **FIXED** — Dup → 31 |
 | 123 | low | ux | verified-run | WS4 | spot | **CONFIRMED** — `openEditPanel` explicitly focused the Name input  · **FIXED** — `focusFirstIn` lands on the panel Close button |
 | 124 | low | a11y | verified-run | WS4 | spot | **CONFIRMED** — `BODY` after the x-for rebuild  · **FIXED** — lands on the row that took the deleted one's place |
@@ -368,7 +368,7 @@ Statuses are filled in during Phase 1.
 | 140 | low | ux | recovered | WS14 | verify | |
 | 141 | low | ux | recovered | WS7 | verify | **CONFIRMED, worse than filed** — the shadow-root input measures **166 px** with `scrollWidth` 1774 for a 166-character value: ~9 % visible, not the reported 15 % · **FIXED, downstream of 89** — the host goes block-level for the edit and the wrapping span is `w-full`; input 166 → 358 px. Three links in the chain, each measured |
 | 142 | low | ux | recovered | WS3 | verify | **CONFIRMED** — no `required`, whole form in the query string  · **FIXED, cause corrected** — plain `required` breaks the URL-download path; the guard is conditional |
-| 143 | low | bug | recovered | WS8 | verify (suspect) | |
+| 143 | low | bug | recovered | WS8 | verify (suspect) | **REJECTED — not reproducible.** The value *is* rendered: the `<td>` measures 133×36 with an `<expandable-text>` of 109×17 inside it, `textContent` is `"hunt value 123"`, and a screenshot shows `hunt_key │ hunt value 123`. What is empty is `innerText`, because the value lives in that custom element's **shadow root** — the report's `{"metaSection":["META DATA\nExpand\nhunt_key\t"]}` is an innerText read, which cannot see it. Self-caveated as "may be inside a collapsed element"; it is not collapsed  · **NOT FIXED — rejected**, and pinned by a Playwright test that asserts a painted box, the shadow text, *and* the empty innerText |
 | 144 | low | ux | recovered | WS5 | verify | **CONFIRMED, broader than filed** — the dialog reads "Upload to Unknown" on `/resource?id=63`, `/group?id=78` **and** `/note?id=61`; `$store.pasteUpload.context?.name` is null on every one, so the `|| 'Unknown'` fallback always wins. Not resource-specific · **FIXED** — the heading reads "Upload to <name>" when a target is known and "Upload files" otherwise; it no longer invents one |
 | 145 | low | ux | recovered | WS14 | product | |
 | 146 | low | ux | recovered | WS6 | Dup → 68 | **CONFIRMED** — `/resources?page=99` 200s blank, Previous → page 98  · **FIXED** — 302 to the last real page; JSON/.body routes deliberately exempt |
@@ -391,23 +391,29 @@ Statuses are filled in during Phase 1.
 accepted without re-verification, 6 are already confirmed from source, and 4 route straight to a
 product decision. That leaves ~111 to verify, ~60 of them in the expensive `recovered` tier.
 
-**Running tally after Batch 9** (WS1–WS7 and WS8 complete bar two rows):
+**Running tally after Batch 10** (WS1–WS10 complete; WS8 fully closed):
 
 | | count |
 |---|---|
 | Ledger rows | 160 |
-| Resolved (a status recorded) | **108** |
-| Still unverified | 52 — WS9 (4), WS10 (6), WS11 (10), WS12 (8), WS13 (3), WS14 (19), WS8 (2: 94 and 143) |
-| Confirmed | 96, of which 3 only partly (29, 31, 61) |
-| **Rejected** | **4** — 14 and 39 (this batch), 61 (partly), 79 |
-| Rows carrying a **FIXED** note | 103 |
-| Rejected *and pinned by a test* so the rejection cannot silently become wrong | 2 — 14, 39 |
+| Resolved (a status recorded) | **120** |
+| Still unverified | 40 — WS11 (10), WS12 (8), WS13 (3), WS14 (19) |
+| Confirmed | 107, of which 3 only partly (29, 31, 61) |
+| **Rejected** | **5** — 14, 39, 61 (partly), 79, 143 (this batch) |
+| Rows carrying a **FIXED** note | 114 |
+| Rejected *and pinned by a test* so the rejection cannot silently become wrong | 3 — 14, 39, 143 |
 
-The rejection rate is the number worth watching: **4 of 108 verified**, i.e. under 4 %. The
-`recovered` tier was expected to be where the false positives lived, and it produced two of the four.
-What it produced far more of is findings whose *symptom* is real and whose *stated cause is wrong* —
-19 of them so far, recorded per workstream in the "Where the plan was wrong" subsections. That is the
-verification step earning its keep, and it is not the thing the effort tiers were designed to catch.
+The rejection rate is the number worth watching: **5 of 120 verified**, i.e. just over 4 %. The
+`recovered` tier was expected to be where the false positives lived, and it produced three of the
+five. What it produced far more of is findings whose *symptom* is real and whose *stated cause is
+wrong* — **23** of them so far, recorded per workstream in the "Where the plan was wrong"
+subsections. That is the verification step earning its keep, and it is not the thing the effort tiers
+were designed to catch.
+
+Three of the five rejections have the same shape, and it is worth naming: **the probe measured the
+wrong property.** 14 read a checkbox audit that swept in unrelated controls, 39 read `outline` while
+a `box-shadow` ring was painted, and 143 read `innerText` on a value that lives in a shadow root. In
+all three the reported *observation* is accurate and the *conclusion* does not follow from it.
 
 ---
 
@@ -537,6 +543,8 @@ versions table; `resource-versioning.spec.ts` and `version-compare.spec.ts` must
 
 Findings **1, 26, 27/37, 38, 42, 43, 44/52, 45, 47, 70, 71, 84, 85, 118, 143, 94**. Each is a small,
 localised change with an obvious Go test. Highest confidence per unit of effort in the whole plan.
+The last two rows (94 and 143) were closed in Batch 10: 94 needed the selector work the ledger
+predicted, and 143 is the campaign's third rejection.
 
 - [x] **1** — `download_queue/manager.go:456` builds the name from `job.creator.FileName` then
       `path.Base(job.URL)` and **never consults `job.creator.Name`**, while the foreground path
@@ -585,11 +593,28 @@ localised change with an obvious Go test. Highest confidence per unit of effort 
       Use `Z07:00`, or normalise to UTC, or use the project's own `datetime` filter
       (`template_filters.go:15`). Test: assert the emitted `datetime` parses to the same instant as
       the entry's timestamp.
-- [ ] **94 — moved to the selector work.** Excluding the winner from the loser picker means an
-      exclusion parameter on the selector profile (`src/selector/`, see
-      `docs/architecture/selector-architecture.md`), not a WS8 one-liner. The raw
-      `Bulk operation failed: Server error: 400` alert it produces is separately fixed by WS3.
-- [ ] **143** — still to verify (the report itself suspects the value is inside a collapsed element).
+- [x] **94 — done as the selector work, in Batch 10.** Confirmed first: on `/tag?id=78`
+      ("modern") the "Tags To Merge" picker offered `["modern"]`, and submitting produced
+      `Error 400 / winner cannot also be the loser`. The profiles gained an `excludeValues`
+      callback (`src/selector/entityFieldProfiles.ts`), applied by wrapping the source's `search`
+      so `create` and the debounce are untouched; `autocompleter.tpl` takes it as `excludeIds`.
+      Three call sites: the tag and group detail merge forms exclude the entity itself, and the
+      bulk toolbar's "Merge Winner" picker excludes `$store.bulkSelection.selectedIds` — read per
+      search, because the ticked set changes while the field is on screen. Verified live on both
+      surfaces with a positive control (own name → 0 options, other queries → 5).
+      It is a **client-side filter after mapping**, deliberately: the search endpoints take no
+      exclusion parameter, and adding one to `/v1/tags`, `/v1/groups` and `/v1/resources` for a UI
+      affordance is a wider change than the finding warrants. The server-side refusal remains the
+      real guard. The raw `Bulk operation failed: Server error: 400` alert is separately fixed by
+      WS3 — the same submit now lands on the in-app error page with recovery links.
+- [x] **143 — REJECTED, not reproducible.** The value is rendered: measured `133×36` for the
+      `<td>` with a `109×17` `<expandable-text>` inside it, `textContent` `"hunt value 123"`, and
+      a screenshot showing `hunt_key │ hunt value 123`. `innerText` returns `""`, because the
+      value lives in that custom element's **shadow root** and `innerText` does not cross it —
+      the report's `{"metaSection":["META DATA\nExpand\nhunt_key\t"]}` is an innerText read.
+      Pinned by `e2e/tests/regressions/ws8-meta-value-and-merge-exclusion.spec.ts`, which asserts
+      the painted box, the shadow text *and* the empty innerText, so the next reader of that
+      evidence does not re-open it.
 
 ### WS2 — Silent write failures and lost edits ★ user data loss
 
@@ -1618,23 +1643,121 @@ one element.
 
 ### WS10 — Global chrome
 
-Findings **33, 83, 102, 116/121, 120**.
+Findings **33, 83, 102, 116/121, 120**. All five confirmed, all five fixed, and **two** of the
+five had a different cause from the one the plan states — one of them a one-line fix the plan
+sent the fixer past. Every number below is measured before and after, at the viewport the
+finding names.
 
-- [ ] **83 + 102 — the jobs FAB steals clicks.** `partials/downloadCockpit.tpl:11` is
-      `fixed bottom-4 right-4 z-40`; the sticky footer holding pagination is `z-index: 10`
-      (`public/index.css:1328-1331`) and its Next link is bottom-right (`pagination.tpl:32-40`). The
-      FAB wins the hit test on **every** page that extends `layouts/base.tpl` with pagination, and at
-      1280×720 it also covers the `/logs` "After" date picker. Move the FAB out of the footer's
-      corner, or raise the footer above it and offset the FAB.
-- [ ] **120 — the header declares `position: sticky` but can never stick**, because `<body>` is
-      `display: grid` and the header is a grid item whose containing block is its own ~36px row.
-      Either make it genuinely sticky or drop the declaration; today nav and ⌘K scroll away on every
-      long list.
-- [ ] **116/121** — add `aria-current="page"` to the active nav link (the app already does this
-      correctly for pagination, so it is an internal inconsistency), and keep the section highlighted
-      on entity detail pages.
-- [ ] **33** — pressing Enter in a runtime-settings field does nothing because the controls are not
-      inside a `<form>`. Either wrap them or make the requirement to click Save explicit.
+- [x] **120 — the header could not stick, and the body grid is not why.** Fixed by one
+      declaration: `.site { overflow-x: hidden }` → `overflow-x: clip`. `hidden` forces the
+      other axis to `auto`, which makes `<body>` a **scroll container** — and a sticky box
+      sticks to its nearest scroll container's scrollport, not to the viewport. `<body>`'s box
+      is exactly as tall as its content, so that scrollport never moves. `clip` clips the same
+      overflow without creating one. Measured at 1280×720 on `/resources`, scrollY 1500:
+      header `bottom -1464 → top 0`, with the grid untouched. See below.
+- [x] **The footer's own `sticky bottom-0` was inert for the identical reason, and is
+      dropped rather than activated.** Making the header stick made the footer stick too —
+      measured `footerTop 7575 → 674` of a 720px viewport — and that **re-created finding
+      102**: `elementFromPoint` over the `/logs` "After" date input then returned an `<a>`
+      from the pinned pagination row instead of the input. A bar fixed to the viewport bottom
+      covers page content at every scroll offset, which is exactly the objection that moved
+      the jobs trigger out of the corner. Pinned by `TestFooter_IsNotSticky` with that reason.
+- [x] **83 + 102 — the jobs trigger is header chrome now, not a fixed corner.** No fixed
+      corner can be safe: the page scrolls underneath a fixed overlay, so whatever is in that
+      corner at a given scroll offset is covered, and *both* halves of the finding are
+      instances of that one fact. Moving it into the header (which 120's fix just made
+      genuinely sticky) makes it more reachable than the FAB was, not less.
+      - `/queries` at 1280×900: the Next link spans x 1194-1264; before, only x ≤ 1220 reached
+        it and x ≥ 1226 returned "Open jobs panel". After: all 12 sweep samples return the
+        link, and a real click navigates to `?page=2`.
+      - `/logs` at 1280×720: the "After" input at `[864,665,400,38]` returned the FAB's `svg`
+        over its picker icon. After: `INPUT`.
+      - `.overlays` went from `z-index: 40` to `41`, so the lightbox, paste-upload, plugin
+        action modal and entity picker still stack above the cockpit panel — the panel now
+        paints inside the header's stacking context, and that ordering is what it had when the
+        cockpit was the third of five includes in `.overlays`.
+      - At 390px the header still fits: the trigger measures `[307,0,36,36]` inside a 358px
+        header and `body.scrollWidth` is 390.
+- [x] **116/121 — the nav says where you are.** `activeNavURL` (in
+      `static_template_context.go`) maps a path to the nav entry that owns it, from an explicit
+      first-segment table plus a prefix match for `/admin/*`. The highlight and `aria-current`
+      both derive from it, in the desktop nav, the mobile panel and the Admin dropdown items.
+      - A **list** page gets `aria-current="page"`; a **detail** page gets
+        `aria-current="true"`. `page` would state that the reader is on `/resources` while they
+        are on `/resource?id=63`, which is false. "The current item in this set" is what `true`
+        is for.
+      - The table is explicit rather than a pluralisation rule because the convention is not
+        mechanical (`/resourceCategory` → `/resourceCategories`, `/query` → `/queries`), and
+        lighting the *wrong* entry is worse than lighting none. An unlisted segment marks
+        nothing, which is the previous behaviour.
+- [x] **33 — the runtime-settings row is a form.** `<form novalidate @submit.prevent="save()">`
+      with Save as `type="submit"`. Both details are load-bearing:
+      - **`type="submit"`, not a keydown handler.** A form whose only button is
+        `type="button"` still does not submit on Enter once more than one field blocks implicit
+        submission, and this row has two text inputs (the value and the reason). A bare `<form>`
+        would have fixed nothing.
+      - **`novalidate`.** Finding 115 made these number inputs with `min`/`max`, so wrapping
+        them put native constraint validation in front of Save: an out-of-bounds value was
+        blocked with a browser bubble, `save()` never ran, and the app's own inline message —
+        the one that names the bounds and is announced through the row's live region —
+        disappeared. It broke `admin-settings.spec.ts`'s "out-of-bounds value shows inline
+        error", which is the test that caught it. The `min`/`max` attributes stay (they drive
+        the spinner and are exposed to assistive tech); the validation that *speaks* stays in
+        charge.
+
+**Tests.** `server/api_tests/ws10_global_chrome_test.go` (7 tests: `aria-current` on five list
+pages and four detail pages with a page-outside-the-menu control, the settings form and its
+submit button, the trigger's position and the panel keeping its trap, the `.site`/`.header`
+CSS declarations, and the footer) and `e2e/tests/regressions/ws10-global-chrome.spec.ts`
+(10 tests, all measured geometry or a persisted value). **Both seen red first** — Playwright
+failed 8 of 10 with the fixes stashed.
+
+#### Where the plan was wrong
+
+1. **120's cause is the overflow, not the grid.** The report and the plan agree that the header
+   is a grid item whose containing block is its own ~36px row, and the plan warns at length
+   that "any change to the body grid has to keep [the sidebar disclosure] working at both
+   viewports". Measured, changing `overflow-x` alone — with `display: grid` and every
+   `grid-row` untouched — takes the header from `bottom: -1464` to `top: 0`. The grid-area
+   theory is not the binding constraint in Chrome, and the plan's warning points at the one
+   thing that did not need to change. (The warning is also misaddressed: the
+   `filter-disclosure` is a grid item of `.content`, not of `.site`, so the body grid never had
+   anything to do with it.)
+2. **"Raise the footer above it and offset the FAB" cannot work.** The FAB lived inside
+   `.overlays`, which is a `z-index: 40` stacking context that also holds the lightbox and
+   every modal — so raising the footer above the FAB necessarily raises it above the lightbox
+   too. The other option the plan offers, moving the FAB out of the corner, is the only one
+   available, and it has to be *out of the page* rather than to another corner: every corner
+   has content scrolling under it.
+3. **Fixing 120 re-created 102 through a different element.** This is the batch's clearest
+   demonstration that two findings can share one cause: the FAB and the pinned pagination row
+   are both "a viewport-fixed box over page content", and removing one while activating the
+   other measured no improvement at all on `/logs`.
+4. **143 is not a defect** (WS8, verified in this batch): the probe read `innerText` on a value
+   rendered inside a custom element's shadow root. Third rejection in the campaign, and the
+   third whose reported observation is accurate while its conclusion is not.
+
+#### Defects the tests did not catch, and one this batch nearly shipped
+
+1. **Moving the cockpit into the header silently emptied seven heading assertions.**
+   `visibleHeadings` in `ws5_keyboard_names_headings_test.go` *truncated* the heading list at
+   the first "global modal" h2 — `Edit Tags`, `Info`, `Crop image`, **`Jobs`**, `Select` — on
+   the assumption that those partials come last in the document. The cockpit panel's
+   `<h2>Jobs</h2>` moved into the header, so the truncation point became the *first* heading on
+   every page and seven subtests failed with "has no `<h1>` at all — this test measured
+   nothing". The assumption was never a contract; the filter is positional-independent now.
+   Worth noting the failure mode was loud, which is the only reason it was cheap.
+2. **A 1-in-1823 flake in `inline-tag-editor-keyboard.spec.ts` was a real test defect, not
+   load.** Its `openTagEditor` clicks the *first* `button.edit-in-list` on an unscoped
+   `/resources`, so which resource these tests edit — and which tag the suggestion list ranks
+   first — were decided by whatever another spec created last. The failure named
+   `erg-<runId>`, a tag `tests/mrql/ergonomics.spec.ts` puts on four resources. 20/20 in
+   isolation and 36/36 after scoping the list to the file's own owner group. The product path
+   is provably untouched by this batch: the tag editor's profile reaches
+   `buildSelectorProfile`, but without `excludeValues` the new wrapper is not applied at all.
+3. **The paused row said "Paused" twice** — once in the status pill and once where the speed
+   goes. Caught by reading the live row rather than by any assertion. The speed cell is empty
+   for a paused job now.
 
 ### WS11 — MRQL and query surfaces
 
@@ -1668,20 +1791,91 @@ Findings **22, 23/46, 24, 82, 125/158, 134, 147, 159, 160**.
 
 ### WS9 — Jobs and downloads cockpit
 
-Findings **2, 40, 41, 113**.
+Findings **2, 40, 41, 113**. All four confirmed, all four fixed. Finding 2 is the last
+high-severity row in the campaign, and it had **three** causes rather than the two the plan
+names — plus a fourth thing that had to happen for the fix to be observable at all.
 
-- [ ] **2 (high) — a paused job can never be cancelled.** `download_queue/job.go:179` `IsActive()` is
-      `pending|downloading|processing` and does not include `paused`; `manager.go:519` rejects anything
-      not active with `"job %s already finished"`, and `download_queue_handlers.go:174-177` maps *any*
-      manager error to 404. Allow cancellation from `paused`, render a Cancel control for paused jobs,
-      and stop collapsing every manager error into 404 (use 409 for state conflicts).
-- [ ] **41** — a paused job loses its entire progress readout (bytes, percent, speed, bar). Keep it.
-- [ ] **40** — the panel renders oldest-first with no auto-scroll, so a download you just started is
-      ~1340px below the fold, and there is no way to dismiss finished jobs. Newest first, plus a
-      "Clear completed" control.
-- [ ] **113** — the progress bar's accessible name is the bare prefix `"Download progress: "` and
-      `aria-valuenow` is pinned at 0 for unknown-size downloads. Name it after the job and make it
-      indeterminate when the total is unknown.
+- [x] **2 (high) — a paused job can now be cancelled.** Reproduced verbatim first: pause
+      answered `200 {"status":"paused"}`, then `POST /v1/jobs/cancel` answered
+      **HTTP 404 `{"error":"job 7b3477b3 already finished"}`**, and the panel rendered only
+      Resume. Four changes:
+      - `DownloadJob.CanCancel()` — pending, downloading, processing **and paused**. `IsActive()`
+        is deliberately left alone: `ActiveCount()` and `Shutdown()` both mean "is running" by
+        it, and widening it would have made paused jobs count against the queue budget.
+      - **The paused transition has to happen inside `Cancel`.** This is the cause the plan does
+        not mention and the fix cannot work without: `Pause` already cancelled the job's context
+        and `processJob` returned, so there is no goroutine left to observe a second
+        cancellation. Without setting the status, `CompletedAt` and notifying subscribers right
+        there, the Cancel button would have answered 200 and changed nothing on screen.
+      - **Typed errors.** `download_queue.NotFoundError` and `StateConflictError`, so the handler
+        reads the *type*. The old code had two different wrong answers for one question: cancel
+        mapped everything to 404, while pause/resume/retry went through `statusCodeForError`,
+        whose `"cannot be"` validation pattern claimed them as **400**. All four are 404 for a
+        missing job and **409** for a state conflict now.
+      - The UI half: `canCancel(job)` gates the Cancel button.
+      - Live after: cancel-while-paused `200` → status `cancelled`; cancel-when-finished
+        `409 {"error":"job … cannot be cancelled (status: cancelled)"}`; unknown id still `404`;
+        `pause` on a finished job `409`.
+- [x] **41 — a paused job keeps its readout, and the data was never lost.** The server reports
+      `progress:196608 totalSize:52428800 progressPercent:0.375` for a paused job; the panel's
+      progress block was gated on `job.status === 'downloading'` and simply stopped rendering
+      it. `showsProgress(job)` covers paused. The bar goes grey and stops pulsing, and the speed
+      cell is empty — a paused download has no speed, and inventing one would be worse than the
+      bug. Live after: `240 KB / 50 MB (0.5%)` plus Resume **and** Cancel.
+- [x] **40 — newest first, and finished jobs can be dismissed.**
+      - `displayJobs` sorts on `createdAt` descending with the id as a tie-breaker. The
+        tie-breaker is not decoration: `SubmitMultiple` copies one creator per URL, so a
+        multi-URL submit lands several jobs on the same instant.
+      - `POST /v1/jobs/clearCompleted` removes every terminal job the caller may see, from the
+        download queue **and** from the plugin action jobs — the panel shows both in one list, so
+        clearing only one would leave rows the button visibly failed to remove. Paused jobs are
+        kept: clearing one would discard a half-transferred download, which is the same data
+        loss finding 2 is about.
+      - The client keeps a `_dismissedIds` set, and this is the part that is easy to get wrong.
+        The `removed` SSE handler's job is to *retain* finished jobs for display, and the removal
+        events the clear provokes arrive **after** the request resolves — so without the set,
+        every cleared row would reappear a moment after the button was pressed. Nothing is
+        dismissed unless the server said it went, so a rejected clear leaves the panel honest.
+      - Live after: clear removed the cancelled job (`/v1/jobs/get` → 404), the row went, and it
+        stayed gone across a reload.
+- [x] **113 — the progress bar is named and can be indeterminate.** The name was
+      `'Download progress: ' + formatProgress(job)`, and `formatProgress` returns `''` when the
+      total is unknown and nothing has arrived — which is exactly the state a fresh remote
+      download is in (`totalSize: -1`). Now `progressLabel(job)` names the job,
+      `progressValueNow(job)` returns `null` for an unknown total (Alpine removes an attribute
+      bound to `null` — the idiom `autocompleter.tpl` already uses for `aria-invalid`), and
+      `progressValueText(job)` describes an indeterminate bar instead. Live after:
+      `"Download progress: slow.dat, 272 KB / 50 MB (0.5%)"`.
+
+**Tests.** `download_queue/cancel_paused_test.go` (7 tests over the manager: the paused
+transition and its event, the typed refusals for all four controls, and `ClearFinished`'s
+keep/clear split and its RBAC predicate), `server/api_tests/ws9_jobs_cockpit_test.go` (9 tests
+over the HTTP layer and the served markup, driving a **real** download against a trickling
+`httptest` server because a generic runFn job can never be paused),
+`src/components/downloadCockpit.test.ts` (14 unit tests over the predicates, the ordering and
+the clear) and `e2e/tests/regressions/ws9-jobs-cockpit.spec.ts` (6 tests). **All seen red
+first**; Playwright failed 3 of 6 with the fixes stashed, and the three that passed are the
+controls (a running row is unchanged, the clear button is absent when nothing is finished).
+
+#### Where the plan was wrong
+
+1. **Finding 2 has a third cause the plan does not name**, and it is the one that decides
+   whether the fix works: cancelling a *paused* job cannot rely on context cancellation, because
+   the goroutine that would observe it is already gone. A fixer who did only the two changes the
+   plan lists — widen `IsActive`, stop collapsing errors into 404 — would have shipped a Cancel
+   button that answers 200 and leaves the row saying "Paused".
+2. **"Stop collapsing every manager error into 404" is right about cancel and misses the
+   sibling.** The plan says to "check what else that handler can return" — the answer is that
+   `Cancel` can only return those two errors, and the real other victims were pause, resume and
+   retry, which had the *opposite* wrong answer (400 Bad Request for a state conflict, via
+   `statusCodeForError`'s `"cannot be"` pattern). Four endpoints changed, not one.
+3. **Finding 41 is a rendering gap, not a data loss.** The report reads as though pausing
+   discards the progress; measured, the server keeps every field. That matters for the fix: the
+   change is one `x-if`, not any change to `Pause`.
+4. **The existing `TestCancel/cancel completed job` assertion had to change**, and the reason is
+   worth recording: `"already finished"` was a single sentence covering both "there is nothing
+   left to cancel" and "this job is paused", which is *how* the defect was expressible. The
+   refusal names the status it saw now, matching what pause/resume/retry already said.
 
 ### WS12 — Taxonomy and template authoring
 
@@ -1843,7 +2037,7 @@ the cheapest high-confidence work clears the ledger early.
 - [x] **Batch 7** — WS4 focus management. Extract `src/utils/focus.js` first as a pure refactor.
 - [x] **Batch 8** — WS5 keyboard, names, headings, target sizes.
 - [x] **Batch 9** — WS7 mobile and layout. Start with finding 3 (nav trap) and 8 (one-line CSS).
-- [ ] **Batch 10** — WS10 global chrome, WS9 jobs cockpit.
+- [x] **Batch 10** — WS10 global chrome, WS9 jobs cockpit, and WS8's two stragglers (94, 143).
 - [ ] **Batch 11** — WS11 MRQL and query surfaces, WS12 taxonomy authoring, WS13 sharing.
 - [ ] **Batch 12** — WS14 long tail; bring the four product decisions back for sign-off.
 - [ ] **Batch 13** — Phase 3 guards.
@@ -1870,6 +2064,52 @@ the cheapest high-confidence work clears the ledger early.
 ## Review
 
 _To be filled in on completion._
+
+### Batch 10 (WS10 + WS9 + WS8's two stragglers) — verification run
+
+| Gate | Result |
+|---|---|
+| `go test --tags 'json1 fts5' ./...` | pass (37 packages) |
+| `staticcheck ./...` | clean |
+| `npm run build` | clean |
+| `npm run test:unit` | **785 passed / 47 files** (766 → 785: 14 cockpit + 5 selector-exclusion) |
+| `cd e2e && npm run test:with-server:all` | **1824 passed, 0 failed, 0 flaky**, 6 skipped |
+| `cd e2e && npm run test:with-server:a11y` | 184 passed, `KNOWN_ISSUES` still `[]` |
+| `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/...` | pass |
+| `./mr docs lint` | OK (16 pre-existing warnings); `docs-site/docs/cli/job/cancel.md` regenerated |
+
+Two gate failures on the way, both worth recording because neither was in the new code:
+
+- `admin-settings.spec.ts` "out-of-bounds value shows inline error" went red the moment
+  finding 33's `<form>` wrapper existed, because finding 115's number inputs brought
+  `min`/`max` with them and native validation blocked the submit before `save()` ran. Fixed
+  with `novalidate`; the app's own message is the one that names the bounds and is announced.
+- Seven subtests of `TestPages_HaveExactlyOneH1` / `TestPages_DoNotSkipHeadingLevels` reported
+  "no `<h1>` at all", because `visibleHeadings` truncated the heading list at the first global
+  modal h2 and the cockpit's `<h2>Jobs</h2>` moved into the header. The helper filters instead
+  of truncating now.
+
+Live re-verification on a freshly seeded ephemeral instance (:8271), on the shipped binary:
+
+| | before | after |
+|---|---|---|
+| `POST /v1/jobs/cancel` on a paused job | `404 {"error":"job … already finished"}` | `200 {"status":"cancelled"}`, status `cancelled` |
+| the same on a finished job | 404 | **409** `cannot be cancelled (status: cancelled)` |
+| the same on an unknown id | 404 | 404 (unchanged) |
+| `POST /v1/jobs/pause` on a finished job | 400 | **409** |
+| `POST /v1/jobs/clearCompleted` | no such endpoint | `200 {"cleared":1}`, the job then 404s |
+| paused row in the panel | `⏸ … Paused … Resume` | `240 KB / 50 MB (0.5%)` + grey bar + Resume **and Cancel** |
+| panel order | oldest first | newest first (the job submitted second is row 1) |
+| progress bar name | `Download progress: ` | `Download progress: slow.dat, 272 KB / 50 MB (0.5%)` |
+| header at scrollY 1500 (`/resources`, 1280×720) | `bottom: -1464` | `top: 0`, height 36 |
+| `/queries` Next link hit test at 1280×900 | FAB from x=1226 of a 1194-1264 link | all 12 samples reach the link; a click goes to `?page=2` |
+| `/logs` "After" picker icon at 1280×720 | the FAB's `svg` | `INPUT` |
+| `/resources` nav | `Resources` active, no `aria-current` | `Resources` active + `aria-current="page"` |
+| `/resource?id=63` nav | nothing marked at all | `Resources` active + `aria-current="true"` |
+| `/account` nav (control) | nothing marked | nothing marked |
+| Enter in `hash_ahash_threshold` | `current=5 overridden=False` | `current=6 overridden=true`, "Saved — took effect at …" |
+| `/tag?id=78` loser picker, own name | `["modern"]` | `[]`; other queries still return 5 |
+| resource Meta Data value (143) | reported missing | rendered `109×17`; only `innerText` is empty |
 
 ### Batch 6 (WS6) — verification run
 

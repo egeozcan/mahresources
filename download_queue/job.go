@@ -180,6 +180,18 @@ func (j *DownloadJob) IsActive() bool {
 	return status == JobStatusPending || status == JobStatusDownloading || status == JobStatusProcessing
 }
 
+// CanCancel returns true if the job can still be abandoned.
+//
+// This is deliberately *not* IsActive(): a paused job is not active — it holds no
+// semaphore slot and has no goroutine — but it is very much cancellable, and
+// treating it as finished is UI bug hunt 2026-07-29 finding 2. IsActive() is left
+// alone because ActiveCount() and Shutdown() both mean "is running" by it.
+func (j *DownloadJob) CanCancel() bool {
+	status := j.GetStatus()
+	return status == JobStatusPending || status == JobStatusDownloading ||
+		status == JobStatusProcessing || status == JobStatusPaused
+}
+
 // CanPause returns true if the job can be paused.
 // Generic jobs (runFn != nil, e.g. group-export) can never be paused because
 // their runFn is a streaming operation that can't be suspended and resumed.

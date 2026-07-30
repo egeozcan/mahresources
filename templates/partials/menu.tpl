@@ -1,6 +1,15 @@
+{# Findings 116/121: the highlight was an exact `menuEntry.Url == path` match, so   #}
+{# every detail page highlighted nothing, and no link ever carried aria-current —   #}
+{# the current location was conveyed by colour alone, while pagination.tpl has done #}
+{# it correctly all along. `activeNavUrl` is the *section* the URL belongs to (see   #}
+{# activeNavURL in static_template_context.go); `activeNavIsExact` distinguishes     #}
+{# "you are on this page" (aria-current="page") from "you are inside this section"   #}
+{# (aria-current="true"), because claiming /resources is the current page while the  #}
+{# reader is on /resource?id=63 would be a false statement, not a nicety.            #}
 <nav aria-label="Main" x-data="mobileNav()"
      x-init="initMobileNav()"
      data-current-path="{{ path }}"
+     data-active-nav="{{ activeNavUrl }}"
      class="navbar flex items-center gap-1">
     {# Finding 3: the mobile panel could not be closed. The toggle is the one #}
     {# affordance that has to survive the panel being painted over it, so it  #}
@@ -18,7 +27,8 @@
     <div class="navbar-links">
         {% for menuEntry in menu %}
         <a href="{{ menuEntry.Url }}"
-           class="navbar-link {% if menuEntry.Url == path %}navbar-link--active{% endif %}">
+           class="navbar-link {% if menuEntry.Url == activeNavUrl %}navbar-link--active{% endif %}"
+           {% if menuEntry.Url == activeNavUrl %}aria-current="{% if activeNavIsExact %}page{% else %}true{% endif %}"{% endif %}>
             {{ menuEntry.Name }}
         </a>
         {% endfor %}
@@ -28,7 +38,7 @@
         <div class="navbar-dropdown" @click.outside="adminOpen = false" @keydown.escape="if (adminOpen) { adminOpen = false; $el.querySelector('button').focus(); }">
             <button @click="adminOpen = !adminOpen"
                     class="navbar-link navbar-link--dropdown"
-                    :class="{ 'navbar-link--active': adminOpen {% for adminEntry in adminMenu %}|| '{{ adminEntry.Url }}' == currentPath{% endfor %} }"
+                    :class="{ 'navbar-link--active': adminOpen {% for adminEntry in adminMenu %}|| '{{ adminEntry.Url }}' == activeNav{% endfor %} || '/admin/users' == activeNav }"
                     :aria-expanded="adminOpen.toString()"
                     aria-haspopup="true">
                 <span>Admin</span>
@@ -47,14 +57,16 @@
                  class="navbar-dropdown-menu">
                 {% for adminEntry in adminMenu %}
                 <a href="{{ adminEntry.Url }}"
-                   class="navbar-dropdown-item {% if adminEntry.Url == path %}navbar-dropdown-item--active{% endif %}"
+                   class="navbar-dropdown-item {% if adminEntry.Url == activeNavUrl %}navbar-dropdown-item--active{% endif %}"
+                   {% if adminEntry.Url == activeNavUrl %}aria-current="{% if activeNavIsExact %}page{% else %}true{% endif %}"{% endif %}
                    @click="adminOpen = false">
                     {{ adminEntry.Name }}
                 </a>
                 {% endfor %}
                 {% if not authEnabled or currentUser.IsAdmin %}
                 <a href="/admin/users"
-                   class="navbar-dropdown-item {% if '/admin/users' == path %}navbar-dropdown-item--active{% endif %}"
+                   class="navbar-dropdown-item {% if '/admin/users' == activeNavUrl %}navbar-dropdown-item--active{% endif %}"
+                   {% if '/admin/users' == activeNavUrl %}aria-current="{% if activeNavIsExact %}page{% else %}true{% endif %}"{% endif %}
                    @click="adminOpen = false">
                     Users
                 </a>
@@ -143,7 +155,8 @@
         <div class="navbar-mobile-section">
             {% for menuEntry in menu %}
             <a href="{{ menuEntry.Url }}"
-               class="navbar-mobile-link {% if menuEntry.Url == path %}navbar-mobile-link--active{% endif %}"
+               class="navbar-mobile-link {% if menuEntry.Url == activeNavUrl %}navbar-mobile-link--active{% endif %}"
+               {% if menuEntry.Url == activeNavUrl %}aria-current="{% if activeNavIsExact %}page{% else %}true{% endif %}"{% endif %}
                @click="mobileOpen = false">
                 {{ menuEntry.Name }}
             </a>
@@ -157,14 +170,16 @@
             <span class="navbar-mobile-label">Admin</span>
             {% for adminEntry in adminMenu %}
             <a href="{{ adminEntry.Url }}"
-               class="navbar-mobile-link {% if adminEntry.Url == path %}navbar-mobile-link--active{% endif %}"
+               class="navbar-mobile-link {% if adminEntry.Url == activeNavUrl %}navbar-mobile-link--active{% endif %}"
+               {% if adminEntry.Url == activeNavUrl %}aria-current="{% if activeNavIsExact %}page{% else %}true{% endif %}"{% endif %}
                @click="mobileOpen = false">
                 {{ adminEntry.Name }}
             </a>
             {% endfor %}
             {% if not authEnabled or currentUser.IsAdmin %}
             <a href="/admin/users"
-               class="navbar-mobile-link {% if '/admin/users' == path %}navbar-mobile-link--active{% endif %}"
+               class="navbar-mobile-link {% if '/admin/users' == activeNavUrl %}navbar-mobile-link--active{% endif %}"
+               {% if '/admin/users' == activeNavUrl %}aria-current="{% if activeNavIsExact %}page{% else %}true{% endif %}"{% endif %}
                @click="mobileOpen = false">
                 Users
             </a>

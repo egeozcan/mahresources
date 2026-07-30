@@ -715,6 +715,8 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/jobs/retry").HandlerFunc(api_handlers.GetDownloadRetryHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/jobs/events").HandlerFunc(api_handlers.GetDownloadEventsHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/jobs/get").HandlerFunc(api_handlers.GetDownloadJobHandler(appContext))
+	// Finding 40: the jobs panel had no way to dismiss a finished job.
+	router.Methods(http.MethodPost).Path("/v1/jobs/clearCompleted").HandlerFunc(api_handlers.GetJobsClearCompletedHandler(appContext))
 
 	// Group exports
 	router.Methods(http.MethodPost).Path("/v1/groups/export/estimate").HandlerFunc(scopedAPI(appContext, api_handlers.GetExportEstimateHandler))

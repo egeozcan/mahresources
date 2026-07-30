@@ -514,18 +514,40 @@ func (dm *DownloadManager) downloadWithProgress(job *DownloadJob) (*models.Resou
 	})
 }
 
-// Cancel cancels a download job by ID
+// Cancel cancels a download job by ID.
+//
+// UI bug hunt 2026-07-29, finding 2: this gated on IsActive(), which excludes
+// `paused`, so a paused download could never be abandoned — the answer was
+// "job %s already finished" and the handler turned that into a 404. A paused job
+// is cancellable now, and the two refusals are typed so the handler can tell a
+// missing job from a state conflict.
 func (dm *DownloadManager) Cancel(jobID string) error {
 	dm.mu.RLock()
 	job, exists := dm.jobs[jobID]
 	dm.mu.RUnlock()
 
 	if !exists {
-		return fmt.Errorf("job %s not found", jobID)
+		return &NotFoundError{JobID: jobID}
 	}
 
-	if !job.IsActive() {
-		return fmt.Errorf("job %s already finished", jobID)
+	if !job.CanCancel() {
+		return &StateConflictError{JobID: jobID, Action: "cancelled", Status: job.GetStatus()}
+	}
+
+	// A paused job has no goroutine left to observe the cancellation: Pause already
+	// cancelled the context and processJob returned. So the terminal transition and
+	// the notification have to happen here, or the panel would keep showing
+	// "Paused" with a Cancel button that appeared to do nothing.
+	//
+	// CompletedAt is set for the same reason the ordinary path sets it: it is what
+	// cleanupOldJobs uses to retire the row.
+	if job.GetStatus() == JobStatusPaused {
+		job.SetStatus(JobStatusCancelled)
+		job.SetError("Download cancelled")
+		job.SetCompletedAt(time.Now())
+		job.Cancel()
+		dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
+		return nil
 	}
 
 	job.Cancel() // This triggers context cancellation
@@ -539,11 +561,11 @@ func (dm *DownloadManager) Pause(jobID string) error {
 	dm.mu.RUnlock()
 
 	if !exists {
-		return fmt.Errorf("job %s not found", jobID)
+		return &NotFoundError{JobID: jobID}
 	}
 
 	if !job.CanPause() {
-		return fmt.Errorf("job %s cannot be paused (status: %s)", jobID, job.GetStatus())
+		return &StateConflictError{JobID: jobID, Action: "paused", Status: job.GetStatus()}
 	}
 
 	// Mark as paused BEFORE cancelling context to avoid race condition
@@ -565,12 +587,12 @@ func (dm *DownloadManager) Resume(jobID string) error {
 	job, exists := dm.jobs[jobID]
 	if !exists {
 		dm.mu.Unlock()
-		return fmt.Errorf("job %s not found", jobID)
+		return &NotFoundError{JobID: jobID}
 	}
 
 	if !job.CanResume() {
 		dm.mu.Unlock()
-		return fmt.Errorf("job %s cannot be resumed (status: %s)", jobID, job.GetStatus())
+		return &StateConflictError{JobID: jobID, Action: "resumed", Status: job.GetStatus()}
 	}
 
 	// Create a new context for the resumed download
@@ -602,12 +624,12 @@ func (dm *DownloadManager) Retry(jobID string) error {
 	job, exists := dm.jobs[jobID]
 	if !exists {
 		dm.mu.Unlock()
-		return fmt.Errorf("job %s not found", jobID)
+		return &NotFoundError{JobID: jobID}
 	}
 
 	if !job.CanRetry() {
 		dm.mu.Unlock()
-		return fmt.Errorf("job %s cannot be retried (status: %s)", jobID, job.GetStatus())
+		return &StateConflictError{JobID: jobID, Action: "retried", Status: job.GetStatus()}
 	}
 
 	// Create a new context for the retried download
@@ -775,6 +797,52 @@ func (dm *DownloadManager) Shutdown() {
 		}
 	}
 	dm.mu.Unlock()
+}
+
+// ClearFinished removes every terminal job (completed, failed or cancelled) the
+// caller may see and returns how many went. Pending, downloading, processing and
+// **paused** jobs are kept: a paused job is not finished, and dropping one would
+// discard a half-transferred download silently.
+//
+// UI bug hunt 2026-07-29, finding 40: there was no way at all to dismiss a
+// finished job. The panel accumulated 20 permanent entries across sessions
+// (completed downloads, completed exports, failed imports) and the only thing
+// that ever removed one was the retention sweep, hours later.
+//
+// visible is the caller's RBAC predicate, given each job's owner id: with -auth on
+// a non-admin sees only the jobs it submitted, so "Clear completed" must not reach
+// anyone else's.
+func (dm *DownloadManager) ClearFinished(visible func(owner *uint) bool) int {
+	var removed []*DownloadJob
+
+	dm.mu.Lock()
+	newOrder := make([]string, 0, len(dm.jobOrder))
+	for _, id := range dm.jobOrder {
+		job := dm.jobs[id]
+		if job == nil {
+			continue
+		}
+		status := job.GetStatus()
+		terminal := status == JobStatusCompleted || status == JobStatusFailed || status == JobStatusCancelled
+		if terminal && (visible == nil || visible(job.GetOwnerUserID())) {
+			delete(dm.jobs, id)
+			removed = append(removed, job)
+			continue
+		}
+		newOrder = append(newOrder, id)
+	}
+	dm.jobOrder = newOrder
+	dm.mu.Unlock()
+
+	// Notified outside the lock: notifySubscribers takes no lock of its own but
+	// subscribers run on other goroutines, and cleanupOldJobs is the only other
+	// place that removes jobs — it notifies under the lock, which this deliberately
+	// does not copy.
+	for _, job := range removed {
+		dm.notifySubscribers(JobEvent{Type: "removed", Job: job})
+	}
+
+	return len(removed)
 }
 
 // ActiveCount returns the number of active (non-completed) jobs

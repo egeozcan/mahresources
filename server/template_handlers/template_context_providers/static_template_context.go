@@ -131,6 +131,86 @@ var baseTemplateContext = pongo2.Context{
 	"partial": func(name string) string { return "/partials/" + name + ".tpl" },
 }
 
+// navSectionByFirstSegment maps the first path segment to the nav entry that owns
+// it.
+//
+// WS10 findings 116 and 121: the nav highlight was `menuEntry.Url == path`, an
+// exact match, so every detail page highlighted nothing at all — /resource?id=85,
+// /note?id=61 and /group?id=68 all measured an empty active-link list, and a reader
+// had no indication of where they were.
+//
+// A table rather than a rule, because the app's singular/plural convention is not
+// mechanical (`/resourceCategory` → `/resourceCategories`, `/query` → `/queries`)
+// and guessing wrong lights the wrong entry, which is worse than lighting none. A
+// segment that is absent from the table simply marks nothing, which is the previous
+// behaviour — so a new page is never mis-attributed, it is only unmarked until it is
+// listed here.
+var navSectionByFirstSegment = map[string]string{
+	"dashboard": "/dashboard",
+
+	"note":  "/notes",
+	"notes": "/notes",
+
+	"resource":  "/resources",
+	"resources": "/resources",
+
+	"group":  "/groups",
+	"groups": "/groups",
+
+	"tag":  "/tags",
+	"tags": "/tags",
+
+	"mrql": "/mrql",
+
+	"query":   "/queries",
+	"queries": "/queries",
+
+	"category":   "/categories",
+	"categories": "/categories",
+
+	"resourceCategory":   "/resourceCategories",
+	"resourceCategories": "/resourceCategories",
+
+	"relation":  "/relations",
+	"relations": "/relations",
+
+	"relationType":  "/relationTypes",
+	"relationTypes": "/relationTypes",
+
+	"noteType":  "/noteTypes",
+	"noteTypes": "/noteTypes",
+
+	"templatePartial":  "/templatePartials",
+	"templatePartials": "/templatePartials",
+
+	"log":  "/logs",
+	"logs": "/logs",
+}
+
+// adminNavSections are the /admin/* nav entries, matched by prefix rather than by
+// first segment (every one of them starts "admin").
+var adminNavSections = []string{
+	"/admin/overview",
+	"/admin/export",
+	"/admin/import",
+	"/admin/shares",
+	"/admin/settings",
+	"/admin/users",
+}
+
+// activeNavURL returns the nav entry URL the given request path belongs to, or ""
+// when it belongs to none (e.g. /account, a plugin page, an error page).
+func activeNavURL(path string) string {
+	for _, section := range adminNavSections {
+		if path == section || strings.HasPrefix(path, section+"/") {
+			return section
+		}
+	}
+
+	first := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)[0]
+	return navSectionByFirstSegment[first]
+}
+
 func contains(s []string, e string) bool {
 	for _, a := range s {
 		if a == e {
@@ -176,6 +256,13 @@ var StaticTemplateCtx = func(request *http.Request) pongo2.Context {
 		// URL, and every list template extends this context.
 		"hasActiveFilter": hasActiveFilter(request),
 		"clearFiltersUrl": clearFiltersURL(request),
+		// WS10 findings 116/121: which nav entry the current URL belongs to. See
+		// activeNavURL — a detail page has to keep its section lit, so this is a
+		// section match and not `path`.
+		"activeNavUrl": activeNavURL(request.URL.Path),
+		"activeNavIsExact": func() bool {
+			return activeNavURL(request.URL.Path) == request.URL.Path
+		}(),
 		"getNextId": func(elName string) string {
 			currentId += 1
 			return fmt.Sprintf("input_%v_%v", elName, currentId)

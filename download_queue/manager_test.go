@@ -641,8 +641,13 @@ func TestCancel(t *testing.T) {
 		if err == nil {
 			t.Error("expected error for completed job")
 		}
-		if !strings.Contains(err.Error(), "already finished") {
-			t.Errorf("expected 'already finished' error, got: %v", err)
+		// The message changed with finding 2. "already finished" was a single
+		// sentence covering both "there is nothing left to cancel" and "this job is
+		// paused", which is what made a paused job uncancellable; the refusal now
+		// names the status it actually saw and matches the wording pause/resume/
+		// retry already used. See cancel_paused_test.go for the typed-error contract.
+		if !strings.Contains(err.Error(), "cannot be cancelled (status: completed)") {
+			t.Errorf("expected the refusal to name the status, got: %v", err)
 		}
 	})
 }

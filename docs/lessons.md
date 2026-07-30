@@ -495,3 +495,99 @@ So the precondition for "Tab stays inside the modal" is *both* "the trap has tak
 *and* "the trapped subtree has stopped changing". Poll for the tabbable count inside the
 overlay to settle, then press Tab. And note which of the two you are testing: the first
 is a test race, the second is a narrow real transient worth recording rather than hiding.
+
+## `overflow-x: hidden` makes an element a scroll container, which silently disables `position: sticky` inside it
+The header declared `position: sticky; top: 0; z-index: 40` and scrolled clean off the page —
+measured `bottom: -1464px` at `scrollY` 1500. Both the bug report and the plan blamed `<body>`
+being `display: grid`: a grid item's containing block is its grid area, and the header's area is
+its own 36px row. Plausible, well known, and not the binding constraint here. Changing one
+declaration on `<body>` with the grid and every `grid-row` untouched fixed it:
+
+    overflow-x: hidden   ->   overflow-x: clip
+
+`hidden` on one axis forces the other axis to `auto`, so the element becomes a **scroll
+container** — and a sticky box sticks to its nearest scroll container's scrollport, not to the
+viewport. `<body>`'s box is exactly as tall as its content, so that scrollport never moves and
+the sticky offset can never apply. `clip` clips the same overflow without creating a scroll
+container.
+
+Two follow-ons. The app's *footer* declared `sticky bottom-0` and was inert for the identical
+reason, so the one-line fix activated it too — which then covered the very control another
+finding in the same batch was about, and had to be dropped deliberately rather than shipped. And
+when a `position: sticky` does nothing, read the computed `overflow` of every ancestor before
+theorising about containing blocks; `overflow-x: hidden` is extremely common as an
+anti-horizontal-scroll guard and it is invisible in this failure.
+
+## No fixed-position control can be safe in a corner, because the page scrolls underneath it
+A floating "jobs" button at `fixed bottom-4 right-4` produced two separate findings: it won the
+hit test over the pagination "Next" link on every paginated page (measured: of a link spanning
+x 1194-1264, only x <= 1220 reached it) and it covered a date input in the filter sidebar at a
+720px-tall viewport. The tempting fixes — move it to another corner, offset it, raise the thing
+underneath — all fail for the same reason: whatever the page happens to paint at that viewport
+offset is covered, and scrolling changes which element that is. Reserving space with padding only
+helps at the end of the document.
+
+The fix is to take the control out of the scrolling plane entirely and put it in chrome. Here that
+was the header, which the sticky fix above had just made genuinely fixed in place — so the control
+became *more* reachable, not less. When you move a fixed overlay into a stacking context that
+already has a `z-index`, check what else was stacking against it: the panel it opens went from
+`.overlays` (z-index 40) into the header (also 40), so the true modals needed one step up to keep
+the order they had.
+
+## A form with no submit button does not submit on Enter once two fields block implicit submission
+Wrapping controls in a `<form>` is the obvious fix for "pressing Enter in this field does
+nothing", and it is not sufficient. HTML's implicit submission only fires when the form has a
+submit button, or has exactly one field that blocks implicit submission. A settings row with a
+value input, a reason input and a `<button type="button">Save</button>` has two blocking fields
+and no submit button, so a bare `<form>` wrapper changes nothing at all. The Save button has to
+become `type="submit"`.
+
+The second half bit immediately after: those inputs had `min`/`max` (from an earlier fix that made
+them `type="number"`), so the new form put **native constraint validation** in front of Save. An
+out-of-bounds value was blocked with a browser bubble, the component's `save()` never ran, and the
+app's own inline message — the one that names the bounds and is announced through the row's live
+region — disappeared. An existing spec caught it. `novalidate` on the form keeps the attributes
+(they drive the spinner and are exposed to assistive tech) while leaving the validation that
+*speaks* in charge.
+
+## Cancelling a paused background job cannot go through its context, because nothing is listening
+"A paused download can never be cancelled" reads like two fixes: widen the state predicate, and
+stop mapping every manager error to 404. Both were needed and neither is sufficient. Pause had
+already cancelled the job's context and its worker goroutine had returned — so a second
+`cancel()` on that context is observed by nobody, and the terminal transition, the `CompletedAt`
+stamp and the subscriber notification all have to happen inside `Cancel` itself. Without that, the
+new Cancel button answers HTTP 200 and the row goes on saying "Paused".
+
+The status-code half generalises. One handler mapped *every* manager error to 404, so a state
+conflict was reported as a missing job; its three siblings ran through a message-matching
+classifier whose "cannot be" pattern claimed them as 400 Bad Request. Two different wrong answers
+to one question, in adjacent functions. Typing the two refusals at the source
+(`NotFoundError`, `StateConflictError`) let all four handlers answer 404 and 409 by reading the
+error's type instead of its prose — which is also the only version that survives someone
+rewording the message.
+
+## A test helper that truncates a list "because the tail is boilerplate" encodes a document-order assumption nobody wrote down
+`visibleHeadings` returned the run of headings *before* the first global-modal `<h2>` (`Edit
+Tags`, `Info`, `Crop image`, `Jobs`, `Select`), on the reasonable-sounding grounds that those
+partials are appended to every page by the layout. Moving one of those partials into the header
+turned the truncation point into the *first* heading on every page, and seven subtests failed with
+"has no `<h1>` at all — this test measured nothing".
+
+The assumption was never a contract, and nothing in the layout promised it. A filter that removes
+the known items wherever they appear is the same amount of code and does not depend on where the
+markup lives. The general form: when a helper narrows what a test looks at, ask what it is
+*assuming* about the shape of the input rather than what it is excluding — and prefer a predicate
+over a position. The one redeeming detail here is that the failure was loud; a helper that
+truncated to a *superset* would have quietly stopped catching anything.
+
+## A spec that edits "the first card on the list" is a spec whose fixture is whatever another spec created last
+A 1-in-1823 flake in the inline tag editor: `openTagEditor` clicked the first
+`button.edit-in-list` on an unscoped `/resources`, and the test then asserted on whichever tag the
+suggestion list ranked first. Both were decided by other specs sharing the worker's server — the
+failure named a tag another file puts on four resources. It held 20/20 in isolation, which is the
+signature everyone reads as "load flake", and the product path was provably untouched.
+
+Scoping the list to the file's own owner group (`/resources?OwnerId=…`) made it 36/36. The rule is
+the "tests covering a real write should own their entity" lesson applied to *reads that pick a
+subject*: `.first()` over shared server state is a fixture, and an unowned fixture is a race. If a
+test needs "some row", it should create the row it means.

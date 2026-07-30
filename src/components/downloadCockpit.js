@@ -15,6 +15,11 @@ export function downloadCockpit() {
         _maxReconnectAttempts: 10,
         _maxReconnectDelay: 60000,  // Max 60 seconds
         speedTracking: {},  // Track progress for speed calculation: { jobId: { lastProgress, lastTime, speed } }
+        // Finding 40: ids the user cleared. Consulted by the `removed` handler, whose
+        // job is otherwise to retain finished jobs for display — it would put every
+        // cleared row straight back, because the removal events arrive after the
+        // clear request resolves.
+        _dismissedIds: new Set(),
         // BH-036: retention window (ms). Read from the meta tag emitted by base.tpl.
         exportRetentionMs: 0,
 
@@ -171,8 +176,9 @@ export function downloadCockpit() {
                 const { job } = JSON.parse(e.data);
                 const existingJob = this.jobs.find(j => j.id === job.id);
 
-                // Retain completed/failed/cancelled jobs (non-active)
-                if (existingJob && !this.isActive(existingJob)) {
+                // Retain completed/failed/cancelled jobs (non-active), unless the
+                // user asked for them to go (finding 40).
+                if (existingJob && !this.isActive(existingJob) && !this._dismissedIds.has(job.id)) {
                     // Avoid duplicates
                     if (!this.retainedCompletedJobs.some(j => j.id === existingJob.id)) {
                         this.retainedCompletedJobs.unshift(existingJob);
@@ -255,6 +261,41 @@ export function downloadCockpit() {
             }).catch(err => console.error('Cancel failed:', err));
         },
 
+        /**
+         * Dismiss every finished job (finding 40).
+         *
+         * The server removes them, which is what makes this durable: a purely local
+         * hide would be undone by the next `init` event, since the SSE stream
+         * replays the whole queue on connect.
+         *
+         * The ids are remembered in `_dismissedIds` because the `removed` events
+         * the clear provokes arrive *after* this resolves, and the `removed`
+         * handler's job is to retain finished jobs for display — it would put every
+         * row straight back. Nothing is dismissed unless the server said it went,
+         * so a rejected clear leaves the panel honest.
+         */
+        async clearCompleted() {
+            const ids = this.displayJobs.filter(j => this.isFinished(j)).map(j => j.id);
+            if (ids.length === 0) return;
+
+            try {
+                const res = await fetch('/v1/jobs/clearCompleted', { method: 'POST' });
+                if (!res.ok) {
+                    this.announce('Could not clear finished jobs.');
+                    return;
+                }
+            } catch (err) {
+                console.error('Clear completed failed:', err);
+                this.announce('Could not clear finished jobs.');
+                return;
+            }
+
+            ids.forEach(id => this._dismissedIds.add(id));
+            this.jobs = this.jobs.filter(j => !this._dismissedIds.has(j.id));
+            this.retainedCompletedJobs = this.retainedCompletedJobs.filter(j => !this._dismissedIds.has(j.id));
+            this.announce(`Cleared ${ids.length} finished job${ids.length === 1 ? '' : 's'}.`);
+        },
+
         pauseJob(jobId) {
             fetch('/v1/jobs/pause', {
                 method: 'POST',
@@ -333,12 +374,88 @@ export function downloadCockpit() {
             return 0;
         },
 
+        /**
+         * The progress bar's accessible name (finding 113).
+         *
+         * It used to be `'Download progress: ' + formatProgress(job)`, and
+         * formatProgress returns `''` whenever the total size is unknown and nothing
+         * has arrived yet — which is exactly the state a fresh remote download is in
+         * (`totalSize: -1`). A screen reader announced the bare prefix
+         * "Download progress:" with nothing after the colon.
+         *
+         * Named after the job, so several bars in one panel are told apart.
+         */
+        progressLabel(job) {
+            const name = this.getJobTitle(job) || 'download';
+            const detail = this.formatProgress(job);
+            if (job.status === 'paused') {
+                return detail
+                    ? `Download progress: ${name}, paused at ${detail}`
+                    : `Download progress: ${name}, paused`;
+            }
+            return detail
+                ? `Download progress: ${name}, ${detail}`
+                : `Download progress: ${name}, size unknown`;
+        },
+
+        /**
+         * aria-valuenow, or null for an indeterminate bar.
+         *
+         * ARIA says an indeterminate progressbar omits aria-valuenow; it used to be
+         * pinned at 0 for the whole transfer of an unknown-size download, which
+         * announces "0 percent" over and over while bytes are arriving. Alpine
+         * removes an attribute bound to null, the same idiom autocompleter.tpl uses
+         * for aria-invalid.
+         */
+        progressValueNow(job) {
+            if (!(job.totalSize > 0)) return null;
+            return Math.round(this.getProgressPercent(job));
+        },
+
+        /** Describes an indeterminate bar, where a percentage would be a lie. */
+        progressValueText(job) {
+            if (job.totalSize > 0) return null;
+            return this.formatProgress(job) || 'Waiting for the first bytes';
+        },
+
         isActive(job) {
             return ['pending', 'downloading', 'processing', 'running'].includes(job.status);
         },
 
+        /**
+         * Finished means terminal: nothing more will happen to this job.
+         *
+         * `paused` is deliberately neither active nor finished — that distinction is
+         * the whole of finding 2. It keeps its Cancel button and it survives
+         * "Clear completed".
+         */
+        isFinished(job) {
+            return ['completed', 'failed', 'cancelled'].includes(job.status);
+        },
+
         canPause(job) {
             return ['pending', 'downloading'].includes(job.status);
+        },
+
+        /**
+         * Finding 2: the Cancel button was gated on isActive(), which excludes
+         * `paused`, so a paused download offered only Resume — and the API refused
+         * a cancel with 404 "already finished" even if you found it. Both halves are
+         * fixed; this is the UI half.
+         */
+        canCancel(job) {
+            return this.isActive(job) || job.status === 'paused';
+        },
+
+        /**
+         * Whether the row shows a progress readout. Finding 41: this was
+         * `status === 'downloading'` in the template, so pausing threw away the
+         * bytes, the percentage and the bar — the server keeps all three (measured:
+         * a paused job still reports progress 196608 of 52428800), only the panel
+         * stopped rendering them.
+         */
+        showsProgress(job) {
+            return job.status === 'downloading' || job.status === 'paused';
         },
 
         canResume(job) {
@@ -357,10 +474,34 @@ export function downloadCockpit() {
             return this.activeCount > 0;
         },
 
+        /**
+         * Newest first (finding 40).
+         *
+         * The panel rendered insertion order and opened scrolled to the top, so a
+         * download you had just started was the *last* row — measured ~1340px below
+         * the fold, with 20 older jobs above it and no hint that an active one
+         * existed further down.
+         *
+         * Sorted on createdAt, which both job kinds carry (DownloadJob.createdAt and
+         * ActionJob.createdAt), with the id as the tie-breaker so the order is
+         * stable rather than dependent on Array#sort's treatment of equal keys —
+         * jobs submitted in one SubmitMultiple call share a timestamp to the
+         * microsecond.
+         */
         get displayJobs() {
             const jobIds = new Set(this.jobs.map(j => j.id));
             const unique = this.retainedCompletedJobs.filter(j => !jobIds.has(j.id));
-            return [...this.jobs, ...unique];
+            const all = [...this.jobs, ...unique].filter(j => !this._dismissedIds.has(j.id));
+            return all.sort((a, b) => {
+                const at = Date.parse(a.createdAt) || 0;
+                const bt = Date.parse(b.createdAt) || 0;
+                if (at !== bt) return bt - at;
+                return String(b.id).localeCompare(String(a.id));
+            });
+        },
+
+        get hasFinishedJobs() {
+            return this.displayJobs.some(j => this.isFinished(j));
         },
 
         truncateUrl(url, maxLength = 40) {
