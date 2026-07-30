@@ -1788,6 +1788,9 @@
   .grow {
     flex-grow: 1;
   }
+  .basis-full {
+    flex-basis: 100%;
+  }
   .border-collapse {
     border-collapse: collapse;
   }
@@ -2959,6 +2962,9 @@
   }
   .break-words {
     overflow-wrap: break-word;
+  }
+  .wrap-anywhere {
+    overflow-wrap: anywhere;
   }
   .break-all {
     word-break: break-all;
@@ -4685,6 +4691,11 @@
   .sm\:inline {
     @media (width >= 40rem) {
       display: inline;
+    }
+  }
+  .sm\:basis-0 {
+    @media (width >= 40rem) {
+      flex-basis: 0;
     }
   }
   .sm\:grid-cols-2 {

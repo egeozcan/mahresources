@@ -4,13 +4,19 @@
         {{ title }}
         {% if description %}<p class="text-xs text-stone-500 mt-0.5 font-sans font-normal">{{ description }}</p>{% endif %}
     </label>
-    <div class="mt-1 sm:mt-0 sm:col-span-2"
+    {# min-w-0: this column holds a CodeMirror editor and a nowrap button row, so #}
+    {# without it the block's min-content width propagates up and overflows the    #}
+    {# viewport (findings 19/101).                                                 #}
+    <div class="mt-1 sm:mt-0 sm:col-span-2 min-w-0"
          x-data="codeEditor({ mode: '{{ mode }}', dbType: '{{ dbType }}', label: '{{ title }}', shortcodes: {% if shortcodes %}true{% else %}false{% endif %}, generate: {% if generate %}true{% else %}false{% endif %} })">
         <input type="hidden" id="{{ field_id }}" name="{{ name }}" x-ref="hiddenInput" value="{{ value }}">
         {% if generate %}
         <div class="mb-2 border border-stone-200 rounded-md p-2 bg-stone-50" aria-label="Generate {{ title }} from natural language">
             <label for="{{ field_id }}-genprompt" class="sr-only">Describe the {{ title }} to generate</label>
-            <div class="flex items-start gap-2">
+            {# flex-wrap + min-w-0: the prompt textarea is flex-1 and the buttons are #}
+            {# whitespace-nowrap, so at 390px the row was 932px wide and the Generate  #}
+            {# button sat at x=880 (findings 19/101).                                  #}
+            <div class="flex flex-wrap items-start gap-2">
                 <textarea id="{{ field_id }}-genprompt"
                           x-model="generationPrompt"
                           data-testid="generate-prompt-{{ name }}"
@@ -18,7 +24,7 @@
                           @keydown.enter.meta.prevent="generateFromPrompt()"
                           :aria-invalid="generationError ? 'true' : 'false'"
                           aria-describedby="{{ field_id }}-genmsg"
-                          class="flex-1 border border-stone-300 rounded-md px-2 py-1 text-sm focus:ring-amber-600 focus:border-amber-600"
+                          class="flex-1 min-w-0 basis-full sm:basis-0 border border-stone-300 rounded-md px-2 py-1 text-sm focus:ring-amber-600 focus:border-amber-600"
                           placeholder="Describe what to generate…"></textarea>
                 <button type="button"
                         @click="generateFromPrompt()"
@@ -57,7 +63,10 @@
             </button>
         </div>
         {% endif %}
-        <div x-ref="editorContainer" class="border border-stone-300 rounded-md overflow-hidden"></div>
+        {# overflow-x:auto rather than hidden: a long template line is content the  #}
+        {# author needs to reach, and clipping it made it unreachable (findings      #}
+        {# 19/101). CodeMirror's own scroller handles the vertical axis.             #}
+        <div x-ref="editorContainer" class="border border-stone-300 rounded-md overflow-hidden max-w-full"></div>
         {% if mode == "json" or mode == "html" %}
         <div class="mt-1 min-h-[1.25rem]">
             <p x-show="formatError"

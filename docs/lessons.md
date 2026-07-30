@@ -431,3 +431,67 @@ identical call shape was in two more methods of the same component, both invoked
 inside an `x-for` row, and one of them sat directly under a comment claiming it kept focus off
 `<body>`. Measured, it did not. After fixing one `$el`-scoping bug, grep the whole component for
 `this.$el` and check each remaining one against the element that actually invokes the method.
+
+## `<fieldset>` will not shrink, and no `min-width: 0` on a descendant changes that
+The taxonomy forms overflowed a 390px viewport by 3x with `html`/`body` both
+`overflow-x: hidden`, so every control past x=390 was unreachable — not scrollable-to,
+gone. Every wrapper inside already had `min-w-0`; the floor was the UA stylesheet's
+`fieldset { min-inline-size: min-content }`. Measured chain:
+
+    FIELDSET        w=984 sw=982  min-width: min-content   <- the floor
+    DIV             w=950         min-width: 0px
+    DIV.cm-editor   w=948         min-width: 0px
+    DIV.cm-scroller w=948         overflow-x: auto
+
+One rule — `fieldset { min-inline-size: 0 }` — took `body.scrollWidth` from 1198 to 390.
+When a flex or grid child refuses to shrink and its own `min-width` is already 0, walk up
+and read the *computed* `min-width` of every ancestor; `<fieldset>` is the one element
+whose UA default is `min-content` rather than `auto`.
+
+## A layout fix aimed at the reported viewport can leave the defect at another one
+Breadcrumb arrows are stranded at the left margin when the trail wraps. The report
+measured it at 390px, so the first fix swapped them for an inline separator below 900px —
+and at **1280px** with a seven-crumb trail the row still wrapped and still stranded an
+arrow at `top:96 left:40`. The trigger was wrapping, not width. Before writing a
+`@media` rule for a layout defect, find the property that actually causes it and check
+the other side of the breakpoint with content long enough to trigger it; if the cause is
+"this wraps", the fix is about wrapping, not about a width.
+
+## Measure the candidate fixes, including the one that looks equivalent
+Two candidates for the centered-flex overflow bug measured identically on the repro (0
+clipped nodes, same geometry at both viewports) and were not equivalent:
+`justify-content: safe center` drops the entire declaration in a browser that cannot
+parse `safe`, landing on `normal` — measured as the tree losing centring altogether
+(root offset −76.5 at 390px, −309.5 at 1280px). `min-width: max-content` +
+`margin-inline: auto` has no such cliff. When two fixes measure the same, choose on the
+failure mode, and write down which measurement decided it.
+
+## An always-present element carrying `role="dialog"` + `aria-modal="true"` is a breaking change
+The lightbox is addressed app-wide by
+`[role="dialog"][aria-modal="true"]:not([aria-labelledby="paste-upload-title"]):not([aria-labelledby="entity-picker-title"])`,
+which resolves uniquely only because those two `:not()` exclusions name the only other
+modals that stay in the DOM while closed. Giving the mobile nav panel dialog semantics —
+the obvious markup for a full-screen modal menu — would have turned roughly 45 of those
+locators into strict-mode violations. Use `x-trap` for the behaviour and a labelled
+region for the semantics, and before adding the role/aria-modal pair to anything that is
+not behind `<template x-if>`, grep the suite for that locator.
+
+## A Go test cannot count rendered elements inside `<template>`
+The served HTML contains the contents of every `<template x-if>`, so a Go assertion over
+the response body counted seven modal dialogs where the browser has three. Anything whose
+truth depends on which branches Alpine actually instantiated — element counts, visibility,
+duplicate ids across `x-for` — belongs in Playwright. Go can assert what the server
+*wrote*; only the browser knows what exists.
+
+## A focus trap has two race windows, not one
+Pressing Tab right after opening a trapped overlay raced two separate things, and fixing
+the first left a 1-in-110 residue that looked like irreducible flake:
+1. Alpine's `x-trap` arms on a `setTimeout(15)`, so Tab pressed before that goes wherever
+   normal document order sends it.
+2. focus-trap recomputes its containers when their contents change, and content built
+   after the overlay opens (a table rendered by JS) reopens the window. Tab pressed
+   during the recomputation escapes.
+So the precondition for "Tab stays inside the modal" is *both* "the trap has taken focus"
+*and* "the trapped subtree has stopped changing". Poll for the tabbable count inside the
+overlay to settle, then press Tab. And note which of the two you are testing: the first
+is a test race, the second is a narrow real transient worth recording rather than hiding.

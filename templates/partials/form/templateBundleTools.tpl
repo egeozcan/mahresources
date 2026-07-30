@@ -8,9 +8,9 @@
     <div class="space-y-4">
         <div>
             <label class="block text-sm font-mono font-medium text-stone-700 mb-1" for="tb-preset">Start from preset</label>
-            <div class="flex gap-2">
+            <div class="flex flex-wrap gap-2">
                 <select id="tb-preset" x-model="presetChoice"
-                        class="flex-1 min-w-0 rounded-md border-stone-300 text-sm font-mono focus:border-amber-500 focus:ring-amber-500">
+                        class="flex-1 min-w-0 basis-full sm:basis-0 max-w-full rounded-md border-stone-300 text-sm font-mono focus:border-amber-500 focus:ring-amber-500">
                     <option value="">Choose a preset…</option>
                     <template x-for="p in presetOptions" :key="p.name">
                         <option :value="p.name" x-text="p.title || p.name"></option>
@@ -23,9 +23,9 @@
 
         <div>
             <label class="block text-sm font-mono font-medium text-stone-700 mb-1" for="tb-copy">Copy from existing</label>
-            <div class="flex gap-2">
+            <div class="flex flex-wrap gap-2">
                 <select id="tb-copy" x-model="copyChoice"
-                        class="flex-1 min-w-0 rounded-md border-stone-300 text-sm font-mono focus:border-amber-500 focus:ring-amber-500">
+                        class="flex-1 min-w-0 basis-full sm:basis-0 max-w-full rounded-md border-stone-300 text-sm font-mono focus:border-amber-500 focus:ring-amber-500">
                     <option value="">Choose a source…</option>
                     <template x-for="(cfg, key) in carriers" :key="key">
                         <optgroup :label="cfg.label + (key === carrier ? ' (this type)' : '')">
@@ -44,7 +44,7 @@
     <div class="border-t border-stone-200 pt-4">
         <label class="block text-sm font-mono font-medium text-stone-700 mb-1" for="tb-generate-prompt">Generate whole template from a description</label>
         <p class="text-xs text-stone-500 mb-2">Sends this description, the metadata schema, and a sample entity to the configured AI provider, then fills every slot. Review before saving.</p>
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
             <textarea id="tb-generate-prompt" x-model="generationPrompt" rows="2"
                       data-testid="template-bundle-generate-prompt"
                       class="flex-1 min-w-0 rounded-md border-stone-300 text-sm focus:border-amber-500 focus:ring-amber-500"

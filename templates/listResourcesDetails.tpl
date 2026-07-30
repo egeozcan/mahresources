@@ -41,8 +41,12 @@
                         <td class="detail-table-secondary">
                             <a href="/resource?id={{ entity.ID }}">{{ entity.ID }}</a>
                         </td>
+                        {# Finding 67: the Name column is sized by its longest cell, so one #}
+                        {# 166-character name made the table 2005px wide inside an 822px     #}
+                        {# scroller and pushed Preview/Size/Created/Updated out of view.     #}
+                        {# title= keeps the whole name available now that it is truncated.   #}
                         <td class="detail-table-name">
-                            <a href="/resource?id={{ entity.ID }}">{{ entity.Name }}</a>
+                            <a href="/resource?id={{ entity.ID }}" title="{{ entity.Name }}">{{ entity.Name }}</a>
                         </td>
                         <td class="detail-table-preview">
                             <a href="/v1/resource/view?id={{ entity.ID }}&v={{ entity.Hash }}#{{ entity.ContentType }}"

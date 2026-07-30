@@ -1,9 +1,12 @@
-<nav aria-label="Main" x-data="{ mobileOpen: false, adminOpen: false, pluginsOpen: false, currentPath: '' }"
-     x-init="currentPath = $el.dataset.currentPath"
+<nav aria-label="Main" x-data="mobileNav()"
+     x-init="initMobileNav()"
      data-current-path="{{ path }}"
      class="navbar flex items-center gap-1">
+    {# Finding 3: the mobile panel could not be closed. The toggle is the one #}
+    {# affordance that has to survive the panel being painted over it, so it  #}
+    {# sits above the panel's z-index; see .navbar-toggle in public/index.css. #}
     <!-- Mobile hamburger -->
-    <button @click="mobileOpen = !mobileOpen" class="navbar-toggle" aria-label="Toggle menu"
+    <button @click="toggleMobileNav($event)" class="navbar-toggle" aria-label="Toggle menu"
             :aria-expanded="mobileOpen.toString()" aria-controls="navbar-mobile-panel">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path x-show="!mobileOpen" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 12h16M4 18h16" />
@@ -102,6 +105,14 @@
     </div>
 
     <!-- Mobile navigation -->
+    {# Finding 3: Escape was inert, the panel held zero buttons, and it painted #}
+    {# over the hamburger so the toggle click was intercepted.                  #}
+    {# Deliberately NOT role="dialog" + aria-modal="true": this element is in    #}
+    {# every page's DOM, and the lightbox is addressed app-wide by a strict      #}
+    {# [role="dialog"][aria-modal="true"] locator whose two :not() exclusions    #}
+    {# name the only other always-present modals. A third would be a            #}
+    {# strict-mode violation in ~45 specs, not a soft failure. x-trap gives the  #}
+    {# modal behaviour; the semantics stay a plain labelled region.              #}
     <div x-show="mobileOpen"
          id="navbar-mobile-panel"
          x-cloak
@@ -111,8 +122,23 @@
          x-transition:leave="transition ease-in duration-150"
          x-transition:leave-start="opacity-100 translate-y-0"
          x-transition:leave-end="opacity-0 -translate-y-2"
-         @click.outside="mobileOpen = false"
+         @click.outside="closeMobileNav()"
+         @keydown.escape.window="closeMobileNav()"
+         x-trap.noscroll.noreturn="mobileOpen"
+         role="group"
+         aria-label="Site navigation"
          class="navbar-mobile">
+
+        {# .noreturn, then an explicit deferred restore in mobileNav.js: x-trap #}
+        {# activates on a setTimeout(15) and records whatever has focus then as #}
+        {# its return node, which is the close button this panel focuses first. #}
+        <div class="navbar-mobile-header">
+            <button type="button" @click="closeMobileNav()" class="navbar-mobile-close" aria-label="Close menu">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
 
         <div class="navbar-mobile-section">
             {% for menuEntry in menu %}

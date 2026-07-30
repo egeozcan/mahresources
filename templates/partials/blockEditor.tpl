@@ -590,8 +590,14 @@
                             <template x-if="!editMode">
                                 <div class="calendar-block">
                                     {# Header #}
-                                    <div class="flex items-center justify-between mb-4">
-                                        <div class="flex items-center gap-2">
+                                    {# Finding 55: this row did not wrap, so at 390px the Month and #}
+                                    {# Agenda buttons were laid out at x=343-407 and x=407-479 —     #}
+                                    {# both past the viewport, inside an overflow-x:hidden ancestor  #}
+                                    {# (clientWidth 110 against scrollWidth 136) and with the        #}
+                                    {# document not scrolling horizontally, so neither could ever be #}
+                                    {# reached or tapped on a phone.                                 #}
+                                    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+                                        <div class="flex flex-wrap items-center gap-2">
                                             {# Month navigation - only shown in month view #}
                                             <template x-if="view === 'month'">
                                                 <div class="flex items-center gap-2">
@@ -613,7 +619,7 @@
                                                 <span class="text-lg font-semibold">Upcoming Events</span>
                                             </template>
                                         </div>
-                                        <div class="flex items-center gap-2">
+                                        <div class="flex flex-wrap items-center gap-2">
                                             <template x-if="isRefreshing">
                                                 <span class="text-xs text-stone-400 flex items-center">
                                                     <svg class="animate-spin h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24">

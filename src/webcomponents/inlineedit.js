@@ -271,6 +271,7 @@ class InlineEdit extends HTMLElement {
         if (this.isEditing) return;
         this.clearError();
         this.isEditing = true;
+        this._borrowHostLayout();
         this._originalValue = this._value ?? '';
         this.inputElement.value = this._originalValue;
         this.shadowRoot.replaceChild(this.inputElement, this.displayContainer);
@@ -295,6 +296,11 @@ class InlineEdit extends HTMLElement {
         this.inputElement.style.borderColor = '#b91c1c';
 
         this.isEditing = true;
+        // exitEditMode() has already restored the host's inline layout by the time a
+        // rejection comes back, and this puts the reader into the input again — so the
+        // borrowed block layout has to come back with it, or a retry after a failed
+        // save is typed into a 166px box (finding 141).
+        this._borrowHostLayout();
         this.inputElement.value = keepValue;
         if (this.displayContainer.parentNode === this.shadowRoot) {
             this.shadowRoot.replaceChild(this.inputElement, this.displayContainer);
@@ -313,9 +319,37 @@ class InlineEdit extends HTMLElement {
         this.inputElement.style.borderColor = '#ccc';
     }
 
+    /**
+     * Make the host block-level for the duration of an edit.
+     *
+     * The host is an inline custom element, so it is only as wide as the text it was
+     * displaying, and the shadow input is width:100% of the host — which made the
+     * rename field 166px for a 166-character name, scrollWidth 2215, about 9% of the
+     * value visible at a time with no wrapping (UI bug hunt 2026-07-29, finding 141).
+     * The previous inline styles are remembered rather than assumed empty, so a host
+     * that was styled by its own page is put back the way it was.
+     */
+    _borrowHostLayout() {
+        if (this._hostLayoutBorrowed) return;
+        this._hostLayoutBorrowed = true;
+        this._previousHostDisplay = this.style.display;
+        this._previousHostWidth = this.style.width;
+        this.style.display = 'block';
+        this.style.width = '100%';
+    }
+
+    /** Undo the block-level layout _borrowHostLayout() took. */
+    _restoreHostLayout() {
+        if (!this._hostLayoutBorrowed) return;
+        this._hostLayoutBorrowed = false;
+        this.style.display = this._previousHostDisplay || '';
+        this.style.width = this._previousHostWidth || '';
+    }
+
     exitEditMode() {
         if (!this.isEditing) return;
         this.isEditing = false;
+        this._restoreHostLayout();
 
         // Return focus to the edit button only when the edit was dismissed via
         // keyboard (Enter/Escape) — not on blur — so clicking or tabbing away is

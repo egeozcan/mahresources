@@ -78,6 +78,14 @@ html {
 }
 
 .navbar-toggle {
+    /* Finding 3: .navbar-mobile is position:fixed inset:0 with z-index 39, and it
+       is a DESCENDANT of the z-index:40 header — so it paints inside the header's
+       stacking context, above the header's own content, and elementFromPoint over
+       the hamburger returned the panel. The toggle click was intercepted and the
+       menu could not be closed. Raising the toggle above the panel keeps it
+       hit-testable; the panel still covers the rest of the page. */
+    position: relative;
+    z-index: 40;
     display: flex;  /* Visible on mobile by default */
     align-items: center;
     justify-content: center;
@@ -200,6 +208,36 @@ html {
     overflow-y: auto;
 }
 
+/* Finding 3: the panel contained zero buttons, so there was no way out of it at
+   all short of following a nav link. The close control is the first thing in the
+   panel, which is also where x-trap lands focus. */
+.navbar-mobile-header {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 4px;
+}
+
+.navbar-mobile-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* WCAG 2.2 SC 2.5.8 — the same 24px floor WS5 applied to every other icon
+       button in this batch, with room to spare because this one is a primary
+       affordance on a touch device. */
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--nav-text);
+    cursor: pointer;
+}
+
+.navbar-mobile-close:hover {
+    color: var(--nav-hover);
+    background-color: rgba(180, 83, 9, 0.08);
+}
+
 .navbar-mobile-section {
     display: flex;
     flex-direction: column;
@@ -254,6 +292,31 @@ html {
 
 .breadcrumb-link {
     max-width: min(24rem, calc(100vw - 7rem));
+}
+
+/*
+ * Finding 150: the arrow separators are `w-6 h-full` chevrons with
+ * preserveAspectRatio="none", drawn to read as one continuous trail. They only do
+ * that on a single line. When the trail wraps, each arrow that starts a new line
+ * is stranded at the left margin as a half-drawn diagonal connecting nothing —
+ * measured at 390px, nav 88px tall against 44px at 1280px, with the second arrow
+ * at top:96 left:40.
+ *
+ * The first attempt at this swapped the arrows for an inline "›" below 900px. That
+ * fixed the reported viewport and left the defect in place: measured at **1280px**
+ * on a seven-crumb trail, the row still wrapped to two lines with a stranded arrow
+ * at top:96 left:40. The trigger is wrapping, not width.
+ *
+ * So the trail does not wrap at all now — it scrolls. That removes the stranding at
+ * every width and keeps the connected-arrow rendering the design intends. It needs
+ * no tabindex, unlike the details table in finding 13: every crumb is an <a>, so
+ * Tab already reaches them and focusing one scrolls it into view.
+ */
+.breadcrumb-list {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    /* Firefox/Chrome: keep the focus ring of a scrolled-to crumb from being clipped. */
+    scroll-padding-inline: 0.5rem;
 }
 
 .title {
@@ -369,11 +432,31 @@ html {
 }
 
 .content .sidebar {
-    grid-column: 2 / 3;
     display: flex;
     flex-direction: column;
     gap: 1rem;
     max-width: 94vw;
+}
+
+/*
+ * Findings 25/62/63/80: the sidebar is wrapped in a <details> disclosure, so the
+ * grid item is now the wrapper and the column placement moves with it.
+ *
+ * At desktop the disclosure must be invisible as a control and as a box: no
+ * border, no background, and the summary hidden, so every one of the 37 templates
+ * that fill {% block sidebar %} looks exactly as it did. These rules come after
+ * .detail-collapsible deliberately — same specificity, so source order decides.
+ */
+.content .filter-disclosure {
+    grid-column: 2 / 3;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    min-width: 0;
+}
+
+.filter-disclosure > .filter-disclosure-summary {
+    display: none;
 }
 
 @media only screen and (max-width: 900px) {
@@ -387,8 +470,28 @@ html {
         grid-column: 1 !important;
     }
 
-    .content > .sidebar {
+    /* order: -1 kept, per the decision: the collapsed control stays at the top so
+       the reader sees "Filters and details" first and the results immediately
+       under it, rather than having to scroll past the filters to find them. */
+    .content > .filter-disclosure {
         order: -1;
+    }
+
+    /* Below the breakpoint it is a real disclosure again, styled like every other
+       .detail-collapsible in the app. */
+    .content .filter-disclosure {
+        border: 1px solid #e7e5e4;
+        border-radius: var(--radius-md);
+        background: #fff;
+    }
+
+    .filter-disclosure > .filter-disclosure-summary {
+        display: flex;
+    }
+
+    .filter-disclosure > .sidebar {
+        padding: 0.75rem;
+        border-top: 1px solid #f5f5f4;
     }
 }
 
@@ -469,7 +572,13 @@ html {
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow-wrap: break-word;
-    word-break: break-all;
+    /* Finding 148: word-break: break-all breaks at ANY character, so
+       "Jul 29, 2026 12:01" rendered as "…2026 1" / "2:01" — a clock time split
+       across lines, which reads as a different value. overflow-wrap: anywhere
+       breaks only where it has to and keeps word boundaries when there is room,
+       while still handling the unbroken hash and path tokens this rule exists
+       for. */
+    overflow-wrap: anywhere;
 }
 
 .card-title:last-child {
@@ -925,9 +1034,19 @@ html {
     cursor: pointer;
 }
 
+/* Finding 67: uncapped, the Name column is sized by its longest cell — a single
+   166-character name made the table 2005px wide inside an 822px overflow-x:auto
+   scroller, spanning x=85..1305 on its own, so Preview, Size, Created, Updated,
+   Original Name and Original Location were all off-screen with no visible hint
+   that they existed. Capped and ellipsised, the way .detail-table-truncate
+   already does for the Original columns; the cell's link carries a title with
+   the full name. */
 .detail-table .detail-table-name {
     font-weight: 500;
     color: #292524;
+    max-width: 32ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .detail-table .detail-table-name a {
@@ -1057,7 +1176,13 @@ html {
     border-radius: var(--radius-md);
     overflow-x: auto;
     white-space: pre-wrap;
-    word-break: break-all;
+    /* Finding 148: word-break: break-all breaks at ANY character, so
+       "Jul 29, 2026 12:01" rendered as "…2026 1" / "2:01" — a clock time split
+       across lines, which reads as a different value. overflow-wrap: anywhere
+       breaks only where it has to and keeps word boundaries when there is room,
+       while still handling the unbroken hash and path tokens this rule exists
+       for. */
+    overflow-wrap: anywhere;
 }
 
 .query-results {
@@ -1312,19 +1437,34 @@ html {
     box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85), 0 1px 4px rgba(0, 0, 0, 0.15);
 }
 
-/* Image card variant for resources */
+/* Finding 75: with `height: auto` an extreme aspect ratio sizes the card by the
+   image. Measured on /resources at 1280px, the 400x1600 thumbnail's card was
+   1721px tall against a median of 416px — and because grid rows are
+   height-matched, the unrelated 32x32-icon card beside it was stretched to 1721px
+   too, so the reader scrolled two screens past one image.
+
+   max-height rather than a forced aspect-ratio: a normal card's image renders at
+   402x284, comfortably under the cap, so ordinary cards are not touched at all —
+   only the extremes are bounded. The image is centred because a very tall or very
+   wide one no longer fills the box once it is scaled to fit. */
 .card--with-image .card-image {
     margin: -1rem -1rem 0.875rem -1rem;
     border-radius: var(--radius-md) var(--radius-md) 0 0;
     overflow: hidden;
     background: #f5f5f4;
     min-height: 80px;
+    max-height: 320px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .card--with-image .card-image img {
     display: block;
-    width: 100%;
+    width: auto;
+    max-width: 100%;
     height: auto;
+    max-height: 320px;
     object-fit: contain;
 }
 
@@ -1527,7 +1667,8 @@ html {
     grid-template-columns: minmax(0, 1fr);
 }
 
-.content--no-sidebar .sidebar {
+.content--no-sidebar .sidebar,
+.content--no-sidebar .filter-disclosure {
     display: none;
 }
 
@@ -1958,7 +2099,13 @@ html {
 .compare-meta-card-value {
     font-size: 0.875rem;
     color: #292524;
-    word-break: break-all;
+    /* Finding 148: word-break: break-all breaks at ANY character, so
+       "Jul 29, 2026 12:01" rendered as "…2026 1" / "2:01" — a clock time split
+       across lines, which reads as a different value. overflow-wrap: anywhere
+       breaks only where it has to and keeps word boundaries when there is room,
+       while still handling the unbroken hash and path tokens this rule exists
+       for. */
+    overflow-wrap: anywhere;
 }
 
 /* Segmented control */
@@ -2689,4 +2836,40 @@ reload-shortcode {
 }
 .calendar-day-number:hover {
   background: #fef3c7;
+}
+
+/* ── WS7 finding 148 ─────────────────────────────────────────────────────────
+   The Tailwind `break-all` class is `word-break: break-all`, which breaks at any
+   character: the resource Metadata cards rendered
+   "A resource with a really extremely l / ong descriptive name that ought to /
+   test how the interface truncates thi / ngs in cards…". This is the same
+   declaration the .compare-meta-card-value and jsonTable rules now use.
+
+   It is a new class rather than an override of `break-all`, because index.css is
+   linked BEFORE tailwind.css in layouts/base.tpl and would lose on source order. */
+.wrap-anywhere {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+/* ── WS7 findings 19/101: <fieldset> will not shrink ─────────────────────────
+   The taxonomy template-authoring forms overflowed a 390px viewport by 3x
+   (body.scrollWidth 1198) with html and body both overflow-x:hidden, so every
+   per-slot Generate and Format HTML button past x=390 was permanently
+   unreachable — not scrollable-to, simply gone.
+
+   The cause is the UA stylesheet, not this app's CSS: <fieldset> has
+   `min-inline-size: min-content`, so it refuses to shrink below its content's
+   min-content width no matter what `min-width: 0` is set on its descendants.
+   Measured chain at 390px, with min-w-0 already on every wrapper inside it:
+
+     FIELDSET  w=984 sw=982  minW=min-content   <- the floor
+     DIV       w=950          minW=0px
+     DIV.cm-editor w=948      minW=0px
+     DIV.cm-scroller w=948 ox=auto
+
+   Once the fieldset can shrink, CodeMirror's own .cm-scroller (overflow-x:auto)
+   scrolls the long template lines, which is where that scrolling belongs. */
+fieldset {
+  min-inline-size: 0;
 }

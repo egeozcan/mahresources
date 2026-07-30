@@ -72,7 +72,24 @@
     </header>
     {% include "/partials/title.tpl" %}
     <div class="content pb-16{% if hideSidebar %} content--no-sidebar{% endif %}" id="main-content">
-        <aside class="sidebar">
+        {# Findings 25/62/63/80: below 900px the sidebar simply stacks above the results #}
+        {# at full height, so the first card sat at y=1745 on /groups, 1574 on /notes    #}
+        {# and 2124 on /resources against an 844px viewport — two to two-and-a-half      #}
+        {# screens of filter controls before any content. On a detail page the same      #}
+        {# pattern put the note's own body at y=902.                                     #}
+        {#                                                                              #}
+        {# Collapsed behind a disclosure, per the decision in docs/todo.md: the existing #}
+        {# <details class="detail-collapsible"> pattern, no source-order change, and     #}
+        {# order:-1 kept so the collapsed control stays at the top.                      #}
+        {#                                                                              #}
+        {# The <aside class="sidebar"> is WRAPPED, not replaced: specs address it as     #}
+        {# `aside, [role="complementary"]` without .first(), so replacing it or adding a #}
+        {# second landmark would be a strict-mode violation. The wrapper class must also #}
+        {# not contain "sidebar" — `[class*="sidebar"]` is a live locator in five specs  #}
+        {# and would resolve to the wrapper, which precedes the aside in document order. #}
+        <details id="sidebar-disclosure" class="detail-collapsible filter-disclosure" open>
+            <summary class="filter-disclosure-summary">Filters and details</summary>
+            <aside class="sidebar">
             {% if mainEntity && (!sc || sc.Timestamps) %}
             <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-stone-600 font-mono">Updated: </span>{{ mainEntity.UpdatedAt|date:"2006-01-02 15:04" }}</small>
             <small class="min-w-0 whitespace-nowrap overflow-hidden overflow-ellipsis text-sm"><span class="text-stone-600 font-mono">Created: </span>{{ mainEntity.CreatedAt|date:"2006-01-02 15:04" }}</small>
@@ -80,7 +97,29 @@
             {% plugin_slot "sidebar_top" %}
             {% block sidebar %}{% endblock %}
             {% plugin_slot "sidebar_bottom" %}
-        </aside>
+            </aside>
+        </details>
+        {# Collapse it before first paint on a narrow viewport.                          #}
+        {#                                                                              #}
+        {# It has to be script, and it has to be here rather than in the bundle. There   #}
+        {# is no pure-CSS way to make a <details> behave as a plain container above a    #}
+        {# breakpoint — ::details-content is Chrome-only — so `open` is the server        #}
+        {# default (correct at desktop, and correct with JS disabled at every width,     #}
+        {# which is the status quo rather than a regression) and this closes it when the #}
+        {# viewport is narrow. Inline and parser-blocking so there is no flash of an     #}
+        {# 1800px-tall sidebar before Alpine boots.                                      #}
+        <script>
+            (function () {
+                var d = document.getElementById('sidebar-disclosure');
+                if (!d || !window.matchMedia) return;
+                var narrow = window.matchMedia('(max-width: 900px)');
+                var sync = function () { d.open = !narrow.matches; };
+                sync();
+                // Re-syncs only when the breakpoint is crossed, which is the one moment
+                // the previous state is certainly wrong.
+                narrow.addEventListener('change', sync);
+            })();
+        </script>
         <main class="main">
             {% block prebody %}{% endblock %}
             {% if errorMessage %}

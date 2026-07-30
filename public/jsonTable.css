@@ -118,7 +118,8 @@
     color: #57534e;
     font-size: 0.75rem;
     font-weight: 500;
-    word-break: break-all;
+    /* Finding 148: break-all splits timestamps mid-token; see index.css. */
+    overflow-wrap: anywhere;
 }
 
 .jsonTable td {
@@ -126,7 +127,8 @@
     color: #292524;
     font-size: 0.8125rem;
     position: relative;
-    word-break: break-all;
+    /* Finding 148: break-all splits timestamps mid-token; see index.css. */
+    overflow-wrap: anywhere;
 }
 
 .jsonTable td.odd {
@@ -221,7 +223,8 @@
     color: #b45309;
     text-decoration: none;
     font-size: 0.8125rem;
-    word-break: break-all;
+    /* Finding 148: break-all splits timestamps mid-token; see index.css. */
+    overflow-wrap: anywhere;
 }
 
 .metaVal--url:hover {

@@ -35,7 +35,7 @@
                     <dt class="text-xs text-stone-500 font-mono">Name</dt>
                     {# data-entity-field lets an inline rename in the h1 update this #}
                     {# copy of the same field without a reload (finding 151). #}
-                    <dd class="text-sm mt-0.5 break-all"><span data-entity-field="name">{{ resource.Name }}</span>
+                    <dd class="text-sm mt-0.5 wrap-anywhere"><span data-entity-field="name">{{ resource.Name }}</span>
                     <button
                         type="button"
                         class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-stone-400 hover:text-stone-600 p-0.5"
@@ -47,7 +47,7 @@
                 {% if resource.OriginalName %}
                 <div class="group relative bg-stone-50 border border-stone-200 hover:border-stone-300 rounded-lg px-4 py-3">
                     <dt class="text-xs text-stone-500 font-mono">Original Name</dt>
-                    <dd class="text-sm mt-0.5 break-all">{{ resource.OriginalName }}
+                    <dd class="text-sm mt-0.5 wrap-anywhere">{{ resource.OriginalName }}
                     <button
                         type="button"
                         class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-stone-400 hover:text-stone-600 p-0.5"
@@ -110,7 +110,7 @@
                         {% if resource.Hash %}
                         <div class="group relative bg-stone-50 border border-stone-200 hover:border-stone-300 rounded-lg px-4 py-3">
                             <dt class="text-xs text-stone-500 font-mono">Hash{% if resource.HashType %} ({{ resource.HashType }}){% endif %}</dt>
-                            <dd class="text-sm mt-0.5 break-all font-mono">{{ resource.Hash }}
+                            <dd class="text-sm mt-0.5 wrap-anywhere font-mono">{{ resource.Hash }}
                             <button
                                 type="button"
                                 class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-stone-400 hover:text-stone-600 p-0.5"
@@ -122,7 +122,7 @@
                         {% if resource.Location %}
                         <div class="group relative bg-stone-50 border border-stone-200 hover:border-stone-300 rounded-lg px-4 py-3">
                             <dt class="text-xs text-stone-500 font-mono">Location</dt>
-                            <dd class="text-sm mt-0.5 break-all font-mono">{{ resource.Location }}
+                            <dd class="text-sm mt-0.5 wrap-anywhere font-mono">{{ resource.Location }}
                             <button
                                 type="button"
                                 class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-stone-400 hover:text-stone-600 p-0.5"
@@ -134,7 +134,7 @@
                         {% if resource.OriginalLocation %}
                         <div class="group relative bg-stone-50 border border-stone-200 hover:border-stone-300 rounded-lg px-4 py-3">
                             <dt class="text-xs text-stone-500 font-mono">Original Location</dt>
-                            <dd class="text-sm mt-0.5 break-all font-mono">{{ resource.OriginalLocation }}
+                            <dd class="text-sm mt-0.5 wrap-anywhere font-mono">{{ resource.OriginalLocation }}
                             <button
                                 type="button"
                                 class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-stone-400 hover:text-stone-600 p-0.5"
@@ -146,7 +146,7 @@
                         {% if resource.StorageLocation %}
                         <div class="group relative bg-stone-50 border border-stone-200 hover:border-stone-300 rounded-lg px-4 py-3">
                             <dt class="text-xs text-stone-500 font-mono">Storage Location</dt>
-                            <dd class="text-sm mt-0.5 break-all font-mono">{{ resource.StorageLocation }}
+                            <dd class="text-sm mt-0.5 wrap-anywhere font-mono">{{ resource.StorageLocation }}
                             <button
                                 type="button"
                                 class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity text-stone-400 hover:text-stone-600 p-0.5"
@@ -171,7 +171,7 @@
                         {% if resource.ImageHash %}
                         <div class="group relative bg-stone-50 border border-stone-200 hover:border-stone-300 rounded-lg px-4 py-3 col-span-2 md:col-span-3" data-testid="perceptual-hash-row">
                             <dt class="text-xs text-stone-500 font-mono">Perceptual hash</dt>
-                            <dd class="text-sm mt-0.5 font-mono break-all">
+                            <dd class="text-sm mt-0.5 font-mono wrap-anywhere">
                                 {% if resource.ImageHash.DHash %}DHash: 0x{{ resource.ImageHash.DHash }}{% endif %}
                                 {% if resource.ImageHash.AHash %}{% if resource.ImageHash.DHash %}<br>{% endif %}AHash: 0x{{ resource.ImageHash.AHash }}{% endif %}
                                 {% if resource.ImageHash.DHashInt != nil and resource.ImageHash.GetDHash == 0 %}
@@ -435,7 +435,7 @@
 
     {% if resource.GUID %}
     <div class="sidebar-group">
-        <button type="button" class="text-xs text-stone-600 break-all cursor-pointer text-left bg-transparent border-0 p-0 w-full" title="Click to copy GUID" onclick="navigator.clipboard.writeText('{{ resource.GUID }}')">
+        <button type="button" class="text-xs text-stone-600 wrap-anywhere cursor-pointer text-left bg-transparent border-0 p-0 w-full" title="Click to copy GUID" onclick="navigator.clipboard.writeText('{{ resource.GUID }}')">
             GUID: {{ resource.GUID }}
         </button>
     </div>

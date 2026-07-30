@@ -906,7 +906,7 @@
                             </dd>
 
                             <dt x-show="$store.lightbox.resourceDetails?.ContentType" class="text-stone-400">Type</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.ContentType" class="text-stone-100 font-mono break-all" x-text="$store.lightbox.resourceDetails?.ContentType"></dd>
+                            <dd x-show="$store.lightbox.resourceDetails?.ContentType" class="text-stone-100 font-mono wrap-anywhere" x-text="$store.lightbox.resourceDetails?.ContentType"></dd>
 
                             <dt x-show="$store.lightbox.resourceDetails?.CreatedAt" class="text-stone-400">Created</dt>
                             <dd x-show="$store.lightbox.resourceDetails?.CreatedAt" class="text-stone-100" x-text="$store.lightbox.formatDateTime($store.lightbox.resourceDetails?.CreatedAt)"></dd>
@@ -993,31 +993,31 @@
                         </summary>
                         <dl class="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs font-mono">
                             <dt x-show="$store.lightbox.resourceDetails?.ID" class="text-stone-400">ID</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.ID" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.ID"></dd>
+                            <dd x-show="$store.lightbox.resourceDetails?.ID" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.ID"></dd>
 
                             <dt x-show="$store.lightbox.resourceDetails?.guid" class="text-stone-400">GUID</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.guid" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.guid"></dd>
+                            <dd x-show="$store.lightbox.resourceDetails?.guid" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.guid"></dd>
 
                             <dt x-show="$store.lightbox.resourceDetails?.Hash" class="text-stone-400" x-text="$store.lightbox.resourceDetails?.HashType || 'Hash'"></dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.Hash" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.Hash"></dd>
+                            <dd x-show="$store.lightbox.resourceDetails?.Hash" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.Hash"></dd>
 
                             <dt x-show="$store.lightbox.resourceDetails?.OriginalName" class="text-stone-400">Original</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.OriginalName" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.OriginalName"></dd>
+                            <dd x-show="$store.lightbox.resourceDetails?.OriginalName" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.OriginalName"></dd>
 
                             <dt x-show="$store.lightbox.resourceDetails?.OriginalLocation" class="text-stone-400">Imported from</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.OriginalLocation" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.OriginalLocation"></dd>
+                            <dd x-show="$store.lightbox.resourceDetails?.OriginalLocation" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.OriginalLocation"></dd>
 
                             <dt x-show="$store.lightbox.resourceDetails?.Location" class="text-stone-400">Location</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.Location" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.Location"></dd>
+                            <dd x-show="$store.lightbox.resourceDetails?.Location" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.Location"></dd>
 
                             <dt x-show="$store.lightbox.resourceDetails?.StorageLocation" class="text-stone-400">Storage</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.StorageLocation" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.StorageLocation"></dd>
+                            <dd x-show="$store.lightbox.resourceDetails?.StorageLocation" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.StorageLocation"></dd>
 
                             <dt x-show="$store.lightbox.resourceDetails?.imageHash?.DHash" class="text-stone-400">dHash</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.imageHash?.DHash" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.imageHash?.DHash"></dd>
+                            <dd x-show="$store.lightbox.resourceDetails?.imageHash?.DHash" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.imageHash?.DHash"></dd>
 
                             <dt x-show="$store.lightbox.resourceDetails?.imageHash?.AHash" class="text-stone-400">aHash</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.imageHash?.AHash" class="text-stone-100 break-all" x-text="$store.lightbox.resourceDetails?.imageHash?.AHash"></dd>
+                            <dd x-show="$store.lightbox.resourceDetails?.imageHash?.AHash" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.imageHash?.AHash"></dd>
                         </dl>
                     </details>
 

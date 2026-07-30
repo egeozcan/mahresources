@@ -224,8 +224,15 @@
     </fieldset>
 
     {% include "/partials/form/templatePreviewPane.tpl" with entityType="resource" previewPath="/v1/resourceCategory/previewTemplate" generatePath="/v1/resourceCategory/generateTemplate" categoryId=resourceCategory.ID %}
-    <div class="flex gap-2 items-start">
-        <div class="flex-1">
+    {# Findings 19/101: `flex-1` is `flex: 1 1 0%` with the flex default          #}
+    {# min-width:auto, so this column could not shrink below the CodeMirror        #}
+    {# editor's min-content width — measured 1098px wide inside a 358px row, which #}
+    {# is what made body.scrollWidth 1198 against a 390px viewport while html and  #}
+    {# body are both overflow-x:hidden, so nothing past x=390 could be reached at  #}
+    {# all. min-w-0 lets it shrink; flex-wrap drops the Visual Editor button onto  #}
+    {# its own row rather than off the side.                                       #}
+    <div class="flex flex-wrap gap-2 items-start">
+        <div class="flex-1 min-w-0 basis-full sm:basis-0">
             {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Meta JSON Schema" name="MetaSchema" value=resourceCategory.MetaSchema mode="json" id="rcMetaSchemaTextarea" generate=true %}
         </div>
         {% include "/partials/form/schemaEditorModal.tpl" with textareaId="rcMetaSchemaTextarea" %}

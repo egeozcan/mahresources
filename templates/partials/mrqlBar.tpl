@@ -17,7 +17,12 @@
         <span class="w-full text-xs">Using the form values will remove the MRQL-only filters.</span>
     </div>
     <form role="search" class="flex flex-wrap items-start gap-2" @submit.prevent="submit()">
-        <div class="relative flex-1 min-w-0">
+        {# Finding 81: `flex-1 min-w-0` let the expression field shrink to 149px on a #}
+        {# 390px viewport rather than pushing the Filter button and the editor link   #}
+        {# onto their own row, so only a few characters of an MRQL expression were    #}
+        {# visible while typing. basis-full below sm makes the row wrap; sm:basis-0   #}
+        {# restores flex-1's own basis at desktop, where the layout was fine.         #}
+        <div class="relative flex-1 min-w-0 basis-full sm:basis-0">
             <label class="sr-only" :for="$id('mrql-bar') + '-input'">Filter these {{ entity }}s with an MRQL expression</label>
             <input
                 x-ref="input"

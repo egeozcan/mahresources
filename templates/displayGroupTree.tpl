@@ -8,14 +8,37 @@
         padding: 1rem;
     }
 
+    /*
+     * Finding 8: a centered flex container overflows SYMMETRICALLY, and the left
+     * overflow sits below scrollLeft: 0 where nothing can scroll to it. Measured at
+     * 390px on a tree with one level wider than the container: .tree-chart had
+     * scrollLeft 0, scrollWidth 613, clientWidth 358, and two node boxes at
+     * x = -191.4 with their RIGHT edge also negative (-42.6) — entirely off-screen
+     * and permanently unreachable. Nested lists are centered too, so every subtree
+     * compounded it. Desktop was clean (minX 41.6).
+     *
+     * min-width: max-content + margin-inline: auto rather than
+     * `justify-content: safe center`. Measured, the two are identical on the repro
+     * (0 clipped nodes, minX 80 at both 390px and 1280px) and both keep the tree
+     * centered when it fits. `safe` is the newer keyword, and if a browser does not
+     * parse it the whole declaration is dropped and centering is lost on every
+     * tree — which is what plain `justify-content: flex-start` measures as
+     * (rootCentreOffset -76.5 at 390px, -309.5 at 1280px). max-content has no such
+     * cliff: the container is never narrower than its content, so `center` has no
+     * free space to distribute and cannot push anything negative, and the auto
+     * margins do the centering when there is room.
+     */
     .tree-chart-list {
         display: flex;
         justify-content: center;
+        min-width: max-content;
         gap: 0;
         padding-top: 1.5rem;
         position: relative;
         list-style: none;
         margin: 0;
+        /* After `margin: 0`, or the shorthand resets it back to zero. */
+        margin-inline: auto;
         padding-left: 0;
     }
 

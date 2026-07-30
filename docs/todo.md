@@ -228,12 +228,12 @@ Statuses are filled in during Phase 1.
 |---|---|---|---|---|---|---|
 | 1 | high | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — resource named `'205'`, Description survived  · **FIXED** |
 | 2 | high | bug | recovered | WS9 | verify | |
-| 3 | high | bug | recovered | WS7 | verify | **CONFIRMED** — after opening at 390×844: `aria-expanded=true`, panel `display:block visibility:visible opacity:1` at 390×844, `elementFromPoint` over the hamburger returns `navbar-mobile-panel`, and the panel contains **zero** buttons. After Escape every value is byte-identical — Escape is a no-op |
+| 3 | high | bug | recovered | WS7 | verify | **CONFIRMED** — after opening at 390×844: `aria-expanded=true`, panel `display:block visibility:visible opacity:1` at 390×844, `elementFromPoint` over the hamburger returns `navbar-mobile-panel`, and the panel contains **zero** buttons. After Escape every value is byte-identical — Escape is a no-op · **FIXED** — Escape via `@keydown.escape.window`, a 44px Close button that x-trap lands focus on, and the toggle raised above the panel's z-index so it stays hit-testable. Focus returns to the toggle, deferred two frames past the trap teardown. Deliberately **not** `role="dialog"` — see below |
 | 4 | high | a11y | recovered | WS4 | verify | **CONFIRMED, worse than reported** — with an empty query the **first** Tab leaves; Shift+Tab leaves immediately too  · **FIXED** — `x-trap.noscroll.noreturn` |
 | 5 | high | a11y | verified-run | WS4 | spot | **CONFIRMED** — `BODY` at all 8 samples over 1.4s after ArrowRight  · **FIXED** — `render()` restores the roving target when focus was inside |
 | 6 | high | a11y | verified-run | WS5 | verify after 47 | **CONFIRMED, cause corrected** — order is now deterministic (47 fixed) and the handlers do fire: `activePickerIndex` walks 0→1→2→1→7→0 and `tabindex`/`aria-selected` rove correctly, but `document.activeElement` stays on option 0 for every key. `focusPickerItem`'s `this.$el` is the **`<li>`** that handled the key, so `$el.querySelector('#add-block-listbox')` is null and the focus call is skipped silently. Not the randomised order — see below · **FIXED, cause corrected** — `focusPickerItem`'s `this.$el` was the `<li>`; the component root is captured in `init()` and both focus paths share one `_focusActivePickerOption()`. `.prevent` dropped from the Tab handler and the close-restore made conditional |
 | 7 | high | bug | ✅ VERIFIED | WS13 | accept | |
-| 8 | high | bug | recovered | WS7 | verify | **CONFIRMED, and the repro needs breadth, not depth** — a pure 1-child chain never overflows (`scrollWidth == clientWidth`), so `?containing=70` alone shows nothing. With one level made wider than the container, at 390 px: `.tree-chart` `scrollLeft:0 scrollWidth:613 clientWidth:358`, all six `.tree-chart-list`s `justify-content:center`, `minX: -191.4` and two nodes whose **right edge is also negative** (-42.6) — entirely unreachable, worse than the reported -18. Desktop clean (`minX 41.6`) |
+| 8 | high | bug | recovered | WS7 | verify | **CONFIRMED, and the repro needs breadth, not depth** — a pure 1-child chain never overflows (`scrollWidth == clientWidth`), so `?containing=70` alone shows nothing. With one level made wider than the container, at 390 px: `.tree-chart` `scrollLeft:0 scrollWidth:613 clientWidth:358`, all six `.tree-chart-list`s `justify-content:center`, `minX: -191.4` and two nodes whose **right edge is also negative** (-42.6) — entirely unreachable, worse than the reported -18. Desktop clean (`minX 41.6`) · **FIXED, candidate chosen by measurement** — `min-width: max-content` + `margin-inline: auto`, not the plan's first choice of `justify-content: safe center`: measured identical (0 clipped, minX 80 at both widths) but `safe` degrades to `flex-start` if unparsed, which measures as losing centring on every tree |
 | 9 | high | bug | verified-run | WS2 | spot | **CONFIRMED** — alert on addTags/removeTags/addMeta/recalculate, write already landed  · **FIXED, cause corrected** — the plan's `list-container` class breaks the table layout; hook decoupled instead |
 | 10 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — HTTP 500 `encountered errors during dimension calculation`  · **FIXED** — gated on `IsRasterImage()`, now 415 naming the format |
 | 11 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — HTTP 500 `image: unknown format`  · **FIXED** — rotate gated on `IsRasterImage()`, now 415 |
@@ -244,13 +244,13 @@ Statuses are filled in during Phase 1.
 | 16 | high | bug | recovered | WS3 | verify | **CONFIRMED** — destructive confirm fired over an empty selection  · **FIXED** — submit disabled, confirm skipped, `losers` jargon gone |
 | 17 | high | bug | ✅ VERIFIED | WS12 | accept | |
 | 18 | high | ux | recovered | WS12 | verify | **CONFIRMED** — Visual Editor blank on an unparseable schema; `rawJsonError` computed in `schemaEditorModal.ts:67-75` but rendered only inside the Raw tabpanel  · **FIXED** — hoisted above the tab body |
-| 19 | high | design | recovered | WS7 | verify | **CONFIRMED** — `/category/new` `body.scrollWidth` 483 vs `innerWidth` 390 with `html`/`body` both `overflow-x:hidden` and `window.scrollX` pinned at 0; "Apply" at 398-466 and "Copy" at 406-466 fully offscreen. `/category/edit?id=72` is 1198 wide with **30** offscreen elements including "Generate" (880-974) and "Format HTML" (885-983). Zero scrollable ancestors. `/templatePartial/new` is clean at 390 — matching the report |
+| 19 | high | design | recovered | WS7 | verify | **CONFIRMED** — `/category/new` `body.scrollWidth` 483 vs `innerWidth` 390 with `html`/`body` both `overflow-x:hidden` and `window.scrollX` pinned at 0; "Apply" at 398-466 and "Copy" at 406-466 fully offscreen. `/category/edit?id=72` is 1198 wide with **30** offscreen elements including "Generate" (880-974) and "Format HTML" (885-983). Zero scrollable ancestors. `/templatePartial/new` is clean at 390 — matching the report · **FIXED, cause was the UA stylesheet** — `<fieldset>` has `min-inline-size: min-content`, so no `min-w-0` on any descendant could shrink it; `bodySW` 1198 → 390 and zero unreachable controls. Three contributing `flex-1` columns also lacked `min-w-0` |
 | 20 | high | bug | ✅ VERIFIED | WS3 | accept | **CONFIRMED** — /categories 400, /tags 200, same SortBy  · **FIXED** — the option is only offered where the model has a meta column |
 | 21 | high | bug | recovered | WS2 | verify | **CONFIRMED** — only signal a 1×1 clipped region  · **FIXED** — visible inline error, editor stays open holding the input |
 | 22 | high | ux | recovered | WS11 | verify | |
 | 23 | high | bug | recovered | WS11 | verify | |
 | 24 | high | design | recovered | WS11 | verify | |
-| 25 | med | design | verified-run | WS7 | spot | **CONFIRMED** — first card at y=1745 on `/groups`, viewport 844, sidebar 1455 px tall with `order:-1` and **no** disclosure element |
+| 25 | med | design | verified-run | WS7 | spot | **CONFIRMED** — first card at y=1745 on `/groups`, viewport 844, sidebar 1455 px tall with `order:-1` and **no** disclosure element · **FIXED** — `<details class="detail-collapsible filter-disclosure">` around the aside, `open` server-side, closed by a parser-blocking script below 900px. First card 1745 → 420 on a 844px viewport |
 | 26 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — live, `/log?id=521`  · **FIXED** |
 | 27 | med | bug | verified-run | WS8 | spot | **CONFIRMED** — `runtime_setting` missing from dropdown  · **FIXED** |
 | 28 | med | bug | verified-run | WS12 | spot | |
@@ -280,19 +280,19 @@ Statuses are filled in during Phase 1.
 | 52 | med | bug | recovered | WS8 | Dup → 44 |  · **FIXED** |
 | 53 | med | bug | recovered | WS2 | Dup → 15 |  · **FIXED** |
 | 54 | med | ux | recovered | WS6 | verify | **CONFIRMED** — zero articles, main text is chrome only  · **FIXED** |
-| 55 | med | ux | recovered | WS7 | verify | **CONFIRMED, worse than filed** — at 390 px **both** view-toggle buttons are offscreen: Month 343-407 and Agenda 407-479, against `innerWidth` 390 and `document.scrollWidth` 390. The immediate ancestor is `overflow-x:hidden` with `clientWidth` 110 against `scrollWidth` 136 |
+| 55 | med | ux | recovered | WS7 | verify | **CONFIRMED, worse than filed** — at 390 px **both** view-toggle buttons are offscreen: Month 343-407 and Agenda 407-479, against `innerWidth` 390 and `document.scrollWidth` 390. The immediate ancestor is `overflow-x:hidden` with `clientWidth` 110 against `scrollWidth` 136 · **FIXED** — the calendar header row wraps; Month/Agenda now at 142-206 and 206-277, zero offscreen, and the clipping ancestor no longer overflows (`clientWidth` 136 = `scrollWidth` 136) |
 | 56 | med | ux | recovered | WS3 | verify | **CONFIRMED** — full-page 400 at /v1/groups/addTags  · **FIXED** — guard + `tag ID` → `tag` |
 | 57 | med | ux | recovered | WS14 | verify | |
 | 58 | med | a11y | recovered | WS5 | verify | **CONFIRMED** — the two category fields pass `min=1` (so the form knows they are required) yet `autocompleter.tpl` emits no `aria-required`, no `*`/Required marker and no `aria-invalid`; only Name is marked · **FIXED** — `autocompleter.tpl` derives the `*`/Required marker and `aria-required` from the `min` it is already passed, and binds `aria-invalid` to `errorMessage` |
 | 59 | med | a11y | recovered | WS5 | Dup → 64 | **CONFIRMED** — Dup → 64 · **FIXED** — Dup → 64 |
 | 60 | med | ux | recovered | WS14 | Dup → 65 | |
 | 61 | med | ux | recovered | WS14 | product | **PARTLY REJECTED** — see below |
-| 62 | med | ux | recovered | WS7 | Dup → 25 | **CONFIRMED** — Dup → 25; first card y=1574 on `/notes` |
-| 63 | med | design | verified-run | WS7 | spot | **CONFIRMED** — Dup → 25 |
+| 62 | med | ux | recovered | WS7 | Dup → 25 | **CONFIRMED** — Dup → 25; first card y=1574 on `/notes` · **FIXED** — Dup → 25; first card 1574 → 420 |
+| 63 | med | design | verified-run | WS7 | spot | **CONFIRMED** — Dup → 25 · **FIXED** — Dup → 25 |
 | 64 | med | a11y | verified-run | WS5 | spot | **CONFIRMED, one claim corrected** — a relation created with no Name renders `<h1>` whose text is `''` (only an empty `<inline-edit>`), while `<title>` computes "Relation from BugHunt Second Person to BugHunt Reykjavik Studio". The report's #199 claim that a **named** relation also has an empty h1 is wrong at HEAD: its h1 carries the name (it is duplicated into the h2 instead) · **FIXED** — `inline-edit` gained `value-is-placeholder`; `title.tpl` renders `pageTitle` as the fallback **server-side**, so the heading is correct with JS off and the editor still opens empty |
 | 65 | med | ux | verified-run | WS14 | spot | |
 | 66 | med | a11y | verified-run | WS4 | spot | **CONFIRMED** — `BUTTON` at 0/200ms, `BODY` from 400ms  · **FIXED** — focus follows to the control that replaces it |
-| 67 | med | design | verified-run | WS7 | spot | **CONFIRMED** — table 2005 px inside an 822 px `overflow-x:auto` wrap; the Name column alone spans 85-1305 (1220 px); Preview/Size/Created/Updated/Original all beyond 1305 |
+| 67 | med | design | verified-run | WS7 | spot | **CONFIRMED** — table 2005 px inside an 822 px `overflow-x:auto` wrap; the Name column alone spans 85-1305 (1220 px); Preview/Size/Created/Updated/Original all beyond 1305 · **FIXED** — `.detail-table-name` capped at 32ch with an ellipsis and a `title`; table 2005 → 1026, Name column 1220 → 231 |
 | 68 | med | ux | verified-run | WS6 | spot | **CONFIRMED** — both halves  · **FIXED** — `{% empty %}`, Select All gated, out-of-range page 302s |
 | 69 | med | bug | verified-run | WS1 | spot | **CONFIRMED** — 0×0 preview served 200  · **FIXED** — Dup → 72 |
 | 70 | med | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — simple p1=75, p2=4; grid p2=25  · **FIXED** |
@@ -300,13 +300,13 @@ Statuses are filled in during Phase 1.
 | 72 | med | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED, cause corrected** — see below  · **FIXED** — zero-dim previews never persisted, 0×0 rows no longer canonical, SVG viewBox read at upload, poisoned rows repaired on read |
 | 73 | med | bug | recovered | WS1 | verify | **CAUSE WRONG** — see below  · **FIXED by 72's fix**; rotate confirmed atomic (it fails before any write) |
 | 74 | med | a11y | recovered | WS4 | verify | **CONFIRMED, cause corrected** — the restore already existed and was stomped twice; see below  · **FIXED** — blur deleted, `.noreturn`, restore deferred two frames |
-| 75 | med | design | recovered | WS7 | verify | **CONFIRMED** — two cards at **1721 px** against a median card height of **416 px**; the second is the tall image's row neighbour, dragged up by row height-matching |
+| 75 | med | design | recovered | WS7 | verify | **CONFIRMED** — two cards at **1721 px** against a median card height of **416 px**; the second is the tall image's row neighbour, dragged up by row height-matching · **FIXED** — `max-height: 320px` on the card media box rather than a forced aspect ratio, so ordinary cards (image 402×284) are untouched; tallest card 1721 → 435 against a median of 413 |
 | 76 | med | a11y | recovered | WS5 | Dup → 139 | **CONFIRMED** — Dup → 139 · **FIXED** — Dup → 139 |
 | 77 | med | ux | recovered | WS6 | Dup → 68 | **CONFIRMED** — Dup → 68  · **FIXED** |
 | 78 | med | ux | recovered | WS14 | verify | |
 | 79 | med | bug | recovered | WS2 | verify (suspect) | **REJECTED — not reproducible** in 9 runs; the invisible checked boxes are the header settings toggles and the zero-checked Select All is a `nth=1` locator hitting hidden "Deselect All". See WS2 |
-| 80 | med | ux | recovered | WS7 | Dup → 25 | **CONFIRMED** — Dup → 25; `mainTop` 1978, first card 2124, sidebar 1834 px tall |
-| 81 | med | design | recovered | WS7 | verify | **CONFIRMED** — the visible `input[name=mrql]` measures **149 px** at a 390 px viewport (the hidden desktop copy measures 0) |
+| 80 | med | ux | recovered | WS7 | Dup → 25 | **CONFIRMED** — Dup → 25; `mainTop` 1978, first card 2124, sidebar 1834 px tall · **FIXED** — Dup → 25; first card 2124 → 420 |
+| 81 | med | design | recovered | WS7 | verify | **CONFIRMED** — the visible `input[name=mrql]` measures **149 px** at a 390 px viewport (the hidden desktop copy measures 0) · **FIXED** — `basis-full sm:basis-0` makes the row wrap; 149 → 358 px at a 390 px viewport |
 | 82 | med | bug | ✅ VERIFIED | WS11 | accept | **CONFIRMED** — `&ldquo; &ndash; &hellip; &lsquo; &rsquo;` |
 | 83 | med | design | verified-run | WS10 | spot | |
 | 84 | med | bug | verified-run | WS8 | spot |  · **FIXED** |
@@ -314,7 +314,7 @@ Statuses are filled in during Phase 1.
 | 86 | med | bug | verified-run | WS1 | Dup → 10/11 + gating | **CONFIRMED** — actions offered for SVG  · **FIXED** — `isRasterImage` gates the details sidebar and the lightbox Rotate/Crop buttons |
 | 87 | med | a11y | verified-run | WS2 | Dup → 15 |  · **FIXED** |
 | 88 | med | ux | verified-run | WS2 | Dup → 21 |  · **FIXED** |
-| 89 | med | design | verified-run | WS7 | spot | **CONFIRMED** — `h1` 166×500 inside a 358 px parent whose computed `flex-wrap` is `nowrap`; no page overflow (`scrollWidth == innerWidth == 390`) |
+| 89 | med | design | verified-run | WS7 | spot | **CONFIRMED** — `h1` 166×500 inside a 358 px parent whose computed `flex-wrap` is `nowrap`; no page overflow (`scrollWidth == innerWidth == 390`) · **FIXED** — `flex-wrap` on the row **and** `basis-full sm:basis-0` on the h1; wrap alone was not enough because `flex-1 min-w-0` let the heading shrink instead. 166×500 → 358×220 |
 | 90 | med | a11y | verified-run | WS4 | spot | **CONFIRMED** — `role=null`, `aria-modal=null`, Escape inert, Tab onto covered controls  · **FIXED** — conditional dialog semantics + `x-trap` + explicit restore |
 | 91 | med | ux | verified-run | WS3 | Dup → 56 | **CONFIRMED**  · **FIXED** — Dup → 56 |
 | 92 | med | ux | verified-run | WS3 | Dup → 16 | **CONFIRMED**  · **FIXED** — Dup → 16 |
@@ -326,7 +326,7 @@ Statuses are filled in during Phase 1.
 | 98 | med | ux | recovered | WS14 | verify | |
 | 99 | med | a11y | recovered | WS5 | verify | **CONFIRMED** — three Delete buttons at **35.3×16** with `opacity: 0` at both 1280 and 390 px; `aria-label="Delete saved query: …"` is already correct, so this is target size + hover-only reveal · **FIXED** — always painted, muted until hover, 24px tall |
 | 100 | med | ux | recovered | WS3 | verify | **CONFIRMED** — raw JSON body rendered as the message  · **FIXED** — shared `errorMessageFromResponse` |
-| 101 | med | design | verified-run | WS7 | Dup → 19 | **CONFIRMED** — Dup → 19 |
+| 101 | med | design | verified-run | WS7 | Dup → 19 | **CONFIRMED** — Dup → 19 · **FIXED** — Dup → 19 |
 | 102 | low | design | verified-run | WS10 | spot | |
 | 103 | low | ux | verified-run | WS3 | spot | **CONFIRMED** — bare id, broken grammar, internal reason  · **FIXED** — sentence + link to the colliding resource; JSON `details[]` contract kept |
 | 104 | low | design | verified-run | WS14 | spot | |
@@ -366,16 +366,16 @@ Statuses are filled in during Phase 1.
 | 138 | low | design | verified-run | WS14 | spot | |
 | 139 | low | a11y | verified-run | WS5 | spot | **CONFIRMED** — 14×14, `padding: 0px`, no wrapping `<label>`, inside a 30×45 `<td>`; grid `card-checkbox` is 24×24; still 14×14 at 390 px · **FIXED** — `.detail-table-checkbox` 14px → 24px, matching `.card-checkbox`; the first column grew 2rem → 2.5rem and row height is unchanged |
 | 140 | low | ux | recovered | WS14 | verify | |
-| 141 | low | ux | recovered | WS7 | verify | **CONFIRMED, worse than filed** — the shadow-root input measures **166 px** with `scrollWidth` 1774 for a 166-character value: ~9 % visible, not the reported 15 % |
+| 141 | low | ux | recovered | WS7 | verify | **CONFIRMED, worse than filed** — the shadow-root input measures **166 px** with `scrollWidth` 1774 for a 166-character value: ~9 % visible, not the reported 15 % · **FIXED, downstream of 89** — the host goes block-level for the edit and the wrapping span is `w-full`; input 166 → 358 px. Three links in the chain, each measured |
 | 142 | low | ux | recovered | WS3 | verify | **CONFIRMED** — no `required`, whole form in the query string  · **FIXED, cause corrected** — plain `required` breaks the URL-download path; the guard is conditional |
 | 143 | low | bug | recovered | WS8 | verify (suspect) | |
 | 144 | low | ux | recovered | WS5 | verify | **CONFIRMED, broader than filed** — the dialog reads "Upload to Unknown" on `/resource?id=63`, `/group?id=78` **and** `/note?id=61`; `$store.pasteUpload.context?.name` is null on every one, so the `|| 'Unknown'` fallback always wins. Not resource-specific · **FIXED** — the heading reads "Upload to <name>" when a target is known and "Upload files" otherwise; it no longer invents one |
 | 145 | low | ux | recovered | WS14 | product | |
 | 146 | low | ux | recovered | WS6 | Dup → 68 | **CONFIRMED** — `/resources?page=99` 200s blank, Previous → page 98  · **FIXED** — 302 to the last real page; JSON/.body routes deliberately exempt |
 | 147 | low | bug | verified-run | WS11 | spot | |
-| 148 | low | design | verified-run | WS7 | spot | **CONFIRMED, broader than filed** — `word-break:break-all` with `overflow-wrap:normal` on six `.compare-meta-card-value` nodes (including "Jul 30, 2026 04:16 → Jul 3…"), on the resource Metadata `dd.break-all` cards, on the GUID span, on the hash/path cards **and** on `h3.card-title` + its `<a>` in the grid list |
+| 148 | low | design | verified-run | WS7 | spot | **CONFIRMED, broader than filed** — `word-break:break-all` with `overflow-wrap:normal` on six `.compare-meta-card-value` nodes (including "Jul 30, 2026 04:16 → Jul 3…"), on the resource Metadata `dd.break-all` cards, on the GUID span, on the hash/path cards **and** on `h3.card-title` + its `<a>` in the grid list · **FIXED** — `overflow-wrap: anywhere` replaces `word-break: break-all` in `index.css` (3), `jsonTable.css` (3) and a new `.wrap-anywhere` class swapped into `displayResource.tpl` (8) and `lightbox.tpl` (10, where `OriginalName` had the identical word-splitting) |
 | 149 | low | ux | verified-run | WS14 | spot | |
-| 150 | low | design | verified-run | WS7 | spot | **CONFIRMED** — breadcrumb nav is 88 px tall at 390 px against 44 px at 1280 px, and the second `flex-shrink-0 w-6 h-full` arrow sits at `top:96 left:40` — stranded at the left margin on its own row, connecting nothing. At 1280 px both arrows share `top:52` |
+| 150 | low | design | verified-run | WS7 | spot | **CONFIRMED** — breadcrumb nav is 88 px tall at 390 px against 44 px at 1280 px, and the second `flex-shrink-0 w-6 h-full` arrow sits at `top:96 left:40` — stranded at the left margin on its own row, connecting nothing. At 1280 px both arrows share `top:52` · **FIXED, first attempt was wrong** — swapping the arrows for an inline `›` below 900 px fixed the reported viewport and left the defect at **1280 px** on a seven-crumb trail. The trail does not wrap at all now: 1 row and 0 stranded separators at both widths, with the connected-arrow design kept |
 | 151 | low | bug | verified-run | WS2 | spot | **CONFIRMED**  · **FIXED** — `inline-edit:saved` → `[data-entity-field]`; the card's Copy button is left stale on purpose (see WS2) |
 | 152 | low | ux | verified-run | WS2 | spot | **CONFIRMED** — `UNIQUE constraint failed: tags.name` reached the client  · **FIXED** — server message humanised, client stops swallowing it |
 | 153 | low | ux | recovered | WS14 | verify | |
@@ -390,6 +390,24 @@ Statuses are filled in during Phase 1.
 **Ledger arithmetic.** 160 findings → 26 marked `Dup` → **134 distinct defects**, of which 13 are
 accepted without re-verification, 6 are already confirmed from source, and 4 route straight to a
 product decision. That leaves ~111 to verify, ~60 of them in the expensive `recovered` tier.
+
+**Running tally after Batch 9** (WS1–WS7 and WS8 complete bar two rows):
+
+| | count |
+|---|---|
+| Ledger rows | 160 |
+| Resolved (a status recorded) | **108** |
+| Still unverified | 52 — WS9 (4), WS10 (6), WS11 (10), WS12 (8), WS13 (3), WS14 (19), WS8 (2: 94 and 143) |
+| Confirmed | 96, of which 3 only partly (29, 31, 61) |
+| **Rejected** | **4** — 14 and 39 (this batch), 61 (partly), 79 |
+| Rows carrying a **FIXED** note | 103 |
+| Rejected *and pinned by a test* so the rejection cannot silently become wrong | 2 — 14, 39 |
+
+The rejection rate is the number worth watching: **4 of 108 verified**, i.e. under 4 %. The
+`recovered` tier was expected to be where the false positives lived, and it produced two of the four.
+What it produced far more of is findings whose *symptom* is real and whose *stated cause is wrong* —
+19 of them so far, recorded per workstream in the "Where the plan was wrong" subsections. That is the
+verification step earning its keep, and it is not the thing the effort tiers were designed to catch.
 
 ---
 
@@ -1410,42 +1428,193 @@ the looped pickers can use it, and rewrite the five E2E touchpoints in the same 
 
 ### WS7 — Mobile and layout
 
-Findings **3, 8, 19/101, 25/62/63/80, 55, 67, 75, 81, 89, 141, 148, 150**.
+Findings **3, 8, 19/101, 25/62/63/80, 55, 67, 75, 81, 89, 141, 148, 150**. All twelve
+confirmed, all twelve fixed, and **five** of them turned out to have a different cause
+or a different fix from the one the plan states. Every number below is measured before
+and after, at the viewport the finding names.
 
-- [ ] **3 (high, and a real bug, not layout) — the mobile nav menu cannot be closed.** Escape is a
-      no-op, the full-screen panel covers the hamburger so the toggle click is intercepted, and the
-      panel contains zero buttons. Add Escape handling, a visible close button, and a focus trap.
-      Fix this first; it strands the user.
-- [ ] **25/62/63/80 — the filter sidebar buries the first result.** `public/index.css:379-393`:
-      `@media (max-width: 900px) { .content { display:flex; flex-direction:column } .content > .sidebar { order: -1 } }`.
-      The 400px filter form stacks above the results at full height → first card at y=1745 (`/groups`),
-      1574 (`/notes`), 2155 (`/resources`).
-      **Decided:** collapse behind a disclosure below the breakpoint. Reuse the existing
-      `<details class="detail-collapsible">` pattern (`public/index.css:718-760`, already used in
-      `displayGroup.tpl`, `displayResource.tpl`, `partials/versionPanel.tpl`) so it works without JS
-      and needs no source-order change. Keep `order: -1` so the collapsed control stays at the top.
-- [ ] **8 — the group tree pushes deep nodes to unreachable negative x.**
-      `displayGroupTree.tpl:13` sets `justify-content: center` on `.tree-chart-list` inside
-      `.tree-chart { overflow-x: auto }` (`:6`). A centered flex container overflows **symmetrically**,
-      and the left overflow sits below `scrollLeft: 0` where nothing can scroll to it. Nested lists are
-      centered too, so every subtree compounds it. Fix: `justify-content: safe center` (or
-      `min-width: max-content` + `margin-inline: auto`). There is currently no `@media` rule for the
-      tree anywhere. One-line CSS fix for a high-severity finding.
-- [ ] **19/101 — taxonomy edit forms overflow and clip.** `body.scrollWidth` is 1778 against a 390px
-      viewport on `/category/edit`, with `html`/`body` both `overflow-x: hidden`, so everything past
-      x=390 is permanently unreachable — including every per-slot Generate and Format HTML button.
-      Same on `/noteType/*` and `/resourceCategory/*`. Give the CodeMirror region its own
-      `overflow-x: auto` container and reflow the form to one column.
-- [ ] **55** — the calendar's Agenda toggle sits at x=407-479 on a 390px viewport inside an
-      `overflow-x: hidden` ancestor. Make the view-toggle strip wrap or scroll.
-- [ ] **67, 75, 148** — desktop sizing: cap the details Name column so a 174-character name cannot
-      make the table 2212px wide inside an 822px scroller; bound grid card height so one 400×1600
-      image cannot blow its card (and its row neighbour) to 1831px; replace `word-break: break-all`
-      on metadata and compare cards with `overflow-wrap: anywhere` so timestamps stop splitting into
-      "Jul 29, 2026 1" / "2:01".
-- [ ] **81, 89, 141, 150** — widen the mobile MRQL input (149px of 390); let the resource header stack
-      at narrow widths instead of crushing the H1 into a 166px, 500px-tall column; let the inline name
-      editor grow to the heading width; stop the breadcrumb chevrons detaching when the trail wraps.
+- [x] **3 — the mobile nav menu.** Escape via `@keydown.escape.window`, a 44px
+      "Close menu" button that `x-trap` lands focus on, and the toggle raised above the
+      panel's `z-index` so it stays hit-testable. The panel is `position: fixed;
+      inset: 0; z-index: 39` and a *descendant* of the `z-index: 40` header, so it
+      painted inside the header's stacking context above the header's own content —
+      which is why the toggle click was intercepted rather than merely covered.
+      Measured after: `elementFromPoint` over the hamburger returns the toggle's own
+      `<path>`; Escape sets `aria-expanded=false` and hides the panel; focus settles on
+      "Toggle menu".
+      - `x-data` moved out of the template into `src/components/mobileNav.js`, because
+        the close path needs `captureTrigger`/`restoreFocus` and a restore deferred two
+        frames past the trap teardown — the WS4 lesson, and not something that belongs
+        in an inline expression.
+      - **Deliberately not `role="dialog"` + `aria-modal="true"`.** See below.
+- [x] **8 — the group tree.** `min-width: max-content` + `margin-inline: auto` on
+      `.tree-chart-list`. Measured: 3 clipped nodes and `minX -191.4` before (two of
+      them with their *right* edge also negative, so entirely invisible), 0 clipped and
+      `minX 80` after, with the tree still exactly centred when it fits.
+      **The plan's first choice was not taken** — see "Where the plan was wrong".
+- [x] **25/62/63/80 — the filter sidebar.** Collapsed behind
+      `<details class="detail-collapsible filter-disclosure">`, per the decision: the
+      existing pattern, no source-order change, `order: -1` kept. First result moved
+      from y=1745 / 1574 / 2124 to **y=420** on an 844px viewport. Three things this had
+      to respect, each of which an existing spec depends on:
+      - the `<aside class="sidebar">` is **wrapped, not replaced** — specs address it as
+        `aside, [role="complementary"]` with no `.first()`, so a second landmark is a
+        strict-mode violation;
+      - the wrapper's class contains no "sidebar" — `[class*="sidebar"]` is a live
+        locator in five specs and the wrapper precedes the aside in document order;
+      - the summary text avoids "Relations" / "Own Entities" / "Related Entities",
+        which `details.detail-collapsible:has(summary:text-is(…))` locators use.
+      - `open` is the **server-side** default and a parser-blocking inline script closes
+        it below the breakpoint. There is no pure-CSS way to force a `<details>` open
+        above a breakpoint (`::details-content` is Chrome-only), so the alternative was
+        a collapsed sidebar for anyone with JS disabled — a regression, not a fix. The
+        script is inline rather than in the bundle so there is no flash of an
+        1800px-tall sidebar before Alpine boots.
+- [x] **19/101 — the taxonomy forms.** `body.scrollWidth` 1198 → **390**, and zero
+      controls left past the viewport with nothing to scroll them into view. The cause
+      was **not** in this app's CSS — see below.
+- [x] **55 — the calendar view controls.** The header row wraps. Both toggles were
+      offscreen (Month 343-407, Agenda 407-479 against a 390px viewport), not just
+      Agenda as reported; they are now at 142-206 and 206-277 with the clipping ancestor
+      no longer overflowing at all.
+- [x] **67 — the details Name column.** Capped at 32ch with an ellipsis, and the cell's
+      link carries a `title` so a clipped name is still readable. Table 2005 → **1026**,
+      Name column 1220 → **231**.
+- [x] **75 — the extreme-aspect-ratio card.** `max-height: 320px` on the media box
+      rather than a forced `aspect-ratio`: an ordinary card's image renders at 402×284,
+      comfortably under the cap, so ordinary cards are not touched at all and only the
+      extremes are bounded. Tallest card 1721 → **435** against a median of 413 (it was
+      1721 against 416, and it dragged its row neighbour to the same height).
+- [x] **81 — the mobile MRQL input.** 149 → **358** px, by letting the row wrap instead
+      of letting the field shrink.
+- [x] **89 + 141 — the mobile resource header, and the rename field inside it.** One
+      chain, three links, each measured — see below.
+- [x] **148 — `word-break: break-all`.** Replaced with `overflow-wrap: anywhere`, which
+      breaks only where it must and keeps word boundaries when there is room, while
+      still handling the unbroken hash and path tokens the rule exists for. Six CSS
+      declarations plus a new `.wrap-anywhere` class swapped into 18 template sites.
+- [x] **150 — the breadcrumb separators.** The trail does not wrap at all now. The first
+      attempt at this was wrong and is recorded below.
+
+**Tests.** `server/api_tests/ws7_mobile_layout_test.go` (5 tests: the panel's handlers
+and the constraint that it is not a dialog, the disclosure's structure and its three
+constraints, the `title` attribute, the absence of `break-all` in the metadata cards,
+the non-wrapping breadcrumb) and `e2e/tests/regressions/ws7-mobile-and-layout.spec.ts`
+(16 tests, all measured geometry). **Both seen red first** — Playwright failed 14 of 16
+with the fixes stashed; the one that passed is the lightbox-locator guard, which is a
+regression guard for something this batch might have broken rather than a fix for
+something that was broken.
+
+#### Where the plan was wrong
+
+1. **19/101's cause is the UA stylesheet, not this app's CSS.** The plan says to "give
+   the CodeMirror region its own `overflow-x: auto` container and reflow the form to one
+   column". Both were done and both were insufficient: with `min-w-0` on every wrapper
+   inside it, the measured chain at 390px was
+
+       FIELDSET       w=984 sw=982  min-width: min-content   <- the floor
+       DIV            w=950         min-width: 0px
+       DIV.cm-editor  w=948         min-width: 0px
+       DIV.cm-scroller w=948 overflow-x: auto
+
+   `<fieldset>` has `min-inline-size: min-content` in the UA stylesheet, so it refuses
+   to shrink below its content's min-content width no matter what any descendant
+   declares. One rule — `fieldset { min-inline-size: 0 }` — took `body.scrollWidth` from
+   1198 to 390. Three `flex-1` columns genuinely were missing `min-w-0` as well, and
+   fixing those alone moved it from 1198 to 1000: enough to look like progress and not
+   enough to fix anything.
+2. **8's fix is the plan's *fallback*, and the measurement is why.** The plan offers
+   `justify-content: safe center` with `min-width: max-content` + `margin-inline: auto`
+   as an alternative. Measured on the repro, they are indistinguishable — both give 0
+   clipped nodes and `minX 80` at 390px and 1280px, and both keep the tree centred when
+   it fits. The tie-breaker is the failure mode: `safe` is a newer keyword, and a
+   browser that cannot parse it drops the whole declaration, which lands on
+   `justify-content: normal` — measured as the tree losing centring entirely
+   (root offset −76.5 at 390px, −309.5 at 1280px). `max-content` has no such cliff.
+   The plan called this a "one-line CSS fix for a high-severity finding"; it is one
+   line, and choosing which one needed four measured candidates at two viewports.
+3. **8 does not reproduce the way the plan implies.** "The group tree pushes deep nodes
+   to unreachable negative x" reads as a depth problem, and the seeded six-level chain
+   is the obvious repro. It shows nothing: a pure one-child chain never overflows
+   (`scrollWidth == clientWidth`), and with no overflow a centered container cannot push
+   anything negative. The trigger is **breadth** — one level wider than the container.
+   The regression test builds that shape rather than relying on the seed.
+4. **89's fix as stated does not work, and 141 is downstream of it.** "Let the resource
+   header stack at narrow widths" is `flex-wrap` on the row — measured, that changed
+   nothing: `flex-1 min-w-0` let the heading shrink to 166px of a 358px container rather
+   than forcing the actions onto their own line, so the h1 stayed 500px tall.
+   `basis-full sm:basis-0` on the heading is what actually claims the row (358×220).
+   141 then needed two more links in the same chain: the heading's wrapping `<span>` is
+   shrink-to-fit under `items-start` (267px), and the `inline-edit` host is inline and
+   only as wide as its own text. All three had to move for the rename field to reach
+   358px.
+5. **150's obvious fix is viewport-shaped and the defect is not.** Swapping the arrows
+   for an inline `›` below 900px made the reported 390px case clean — and measured at
+   **1280px** on a seven-crumb trail, the row still wrapped to two lines with a
+   separator stranded at `top:96 left:40`. The trigger is wrapping, not width. The trail
+   no longer wraps at all, which fixes it at every width and keeps the connected-arrow
+   rendering the design intends. It needs no `tabindex`, unlike finding 13's table: the
+   crumbs are all `<a>` elements, so Tab already reaches them — verified, all seven.
+
+#### Why the mobile nav panel is not a `role="dialog"`
+
+It is the obvious markup for a full-screen modal menu, and it would have broken roughly
+45 specs. The panel is in **every** page's DOM (it is `x-show`, not `x-if`), and the
+lightbox is addressed app-wide by
+
+    [role="dialog"][aria-modal="true"]
+      :not([aria-labelledby="paste-upload-title"])
+      :not([aria-labelledby="entity-picker-title"])
+
+which resolves uniquely only because those two `:not()` exclusions name the only *other*
+modals that stay in the DOM while closed. A third always-present element carrying the
+pair turns every one of those locators into a strict-mode violation — a hard failure,
+not a soft one. So the panel is a labelled `role="group"` region and `x-trap` supplies
+the modal *behaviour*. Pinned from both sides: a Go test that the panel carries no
+`role="dialog"`, and a Playwright test that the real locator still resolves to exactly
+one element.
+
+#### Defects the tests did not catch, and four this batch nearly shipped
+
+1. **A spec keyed on an attribute a WS5 fix removed.** `entity-picker.spec.ts` located
+   the reference-chip remove control as `button[title="Remove"]`, and finding 48
+   replaced those undescriptive names with aria-labels. The full suite caught it. Worth
+   noting *how* the locator was wrong before the change too: it matched every remove
+   control in the block editor, in a test whose own comment says it is about one
+   specific group. It is scoped by accessible name now.
+2. **My own first version of the finding-8 test asserted nothing.** It used
+   `?root=<id>`, which renders the root collapsed — one node. "No node is clipped" is
+   trivially true of a one-node tree. The test now asserts the node count and the
+   presence of overflow as preconditions before it asserts the absence of clipping.
+3. **Three of the WS7 tests passed on a fresh worker server for the wrong reason.** The
+   sidebar-burial tests measured `main article`, and an empty list renders its empty
+   state with no `<article>` at all — so the measurement was `null` and the comparison
+   vacuous. The grid-card test needed more than two cards for a median to mean anything.
+   Both now create their own data.
+4. **A Go test cannot count rendered dialogs.** The served HTML contains the contents of
+   every `<template x-if>`, so Go sees seven `[role=dialog][aria-modal=true]` elements
+   where the browser has three. The first version of that assertion was in Go and was
+   measuring template source. The count assertion moved to Playwright; Go keeps only the
+   claim it can actually make.
+5. **The one "flaky" in the full run was a real test defect in a Batch 7 spec, and it took
+   two passes to find.** `ws4-focus-management.spec.ts`'s finding-90 test pressed Tab
+   immediately after opening the metadata overlay and sampled `document.activeElement`
+   once. It held at 24/24 in isolation and failed once in a 4-worker full-suite run.
+   - First cause: `x-trap` arms on a `setTimeout(15)`, so under load Tab was pressed
+     before the trap existed. Waiting for focus to be inside the overlay fixed that —
+     and left a **1-in-110** residue.
+   - Second cause: the metadata table is built by `tableMaker` *after* the overlay
+     opens, and focus-trap recomputes its containers when their contents change.
+     Pressing Tab inside that window escaped the overlay. The test now polls for the
+     overlay's tabbable count to settle before pressing Tab. 220/220 clean.
+   - Deliberately **not** treated as a product fix: finding 90 is about the permanent
+     state (no `role`, no `aria-modal`, Escape inert, Tab reaching covered controls),
+     all of which are fixed and asserted. What remains is a ~1 % transient inside a
+     third-party trap's own update window, recoverable by Escape. Recorded rather than
+     papered over.
+   - The file already had `settledActiveElement`/`settlesOn` for exactly this class of
+     race and did not use them here. A helper that exists in the file is not a helper
+     that is used.
 
 ### WS10 — Global chrome
 
@@ -1673,7 +1842,7 @@ the cheapest high-confidence work clears the ledger early.
 - [x] **Batch 6** — WS6 empty states. Cheap, and the `{% empty %}` pattern is mechanical.
 - [x] **Batch 7** — WS4 focus management. Extract `src/utils/focus.js` first as a pure refactor.
 - [x] **Batch 8** — WS5 keyboard, names, headings, target sizes.
-- [ ] **Batch 9** — WS7 mobile and layout. Start with finding 3 (nav trap) and 8 (one-line CSS).
+- [x] **Batch 9** — WS7 mobile and layout. Start with finding 3 (nav trap) and 8 (one-line CSS).
 - [ ] **Batch 10** — WS10 global chrome, WS9 jobs cockpit.
 - [ ] **Batch 11** — WS11 MRQL and query surfaces, WS12 taxonomy authoring, WS13 sharing.
 - [ ] **Batch 12** — WS14 long tail; bring the four product decisions back for sign-off.

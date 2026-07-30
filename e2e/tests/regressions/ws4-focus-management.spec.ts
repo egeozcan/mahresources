@@ -119,14 +119,56 @@ test.describe('WS4: dialogs return focus to what opened them', () => {
     await expect(overlay).toHaveAttribute('role', 'dialog');
     await expect(overlay).toHaveAttribute('aria-modal', 'true');
 
-    // Tab must stay inside the overlay: everything behind it is covered.
-    await page.keyboard.press('Tab');
-    expect(
-      await page.evaluate(() => {
+    /**
+     * Tab must stay inside the overlay: everything behind it is covered.
+     *
+     * Wait for the trap to be ARMED before pressing Tab. Alpine's focus plugin
+     * activates x-trap on a setTimeout(15) and only then moves focus inside, so
+     * pressing Tab immediately after the click and sampling document.activeElement
+     * once races that timer: the browser moves focus per normal document order,
+     * out of the overlay, and the read catches it there. It held at one worker and
+     * failed once in a 4-worker full-suite run — a load-dependent test defect, not
+     * a product one. The trap being armed is the precondition of the assertion, so
+     * it is waited for rather than assumed.
+     */
+    const focusInsideOverlay = () =>
+      page.evaluate(() => {
         const o = document.querySelector('.tableContainer.expanded');
         return !!o && o.contains(document.activeElement);
-      }),
-    ).toBe(true);
+      });
+    await expect
+      .poll(focusInsideOverlay, { timeout: 5000, message: 'x-trap never moved focus into the overlay' })
+      .toBe(true);
+
+    /**
+     * Wait for the overlay's tabbable set to STOP CHANGING before pressing Tab.
+     *
+     * The metadata table is built by tableMaker after the overlay opens, and
+     * focus-trap recomputes its containers when the DOM inside them changes. Pressing
+     * Tab during that recomputation escaped the overlay in 1 of 110 repeats — a
+     * ~1 % transient in the trap's own update window, not the permanent "Tab reaches
+     * controls behind the dialog" state finding 90 is about. Polling for the count to
+     * settle makes the precondition explicit instead of hoping the render already won.
+     */
+    const tabbableCount = () =>
+      page.evaluate(() => {
+        const o = document.querySelector('.tableContainer.expanded');
+        if (!o) return -1;
+        return o.querySelectorAll(
+          'button:not([disabled]), [href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])',
+        ).length;
+      });
+    let previousCount = await tabbableCount();
+    for (let i = 0; i < 20; i++) {
+      await page.waitForTimeout(100);
+      const now = await tabbableCount();
+      if (now === previousCount && now > 0) break;
+      previousCount = now;
+    }
+    expect(previousCount, 'the overlay must contain something tabbable for a trap to trap').toBeGreaterThan(0);
+
+    await page.keyboard.press('Tab');
+    expect(await focusInsideOverlay(), 'Tab escaped the modal overlay').toBe(true);
 
     await page.keyboard.press('Escape');
     await expect(page.locator('.tableContainer.expanded')).toHaveCount(0);
