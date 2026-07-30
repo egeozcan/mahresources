@@ -162,3 +162,71 @@ func TestImportLifecycle_OwnershipEnforced(t *testing.T) {
 		t.Fatalf("owner delete should pass the ownership gate, got 404")
 	}
 }
+
+// Round-4 review: the ownership gate above expires. The owner tag lives only on the
+// in-memory queue record, which "Clear completed" removes at once and the retention
+// sweep removes an hour later — while the files it authorised (the staged tar, the
+// plan, the result) stay on disk, and every one of these endpoints works from those
+// files by id. An unknown job used to fall through to the handler's own path, which
+// is to read the plan, apply it, or delete the files. So under -auth the check simply
+// stopped applying, and any other authenticated user holding the id could act on
+// somebody else's import from that moment on.
+func TestImportLifecycle_OwnershipSurvivesTheJobBeingCleared(t *testing.T) {
+	tc := setupAuthEnv(t)
+	_, aID := plainUserBearer(t, tc, "impc-a")
+	bBearer, _ := plainUserBearer(t, tc, "impc-b")
+
+	job, err := tc.AppCtx.DownloadManager().SubmitJob(download_queue.JobSourceGroupImportParse, "queued",
+		func(ctx context.Context, j *download_queue.DownloadJob, sink download_queue.ProgressSink) error {
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("submit parse job: %v", err)
+	}
+	job.SetOwnerUserID(aID)
+	jobID := job.ID
+
+	// The control: while the job is in the queue, the gate is known to work — this is
+	// the state TestImportLifecycle_OwnershipEnforced covers.
+	bH := map[string]string{"Authorization": bBearer, "Content-Type": "application/json"}
+	if code := doReq(tc, http.MethodGet, "/v1/imports/"+jobID+"/plan", bH, nil, nil).Code; code != http.StatusNotFound {
+		t.Fatalf("precondition: non-owner plan read should be 404 while the job exists, got %d", code)
+	}
+
+	// Now the job goes, the way it goes in practice: the owner presses "Clear
+	// completed", or an hour passes.
+	waitForJobStatus(t, tc, jobID, download_queue.JobStatusCompleted)
+	tc.AppCtx.DownloadManager().ClearFinished(nil)
+	if _, stillThere := tc.AppCtx.DownloadManager().GetJob(jobID); stillThere {
+		t.Fatalf("precondition: the job is still in the queue, so this test measured nothing")
+	}
+
+	cases := []struct{ method, path string }{
+		{http.MethodGet, "/v1/imports/" + jobID + "/plan"},
+		{http.MethodGet, "/v1/imports/" + jobID + "/result"},
+		{http.MethodPost, "/v1/imports/" + jobID + "/apply"},
+		{http.MethodDelete, "/v1/imports/" + jobID},
+	}
+	for _, c := range cases {
+		if code := doReq(tc, c.method, c.path, bH, nil, strings.NewReader("{}")).Code; code != http.StatusNotFound {
+			t.Errorf("after the job was cleared, non-owner %s %s answered %d — the authorization evidence went with the job", c.method, c.path, code)
+		}
+	}
+
+	// The positive control: an admin is not locked out by the fail-closed reading,
+	// because an admin may see every job whatever its owner. Without it, denying
+	// every unknown id outright would pass everything above.
+	admin, err := tc.AppCtx.EnsureAdminUser("admin", "adminpw1")
+	if err != nil {
+		t.Fatalf("admin: %v", err)
+	}
+	adminRaw, _, err := tc.AppCtx.CreateApiToken(admin.ID, "t", nil)
+	if err != nil {
+		t.Fatalf("admin token: %v", err)
+	}
+	adminH := map[string]string{"Authorization": "Bearer " + adminRaw}
+	if code := doReq(tc, http.MethodDelete, "/v1/imports/"+jobID, adminH, nil, nil).Code; code == http.StatusNotFound {
+		t.Errorf("an admin was refused a cleared import job's delete with 404")
+	}
+}
+

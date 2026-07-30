@@ -65,8 +65,11 @@ type DownloadJob struct {
 	// no longer speaks for this job. Without it a paused-then-resumed job took the old
 	// attempt's terminal state: `cancelled` landed on a job that was downloading
 	// again, and the new attempt's own terminal write later overwrote that.
-	runID       uint64
-	ownerUserID *uint // RBAC: user that created the job (export download ownership)
+	runID uint64
+	// initialPhase is what the job was submitted with, kept so a retry can put the
+	// label back rather than leaving the failed attempt's.
+	initialPhase string
+	ownerUserID  *uint // RBAC: user that created the job (export download ownership)
 }
 
 // Status transitions
@@ -307,6 +310,11 @@ func (j *DownloadJob) claimRetry(ctx context.Context, cancel context.CancelFunc)
 	// phase counters read as a run that was part-way through something.
 	j.Warnings, j.ResultPath = nil, ""
 	j.PhaseCount, j.PhaseTotal = 0, 0
+	// Phase goes back to what the job was submitted with, not to "". Clearing the
+	// counters and leaving the label was the worst of both: a parse that failed
+	// half-way was re-listed as pending/"parsing" — a phase the new attempt has not
+	// begun and, queued behind a busy semaphore, may not begin for a while.
+	j.Phase = j.initialPhase
 	return JobStatusPending, true
 }
 

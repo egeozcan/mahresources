@@ -94,6 +94,12 @@ type DownloadManager struct {
 	semaphore     chan struct{}
 	subscribers   map[chan JobEvent]struct{}
 	subscribersMu sync.RWMutex
+	// notifyMu orders snapshot-and-publish against itself, so the sequence
+	// subscribers see is the sequence the snapshots were taken in. See notifyJob.
+	// Held across a Snapshot and a set of non-blocking sends, and never while any
+	// other lock is being acquired in the other direction: no job method reaches the
+	// manager, and no caller holds a job's mutex across a notification.
+	notifyMu sync.Mutex
 	cleanupTicker *time.Ticker
 	done          chan struct{}
 	concurrency   int
@@ -762,7 +768,20 @@ func (dm *DownloadManager) Subscribe() (<-chan JobEvent, func()) {
 // after an update beside the TotalSize and ProgressPercent from before it. Warnings
 // is worse, because marshalling a slice header while another goroutine appends to it
 // can read a length that does not match the array.
+//
+// Taking the copy and publishing it are one step, under notifyMu, so subscribers
+// receive the snapshots in the order they were taken. A copy is a statement about one
+// instant, and two goroutines that snapshot in one order and publish in the other
+// deliver a stale statement last — which the live pointer could not do, because it
+// always marshalled the present. Concretely: a progress callback snapshots
+// `downloading`, a Pause claims `paused` and publishes, then the callback publishes
+// its older copy. The panel is left showing a running download with no Resume, and
+// nothing repairs it, because the worker's terminal write is correctly suppressed on
+// a paused job. So the snapshot fix needs an ordering fix beside it — the same
+// coupling as the "added" ordering in Submit.
 func (dm *DownloadManager) notifyJob(eventType string, job *DownloadJob) {
+	dm.notifyMu.Lock()
+	defer dm.notifyMu.Unlock()
 	dm.notifySubscribers(JobEvent{Type: eventType, Job: job.Snapshot()})
 }
 

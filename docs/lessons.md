@@ -997,3 +997,60 @@ show it, as one address written by two downloads that had nothing to do with eac
   old one.
 - More generally: **abandoning a goroutine is a decision about memory ownership, not just about
   latency.** Returning early from a `select` does not stop what you started.
+
+## A `select` between "a result arrived" and "give up" is a coin flip, and the coin decides user-visible behaviour
+
+A cancellable read is usually written as: run the blocking read on a goroutine, then `select` on
+its result channel against the context. When both are ready, Go picks uniformly — so a cancelled
+transfer delivered its final chunk about half the time. Measured at 37 of 60.
+
+Half the time is not a rounding error, because the last chunk is the one carrying `io.EOF`. With it,
+the consumer sees a complete body and the operation *succeeds* after the user was told it would be
+abandoned. Without it, the operation fails as asked. One `select` decided which.
+
+**Give abandonment its own non-blocking `select` first**, then wait. And when you find yourself
+arguing that a race is "a few instructions wide", measure it before you write that down — this one
+was in a file whose comments already claimed the window was narrow.
+
+## Building the coverage matrix does not lower the defect rate; it moves the defects
+
+An exhaustive state × operation table found six defects three review rounds had walked past. The
+round that reviewed *that* pass found ten more, all real. The table was not wrong — it was a table
+about the thing it was a table of.
+
+Three of the ten were in code the matrix pass had just written. Three were in the guards it added,
+each covering less than it claimed: a modal check that swept one DOM layer and missed six dialogs
+elsewhere, an authorization check that expired with the in-memory record it read from, a
+retain-for-display rule that trusted the local copy of state the server had already corrected. Two
+were in the one file the matrix had no column for — the transfer's own plumbing rather than a job
+state or a control — and both were found by `-race -count=10` and a stopwatch, not by reasoning.
+
+- **A new guard is new code, and gets reviewed like new code.** The most dangerous line in a
+  remediation is the one that looks like it closes the finding.
+- **When you write a guard, enumerate what it covers and compare that against what exists.** "It
+  queries the overlays layer" and "it covers the app's modals" were not the same claim, and only
+  one of them was true.
+- **The matrix and repetition-under-load are different instruments.** Neither substitutes for the
+  other; a pass that only does one will report convergence it has not reached.
+
+## A red produced by an unsound test is worse than no test, because it certifies the fix
+
+Writing the failing test first is the rule, and it has a hole in it: a test can fail for a reason
+that has nothing to do with the defect, and the red then reads as proof.
+
+The case: two goroutines took a shared counter, wrote it as a job's progress, and notified. The
+assertion was that the delivered progress never decreased. It went red immediately, the fix went in,
+it went green, and the commit message was ready. But the mutation and the notification are separate
+steps *in the product*, so two writers can take counter values in one order and write them in the
+other — the sequence was never monotonic and the test was measuring its own premise. The fix it
+"proved" was fine; the proof was not, and with the premise corrected the defect turned out not to be
+reachable in 20 000 iterations at all. The honest entry is "not seen red, fixed on inspection",
+which is a different and much weaker claim than the one that was about to be written down.
+
+Before believing a red, ask what *else* could produce it. In particular:
+
+- **An assertion built on a quantity you assume is monotonic** — check that the product actually
+  makes it so, under the concurrency the test is creating.
+- **A red that appears on the first iteration of a race you have just described as narrow.** Those
+  two facts do not fit together, and the mismatch is the signal.
+

@@ -44,22 +44,39 @@ type principalBinder interface {
 	WithPrincipal(p *auth.Principal) *application_context.MahresourcesContext
 }
 
-// importJobDenied reports whether the import job identified by jobID exists but
-// is not visible to the caller (a different user's job). Parse/apply jobs are
-// owner-tagged at submit; the lifecycle handlers (plan/apply/result/delete)
-// must not let another user inspect, apply, or delete them by guessing the ID.
-// Unknown jobs return false so the handler's own not-found path runs. Reported
-// as 404 (not 403) so IDs cannot be enumerated.
+// importJobDenied reports whether the import job identified by jobID may not be
+// touched by the caller. Parse/apply jobs are owner-tagged at submit; the lifecycle
+// handlers (plan/apply/result/delete) must not let another user inspect, apply, or
+// delete them by guessing the ID. Reported as 404 (not 403) so IDs cannot be
+// enumerated.
+//
+// **An unknown job is denied, not allowed.** The ownership tag lives only on the
+// in-memory queue record, and that record is ephemeral: "Clear completed" removes it
+// immediately and the retention sweep removes it an hour later. The files it
+// authorised — the staged tar, the plan, the result — outlive it on disk, and the
+// handlers below work from those files by id. So an unknown job used to mean "fall
+// through to the handler's own not-found path", and the handler's own path is to read
+// the plan, or apply it, or delete the files. Under -auth that is an authorization
+// check that expires: any other authenticated user holding the id could act on
+// someone else's import as soon as the job was cleared.
+//
+// Denying is the fail-closed reading of "there is no evidence you own this". It costs
+// the owner nothing in the flow the endpoints exist for — parse, review, apply, all
+// within one sitting — and admins (and the auth-off super-user) are unaffected,
+// because jobVisibleToPrincipal answers true for them whatever the owner is.
 func importJobDenied(ctx GroupImporter, r *http.Request, jobID string) bool {
+	p := auth.PrincipalFromContext(r.Context())
 	dm := ctx.DownloadManager()
 	if dm == nil {
-		return false
+		return !jobVisibleToPrincipal(p, nil)
 	}
 	job, ok := dm.GetJob(jobID)
 	if !ok {
-		return false
+		// No owner to check against, so only a principal that may see *every* job may
+		// proceed. For everyone else this is the 404 the doc comment promises.
+		return !jobVisibleToPrincipal(p, nil)
 	}
-	return !jobVisibleToPrincipal(auth.PrincipalFromContext(r.Context()), job.GetOwnerUserID())
+	return !jobVisibleToPrincipal(p, job.GetOwnerUserID())
 }
 
 // GetImportParseHandler — POST /v1/groups/import/parse

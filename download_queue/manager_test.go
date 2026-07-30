@@ -690,6 +690,20 @@ func TestPauseResume(t *testing.T) {
 		job := addTestJob(dm, "paused", JobStatusPaused)
 		job.creator = &query_models.ResourceFromRemoteCreator{URL: "http://example.com/file.txt"}
 
+		// Hold every semaphore slot, so the worker Resume starts parks before its
+		// first status write and `pending` is the state this can observe. Without
+		// this the assertion races the worker: the job is legitimately `downloading`
+		// a moment later, and the test failed 1 in 10 under `-race -count=10` once
+		// round 4 took a 10ms poll out of every read and made workers start sooner.
+		for i := 0; i < cap(dm.semaphore); i++ {
+			dm.semaphore <- struct{}{}
+		}
+		defer func() {
+			for i := 0; i < cap(dm.semaphore); i++ {
+				<-dm.semaphore
+			}
+		}()
+
 		err := dm.Resume("paused")
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)

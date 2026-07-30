@@ -53,6 +53,9 @@ export function downloadCockpit() {
             // The trigger always exists (it is header chrome, not inside an x-if), so
             // it is somewhere real to land whenever there was no trigger to capture.
             this._trigger = this.$el.querySelector('.cockpit-trigger');
+            // Captured for the same reason: blockingModal() sweeps the whole document
+            // for open dialogs, and this panel is one of them.
+            this._root = this.$el;
 
             // BH-036: pick up the retention window from the meta tag emitted by base.tpl.
             const metaEl = document.querySelector('meta[name="x-export-retention-ms"]');
@@ -107,23 +110,31 @@ export function downloadCockpit() {
         },
 
         /**
-         * The dialog, if any, that is currently painted above this panel.
+         * The dialog, if any, that is already open when the panel is asked to open.
          *
          * The panel is header chrome: `.header` is a stacking context at z-index 40,
          * so the panel's own z-[60] only orders it against its *header* siblings. The
-         * app's true modals — lightbox, paste-upload, the plugin action modal, the
-         * entity picker — live in `.overlays` at z-index 41 in the root stacking
-         * context, above the whole header layer. Opening the panel underneath one of
-         * them puts an aria-modal dialog behind an aria-modal dialog and moves focus
-         * into the one nobody can see: x-trap then holds it there, and Escape closes
-         * whichever component hears it first.
+         * app's true modals live in `.overlays` at z-index 41 in the root stacking
+         * context, above the whole header layer, so the panel opens behind one, moves
+         * focus into itself and x-trap holds it there — inside a dialog nobody can
+         * see, with Escape going to whichever component hears it first.
          *
-         * Two aria-modal dialogs open at once is the defect whichever way it renders,
+         * The query is every `aria-modal` in the document and not just `.overlays`.
+         * Scoping it to that layer was wrong twice over: the global search dialog is a
+         * *header sibling* of this panel, so two dialogs at the same z-index fight on
+         * DOM order alone, and six more live elsewhere (mrql.tpl, json.tpl, menu.tpl,
+         * blockEditor.tpl, schemaEditorModal.tpl, globalSearch.tpl). A guard that
+         * covers four of ten dialogs recreates the defect it exists to prevent, for
+         * the other six.
+         *
+         * Two aria-modal dialogs open at once is the defect whichever way it paints,
          * so the panel declines rather than fighting for the top.
          */
         blockingModal() {
-            const candidates = document.querySelectorAll('.overlays [aria-modal="true"]');
-            for (const el of candidates) {
+            for (const el of document.querySelectorAll('[aria-modal="true"]')) {
+                // Never this panel: on the paths that can be reached while it is open,
+                // finding itself would make it refuse to do anything.
+                if (this._root?.contains?.(el)) continue;
                 if (this.isRendered(el)) return el;
             }
             return null;
@@ -157,14 +168,13 @@ export function downloadCockpit() {
          * the header trigger rather than to the action button they pressed.
          */
         openFromEvent(detail = null) {
-            const blocker = this.blockingModal();
-            if (blocker) {
-                this.announce('A dialog is open, so the jobs panel was not opened. Close the dialog, then press Control or Command, Shift and D.');
-                return;
-            }
             if (!this.isOpen) {
+                if (this.blockingModal()) {
+                    this.announce('A dialog is open, so the jobs panel was not opened. Close the dialog, then press Control or Command, Shift and D.');
+                    return;
+                }
                 const requested = detail?.returnFocusTo;
-                this._lastTrigger = (requested?.isConnected ? requested : null) ?? focusedElement() ?? this._trigger;
+                this._lastTrigger = (this.isRendered(requested) ? requested : null) ?? focusedElement() ?? this._trigger;
             }
             this.isOpen = true;
         },
@@ -441,12 +451,20 @@ export function downloadCockpit() {
          */
         handleJobRemoved(job, { isAction = false } = {}) {
             const existingJob = this.jobs.find(j => j.id === job.id);
+            // The removal event is the server's last word about this job, and it wins
+            // over the local row. Deciding from the local copy alone assumes the panel
+            // saw every update, and it does not: notifySubscribers drops an event
+            // rather than blocking on a slow subscriber, so a missed terminal
+            // `updated` left the row reading "downloading" — not finished, therefore
+            // not retained — and the completion, its warnings and an export's download
+            // link vanished at the moment they became useful.
+            const finalJob = existingJob ? { ...existingJob, ...job } : job;
 
-            if (existingJob && this.isFinished(existingJob) && !this._dismissedIds.has(job.id)) {
-                if (isAction) existingJob._isAction = true;
+            if (existingJob && this.isFinished(finalJob) && !this._dismissedIds.has(job.id)) {
+                if (isAction) finalJob._isAction = true;
                 // Avoid duplicates
-                if (!this.retainedCompletedJobs.some(j => j.id === existingJob.id)) {
-                    this.retainedCompletedJobs.unshift(existingJob);
+                if (!this.retainedCompletedJobs.some(j => j.id === finalJob.id)) {
+                    this.retainedCompletedJobs.unshift(finalJob);
                     // Keep only the last 5
                     if (this.retainedCompletedJobs.length > 5) {
                         this.retainedCompletedJobs = this.retainedCompletedJobs.slice(0, 5);

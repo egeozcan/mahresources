@@ -177,6 +177,25 @@ func (p *parkingCreator) releaseOne(t *testing.T) {
 	}
 }
 
+// waitForWorkerToExit blocks until no worker holds a semaphore slot.
+//
+// This is a real happens-before and not a delay: processJob registers
+// `defer func() { <-dm.semaphore }()` before it does anything else, so the slot is
+// only given back after the function body has run — and the body ends with the
+// terminal write. Once the semaphore is empty, whatever the worker was going to write
+// it has written.
+func waitForWorkerToExit(t *testing.T, dm *DownloadManager) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(dm.semaphore) == 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("a worker still holds a semaphore slot, so it has not finished writing")
+}
+
 // inFlightJobWith is inFlightJob with a caller-supplied creator.
 func inFlightJobWith(t *testing.T, creator ResourceCreator) (*DownloadManager, *DownloadJob) {
 	t.Helper()
@@ -227,14 +246,13 @@ func TestFinish_AWorkerCannotUnretireAJobAControlAlreadyRetired(t *testing.T) {
 	// bytes when the cancel landed.
 	creator.releaseOne(t)
 
-	// Give the worker every chance to write. A poll that stops at the first good
-	// sample would pass against the broken code simply by looking too early.
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if got := job.GetStatus(); got != JobStatusCancelled {
-			t.Fatalf("the worker un-retired a cancelled job as %q; the cancel had already been answered and shown", got)
-		}
-		time.Sleep(5 * time.Millisecond)
+	// Wait for the worker to be *gone*, not for a second to pass. A timed window is
+	// not a synchronisation: broken code that got descheduled would pass it, and the
+	// assertion would be about the scheduler rather than about the guard.
+	waitForWorkerToExit(t, dm)
+
+	if got := job.GetStatus(); got != JobStatusCancelled {
+		t.Fatalf("the worker un-retired a cancelled job as %q; the cancel had already been answered and shown", got)
 	}
 	if snap := job.Snapshot(); snap.ResourceID != nil {
 		t.Errorf("the cancelled job carries resource id %d, so the row offers a link it should never have had", *snap.ResourceID)
@@ -637,5 +655,97 @@ func TestTimeoutReader_DeliversWhatItReads(t *testing.T) {
 	}
 	if string(got) != "hello world" {
 		t.Errorf("read %q, want %q", got, "hello world")
+	}
+}
+
+// -------------------------------------------------- round 4
+
+// Subscribers see snapshots in the order they were taken.
+//
+// A copy is a statement about one instant, so two goroutines that snapshot in one
+// order and publish in the other deliver a stale statement last — something the live
+// pointer could not do, because it always marshalled the present. The readable form
+// is this test: a progress callback snapshots `downloading`, a Pause claims `paused`
+// and publishes, then the callback publishes its older copy. The panel is left
+// showing a running download with no Resume button, and nothing repairs it, because
+// the worker's terminal write is correctly suppressed on a paused job.
+//
+// The assertion is the one-way transition itself and not a counter. A first attempt
+// at this test had the two writers bump a shared counter and asserted the delivered
+// progress never decreased — which is not an invariant of the product at all: the
+// mutation and the notification are separate steps, so two writers can take counter
+// values in one order and write them in the other. It failed with the fix in place,
+// for its own reasons. `downloading` -> `paused` happens once per iteration and only
+// in that direction, so nothing but a reordered publish can produce the failure.
+func TestNotify_DeliversSnapshotsInTheOrderTheyWereTaken(t *testing.T) {
+	for iteration := 0; iteration < 200; iteration++ {
+		dm := createTestManager()
+		job := addTestJob(dm, "j", JobStatusDownloading)
+		reporter := &attemptReporter{dm: dm, job: job, runID: 0, total: 1 << 20}
+
+		events, unsub := dm.Subscribe()
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		// The transfer, reporting a chunk.
+		go func() {
+			defer wg.Done()
+			reporter.lastNotify = time.Time{} // never throttled
+			reporter.onProgress(4096)
+		}()
+		// The reader, pausing it.
+		go func() {
+			defer wg.Done()
+			_ = dm.Pause("j")
+		}()
+		wg.Wait()
+		unsub()
+
+		paused := false
+		for ev := range events {
+			if ev.Job.Status == JobStatusPaused {
+				paused = true
+				continue
+			}
+			if paused && ev.Job.Status == JobStatusDownloading {
+				t.Fatalf("iteration %d: a subscriber was told the job was downloading *after* being told it was paused — an older snapshot was published after a newer one, and nothing else will correct it",
+					iteration)
+			}
+		}
+		if !paused {
+			t.Fatalf("iteration %d: the pause was never announced, so this iteration measured nothing", iteration)
+		}
+	}
+}
+
+// A retry puts the phase label back to what the job was submitted with.
+//
+// The counters were cleared and the label was not, which is the worst of the two: a
+// parse that failed half-way was re-listed as pending/"parsing" — a phase the new
+// attempt has not begun, and behind a busy semaphore may not begin for a while.
+func TestClaimRetry_RestoresTheInitialPhase(t *testing.T) {
+	dm := createTestManager()
+	job, err := dm.SubmitJobWithOptions(
+		JobOptions{Source: JobSourceGroupImportParse, InitialPhase: "queued"},
+		func(_ context.Context, _ *DownloadJob, p ProgressSink) error {
+			p.SetPhase("parsing")
+			return errors.New("boom")
+		})
+	if err != nil {
+		t.Fatalf("submitting failed: %v", err)
+	}
+	if status := settle(t, job); status != JobStatusFailed {
+		t.Fatalf("the job settled at %q, want %q", status, JobStatusFailed)
+	}
+	if got := job.Snapshot().Phase; got != "parsing" {
+		t.Fatalf("precondition: the failed job reports phase %q, want \"parsing\"", got)
+	}
+
+	if err := dm.Retry(job.ID); err != nil {
+		t.Fatalf("retrying failed: %v", err)
+	}
+
+	if got := job.Snapshot().Phase; got != "queued" {
+		t.Errorf("the retried job reports phase %q, want the phase it was submitted with", got)
 	}
 }

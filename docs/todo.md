@@ -2408,6 +2408,97 @@ accepted Cancel, and said not to pick quietly. Splitting it in two is what the m
   fixed because the snapshot change is what makes it observable, and shipped in the same commit for
   that reason.
 
+
+#### Round 4 — what the matrix pass itself got wrong
+
+The systematic pass went back for independent review. **Ten findings, all ten real**, which is
+worth stating plainly: building the table did not stop the rate, it changed *where* the defects
+were. Three of the ten are in code round 3 wrote, three are in the guards round 3 added (each
+covering less than it claimed), two are pre-existing and in the one file the matrix has no column
+for, and two are round 3's own tests.
+
+- [x] **1 (high) — a cancelled transfer delivered its final chunk about half the time.**
+      `progress.go`'s wait had `case result := <-tr.pending` beside `case <-tr.ctx.Done()`, and Go
+      picks uniformly when both are ready. **Measured: 37 of 60 attempts.** The chunk that arrives
+      is the one carrying `io.EOF`, so `AddResource` sees a complete body and the job reports
+      `completed`. This is *not* the argued case below — there the resource already existed when
+      the cancel was accepted; here the cancel is accepted first and the transfer finishes anyway,
+      purely because of which case the runtime picked. Abandonment is checked first now, in its own
+      non-blocking select.
+- [x] **2 (medium) — every read of every download paid a 10 ms scheduler quantum.** The wait loop
+      fell through to a `default:` that slept 10 ms and looked again, which is how it learned about
+      an idle timeout: the watcher set `err` and had no way to say so. **Measured: 10 810 µs per
+      read, against 1.3 µs after the fix** — at `io.Copy`'s 32 KiB that is a ceiling near 3 MB/s no
+      matter what the network does. The watcher closes a channel now and the wait simply blocks.
+      Pre-existing, and the sort of thing a state-machine matrix will never surface.
+- [x] **3 (medium) — snapshotting needed an ordering rule beside it.** Round 3 made every published
+      job a copy, and a copy is a statement about one instant: two goroutines that snapshot in one
+      order and publish in the other deliver the stale one last. The live pointer could not do that,
+      because it always marshalled the present. A progress callback snapshots `downloading`, a Pause
+      claims `paused` and publishes, the callback publishes its older copy — and nothing repairs it,
+      because the worker's terminal write is correctly suppressed on a paused job. The panel keeps a
+      running download with no Resume. Snapshot-and-publish is one step under `notifyMu` now.
+      **Not seen red.** The gap between `Snapshot()` returning and the channel send is a few
+      instructions, and the other goroutine has to fit a claim, a snapshot and a publish inside it;
+      20 000 iterations never hit it. The guard that ships is an invariant test that passed
+      beforehand as well — and the first version of that test was worse than useless, see below.
+      Fixed on inspection, and downgraded from the review's "high" for the same reason.
+- [x] **4 (high) — the import ownership check expired.** The owner tag lives only on the in-memory
+      queue record; "Clear completed" removes it at once and the retention sweep an hour later.
+      The files it authorised — staged tar, plan, result — outlive it on disk, and every import
+      lifecycle endpoint works from those files by id. An unknown job returned "not denied", so the
+      handler's own path ran: read the plan, apply it, delete the files. **Measured after a clear: a
+      non-owner got 204 on `DELETE /v1/imports/<id>` and 409 on apply.** Unknown is denied now,
+      which is the fail-closed reading of "there is no evidence you own this"; admins and the
+      auth-off super-user are unaffected because they may see every job whatever its owner.
+- [x] **5 (high) — the modal guard covered four dialogs out of ten.** Round 3 queried
+      `.overlays [aria-modal="true"]`. The global search dialog is a *header sibling* of the panel —
+      same z-index, ordered by DOM position — and six more live in `mrql.tpl`, `json.tpl`,
+      `menu.tpl`, `blockEditor.tpl`, `schemaEditorModal.tpl` and `globalSearch.tpl`. A guard that
+      covers four of ten recreates, for the other six, exactly the defect it exists to prevent. The
+      sweep is document-wide now, skipping the panel itself.
+- [x] **6 (high) — a stale plugin run destroyed the modal that replaced it.** Cancel stays enabled
+      while a request is in flight, so the reader can close action A and open action B before A
+      answers. A's continuation then called `close()` on B, discarded a half-filled form, and opened
+      the jobs panel for a run the reader had abandoned. A submission sequence number, bumped by
+      `open()` as well as by `submit()`, makes a superseded continuation return.
+- [x] **7 (medium) — a removal was judged from the local row.** `notifySubscribers` drops an event
+      rather than blocking on a slow subscriber, so the terminal `updated` can simply not arrive.
+      The row still read "downloading", was therefore not "finished", and was not retained — so the
+      completion, its warnings and an export's download link vanished at the moment they became
+      useful. The removal event is the server's last word and is merged over the local copy now.
+- [x] **8 (medium, a11y) — an opener can be connected and still not focusable.** A card action menu
+      closes via `x-show` before dispatching, so the menu item the reader activated stays in the
+      document at `display:none`. `isConnected` says yes, `.focus()` silently fails, and the reader
+      lands on `<body>` — the state the whole focus-return apparatus exists to avoid. Two halves:
+      the check is "is it painted" rather than "is it attached", and `cardActionMenu` hands over its
+      own trigger button, which is still on screen.
+- [x] **9 (minor) — a retry kept the failed attempt's phase label.** Round 3 cleared the counters
+      and left `Phase`, which is the worst of the two: a parse that failed half-way was re-listed as
+      pending/"parsing", a phase the new attempt has not begun and, queued behind a busy semaphore,
+      may not begin for a while. `initialPhase` is kept at construction and restored.
+- [x] **10 (minor) — two of round 3's "deterministic" tests were not.** The un-retire test polled
+      for a second instead of synchronising, so broken code that got descheduled would have passed;
+      it waits for the worker's semaphore slot to come back now, which is a real happens-before
+      (the release is deferred, so it runs after the terminal write). And the round-2 blocking
+      creator had *one* shared release channel, so a test that parked two attempts and meant "let A
+      go" could let B go instead — each parked call gets its own gate now, released oldest-first.
+
+**One of round 4's own tests was unsound, and its "red" was worthless.** The first version of the
+ordering guard had two goroutines bump a shared counter, write it as the job's progress, notify, and
+asserted the delivered progress never decreased. It went red on iteration 0 — and not because of the
+defect: the mutation and the notification are separate steps in the product too, so two writers can
+take counter values in one order and write them in the other. It was measuring its own premise. The
+test asserts the `downloading` -> `paused` transition now, which happens once per iteration and only
+in that direction, so nothing but a reordered publish can produce the failure. Then it stopped going
+red at all, which is the honest answer recorded above. **A red that a bad test produces is not
+evidence, and it is more dangerous than no test, because it certifies the fix.**
+
+**Where the review's framing needed adjusting.** Finding 1 was reported as undermining the argued
+`completed`-despite-cancel decision. It does not: it is a separate defect on the other side of that
+decision, and fixing it makes the argued case *narrower* rather than wrong. The decision stands as
+recorded, and the open half of it is still the wording of Cancel's reply, carried to Batch 12.
+
 #### The a11y "flake" was a real defect, and my first explanation of it was wrong
 
 The first a11y run of this pass reported 1 flaky in `20-a11y-hover-cards.spec.ts` and I wrote it

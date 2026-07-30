@@ -103,6 +103,7 @@ func (m *DownloadManager) SubmitJobWithOptions(opts JobOptions, runFn JobRunFn) 
 		CreatedAt:       time.Now(),
 		Source:          opts.Source,
 		Phase:           opts.InitialPhase,
+		initialPhase:    opts.InitialPhase,
 		ctx:             ctx,
 		cancel:          cancel,
 		runFn:           runFn,

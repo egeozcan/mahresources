@@ -361,7 +361,7 @@ describe('round 3 — the panel declines to open underneath a modal', () => {
     function stubOverlays(modals: any[]) {
         vi.stubGlobal('document', {
             querySelectorAll: (sel: string) =>
-                sel === '.overlays [aria-modal="true"]' ? modals : [],
+                sel === '[aria-modal="true"]' ? modals : [],
             activeElement: null,
             body: {},
             documentElement: {},
@@ -415,6 +415,75 @@ describe('round 3 — the panel declines to open underneath a modal', () => {
     });
 });
 
+/**
+ * Round 4. Every finding below is one an independent review found in the round-3 fix
+ * itself, which is the point: the guard, the dedupe and the retain-for-display each
+ * shipped covering less than they claimed.
+ */
+describe('round 4 — the guard covers every dialog, not one layer of them', () => {
+    const shown = { isConnected: true, checkVisibility: () => true };
+
+    test('a dialog outside .overlays blocks the panel too', () => {
+        // The first version queried `.overlays [aria-modal="true"]`. The global search
+        // dialog is a *header sibling* of this panel — same z-index, ordered by DOM
+        // position — and six more live in mrql.tpl, json.tpl, menu.tpl,
+        // blockEditor.tpl, schemaEditorModal.tpl and globalSearch.tpl. A guard that
+        // covers four of ten dialogs recreates the defect for the other six.
+        const headerDialog = { ...shown, id: 'global-search' };
+        vi.stubGlobal('document', {
+            querySelectorAll: (sel: string) =>
+                sel === '[aria-modal="true"]' ? [headerDialog] : [],
+            activeElement: null, body: {}, documentElement: {},
+        });
+        component.announce = () => {};
+
+        component.toggle();
+
+        expect(component.isOpen).toBe(false);
+        expect(component.blockingModal()).toBe(headerDialog);
+    });
+
+    test('the panel never counts itself as the thing blocking it', () => {
+        // The sweep is document-wide now, and this panel is an aria-modal dialog. A
+        // path that consults the guard while the panel is open would otherwise find
+        // itself and refuse.
+        const ownPanel = { ...shown };
+        component._root = { contains: (el: any) => el === ownPanel };
+        vi.stubGlobal('document', {
+            querySelectorAll: (sel: string) =>
+                sel === '[aria-modal="true"]' ? [ownPanel] : [],
+            activeElement: null, body: {}, documentElement: {},
+        });
+
+        expect(component.blockingModal()).toBeNull();
+    });
+});
+
+describe('round 4 — a removed job is judged by what the server said, not by the local row', () => {
+    test('a removal that reports completion is retained even if the update was missed', () => {
+        // notifySubscribers drops an event rather than blocking on a slow subscriber,
+        // so the terminal `updated` can simply not arrive. The local row then still
+        // says "downloading", is not finished, is not retained — and the completion,
+        // its warnings and an export's download link disappear at the moment they
+        // become useful.
+        component.jobs = [job({ id: 'exp', status: 'downloading', source: 'group-export' })];
+
+        component.handleJobRemoved({ id: 'exp', status: 'completed', resultPath: '_exports/exp.tar' });
+
+        expect(component.retainedCompletedJobs.map(j => j.id)).toEqual(['exp']);
+        expect(component.retainedCompletedJobs[0].status).toBe('completed');
+        expect(component.retainedCompletedJobs[0].resultPath).toBe('_exports/exp.tar');
+    });
+
+    test('the control: a removal that reports an active job is still dropped', () => {
+        component.jobs = [job({ id: 'live', status: 'downloading' })];
+
+        component.handleJobRemoved({ id: 'live', status: 'downloading' });
+
+        expect(component.retainedCompletedJobs).toEqual([]);
+    });
+});
+
 describe('round 3 — a plugin action returns focus to the control that started it', () => {
     test('openFromEvent prefers the opener the request names', () => {
         // pluginActionModal closes itself and then asks for the panel, so what has
@@ -422,8 +491,8 @@ describe('round 3 — a plugin action returns focus to the control that started 
         // remove. The panel's restore rejects a detached node and falls back to the
         // header trigger, so the reader ended a plugin action somewhere they had
         // never been.
-        const runButton = { tagName: 'BUTTON', isConnected: true };
-        const actionButton = { tagName: 'BUTTON', isConnected: true };
+        const runButton = { tagName: 'BUTTON', isConnected: true, checkVisibility: () => true };
+        const actionButton = { tagName: 'BUTTON', isConnected: true, checkVisibility: () => true };
         vi.stubGlobal('document', {
             querySelectorAll: () => [],
             activeElement: runButton,
@@ -435,6 +504,26 @@ describe('round 3 — a plugin action returns focus to the control that started 
         component.openFromEvent({ returnFocusTo: actionButton });
 
         expect(component._lastTrigger).toBe(actionButton);
+    });
+
+    test('an opener that is connected but no longer painted is rejected too', () => {
+        // Round 4: a card action menu closes via x-show before dispatching, so its
+        // menu item stays in the document at display:none. `isConnected` is true and
+        // focusing it silently fails, which lands the reader on <body> — the state all
+        // of this exists to avoid. The check is "is it painted", not "is it attached".
+        const hidden = { tagName: 'BUTTON', isConnected: true, checkVisibility: () => false };
+        const live = { tagName: 'INPUT' };
+        vi.stubGlobal('document', {
+            querySelectorAll: () => [],
+            activeElement: live,
+            body: {},
+            documentElement: {},
+        });
+        component._trigger = { tagName: 'BUTTON' };
+
+        component.openFromEvent({ returnFocusTo: hidden });
+
+        expect(component._lastTrigger).toBe(live);
     });
 
     test('an opener that is already gone falls back to where focus is', () => {

@@ -12,13 +12,23 @@ export function pluginActionModal() {
         // the time this modal hands over to the jobs panel its own Run button has
         // focus and is about to be removed by the x-if — see submit().
         _opener: null,
+        // Which submission the modal is currently showing. A run is an await away from
+        // its own continuation, and the modal is reusable in the meantime.
+        _submitSeq: 0,
 
         init() {
             window.addEventListener('plugin-action-open', (e) => this.open(e.detail));
         },
 
         open(detail) {
-            this._opener = focusedElement();
+            // `returnFocusTo` when the caller knows better than focus does. A card
+            // action menu closes itself before dispatching, so its menu item is still
+            // connected but `display:none` — restoring to it silently fails and the
+            // reader is dropped somewhere else entirely. The menu's own trigger button
+            // is still on screen, and is where they came from.
+            this._opener = detail?.returnFocusTo ?? focusedElement();
+            // Any request still in flight now belongs to a modal that no longer exists.
+            this._submitSeq++;
             const action = {
                 plugin: detail.plugin,
                 action: detail.action,
@@ -177,6 +187,13 @@ export function pluginActionModal() {
             }
 
             this.submitting = true;
+            // The run this continuation speaks for. Cancel stays enabled while a
+            // request is in flight, so the reader can close this modal and open another
+            // action before the first answer arrives — and the first answer then
+            // called close() on the *second* modal, discarding a half-filled form and
+            // opening the jobs panel for a run the reader had abandoned.
+            const seq = ++this._submitSeq;
+            const superseded = () => seq !== this._submitSeq;
             try {
                 const resp = await fetch('/v1/jobs/action/run', {
                     method: 'POST',
@@ -190,6 +207,8 @@ export function pluginActionModal() {
                 });
 
                 const data = await resp.json();
+
+                if (superseded()) return;
 
                 if (!resp.ok) {
                     this.errors._general = data.error || 'Action failed';
@@ -227,9 +246,12 @@ export function pluginActionModal() {
                     }, 1500);
                 }
             } catch (err) {
+                if (superseded()) return;
                 this.errors._general = err.message;
             } finally {
-                this.submitting = false;
+                // Not unconditionally: clearing it from a superseded run would unlock
+                // the Run button of a submission that is still in flight.
+                if (!superseded()) this.submitting = false;
             }
         },
     };

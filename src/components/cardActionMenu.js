@@ -46,9 +46,15 @@ export function cardActionMenu() {
             }
         },
         runAction(action, entityId, entityType) {
+            // The trigger, captured before close() hides the menu. The menu item the
+            // reader activated stays in the document but goes display:none, so it
+            // cannot take focus back when the action modal closes; the button that
+            // opened the menu is still on screen and is where they came from.
+            const trigger = this.$refs.trigger;
             this.close();
             window.dispatchEvent(new CustomEvent('plugin-action-open', {
                 detail: {
+                    returnFocusTo: trigger,
                     plugin: action.plugin_name,
                     action: action.id,
                     label: action.label,

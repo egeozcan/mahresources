@@ -91,6 +91,13 @@ type TimeoutReaderWithContext struct {
 	pending    chan readResult
 	ready      []byte
 	pendingErr error
+
+	// failed is closed by the watcher when it sets err, so a Read waiting on a remote
+	// that has gone quiet is woken instead of discovering it on the next poll. There
+	// was no such signal: Read learned about an idle timeout only from a `default:`
+	// branch that slept 10ms and looked again, which cost every read of the transfer
+	// a scheduler quantum it did not need.
+	failed chan struct{}
 }
 
 // NewTimeoutReaderWithContext creates a new timeout reader with context cancellation
@@ -101,6 +108,7 @@ func NewTimeoutReaderWithContext(r io.Reader, idleTimeout time.Duration, ctx con
 		ctx:         ctx,
 		lastRead:    time.Now(),
 		done:        make(chan struct{}),
+		failed:      make(chan struct{}),
 	}
 	go tr.watchTimeout()
 	return tr
@@ -125,6 +133,7 @@ func (tr *TimeoutReaderWithContext) watchTimeout() {
 			tr.mu.Lock()
 			tr.err = fmt.Errorf("download cancelled")
 			tr.mu.Unlock()
+			close(tr.failed)
 			return
 		case <-ticker.C:
 			tr.mu.Lock()
@@ -132,6 +141,7 @@ func (tr *TimeoutReaderWithContext) watchTimeout() {
 			if elapsed > tr.idleTimeout {
 				tr.err = fmt.Errorf("remote server stopped sending data (idle timeout after %v)", tr.idleTimeout)
 				tr.mu.Unlock()
+				close(tr.failed)
 				return
 			}
 			tr.mu.Unlock()
@@ -193,43 +203,97 @@ func (tr *TimeoutReaderWithContext) Read(p []byte) (n int, err error) {
 		}()
 	}
 
-	// Wait for read to complete, timeout, or cancellation
-	for {
-		select {
-		case result := <-tr.pending:
-			tr.pending = nil
-			if result.n > 0 {
-				tr.mu.Lock()
-				tr.lastRead = time.Now()
-				tr.mu.Unlock()
-				tr.ready = tr.buf[:result.n]
-				tr.pendingErr = result.err
-				n = tr.drain(p)
-				if len(tr.ready) > 0 {
-					// The caller asked for less than the outstanding read delivered,
-					// which only a caller that shrank its buffer after an abandoned
-					// attempt can do. The rest waits for the next call.
-					return n, nil
-				}
-				err = tr.pendingErr
-				tr.pendingErr = nil
-				return n, err
-			}
-			return 0, result.err
-		case <-tr.ctx.Done():
-			return 0, fmt.Errorf("download cancelled")
-		case <-tr.done:
-			return 0, fmt.Errorf("remote server stopped sending data (idle timeout after %v)", tr.idleTimeout)
-		default:
-			tr.mu.Lock()
-			err := tr.err
-			tr.mu.Unlock()
-			if err != nil {
-				return 0, err
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
+	// Abandonment outranks a result that arrived alongside it. A plain select over
+	// both is a coin flip when both are ready, and losing it is not cosmetic: the
+	// chunk it hands over can be the one carrying io.EOF, so a download the user
+	// cancelled — or one the idle watchdog gave up on — reaches AddResource with a
+	// complete body and reports `completed`. That is a different thing from the
+	// argued case in docs/todo.md, where AddResource had already succeeded before the
+	// cancel was accepted; here the cancel is accepted first and the transfer
+	// finishes anyway, purely because of which case the runtime picked.
+	if err := tr.abandoned(); err != nil {
+		return 0, err
 	}
+
+	// Wait for the read to complete, or for one of the three ways out. No polling
+	// branch: this used to fall through to a `default:` that slept 10ms and looked
+	// again, which is how it learned about an idle timeout, and it charged that 10ms
+	// to *every* read whose goroutine had not finished by the time the select ran —
+	// which is almost all of them. At io.Copy's 32 KiB that is a ceiling of about
+	// 3 MB/s regardless of the network. The watcher closes tr.failed now, so this can
+	// simply block.
+	select {
+	case result := <-tr.pending:
+		tr.pending = nil
+		// Checked once more, because the select above does not rank its cases: a
+		// result and a cancellation that become ready together are a coin flip, and
+		// the priority check before the select only covers the ones that were already
+		// ready when this call reached it. Measured with the pre-check alone: 1 of 60
+		// cancelled transfers still handed over its final chunk, and that chunk is the
+		// one carrying io.EOF.
+		if err := tr.abandoned(); err != nil {
+			return 0, err
+		}
+		if result.n > 0 {
+			tr.mu.Lock()
+			tr.lastRead = time.Now()
+			tr.mu.Unlock()
+			tr.ready = tr.buf[:result.n]
+			tr.pendingErr = result.err
+			n = tr.drain(p)
+			if len(tr.ready) > 0 {
+				// The caller asked for less than the outstanding read delivered. The
+				// rest waits for the next call rather than being dropped.
+				return n, nil
+			}
+			err = tr.pendingErr
+			tr.pendingErr = nil
+			return n, err
+		}
+		return 0, result.err
+	case <-tr.ctx.Done():
+		return 0, fmt.Errorf("download cancelled")
+	case <-tr.done:
+		return 0, fmt.Errorf("remote server stopped sending data (idle timeout after %v)", tr.idleTimeout)
+	case <-tr.failed:
+		return 0, tr.watcherErr()
+	}
+}
+
+// abandoned reports the reason this transfer has been given up on, or nil.
+//
+// Abandonment outranks anything the remote has to say. A plain select over both is a
+// coin flip when both are ready, and losing it is not cosmetic: the chunk it hands
+// over can be the one carrying io.EOF, so a download the user cancelled — or one the
+// idle watchdog gave up on — reaches AddResource with a complete body and reports
+// `completed`. Measured before this existed: 37 of 60 cancelled transfers delivered
+// their last chunk. That is a different thing from the argued case in docs/todo.md,
+// where AddResource had already succeeded before the cancel was accepted; here the
+// cancel is accepted first and the transfer finishes anyway.
+func (tr *TimeoutReaderWithContext) abandoned() error {
+	select {
+	case <-tr.ctx.Done():
+		return fmt.Errorf("download cancelled")
+	default:
+	}
+	select {
+	case <-tr.done:
+		return fmt.Errorf("remote server stopped sending data (idle timeout after %v)", tr.idleTimeout)
+	default:
+	}
+	select {
+	case <-tr.failed:
+		return tr.watcherErr()
+	default:
+	}
+	return nil
+}
+
+// watcherErr reports what the timeout watcher gave up with.
+func (tr *TimeoutReaderWithContext) watcherErr() error {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	return tr.err
 }
 
 // drain hands over as much of what has arrived as p will hold.

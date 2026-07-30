@@ -38,40 +38,66 @@ import (
 // That is what makes the interleavings below deterministic rather than a timing
 // gamble: while the worker is parked here it cannot reach its terminal write, so a
 // test can drive Cancel and Pause into exactly the window the old code left open.
+// Each parked call gets its own gate, and releaseOne opens the oldest one still
+// closed. One shared release channel was not enough once a test parked two attempts
+// at a time: `b.release <- struct{}{}` is taken by whichever goroutine reaches the
+// receive first, so a test that meant "let attempt A go" could let B go instead and
+// then fail on B's terminal write — a scheduler-dependent failure in a test whose
+// whole claim is that it is sequenced. Round-4 review.
 type blockingResourceCreator struct {
-	entered chan struct{} // buffered: one token per AddResource entry
-	release chan struct{} // one token releases one parked call
+	mu     sync.Mutex
+	gates  []chan struct{} // parked and not yet released, oldest first
+	parked chan chan struct{}
 }
 
 func newBlockingResourceCreator() *blockingResourceCreator {
-	return &blockingResourceCreator{entered: make(chan struct{}, 4), release: make(chan struct{})}
+	return &blockingResourceCreator{parked: make(chan chan struct{}, 4)}
 }
 
 func (b *blockingResourceCreator) AddResource(file contracts.File, _ string, _ *query_models.ResourceCreator) (*models.Resource, error) {
 	_, _ = io.CopyN(io.Discard, file, 1)
-	select {
-	case b.entered <- struct{}{}:
-	default:
-	}
-	<-b.release
+	gate := make(chan struct{})
+	b.parked <- gate
+	<-gate
 	return nil, errors.New("aborted while the test held the worker")
 }
 
-// releaseOne lets a single parked worker continue.
-func (b *blockingResourceCreator) releaseOne(t *testing.T) {
+// takeGate returns the next gate, waiting for a worker to park if none has yet.
+func (b *blockingResourceCreator) takeGate(t *testing.T) chan struct{} {
 	t.Helper()
+	b.mu.Lock()
+	if len(b.gates) > 0 {
+		gate := b.gates[0]
+		b.gates = b.gates[1:]
+		b.mu.Unlock()
+		return gate
+	}
+	b.mu.Unlock()
+
 	select {
-	case b.release <- struct{}{}:
+	case gate := <-b.parked:
+		return gate
 	case <-time.After(15 * time.Second):
-		t.Fatalf("no worker was parked to release")
+		t.Fatalf("no worker was parked in AddResource")
+		return nil
 	}
 }
 
-// waitParked blocks until a worker is parked inside AddResource.
+// releaseOne lets the earliest-parked worker that is still waiting continue.
+func (b *blockingResourceCreator) releaseOne(t *testing.T) {
+	t.Helper()
+	close(b.takeGate(t))
+}
+
+// waitParked blocks until a worker is parked inside AddResource, and remembers it so
+// a later releaseOne frees that one rather than whichever goroutine wins a race.
 func (b *blockingResourceCreator) waitParked(t *testing.T) {
 	t.Helper()
 	select {
-	case <-b.entered:
+	case gate := <-b.parked:
+		b.mu.Lock()
+		b.gates = append(b.gates, gate)
+		b.mu.Unlock()
 	case <-time.After(15 * time.Second):
 		t.Fatalf("the worker never reached AddResource, so nothing was mid-flight to test")
 	}
