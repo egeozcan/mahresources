@@ -47,6 +47,15 @@ type PluginManagerProvider interface {
 	PluginManager() *plugin_system.PluginManager
 }
 
+// ShortcodeLintContext serves /v1/shortcodes/lint. Beyond the plugin registry
+// (for the plugin shortcode catalogue) it reads the template-partial *names*, so
+// a [partial] reference to a partial that does not exist can be reported
+// (finding 155).
+type ShortcodeLintContext interface {
+	PluginManagerProvider
+	partialNameResolver
+}
+
 // MRQLAPIContext serves the /v1/mrql surface: execution, validation,
 // completion, explain, generation, and the saved-query CRUD.
 type MRQLAPIContext interface {

@@ -591,3 +591,129 @@ Scoping the list to the file's own owner group (`/resources?OwnerId=…`) made i
 the "tests covering a real write should own their entity" lesson applied to *reads that pick a
 subject*: `.first()` over shared server state is a fixture, and an unowned fixture is a race. If a
 test needs "some row", it should create the row it means.
+
+## An unordered JSON object is only unordered in the spec, and that is what saves a public endpoint
+
+Finding 147 — `/v1/query/run` alphabetising a saved query's result columns — reads like
+it demands a shape change, and the plan asked for `{columns: [...], rows: [[...]]}`.
+That endpoint has an OpenAPI entry, a documented curl example and a CLI consumer
+(`mr query run`), so the change would have broken every external reader for a defect
+that is entirely about *order*.
+
+`encoding/json` sorts map keys; it does not sort an object emitted by a custom
+`MarshalJSON`. RFC 8259 says object members are unordered, but every parser in practice
+preserves insertion order for non-integer string keys — which is exactly what the two
+consumers rely on, one walking `Object.keys()` and one passing the body through. A
+20-line ordered-row type fixed the reported defect with no shape change, no CLI churn
+and no docs regeneration.
+
+The general rule: before changing a response's *shape* to fix a property of its
+*content*, check whether the content property can be fixed on its own. And the
+corollary that decided it here: the report's justification for the shape change was
+that `/mrql` "already preserves order", and it does not — see the next entry.
+
+## A worked example in a bug report can be right by coincidence, and then the diagnosis built on it is wrong
+
+Finding 147 argued that raw SQL results were "inconsistent with /mrql, which preserves
+order", quoting `contentType, count, sum_fileSize`. `MRQLGroupedResult.Rows` is also
+`[]map[string]any`, so it is alphabetised identically — and that example happens to be
+in alphabetical order (`contentType` < `count` < `sum_fileSize`). Measured, writing
+`GROUP BY contentType SUM(fileSize) COUNT()` and `GROUP BY contentType COUNT()
+SUM(fileSize)` emit the same key order, which is the definition of the order being
+discarded.
+
+Had the "inconsistency" been taken at face value, the fix would have changed one
+surface to a new shape and left the other with the defect — manufacturing the
+inconsistency the report was complaining about. When a report contrasts a broken
+surface with a working one, **run the working one with an input that would distinguish
+them**. An example whose expected and buggy outputs coincide proves nothing, and a
+comparison is a claim about two things.
+
+## A finding's UI half can already be fixed while its API half is wide open, and the plan will only describe one
+
+The share findings split cleanly the wrong way. Finding 7 said "disable the Share
+action when no share server is configured", and `noteShare.tpl` had been wrapped in
+`{% if shareEnabled %}` for some time: with `SHARE_PORT` unset the note page renders
+**zero** Share buttons. What still reproduced was the finding's own ✅ VERIFIED
+evidence — `POST /v1/note/share` answering `200` with a token for a URL the only
+running server has no route for. A fixer following the prescription would have edited a
+correct template and left the hole.
+
+The reason the hunt *saw* a Share button is a different finding: 51, whose evidence
+records `.env` holding `SHARE_PORT=8383` while the bind had failed. So "an operator
+configured a port" and "a request to `/s/<token>` can succeed" are different facts, and
+two findings that look independent needed one predicate rather than one check each.
+
+Two follow-ons worth keeping. Gating the whole sharing panel on the new predicate would
+have been a worse bug than the original: an already-shared note would be publicly
+reachable with no way to revoke it, so revocation must never be gated on the feature
+being healthy. And when a server-side gate is added, **the tests that used the ungated
+behaviour as setup all break** — five Go test files here shared a note as a fixture and
+had to be told they want sharing. That is the "grep for what you are changing" rule
+applied to behaviour rather than to markup.
+
+## A "no dialog appeared" or "no error appeared" observation is only as good as the selector that looked for it
+
+Three of the campaign's rejections and one of this batch's are the same mistake, and it
+is worth naming the shape rather than the instances. Finding 96 reported that "Format
+JSON does nothing at all — no change, no error, no announcement", having swept
+`[aria-live]` nodes for text; the message is in a `role="alert"` paragraph, painted and
+32 px tall, which implies an assertive live region but is not *inside* one, so the sweep
+could not see it. Finding 134 reported "no visible error in the filter area" from a
+capture that explicitly truncated `main` to 400 characters, and said so.
+
+Both reports' *observations* are accurate. Neither conclusion follows. Before filing or
+accepting an absence, ask what the probe could not have seen: a shadow root (finding
+143), a `box-shadow` where `outline` was read (39), an element outside the captured
+region (134), a role the selector did not include (96). And when the finding is
+rejected, pin it with a test that asserts the thing **is** painted, so the rejection
+cannot quietly become wrong.
+
+## A test that creates three rows cannot prove a fix to a fifty-row page cap
+
+The finding-28 guard — "the copy-from picker offers every category, not the first 50" —
+created three categories and asserted they were offered. It passed against the unfixed
+single-request client, because on a near-empty worker server three new rows land on page
+one. Green, reasonable-looking, and blind to the entire defect.
+
+Two things fixed it. Count what the shared server already holds and create enough to
+cross the next page boundary (`PAGE_SIZE - existing % PAGE_SIZE + 3`), with names that
+sort last so the new rows are on the final page. And assert the *mechanism* as well as
+the outcome: listening on `page.on('request')` and requiring more than one distinct
+`?page=` proves the client pages regardless of how much data happens to exist. The red
+run then failed with "the picker issued only none — it is not paging", which names the
+defect rather than the symptom.
+
+The general form: when a fix is about a **threshold**, the fixture has to cross it, and
+"the data I created is present" is not the assertion — "the request pattern changed" is.
+
+## Adding validation to a write path breaks every test that used the invalid value as a fixture, and deleting those tests loses real coverage
+
+Rejecting an unparseable Meta JSON Schema (findings 17/93) broke six existing
+Playwright tests, and none of them was about validation. Three guarded **stored XSS**
+through an Alpine `x-data` injection — a P1 — by creating a category whose schema was
+`'; alert('xss'); '`. Two guarded the Visual Editor disabling Apply on an invalid
+schema. One was the same XSS guard on the resource form. Every fixture went through the
+API, and the API now says no.
+
+The two tempting responses are both wrong: weakening the validation abandons the
+finding, and deleting the tests abandons a security guard. Three different routes kept
+all of it:
+
+- **Find a payload that passes validation and still attacks.**
+  `{"type":"object","description":"'; alert('xss'); '"}` is a valid JSON Schema carrying
+  the identical quote sequence. It is also a *better* statement of the requirement: a
+  schema an author can legitimately save must not be able to break out of the attribute
+  it is injected into.
+- **Move the cases that genuinely need invalid data to a layer that can plant it.** The
+  "stored schema is not JSON at all" tests are about *legacy* rows — written before the
+  rule, by a plugin that bypasses it, or by hand — so a fixture going through the
+  validated write path was always the wrong way to say that. In Go the row is one
+  `Update` call, and CI runs Go while it does not run the browser suite.
+- **Check whether the test needed persistence at all.** The Visual Editor reads the
+  form field, not the database, so typing the invalid schema into the field preserves
+  the subject exactly.
+
+The rule: when a new guard makes a fixture impossible, ask what each affected test is
+*for* before touching it. A fixture is not a requirement, and "the test used to be able
+to create this" is not a reason to keep allowing it.

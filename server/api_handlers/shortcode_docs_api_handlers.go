@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"mahresources/constants"
+	"mahresources/models"
 	"mahresources/mrql"
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
@@ -140,7 +141,7 @@ type shortcodeLintResponse struct {
 // of shortcode markup. It never executes shortcodes, plugin code, or the DB;
 // only the MRQL parser is invoked to syntax-check query attributes. Listed in
 // isReadViaPost so read-only principals may lint while authoring templates.
-func GetShortcodeLintHandler(ctx PluginManagerProvider) func(http.ResponseWriter, *http.Request) {
+func GetShortcodeLintHandler(ctx ShortcodeLintContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req shortcodeLintRequest
 		if err := tryFillStructValuesFromRequest(&req, request); err != nil {
@@ -155,8 +156,9 @@ func GetShortcodeLintHandler(ctx PluginManagerProvider) func(http.ResponseWriter
 		}
 
 		issues := shortcodes.Lint(req.Content, shortcodes.LintOptions{
-			Known:        known,
-			ValidateMRQL: validateMRQL,
+			Known:         known,
+			ValidateMRQL:  validateMRQL,
+			PartialExists: partialExistsFn(ctx),
 		})
 		if issues == nil {
 			issues = []shortcodes.LintIssue{}
@@ -207,4 +209,26 @@ func pluginShortcodeSyntax(sc plugin_system.PluginShortcodeInfo) string {
 		}
 	}
 	return syntax + "]"
+}
+
+// partialExistsFn is the resolver the linter uses to flag a [partial] reference
+// that names nothing (finding 155). It reads by name only: no partial content is
+// loaded and nothing is rendered, so it stays inside what a read-only principal
+// linting a template is already allowed to do. Lint memoizes the callback, so a
+// template referencing one partial repeatedly asks once.
+//
+// A lookup error is treated as "exists", because reporting a partial as missing
+// because a query failed would be worse than reporting nothing.
+func partialExistsFn(ctx partialNameResolver) func(string) bool {
+	return func(name string) bool {
+		partial, err := ctx.GetTemplatePartialByName(name)
+		return err == nil && partial != nil
+	}
+}
+
+// partialNameResolver is the one method partialExistsFn needs. Spelled locally
+// rather than reusing template_filters.PartialResolverContext so this file does
+// not depend on the render layer for a name lookup.
+type partialNameResolver interface {
+	GetTemplatePartialByName(name string) (*models.TemplatePartial, error)
 }

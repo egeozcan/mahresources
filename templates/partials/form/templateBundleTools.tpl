@@ -17,6 +17,7 @@
                     </template>
                 </select>
                 <button type="button" @click="applyPreset()" :disabled="!presetChoice"
+                        data-testid="tb-apply-preset"
                         class="shrink-0 inline-flex items-center px-3 py-1.5 text-sm font-mono font-medium text-white bg-amber-600 border border-transparent rounded-md hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-amber-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">Apply</button>
             </div>
         </div>

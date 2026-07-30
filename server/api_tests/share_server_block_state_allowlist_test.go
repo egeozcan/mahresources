@@ -41,7 +41,7 @@ func shareNote(t *testing.T, tc *TestContext, noteID uint) string {
 // TestShareBlockState_RejectsNonTodoBlocks verifies BH-031:
 // a gallery block state write via share token must return 403.
 func TestShareBlockState_RejectsNonTodoBlocks(t *testing.T) {
-	tc := SetupTestEnv(t)
+	tc := setupShareEnabledTestEnv(t) // finding 7: sharing needs a configured share server
 	shareRouter := setupShareServer(t, tc)
 
 	// Create a note and share it.
@@ -76,7 +76,7 @@ func TestShareBlockState_RejectsNonTodoBlocks(t *testing.T) {
 // TestShareBlockState_AllowsTodoBlocks verifies that todos blocks
 // are still writable via the share token after the allowlist is added.
 func TestShareBlockState_AllowsTodoBlocks(t *testing.T) {
-	tc := SetupTestEnv(t)
+	tc := setupShareEnabledTestEnv(t) // finding 7: sharing needs a configured share server
 	shareRouter := setupShareServer(t, tc)
 
 	note := tc.CreateDummyNote("bh031-note-todo")
@@ -109,7 +109,7 @@ func TestShareBlockState_AllowsTodoBlocks(t *testing.T) {
 
 // TestShareBlockState_RejectsTextBlocks verifies that text blocks are rejected (403).
 func TestShareBlockState_RejectsTextBlocks(t *testing.T) {
-	tc := SetupTestEnv(t)
+	tc := setupShareEnabledTestEnv(t) // finding 7: sharing needs a configured share server
 	shareRouter := setupShareServer(t, tc)
 
 	note := tc.CreateDummyNote("bh031-note-text")

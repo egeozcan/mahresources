@@ -57,6 +57,11 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 		return nil, err
 	}
 
+	// Findings 17/93: an unparseable Meta JSON Schema used to persist verbatim.
+	if err := ValidateMetaSchema(categoryQuery.MetaSchema); err != nil {
+		return nil, err
+	}
+
 	hookData := map[string]any{
 		"id":          float64(0),
 		"name":        categoryQuery.Name,
@@ -107,6 +112,11 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 
 func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.CategoryEditor) (*models.Category, error) {
 	if err := ValidateEntityName(categoryQuery.Name, "category"); err != nil {
+		return nil, err
+	}
+
+	// Findings 17/93: the edit form was the path the report reproduced on.
+	if err := ValidateMetaSchema(categoryQuery.MetaSchema); err != nil {
 		return nil, err
 	}
 

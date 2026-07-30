@@ -34,7 +34,14 @@
                 {# the host, so this is the last link in finding 141's chain.       #}
                 <span class="break-words w-full"><inline-edit post="/v1/{{ mainEntityType }}/editName?id={{ mainEntity.ID }}" name="name"{% if mainEntity.Name %}{% else %} value-is-placeholder{% endif %}>{% if mainEntity.Name %}{{ mainEntity.Name }}{% else %}{{ pageTitle }}{% endif %}</inline-edit></span>
             {% else %}
-                <span class="break-words">{{ pageTitle }}</span>
+                {# Finding 156: a detail page whose entity has no inline-rename    #}
+                {# route (the template partial — a rename would break every        #}
+                {# [partial name=…] pointing at it) fell back to pageTitle here,   #}
+                {# and pageTitle is also what <title> uses, so it carries the type #}
+                {# ("Template Partial: status-badge"). Next to the type pill that  #}
+                {# printed the type twice. headingTitle lets such a page name the  #}
+                {# heading separately from the document title.                     #}
+                <span class="break-words">{% if headingTitle %}{{ headingTitle }}{% else %}{{ pageTitle }}{% endif %}</span>
             {% endif %}
         </h1>
         {% if action %}

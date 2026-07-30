@@ -100,7 +100,12 @@ func TemplatePartialContextProvider(context TemplatePartialPageContext) func(req
 		}
 
 		return pongo2.Context{
-			"pageTitle":       "Template Partial: " + partial.Name,
+			"pageTitle": "Template Partial: " + partial.Name,
+			// Finding 156: the pill already says "Template Partial", so the h1 says
+			// only the name — matching every other detail page. pageTitle keeps the
+			// type because it is also the browser <title>, where the type is what
+			// tells two tabs apart.
+			"headingTitle":    partial.Name,
 			"prefix":          "Template Partial",
 			"templatePartial": partial,
 			"action": template_entities.Entry{

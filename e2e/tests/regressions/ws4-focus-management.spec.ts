@@ -75,6 +75,23 @@ test.describe('WS4: dialogs return focus to what opened them', () => {
     const dialog = page.getByRole('dialog', { name: 'Search' });
     await expect(dialog).toBeVisible();
 
+    // Wait for the trap to have TAKEN focus before pressing anything. `x-trap`
+    // arms on a setTimeout(15), so a Tab pressed before that goes wherever normal
+    // document order sends it — and under full-suite load a 15 ms timer slips
+    // easily. This spec produced one retried-green failure in a 1841-test run and
+    // held 40/40 in isolation, which is precisely the signature of that window;
+    // the sibling finding-90 test already waits, and this one did not.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const dlg = document.querySelector('[role="dialog"][aria-label="Search"]');
+            return !!dlg && dlg.contains(document.activeElement);
+          }),
+        { timeout: 5000 },
+      )
+      .toBe(true);
+
     // Finding 4: Tab must not walk out of an aria-modal dialog.
     for (let i = 0; i < 8; i++) {
       await page.keyboard.press('Tab');

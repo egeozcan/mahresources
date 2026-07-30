@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"mahresources/shortcodes"
-
-	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 const (
@@ -255,19 +253,10 @@ func validateMetaSchemaJSON(content string) []shortcodes.LintIssue {
 }
 
 // compileGeneratedSchema verifies the generated MetaSchema compiles as a JSON
-// Schema, mirroring plugin_system.compileSchema.
+// Schema. It shares ValidateMetaSchema with the write paths (findings 17/93) so
+// a generated schema and an authored one are held to one rule.
 func compileGeneratedSchema(schemaJSON string) error {
-	doc, err := jsonschema.UnmarshalJSON(strings.NewReader(schemaJSON))
-	if err != nil {
-		return err
-	}
-	c := jsonschema.NewCompiler()
-	const id = "mem://generated-metaschema.json"
-	if err := c.AddResource(id, doc); err != nil {
-		return err
-	}
-	_, err = c.Compile(id)
-	return err
+	return ValidateMetaSchema(schemaJSON)
 }
 
 func hasErrorIssue(issues []shortcodes.LintIssue) bool {

@@ -49,6 +49,15 @@ type LintOptions struct {
 	// being linted. A [partial name="<PartialName>"] reference inside it is a
 	// direct self-reference and is flagged as a warning.
 	PartialName string
+	// PartialExists, when non-nil, reports whether a template partial with that
+	// name exists. A [partial] reference to a name it rejects is flagged
+	// (finding 155: a reference to a partial that does not exist rendered nothing
+	// at all and produced no diagnostic, while an invalid [mrql] query right
+	// beside it was reported). nil disables the check, so a caller with no way to
+	// resolve names behaves as before rather than reporting every partial as
+	// missing. Lint memoizes it, so a template referencing one partial ten times
+	// asks once.
+	PartialExists func(name string) bool
 }
 
 // KnownFromBuiltins builds a KnownShortcodes catalogue seeded with the built-in
@@ -87,6 +96,21 @@ func Lint(input string, opts LintOptions) []LintIssue {
 	var issues []LintIssue
 	add := func(start, end int, severity, msg string) {
 		issues = append(issues, LintIssue{Start: start, End: end, Severity: severity, Message: msg})
+	}
+
+	// Finding 155: memoized so a template that references the same partial many
+	// times resolves it once per lint run.
+	var partialExists func(string) bool
+	if opts.PartialExists != nil {
+		seen := map[string]bool{}
+		partialExists = func(name string) bool {
+			if got, ok := seen[name]; ok {
+				return got
+			}
+			got := opts.PartialExists(name)
+			seen[name] = got
+			return got
+		}
 	}
 
 	tokens := matchTokens(input)
@@ -190,9 +214,15 @@ func Lint(input string, opts LintOptions) []LintIssue {
 					"["+tk.name+"] cannot be used inside a [reload] button face")
 			}
 		case "partial":
+			refName := strings.TrimSpace(tk.attrs["name"])
 			if opts.PartialName != "" && tk.attrs["name"] == opts.PartialName {
 				add(tk.start, tk.end, SeverityWarning,
 					"[partial] references itself; this recursion stops at the depth limit")
+			} else if partialExists != nil && refName != "" && !partialExists(refName) {
+				// Finding 155. A warning rather than an error: the partial may be
+				// about to be created, and lint must never block a save.
+				add(tk.start, tk.end, SeverityWarning,
+					`no template partial named "`+refName+`" exists; this renders nothing`)
 			}
 		case "meta":
 			if strings.TrimSpace(tk.attrs["default"]) != "" && tk.attrs["hide-empty"] == "true" {

@@ -42,6 +42,13 @@ export function mrqlEditor() {
     defaultLimitApplied: false,
     appliedLimit: 0,
 
+    // Findings 23/46: the query text each panel belongs to. Neither panel was
+    // ever invalidated, so an Explain of one query sat above the results of
+    // another and nothing on screen said which was which. Whichever panel does
+    // not describe the query being run is cleared before the request goes out.
+    resultQuery: '',
+    explainQuery: '',
+
     // Save dialog
     saveName: '',
     saveDescription: '',
@@ -82,6 +89,29 @@ export function mrqlEditor() {
       return (this.result.resources?.length || 0)
         + (this.result.notes?.length || 0)
         + (this.result.groups?.length || 0);
+    },
+
+    // Findings 125/158: the heading always used the plural form, so a one-row
+    // result read "Results (1 items)".
+    get resultCountLabel() {
+      if (!this.result) return '';
+      const n = this.totalCount;
+      if (this.result.mode === 'aggregated') return `(${n} ${n === 1 ? 'row' : 'rows'})`;
+      if (this.result.mode === 'bucketed') {
+        const g = this.result.groups?.length || 0;
+        return `(${g} ${g === 1 ? 'group' : 'groups'}, ${n} ${n === 1 ? 'item' : 'items'})`;
+      }
+      return `(${n} ${n === 1 ? 'item' : 'items'})`;
+    },
+
+    // Finding 125: the default-limit banner fired whenever the server applied a
+    // default LIMIT, which is *every* query without an explicit one — so a
+    // full-width yellow warning saying "add LIMIT / OFFSET to paginate" sat over
+    // a single-row result that had not been truncated. The limit can only have
+    // cut something off when the row count actually reached it.
+    get resultsTruncated() {
+      if (!this.defaultLimitApplied || !this.appliedLimit) return false;
+      return this.totalCount >= this.appliedLimit;
     },
 
     // BH-012: surface the Update affordance only when a saved query is loaded
@@ -211,9 +241,19 @@ export function mrqlEditor() {
 
           return {
             from: word ? word.from : pos,
+            // Findings 22 and 160: this used to be `label: s.label || s.value`.
+            // The server's `label` is a human *description* ("relation count",
+            // "full-text search"), so the list showed four indistinguishable
+            // "relation count" rows, activating one inserted a token that had
+            // never been displayed, and — because CodeMirror filters options by
+            // their label — typing `tags.c` matched nothing at all and the
+            // popup refused to open (finding 160 is the same defect, not a
+            // separate one). The label is the token that will be inserted; the
+            // description is secondary detail.
             options: data.suggestions.map((s) => ({
-              label: s.label || s.value,
+              label: s.value,
               apply: s.value,
+              detail: s.label || undefined,
               type: s.type === 'keyword' ? 'keyword'
                 : s.type === 'field' ? 'property'
                 : s.type === 'operator' ? 'operator'
@@ -328,7 +368,8 @@ export function mrqlEditor() {
           this._executeRequestId++;
           this.executing = false;
           this.setQuery('');
-          this.result = null;
+          this.clearResult();
+          this.clearExplain();
           this.error = '';
         }
       };
@@ -509,14 +550,30 @@ export function mrqlEditor() {
       }
     },
 
+    // Findings 23/46: one place each panel is reset, so every caller clears the
+    // same state. The panels are addressed by their own query text, not by a
+    // generation counter, because "Explain then Run the same query" must keep
+    // both — that is the workflow the Explain button exists for.
+    clearResult() {
+      this.result = null;
+      this.resultQuery = '';
+      this.defaultLimitApplied = false;
+      this.appliedLimit = 0;
+    },
+
+    clearExplain() {
+      this.explainResult = null;
+      this.explainQuery = '';
+      this.showExplain = false;
+    },
+
     applyGeneratedQuery() {
       if (!this.generatedQuery) return;
       this.setQuery(this.generatedQuery);
       this.clearLoadedSaved();
-      this.result = null;
+      this.clearResult();
+      this.clearExplain();
       this.error = '';
-      this.defaultLimitApplied = false;
-      this.appliedLimit = 0;
       this.scheduleValidation();
     },
 
@@ -530,10 +587,12 @@ export function mrqlEditor() {
       this._executeController = controller;
       this.executing = true;
       this.error = '';
-      this.result = null;
-      // BH-013: clear the banner state at the start of each request.
-      this.defaultLimitApplied = false;
-      this.appliedLimit = 0;
+      // BH-013: clears the banner state at the start of each request too.
+      this.clearResult();
+      // Findings 23/46: an Explain of a different query must not survive this
+      // run. Explaining and then running the *same* text is a normal workflow,
+      // so that plan is kept.
+      if (this.explainQuery !== query) this.clearExplain();
 
       try {
         const resp = await fetch('/v1/mrql?render=1', {
@@ -554,6 +613,7 @@ export function mrqlEditor() {
         const result = await resp.json();
         if (requestId !== this._executeRequestId || controller.signal.aborted) return;
         this.result = result;
+        this.resultQuery = query;
         // BH-013: capture the default-limit signal from the response payload.
         this.defaultLimitApplied = !!(this.result && this.result.default_limit_applied);
         this.appliedLimit = (this.result && this.result.applied_limit) || 0;
@@ -598,6 +658,10 @@ export function mrqlEditor() {
       this._explainController = controller;
       this.explaining = true;
       this.error = '';
+      this.explainQuery = '';
+      // Findings 23/46, the other direction: the report saw a fresh plan sitting
+      // on top of a previous query's result rows too.
+      if (this.resultQuery !== query) this.clearResult();
       try {
         const resp = await fetch('/v1/mrql/explain', {
           method: 'POST',
@@ -615,6 +679,7 @@ export function mrqlEditor() {
         const explainResult = await resp.json();
         if (requestId !== this._explainRequestId || controller.signal.aborted) return;
         this.explainResult = explainResult;
+        this.explainQuery = query;
         this.showExplain = true;
       } catch (err) {
         if (err?.name !== 'AbortError' && requestId === this._explainRequestId) {

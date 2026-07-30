@@ -103,6 +103,10 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		issues := shortcodes.Lint(req.Content, shortcodes.LintOptions{
 			Known:        buildKnownShortcodes(ctx),
 			ValidateMRQL: func(q string) error { _, e := mrql.Parse(q); return e },
+			// Finding 155: the preview pane's issue list reports an unknown
+			// [partial] too, so the diagnostic is there whether the author is
+			// reading the editor gutter or the preview.
+			PartialExists: partialExistsFn(ctx),
 		})
 		// Warn (don't fail) when previewing against an entity of a different
 		// category than the one being edited.

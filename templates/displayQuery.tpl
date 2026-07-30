@@ -76,7 +76,18 @@
                             {% endautoescape %}
                         </div>
                     </template>
-                    <div class="query-results output mt-2" x-ref="output"></div>
+                    {# Finding 24: this box was overflow-x:visible around a table  #}
+                    {# with width:100%, so 16 columns were crushed into 790px —    #}
+                    {# header cells wrapped to one character per line, 269px tall — #}
+                    {# while a third of the page sat empty. It scrolls now, and per #}
+                    {# the finding-13 pattern the scroller is reachable by Tab and  #}
+                    {# named, but only once it holds a table: a permanently         #}
+                    {# focusable empty box is a tab stop that leads nowhere.        #}
+                    <div class="query-results output mt-2"
+                         x-ref="output"
+                         :tabindex="results && results.length > 0 ? '0' : null"
+                         :role="results && results.length > 0 ? 'region' : null"
+                         :aria-label="results && results.length > 0 ? 'Query results table, scrolls horizontally' : null"></div>
                     <template x-if="error">
                         <div>
                             <h2>Something went wrong.</h2>

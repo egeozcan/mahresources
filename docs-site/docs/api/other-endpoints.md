@@ -406,6 +406,11 @@ curl -X POST "http://localhost:8181/v1/query/run?name=Recent%20Resources" \
   -H "Accept: application/json"
 ```
 
+The response is a JSON array of row objects whose members appear in the order the
+query's `SELECT` list names them. See
+[Saved Queries](../features/saved-queries.md#run-a-query) for the repeated-column
+and column-type rules.
+
 ### Get Database Schema
 
 Return the database table and column schema. Useful for writing saved queries.

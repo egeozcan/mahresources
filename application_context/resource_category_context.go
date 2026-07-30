@@ -56,6 +56,11 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 		return nil, err
 	}
 
+	// Findings 17/93.
+	if err := ValidateMetaSchema(query.MetaSchema); err != nil {
+		return nil, err
+	}
+
 	if err := ValidateAutoDetectRules(query.AutoDetectRules); err != nil {
 		return nil, err
 	}
@@ -90,6 +95,11 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.ResourceCategoryEditor) (*models.ResourceCategory, error) {
 	var resourceCategory models.ResourceCategory
 	if err := ctx.db.First(&resourceCategory, query.ID).Error; err != nil {
+		return nil, err
+	}
+
+	// Findings 17/93.
+	if err := ValidateMetaSchema(query.MetaSchema); err != nil {
 		return nil, err
 	}
 

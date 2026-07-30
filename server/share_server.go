@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -126,7 +128,23 @@ func (s *ShareServer) Handler() http.Handler {
 
 // Start begins the share server on the specified address and port.
 // If port is empty, the server is not started (share feature disabled).
-// The server runs in a goroutine and returns immediately.
+//
+// The listener is opened **synchronously** and a bind failure is returned to the
+// caller. Finding 51: this used to call ListenAndServe inside a goroutine and
+// return nil unconditionally, so `bind: address already in use` was written to
+// stderr and thrown away — main.go's log.Fatalf could never fire, the very next
+// line printed "Share server available at http://…", /admin/settings went on
+// advertising the port, and the note sidebar went on handing out /s/<token> URLs
+// that nothing in the process would ever answer. Measured on the unfixed code, in
+// this order:
+//
+//	Share server starting on 127.0.0.1:8384
+//	Share server available at http://127.0.0.1:8384
+//	Share server error: listen tcp 127.0.0.1:8384: bind: address already in use
+//
+// Serving still happens in a goroutine — that is what "start" means — but if Serve
+// ever returns unexpectedly the context is marked so the UI and the share endpoint
+// stop offering a feature that is not working.
 func (s *ShareServer) Start(bindAddress string, port string) error {
 	if port == "" {
 		return nil // Share server disabled
@@ -144,10 +162,21 @@ func (s *ShareServer) Start(bindAddress string, port string) error {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	log.Printf("Share server starting on %s", addr)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		s.appContext.MarkShareServerFailed()
+		return fmt.Errorf("share server could not bind %s: %w", addr, err)
+	}
+
+	log.Printf("Share server listening on %s", addr)
 	go func() {
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("Share server error: %v", err)
+			s.appContext.MarkShareServerFailed()
+			s.appContext.Logger().Warning(
+				models.LogActionUpdate, "share", nil, addr,
+				"Share server stopped serving: "+err.Error(), nil,
+			)
 		}
 	}()
 

@@ -232,7 +232,7 @@ Statuses are filled in during Phase 1.
 | 4 | high | a11y | recovered | WS4 | verify | **CONFIRMED, worse than reported** — with an empty query the **first** Tab leaves; Shift+Tab leaves immediately too  · **FIXED** — `x-trap.noscroll.noreturn` |
 | 5 | high | a11y | verified-run | WS4 | spot | **CONFIRMED** — `BODY` at all 8 samples over 1.4s after ArrowRight  · **FIXED** — `render()` restores the roving target when focus was inside |
 | 6 | high | a11y | verified-run | WS5 | verify after 47 | **CONFIRMED, cause corrected** — order is now deterministic (47 fixed) and the handlers do fire: `activePickerIndex` walks 0→1→2→1→7→0 and `tabindex`/`aria-selected` rove correctly, but `document.activeElement` stays on option 0 for every key. `focusPickerItem`'s `this.$el` is the **`<li>`** that handled the key, so `$el.querySelector('#add-block-listbox')` is null and the focus call is skipped silently. Not the randomised order — see below · **FIXED, cause corrected** — `focusPickerItem`'s `this.$el` was the `<li>`; the component root is captured in `init()` and both focus paths share one `_focusActivePickerOption()`. `.prevent` dropped from the Tab handler and the close-restore made conditional |
-| 7 | high | bug | ✅ VERIFIED | WS13 | accept | |
+| 7 | high | bug | ✅ VERIFIED | WS13 | accept | **CONFIRMED on the API; the UI half was already fixed** — with `SHARE_PORT` unset the note page renders **zero** "Share Note" buttons (`noteShare.tpl` is gated on `shareEnabled`), yet `POST /v1/note/share` answered `200 {"shareToken":"e32d5abd…","shareUrl":"/s/e32d5abd…"}`, `GET /s/<token>` → **404**, and `/admin/shares` listed "1 shared" note  · **FIXED** — the endpoint is gated too (**503** naming the flag); revoking stays available whatever the gate says |
 | 8 | high | bug | recovered | WS7 | verify | **CONFIRMED, and the repro needs breadth, not depth** — a pure 1-child chain never overflows (`scrollWidth == clientWidth`), so `?containing=70` alone shows nothing. With one level made wider than the container, at 390 px: `.tree-chart` `scrollLeft:0 scrollWidth:613 clientWidth:358`, all six `.tree-chart-list`s `justify-content:center`, `minX: -191.4` and two nodes whose **right edge is also negative** (-42.6) — entirely unreachable, worse than the reported -18. Desktop clean (`minX 41.6`) · **FIXED, candidate chosen by measurement** — `min-width: max-content` + `margin-inline: auto`, not the plan's first choice of `justify-content: safe center`: measured identical (0 clipped, minX 80 at both widths) but `safe` degrades to `flex-start` if unparsed, which measures as losing centring on every tree |
 | 9 | high | bug | verified-run | WS2 | spot | **CONFIRMED** — alert on addTags/removeTags/addMeta/recalculate, write already landed  · **FIXED, cause corrected** — the plan's `list-container` class breaks the table layout; hook decoupled instead |
 | 10 | high | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED** — HTTP 500 `encountered errors during dimension calculation`  · **FIXED** — gated on `IsRasterImage()`, now 415 naming the format |
@@ -242,18 +242,18 @@ Statuses are filled in during Phase 1.
 | 14 | high | a11y | recovered | WS5 | verify | **REJECTED — not reproducible as filed.** Every row checkbox carries `aria-label="Select <name>"` (52 of them on page 1). The nameless checkboxes in the report's audit are the sidebar filter controls from `partials/form/checkboxInput.tpl`, which are wrapped in `<label for=…>` with visible text — named. The plan's instruction to check this first was right · **NOT FIXED — rejected**, and pinned by `TestDetailsRowCheckboxes_AreNamedAfterTheirRow` so the name cannot be lost later |
 | 15 | high | bug | recovered | WS2 | verify | **CONFIRMED** — no Save control, `@click.away` the only trigger  · **FIXED** — Save/Cancel + Ctrl/Cmd+Enter + keyboard focus-out commit |
 | 16 | high | bug | recovered | WS3 | verify | **CONFIRMED** — destructive confirm fired over an empty selection  · **FIXED** — submit disabled, confirm skipped, `losers` jargon gone |
-| 17 | high | bug | ✅ VERIFIED | WS12 | accept | |
+| 17 | high | bug | ✅ VERIFIED | WS12 | accept | **CONFIRMED** — `POST /v1/category` with `MetaSchema:"{ not valid json ]["` → **200**, stored verbatim; the editor showed `lintMarkers:0`  · **FIXED** — `ValidateMetaSchema` (parse + compile) on all **six** write paths (Category create/update, Note Type, Resource Category, and the two generic CRUD builders), 400 quoting the parser; plus a CodeMirror JSON linter joined to the existing pre-save confirm |
 | 18 | high | ux | recovered | WS12 | verify | **CONFIRMED** — Visual Editor blank on an unparseable schema; `rawJsonError` computed in `schemaEditorModal.ts:67-75` but rendered only inside the Raw tabpanel  · **FIXED** — hoisted above the tab body |
 | 19 | high | design | recovered | WS7 | verify | **CONFIRMED** — `/category/new` `body.scrollWidth` 483 vs `innerWidth` 390 with `html`/`body` both `overflow-x:hidden` and `window.scrollX` pinned at 0; "Apply" at 398-466 and "Copy" at 406-466 fully offscreen. `/category/edit?id=72` is 1198 wide with **30** offscreen elements including "Generate" (880-974) and "Format HTML" (885-983). Zero scrollable ancestors. `/templatePartial/new` is clean at 390 — matching the report · **FIXED, cause was the UA stylesheet** — `<fieldset>` has `min-inline-size: min-content`, so no `min-w-0` on any descendant could shrink it; `bodySW` 1198 → 390 and zero unreachable controls. Three contributing `flex-1` columns also lacked `min-w-0` |
 | 20 | high | bug | ✅ VERIFIED | WS3 | accept | **CONFIRMED** — /categories 400, /tags 200, same SortBy  · **FIXED** — the option is only offered where the model has a meta column |
 | 21 | high | bug | recovered | WS2 | verify | **CONFIRMED** — only signal a 1×1 clipped region  · **FIXED** — visible inline error, editor stays open holding the input |
-| 22 | high | ux | recovered | WS11 | verify | |
-| 23 | high | bug | recovered | WS11 | verify | |
-| 24 | high | design | recovered | WS11 | verify | |
+| 22 | high | ux | recovered | WS11 | verify | **CONFIRMED** — 29 completion rows, four of them the identical label "relation count", plus "any ancestor group" / "entity type filter" / "full-text search" / "perceptual similarity" standing in for tokens; typing `anc` filtered on the descriptions  · **FIXED, and it is also finding 160** — `label: s.value`, `detail: s.label`. After: 0 rows labelled "relation count"; `group.count`/`groups.count`/`notes.count`/`tags.count` each distinct with the description as detail |
+| 23 | high | bug | recovered | WS11 | verify | **CONFIRMED** — after running `type = group LIMIT 3` the plan still read `Explain (note) … SELECT * FROM \`notes\` WHERE 1 = 1 LIMIT 3` beside `Results (3 items) … Entity: group`  · **FIXED** — each panel is stamped with the query text it belongs to and the other is cleared per run; Explain-then-Run of the *same* text keeps both. After: the plan panel is gone, results read `Entity: group` |
+| 24 | high | design | recovered | WS11 | verify | **CONFIRMED, worse than filed** — table 790 px inside an 824 px `overflow-x:visible` box, 16 columns at 32-70 px, and the first `<th>` measured **269 px tall** (one character per line); no `tabindex`/`role`  · **FIXED** — `overflow-x:auto` on `.query-results`, `width:max-content; min-width:100%` on the table, and the finding-13 region treatment bound to there being a table. After: box 822 CW / 3565 SW, table 3533 px, tallest `<th>` 35 px, Tab reaches it and ArrowRight scrolls it |
 | 25 | med | design | verified-run | WS7 | spot | **CONFIRMED** — first card at y=1745 on `/groups`, viewport 844, sidebar 1455 px tall with `order:-1` and **no** disclosure element · **FIXED** — `<details class="detail-collapsible filter-disclosure">` around the aside, `open` server-side, closed by a parser-blocking script below 900px. First card 1745 → 420 on a 844px viewport |
 | 26 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — live, `/log?id=521`  · **FIXED** |
 | 27 | med | bug | verified-run | WS8 | spot | **CONFIRMED** — `runtime_setting` missing from dropdown  · **FIXED** |
-| 28 | med | bug | verified-run | WS12 | spot | |
+| 28 | med | bug | verified-run | WS12 | spot | **CONFIRMED** — the picker offered `Category=50, Resource Category=1, Note Type=50`, and `Person`/`Vendor` were absent; `/v1/categories` returns 50 and **ignores `maxResults=500`**  · **FIXED in the client** — `loadSources` pages `?page=N` until a short page (cap 20 pages, reported when hit). No endpoint gained a `maxResults`; the paging the fix relies on is pinned by a Go test |
 | 29 | med | ux | verified-run | WS6 | spot | **PARTLY CONFIRMED** — the edit form of an empty category, yes; the report's "same on /category/new" is **wrong** (`_scopeParam()` already short-circuits there)  · **FIXED** — explains itself, and borrows an unscoped sample |
 | 30 | med | a11y | recovered | WS4 | verify | **CONFIRMED** — `BODY` at all 5 samples after Escape  · **FIXED** — `captureTrigger` + `restoreFocus`, `document.activeElement` fallback for Cmd+K |
 | 31 | med | bug | recovered | WS6 | verify | **PARTLY CONFIRMED, symptom stale** — the reported "No results found" has not been shown since 652917e5 (already on master); at HEAD the dialog body is **blank**  · **FIXED** — new below-threshold state |
@@ -271,12 +271,12 @@ Statuses are filled in during Phase 1.
 | 43 | med | bug | verified-run | WS8 | **confirmed (source)** | **CONFIRMED** — level-6 absent, level-2 renders  · **FIXED** |
 | 44 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — exactly 50 root links  · **FIXED** |
 | 45 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — relative `href="groups"` in rendered page  · **FIXED** |
-| 46 | med | bug | verified-run | WS11 | Dup → 23 | |
+| 46 | med | bug | verified-run | WS11 | Dup → 23 | **CONFIRMED** — Dup → 23 · **FIXED** — Dup → 23 |
 | 47 | med | bug | verified-run | WS8 | spot | **CONFIRMED** — 8 distinct orders in 20 calls  · **FIXED** |
 | 48 | med | a11y | verified-run | WS5 | spot | **CONFIRMED, numbers corrected** — todo-item inputs have no name of any kind (`aria-label`/`aria-labelledby`/`title`/`<label>`/placeholder all absent). The `×` buttons measure **9.6×24** (todos) and **8.4×20** (chips), not the reported 10×24/16×16. The block-level Move/Delete buttons are already 24×24 and named ("Delete block 1") · **FIXED** — positional `aria-label`s on the todo/table inputs, object-naming `aria-label`s on all seven `×` buttons, and one shared `.remove-target` 24×24 class. Two more unnamed `×` buttons found in `entityPicker.tpl` and `lightbox.tpl` by the test |
 | 49 | med | a11y | verified-run | WS5 | spot | **CONFIRMED** — 35 day cells, all `DIV`, 0 focusable, 0 with a role. A nested `@click.stop="openEventModalForEdit(event)"` event chip is click-only too · **FIXED, design corrected** — the cell cannot become a `<button>` (it holds the event chips and the expanded-day popover, and the parser hoists nested buttons out); the day *number* is the control, and the chips and "+N more" became buttons too |
 | 50 | med | bug | verified-run | WS2 | spot | **CONFIRMED** — and two more blur/change-only controls found  · **FIXED** — debounced `@input` on all five |
-| 51 | med | bug | verified-run | WS13 | spot | |
+| 51 | med | bug | verified-run | WS13 | spot | **CONFIRMED verbatim, and the ordering is the whole bug** — with 8384 held, the log read `Share server starting on 127.0.0.1:8384` → `Share server available at http://127.0.0.1:8384` → `Share server error: … bind: address already in use`; the process stayed up on :8273 answering 301, `/admin/settings` still said "Share port 8384", `/v1/logs` held **1** entry (a note create) and nothing about the share server, and `/s/<token>` was dead everywhere  · **FIXED** — `net.Listen` synchronously and return the error, so `main.go`'s `log.Fatalf` fires (measured: exit code **1** with a remediation line, no "available at" printed); a `shareServerFailed` flag makes `ShareEnabled()` mean "a /s/ request can succeed"; `/admin/settings` says "NOT serving"; the note sidebar keeps Unshare and explains the dead link |
 | 52 | med | bug | recovered | WS8 | Dup → 44 |  · **FIXED** |
 | 53 | med | bug | recovered | WS2 | Dup → 15 |  · **FIXED** |
 | 54 | med | ux | recovered | WS6 | verify | **CONFIRMED** — zero articles, main text is chrome only  · **FIXED** |
@@ -307,7 +307,7 @@ Statuses are filled in during Phase 1.
 | 79 | med | bug | recovered | WS2 | verify (suspect) | **REJECTED — not reproducible** in 9 runs; the invisible checked boxes are the header settings toggles and the zero-checked Select All is a `nth=1` locator hitting hidden "Deselect All". See WS2 |
 | 80 | med | ux | recovered | WS7 | Dup → 25 | **CONFIRMED** — Dup → 25; `mainTop` 1978, first card 2124, sidebar 1834 px tall · **FIXED** — Dup → 25; first card 2124 → 420 |
 | 81 | med | design | recovered | WS7 | verify | **CONFIRMED** — the visible `input[name=mrql]` measures **149 px** at a 390 px viewport (the hidden desktop copy measures 0) · **FIXED** — `basis-full sm:basis-0` makes the row wrap; 149 → 358 px at a 390 px viewport |
-| 82 | med | bug | ✅ VERIFIED | WS11 | accept | **CONFIRMED** — `&ldquo; &ndash; &hellip; &lsquo; &rsquo;` |
+| 82 | med | bug | ✅ VERIFIED | WS11 | accept | **CONFIRMED** — `&ldquo; &ndash; &hellip; &lsquo; &rsquo;` (live: 17 `&lsquo;`, 17 `&rsquo;`, 3 `&ldquo;`, 2 `&ndash;`, 1 `&hellip;`)  · **FIXED** — `partials/query.tpl` renders `entity.Text` verbatim in a `<pre><code>`; it no longer goes through `description.tpl` at all, so the Batch 4 editor work is untouched. After: 50 cards, 0 smart characters, `!= 'x' … -- range 1--5 and dots...` intact |
 | 83 | med | design | verified-run | WS10 | spot | **CONFIRMED** — `/queries` at 1280×900: the Next link spans x 1194-1264 and `elementFromPoint` returned the FAB from x=1226 on; only x≤1220 reached the link  · **FIXED** — the trigger is header chrome now, not a fixed corner. After: all 12 sweep samples return `next`, and a real click goes to `?page=2` |
 | 84 | med | bug | verified-run | WS8 | spot |  · **FIXED** |
 | 85 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — `filename="v2_9b998df6"`  · **FIXED** |
@@ -318,10 +318,10 @@ Statuses are filled in during Phase 1.
 | 90 | med | a11y | verified-run | WS4 | spot | **CONFIRMED** — `role=null`, `aria-modal=null`, Escape inert, Tab onto covered controls  · **FIXED** — conditional dialog semantics + `x-trap` + explicit restore |
 | 91 | med | ux | verified-run | WS3 | Dup → 56 | **CONFIRMED**  · **FIXED** — Dup → 56 |
 | 92 | med | ux | verified-run | WS3 | Dup → 16 | **CONFIRMED**  · **FIXED** — Dup → 16 |
-| 93 | med | bug | verified-run | WS12 | Dup → 17 | |
+| 93 | med | bug | verified-run | WS12 | Dup → 17 | **CONFIRMED** — Dup → 17 · **FIXED** — Dup → 17 |
 | 94 | med | bug | recovered | WS8 | verify | **CONFIRMED** — on `/tag?id=78` ("modern") the loser picker offered `["modern"]`, and submitting produced `Error 400 / winner cannot also be the loser`  · **FIXED, in the selector after all** — an `excludeValues` callback on the profiles, wired as `excludeIds` from `displayTag`/`displayGroup` and from the bulk toolbar (where it reads `$store.bulkSelection.selectedIds` per search). After: own name → 0 options, other queries → 5 |
-| 95 | med | bug | recovered | WS12 | verify | |
-| 96 | med | ux | recovered | WS12 | verify | |
+| 95 | med | bug | recovered | WS12 | verify | **CONFIRMED, exact counts** — 6 console errors on load (3× CORS on `/v1/account/settings` from origin `null` + 3× `ERR_FAILED`, one pair per `LOAD_RETRIES` attempt), 6 → 12 after one Refresh  · **FIXED** — the host page seeds `window.__mahUserSettings` into the srcdoc and `userSettings.js` serves reads from that snapshot without ever touching the network. After: 0 on load, 0 after Refresh, with the bundle still running in the frame |
+| 96 | med | ux | recovered | WS12 | verify | **REJECTED — works as intended.** "Format JSON" *does* report the failure: clicking it on `{ not valid json ][` renders `Expected property name or '}' in JSON at position 2 (line 1 column 3)` in a `role="alert"` computing `display:block`, 32 px tall. The report's live-region sweep looked at `[aria-live]` nodes and this one is not inside any. Its *other* observation — `lintMarkers:0` — is real and is finding 17/93  · **NOT FIXED — rejected**, and pinned by a Playwright assertion that the alert is painted |
 | 97 | med | a11y | recovered | WS4 | verify | **CONFIRMED, cause corrected** — the restore existed and `$el` scoping broke it; x-trap was already present  · **FIXED** |
 | 98 | med | ux | recovered | WS14 | verify | |
 | 99 | med | a11y | recovered | WS5 | verify | **CONFIRMED** — three Delete buttons at **35.3×16** with `opacity: 0` at both 1280 and 390 px; `aria-label="Delete saved query: …"` is already correct, so this is target size + hover-only reveal · **FIXED** — always painted, muted until hover, 24px tall |
@@ -350,16 +350,16 @@ Statuses are filled in during Phase 1.
 | 122 | low | ux | verified-run | WS6 | spot | **CONFIRMED** — every step of the report reproduces verbatim  · **FIXED** — Dup → 31 |
 | 123 | low | ux | verified-run | WS4 | spot | **CONFIRMED** — `openEditPanel` explicitly focused the Name input  · **FIXED** — `focusFirstIn` lands on the panel Close button |
 | 124 | low | a11y | verified-run | WS4 | spot | **CONFIRMED** — `BODY` after the x-for rebuild  · **FIXED** — lands on the row that took the deleted one's place |
-| 125 | low | ux | verified-run | WS11 | spot | |
+| 125 | low | ux | verified-run | WS11 | spot | **CONFIRMED both halves** — `Results (1 items)` and the full-width "Default limit applied (500 rows) — add LIMIT / OFFSET…" banner over a single row  · **FIXED** — `resultCountLabel` pluralises items/rows/groups; `resultsTruncated` gates the banner on the row count actually reaching the applied limit. After: `Results (1 item)`, no banner; with the default limit at 2 and 2 rows the banner is back |
 | 126 | low | design | verified-run | WS6 | spot | **CONFIRMED** — todos alone has no zero-length branch  · **FIXED** |
 | 127 | low | a11y | verified-run | WS5 | spot | **CONFIRMED, the report's own URL does not show it** — `/note?id=61` has no owner group and its outline is clean (H1 → H2). On `/note?id=1` it reproduces exactly: `H1: Note Weekly Engineering Standup` → **`H3: Engineering Backend`** (`<h3 class="card-title">`) → `H2: Note Type` · **FIXED** — `card-title` promoted h3→h2 in all eleven card templates, and `.card-title` added by name to the one `.list-container … h3` CSS rule that reached it by element name |
-| 128 | low | ux | verified-run | WS13 | spot | |
+| 128 | low | ux | verified-run | WS13 | spot | **CONFIRMED** — Unshare fired **0** dialogs and revoked; re-sharing minted `43a6f040…` where `3ca5263f…` had been. Control: the note Delete button fires `confirm "Are you sure you want to delete?"`  · **FIXED — wording only**, per the campaign decision: a `window.confirm` naming the action, that every holder of the URL loses access immediately, and that a new link cannot restore the old one |
 | 129 | low | ux | recovered | WS14 | verify | |
 | 130 | low | design | recovered | WS14 | product | |
 | 131 | low | ux | recovered | WS14 | verify | |
 | 132 | low | ux | recovered | WS3 | Dup → 119 | **CONFIRMED**  · **FIXED** — Dup → 119 |
 | 133 | low | a11y | recovered | WS5 | verify | **CONFIRMED** — `createFormTextareaInput.tpl:17-24` declares `role=combobox` + `aria-autocomplete=list` + `aria-haspopup=listbox` + `:aria-activedescendant` but no `aria-controls`/`aria-owns`, and `mentionDropdown.tpl` has no `id` to point at. `autocompleter.tpl` in the same directory sets both · **FIXED** — `aria-controls`/`aria-owns` on all three mention textareas, and `mentionDropdown.tpl` gained a per-field id (bound per block in the block editor, so a note with several text blocks has no duplicate ids) |
-| 134 | low | ux | recovered | WS11 | verify | |
+| 134 | low | ux | recovered | WS11 | verify | **REJECTED — works as intended.** The bar renders the parse error in a `role="alert"` paragraph at `[16,294,824,20]`, `display:block visibility:visible opacity:1`, with `aria-invalid="true"` on the input; the text is `expected value (string, number, date, function, or identifier), got "'"`. The report caveats itself — "only the first 400 characters of main were captured, so an error banner further down cannot be fully ruled out" — and that is exactly what happened. The `role="alert"` predates this branch (`master`, 843b7ac4)  · **NOT FIXED — rejected**, pinned in Go (the server hands the bar the error) and in Playwright (it is painted) |
 | 135 | low | ux | verified-run | WS3 | Dup → 119 | **CONFIRMED**  · **FIXED** — Dup → 119 |
 | 136 | low | bug | verified-run | WS14 | spot | |
 | 137 | low | ux | verified-run | WS14 | spot | |
@@ -372,48 +372,55 @@ Statuses are filled in during Phase 1.
 | 144 | low | ux | recovered | WS5 | verify | **CONFIRMED, broader than filed** — the dialog reads "Upload to Unknown" on `/resource?id=63`, `/group?id=78` **and** `/note?id=61`; `$store.pasteUpload.context?.name` is null on every one, so the `|| 'Unknown'` fallback always wins. Not resource-specific · **FIXED** — the heading reads "Upload to <name>" when a target is known and "Upload files" otherwise; it no longer invents one |
 | 145 | low | ux | recovered | WS14 | product | |
 | 146 | low | ux | recovered | WS6 | Dup → 68 | **CONFIRMED** — `/resources?page=99` 200s blank, Previous → page 98  · **FIXED** — 302 to the last real page; JSON/.body routes deliberately exempt |
-| 147 | low | bug | verified-run | WS11 | spot | |
+| 147 | low | bug | verified-run | WS11 | spot | **CONFIRMED; the report's comparison to /mrql is wrong** — `SELECT name AS zebra, id AS apple, description AS mango` returned `{"apple":…,"mango":…,"zebra":…}`  · **FIXED without changing the response shape** — `contracts.OrderedRow` emits the object in `rows.Columns()` order, so the CLI, the OpenAPI entry and the docs examples are untouched. Repeated names get a `:2` suffix instead of collapsing. After: `{"zebra":"draft","apple":1,"mango":…}`, and `/query?id=` headers read `id, created_at, updated_at, …` (schema order) instead of alphabetical. See "Where the plan was wrong" for the /mrql half |
 | 148 | low | design | verified-run | WS7 | spot | **CONFIRMED, broader than filed** — `word-break:break-all` with `overflow-wrap:normal` on six `.compare-meta-card-value` nodes (including "Jul 30, 2026 04:16 → Jul 3…"), on the resource Metadata `dd.break-all` cards, on the GUID span, on the hash/path cards **and** on `h3.card-title` + its `<a>` in the grid list · **FIXED** — `overflow-wrap: anywhere` replaces `word-break: break-all` in `index.css` (3), `jsonTable.css` (3) and a new `.wrap-anywhere` class swapped into `displayResource.tpl` (8) and `lightbox.tpl` (10, where `OriginalName` had the identical word-splitting) |
 | 149 | low | ux | verified-run | WS14 | spot | |
 | 150 | low | design | verified-run | WS7 | spot | **CONFIRMED** — breadcrumb nav is 88 px tall at 390 px against 44 px at 1280 px, and the second `flex-shrink-0 w-6 h-full` arrow sits at `top:96 left:40` — stranded at the left margin on its own row, connecting nothing. At 1280 px both arrows share `top:52` · **FIXED, first attempt was wrong** — swapping the arrows for an inline `›` below 900 px fixed the reported viewport and left the defect at **1280 px** on a seven-crumb trail. The trail does not wrap at all now: 1 row and 0 stranded separators at both widths, with the connected-arrow design kept |
 | 151 | low | bug | verified-run | WS2 | spot | **CONFIRMED**  · **FIXED** — `inline-edit:saved` → `[data-entity-field]`; the card's Copy button is left stale on purpose (see WS2) |
 | 152 | low | ux | verified-run | WS2 | spot | **CONFIRMED** — `UNIQUE constraint failed: tags.name` reached the client  · **FIXED** — server message humanised, client stops swallowing it |
 | 153 | low | ux | recovered | WS14 | verify | |
-| 154 | low | ux | recovered | WS12 | verify | |
-| 155 | low | ux | recovered | WS12 | verify | |
-| 156 | low | design | recovered | WS12 | verify | |
-| 157 | low | ux | recovered | WS3 | verify | **CONFIRMED** — rule only enforced after submit  · **FIXED, two causes corrected** — `createFormTextInput.tpl` never rendered the `description` it was handed, and `pattern="[a-z][a-z0-9-]*"` is invalid under the regex `v` flag, so it validated nothing |
-| 158 | low | ux | recovered | WS11 | Dup → 125 | |
-| 159 | low | bug | recovered | WS11 | verify (expect reject) | |
-| 160 | low | bug | recovered | WS11 | verify (self-caveated) | |
+| 154 | low | ux | recovered | WS12 | verify | **CONFIRMED** — applying the `contact-card` preset took `CustomHeader` from 107 characters of authored template to 353 of preset with **0** dialogs  · **FIXED** — one `confirmOverwrite` gate on all **three** clobber paths (preset, copy-from, bundle import), naming the source and counting the fields at risk. Silent when every slot is empty, which is the create form |
+| 155 | low | ux | recovered | WS12 | verify | **CONFIRMED** — 1 lint marker, covering `query='SELECT bogus FROM nothing']` only; the `[partial name="does-not-exist"]` beside it had none  · **FIXED** — `LintOptions.PartialExists` (memoised per run, nil disables) reports `no template partial named "…" exists; this renders nothing` as a **warning**, wired into both `/v1/shortcodes/lint` and the preview endpoint's issue list |
+| 156 | low | design | recovered | WS12 | verify | **CONFIRMED** — pill "Template Partial" above an h1 reading "Template Partial: b11-probe-partial". The cause is that the provider has no `mainEntity` (deliberately: `routes.go:640` records that a partial has **no** `/editName`, because a rename would break every `[partial name=…]` pointing at it), so `title.tpl` falls back to `pageTitle`, which also feeds `<title>` and therefore carries the type  · **FIXED** — a `headingTitle` override lets the page name the heading separately from the document title. After: pill "Template Partial", h1 text "b11v-heading", `<title>Template Partial: b11v-heading` |
+| 157 | low | ux | recovered | WS3 | verify | **CONFIRMED** — rule only enforced after submit  · **FIXED, two causes corrected** — `createFormTextInput.tpl` never rendered the `description` it was handed, and `pattern="[a-z][a-z0-9-]*"` is invalid under the regex `v` flag, so it validated nothing. **Re-checked in Batch 11:** the client rule now holds (`validity.patternMismatch` true, the form does not navigate), and the *message* is fixed — a duplicate name reached the banner as raw `UNIQUE constraint failed: template_partials.name` and now reads `a template partial named "…" already exists`. The **URL round-trip half is deliberately not fixed** — see WS12 |
+| 158 | low | ux | recovered | WS11 | Dup → 125 | **CONFIRMED** — Dup → 125 · **FIXED** — Dup → 125 |
+| 159 | low | bug | recovered | WS11 | verify (expect reject) | **REJECTED — not reproducible, with the mechanism proved.** Three identical `POST /v1/mrql` calls all returned `applied_limit: 500`. Setting `mrql_default_limit=3` made both of a pair return **3**; resetting returned both to **500**. The value is a pure function of the configuration, and finding 33's own evidence records the hunt changing that setting mid-run  · **NOT FIXED — struck**, pinned by a Go test asserting stability *and* that the setting is what moves it |
+| 160 | low | bug | recovered | WS11 | verify (self-caveated) | **CONFIRMED despite the caveat — and it is the same bug as 22.** For `type = resource AND tags.c` no popup opened automatically or on Ctrl+Space, while `POST /v1/mrql/complete` at that cursor returned 29 suggestions including `tags.count`. The cause is not the dot: CodeMirror filters options by their **label**, and the label was the description, so `tags.c` is not a subsequence of "relation count" and every option was filtered out  · **FIXED by 22's one-line change.** After: the popup opens with `tags.count` |
 
 **Ledger arithmetic.** 160 findings → 26 marked `Dup` → **134 distinct defects**, of which 13 are
 accepted without re-verification, 6 are already confirmed from source, and 4 route straight to a
 product decision. That leaves ~111 to verify, ~60 of them in the expensive `recovered` tier.
 
-**Running tally after Batch 10** (WS1–WS10 complete; WS8 fully closed):
+**Running tally after Batch 11** (WS1–WS13 complete; only WS14 left):
 
 | | count |
 |---|---|
 | Ledger rows | 160 |
-| Resolved (a status recorded) | **120** |
-| Still unverified | 40 — WS11 (10), WS12 (8), WS13 (3), WS14 (19) |
-| Confirmed | 107, of which 3 only partly (29, 31, 61) |
-| **Rejected** | **5** — 14, 39, 61 (partly), 79, 143 (this batch) |
-| Rows carrying a **FIXED** note | 114 |
-| Rejected *and pinned by a test* so the rejection cannot silently become wrong | 3 — 14, 39, 143 |
+| Resolved (a status recorded) | **141** |
+| Still unverified | 19 — WS14 only |
+| Confirmed | 125, of which 4 only partly (29, 31, 61, 157) |
+| **Rejected** | **8** — 14, 39, 61 (partly), 79, 143, 96, 134, 159 |
+| Rows carrying a **FIXED** note | 133 |
+| Rejected *and pinned by a test* so the rejection cannot silently become wrong | 6 — 14, 39, 143, 96, 134, 159 |
 
-The rejection rate is the number worth watching: **5 of 120 verified**, i.e. just over 4 %. The
-`recovered` tier was expected to be where the false positives lived, and it produced three of the
-five. What it produced far more of is findings whose *symptom* is real and whose *stated cause is
-wrong* — **23** of them so far, recorded per workstream in the "Where the plan was wrong"
-subsections. That is the verification step earning its keep, and it is not the thing the effort tiers
-were designed to catch.
+The rejection rate is the number worth watching: **8 of 141 verified**, i.e. just under 6 %, and
+Batch 11 alone produced three of the eight. The `recovered` tier was expected to be where the false
+positives lived, and it has produced six of them. What it produced far more of is findings whose
+*symptom* is real and whose *stated cause is wrong* — **32** of them so far, recorded per workstream
+in the "Where the plan was wrong" subsections. That is the verification step earning its keep, and it
+is not the thing the effort tiers were designed to catch.
 
-Three of the five rejections have the same shape, and it is worth naming: **the probe measured the
+Five of the eight rejections have the same shape, and it is worth naming: **the probe measured the
 wrong property.** 14 read a checkbox audit that swept in unrelated controls, 39 read `outline` while
-a `box-shadow` ring was painted, and 143 read `innerText` on a value that lives in a shadow root. In
-all three the reported *observation* is accurate and the *conclusion* does not follow from it.
+a `box-shadow` ring was painted, 143 read `innerText` on a value that lives in a shadow root, 96
+swept `[aria-live]` nodes for a message that lives in a `role="alert"` outside one, and 134 read the
+first 400 characters of a page whose error banner is below them. In all five the reported
+*observation* is accurate and the *conclusion* does not follow from it. 159 is the sixth and a
+different shape again: it observed the hunt's own configuration change.
+
+Batch 11 also produced the campaign's first finding that turned out to be a **second symptom of
+another** rather than its own defect: 160 (the MRQL completion popup refusing to open after a dot) is
+finding 22's label/value swap, and one line closed both.
 
 ---
 
@@ -1761,33 +1768,102 @@ failed 8 of 10 with the fixes stashed.
 
 ### WS11 — MRQL and query surfaces
 
-Findings **22, 23/46, 24, 82, 125/158, 134, 147, 159, 160**.
+Findings **22, 23/46, 24, 82, 125/158, 134, 147, 159, 160**. Nine rows, of which **two
+are rejections** (134, 159) and **one turned out to be a second symptom of another**
+(160 is 22).
 
-- [ ] **82 (✅ VERIFIED) — SQL is run through a markdown filter.**
-      `templates/partials/query.tpl:27-30` passes `entity.Text` into `partials/description.tpl` with
-      `preview=true`, and the preview branch (`description.tpl:13`) uses **pongo2-addons'** `markdown`
-      filter — blackfriday with `Smartypants | SmartypantsDashes | SmartypantsLatexDashes` — so `''`
-      becomes `"`, `--` becomes an en dash, `...` becomes an ellipsis. Copied SQL is invalid. The
-      non-preview branch (`:12`) uses the project's own `markdown2`. Render SQL verbatim in a `<code>`
-      block; do not send it through markdown at all.
-- [ ] **147 — SQL result column order is destroyed server-side.**
-      `query_api_handlers.go:20` `sQLToMap` reads `rows.Columns()` (ordered) but returns
-      `[]map[string]any`, so Go's map marshalling sorts the keys and duplicate column names collapse.
-      Return `{columns: [...], rows: [[...]]}`. Also at `:43-50` a `[]uint8` value is opportunistically
-      re-parsed as JSON, so a text column containing `123` silently changes type — fix or document.
-      **Watch the CLI specs**, which assert on JSON field names.
-- [ ] **23/46** — the Explain panel is never invalidated, so a plan and a result set from two
-      different queries sit side by side. Clear or version-stamp both panels per run.
-- [ ] **22, 160** — the autocomplete renders the server's `label` (a description) instead of its
-      `value`, giving four indistinguishable "relation count" rows and inserting text that never
-      appeared in the list; and member completions after a dot do not open. 160 is self-caveated —
-      verify first.
-- [ ] **24** — 16 columns crushed into a 790px table inside an 824px `overflow-x: visible` container,
-      one character per line, while 35% of the page sits empty. Make it scroll.
-- [ ] **125/158, 134** — pluralise "Results (1 item)"; do not show the default-limit warning when
-      nothing was truncated; report a syntax error for single-quoted strings instead of returning an
-      empty list.
-- [ ] **159** — verify; expect not-reproducible (see above).
+- [x] **82 — SQL is rendered verbatim.** `partials/query.tpl` no longer includes
+      `description.tpl` at all: it prints `entity.Text` in a `<pre class="query-card-sql">
+      <code>`, truncated to 250 characters as before. Going *around* the partial rather
+      than adding a flag to it is deliberate — `description.tpl` is included by 12
+      templates and Batch 4 rewrote it for finding 15, and SQL is not prose that wants a
+      markdown filter under any parameter. Live after: 50 cards, **zero** smart
+      characters, `!= 'x' … -- range 1--5 and dots...` intact.
+- [x] **147 — the result columns keep the SELECT order, and the response shape does
+      not change.** `contracts.OrderedRow` holds `Columns` and index-aligned `Values`
+      and marshals an object in column order. `/v1/query/run` is a documented public
+      endpoint with an OpenAPI entry and a CLI consumer (`mr query run`), so
+      `{columns, rows}` would have been a breaking change for a defect that is entirely
+      about *order*; every JSON parser in practice preserves insertion order for string
+      keys, which is what both consumers rely on (the browser table walks
+      `Object.keys()`, `mr` passes the body through). Two further changes: a repeated
+      column name gets a `:2` suffix instead of collapsing, and the speculative
+      `[]uint8` → JSON re-parse is narrowed to values that begin with `{` or `[`.
+- [x] **23/46 — the two panels can no longer disagree.** `resultQuery` and
+      `explainQuery` stamp each panel with the text it describes; `execute()` clears the
+      plan unless it belongs to the same query and `explain()` clears the rows unless
+      they do. Explain-then-Run of the *same* text keeps both, which is the workflow the
+      Explain button exists for and the reason this is not "clear the other panel
+      always".
+- [x] **22 + 160 — one line.** `label: s.value, detail: s.label` instead of
+      `label: s.label || s.value`.
+- [x] **24 — the results box scrolls.** `overflow-x: auto` on `.query-results`,
+      `width: max-content; min-width: 100%` on the table inside it (scoped to
+      `.query-results > .jsonTable`, because `.jsonTable` is `width: 100%` and is shared
+      with the metadata sidebar), and the finding-13 region treatment — `tabindex="0"
+      role="region" aria-label` — bound to `results.length > 0` so an empty box is not a
+      tab stop leading nowhere.
+- [x] **125/158 — `resultCountLabel` and `resultsTruncated`.** Singular/plural for
+      items, rows and groups; the banner fires only when the row count reached the
+      applied limit.
+- [x] **134 — REJECTED**, works as intended.
+- [x] **159 — REJECTED**, not reproducible.
+
+**Tests.** `server/api_tests/ws11_query_surfaces_test.go` (9 tests: the card markup,
+column order asserted on the raw body, the scalar-type narrowing, repeated columns,
+the scroll-region markup, and the two rejection pins),
+`src/components/mrqlEditor-panels.test.ts` (13 tests over the pure state) and
+`e2e/tests/regressions/ws11-mrql-and-query-surfaces.spec.ts` (10 tests over
+CodeMirror, the panels, the geometry and the Tab walk). Seen red first: **11 of 13**
+Go/vitest and **13 of 20** Playwright, the rest being controls and rejection pins.
+
+#### Where the plan was wrong
+
+1. **147's comparison to /mrql is false, and it decided the fix.** The report's
+   argument for `{columns, rows}` is that "the MRQL GROUP BY result table on /mrql
+   already behaves [correctly] (contentType, count, sum_fileSize is preserved
+   there)". It does not. `MRQLGroupedResult.Rows` is also `[]map[string]any`, and that
+   example is alphabetical **by coincidence** — `contentType` < `count` < `sum_fileSize`.
+   Measured: writing `GROUP BY contentType SUM(fileSize) COUNT()` and
+   `GROUP BY contentType COUNT() SUM(fileSize)` both emit
+   `contentType, count, sum_fileSize`. So changing only `/v1/query/run` to a new shape
+   would have broken the CLI and the docs *and* created the very inconsistency the
+   report was complaining about. The ordered-object marshaller fixes the raw-SQL path
+   with no shape change; the MRQL half is recorded below as not done.
+2. **147's second half is Postgres-only.** The plan says "a `[]uint8` value is
+   opportunistically re-parsed as JSON, so a text column containing `123` silently
+   changes type". On SQLite it cannot: go-sqlite3 hands TEXT to `database/sql` as a
+   `string`. Verified against the unfixed binary — a real `meta` JSON column came back
+   as the *string* `"{\"a\":1,\"b\":\"x\"}"`, not as an object, so the speculative
+   parse was inlining nothing there either. lib/pq does return `[]byte`, so the defect
+   is real on Postgres only. The narrowing shipped anyway, because a value's type must
+   not depend on what it spells.
+3. **160 is not a separate bug and not about the dot.** The plan lists it as
+   "member completions after a dot do not open", self-caveated. It reproduces, and its
+   cause is 22's: CodeMirror filters completion options by their **label**, the label
+   was the description, and `tags.c` is not a subsequence of "relation count" — so
+   every option was filtered out and the popup had nothing to show. One line fixed
+   both. The server was never at fault: at the real cursor it returns 29 suggestions
+   including `tags.count`.
+4. **134 was right to be doubted, but for the reason it doubted itself.** The
+   `role="alert"` paragraph carrying the parse error has been in `mrqlBar.tpl` since
+   `master` (843b7ac4). The report captured 400 characters of `main` and the alert is
+   below that.
+5. **24 is worse than filed in a way that matters for the fix.** The plan says "one
+   character per line"; measured, the first `<th>` was **269 px tall**. That number is
+   the test's assertion, because "the table is wider than the box" alone would pass on
+   a page where the header simply wrapped twice.
+
+#### Deliberately not done, and why
+
+**MRQL aggregated rows have finding 147's defect too.** Measured above: the author's
+`SELECT` order is discarded there as well, and the frontend renders that table from
+`Object.keys(result.rows[0])`, so an ordered emission would fix it with no template
+change. Threading the order out needs the alias list carried from
+`buildAggregatedGroupByDB` through `GroupByResult` and `MRQLGroupedResult`, and
+`mrql/translator_test.go` indexes `Rows` as maps in about ten places. It is a real
+defect, it is not what 147 filed, and it belongs with the MRQL package tests rather
+than bolted onto this batch. Recorded here so it is not lost.
 
 ### WS9 — Jobs and downloads cockpit
 
@@ -1879,43 +1955,186 @@ controls (a running row is unchanged, the clear button is absent when nothing is
 
 ### WS12 — Taxonomy and template authoring
 
-Findings **17/93, 28, 95, 96, 154, 155, 156, 157** (18 and 29 are handled in WS6, 19/101 in WS7).
+Findings **17/93, 28, 95, 96, 154, 155, 156, 157** (18 and 29 are handled in WS6,
+19/101 in WS7). One rejection (96), one finding whose stated cause was one level out
+(156), and one half deliberately left alone (157).
 
-- [ ] **17/93 (✅ VERIFIED) — an invalid Meta JSON Schema is accepted and persisted verbatim.** There
-      is no validation anywhere: `handler_factory.go:312` only decodes, and
-      `application_context/category_context.go:86` / `:145` assign the raw string. Note
-      `SectionConfig` right beside it **is** stored as `types.JSON`, so the inconsistency is local to
-      `MetaSchema`. Validate on create and update (parse, and compile as JSON Schema), and surface the
-      parse error in the editor. The form already has a pre-save confirm for shortcode lint issues —
-      extend it rather than adding a second mechanism.
-- [ ] **28** — the "Copy from existing" dropdown is capped at 51 per group because the backing calls
-      return 50 rows and ignore `maxResults`; 22 categories and 16 note types can never be copied from.
-- [ ] **95** — the sandboxed preview iframe (origin `null`) fetches `/v1/account/settings` and floods
-      the console with 6 CORS errors per render. Give the iframe what it needs from the host page.
-- [ ] **96, 155** — "Format JSON" does nothing at all when the JSON is invalid (the Visual Editor's
-      Raw JSON tab already computes the exact parse error); a reference to a non-existent `[partial]`
-      produces no diagnostic while an invalid `[mrql]` does.
-- [ ] **154** — applying a preset silently clobbers authored template content. Confirm first.
-- [ ] **156, 157** — the template-partial detail page prints the entity type twice; the kebab-case
-      name rule is only enforced after submit, and the whole editor body round-trips through the URL.
+- [x] **17/93 — an invalid Meta JSON Schema is rejected on every write path.**
+      `application_context.ValidateMetaSchema` parses the value and compiles it as a
+      JSON Schema, reusing the compiler `template_generation.go` already had (which now
+      delegates to it, so a generated schema and an authored one are held to one rule).
+      Called from **six** places, not the two the plan names: `CreateCategory`,
+      `UpdateCategory`, `CreateOrUpdateNoteType`, `CreateResourceCategory`,
+      `UpdateResourceCategory`, and the generic `buildCategory` / `buildResourceCategory`
+      CRUD builders. An empty schema stays legal — that is how a freeform carrier is
+      spelled. Client side: a CodeMirror JSON linter (`src/components/jsonLint.js`)
+      marks the failing offset and registers with the **existing** pre-save confirm
+      rather than adding a second mechanism, as the plan asked.
+- [x] **28 — the copy-from picker pages.** `fetchAllPages` walks `?page=N` until a
+      short page, capped at 20 pages and reporting when the cap is hit. No endpoint
+      gained a `maxResults`: none of them honour one today, and the paging the client
+      relies on is pinned by a Go test that also asserts `maxResults=500` is still
+      ignored, so nobody "simplifies" the client back to one request.
+- [x] **95 — the preview iframe is handed its settings.** `templatePreview` seeds
+      `window.__mahUserSettings` into the srcdoc from `userSettings.snapshot()`, and
+      `userSettings.js` treats a seeded page as offline: reads come from the snapshot,
+      `putNow` returns without a request, and `flushAllOnHide` is a no-op. The six
+      errors per render were three `LOAD_RETRIES` attempts × (CORS + ERR_FAILED).
+- [x] **96 — REJECTED**, works as intended.
+- [x] **154 — one confirm on all three clobber paths.** `confirmOverwrite` counts the
+      filled slots (including MetaSchema), names the source, and says the content is
+      discarded but undo still works and nothing is saved yet. Silent when every slot is
+      empty. Applied to preset, copy-from **and** bundle import — the plan names only the
+      preset, and all three call the same `applyBundle`.
+- [x] **155 — an unknown `[partial]` is flagged.** `LintOptions.PartialExists` is an
+      optional, memoised resolver (nil disables the check, so a caller with no way to
+      look names up behaves as before rather than reporting every partial as missing).
+      Wired into `/v1/shortcodes/lint` *and* the preview endpoint's issue list, so the
+      diagnostic is there whether the author is reading the gutter or the preview. A
+      **warning**, not an error: the partial may be about to be created, and lint must
+      never block a save.
+- [x] **156 — a `headingTitle` override.** See below for why `mainEntity` was not the
+      answer.
+- [x] **157's message** — a duplicate partial name goes through
+      `friendlyUniqueNameError` like every other entity.
+
+**Tests.** `server/api_tests/ws12_taxonomy_authoring_test.go` (9 tests, the schema
+rejection run as a subtest per carrier), `src/components/templateBundle-sources.test.ts`
+(13), `src/components/jsonLint.test.ts` (6) and
+`e2e/tests/regressions/ws12-taxonomy-authoring.spec.ts` (7). Seen red first.
+
+#### The schema-editor specs the validation broke, and why they were not simply relaxed
+
+Six existing Playwright tests planted an invalid MetaSchema over the API as their
+*fixture* — three guarding stored XSS through the Alpine `x-data` injection (a P1),
+two guarding that the Visual Editor disables Apply on an invalid schema, one the same
+XSS guard on the resource form. Validation made every one of those fixtures
+impossible, and the tempting responses — weaken the validation, or delete the tests —
+both lose real coverage. What the guards are about survives intact, by three different
+routes:
+
+- **The XSS guards now use a payload that is valid JSON Schema and still hostile:**
+  `{"type":"object","description":"'; alert('xss'); '"}`. Same attack, same escaping
+  path, and a better statement of the requirement — a schema an author can
+  *legitimately save* must not be able to break out of the attribute it is injected
+  into. A new Go test asserts the same thing on the served markup.
+- **The "stored schema is not JSON at all" cases moved to Go**
+  (`TestFormsSurviveALegacyNonJSONMetaSchema`), where the row is planted straight into
+  the column. That is not a workaround: those cases are about *legacy data* — a row
+  written before the rule existed, by a plugin (`mah.db.*` bypasses it, a documented v1
+  gap), or by hand — so a fixture that goes through the validated write path was
+  always the wrong way to express them. CI runs `go test` and does not run the browser
+  suite, so the coverage also got stronger.
+- **The Visual Editor tests type the invalid schema into the field** instead of
+  persisting it, because the modal reads the field. Their subject is unchanged.
+
+Four more specs described behaviour this batch deliberately changed and were updated:
+the BH-013 banner spec (which also turned out to assert truncation against a query
+returning **zero** rows on a server it never seeds — it creates its own notes now), two
+heading assertions that keyed on the plural literal `rows` / `groups`, and the
+note-sharing unshare test, which now has a confirm to accept.
+
+One more, unrelated to any finding but not dismissed as noise: the WS4 search-dialog
+focus test produced a single retried-green failure in a 1841-test run, and held **40/40**
+in isolation. That is the signature of race window #1 from the "a focus trap has two
+race windows" lesson — `x-trap` arms on a `setTimeout(15)` and this spec pressed Tab as
+soon as the dialog was visible, while its finding-90 sibling in the same file already
+waits. It now polls for the trap to have taken focus first: **275/275** clean at
+`--repeat-each=25 --workers=3`. A test race, not a product defect, and recorded rather
+than retried away.
+
+#### Where the plan was wrong
+
+1. **156's cause is a deliberate design decision two files away.** The plan reads as a
+   cosmetic duplication. The reason the h1 falls back to `pageTitle` — which also feeds
+   `<title>` and therefore carries the type — is that the provider sets no `mainEntity`,
+   and it sets no `mainEntity` because **there is no `/v1/templatePartial/editName`
+   route**, with a comment at `routes.go:640` explaining that a rename would break every
+   `[partial name=…]` pointing at it. So the obvious fix (copy what Tag and Query do)
+   would have shipped an inline rename that silently breaks references. `headingTitle`
+   separates the heading from the document title instead, and `<title>` keeps the type
+   because that is what tells two tabs apart.
+2. **96 is a rejection, and its evidence is two claims not one.** "Nothing happens, no
+   error, no announcement" is wrong — a `role="alert"` carries the parser's message,
+   painted, 32 px tall. "No lint marker appears" is right, and belongs to 17/93. The
+   report's probe swept `[aria-live]` nodes; `role="alert"` implies an assertive live
+   region but the element is not *inside* one, so the sweep could not see it. Fourth
+   rejection in the campaign with this shape.
+3. **17/93 has six write paths, not two.** The plan names `handler_factory.go:312` and
+   `category_context.go:86/:145`. Note Type, Resource Category, and both generic CRUD
+   builders write the same field. A rule enforced on three of six is not a rule.
+4. **154 has three callers, not one.** Preset, copy-from and import all funnel through
+   `applyBundle`, and all three clobber identically.
+
+#### Deliberately not done, and why
+
+**157's other half — the whole editor body round-trips through the URL — is not
+fixed.** Measured: a 24 000-byte template body produced a **44 143-byte** redirect URL,
+which Go's own 1 MB `MaxHeaderBytes` accepts (the values do survive) and nginx's
+default 8 k `large_client_header_buffers` would not. Every fix available inside this
+batch is worse than the bug: dropping the large field from the query string loses the
+author's work, and doing it properly needs a server-side flash store that
+`HandleFormError` — used by every form in the app, and rewritten in Batch 4 — does not
+have. The primary symptom of 157 (the kebab-case rule only enforced after submit) was
+fixed in Batch 5 and re-verified here; the message is fixed above. The transport is a
+follow-up in its own right.
 
 ### WS13 — Sharing
 
-Findings **7 (✅ VERIFIED), 51, 128**.
+Findings **7 (✅ VERIFIED), 51, 128**. All three confirmed. 7 and 51 turned out to be
+two halves of one predicate, which is what shaped the fix.
 
-- [ ] **7 — share tokens are minted even when the share server is disabled.**
-      `share_handlers.go:19` calls `ShareNote` and returns `"/s/" + token` with **no check** that
-      `SharePort` is configured, and the returned URL is a bare relative path pointing at the primary
-      server, which has no `/s/` route. Disable the Share action (with an explanation) when sharing is
-      not configured.
-- [ ] **51 — a share-server bind failure is swallowed.** `server/share_server.go:148-153` runs
-      `ListenAndServe` in a goroutine and only `log.Printf`s on error, then returns `nil`, so
-      `main.go:608-616`'s `log.Fatalf` never fires and `main.go:615` still prints "Share server
-      available at …". Bind synchronously with `net.Listen` and return the error; add a `healthy` flag
-      the UI and `/admin/settings` can read.
-- [ ] **128** — "Unshare" revokes a public link on one click with no confirmation, and re-sharing mints
-      a different token, so every distributed URL dies permanently. Confirm first (wording only, per
-      the decision above).
+- [x] **7 — the share endpoint is gated, and the UI half was already done.**
+      `POST /v1/note/share` answers **503** naming the flag when nothing serves `/s/`.
+      Revoking is deliberately *not* gated: a note already marked shared has to stay
+      revocable even after the share server dies.
+- [x] **51 — the bind is synchronous and the failure is fatal.** `net.Listen` before
+      the goroutine, error returned, so `main.go`'s existing `log.Fatalf` finally fires
+      (with a remediation line). If `Serve` dies later the context is marked and an
+      application-log warning is written, so the flag covers the case the process
+      survives. `ShareEnabled()` now means "a `/s/<token>` request can succeed";
+      `ShareConfigured()` is the old "an operator typed a port", which `/admin/settings`
+      needs in order to say "NOT serving".
+- [x] **128 — wording only**, per the campaign decision. `window.confirm` kept.
+
+**Tests.** `server/api_tests/ws13_sharing_test.go` (6 tests: the gate and its positive
+control, the bind failure and its free-port control, and the dead-server sidebar and
+its healthy control) plus `e2e/tests/regressions/ws13-sharing.spec.ts` (3). The Go
+tests were seen red by reverting only `share_server.go`, `share_handlers.go` and
+`noteShare.tpl`, which keeps the package compiling — with the whole change stashed the
+package cannot build at all, because the test calls `MarkShareServerFailed`.
+
+#### Where the plan was wrong
+
+1. **Finding 7's UI half was already fixed, and its remaining half is the API.** The
+   plan says to "disable the Share action, with an explanation, when sharing is not
+   configured". `noteShare.tpl` has been wrapped in `{% if shareEnabled %}` for a while:
+   with `SHARE_PORT` unset the note page renders **zero** "Share Note" buttons. What
+   still reproduced is exactly the ✅ VERIFIED evidence — the *endpoint* answering 200
+   with a token for a URL nothing serves. A fixer following the plan literally would
+   have edited a template that was already correct and left the hole open.
+2. **The reason the hunt saw a Share button at all is finding 51, not finding 7.** Its
+   own evidence records `.env` containing `SHARE_PORT=8383`, so `ShareEnabled()` was
+   true and the bind had failed — which is why the two findings have to share one
+   predicate rather than each getting its own check.
+3. **"Add a `healthy` flag the UI can read" and "make the bind failure fatal" are in
+   tension, and the resolution matters.** If a bind failure kills the process the flag
+   can never be false at boot, and if the flag is the whole answer the deployment comes
+   up advertising a dead port. Both shipped, for different failure modes: the bind is
+   fatal (operator misconfiguration, caught at startup) and the flag covers `Serve`
+   dying later. The flag also defaults to *false-meaning-healthy* rather than requiring
+   `Start`, so a context built without a share server — every Go test, and the tooling —
+   behaves as before instead of reporting sharing broken.
+4. **Hiding the panel when sharing is dead would have been a worse bug.** Gating the
+   whole partial on the new predicate leaves an already-shared note publicly marked
+   shared with no way to revoke it. The panel renders for `shareEnabled or
+   note.ShareToken`, drops the Share button, and says the link does not work.
+5. **Five existing Go tests shared notes as setup and had to be told they want
+   sharing.** `TestShareNote`, `TestShareNoteMultipartFormData`, the two POST-body
+   tests, the three block-state allowlist tests and the array-table render test all
+   called `SetupTestEnv`, which leaves `SharePort` empty. They now use
+   `setupShareEnabledTestEnv`. This is the "grep the specs for what you are changing"
+   rule applied to behaviour rather than markup.
 
 ### WS14 — Long tail and product decisions
 
@@ -2038,7 +2257,7 @@ the cheapest high-confidence work clears the ledger early.
 - [x] **Batch 8** — WS5 keyboard, names, headings, target sizes.
 - [x] **Batch 9** — WS7 mobile and layout. Start with finding 3 (nav trap) and 8 (one-line CSS).
 - [x] **Batch 10** — WS10 global chrome, WS9 jobs cockpit, and WS8's two stragglers (94, 143).
-- [ ] **Batch 11** — WS11 MRQL and query surfaces, WS12 taxonomy authoring, WS13 sharing.
+- [x] **Batch 11** — WS11 MRQL and query surfaces, WS12 taxonomy authoring, WS13 sharing.
 - [ ] **Batch 12** — WS14 long tail; bring the four product decisions back for sign-off.
 - [ ] **Batch 13** — Phase 3 guards.
 - [ ] **Batch 14** — final verification, docs, and a lessons entry.

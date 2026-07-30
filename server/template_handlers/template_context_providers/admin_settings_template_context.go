@@ -23,7 +23,7 @@ func AdminSettingsContextProvider(ctx AdminSettingsPageContext) func(r *http.Req
 			"pageTitle":       "Settings",
 			"hideSidebar":     true,
 			"settingsByGroup": groups,
-			"bootOnly":        bootOnlyFields(ctx.Configuration()),
+			"bootOnly":        bootOnlyFields(ctx.Configuration(), ctx.ShareServerFailed()),
 		}.Update(baseContext)
 	}
 }
@@ -62,16 +62,26 @@ type bootOnlyField struct {
 
 // bootOnlyFields returns a read-only snapshot of restart-only settings, shown
 // in the collapsible "Requires restart" reference section.
-func bootOnlyFields(cfg *application_context.MahresourcesConfig) []bootOnlyField {
+func bootOnlyFields(cfg *application_context.MahresourcesConfig, shareFailed bool) []bootOnlyField {
 	if cfg == nil {
 		return nil
+	}
+	// Finding 51: this table said "Share port 8383" while nothing was listening on
+	// 8383, because a bind failure was logged and dropped. The value alone cannot
+	// tell an operator that, so the row says which it is.
+	sharePort := cfg.SharePort
+	switch {
+	case sharePort == "":
+		sharePort = "not configured"
+	case shareFailed:
+		sharePort += " (NOT serving — the share server failed to start)"
 	}
 	return []bootOnlyField{
 		{Label: "DB type", Value: cfg.DbType},
 		{Label: "Bind address", Value: cfg.BindAddress},
 		{Label: "File save path", Value: cfg.FileSavePath},
 		{Label: "Ephemeral mode", Value: boolStr(cfg.EphemeralMode || cfg.MemoryDB || cfg.MemoryFS)},
-		{Label: "Share port", Value: cfg.SharePort},
+		{Label: "Share port", Value: sharePort},
 		{Label: "FTS enabled", Value: boolStr(!cfg.SkipFTS)},
 		{Label: "Plugin path", Value: cfg.PluginPath},
 	}

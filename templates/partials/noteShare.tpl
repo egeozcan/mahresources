@@ -1,7 +1,34 @@
-{# with note=note shareEnabled=shareEnabled shareBaseUrl=shareBaseUrl shareUrlConfigured=shareUrlConfigured #}
-{% if shareEnabled %}
+{# with note=note shareEnabled=shareEnabled shareConfigured=shareConfigured shareBaseUrl=shareBaseUrl shareUrlConfigured=shareUrlConfigured #}
+{# Findings 7 and 51. shareEnabled means "a /s/<token> request can succeed", so #}
+{# it is false both when no share port is configured and when the share server  #}
+{# failed to bind. The panel still renders for an ALREADY shared note in that    #}
+{# second case: hiding it would leave a note publicly marked shared with no way  #}
+{# to revoke it, which is worse than the bug. It says the link is dead instead.   #}
+{% if shareEnabled or note.ShareToken %}
 <div class="mt-4 pt-4 border-t border-stone-200">
     {% include "/partials/sideTitle.tpl" with title="Sharing" %}
+    {% if not shareEnabled %}
+    <div class="mb-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-800" role="alert" data-testid="share-server-down-warning">
+        <p class="font-medium">This link does not work.</p>
+        <p class="mt-1">
+            {% if shareConfigured %}
+            The share server is configured but is not running, so nothing answers the share URL.
+            Check the server log for a bind failure, then restart.
+            {% else %}
+            Sharing is not enabled on this server, so no address serves shared notes.
+            Set <code class="font-mono">SHARE_PORT</code> (flag: <code class="font-mono">-share-port</code>) to enable it.
+            {% endif %}
+            You can still revoke the link below.
+        </p>
+    </div>
+    {% endif %}
+    {# Finding 128: unshare() confirms first. Revoking is irreversible for every #}
+    {# holder of the URL, because re-sharing mints a NEW token and the old link is #}
+    {# dead for good — so the prompt names the action and its blast radius, per the #}
+    {# campaign's confirmation-wording decision. window.confirm is deliberate; an #}
+    {# in-app modal is a separate follow-up. The comment lives out here rather than #}
+    {# inside the x-data attribute: a // comment in an attribute value survives #}
+    {# only as long as the newline does. #}
     <div x-data="{
         shared: {% if note.ShareToken %}true{% else %}false{% endif %},
         shareToken: '{{ note.ShareToken|default:'' }}',
@@ -28,6 +55,9 @@
             }
         },
         async unshare() {
+            if (!window.confirm('Revoke this public link? Anyone holding the current URL loses access immediately, and sharing again creates a different link — the old one cannot be restored.')) {
+                return;
+            }
             this.loading = true;
             this.error = null;
             try {
@@ -54,6 +84,7 @@
             await updateClipboard(this.getShareUrl());
         }
     }">
+        {% if shareEnabled %}
         <template x-if="!shared">
             <button
                 @click="share()"
@@ -70,6 +101,7 @@
                 Share Note
             </button>
         </template>
+        {% endif %}
         <template x-if="shared">
             <div class="space-y-2">
                 <div class="flex items-center gap-1">

@@ -605,11 +605,19 @@ func main() {
 	context.SetThumbnailQueue(tw.GetQueue())
 	defer tw.Stop()
 
-	// Start share server if configured
+	// Start share server if configured.
+	//
+	// Finding 51: Start binds synchronously now, so this log.Fatalf is reachable
+	// and the "available at" line below is only printed once something really is
+	// listening. It used to print unconditionally, a moment before the bind error
+	// arrived from a goroutine nobody was watching.
 	if cfg.SharePort != "" {
 		shareServer := server.NewShareServer(context)
 		if err := shareServer.Start(cfg.ShareBindAddress, cfg.SharePort); err != nil {
-			log.Fatalf("Failed to start share server: %v", err)
+			log.Fatalf("Failed to start share server: %v\n"+
+				"Sharing was requested (-share-port=%s) and the port is not available. "+
+				"Free the port, choose another, or drop -share-port to run without sharing.",
+				err, cfg.SharePort)
 		}
 		defer shareServer.Stop()
 		log.Printf("Share server available at http://%s:%s", cfg.ShareBindAddress, cfg.SharePort)

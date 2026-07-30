@@ -320,6 +320,11 @@ func NoteContextProvider(context NotePageContext) func(request *http.Request) po
 		// unset, shareBaseUrl stays empty and the template surfaces a warning
 		// so the admin knows why the sidebar is degraded.
 		shareEnabled := context.ShareEnabled()
+		// Finding 51: ShareEnabled() is false when the share server failed to come
+		// up, which correctly hides the Share action — but a note that is *already*
+		// shared must still be revocable, and the reader deserves to be told the
+		// link is dead rather than watching the whole panel disappear.
+		shareConfigured := context.ShareConfigured()
 		shareBaseUrl := ""
 		shareUrlConfigured := false
 		if rawURL := context.Settings().SharePublicURL(); rawURL != "" {
@@ -350,6 +355,7 @@ func NoteContextProvider(context NotePageContext) func(request *http.Request) po
 			"mainEntity":         note,
 			"mainEntityType":     "note",
 			"shareEnabled":       shareEnabled,
+			"shareConfigured":    shareConfigured,
 			"shareBaseUrl":       shareBaseUrl,
 			"shareUrlConfigured": shareUrlConfigured,
 		}.Update(baseContext)

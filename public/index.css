@@ -1253,6 +1253,23 @@ html {
     border-radius: var(--radius-md);
     padding: 1rem;
     background: #fafaf9;
+    /* Finding 24: a raw-SQL result can be far wider than the column it sits in
+       (SELECT * FROM categories is 16 columns), and `visible` meant the table
+       squeezed instead of scrolling. */
+    overflow-x: auto;
+}
+
+/* .jsonTable is width:100%, which inside a scroller still means "100% of the
+   container" — so the table has to be allowed to exceed it before the scroller
+   has anything to scroll. min-width:100% keeps a narrow result filling the box. */
+.query-results > .jsonTable {
+    width: max-content;
+    min-width: 100%;
+}
+
+.query-results:focus-visible {
+    outline: 2px solid #b45309;
+    outline-offset: 2px;
 }
 
 /* Entity picker modal — sits above plugin-action-overlay (z-index: 60) */
@@ -1452,6 +1469,21 @@ html {
 
 .card-description:last-child {
     margin-bottom: 0;
+}
+
+/* Finding 82: a saved query's SQL is rendered verbatim on its list card (never
+   through the markdown filter, which mangled quotes and dashes). It still has to
+   look like a card preview rather than a code block that dwarfs the card, so it
+   keeps the card's own type scale and wraps instead of scrolling. */
+.query-card-sql {
+    margin: 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: #57534e;
+    white-space: pre-wrap;
+    /* Finding 148: break-all splits tokens mid-word. */
+    overflow-wrap: anywhere;
 }
 
 /* Override description partial's own box (bg/border/padding) when inside a card */

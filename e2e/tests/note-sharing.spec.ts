@@ -168,6 +168,10 @@ test.describe('Note Sharing UI', () => {
     // Wait for unshare button to appear (note should be shared from previous tests)
     const unshareButton = page.locator('button:has-text("Unshare")');
     await unshareButton.waitFor({ state: 'visible', timeout: 10000 });
+    // Finding 128: revoking a public link now asks first, because re-sharing mints
+    // a different token and every distributed URL dies. The prompt's wording is
+    // asserted in e2e/tests/regressions/ws13-sharing.spec.ts.
+    page.once('dialog', (d) => d.accept());
     await unshareButton.click();
 
     // Should show share button again

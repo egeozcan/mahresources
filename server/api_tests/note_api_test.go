@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"mahresources/application_context"
 )
 
 func TestNoteEndpoints(t *testing.T) {
@@ -223,7 +224,14 @@ func TestNoteSharedFilterDistinguishesTrueAndFalse(t *testing.T) {
 }
 
 func TestShareNote(t *testing.T) {
-	tc := SetupTestEnv(t)
+	// Finding 7: POST /v1/note/share is refused with 503 when no share server is
+	// configured, because a token whose /s/<token> URL nothing answers is worse
+	// than no token. This test is about token minting, not about the gate, so it
+	// configures a share port. The gate itself is covered in ws13_sharing_test.go.
+	tc := setupTestEnvWithConfig(t, func(c *application_context.MahresourcesConfig) {
+		c.SharePort = "18390"
+		c.ShareBindAddress = "127.0.0.1"
+	})
 	note := tc.CreateDummyNote("Test Share Note")
 
 	t.Run("Share note creates token", func(t *testing.T) {

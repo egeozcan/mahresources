@@ -40,6 +40,20 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
         import('@codemirror/autocomplete'),
       ]);
 
+      // Findings 17/93: a JSON editor (the Meta JSON Schema field) lints its
+      // content so an unparseable schema is marked where it breaks, and it joins
+      // the same pre-save confirm the shortcode editors use rather than adding a
+      // second warning mechanism.
+      let jsonExtensions = [];
+      if (mode === 'json') {
+        try {
+          const jsonLintMod = await import('./jsonLint.js');
+          jsonExtensions = jsonLintMod.jsonLintExtensions();
+        } catch (e) {
+          console.error('json lint failed to load', e);
+        }
+      }
+
       // Shortcode editor tooling (lint + autocomplete + hover) — loaded only for
       // template slots that carry shortcodes, so plain SQL/JSON editors stay lean.
       // Built here (after the core import) because it needs EditorState.
@@ -93,6 +107,7 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
           indentWithTab,
         ]),
         this.langCompartment.of([]),
+        ...jsonExtensions,
         ...shortcodeExtensions,
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -130,9 +145,17 @@ export function codeEditor({ mode = 'sql', dbType = 'SQLITE', label = '', shortc
       // Expose the view on the container for test automation
       container._cmView = this.view;
 
-      // Soft-warn on submit when a shortcode template holds error diagnostics.
+      // Soft-warn on submit when a shortcode template — or, findings 17/93, a
+      // JSON editor — holds error diagnostics.
       if (shortcodes && shortcodeMod) {
         shortcodeMod.installSubmitGuard(container.closest('form'), this.view);
+      } else if (jsonExtensions.length) {
+        try {
+          const guardMod = await import('./shortcodeLint.js');
+          guardMod.installSubmitGuard(container.closest('form'), this.view);
+        } catch (e) {
+          console.error('submit guard failed to load', e);
+        }
       }
 
       // Load language extension asynchronously

@@ -15,9 +15,24 @@ func (ctx *MahresourcesContext) DatabaseType() string {
 	return ctx.Config.DbType
 }
 
-// ShareEnabled reports whether the public share server is configured. The share
-// UI is hidden when it is not.
+// ShareEnabled reports whether note sharing is actually available: a share port
+// is configured *and* no share-server failure has been observed. The share UI is
+// hidden and POST /v1/note/share is refused when it is not.
+//
+// Findings 7 and 51 are two halves of one thing. 7: the API minted a token with
+// no check that a share server exists at all, so /s/<token> 404'd on the primary
+// server, which has no /s/ route — the UI gate has been here for a while, the
+// endpoint had none. 51: with a port configured but the bind failed, "configured"
+// was true and every share URL was still dead. Both need one predicate that means
+// "a request to /s/<token> can succeed", not "an operator typed a port".
 func (ctx *MahresourcesContext) ShareEnabled() bool {
+	return ctx.ShareConfigured() && !ctx.ShareServerFailed()
+}
+
+// ShareConfigured reports only whether a share port was configured, regardless of
+// whether the server came up. /admin/settings shows the configured value and
+// needs to distinguish "not configured" from "configured but not serving".
+func (ctx *MahresourcesContext) ShareConfigured() bool {
 	return ctx.Config.SharePort != ""
 }
 

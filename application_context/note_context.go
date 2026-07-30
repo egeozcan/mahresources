@@ -441,6 +441,11 @@ func (ctx *MahresourcesContext) GetNoteTypesCount(query *query_models.NoteTypeQu
 }
 
 func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteTypeEditor) (*models.NoteType, error) {
+	// Findings 17/93: a note type's Meta JSON Schema had no validation either.
+	if err := ValidateMetaSchema(query.MetaSchema); err != nil {
+		return nil, err
+	}
+
 	isNew := query.ID == 0
 	var noteType models.NoteType
 	if query.ID != 0 {

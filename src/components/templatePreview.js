@@ -4,6 +4,8 @@
 // iframe. The CSRF token is attached automatically by the global fetch wrapper
 // (src/csrf.js).
 
+import * as userSettings from '../userSettings.js';
+
 const SLOTS = [
   { name: 'CustomHeader', label: 'Header' },
   { name: 'CustomSidebar', label: 'Sidebar' },
@@ -327,6 +329,15 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       // x-text="entity.Name" behave as they will on the real page.
       // sandbox="allow-scripts" (no allow-same-origin) keeps it origin-isolated;
       // API-backed widgets degrade gracefully.
+      //
+      // Finding 95: the bundle's user-settings module used to GET
+      // /v1/account/settings from inside here, which is cross-origin from an
+      // opaque origin and produced six console errors per render (and grew:
+      // 6 -> 18 -> 30 across three Refreshes). The host page already holds those
+      // values, so it hands them over in the document instead. See
+      // src/userSettings.js — a seeded page serves reads from the snapshot and
+      // never touches the network.
+      const settingsJson = JSON.stringify(userSettings.snapshot()).replace(/</g, '\\u003c');
       frame.srcdoc = `<!doctype html><html><head>
 <meta charset="utf-8">
 <link rel="stylesheet" href="/public/index.css">
@@ -334,7 +345,8 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
 <link rel="stylesheet" href="/public/jsonTable.css">
 <style>${css}</style>
 <style>body{margin:0;padding:1rem;background:#fff;color:#1c1917;}</style>
-<script>window.__previewEntity = ${entityJson};</script>
+<script>window.__previewEntity = ${entityJson};
+window.__mahUserSettings = ${settingsJson};</script>
 </head><body>
 <div x-data="{ entity: window.__previewEntity }">
 ${html}

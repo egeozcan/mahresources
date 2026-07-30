@@ -10,10 +10,16 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"mahresources/application_context"
 )
 
 func TestShareNoteMultipartFormData(t *testing.T) {
-	tc := SetupTestEnv(t)
+	// Finding 7: sharing needs a configured share server now — see
+	// ws13_sharing_test.go. This test is about multipart body parsing.
+	tc := setupTestEnvWithConfig(t, func(c *application_context.MahresourcesConfig) {
+		c.SharePort = "18391"
+		c.ShareBindAddress = "127.0.0.1"
+	})
 	note := tc.CreateDummyNote("Multipart Share Note")
 
 	t.Run("Share via multipart/form-data", func(t *testing.T) {

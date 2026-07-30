@@ -77,6 +77,11 @@ func buildCategory(creator *query_models.CategoryCreator) (models.Category, erro
 	if strings.TrimSpace(creator.Name) == "" {
 		return models.Category{}, errors.New("category name must be non-empty")
 	}
+	// Findings 17/93: the generic writer is a second create path; the rule has to
+	// hold on both or it holds on neither.
+	if err := ValidateMetaSchema(creator.MetaSchema); err != nil {
+		return models.Category{}, err
+	}
 	return models.Category{
 		Name:             creator.Name,
 		Description:      creator.Description,
@@ -113,6 +118,10 @@ func (ctx *MahresourcesContext) ResourceCategoryCRUD() (
 func buildResourceCategory(creator *query_models.ResourceCategoryCreator) (models.ResourceCategory, error) {
 	if strings.TrimSpace(creator.Name) == "" {
 		return models.ResourceCategory{}, errors.New("resource category name must be non-empty")
+	}
+	// Findings 17/93.
+	if err := ValidateMetaSchema(creator.MetaSchema); err != nil {
+		return models.ResourceCategory{}, err
 	}
 	return models.ResourceCategory{
 		Name:             creator.Name,

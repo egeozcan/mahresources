@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -377,6 +378,31 @@ type MahresourcesContext struct {
 	// [lazy]/[details] deferred-render shortcodes (lib/deferredtoken). Derived from
 	// Config.TemplateSigningKey when set, otherwise a per-boot random 32 bytes.
 	deferredSigningKey []byte
+	// shareServerFailed records that the public share server could not bind, or
+	// stopped serving. Finding 51: a bind failure was logged and swallowed, so
+	// /admin/settings went on advertising the share port and the note sidebar went
+	// on minting tokens for URLs nothing would ever answer. A pointer for the same
+	// reason as rootAdmin — WithRequest/WithPrincipal/WithTransaction shallow-copy
+	// the struct, and every copy has to see the same flag.
+	//
+	// It starts *false* deliberately: "no failure observed" is the right default
+	// for a context whose share server was never started (tests, tooling), and the
+	// boot path cannot reach a running-but-dead state any more because Start now
+	// binds synchronously and main.go exits on the error.
+	shareServerFailed *atomic.Bool
+}
+
+// MarkShareServerFailed records that the share server is not serving. Called by
+// server.ShareServer on a bind failure and if Serve ever returns unexpectedly.
+func (ctx *MahresourcesContext) MarkShareServerFailed() {
+	if ctx != nil && ctx.shareServerFailed != nil {
+		ctx.shareServerFailed.Store(true)
+	}
+}
+
+// ShareServerFailed reports whether a share-server failure has been observed.
+func (ctx *MahresourcesContext) ShareServerFailed() bool {
+	return ctx != nil && ctx.shareServerFailed != nil && ctx.shareServerFailed.Load()
 }
 
 // DeferredSigningKey returns the HMAC key used to sign and verify deferred-render
@@ -478,6 +504,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		DefaultResourceCategoryID: 1,
 		rootAdmin:                 newRootAdminCache(),
 		deferredSigningKey:        deriveDeferredSigningKey(config.TemplateSigningKey),
+		shareServerFailed:         &atomic.Bool{},
 	}
 
 	// Install RBAC group-subtree scoping + CreatedByUserId stamping callbacks.

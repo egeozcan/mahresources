@@ -68,7 +68,10 @@ test.describe('MRQL counting and aggregation', () => {
     await mrql.executeQuery();
 
     const heading = mrql.resultsSection.locator('h2');
-    await expect(heading).toContainText('rows');
+    // Finding 158 (2026-07-29 UI bug hunt): the count is pluralised now, so a
+    // single-bucket result reads "(1 row)". The word is what identifies aggregated
+    // mode; the number is not this test's subject.
+    await expect(heading).toHaveText(/\(\d+ rows?\)/);
 
     const table = mrql.resultsSection.locator('table');
     await expect(table).toBeVisible();

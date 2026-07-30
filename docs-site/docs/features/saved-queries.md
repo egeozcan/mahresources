@@ -225,7 +225,16 @@ curl -X POST "http://localhost:8181/v1/query/run?id=3" \
   -d '{"tagName": "photography"}'
 ```
 
-Response is a JSON array of row objects.
+Response is a JSON array of row objects. The members of each object appear in the
+order the query's `SELECT` list names them, not alphabetically — so
+`SELECT name AS zebra, id AS apple` returns `{"zebra": …, "apple": …}`. A column
+name that repeats (`SELECT id, id`, or a join of two tables that both have `id`)
+is disambiguated with a `:2`, `:3` suffix on the later occurrences so no value is
+dropped.
+
+A text column whose contents happen to spell a number or a boolean keeps its
+string type. Only a value that begins with `{` or `[` is inlined as a JSON
+document.
 
 ### Get Database Schema
 

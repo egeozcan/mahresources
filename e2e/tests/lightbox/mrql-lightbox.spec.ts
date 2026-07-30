@@ -121,8 +121,9 @@ test.describe('MRQL default resource card lightbox', () => {
     await mrql.enterQuery(`${flatQuery} GROUP BY contentType`);
     await mrql.executeQuery();
 
-    // Bucketed mode: heading mentions groups, thumbnails live inside bucket grids
-    await expect(mrql.resultsSection.locator('h2')).toContainText('groups');
+    // Bucketed mode: heading mentions groups, thumbnails live inside bucket grids.
+    // Finding 158: pluralised, so one bucket reads "(1 group, N items)".
+    await expect(mrql.resultsSection.locator('h2')).toHaveText(/\(\d+ groups?,/);
 
     const thumbnail = mrql.resultsSection.locator('[data-lightbox-item]').first();
     await expect(thumbnail).toBeVisible();

@@ -29,6 +29,21 @@ const _timers = {};            // key -> debounce timer id
 let _loaded = false;           // true only after a SUCCESSFUL GET
 let _loadPromise = null;       // shared promise, resolves once the GET settles (ok or give-up)
 
+// Finding 95: the category-template preview renders the slot inside a
+// sandbox="allow-scripts" iframe, which runs the whole app bundle from an opaque
+// origin ("null"). Every /v1/... request from there is a cross-origin request the
+// server does not permit, so the initial GET failed three times (LOAD_RETRIES)
+// and produced six console errors per render — 6, 18, 30 as the author pressed
+// Refresh. The preview does not need the network: the host page already has
+// these values and seeds them into the frame's document, and this module then
+// serves reads from that snapshot and never issues a request of its own.
+const _seeded = typeof window !== 'undefined'
+  && window.__mahUserSettings
+  && typeof window.__mahUserSettings === 'object'
+  ? window.__mahUserSettings
+  : null;
+const _offline = _seeded !== null;
+
 function clone(value) {
   if (value === null || typeof value !== 'object') return value;
   try {
@@ -43,6 +58,9 @@ function sleep(ms) {
 }
 
 async function putNow(key, value, keepalive = false) {
+  // Finding 95: a seeded (preview-iframe) page is read-only. A PUT from an
+  // opaque origin is another CORS failure, and there is no user to persist for.
+  if (_offline) return false;
   try {
     const res = await fetch(`/v1/account/settings/${encodeURIComponent(key)}`, {
       method: 'PUT',
@@ -119,6 +137,15 @@ function removeLegacy(m) {
 }
 
 async function load() {
+  // Finding 95: preview iframes are seeded by the host page — no request at all.
+  if (_offline) {
+    for (const [k, v] of Object.entries(_seeded)) {
+      if (!_dirty.has(k)) _cache[k] = v;
+    }
+    _loaded = true;
+    return;
+  }
+
   let serverData = null;
   for (let attempt = 0; attempt < LOAD_RETRIES; attempt++) {
     try {
@@ -150,6 +177,7 @@ async function load() {
 }
 
 function flushAllOnHide() {
+  if (_offline) return;
   for (const key of Array.from(_dirty)) {
     clearTimeout(_timers[key]);
     if (_loaded && _cache[key] !== undefined) putNow(key, _cache[key], true);
@@ -180,6 +208,16 @@ export function get(key) {
 }
 
 /**
+ * Every known setting as one plain object. Used to hand the current values to a
+ * page that cannot fetch them itself — the sandboxed template-preview iframe
+ * (finding 95). Returns whatever has loaded so far rather than waiting: the
+ * preview is cosmetic and must never block on the settings request.
+ */
+export function snapshot() {
+  return clone(_cache) || {};
+}
+
+/**
  * Write a setting. Fire-and-forget: updates the in-page cache immediately and schedules
  * a debounced PUT. Before the initial load succeeds it only caches (never PUTs), so a
  * default value cannot overwrite real server data.
@@ -193,4 +231,4 @@ export function set(key, value) {
 // Start loading as early as possible so consumers' whenLoaded() resolves quickly.
 if (typeof window !== 'undefined') whenLoaded();
 
-export default { whenLoaded, isLoaded, get, set };
+export default { whenLoaded, isLoaded, get, set, snapshot };

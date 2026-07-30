@@ -53,6 +53,12 @@ type NoteSharer interface {
 	UnshareNote(noteId uint) error
 	GetNoteByShareToken(token string) (*models.Note, error)
 	BulkUnshareNotes(ids []uint) (int, error)
+	// ShareEnabled reports whether a /s/<token> URL can actually be served.
+	// Finding 7: the endpoint minted tokens with no such check, so with sharing
+	// switched off it answered 200 with a link the primary server has no route
+	// for. Revoking stays available whatever this says — a note already marked
+	// shared must always be un-shareable.
+	ShareEnabled() bool
 }
 
 // BulkNoteTagEditor handles bulk tag operations on notes

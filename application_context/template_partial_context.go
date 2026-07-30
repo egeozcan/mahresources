@@ -64,7 +64,11 @@ func (ctx *MahresourcesContext) CreateOrUpdateTemplatePartial(query *query_model
 	partial.Content = query.Content
 
 	if err := ctx.db.Save(&partial).Error; err != nil {
-		return nil, err
+		// Finding 157, found live while checking the form round trip: a duplicate
+		// name surfaced as the raw `UNIQUE constraint failed:
+		// template_partials.name` in the form's error banner. Every other entity
+		// already goes through friendlyUniqueNameError.
+		return nil, friendlyUniqueNameError("template partial", partial.Name, err)
 	}
 
 	if isNew {

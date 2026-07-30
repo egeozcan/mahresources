@@ -380,12 +380,11 @@ func GetTableBlockQueryDataHandler(ctx contracts.TableBlockQueryRunner) func(htt
 		}
 
 		// Add row IDs to each row
+		// This response carries its own ordered `columns` list, so the rows do
+		// not depend on JSON member order and a plain map is fine here.
 		rowsWithIDs := make([]map[string]any, len(resultMap))
 		for i, row := range resultMap {
-			rowWithID := make(map[string]any)
-			for k, v := range row {
-				rowWithID[k] = v
-			}
+			rowWithID := row.Map()
 			rowWithID["id"] = "row_" + strconv.Itoa(i)
 			rowsWithIDs[i] = rowWithID
 		}

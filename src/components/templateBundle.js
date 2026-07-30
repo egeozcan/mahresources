@@ -31,6 +31,34 @@ const CARRIERS = {
 
 const BUNDLE_SCHEMA_VERSION = 1;
 
+// constants.MaxResultsPerPage on the server. A full page means there may be more.
+const PAGE_SIZE = 50;
+// Bound on how far loadSources() will page, so a pathological taxonomy cannot
+// turn opening a form into an unbounded fetch loop. Hitting it is reported.
+const SOURCE_PAGE_LIMIT = 20;
+
+// fetchAllPages walks ?page=1..N until a short page arrives, and reports whether
+// it reached the end or stopped at the page cap.
+export async function fetchAllPages(url, fetchImpl = fetch) {
+  const items = [];
+  for (let page = 1; page <= SOURCE_PAGE_LIMIT; page++) {
+    let batch;
+    try {
+      const sep = url.includes('?') ? '&' : '?';
+      const resp = await fetchImpl(`${url}${sep}page=${page}`, { headers: { Accept: 'application/json' } });
+      if (!resp.ok) return { items, complete: true };
+      const data = await resp.json();
+      batch = Array.isArray(data) ? data : [];
+    } catch {
+      // Network failure mid-walk: keep what arrived rather than losing the lot.
+      return { items, complete: true };
+    }
+    items.push(...batch);
+    if (batch.length < PAGE_SIZE) return { items, complete: true };
+  }
+  return { items, complete: false };
+}
+
 export function templateBundle({ carrier } = {}) {
   return {
     carrier,
@@ -147,6 +175,25 @@ export function templateBundle({ carrier } = {}) {
       };
     },
 
+    // Finding 154: applying a preset replaced authored template content with no
+    // prompt. It is recoverable — Cmd+Z in the editor restores it and nothing is
+    // persisted until Save — but nothing said so, and a preset applied by
+    // accident looks exactly like losing the work. Named per the campaign's
+    // confirmation-wording decision: say what will be replaced and how much.
+    //
+    // Returns true when the caller may proceed. Empty slots need no prompt at
+    // all, which is the common case on a create form.
+    confirmOverwrite(sourceLabel) {
+      const filled = Object.values(SLOT_FIELDS)
+        .filter((field) => this.getEditor(field).trim() !== '');
+      if (this.getEditor('MetaSchema').trim() !== '') filled.push('MetaSchema');
+      if (filled.length === 0) return true;
+      const what = filled.length === 1 ? '1 template field' : `${filled.length} template fields`;
+      return window.confirm(
+        `Replace ${what} with ${sourceLabel}? The current content is discarded (undo in the editor still works, and nothing is saved until you press Save).`,
+      );
+    },
+
     // applyBundle fills the form from a bundle. Slots and metaSchema always
     // apply; SectionConfig only applies when the source carrier matches (shapes
     // differ per carrier). Name/description are left untouched — this is a
@@ -180,21 +227,28 @@ export function templateBundle({ carrier } = {}) {
 
     // ---- Copy from an existing category ------------------------------------
 
+    // Finding 28: this issued one un-paged GET per carrier and the list
+    // endpoints return at most constants.MaxResultsPerPage (50) rows, ignoring
+    // any maxResults parameter. On an instance with 73 categories and 67 note
+    // types the picker offered 50 of each and the other 40 could never be used
+    // as a copy source, with nothing on screen saying the list was cut off.
+    // The endpoints do honour ?page=, so page until a short page arrives.
     async loadSources() {
       const entries = Object.entries(CARRIERS);
+      const truncated = [];
       await Promise.all(
         entries.map(async ([key, cfg]) => {
-          try {
-            const resp = await fetch(cfg.list, { headers: { Accept: 'application/json' } });
-            if (resp.ok) {
-              const data = await resp.json();
-              this.sources[key] = Array.isArray(data) ? data : [];
-            }
-          } catch {
-            /* leave empty on failure */
-          }
+          const { items, complete } = await fetchAllPages(cfg.list);
+          this.sources[key] = items;
+          if (!complete) truncated.push(cfg.label);
         }),
       );
+      if (truncated.length) {
+        this.notify(
+          `Showing the first ${SOURCE_PAGE_LIMIT * PAGE_SIZE} of the available ${truncated.join(' / ')} templates. Copy from a more specific one if the source you want is missing.`,
+          'warn',
+        );
+      }
     },
 
     copyFrom() {
@@ -208,6 +262,8 @@ export function templateBundle({ carrier } = {}) {
         this.notify('Could not find the selected source.', 'warn');
         return;
       }
+      // Finding 154: copy clobbers exactly as hard as a preset does.
+      if (!this.confirmOverwrite(`the template from "${obj.Name || 'the selected source'}"`)) return;
       this.applyBundle(this.entityToBundle(obj, sourceCarrier));
     },
 
@@ -243,6 +299,8 @@ export function templateBundle({ carrier } = {}) {
           this.notify('That file is not valid JSON.', 'warn');
           return;
         }
+        // Finding 154: import is the third path into applyBundle.
+        if (!this.confirmOverwrite(`the imported bundle "${file.name}"`)) return;
         this.applyBundle(bundle);
       };
       reader.readAsText(file);
@@ -278,6 +336,8 @@ export function templateBundle({ carrier } = {}) {
       if (!this.presetChoice) return;
       const preset = this.presets.find((p) => p.name === this.presetChoice);
       if (!preset) return;
+      // Finding 154: this is the path the report reproduced on.
+      if (!this.confirmOverwrite(`the "${preset.name}" preset`)) return;
       this.applyBundle(preset);
     },
 

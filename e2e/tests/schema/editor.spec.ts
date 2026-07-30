@@ -641,8 +641,13 @@ test.describe('Schema Editor Form Mode', () => {
   });
 
   test('resource form handles JS-breaking MetaSchema without XSS', async ({ page, apiClient }) => {
-    // Create a resource category with a MetaSchema that would break JS if injected raw
-    const maliciousSchema = "'; alert('xss'); '";
+    // Create a resource category with a MetaSchema that would break JS if injected
+    // raw. Findings 17/93 (2026-07-29 UI bug hunt) made the API reject a schema
+    // that is not parseable JSON, so the payload is valid JSON Schema carrying the
+    // same hostile quote sequence — which is the shape that matters anyway: a
+    // schema an author can legitimately save must not break the attribute it is
+    // injected into.
+    const maliciousSchema = JSON.stringify({ type: 'object', description: "'; alert('xss'); '" });
     const rcName = 'XSS Resource Test ' + Date.now();
     const rc = await apiClient.createResourceCategory(rcName, '', { MetaSchema: maliciousSchema });
 
@@ -666,14 +671,12 @@ test.describe('Schema Editor Form Mode', () => {
       // Page should NOT have crashed — no JS errors, no alert dialog
       expect(jsErrors).toHaveLength(0);
 
-      // The schema is invalid JSON, so the free-form fallback should be showing
-      // (schema-form-mode won't render for non-JSON MetaSchema)
-
       // Verify the page is still functional — the form submit button should be visible
       await expect(page.locator('button[type="submit"]')).toBeVisible();
 
-      // Verify no schema-form-mode rendered (invalid schema should fall back to freeFields)
-      await expect(page.locator('schema-form-mode')).not.toBeVisible();
+      // The payload is a valid schema now, so schema-form-mode is expected to
+      // render. What must NOT have happened is the injection: no page error above,
+      // and no alert dialog (an unhandled dialog fails the test in Playwright).
     } finally {
       await apiClient.deleteResourceCategory(rc.ID);
     }

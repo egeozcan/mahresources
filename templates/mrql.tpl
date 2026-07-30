@@ -519,8 +519,9 @@
                 <div class="flex items-center justify-between gap-2 flex-wrap">
                     <h2 class="text-base font-semibold font-mono text-stone-800">
                         Results
+                        {# Findings 125/158: singular/plural, from resultCountLabel. #}
                         <span class="text-sm font-normal text-stone-500"
-                              x-text="result.mode === 'aggregated' ? '(' + totalCount + ' rows)' : result.mode === 'bucketed' ? '(' + (result.groups?.length || 0) + ' groups, ' + totalCount + ' items)' : '(' + totalCount + ' items)'"></span>
+                              x-text="resultCountLabel"></span>
                     </h2>
                     <div class="flex items-center gap-2">
                         {# Package 4: export the current query + params as a download. #}
@@ -543,8 +544,11 @@
                     </div>
                 </div>
 
-                {# BH-013: default-limit banner — shown when no explicit LIMIT was supplied. #}
-                <template x-if="defaultLimitApplied">
+                {# BH-013: default-limit banner. Finding 125: it used to fire on every #}
+                {# query with no explicit LIMIT, so a single-row result carried a      #}
+                {# full-width warning telling the reader to paginate. resultsTruncated #}
+                {# is true only when the row count actually reached the limit.         #}
+                <template x-if="resultsTruncated">
                     <div data-testid="mrql-default-limit-banner"
                          class="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800 font-mono"
                          role="status">

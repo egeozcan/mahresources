@@ -11,7 +11,7 @@ import (
 )
 
 func TestShareNote_PostBody_ReadsNoteId(t *testing.T) {
-	tc := SetupTestEnv(t)
+	tc := setupShareEnabledTestEnv(t) // finding 7: sharing needs a configured share server
 	note := tc.CreateDummyNote("Share Via POST Body")
 
 	// Bug: POST /v1/note/share uses GetUIntQueryParameter which only reads
@@ -32,7 +32,7 @@ func TestShareNote_PostBody_ReadsNoteId(t *testing.T) {
 }
 
 func TestUnshareNote_PostBody_ReadsNoteId(t *testing.T) {
-	tc := SetupTestEnv(t)
+	tc := setupShareEnabledTestEnv(t) // finding 7: sharing needs a configured share server
 	note := tc.CreateDummyNote("Unshare Via POST Body")
 
 	// First share the note via query param (known working path)

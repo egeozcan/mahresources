@@ -65,6 +65,9 @@ type AccountPageContext interface {
 type AdminSettingsPageContext interface {
 	Settings() *application_context.RuntimeSettings
 	Configuration() *application_context.MahresourcesConfig
+	// ShareServerFailed distinguishes "share port 8383" from "share port 8383 and
+	// nothing is listening on it" (finding 51).
+	ShareServerFailed() bool
 }
 
 // AdminSharesPageContext serves /admin/shares.
@@ -136,6 +139,10 @@ type NotePageContext interface {
 	CheckMRQLFilter(entity mrql.EntityType, expr string) *application_context.MRQLFilterError
 	Settings() *application_context.RuntimeSettings
 	ShareEnabled() bool
+	// ShareConfigured is "an operator asked for sharing", where ShareEnabled is
+	// "sharing works". They differ exactly when the share server failed to bind
+	// (finding 51), which is the case the note sidebar has to explain.
+	ShareConfigured() bool
 	selectionHydrator
 }
 

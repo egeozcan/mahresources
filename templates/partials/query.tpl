@@ -24,8 +24,14 @@
         </header>
 
         {% if !noDescription && entity.Text %}
+        {# Finding 82: this used to go through partials/description.tpl with        #}
+        {# preview=true, whose preview branch runs the pongo2-addons `markdown`     #}
+        {# filter — blackfriday with Smartypants — so '' became a curly quote, --   #}
+        {# an en dash and ... an ellipsis. SQL copied off a card was invalid. SQL   #}
+        {# is code, not prose: render it verbatim in a <code> block and never send  #}
+        {# it through a markdown filter.                                            #}
         <div class="card-description">
-            {% include "partials/description.tpl" with description=entity.Text descriptionEntity=entity preview=true %}
+            <pre class="query-card-sql"><code>{{ entity.Text|truncatechars:250 }}</code></pre>
         </div>
         {% endif %}
     </div>

@@ -21,6 +21,23 @@ func GetShareNoteHandler(ctx contracts.NoteSharer) func(writer http.ResponseWrit
 		// Enable request-aware logging if the context supports it
 		effectiveCtx := withRequestContext(ctx, request).(contracts.NoteSharer)
 
+		// Finding 7: minting a share token when nothing serves /s/<token> hands the
+		// user a dead link and marks the note "Shared" in /admin/shares. The note
+		// sidebar has been gated on ShareEnabled() for a while; this endpoint was
+		// not, so the API said 200 and GET /s/<token> said 404 on the only server
+		// running. 503 rather than 400: the request is fine, the feature is not
+		// available in this deployment.
+		if !effectiveCtx.ShareEnabled() {
+			http_utils.HandleError(
+				errors.New("note sharing is not available: no share server is running "+
+					"(set -share-port / SHARE_PORT to enable it)"),
+				writer,
+				request,
+				http.StatusServiceUnavailable,
+			)
+			return
+		}
+
 		noteId := http_utils.GetUIntFormValue(request, "noteId", 0)
 		if noteId == 0 {
 			http_utils.HandleError(

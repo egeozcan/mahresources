@@ -16,7 +16,7 @@ import (
 // columns + array rows) must render, not 500. Before normalization, pongo2
 // errored on `col.label` against a string and aborted the whole page.
 func TestSharedNote_ArrayFormatTable_RendersWithoutCrash(t *testing.T) {
-	tc := SetupTestEnv(t)
+	tc := setupShareEnabledTestEnv(t) // finding 7: sharing needs a configured share server
 	shareRouter := setupShareServer(t, tc)
 
 	note := tc.CreateDummyNote("array-table-note")

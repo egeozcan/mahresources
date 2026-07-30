@@ -4,8 +4,45 @@
  * Bug 1 (P1): Stored XSS via MetaSchema injection into Alpine x-data
  * Bug 2 (P1): Category/schema change drops in-progress Meta edits
  * Bug 3 (P2): Opening modal on already-invalid MetaSchema lets Apply through
+ *
+ * Reworked for findings 17/93 (2026-07-29 UI bug hunt), which made the API reject
+ * a MetaSchema that is not parseable JSON — so these fixtures can no longer plant
+ * one over HTTP. The guards are unchanged in substance:
+ *
+ *  - Bug 1's XSS payload is now valid JSON Schema that still carries the hostile
+ *    quote sequence (`{"description": "'; alert('xss'); '"}`). That is the same
+ *    attack on the same escaping path, and it is the shape that matters: a schema
+ *    an author can legitimately save must not be able to break the x-data
+ *    attribute it is injected into.
+ *  - The "stored schema is not JSON at all" cases are legacy data — a row written
+ *    before validation existed, by a plugin (mah.db.* bypasses it), or by hand.
+ *    They moved to server/api_tests/ws12_taxonomy_authoring_test.go, where the
+ *    row can be planted directly and where CI actually runs them.
+ *  - Bug 3's subject is the modal reading the form field, so it types the invalid
+ *    schema into the field instead of persisting it.
  */
 import { test, expect } from '../../fixtures/base.fixture';
+
+/**
+ * Put an unparseable schema into the MetaSchema field without persisting it.
+ * Findings 17/93 made the API reject such a value, and the Visual Editor modal
+ * reads the field rather than the database, so this preserves Bug 3's subject
+ * exactly. The CodeMirror view owns the field, so drive it rather than the input.
+ */
+async function setInvalidSchemaField(page: import('@playwright/test').Page, value: string) {
+  await page.waitForFunction(() => {
+    const input = document.querySelector('input[name="MetaSchema"], #metaSchemaTextarea');
+    const container = input?.closest('[x-data]')?.querySelector('[x-ref="editorContainer"]');
+    return !!(container as never as { _cmView?: unknown })?._cmView;
+  }, undefined, { timeout: 20000 });
+  await page.evaluate((v) => {
+    const input = document.querySelector('input[name="MetaSchema"], #metaSchemaTextarea') as HTMLInputElement;
+    const view = (input.closest('[x-data]')!.querySelector('[x-ref="editorContainer"]') as never as {
+      _cmView: { state: { doc: { length: number } }; dispatch: (t: unknown) => void };
+    })._cmView;
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: v } });
+  }, value);
+}
 
 // ── Bug 1: MetaSchema injection into Alpine x-data ─────────────────────────
 
@@ -13,10 +50,12 @@ test.describe('Bug 1: MetaSchema injection into Alpine x-data', () => {
   test('group edit page does not crash when category has JS-breaking MetaSchema', async ({ page, apiClient }) => {
     // Create a category with MetaSchema that would break JavaScript if
     // injected unescaped into an x-data expression
+    // Valid JSON Schema carrying the hostile quote sequence, so it passes the
+    // findings 17/93 write validation and still attacks the x-data injection.
     const cat = await apiClient.createCategory(
       `XSS Schema Test ${Date.now()}`,
       'Category with JS-breaking MetaSchema',
-      { MetaSchema: "'; alert('xss'); '" }
+      { MetaSchema: JSON.stringify({ type: 'object', description: "'; alert('xss'); '" }) }
     );
 
     // Create a group with that category so the group edit page will render
@@ -46,64 +85,13 @@ test.describe('Bug 1: MetaSchema injection into Alpine x-data', () => {
     }
   });
 
-  test('group edit page does not crash with non-JSON MetaSchema', async ({ page, apiClient }) => {
-    const cat = await apiClient.createCategory(
-      `XSS Schema NonJSON Test ${Date.now()}`,
-      'Category with non-JSON MetaSchema',
-      { MetaSchema: 'this is not json' }
-    );
-
-    const group = await apiClient.createGroup({
-      name: `XSS Test Group2 ${Date.now()}`,
-      categoryId: cat.ID,
-    });
-
-    try {
-      const jsErrors: string[] = [];
-      page.on('pageerror', (err) => jsErrors.push(err.message));
-
-      await page.goto(`/group/edit?id=${group.ID}`);
-      await page.waitForLoadState('load');
-
-      expect(jsErrors).toHaveLength(0);
-      await expect(page.locator('button[type="submit"]')).toBeVisible();
-    } finally {
-      await apiClient.deleteGroup(group.ID);
-      await apiClient.deleteCategory(cat.ID);
-    }
-  });
-
-  test('dynamic category selection handles invalid MetaSchema without crashing', async ({ page, apiClient }) => {
-    // Test the dynamic selection path (via autocompleter) as well
-    const cat = await apiClient.createCategory(
-      `XSS Dynamic Test ${Date.now()}`,
-      'Category with non-JSON MetaSchema',
-      { MetaSchema: 'this is not json' }
-    );
-
-    try {
-      const jsErrors: string[] = [];
-      page.on('pageerror', (err) => jsErrors.push(err.message));
-
-      await page.goto('/group/new');
-      await page.waitForLoadState('load');
-
-      const categoryInput = page.getByRole('combobox', { name: 'Category' });
-      await categoryInput.click();
-      await categoryInput.fill(cat.Name);
-
-      const option = page.locator('div[role="option"]:visible').filter({ hasText: cat.Name }).first();
-      await option.waitFor({ timeout: 10000 });
-      await option.click();
-      await option.waitFor({ state: 'hidden', timeout: 3000 }).catch(() => {});
-      await page.waitForTimeout(500);
-
-      expect(jsErrors).toHaveLength(0);
-      await expect(page.locator('button[type="submit"]')).toBeVisible();
-    } finally {
-      await apiClient.deleteCategory(cat.ID);
-    }
-  });
+  // The two "stored MetaSchema is not JSON at all" cases that used to live here
+  // (the group edit page, and dynamic category selection through the
+  // autocompleter) moved to TestFormsSurviveALegacyNonJSONMetaSchema in
+  // server/api_tests/ws12_taxonomy_authoring_test.go. Findings 17/93 made the API
+  // refuse to create such a category, so the fixture has to plant the row
+  // directly — which Go can do and a browser cannot. The escaping the browser
+  // tests were really about is asserted there on the served markup.
 });
 
 // ── Bug 2: Category/schema change drops in-progress Meta edits ─────────────
@@ -183,17 +171,16 @@ test.describe('Bug 2: Category change drops in-progress Meta edits', () => {
 
 test.describe('Bug 3: Modal Apply enabled on invalid MetaSchema', () => {
   test('disables Apply when opened on invalid MetaSchema', async ({ page, apiClient }) => {
-    const cat = await apiClient.createCategory(
-      `Invalid Schema Modal Test ${Date.now()}`,
-      undefined,
-      { MetaSchema: 'this is not valid json {{{' }
-    );
+    const cat = await apiClient.createCategory(`Invalid Schema Modal Test ${Date.now()}`);
 
     try {
       await page.goto(`/category/edit?id=${cat.ID}`);
       await page.waitForLoadState('load');
 
-      // The MetaSchema textarea should contain the invalid content
+      // The modal reads the form field, not the database, so put the invalid
+      // schema in the field. Findings 17/93 stopped the API accepting one, and
+      // this test's subject is the modal — not persistence.
+      await setInvalidSchemaField(page, 'this is not valid json {{{');
       const textarea = page.locator('#metaSchemaTextarea');
       const value = await textarea.inputValue();
       expect(value).toBe('this is not valid json {{{');
@@ -213,15 +200,13 @@ test.describe('Bug 3: Modal Apply enabled on invalid MetaSchema', () => {
   });
 
   test('enables Apply after fixing invalid MetaSchema in raw tab', async ({ page, apiClient }) => {
-    const cat = await apiClient.createCategory(
-      `Fix Schema Modal Test ${Date.now()}`,
-      undefined,
-      { MetaSchema: 'broken json!!!' }
-    );
+    const cat = await apiClient.createCategory(`Fix Schema Modal Test ${Date.now()}`);
 
     try {
       await page.goto(`/category/edit?id=${cat.ID}`);
       await page.waitForLoadState('load');
+
+      await setInvalidSchemaField(page, 'broken json!!!');
 
       // Open the visual editor modal
       await page.locator('.visual-editor-btn').click();

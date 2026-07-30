@@ -1,6 +1,7 @@
 package api_handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,13 +18,16 @@ import (
 	"mahresources/server/http_utils"
 )
 
-func sQLToMap(rows *sqlx.Rows) ([]map[string]any, error) {
+// sQLToMap converts a raw-SQL result set into rows that serialize with their
+// columns in the query's own order (finding 147 — see contracts.OrderedRow for
+// why the response shape is unchanged).
+func sQLToMap(rows *sqlx.Rows) ([]contracts.OrderedRow, error) {
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, fmt.Errorf("column error: %v", err)
 	}
 
-	data := make([]map[string]any, 0)
+	data := make([]contracts.OrderedRow, 0)
 
 	for rows.Next() {
 		columns := make([]any, len(cols))
@@ -36,26 +40,18 @@ func sQLToMap(rows *sqlx.Rows) ([]map[string]any, error) {
 			return nil, err
 		}
 
-		m := make(map[string]any)
-		for i, colName := range cols {
-
-			switch columns[i].(type) {
-			case []uint8:
-				var jsonVal json.RawMessage
-				if err := json.Unmarshal(columns[i].([]byte), &jsonVal); err == nil {
-					m[colName] = jsonVal
-				} else {
-					val := columnPointers[i].(*any)
-					m[colName] = *val
+		values := make([]any, len(cols))
+		for i := range cols {
+			val := *(columnPointers[i].(*any))
+			if raw, ok := val.([]uint8); ok {
+				if embedded, ok := embeddedJSON(raw); ok {
+					val = embedded
 				}
-			default:
-				val := columnPointers[i].(*any)
-				m[colName] = *val
 			}
-
+			values[i] = val
 		}
 
-		data = append(data, m)
+		data = append(data, contracts.NewOrderedRow(cols, values))
 	}
 
 	if err := rows.Err(); err != nil {
@@ -63,6 +59,28 @@ func sQLToMap(rows *sqlx.Rows) ([]map[string]any, error) {
 	}
 
 	return data, nil
+}
+
+// embeddedJSON decides whether a text/blob column holds a JSON document that
+// should be re-emitted as structure rather than as a string. Several columns
+// really are JSON (`meta`, `section_config`), and inlining them keeps a saved
+// query's output usable.
+//
+// Finding 147, second half: this used to attempt json.Unmarshal on *every*
+// []uint8 value, so a text column containing `123` came back as the number 123,
+// `true` as a boolean and `null` as null — a silent type change driven by the
+// contents of the cell. Only an object or an array is treated as embedded JSON
+// now; a bare scalar keeps the type the column has.
+func embeddedJSON(raw []byte) (json.RawMessage, bool) {
+	trimmed := bytes.TrimLeft(raw, " \t\r\n")
+	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return nil, false
+	}
+	var out json.RawMessage
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, false
+	}
+	return out, true
 }
 
 func GetDatabaseSchemaHandler(ctx contracts.SchemaReader) func(writer http.ResponseWriter, request *http.Request) {
