@@ -303,15 +303,38 @@ describe('review finding 4 — the keyboard shortcut has somewhere to return foc
         expect(component._lastTrigger).toBe(clicked);
     });
 
-    test('closing does not clear the trigger, so a reopen still has a floor', () => {
+    test('a reopen does not return to a trigger captured on an earlier open', () => {
+        // The floor is the trigger element, not `this._lastTrigger`. A control captured
+        // on a previous open may be long gone from the page — the panel's own rows are
+        // rebuilt constantly — and restoring to a detached node lands on <body>.
+        const stale = { tagName: 'A' };
         const trigger = { tagName: 'BUTTON' };
         component._trigger = trigger;
-        vi.stubGlobal('document', { activeElement: {}, body: {}, documentElement: {} });
 
+        vi.stubGlobal('document', { activeElement: stale, body: {}, documentElement: {} });
         component.toggle();
-        expect(component.isOpen).toBe(true);
         component.toggle();
         expect(component.isOpen).toBe(false);
-        expect(component._trigger).toBe(trigger);
+
+        // Second open, with focus nowhere: the stale capture must not be reused.
+        const body = { tagName: 'BODY' };
+        vi.stubGlobal('document', { activeElement: body, body, documentElement: {} });
+        component.toggle();
+
+        expect(component._lastTrigger).toBe(trigger);
+    });
+
+    test('an event-less open from elsewhere still captures where the reader was', () => {
+        // `jobs-panel-open` and an incoming plugin action job both set isOpen directly.
+        // openFromEvent is what those paths call so the reader is returned to the
+        // control they were on, rather than to the panel's own trigger.
+        const input = { tagName: 'INPUT' };
+        vi.stubGlobal('document', { activeElement: input, body: {}, documentElement: {} });
+        component._trigger = { tagName: 'BUTTON' };
+
+        component.openFromEvent();
+
+        expect(component.isOpen).toBe(true);
+        expect(component._lastTrigger).toBe(input);
     });
 });

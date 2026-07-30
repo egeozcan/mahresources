@@ -43,6 +43,30 @@ function rowFor(page: Page, id: string): Locator {
   return page.locator(`[data-testid="cockpit-panel"] [data-job-id="${id}"]`);
 }
 
+/**
+ * Wait for `document.activeElement` to stop moving, and report what it is.
+ *
+ * Two identical consecutive samples rather than one matching sample: the focus trap
+ * arms on a timeout and the panel's teardown moves focus, so the first non-body value
+ * seen is not necessarily where the reader is left.
+ */
+async function settledFocus(page: Page): Promise<string> {
+  const describe = () =>
+    page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      if (!el || el === document.body) return 'body';
+      return `${el.tagName.toLowerCase()}#${el.id}.${el.className}|${(el.textContent || '').trim().slice(0, 40)}`;
+    });
+  let previous = await describe();
+  for (let i = 0; i < 40; i++) {
+    await page.waitForTimeout(50);
+    const current = await describe();
+    if (current === previous && current !== 'body') return current;
+    previous = current;
+  }
+  return previous;
+}
+
 /** The position of each job's row in the rendered list, or -1 when it is absent. */
 async function rowPositions(page: Page, ids: string[]): Promise<number[]> {
   return page.evaluate((wanted) => {
@@ -261,6 +285,12 @@ test.describe('finding 40 — newest first, and finished jobs can be dismissed',
 
     await page.locator('[data-testid="cockpit-clear-completed"]').click();
 
+    // Why this can fail against the old client, rather than passing for the wrong
+    // reason: the racer's terminal `updated` is emitted by its worker before the route
+    // handler above observes `cancelled`, which is before the clear is handled and its
+    // `removed` is emitted. Both events reach the browser on one ordered SSE stream, so
+    // by the time `removed` arrives the client's copy of the racer is terminal — and
+    // the old `removed` handler retains a terminal job it has not been told to dismiss.
     await expect.poll(() => jobStatus(page, racer), { timeout: 10_000 }).toBe('http-404');
     // The row must not be retained for display: the server has no such job, so the
     // panel would be showing a job that does not exist until the next reconnect.
@@ -375,11 +405,10 @@ test('review finding 4 — closing the panel opened by its shortcut returns focu
   await page.keyboard.press('Escape');
   await expect(panel).toHaveCount(0);
 
-  // Poll for focus to settle, then assert once: expect.poll returns on its first
-  // matching sample, so polling for the answer cannot say where focus ended up.
-  await expect
-    .poll(() => page.evaluate(() => document.activeElement?.tagName.toLowerCase() ?? 'null'))
-    .not.toBe('body');
+  // Poll for focus to *settle*, then assert once. `expect.poll` returns on its first
+  // matching sample, so a poll for "not body" can be satisfied by a transient landing
+  // and say nothing about where focus ended up.
+  await settledFocus(page);
   const landed = await page.evaluate(() => {
     const el = document.activeElement as HTMLElement | null;
     return { tag: el?.tagName.toLowerCase() ?? 'null', text: (el?.textContent || '').trim() };
@@ -404,9 +433,7 @@ test('review finding 4 — with focus nowhere, the panel still hands it back to 
   await page.keyboard.press('Escape');
   await expect(page.locator('[data-testid="cockpit-panel"]')).toHaveCount(0);
 
-  await expect
-    .poll(() => page.evaluate(() => document.activeElement?.tagName.toLowerCase() ?? 'null'))
-    .not.toBe('body');
+  await settledFocus(page);
   const onTrigger = await page.evaluate(
     () => document.activeElement?.closest('[data-testid="cockpit-trigger"]') !== null,
   );

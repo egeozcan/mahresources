@@ -61,7 +61,7 @@ export function downloadCockpit() {
             }
 
             // Listen for jobs-panel-open event (e.g., from pluginActionModal)
-            window.addEventListener('jobs-panel-open', () => { this.isOpen = true; });
+            window.addEventListener('jobs-panel-open', () => this.openFromEvent());
 
             // Listen for keyboard shortcut: Cmd/Ctrl+Shift+D
             this._keydownHandler = (e) => {
@@ -104,6 +104,22 @@ export function downloadCockpit() {
                 document.removeEventListener('keydown', this._keydownHandler);
             }
             this.disconnect();
+        },
+
+        /**
+         * Open the panel from something that is not the trigger: the
+         * `jobs-panel-open` window event, or a plugin action job arriving over SSE.
+         *
+         * These set isOpen directly, so they used to leave nothing to return focus to
+         * and the reader came back to the panel's trigger instead of the control they
+         * were actually on. Where they were is knowable — read it before the panel
+         * mounts and moves focus inside.
+         */
+        openFromEvent() {
+            if (!this.isOpen) {
+                this._lastTrigger = focusedElement() ?? this._trigger;
+            }
+            this.isOpen = true;
         },
 
         toggle(event) {
@@ -200,7 +216,7 @@ export function downloadCockpit() {
                 const { job } = JSON.parse(e.data);
                 job._isAction = true;
                 this.jobs.push(job);
-                this.isOpen = true;
+                this.openFromEvent();
                 this.announce(`Action started: ${job.label}`);
             });
 

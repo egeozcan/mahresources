@@ -57,6 +57,12 @@ function isExcluded(el) {
 }
 
 export function setupHoverCard() {
+  // Announces that the delegated listeners are attached. A hover that lands before
+  // that point is simply lost — nothing retries it — and `window.Alpine` being defined
+  // is not a usable signal for that: it is assigned before Alpine.start() walks the
+  // document, and this runs after. Waited on by e2e/tests/accessibility/20-a11y-hover-cards.spec.ts.
+  document.documentElement.dataset.hovercardReady = '1';
+
   const reducedMotion =
     window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 

@@ -53,7 +53,7 @@ func TestDownloadWorker_KeepsUserSuppliedName(t *testing.T) {
 		ctx: context.Background(),
 	}
 
-	if _, err := dm.downloadWithProgress(job); err != nil {
+	if _, err := dm.downloadWithProgress(job.GetContext(), job); err != nil {
 		t.Fatalf("downloadWithProgress: %v", err)
 	}
 	if !rc.called {
@@ -84,7 +84,7 @@ func TestDownloadWorker_FallsBackToURLSegment(t *testing.T) {
 		ctx:     context.Background(),
 	}
 
-	if _, err := dm.downloadWithProgress(job); err != nil {
+	if _, err := dm.downloadWithProgress(job.GetContext(), job); err != nil {
 		t.Fatalf("downloadWithProgress: %v", err)
 	}
 	if rc.resourceName != "sunset.jpg" {

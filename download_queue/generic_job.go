@@ -96,11 +96,16 @@ func (m *DownloadManager) SubmitJob(source, initialPhase string, runFn JobRunFn)
 // processGenericJob runs runFn under the shared semaphore and broadcasts
 // the terminal state to subscribers.
 func (m *DownloadManager) processGenericJob(j *DownloadJob) {
+	// The attempt this goroutine owns, and the context to judge its result by. Read
+	// once, as in processJob: Retry installs a fresh context, and a stale attempt must
+	// not classify itself against it.
+	runID, ctx := j.attempt()
+
 	// Acquire semaphore (blocks if MaxConcurrentDownloads jobs already running)
 	select {
 	case m.semaphore <- struct{}{}:
-	case <-j.ctx.Done():
-		if j.finish(JobStatusCancelled, "", 0, time.Now()) {
+	case <-ctx.Done():
+		if j.finish(runID, JobStatusCancelled, "", 0, time.Now()) {
 			m.notifySubscribers(JobEvent{Type: "updated", Job: j.Snapshot()})
 		}
 		return
@@ -108,29 +113,32 @@ func (m *DownloadManager) processGenericJob(j *DownloadJob) {
 	defer func() { <-m.semaphore }()
 
 	// Claimed for the same reason processJob claims its own start. A generic job can
-	// never be paused, so the refusal is unreachable today; it is here so the one
-	// discipline covers both workers rather than only the one that needed it.
-	if !j.claimStart(JobStatusProcessing, time.Now()) {
+	// never be paused, so the status half of the refusal is unreachable today; the
+	// generation half is not — a Retry while this attempt was starting would bump it.
+	if !j.claimStart(runID, JobStatusProcessing, time.Now()) {
 		return
 	}
 	m.notifySubscribers(JobEvent{Type: "updated", Job: j.Snapshot()})
 
 	sink := &managedSink{m: m, j: j}
-	err := j.runFn(j.ctx, j, sink)
+	err := j.runFn(ctx, j, sink)
 
+	// The context outranks the return value. A runFn may honour cancellation by
+	// stopping and returning nil — "I gave up, and that is not an error" — and
+	// reporting that as `completed` made Cancel's 200 a lie: the panel said an export
+	// had finished when it had been abandoned, with a partial tar or none at all.
+	// Unlike a download, an abandoned generic job has no created resource to orphan by
+	// calling it what it is.
 	status, errMsg := JobStatusCompleted, ""
 	switch {
-	case err != nil && j.ctx.Err() != nil:
+	case ctx.Err() != nil:
 		status = JobStatusCancelled
 	case err != nil:
 		status, errMsg = JobStatusFailed, err.Error()
 	}
 
-	// One atomic terminal write, as in processJob. A generic job can never be paused
-	// (CanPause refuses anything with a runFn), so this only ever returns false if
-	// that changes — and if it does, CompletedAt must not have been stamped on a job
-	// that is still going, which is why the stamp now lives inside finish.
-	if !j.finish(status, errMsg, 0, time.Now()) {
+	// One atomic terminal write, as in processJob.
+	if !j.finish(runID, status, errMsg, 0, time.Now()) {
 		return
 	}
 	m.notifySubscribers(JobEvent{Type: "updated", Job: j.Snapshot()})

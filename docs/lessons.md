@@ -799,3 +799,62 @@ does not).
 Assert it with `elementFromPoint` over a point inside the element that should be covered, plus
 the same probe with the modal closed as the precondition. Reading the computed `z-index` back
 passes against the bug, because both values were 50 and the defect was the DOM order.
+
+## A control that leaves a worker running has created a second actor, and "no path can reach this" is a claim about every control
+
+Having made every status transition on a download job a single atomic claim, I wrote down that a
+per-attempt generation number was unnecessary, because a stale worker could not exist: `Retry`
+needs `failed` or `cancelled` and `Resume` needs `paused`, and each of those is written either by a
+worker's own last act or by a control acting on a job whose worker has already returned.
+
+The last clause was false about exactly one control — the one whose entire design is to leave a
+worker running. `Pause` writes `paused` *while* the worker is mid-download, so that the worker sees
+it and returns without stamping anything. So a Resume a moment later starts a second attempt while
+the first is still unwinding, and the first then stamped its own terminal state on a job that was
+already downloading again. Worse, the first attempt asked the job for "the" context after unwinding
+and got the *second* attempt's live one, so it reported `failed` for a download its own pause had
+cancelled.
+
+Two rules come out of this:
+
+- **A worker must capture its identity and its context once, at entry, and be judged against
+  those.** `job.GetContext()` read after the work is not the context the work ran under. A
+  generation number bumped by every restart, checked by the worker's first and last writes, is what
+  makes "this attempt still speaks for the job" decidable.
+- **When you catch yourself writing "no path can produce this", enumerate the paths in the
+  writing.** I did enumerate them, and the enumeration was where the error was: I asserted a
+  property of "every control" without checking the control that is the exception. If the enumeration
+  is worth writing down, it is worth being suspicious of.
+
+Corollary for the reviewer's side: a reviewer who says "there is no generation identity here" is
+making a cheap, structural observation that does not require finding the interleaving. That kind of
+finding is worth more than it looks, because the interleaving is usually a few instructions wide and
+will not show up in a stress loop — 200 concurrent iterations of the Retry/ClearFinished window
+never hit it, and it is still a real defect.
+
+## An intermittent that reproduces ten times in twenty-one is not contention, and a green re-run is not evidence
+
+An accessibility spec failed once in a full run. I checked it 35 times in isolation, re-ran the
+gate clean, and wrote it off as CPU contention against a poll-based assertion — the explanation that
+had been true of an earlier flake in this campaign. The next full run failed three of that file's
+tests with every retry, and the honest measurement was 10 failures in 21 runs at the commit *before*
+any of my work.
+
+Two mistakes, both cheap to avoid:
+
+- **Isolation and repetition are different axes.** `--repeat-each=5` on one file, at default
+  parallelism, reproduces the *concurrent* conditions, not the *ordering* ones. The configuration
+  that exposed this was `--workers=1`, which puts every test of the file on one server in
+  declaration order. Vary both before concluding.
+- **A prior flake's diagnosis is a hypothesis, not a prior.** "CPU contention against a poll" was
+  written down in this file for a different spec, and having it available made it too easy to reach
+  for.
+
+The defect itself is worth knowing on its own: the spec waited for `window.Alpine` to be defined
+and then hovered. `window.Alpine` is assigned *before* `Alpine.start()` walks the document, and the
+reflow that Alpine's `x-cloak` removal produces under a stationary pointer fires `mouseout`, which
+cancels the hover-intent timer. Nothing retries a missed hover, so the test fails rather than
+flakes. Adding a readiness signal alone made it worse, because the test then hovered even earlier;
+what it needed was to wait for the page to stop moving. **A readiness signal has to be the thing you
+depend on** — the listener, the settled layout — and not the earliest observable symptom of the
+bundle having run.

@@ -27,8 +27,17 @@ test.describe('Hover-card previews', () => {
   async function gotoList(page: any) {
     await page.goto('/groups');
     await page.waitForLoadState('load');
-    // Ensure the JS bundle has initialized the delegated listener.
-    await page.waitForFunction(() => typeof (window as any).Alpine !== 'undefined');
+    // Wait for the delegated listener itself, not for `window.Alpine`: that is
+    // assigned *before* Alpine.start() walks the document, and setupHoverCard used to
+    // run after that walk — so a hover placed here landed before any listener existed
+    // and the preview never opened. Nothing retries a missed hover, so the test failed
+    // outright. Measured at 8772ab96: 10 of 21 runs at --workers=1 --repeat-each=3.
+    await page.waitForFunction(() => document.documentElement.dataset.hovercardReady === '1');
+    // And wait for the page to stop moving. The hover-intent timer is cancelled by the
+    // mouseout that a reflow under a stationary pointer produces, and Alpine's x-cloak
+    // removal plus deferred shortcode content both reflow the card list after load.
+    await page.waitForFunction(() => document.querySelectorAll('[x-cloak]').length === 0);
+    await page.waitForTimeout(250);
   }
 
   function titleLink(page: any) {

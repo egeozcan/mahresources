@@ -2053,12 +2053,16 @@ time — a test that fails because the package no longer builds has proven nothi
         deliberately does *not* refuse a job whose cancel has been accepted: an active job's
         terminal state is its worker's to stamp, so refusing there would leave the job `pending`
         with nobody left to retire it.
-      - **A fencing token (a per-run generation on the job) was considered and left out.** It would
-        stop a stale worker retiring a job that Resume or Retry had restarted — but no path can
-        produce one: `Retry` needs `failed`/`cancelled` and `Resume` needs `paused`, and every one
-        of those states is written either by the worker's own last act (`finish`) or by a control on
-        a job whose worker has already returned. Version fields for an unreachable interleaving are
-        speculation, so the reasoning is recorded here instead of in the struct.
+      - ~~**A fencing token (a per-run generation on the job) was considered and left out.**~~
+        **Wrong, and corrected in the round below.** The argument was that no path can produce a
+        stale worker, because `Retry` needs `failed`/`cancelled` and `Resume` needs `paused`, and
+        every one of those states is written either by the worker's own last act or by a control on
+        a job whose worker has already returned. That last clause is false: **`Pause` writes
+        `paused` while the worker is still unwinding** — that is the entire mechanism by which a
+        pause works — so a Resume immediately afterwards starts a second attempt while the first is
+        still alive. The token exists now (`DownloadJob.runID`). Left here rather than deleted
+        because the shape of the mistake is the point: "no path can reach this" was asserted about
+        the one control whose whole design is to leave a worker running.
 - [x] **2 — the server names the jobs it cleared.** `ClearFinished` and
       `ClearFinishedActionJobs` return `[]string` instead of a count, and
       `POST /v1/jobs/clearCompleted` answers `{"cleared": N, "ids": [...]}`. The client dismisses
@@ -2090,6 +2094,97 @@ time — a test that fails because the package no longer builds has proven nothi
       POST body and the resulting selection. With the wrapper's one `create`-forwarding line
       removed it fails at `createCandidate` — which is what losing tag creation app-wide would
       have looked like.
+
+#### Round 2 — a second independent review of the remediation itself
+
+`03aa7664` and `ab3c4b49` went back for review. Six of the findings were real, three of them
+introduced or left open by the first round, and one of them says the paragraph above (struck
+through) was wrong. Two claims did not hold up and are argued rather than accepted.
+
+- [x] **The claims own the cancellation, not their callers (high).** `Pause` wrote `paused`,
+      released the job's lock, and only then called `job.Cancel()` — which reads the *current*
+      cancel func. A Resume landing in that gap swapped `ctx`/`cancel` out, so the pause cancelled
+      the **new** attempt and left the old one running with a live context, with both controls
+      returning success. `cancelLocked()` inside `claimCancel`/`claimPause` makes the status write
+      and the cancellation one step. Safe under the job's mutex: a `context.CancelFunc` closes a
+      channel and cancels children; it does not call back into the job.
+- [x] **Attempts have an identity now (high) — `DownloadJob.runID`.** Pause makes a job resumable
+      *while its worker is still unwinding*, so a paused-then-resumed job has two attempts alive.
+      The first one then reached `finish` and stamped its own terminal state on a job that was
+      already downloading again — measured: `a stale attempt stamped "failed" on a job that is
+      downloading again`. `failed` and not `cancelled`, which is the second half of the same
+      defect: the worker asked the job for "the" context after unwinding and got the *new*
+      attempt's live one, so it misclassified its own cancellation as a failure. Both workers now
+      read `runID` and their context once at entry (`DownloadJob.attempt()`), `claimStart` and
+      `finish` refuse a run that is no longer current, and `Resume`/`Retry` bump it.
+- [x] **A job that is running is in the queue again (high).** The first round replaced
+      `Resume`/`Retry`'s `dm.mu.Lock()` with a `lookup` that releases the registry lock before
+      claiming — so a `ClearFinished` or retention sweep between the two could delete a job whose
+      worker was about to start: not listable, not cancellable, never retired. Both hold
+      `dm.mu.RLock()` across the claim and the start now. **Not seen red**: the gap is a few
+      instructions and 200 concurrent Retry/ClearFinished iterations never hit it, so the guard
+      that ships is an invariant test that passed before the fix as well. Fixed on inspection.
+- [x] **An abandoned generic run reports `cancelled`, not `completed`.** A `runFn` may honour
+      cancellation by stopping and returning nil — "I gave up, and that is not an error" — and the
+      worker's `err != nil` gate then called it completed. Cancel answered 200 and the panel said
+      the export had finished. `processGenericJob` classifies on the context first now.
+      **Deliberately not applied to downloads**: there, a success means `AddResource` returned and
+      the resource and its version row exist, so reporting `cancelled` would orphan a file the
+      user can see. Cancellation of a download is best-effort, and one that lands after the
+      resource is written has landed too late; the comment in `processJob` says so.
+- [x] **Two of the round-1 tests could not fail, and one path still lost the focus origin.** The
+      fourth focus unit test asserted that `_trigger` had not been reassigned, which is true either
+      way; it now asserts that a *reopen* does not return to a trigger captured on an earlier open
+      (the stale-node case the floor exists for). `ClearFinishedActionJobs` returning an empty list
+      would have left every test green — `plugin_system/action_jobs_test.go` covers the ids and the
+      RBAC predicate now, red first at `got []`. And `jobs-panel-open` and an incoming plugin action
+      job both set `isOpen` directly, so they still returned focus to the trigger rather than to
+      whatever the reader was on: both call `openFromEvent()` now.
+- [x] **The focus E2Es poll for stability rather than for the first non-body sample.** `settledFocus`
+      requires two identical consecutive samples. Both tests still fail with the fix reverted, so
+      the helper did not weaken them.
+
+**Two claims argued rather than accepted.**
+
+1. **"The clear-race E2E still passes against the reverted client."** It does not, and the reason
+   is ordering rather than luck: the racer's terminal `updated` is emitted by its worker before the
+   route handler observes `cancelled`, which is before the clear is handled and `removed` is
+   emitted — one ordered SSE stream, so the client's copy is already terminal when `removed`
+   arrives, and the old handler retains a terminal job it was not told to dismiss. Measured red at
+   `toHaveCount(0)` received 1. The argument is now a comment in the test.
+2. **"`z-[60]` cannot escape the header's root `z-index: 40`."** True, and stated as such in
+   `public/index.css` — page-level layers above 40 (`.overlays` at 41 deliberately, a plugin
+   actions menu at 50, expanded metadata at 100) do paint above both header dialogs. It is not this
+   pass's regression: the panel has been inside the header since `2cc4d4f6`, and reaching the state
+   needs a page-level menu that was already open behind a modal backdrop, since the backdrop
+   prevents opening one. Fixing it properly means getting the panel out of the header —
+   `x-teleport` into `.overlays` — which is a structural change with its own risk to `x-ref`,
+   `x-trap` and fifteen tests, and does not belong in a remediation pass. **Carried to Batch 12 as
+   a product decision.**
+
+#### The a11y "flake" was a real defect, and my first explanation of it was wrong
+
+The first a11y run of this pass reported 1 flaky in `20-a11y-hover-cards.spec.ts` and I wrote it
+off as CPU contention on the strength of 35/35 in isolation and a clean re-run. The full browser
+suite then failed **3 of that file's tests, all retries included**. Measured properly:
+
+| | `--workers=1 --repeat-each=3` |
+|---|---|
+| at `8772ab96` (before this branch's work) | **10 of 21 failed** |
+| at `ab3c4b49` | 1 of 7 failed |
+| with the fix below | **21 of 21 passed** |
+
+So: pre-existing, and nothing to do with the cockpit. The cause is not contention. `gotoList` waited
+for `window.Alpine` to be defined — which is assigned *before* `Alpine.start()` walks the document —
+and then hovered immediately. Two things follow from hovering that early: the delegated listener may
+not be attached yet (`setupHoverCard()` runs after the walk), and, more importantly, **the reflow
+that Alpine's `x-cloak` removal produces under a stationary pointer fires a `mouseout` that cancels
+the 500 ms hover-intent timer**. Nothing retries a missed hover, so the test fails outright rather
+than flaking. Adding only a readiness signal made it *worse* (12 of 21) — it hovered even earlier.
+The fix is one line of product (`data-hovercard-ready`, so there is a signal to wait on at all) and
+a wait for the page to stop moving in the spec. Out of this pass's scope, fixed because it was
+blocking the gate, and worth its own lesson: **an intermittent that reproduces at 10/21 was called
+contention on the strength of a green re-run.**
 
 ### WS12 — Taxonomy and template authoring
 
@@ -2426,29 +2521,30 @@ _To be filled in on completion._
 
 ### Batch 10-fix (the review remediation) — verification run
 
+All of these were re-run after the last code change of round 2, not carried over from round 1.
+
 | Gate | Result |
 |---|---|
 | `go test --tags 'json1 fts5' ./...` | pass (37 packages) |
-| `go test -race --tags 'json1 fts5' ./download_queue/...` | pass — the new gate for finding 1 |
+| `go test -race --tags 'json1 fts5' -count=1 ./download_queue/...` | pass — the new gate for finding 1 |
 | `staticcheck ./...` | clean |
 | `npm run build` | clean |
-| `npm run test:unit` | **831 passed / 51 files** (817 → 831: 6 cockpit clear/removal, 4 cockpit focus, 3 `focusedElement`, 1 selector exclusion) |
+| `npm run test:unit` | **832 passed / 51 files** (817 → 832) |
 | `cd e2e && npm run test:with-server:all` | **1846 passed, 0 failed, 0 flaky**, 6 skipped (1842 → 1846: the WS9 spec went from 6 tests to 10) |
 | `cd e2e && npm run test:with-server:a11y` | **184 passed**, `KNOWN_ISSUES` still `[]` |
 | `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/...` | pass |
 | `./mr docs lint` | OK (16 pre-existing warnings) |
 
-The first a11y run reported 1 flaky — `20-a11y-hover-cards.spec.ts`'s aria-describedby test, whose
-hover popover did not appear inside 5s. Not called flaky on that basis: 35/35 for the whole file at
-`--repeat-each=5 --retries=0`, and 184/184 with 0 flaky on a clean re-run of the gate. Contention
-against a hover-open delay, the same shape as the Batch 6 note above. Nothing this pass touches is
-on that path.
+`go test -race ./plugin_system/...` fails and does so at `8772ab96` too — four `TestRunActionAsync_*`
+subtests race between `PluginManager.Close()` closing the Lua state and an in-flight async action.
+Verified in a clean worktree at that commit before anything was touched: same four tests, same
+`gopher-lua (*LState).Close` write. Pre-existing, unrelated, and never a gate.
 
-`go test -race ./plugin_system/...` fails, and does so at `8772ab96` too — four `TestRunActionAsync_*`
-subtests race between `PluginManager.Close()` closing the Lua state and an in-flight async action
-goroutine. Verified in a clean worktree checked out at HEAD before touching anything: same four
-tests, same `gopher-lua (*LState).Close` write. Pre-existing, unrelated to this pass, and never a
-gate.
+The first a11y run reported 1 flaky — `20-a11y-hover-cards.spec.ts`'s aria-describedby test, whose
+hover popover did not appear inside 5s. **This explanation was wrong.** It is not contention: the
+spec hovers before the page has stopped moving, and the reflow cancels the hover-intent timer. It
+reproduces 10 of 21 times at `8772ab96`. See "The a11y flake was a real defect" in the WS9-fix
+section, and the row for it in the round-2 table below.
 
 Each finding's red check, since a bulk "N of M failed with the fixes stashed" run is what let three
 unfalsifiable assertions through in the first place:
@@ -2464,6 +2560,12 @@ unfalsifiable assertions through in the first place:
 | 5 — clear | The `_dismissedIds` bookkeeping removed from Batch 10's `clearCompleted`, button intact: the row is still there. |
 | 5 — row scoping | `rowFor` reverted to `.filter({ hasText: 'events' }).first()` against the *fixed* product: the paused test fails on the running decoy's missing Resume, which is the wrong-row failure the id scoping prevents. |
 | minor — selector create | The wrapper's one `create`-forwarding line removed: `expected null to deeply equal { label: 'fresh' }`. |
+| r2 — stale attempt | `a stale attempt stamped "failed" on a job that is downloading again`, with attempt A parked inside AddResource for the whole test so "while A unwinds" is sequenced rather than hoped for. |
+| r2 — claims own the cancel | `claimPause left the context it observed live, so a Resume between the claim and the caller's cancel would swap it` (and the same for `claimCancel`). The interleaving itself is a few instructions wide; what is asserted is the invariant that closes it. |
+| r2 — abandoned generic run | `an abandoned run settled at "completed", want "cancelled" — Cancel had already answered 200`, with its control (an uninterrupted run still completes) passing in both states. |
+| r2 — action-job ids | `expected the two finished jobs to be named as cleared, got []` with the one id-collecting line removed. |
+| r2 — registry atomicity | **Not seen red.** 200 concurrent Retry/ClearFinished iterations never hit the gap. Fixed on inspection; the test that ships is an invariant guard that passed before the fix too. |
+| r2 — hover-card readiness | 10 of 21 failed at `8772ab96` and 12 of 21 with a readiness signal alone, against 21 of 21 with the settle wait. |
 
 ### Batch 10 (WS10 + WS9 + WS8's two stragglers) — verification run
 

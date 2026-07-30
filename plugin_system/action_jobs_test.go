@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -494,5 +495,56 @@ end
 		default:
 			time.Sleep(10 * time.Millisecond)
 		}
+	}
+}
+
+// TestClearFinishedActionJobs_NamesWhatItCleared is review remediation finding 2,
+// second round: the panel dismisses the ids the *server* says it cleared, and the
+// action-job half of that answer had no coverage at all — returning an empty list
+// from here would have left every test green while the panel silently kept showing
+// finished plugin-action rows it had just cleared.
+func TestClearFinishedActionJobs_NamesWhatItCleared(t *testing.T) {
+	pm := &PluginManager{actionJobs: map[string]*ActionJob{}}
+
+	done := &ActionJob{ID: "done", Status: "completed", CreatedAt: time.Now()}
+	failed := &ActionJob{ID: "failed", Status: "failed", CreatedAt: time.Now()}
+	running := &ActionJob{ID: "running", Status: "running", CreatedAt: time.Now()}
+	for _, j := range []*ActionJob{done, failed, running} {
+		pm.actionJobs[j.ID] = j
+	}
+
+	ids := pm.ClearFinishedActionJobs(nil)
+
+	sorted := append([]string(nil), ids...)
+	slices.Sort(sorted)
+	if !slices.Equal(sorted, []string{"done", "failed"}) {
+		t.Errorf("expected the two finished jobs to be named as cleared, got %v", ids)
+	}
+	// The positive control: a running job is neither cleared nor named, or the panel
+	// would drop a row the server still has.
+	if _, ok := pm.actionJobs["running"]; !ok {
+		t.Error("a running action job was cleared")
+	}
+	if slices.Contains(ids, "running") {
+		t.Errorf("a running action job was named as cleared: %v", ids)
+	}
+}
+
+// Only the caller's own action jobs may be cleared or named, matching the visibility
+// predicate the queue and the SSE stream apply.
+func TestClearFinishedActionJobs_HonoursVisibility(t *testing.T) {
+	pm := &PluginManager{actionJobs: map[string]*ActionJob{}}
+	mine, theirs := uint(7), uint(9)
+
+	pm.actionJobs["mine"] = &ActionJob{ID: "mine", Status: "completed", ownerUserID: &mine}
+	pm.actionJobs["theirs"] = &ActionJob{ID: "theirs", Status: "completed", ownerUserID: &theirs}
+
+	ids := pm.ClearFinishedActionJobs(func(owner *uint) bool { return owner != nil && *owner == mine })
+
+	if !slices.Equal(ids, []string{"mine"}) {
+		t.Errorf("expected only the caller's own job named as cleared, got %v", ids)
+	}
+	if _, ok := pm.actionJobs["theirs"]; !ok {
+		t.Error("another user's completed action job was cleared")
 	}
 }

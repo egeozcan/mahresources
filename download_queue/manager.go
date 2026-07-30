@@ -335,14 +335,21 @@ func (dm *DownloadManager) SubmitMultiple(creator *query_models.ResourceFromRemo
 
 // processJob handles the download in a background goroutine
 func (dm *DownloadManager) processJob(job *DownloadJob) {
+	// The attempt this goroutine owns, and the context its result must be judged
+	// against. Both are read once: Resume installs a fresh context, so a worker that
+	// asked the job for "the" context after unwinding could classify its own failure
+	// against a *later* attempt's live context — and report `failed` for a download
+	// its own pause had cancelled.
+	runID, ctx := job.attempt()
+
 	// Acquire semaphore slot (limits concurrent downloads)
 	select {
 	case dm.semaphore <- struct{}{}:
 		defer func() { <-dm.semaphore }()
-	case <-job.GetContext().Done():
+	case <-ctx.Done():
 		// finish is a no-op on a paused job: Pause cancels the context too, and a
 		// paused job waits for Resume rather than being retired here.
-		if job.finish(JobStatusCancelled, "Cancelled before starting", 0, time.Now()) {
+		if job.finish(runID, JobStatusCancelled, "Cancelled before starting", 0, time.Now()) {
 			dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
 		}
 		return
@@ -352,21 +359,25 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	// between the semaphore acquisition and this write would be overwritten by it
 	// (see DownloadJob.claimStart). A refusal means a control owns the job now and
 	// has already notified subscribers.
-	if !job.claimStart(JobStatusDownloading, time.Now()) {
+	if !job.claimStart(runID, JobStatusDownloading, time.Now()) {
 		return
 	}
 	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
 
 	// Perform the download with progress tracking
-	resource, err := dm.downloadWithProgress(job)
+	resource, err := dm.downloadWithProgress(ctx, job)
 
 	status, errMsg, resourceID := JobStatusCompleted, "", uint(0)
 	switch {
-	case err != nil && job.GetContext().Err() != nil:
+	case err != nil && ctx.Err() != nil:
 		status, errMsg = JobStatusCancelled, "Download cancelled"
 	case err != nil:
 		status, errMsg = JobStatusFailed, err.Error()
 	default:
+		// Deliberately not overridden by an accepted cancel: the resource exists and
+		// the version row is written, so reporting `cancelled` here would orphan a
+		// file the user can see. Cancellation of a download is best-effort, and one
+		// that lands after AddResource has returned has landed too late.
 		resourceID = resource.ID
 	}
 
@@ -374,7 +385,7 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	// and then writing the terminal one is the same check-then-act the controls had:
 	// a Pause landing between the two was silently overwritten, and a Pause landing
 	// just before the read stranded the job (see DownloadJob.finish).
-	if !job.finish(status, errMsg, resourceID, time.Now()) {
+	if !job.finish(runID, status, errMsg, resourceID, time.Now()) {
 		return
 	}
 
@@ -398,13 +409,13 @@ func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
 }
 
 // downloadWithProgress performs the HTTP download with progress tracking
-func (dm *DownloadManager) downloadWithProgress(job *DownloadJob) (*models.Resource, error) {
+func (dm *DownloadManager) downloadWithProgress(ctx context.Context, job *DownloadJob) (*models.Resource, error) {
 	// Snapshot settings once so all timeout values are consistent for this
 	// download and the read-lock is held only briefly.
 	s := dm.currentSettings()
 	httpClient := dm.createHTTPClient(s)
 
-	req, err := http.NewRequestWithContext(job.GetContext(), "GET", job.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", job.URL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -425,7 +436,7 @@ func (dm *DownloadManager) downloadWithProgress(job *DownloadJob) (*models.Resou
 	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
 
 	// Wrap with timeout reader for idle detection and cancellation
-	timeoutBody := NewTimeoutReaderWithContext(resp.Body, s.IdleTimeout(), job.GetContext())
+	timeoutBody := NewTimeoutReaderWithContext(resp.Body, s.IdleTimeout(), ctx)
 	defer timeoutBody.Close()
 
 	// Throttle progress updates to avoid flooding SSE clients
@@ -536,11 +547,10 @@ func (dm *DownloadManager) Cancel(jobID string) error {
 		return &StateConflictError{JobID: jobID, Action: "cancelled", Status: prev}
 	}
 
-	// The context cancellation happens outside the job's lock, because a CancelFunc
-	// can run arbitrary registered work. That is safe now: claimCancel has already
-	// recorded the intent, so a Pause arriving here is refused rather than winning.
-	job.Cancel()
-
+	// The cancellation itself happened inside claimCancel, under the job's lock: doing
+	// it here left a gap in which a Resume could swap the context out, so the cancel
+	// landed on the new attempt and the old one kept running.
+	//
 	// A paused job has no goroutine left to notice any of this — Pause cancelled its
 	// context and processJob returned — so the notification has to happen here, or
 	// the panel would keep showing "Paused" with a Cancel button that appeared to do
@@ -566,8 +576,6 @@ func (dm *DownloadManager) Pause(jobID string) error {
 		return &StateConflictError{JobID: jobID, Action: "paused", Status: status}
 	}
 
-	job.Cancel()
-
 	dm.notifySubscribers(JobEvent{Type: "updated", Job: job})
 
 	return nil
@@ -575,9 +583,17 @@ func (dm *DownloadManager) Pause(jobID string) error {
 
 // Resume resumes a paused download job by ID
 func (dm *DownloadManager) Resume(jobID string) error {
-	job, err := dm.lookup(jobID)
-	if err != nil {
-		return err
+	// The registry's read lock is held across the claim and the start, which is what
+	// makes "a job that is running is in the queue" true: ClearFinished and
+	// cleanupOldJobs both take the write lock, and either of them landing between the
+	// lookup and the claim would leave a worker running on a job no longer in the map
+	// — unlistable, uncancellable and never retired.
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+
+	job, exists := dm.jobs[jobID]
+	if !exists {
+		return &NotFoundError{JobID: jobID}
 	}
 
 	// The context is built before the claim and discarded if the claim loses, so the
@@ -598,9 +614,16 @@ func (dm *DownloadManager) Resume(jobID string) error {
 
 // Retry retries a failed or cancelled download job by ID
 func (dm *DownloadManager) Retry(jobID string) error {
-	job, err := dm.lookup(jobID)
-	if err != nil {
-		return err
+	// Read-locked across the claim and the start, for the reason Resume gives: a
+	// ClearFinished between the two would start a worker on a job that is no longer in
+	// the queue. Retry is the exposed one, because the states it accepts (failed,
+	// cancelled) are exactly the states ClearFinished removes.
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+
+	job, exists := dm.jobs[jobID]
+	if !exists {
+		return &NotFoundError{JobID: jobID}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

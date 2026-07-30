@@ -1,6 +1,7 @@
 package download_queue
 
 import (
+	"context"
 	"errors"
 	"io"
 	"mahresources/contracts"
@@ -349,5 +350,175 @@ func TestProcessJob_StartsAPendingJobAndHonoursAnAcceptedCancel(t *testing.T) {
 	}
 	if job.GetCompletedAt() == nil {
 		t.Error("the cancelled job has no CompletedAt, so job retention will never retire it")
+	}
+}
+
+// ---------------------------------------------- review round 2 (pi, sol:high)
+
+// A paused-then-resumed job has two attempts alive for a moment: the first is
+// unwinding while the second starts. The first must not be able to stamp a terminal
+// state over the second — it used to, because `finish` accepted any non-paused
+// status, and the first attempt's `cancelled` then landed on a job that was already
+// downloading again. The panel showed "Cancelled" for a live download, and the
+// second attempt's own terminal write later overwrote that.
+//
+// Fully sequenced: attempt A is parked inside AddResource for the whole test, so
+// "while A unwinds" is not a timing hope.
+func TestFinish_AStaleAttemptCannotStampARestartedJob(t *testing.T) {
+	dm, job, blocker := inFlightJob(t)
+
+	if err := dm.Pause(job.ID); err != nil {
+		t.Fatalf("pausing failed: %v", err)
+	}
+	if err := dm.Resume(job.ID); err != nil {
+		t.Fatalf("resuming failed: %v", err)
+	}
+	// Attempt B reaches AddResource and parks there too.
+	blocker.waitParked(t)
+	if got := job.GetStatus(); got != JobStatusDownloading {
+		t.Fatalf("the resumed attempt is %q, want %q", got, JobStatusDownloading)
+	}
+
+	// Now let attempt A go. Its context was cancelled by the pause, so it classifies
+	// itself as cancelled and tries to write that.
+	blocker.releaseOne(t)
+
+	// B is still parked, so any terminal status now can only have come from A.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if status := job.GetStatus(); status != JobStatusDownloading {
+			t.Fatalf("a stale attempt stamped %q on a job that is downloading again", status)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	blocker.releaseOne(t)
+}
+
+// A generic job's runFn may honour cancellation by returning nil — "I stopped, and
+// that is not an error". Reporting that as `completed` makes Cancel's 200 a lie and
+// tells the user an export finished when it was abandoned. What the context says
+// outranks what the runFn returned.
+func TestProcessGenericJob_AnAbandonedRunIsCancelledNotCompleted(t *testing.T) {
+	dm := createTestManager()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	job, err := dm.SubmitJob("test", "running", func(ctx context.Context, j *DownloadJob, p ProgressSink) error {
+		close(started)
+		<-release
+		// Honours the cancellation by stopping, with nothing to report as an error.
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("submitting a generic job failed: %v", err)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(15 * time.Second):
+		t.Fatalf("the runFn never started")
+	}
+
+	if err := dm.Cancel(job.ID); err != nil {
+		t.Fatalf("cancelling a running generic job failed: %v", err)
+	}
+	close(release)
+
+	if status := settle(t, job); status != JobStatusCancelled {
+		t.Errorf("an abandoned run settled at %q, want %q — Cancel had already answered 200", status, JobStatusCancelled)
+	}
+}
+
+// The control for the test above: a run that finishes on its own, with no cancel in
+// sight, still reports completed.
+func TestProcessGenericJob_AnUninterruptedRunStillCompletes(t *testing.T) {
+	dm := createTestManager()
+
+	job, err := dm.SubmitJob("test", "running", func(ctx context.Context, j *DownloadJob, p ProgressSink) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("submitting a generic job failed: %v", err)
+	}
+
+	if status := settle(t, job); status != JobStatusCompleted {
+		t.Errorf("an uninterrupted run settled at %q, want %q", status, JobStatusCompleted)
+	}
+}
+
+// The claims own the context, not their callers. Pause used to write `paused`,
+// release the job's lock, and only then cancel — and a Resume landing in that gap
+// swapped the context out, so the pause cancelled the *new* attempt's context and
+// left the old attempt running with a live one. Both controls returned success.
+//
+// The interleaving itself is a few instructions wide and needs a hook to drive; what
+// is asserted here is the invariant that closes it — that the status transition and
+// the cancellation are one step.
+func TestClaims_CancelTheContextTheyObserved(t *testing.T) {
+	t.Run("pause", func(t *testing.T) {
+		job := addTestJob(createTestManager(), "j", JobStatusDownloading)
+		observed := job.GetContext()
+
+		if _, ok := job.claimPause(); !ok {
+			t.Fatalf("claiming a pause on a downloading job failed")
+		}
+
+		select {
+		case <-observed.Done():
+		default:
+			t.Error("claimPause left the context it observed live, so a Resume between the claim and the caller's cancel would swap it")
+		}
+	})
+
+	t.Run("cancel", func(t *testing.T) {
+		job := addTestJob(createTestManager(), "j", JobStatusDownloading)
+		observed := job.GetContext()
+
+		if _, ok := job.claimCancel(time.Now()); !ok {
+			t.Fatalf("claiming a cancel on a downloading job failed")
+		}
+
+		select {
+		case <-observed.Done():
+		default:
+			t.Error("claimCancel left the context it observed live")
+		}
+	})
+}
+
+// A job Resume or Retry has just started must be in the registry. Retry used to
+// resolve the job, drop the manager's lock, and only then claim and start it — so a
+// ClearFinished in that gap deleted a job whose worker was about to run: not
+// listable, not cancellable, and never retired.
+//
+// Concurrent rather than sequenced, because the gap is a few instructions wide; the
+// invariant holds for every interleaving.
+func TestRetry_AStartedJobIsAlwaysStillInTheRegistry(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		dm := createTestManager()
+		dm.settings = NewStaticDownloadSettings(TimeoutConfig{
+			ConnectTimeout: time.Millisecond, IdleTimeout: time.Millisecond, OverallTimeout: time.Millisecond,
+		}, 0)
+		job := addTestJob(dm, "gone", JobStatusCancelled)
+		job.creator = &query_models.ResourceFromRemoteCreator{}
+		job.URL = "http://127.0.0.1:1/nothing-here"
+		completedAt := time.Now()
+		job.CompletedAt = &completedAt
+
+		var wg sync.WaitGroup
+		var retryErr error
+		start := make(chan struct{})
+		wg.Add(2)
+		go func() { defer wg.Done(); <-start; retryErr = dm.Retry("gone") }()
+		go func() { defer wg.Done(); <-start; dm.ClearFinished(nil) }()
+		close(start)
+		wg.Wait()
+
+		if retryErr == nil {
+			if _, ok := dm.GetJob("gone"); !ok {
+				t.Fatalf("iteration %d: Retry reported success and the job is not in the queue — nothing can list, cancel or retire it now", i)
+			}
+		}
 	}
 }

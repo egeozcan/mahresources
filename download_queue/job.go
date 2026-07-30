@@ -60,7 +60,13 @@ type DownloadJob struct {
 	// cancellation the caller was told about cannot be overwritten by a later
 	// control. Cleared by claimRetry, which is the user asking for the job again.
 	cancelRequested bool
-	ownerUserID     *uint // RBAC: user that created the job (export download ownership)
+	// runID identifies the current attempt. Resume and Retry bump it, so the previous
+	// attempt — which is still unwinding while the new one starts — can tell that it
+	// no longer speaks for this job. Without it a paused-then-resumed job took the old
+	// attempt's terminal state: `cancelled` landed on a job that was downloading
+	// again, and the new attempt's own terminal write later overwrote that.
+	runID       uint64
+	ownerUserID *uint // RBAC: user that created the job (export download ownership)
 }
 
 // Status transitions
@@ -111,7 +117,33 @@ func (j *DownloadJob) claimCancel(completedAt time.Time) (JobStatus, bool) {
 		// cleanupOldJobs uses to retire the row.
 		j.CompletedAt = &completedAt
 	}
+	j.cancelLocked()
 	return prev, true
+}
+
+// cancelLocked cancels the context the claim just observed.
+//
+// The cancellation belongs inside the claim, not after it: Pause used to write
+// `paused`, release this lock, and only then cancel — and a Resume landing in that
+// gap swapped ctx/cancel out, so the pause cancelled the *new* attempt's context and
+// left the old attempt running with a live one. Both controls returned success.
+//
+// Safe under j.mu: a context.CancelFunc closes a channel and cancels children. It
+// does not call back into the job, and any goroutine it wakes runs elsewhere.
+func (j *DownloadJob) cancelLocked() {
+	if j.cancel != nil {
+		j.cancel()
+	}
+}
+
+// attempt returns the identity of the attempt a worker is starting: the run it owns
+// and the context that run must be judged against. Both come from one lock
+// acquisition, so a worker cannot end up classifying its result against a context a
+// later Resume installed.
+func (j *DownloadJob) attempt() (uint64, context.Context) {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.runID, j.ctx
 }
 
 // claimStart atomically hands the job to its worker: pending -> the running status
@@ -131,11 +163,11 @@ func (j *DownloadJob) claimCancel(completedAt time.Time) (JobStatus, bool) {
 // job's terminal state is its worker's to stamp, so refusing here would leave the
 // job pending forever with nobody left to retire it. The worker starts, the
 // cancelled context fails the download immediately, and finish stamps `cancelled`.
-func (j *DownloadJob) claimStart(running JobStatus, startedAt time.Time) bool {
+func (j *DownloadJob) claimStart(runID uint64, running JobStatus, startedAt time.Time) bool {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	if j.Status != JobStatusPending {
+	if j.runID != runID || j.Status != JobStatusPending {
 		return false
 	}
 	j.Status = running
@@ -162,6 +194,7 @@ func (j *DownloadJob) claimPause() (JobStatus, bool) {
 	}
 	j.Status = JobStatusPaused
 	j.Error = "" // Clear any previous error
+	j.cancelLocked()
 	return JobStatusPaused, true
 }
 
@@ -179,6 +212,7 @@ func (j *DownloadJob) claimResume(ctx context.Context, cancel context.CancelFunc
 	if !j.canResumeLocked() {
 		return j.Status, false
 	}
+	j.runID++
 	j.ctx, j.cancel = ctx, cancel
 	j.Status = JobStatusPending
 	j.Progress, j.TotalSize, j.ProgressPercent = 0, -1, -1
@@ -198,6 +232,7 @@ func (j *DownloadJob) claimRetry(ctx context.Context, cancel context.CancelFunc)
 		return j.Status, false
 	}
 	j.cancelRequested = false
+	j.runID++
 	j.ctx, j.cancel = ctx, cancel
 	j.Status = JobStatusPending
 	j.Error = ""
@@ -212,10 +247,16 @@ func (j *DownloadJob) claimRetry(ctx context.Context, cancel context.CancelFunc)
 // its progress and waits for Resume, so the worker must not retire it. That check
 // used to live in the worker as a separate read followed by a separate write, which
 // is the same check-then-act the controls had.
-func (j *DownloadJob) finish(status JobStatus, errMsg string, resourceID uint, completedAt time.Time) bool {
+func (j *DownloadJob) finish(runID uint64, status JobStatus, errMsg string, resourceID uint, completedAt time.Time) bool {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
+	// A stale attempt speaks for nobody. Pause makes a job resumable while its worker
+	// is still unwinding, so the previous attempt can reach this while the next one is
+	// already downloading — and its terminal state would land on a live job.
+	if j.runID != runID {
+		return false
+	}
 	if j.Status == JobStatusPaused {
 		return false
 	}
