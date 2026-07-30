@@ -4812,11 +4812,17 @@ Run a query by ID
 mr query run <id>
 ```
 
-Execute a saved query by ID and return the rows as JSON. The query
+Execute a saved query by ID and return the result set. The query
 runs against a read-only database handle: any attempt to write
-(INSERT/UPDATE/DELETE/DDL) is rejected. Column names in the result
-come verbatim from the SELECT list, so use explicit column aliases
-(`select count(*) as n ...`) to produce predictable keys.
+(INSERT/UPDATE/DELETE/DDL) is rejected. Column names come verbatim
+from the SELECT list, so use explicit column aliases (`select
+count(*) as n ...`) to produce predictable ones.
+
+The response is `{"columns": [...], "rows": [[...], ...]}`. Columns
+keep the order the SELECT list names them, a repeated column name
+appears twice rather than being merged, and `columns` is populated
+even when no rows matched. Without `--json` the columns become the
+header of a text table.
 
 Returns `400 Bad Request` if the SQL fails to execute and `404 Not
 Found` if the given ID does not exist. For templated queries, the
@@ -4827,13 +4833,15 @@ request body/form values are bound as named SQL parameters.
 **Examples:**
 
 ```bash
-# Run a query by ID and print the raw JSON array
+# Run a query by ID and print a text table
 mr query run 42
-# Run and extract the first row's count column with jq
-mr query run 42 --json | jq '.[0].n'
+# Run and extract the first row's first column with jq
+mr query run 42 --json | jq '.rows[0][0]'
+# Address a column by name rather than by position
+mr query run 42 --json | jq '.rows[0][(.columns|index("n"))]'
 ```
 
-**Output:** Array of row objects; each object's keys are the query's selected column names
+**Output:** An object with `columns` (the selected column names, in SELECT order) and `rows` (one array of values per row, index-aligned with columns)
 
 **See also:** `mr query run-by-name`, `mr query schema`, `mr query get`
 
@@ -4847,8 +4855,10 @@ mr query run-by-name
 
 Execute a saved query by its unique `Name` instead of its numeric
 ID. Same semantics as `query run`: read-only handle, 400 on SQL
-errors, 404 when the name does not resolve. Useful in scripts where
-the ID is not known ahead of time but the name is a stable contract.
+errors, 404 when the name does not resolve, and the same
+`{"columns": [...], "rows": [[...], ...]}` response. Useful in
+scripts where the ID is not known ahead of time but the name is a
+stable contract.
 
 Renaming a query via `query edit-name` invalidates callers that
 pointed at the old name, so prefer `query run <id>` for
@@ -4863,11 +4873,11 @@ long-running integrations.
 ```bash
 # Run by name
 mr query run-by-name --name "count-resources"
-# Run by name and extract the count column
-mr query run-by-name --name "count-resources" --json | jq '.[0].n'
+# Run by name and extract the first row's first column
+mr query run-by-name --name "count-resources" --json | jq '.rows[0][0]'
 ```
 
-**Output:** Array of row objects; each object's keys are the query's selected column names
+**Output:** An object with `columns` (the selected column names, in SELECT order) and `rows` (one array of values per row, index-aligned with columns)
 
 **See also:** `mr query run`, `mr query get`, `mr queries list`
 

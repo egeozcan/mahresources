@@ -79,6 +79,11 @@ export function mrqlEditor() {
     _executeRequestId: 0,
     _explainController: null,
     _explainRequestId: 0,
+    // The panelStamp() each in-flight request was started for, so the other
+    // operation can tell whether it describes the same request — see
+    // abandonStaleCompanionRequest.
+    _inflightExecuteStamp: '',
+    _inflightExplainStamp: '',
     _generationRequestId: 0,
     _generationEditorSnapshot: '',
 
@@ -367,6 +372,11 @@ export function mrqlEditor() {
           this.execute({ pushState: false });
         } else {
           this._executeController?.abort();
+          // Null it as cancelStaleQueryRequests does: the aborted request's own
+          // finally will not, because the id was just bumped past it, and
+          // abandonStaleCompanionRequest reads this field to decide whether a
+          // request is still open.
+          this._executeController = null;
           this._executeRequestId++;
           this.executing = false;
           this.setQuery('');
@@ -583,6 +593,32 @@ export function mrqlEditor() {
       this.showExplain = false;
     },
 
+    // Findings 23/46, round 3: the two panels can be made stale by each other
+    // while both requests are still open, and each operation only ever validated
+    // its own request id. Explain(A) still in flight when Run(B) completes ends
+    // with A's plan installed beside B's rows; Run(A) still in flight when
+    // Explain(B) completes is the mirror, and it slips through because the two
+    // operations count requests on separate counters.
+    //
+    // Whichever operation the reader starts *last* names the request they are
+    // asking about, so an operation still in flight for a different one is
+    // abandoned here rather than allowed to land. Aborting the controller is
+    // enough: the fetch rejects with an AbortError, which the catch already
+    // ignores, and the finally still settles the busy flag and the controller.
+    //
+    // Same request on both sides means Explain-then-Run of one query, which is
+    // the workflow the Explain button exists for and must keep both panels.
+    abandonStaleCompanionRequest(stamp) {
+      if (this._executeController && this._inflightExecuteStamp !== stamp) {
+        this._executeController.abort();
+        this.clearResult();
+      }
+      if (this._explainController && this._inflightExplainStamp !== stamp) {
+        this._explainController.abort();
+        this.clearExplain();
+      }
+    },
+
     applyGeneratedQuery() {
       if (!this.generatedQuery) return;
       this.setQuery(this.generatedQuery);
@@ -609,6 +645,8 @@ export function mrqlEditor() {
       // run. Explaining and then running the *same* query with the *same*
       // parameter values is a normal workflow, so that plan is kept.
       const stamp = this.panelStamp(query);
+      this._inflightExecuteStamp = stamp;
+      this.abandonStaleCompanionRequest(stamp);
       if (this.explainQuery !== stamp) this.clearExplain();
 
       try {
@@ -679,6 +717,8 @@ export function mrqlEditor() {
       // Findings 23/46, the other direction: the report saw a fresh plan sitting
       // on top of a previous query's result rows too.
       const stamp = this.panelStamp(query);
+      this._inflightExplainStamp = stamp;
+      this.abandonStaleCompanionRequest(stamp);
       if (this.resultQuery !== stamp) this.clearResult();
       try {
         const resp = await fetch('/v1/mrql/explain', {

@@ -231,7 +231,7 @@ mr tags delete --ids 8,9
 | Language | MRQL DSL (see `mrql.md`) | raw **read-only** SQL (writes rejected) |
 | Args | `mrql save <name> <query>`, `mrql run <name-or-id>` | `query create --name --text`, `query run <id>` (positional), `query run-by-name --name <name>` |
 | Discover schema | n/a | `mr query schema` (table → columns map) |
-| Result keys | `.resources[]` etc. (PascalCase rows) | one object per row; keys are the SQL SELECT column names — use `as` aliases |
+| Result shape | `.resources[]` etc. (PascalCase rows) | `{"columns": [...], "rows": [[...]]}` — one array of values per row, index-aligned with `columns`, which keeps the SELECT order and repeats a repeated name |
 
 `mr mrql run` accepts either an ID or a name in one argument; the CLI sends both `id` and `name` query params and the **server** tries ID first, then name (so a numeric *name* still resolves). `mr mrql delete <id>` takes a numeric ID only.
 
@@ -239,7 +239,9 @@ mr tags delete --ids 8,9
 mr mrql save large-files 'type = resource AND fileSize > 100mb' --description "big files"
 mr mrql run large-files --json | jq '.resources[].ID'
 mr query create --name counts --text 'select count(*) as n from resources' --json
-mr query run-by-name --name counts --json | jq '.[0].n'
+mr query run-by-name --name counts --json | jq '.rows[0][0]'
+# ...or address the column by name rather than by position
+mr query run-by-name --name counts --json | jq '.rows[0][(.columns|index("n"))]'
 ```
 
 ---

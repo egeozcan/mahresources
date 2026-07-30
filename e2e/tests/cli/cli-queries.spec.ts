@@ -94,27 +94,67 @@ test.describe('Query run', () => {
     cli.run('query', 'delete', String(queryId));
   });
 
-  test('run query by ID returns results or expected error', async ({ cli }) => {
-    // The query run endpoint may return a schema error for simple SELECT queries
-    // in ephemeral mode. Verify the command executes (exit 0 or known error).
-    const result = cli.run('query', 'run', String(queryId), '--json');
-    if (result.exitCode === 0) {
-      const parsed = JSON.parse(result.stdout);
-      expect(parsed).toBeDefined();
-    } else {
-      // Known issue: "schema: interface must be a pointer to struct"
-      expect(result.stderr + result.stdout).toContain('schema');
-    }
+  // These used to assert only `expect(parsed).toBeDefined()`, which the old
+  // array-of-row-objects body satisfies just as well as the current one — so they
+  // could not have caught the shape change either way — and neither of them ran
+  // the text table at all. They assert the documented contract now:
+  // `{"columns": [...], "rows": [[...]]}`, columns in SELECT order, one array of
+  // values per row.
+  test('run query by ID returns the documented {columns, rows} shape', async ({ cli }) => {
+    const result = cli.runOrFail('query', 'run', String(queryId), '--json');
+    const parsed = JSON.parse(result.stdout) as { columns: string[]; rows: unknown[][] };
+
+    expect(Array.isArray(parsed.columns)).toBe(true);
+    expect(parsed.columns).toEqual(['test']);
+    expect(Array.isArray(parsed.rows)).toBe(true);
+    expect(parsed.rows).toHaveLength(1);
+    // An array of values, not an object keyed by column name.
+    expect(Array.isArray(parsed.rows[0])).toBe(true);
+    expect(parsed.rows[0]).toEqual([1]);
   });
 
-  test('run query by name returns results or expected error', async ({ cli }) => {
-    const result = cli.run('query', 'run-by-name', '--name', queryName, '--json');
-    if (result.exitCode === 0) {
-      const parsed = JSON.parse(result.stdout);
-      expect(parsed).toBeDefined();
-    } else {
-      // Known issue: "schema: interface must be a pointer to struct"
-      expect(result.stderr + result.stdout).toContain('schema');
+  test('run query by ID prints a text table with the column as its header', async ({ cli }) => {
+    const result = cli.runOrFail('query', 'run', String(queryId));
+    const lines = result.stdout.trim().split('\n').filter((l) => l.trim().length > 0);
+
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    expect(lines[0].trim()).toBe('test');
+    expect(lines[1].trim()).toBe('1');
+    // Nothing JSON-shaped: before the response carried its columns, `run` had no
+    // header to build and printed the raw body in both modes.
+    expect(result.stdout).not.toContain('{');
+  });
+
+  test('run query by name returns the documented {columns, rows} shape', async ({ cli }) => {
+    const result = cli.runOrFail('query', 'run-by-name', '--name', queryName, '--json');
+    const parsed = JSON.parse(result.stdout) as { columns: string[]; rows: unknown[][] };
+
+    expect(parsed.columns).toEqual(['test']);
+    expect(parsed.rows).toEqual([[1]]);
+  });
+
+  test('a repeated column name survives, and a large integer keeps its digits', async ({ cli }) => {
+    // Two properties the array shape exists for, exercised end to end through the
+    // CLI: a JSON object could hold only one `dup`, and decoding the text table's
+    // numbers as float64 rounded anything past 2^53.
+    const cliRunner = createCliRunner();
+    const name = `shape-query-${suffix}`;
+    const query = cliRunner.runJson<Query>(
+      'query', 'create', '--name', name,
+      '--text', 'SELECT 10 AS dup, 20 AS dup, 9007199254740993 AS big',
+    );
+    try {
+      const json = JSON.parse(
+        cli.runOrFail('query', 'run', String(query.ID), '--json').stdout,
+      ) as { columns: string[]; rows: unknown[][] };
+      expect(json.columns).toEqual(['dup', 'dup', 'big']);
+      expect(json.rows[0].slice(0, 2)).toEqual([10, 20]);
+
+      const text = cli.runOrFail('query', 'run', String(query.ID)).stdout;
+      expect(text).toContain('9007199254740993');
+      expect(text).not.toContain('9007199254740992');
+    } finally {
+      cliRunner.run('query', 'delete', String(query.ID));
     }
   });
 });

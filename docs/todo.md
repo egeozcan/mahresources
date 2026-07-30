@@ -2761,6 +2761,187 @@ now opens the read-only handle exactly the way production does, and
 against Postgres at all. With the fix reverted it reports
 `num = "MS41", ident = "ZTU1MDFkMTEt…", arr = "e2EsYn0="`.
 
+#### Round 3 — the cell matrix, because the second review said it had not converged
+
+A second independent review of `7e400e3f` returned five substantive findings and said
+so explicitly. Following the `download_queue` round-3 method, this pass built the
+table before fixing anything: **every cell type × each driver × each consumer**, with
+what should happen, what did, and whether a test says so. Measured on a seeded
+instance and on a live Postgres, not reasoned about.
+
+##### What decides a cell's JSON type
+
+One sentence, now the comment at the head of `cellValue`:
+
+> The **column's declared database type** decides how a value is represented. A
+> column declared `json`/`jsonb` holds a document — and a document may be a scalar.
+> Everything else that arrives as `[]byte` is the driver's *text* form of the value.
+> Bytes with no text form keep base64. The bytes never decide.
+
+Round 2's rule was the opposite: *a `[]byte` that parses as an object or array is a
+document*. That makes a value's JSON type a function of what it happens to spell.
+
+##### The instrument: what `rows.ColumnTypes()` actually gives you
+
+The review prescribed `ColumnTypes()` and it is the right instrument, with one caveat
+that had to be measured before committing to it:
+
+| | `DatabaseTypeName()` |
+|---|---|
+| **lib/pq** (production's read-only handle on Postgres) | reliable for every column, including expressions: `NUMERIC`, `UUID`, `_TEXT`, `TEXT`, `INT4`, `INT8`, `BOOL`, `TIMESTAMPTZ`, `JSON`, `JSONB`, `BYTEA` |
+| **go-sqlite3** | the **decltype**, so `JSON` / `INTEGER` / `TEXT` / `datetime` for a direct table column and **`""` for every expression or literal** |
+
+So on SQLite the column type answers the question only for direct table columns, and
+`""` means "no declared type" — which is the honest answer, not a gap to fill by
+sniffing. The consequence is stated in the code: `SELECT json_agg(...)` is structure
+on Postgres and `SELECT json_group_array(...)` is a string on SQLite, because SQLite
+has no type for a computed column. That is SQLite's type system, not this function.
+
+##### The matrix
+
+`run` = `POST /v1/query/run`; `CLI` = `mr query run` text table (`--json` is the raw
+body, byte for byte, on every row); `block` = `GET /v1/note/block/table/query` →
+`blockEditor.tpl`; `share` = the same data through `sharedBlock.tpl`. **Bold** marks a
+cell this round changed.
+
+| cell | SQLite value | lib/pq value | run (after) | run (before) | CLI text | block / share |
+|---|---|---|---|---|---|---|
+| NULL | `nil` | `nil` | `null` | `null` | empty | empty |
+| integer | `int64` | `int64`/`int32` | number | number | **digits kept** (was rounded past 2^53) | number |
+| bigint > 2^53 | `int64` | `int64` | number | number | **`9007199254740993`** (was `…92`) | number |
+| float | `float64` | `float64` | number | number | shortest round-trip | number |
+| numeric | — | `[]byte("1.5")` | `"1.5"` | `"1.5"` | `1.5` | `1.5` |
+| bool | `int64` (SQLite has no bool) | `bool` | number / bool | same | same | same |
+| text | `string` | `string` | string | string | text | text |
+| text spelling `123` | `string` | `string` | `"123"` | `"123"` | `123` | `123` |
+| timestamp | `time.Time` (decltype `datetime`) | `time.Time` | RFC3339 string | same | same | same |
+| uuid | — | `[]byte` | string | string | text | text |
+| array | — | `[]byte("{a,b}")` | `"{a,b}"` | `"{a,b}"` | `{a,b}` | `{a,b}` |
+| **json/jsonb object** | `string` (decltype `JSON`) | `[]byte` | **object on both** | object on PG, **quoted string on SQLite** | compact JSON | **compact JSON text** |
+| **json/jsonb scalar** (`123`, `"x"`, `null`, `true`) | as above | `[]byte` | **`123` / `"x"` / `null` / `true`** | **`"123"` / `"\"x\""` / `"null"` / `"true"`** | the scalar | the scalar |
+| **bytea/BLOB spelling JSON** | `[]byte` | `[]byte` | **`"{\"a\":1}"` (a string)** | **`{"a":1}` (an object)** | text | text |
+| bytea/BLOB, real binary | `[]byte` | `[]byte` | base64 | base64 | base64 | **base64** (was a rendered byte slice on `share`) |
+| bytea/BLOB, empty | `[]byte{}` | `[]byte{}` | `""` | `""` | empty | empty |
+| bytea/BLOB, readable text | `[]byte` | `[]byte` | its text | its text | text | text |
+| **repeated column name** | — | — | both values (array) | both values | **both** (was both) | **both** (was: later wins, earlier lost) |
+| **a column named `id`** | — | — | its value | its value | its value | **its value** (was `row_0`) |
+
+Three cells of that table were defects nobody had named, and the two most damaging are
+in the *block* column, not the raw endpoint:
+
+- **`SELECT 42 AS id` in a table block rendered `row_0`.** The endpoint adds a
+  synthetic `id` per row for the client's `x-for` `:key`, and wrote it over a column
+  genuinely called `id` — the most common column in this application. Measured:
+  `{"columns":[{"id":"id",…}],"rows":[{"id":"row_0","other":7}]}`.
+- **The same conversion existed twice**, once in `block_api_handlers.go` and once in
+  `share_server.go`'s `fetchTableQueryData`, and the second copy also turned every
+  `[]byte` into a string — so a binary column was base64 for a signed-in reader and
+  mojibake on the public page. One function now, `TableBlockQueryData`.
+- **A structured cell rendered `[object Object]`.** `x-text="row[col.id]"` and
+  `{{ row|lookup:col.id }}` each produce one text node, and jsonb has always been an
+  object on Postgres — so this was live before this round and would have spread to
+  SQLite with the fix. The block conversion flattens structure to compact JSON text,
+  which is the one place it deliberately differs from `/v1/query/run`, asserted as
+  such rather than left implicit.
+
+##### The five findings
+
+- [x] **1 (high) — cell typing is content-based.** `cellValue` takes the column's
+      declared type. The clearest single repro is on **SQLite**, which the review
+      framed as mostly a Postgres problem: `SELECT json_object('a',1)` answered
+      `"{\"a\":1}"` and `SELECT CAST(json_object('a',1) AS BLOB)` answered `{"a":1}` —
+      one document, two JSON types, decided by which Go type go-sqlite3 chose. Scalar
+      `jsonb`, JSON-looking `bytea`, and the SQLite-vs-Postgres disagreement over
+      `meta` all fall out of the same rule.
+- [x] **2 (medium) — Run and Explain could still install mutually stale panels.**
+      Each operation validated only its own request id, and they count on separate
+      counters — so Explain(A) completing after Run(B) put A's plan beside B's rows,
+      and the mirror ordering put A's rows under B's plan.
+      `abandonStaleCompanionRequest` aborts an in-flight *companion* whose
+      `panelStamp()` differs, at the point the reader starts the newer operation:
+      that is where their intent is expressed. Same stamp on both sides is
+      Explain-then-Run of one query and keeps both, which is the whole point of the
+      Explain button.
+- [x] **3 (medium) — the share server's lifecycle.** `Stop` cleared nothing, so a
+      shut-down share server went on being advertised and `POST /v1/note/share` went
+      on minting tokens — finding 7 again, through state that had merely gone stale.
+      `Stop` marks it, `Start`/`Stop` take a mutex (the race detector flags the old
+      code directly), and the `Serve` goroutine captures the server it was handed
+      instead of reading `s.server`, which a restart had already replaced.
+- [x] **4 (medium) — the CLI text table rounded large integers.** `[][]any` decodes
+      every JSON number to `float64`. `queryResultTable` decodes with `UseNumber()`
+      and `formatCell` prints the literal. **The reviewer's 2^23 figure is wrong** and
+      is not repeated anywhere: `strconv.FormatFloat(v,'f',-1,64)` is
+      shortest-round-trip, so every integer a float64 holds exactly still prints its
+      own digits and the real threshold is 2^53. Measured before:
+      `9007199254740993 → 9007199254740992`, `12345678901234567 → …68`.
+- [x] **5 (medium) — table-block rows regressed on repeated column names.** Column
+      ids are positional (`col_0`, `col_1`, …) with the real name in `label`, which is
+      the spelling `blockTable.js` already generates for a legacy manual table. A
+      client-side fallback resolves a *persisted* `sortColumn` by label, so a block
+      that was sorted before the change keeps its sort.
+- [x] **6 (minor) — migration docs and CLI E2E.** The two shipped CLI *skill*
+      references still described the array-of-objects shape and `jq '.[0].n'`
+      (`cmd/mr/commands/queries_help/` and `docs-site/docs/cli/` were already correct
+      and verified in sync with `mr docs dump`). `cli-queries.spec.ts` asserted only
+      `expect(parsed).toBeDefined()` — true of the old body and the new one alike —
+      and never ran the text table; it asserts the documented shape, the header row,
+      a repeated column and a 2^53 integer end to end now.
+
+#### Where round 2's diagnosis needed correcting
+
+1. **Finding 1 is not "mostly Postgres".** The review's examples are all Postgres, and
+   the sharpest reproduction is on SQLite, where the same document written as TEXT and
+   as BLOB comes back with two different JSON types from one query. A fixer working
+   only from the report would have gated the change behind a Postgres-only test.
+2. **`ColumnTypes()` is the right instrument and does not answer everywhere.** The
+   prescription is sound for lib/pq and gives nothing for a SQLite expression. The fix
+   therefore treats `""` as "no declared type" and leaves it as text, rather than
+   falling back to the sniffing it replaced. What the review filed as a "cross-driver
+   consistency" gap is closed for declared columns and is *inherent* for expressions;
+   saying which is which is the useful part.
+3. **Finding 5 understates itself by a long way.** "Later duplicates overwrite earlier
+   values" is true, and the same line destroys a column named `id` on every query that
+   selects one — no duplicate needed. It also had a second, unmentioned copy in the
+   share server with a *third* cell-typing rule.
+4. **Finding 4's magnitude was overstated** (2^23 for 2^53), and the defect is real.
+5. **Finding 3 lists three symptoms of one omission.** Stop not clearing the flag, the
+   goroutine dereferencing `s.server`, and the missing synchronisation are all "the
+   lifecycle after Start was never modelled". They are one fix, not three.
+
+#### Not driven red, and said so
+
+- **`TestTableBlockQueryTypesCellsLikeQueryRun`'s equality loop** passes in both
+  directions: both surfaces already shared the result-set conversion, so they were
+  consistently wrong before and consistently right after. It pins that they cannot
+  *drift*, which the duplicated share-server conversion made easy; the cell-typing fix
+  is proved by `TestQueryRunTypesACellByItsColumnAndNotByItsBytes`.
+- **`TestPG_QueryRunKeepsNullAndEmptyCells`** passes in both directions by design —
+  nothing about NULL or empty bytes changed. It is in the table because a rule about
+  column types has to say what it does when there is no value to type.
+- **`TestPG_QueryRunInlinesTheMetaColumnLikeSQLite`** passes in both directions too:
+  jsonb has always been an object on lib/pq. Its SQLite twin
+  (`TestQueryRunInlinesADeclaredJSONColumnOnEveryDriver`) is the half that was red.
+- **Three of the four `blockTable-sort` tests** pass in both directions; only the
+  label-fallback one discriminates. They are the controls that keep the fallback from
+  breaking ordinary sorting.
+- **The share-server concurrency test** asserts the agreement between the flag and
+  reality after a burst of Start/Stop; the interleaving that corrupts state is not one
+  a test can promise to hit. What *is* deterministic is `-race`, which reports the
+  unsynchronised `s.server` write/read directly on the old code.
+
+#### The `/mrql` decision — measured, recommended, not taken
+
+See "Deliberately not done, and why" above for the original measurement. Re-measured
+this round on a fresh instance: `GROUP BY width, height, contentType COUNT()` and
+`GROUP BY contentType, height, width COUNT()` emit **byte-identical** key order
+(`contentType, count, height, width`), which is the definition of the authored order
+being discarded. The recommendation and its blast radius are in the batch report; the
+short version is **fix the ordering, do not take the shape change**, because the two
+properties that made the object shape unfixable for raw SQL are both provably absent
+from MRQL: `meta.2024` is a **parse error** ("expected identifier after '.'"), so an
+integer-like column name cannot be spelled, and `GROUP BY width, width` collapses to
+one column in the SQL as well, so no value is lost.
 
 ### WS12 — Taxonomy and template authoring
 
@@ -3093,6 +3274,11 @@ the cheapest high-confidence work clears the ledger early.
 - [x] **Batch 11** — WS11 MRQL and query surfaces, WS12 taxonomy authoring, WS13 sharing.
 - [x] **Batch 10-fix** — the five findings an independent review of Batch 10 turned up, three of
       them tests that could not fail. See WS9-fix.
+- [x] **Batch 11-fix** — the eight findings from the first independent review of Batch 11. See
+      "What the review of 8772ab96 caught".
+- [x] **Batch 11 round 3** — the five findings from the *second* review, which said the work had
+      not converged, plus the cell matrix that turned up three more. See WS11 "Round 3 — the cell
+      matrix". Leaves the `/mrql` ordering decision with the user, with the blast radius measured.
 - [ ] **Batch 12** — WS14 long tail; bring the four product decisions back for sign-off.
 - [ ] **Batch 13** — Phase 3 guards.
 - [ ] **Batch 14** — final verification, docs, and a lessons entry.

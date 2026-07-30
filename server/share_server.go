@@ -9,12 +9,14 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/flosch/pongo2/v4"
 	"github.com/gorilla/mux"
 	"mahresources/application_context"
 	"mahresources/models"
+	"mahresources/server/api_handlers"
 	"mahresources/server/template_handlers/loaders"
 	"mahresources/server/template_handlers/template_context_providers"
 	template_filters "mahresources/server/template_handlers/template_filters"
@@ -41,6 +43,11 @@ type groupInfo struct {
 // It runs on a different port from the main server and only exposes
 // shared content through cryptographically secure tokens.
 type ShareServer struct {
+	// mu serialises Start and Stop. Round 3, finding 3: neither took a lock, so
+	// two of them racing wrote and read s.server concurrently (the detector flags
+	// it) and could leave the context's listening flag disagreeing with what is
+	// actually bound.
+	mu          sync.Mutex
 	server      *http.Server
 	appContext  *application_context.MahresourcesContext
 	templateSet *pongo2.TemplateSet
@@ -150,11 +157,14 @@ func (s *ShareServer) Start(bindAddress string, port string) error {
 		return nil // Share server disabled
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	router := mux.NewRouter()
 	s.registerShareRoutes(router)
 
 	addr := fmt.Sprintf("%s:%s", bindAddress, port)
-	s.server = &http.Server{
+	srv := &http.Server{
 		Addr:         addr,
 		Handler:      withSecurityHeaders(router), // BH-032
 		ReadTimeout:  15 * time.Second,
@@ -168,11 +178,20 @@ func (s *ShareServer) Start(bindAddress string, port string) error {
 		return fmt.Errorf("share server could not bind %s: %w", addr, err)
 	}
 
+	s.server = srv
 	s.appContext.MarkShareServerListening()
 	log.Printf("Share server listening on %s", addr)
+	// srv, not s.server: the goroutine outlives the field. Round 3, finding 3 —
+	// after a Stop and a restart, s.server is a *different* server, so the old
+	// goroutine was serving its listener through whatever handler had replaced it
+	// and reporting its exit against the wrong one. isCurrentServer keeps a dying
+	// old attempt from marking a healthy new one as broken.
 	go func() {
-		if err := s.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("Share server error: %v", err)
+			if !s.isCurrentServer(srv) {
+				return
+			}
 			s.appContext.MarkShareServerFailed()
 			s.appContext.Logger().Warning(
 				models.LogActionUpdate, "share", nil, addr,
@@ -184,14 +203,35 @@ func (s *ShareServer) Start(bindAddress string, port string) error {
 	return nil
 }
 
-// Stop gracefully shuts down the share server with a 5 second timeout
+// isCurrentServer reports whether srv is still the server this ShareServer is
+// running, so a goroutine belonging to a superseded attempt stays quiet.
+func (s *ShareServer) isCurrentServer(srv *http.Server) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.server == srv
+}
+
+// Stop gracefully shuts down the share server with a 5 second timeout.
+//
+// Round 3, finding 3: this used to leave the context's listening flag set, so
+// after a shutdown every note page went on offering /s/<token> links and
+// POST /v1/note/share went on minting tokens for a port nothing was answering —
+// finding 7 again, through a state that had simply gone stale. Stopping a server
+// is the clearest possible evidence that it is not listening.
 func (s *ShareServer) Stop() error {
-	if s.server == nil {
+	s.mu.Lock()
+	srv := s.server
+	s.server = nil
+	s.mu.Unlock()
+
+	if srv == nil {
 		return nil
 	}
+	s.appContext.MarkShareServerStopped()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return s.server.Shutdown(ctx)
+	return srv.Shutdown(ctx)
 }
 
 // registerShareRoutes sets up all routes for the share server
@@ -678,7 +718,14 @@ func (s *ShareServer) renderSharedNote(w http.ResponseWriter, note *models.Note,
 	}
 }
 
-// fetchTableQueryData executes a query and returns data formatted for table display
+// fetchTableQueryData executes a query and returns data formatted for table display.
+//
+// It goes through api_handlers.TableBlockQueryData, the same conversion
+// /v1/note/block/table/query uses, rather than repeating it. Round 3, finding 5:
+// this used to key each row by the raw column name — so a repeated name lost a
+// value exactly as the API endpoint did — and to turn every []byte into a string,
+// so a binary column rendered as mojibake in a public page while the logged-in
+// view of the same query showed base64. One rule, one place.
 func (s *ShareServer) fetchTableQueryData(queryId uint, params map[string]any) (map[string]interface{}, error) {
 	rows, err := s.appContext.RunReadOnlyQuery(queryId, params)
 	if err != nil {
@@ -686,53 +733,5 @@ func (s *ShareServer) fetchTableQueryData(queryId uint, params map[string]any) (
 	}
 	defer rows.Close()
 
-	// Get column names
-	colNames, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-
-	// Build column definitions
-	columns := make([]map[string]string, 0, len(colNames))
-	for _, colName := range colNames {
-		columns = append(columns, map[string]string{
-			"id":    colName,
-			"label": colName,
-		})
-	}
-
-	// Scan rows into maps
-	resultRows := make([]map[string]interface{}, 0)
-	for rows.Next() {
-		columnValues := make([]interface{}, len(colNames))
-		columnPointers := make([]interface{}, len(colNames))
-		for i := range columnValues {
-			columnPointers[i] = &columnValues[i]
-		}
-
-		if err := rows.Scan(columnPointers...); err != nil {
-			return nil, err
-		}
-
-		row := make(map[string]interface{})
-		for i, colName := range colNames {
-			val := columnValues[i]
-			// Convert []byte to string for display
-			if b, ok := val.([]byte); ok {
-				row[colName] = string(b)
-			} else {
-				row[colName] = val
-			}
-		}
-		resultRows = append(resultRows, row)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return map[string]interface{}{
-		"columns": columns,
-		"rows":    resultRows,
-	}, nil
+	return api_handlers.TableBlockQueryData(rows)
 }

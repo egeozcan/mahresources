@@ -254,11 +254,36 @@ entry of `rows` is index-aligned with it. Three consequences:
 - `columns` is populated even when the query matched nothing, so a client can
   still draw the table header for an empty result.
 
-Cell values keep the type the column has. A text column whose contents happen to
-spell a number or a boolean stays a string; only a value that begins with `{` or
-`[` and parses is inlined as a JSON document. A column holding bytes that are not
-valid UTF-8 — a `bytea` of real binary — is base64-encoded, which is the only
-representation JSON has for it.
+A cell's JSON type is decided by its **column**, not by what its contents happen
+to spell:
+
+- A column declared `json` or `jsonb` (Postgres), or `JSON` (the SQLite type
+  mahresources' `meta` / `section_config` columns are declared with), holds a JSON
+  document and is inlined as structure — including when the document is a scalar,
+  so `'123'::jsonb` is the number `123`.
+- Every other column is its text. A `text` column spelling `123` stays the string
+  `"123"`; so does a `numeric`, a `uuid`, an array (`{a,b}`), and a `bytea` whose
+  bytes happen to read as JSON.
+- Bytes that are not valid UTF-8 — a `bytea` of real binary — are base64-encoded,
+  which is the only representation JSON has for them.
+- `NULL` is `null`.
+
+SQLite has no declared type for a computed column, so an expression there is
+always text: `SELECT json_group_array(name)` returns a string on SQLite while
+`SELECT json_agg(name)` returns structure on Postgres. Select the column itself,
+or parse client-side, if you need the document.
+
+:::note
+
+Before this rule, a value was typed by sniffing its bytes: anything that parsed
+as a JSON object or array became one. That made the same document have two types
+depending on how the driver handed it over — on SQLite,
+`SELECT json_object('a',1)` was the string `"{\"a\":1}"` while
+`SELECT CAST(json_object('a',1) AS BLOB)` was the object `{"a":1}` — and it left
+scalar `jsonb` values as quoted strings. If you were relying on a `bytea` or BLOB
+being re-parsed into structure, parse it yourself.
+
+:::
 
 :::note Changed response shape
 

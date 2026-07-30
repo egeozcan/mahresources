@@ -271,3 +271,157 @@ describe('findings 23/46 — the panels are invalidated per query', () => {
     expect(e.explainQuery).toBe(e.panelStamp('type = note LIMIT 3'));
   });
 });
+
+// WS11 round 3 — findings 23/46, the concurrent half.
+//
+// Round 2 stamped each panel with the request it describes and had each operation
+// check the *other* panel's stamp at its own start. That covers a sequential
+// change of query text; it does not cover two operations being in flight at once,
+// because each one only ever validated its own request id. Measured on the
+// round-2 code, with Explain(A) still open when Run(B) is pressed:
+//
+//	execute(B) -> clearExplain() (explainQuery is already '' — explain() blanked it)
+//	           -> installs rows for B
+//	explain(A) -> installs the plan for A
+//	           => the plan for A sitting beside the rows for B, which is finding 23
+//
+// and the mirror with Run(A) open when Explain(B) is pressed: explain's own
+// request id is a different counter, so execute(A)'s "am I still current" check
+// passes and it writes A's rows under B's plan.
+//
+// Whichever operation the reader starts *last* names the request they are asking
+// about, so an in-flight operation for a different request is abandoned at that
+// point rather than allowed to land.
+describe('findings 23/46 — a Run and an Explain in flight at the same time', () => {
+  // A fetch stub whose responses are released by hand, so two requests can be
+  // open at once and completed in a chosen order.
+  function deferredFetch() {
+    const pending: Array<{ url: string; resolve: (body: unknown) => void }> = [];
+    const fetchImpl = ((url: string) =>
+      new Promise((resolve) => {
+        pending.push({
+          url,
+          resolve: (body: unknown) => resolve({ ok: true, json: async () => body }),
+        });
+      })) as unknown as typeof fetch;
+    return { pending, fetchImpl };
+  }
+
+  function panelEditor(text: () => string) {
+    const e = editor();
+    e.getQuery = text;
+    e.addToHistory = () => {};
+    // A no-op rather than fn(): execute()'s tick re-collects lightbox items off
+    // `window`, which does not exist here, and it runs inside execute()'s try —
+    // so calling it would land "window is not defined" in `this.error` and make
+    // the error assertion below measure the harness instead of the product.
+    e.$nextTick = () => {};
+    return e;
+  }
+
+  it('a plan still being computed for query A does not land beside query B’s rows', async () => {
+    let text = 'type = note LIMIT 3';
+    const e = panelEditor(() => text);
+    const { pending, fetchImpl } = deferredFetch();
+    globalThis.fetch = fetchImpl;
+
+    const explaining = e.explain(); // Explain(A), left open
+    expect(pending.length).toBe(1); // control: the explain really is in flight
+
+    text = 'type = group LIMIT 3';
+    const running = e.execute({ pushState: false }); // Run(B)
+
+    // Release B's rows first, then A's plan — the order the report describes.
+    const runCall = pending.find((p) => !p.url.includes('explain'));
+    runCall!.resolve({ entityType: 'group', groups: [{ ID: 1 }] });
+    await running;
+
+    pending[0].resolve({ entityType: 'note', statements: [{ label: 'notes', sql: 'SELECT 1' }] });
+    await explaining;
+
+    // Positive control: B's rows are on screen, so this is about the plan and not
+    // about a run that never landed.
+    expect(e.result).not.toBeNull();
+    expect(e.resultQuery).toBe(e.panelStamp('type = group LIMIT 3'));
+    expect(e.explainResult).toBeNull();
+    expect(e.showExplain).toBe(false);
+  });
+
+  it('rows still being fetched for query A do not land under query B’s plan', async () => {
+    let text = 'type = note LIMIT 3';
+    const e = panelEditor(() => text);
+    const { pending, fetchImpl } = deferredFetch();
+    globalThis.fetch = fetchImpl;
+
+    const running = e.execute({ pushState: false }); // Run(A), left open
+    expect(pending.length).toBe(1);
+
+    text = 'type = group LIMIT 3';
+    const explaining = e.explain(); // Explain(B)
+
+    const explainCall = pending.find((p) => p.url.includes('explain'));
+    explainCall!.resolve({ entityType: 'group', statements: [{ label: 'groups', sql: 'SELECT 1' }] });
+    await explaining;
+
+    pending[0].resolve({ entityType: 'note', notes: [{ ID: 1 }] });
+    await running;
+
+    // Positive control: B's plan is on screen.
+    expect(e.explainResult).not.toBeNull();
+    expect(e.explainQuery).toBe(e.panelStamp('type = group LIMIT 3'));
+    expect(e.result).toBeNull();
+    expect(e.resultQuery).toBe('');
+  });
+
+  it('an Explain in flight for the SAME request survives a Run, because that is the workflow', async () => {
+    const e = panelEditor(() => 'type = note LIMIT 3');
+    const { pending, fetchImpl } = deferredFetch();
+    globalThis.fetch = fetchImpl;
+
+    const explaining = e.explain();
+    const running = e.execute({ pushState: false });
+
+    const runCall = pending.find((p) => !p.url.includes('explain'));
+    runCall!.resolve({ entityType: 'note', notes: [{ ID: 1 }] });
+    await running;
+
+    const explainCall = pending.find((p) => p.url.includes('explain'));
+    explainCall!.resolve({ entityType: 'note', statements: [{ label: 'notes', sql: 'SELECT 1' }] });
+    await explaining;
+
+    // Both describe the same request, so both stay. This is the assertion that
+    // stops the fix from being "always abandon the other operation".
+    expect(e.result).not.toBeNull();
+    expect(e.explainResult).not.toBeNull();
+    expect(e.showExplain).toBe(true);
+    expect(e.explainQuery).toBe(e.resultQuery);
+  });
+
+  // Honesty note: this one passes in both directions — the round-2 code already
+  // settled both flags, because the abandoned operation was allowed to complete
+  // normally. It is a control on the *fix*: abandoning an in-flight request must
+  // not strand `explaining`/`executing` on true (which would disable the buttons
+  // for the rest of the session) or report an AbortError to the reader.
+  it('an abandoned operation does not leave its busy flag set', async () => {
+    let text = 'type = note LIMIT 3';
+    const e = panelEditor(() => text);
+    const { pending, fetchImpl } = deferredFetch();
+    globalThis.fetch = fetchImpl;
+
+    const explaining = e.explain();
+    text = 'type = group LIMIT 3';
+    const running = e.execute({ pushState: false });
+
+    const runCall = pending.find((p) => !p.url.includes('explain'));
+    runCall!.resolve({ entityType: 'group', groups: [{ ID: 1 }] });
+    await running;
+    pending[0].resolve({ entityType: 'note', statements: [] });
+    await explaining;
+
+    expect(e.explaining).toBe(false);
+    expect(e.executing).toBe(false);
+    // The abandoned explain must not have reported an error to the reader: they
+    // did not do anything wrong, they asked a newer question.
+    expect(e.error).toBe('');
+  });
+});

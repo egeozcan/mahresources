@@ -134,18 +134,31 @@ export function blockTable(block, saveContentFn, saveStateFn, getEditMode, saveC
       return this._normalizeColumns(raw);
     },
 
+    // Resolve the persisted sortColumn against the columns actually on screen.
+    //
+    // A query-mode block's column ids became positional (`col_0`, `col_1`) when
+    // the server stopped keying rows by the raw column name — a repeated name
+    // overwrote itself and a column called `id` collided with the synthetic row
+    // key. State saved before that holds the *name*, so fall back to matching a
+    // column's label, and a block that was sorted keeps its sort.
+    _resolveSortColumnId(cols) {
+      if (!this.sortColumn) return '';
+      if (cols.some(c => c.id === this.sortColumn)) return this.sortColumn;
+      const byLabel = cols.find(c => c.label === this.sortColumn);
+      return byLabel ? byLabel.id : '';
+    },
+
     // Computed: which rows to display (sorted)
     get displayRows() {
       const rawRows = this.isQueryMode ? this.queryRows : this.rows;
       const cols = this.displayColumns;
       const rows = this._normalizeRows(rawRows, cols);
-      if (!this.sortColumn) return rows;
 
-      const col = cols.find(c => c.id === this.sortColumn);
-      if (!col) return rows;
+      const sortId = this._resolveSortColumnId(cols);
+      if (!sortId) return rows;
 
       return [...rows].sort((a, b) => {
-        const cmp = compareCellValues(a[this.sortColumn], b[this.sortColumn]);
+        const cmp = compareCellValues(a[sortId], b[sortId]);
         return this.sortDirection === 'asc' ? cmp : -cmp;
       });
     },

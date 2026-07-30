@@ -19,13 +19,31 @@ import (
 	"mahresources/server/http_utils"
 )
 
-// sQLToResultSet converts a raw-SQL result set into the columns-and-rows body
+// SQLToResultSet converts a raw-SQL result set into the columns-and-rows body
 // POST /v1/query/run returns. See contracts.SQLResultSet for why the shape is an
 // array of arrays and not an array of objects (finding 147).
-func sQLToResultSet(rows *sqlx.Rows) (*contracts.SQLResultSet, error) {
+//
+// Exported because the table-block endpoint and the public share server both run
+// saved queries and must present a cell the same way POST /v1/query/run does;
+// the share server used to do its own []byte-to-string conversion and disagreed.
+func SQLToResultSet(rows *sqlx.Rows) (*contracts.SQLResultSet, error) {
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, fmt.Errorf("column error: %v", err)
+	}
+
+	// The declared database type of each column, which is what decides how a
+	// value is represented (see cellValue). ColumnTypes is advisory: a driver
+	// that does not implement it leaves the names empty, and an empty name means
+	// "no declared type", which is the same answer go-sqlite3 gives for every
+	// expression.
+	dbTypes := make([]string, len(cols))
+	if colTypes, err := rows.ColumnTypes(); err == nil {
+		for i, ct := range colTypes {
+			if i < len(dbTypes) && ct != nil {
+				dbTypes[i] = ct.DatabaseTypeName()
+			}
+		}
 	}
 
 	out := contracts.NewSQLResultSet(cols)
@@ -43,7 +61,7 @@ func sQLToResultSet(rows *sqlx.Rows) (*contracts.SQLResultSet, error) {
 
 		values := make([]any, len(cols))
 		for i := range cols {
-			values[i] = cellValue(*(columnPointers[i].(*any)))
+			values[i] = cellValue(*(columnPointers[i].(*any)), dbTypes[i])
 		}
 
 		out.Rows = append(out.Rows, values)
@@ -56,35 +74,57 @@ func sQLToResultSet(rows *sqlx.Rows) (*contracts.SQLResultSet, error) {
 	return out, nil
 }
 
-// cellValue decides how one scanned column value is represented in JSON.
+// cellValue decides how one scanned column value is represented in JSON, from
+// the column's **declared database type** rather than from the bytes.
 //
-// The only case that needs a decision is []byte, which encoding/json base64s.
-// Whether a driver hands a value back as a []byte or as a typed Go value is a
-// property of the driver, not of the data: go-sqlite3 returns TEXT as a string,
-// and lib/pq — the driver behind the production read-only handle on Postgres —
-// returns numeric, uuid, arrays, json and jsonb as []byte while returning text,
-// int, bool and timestamps as typed values. So on Postgres, `SELECT sum(file_size)`
-// came back as `"MS41"`: base64 of the number the query existed to read.
+// Two facts make the decision necessary at all. Whether a driver hands a value
+// back as a []byte or as a typed Go value is a property of the driver, not of the
+// data: go-sqlite3 returns TEXT as a string and BLOB as []byte, and lib/pq — the
+// driver behind the production read-only handle on Postgres — returns numeric,
+// uuid, arrays, json, jsonb and bytea as []byte while returning text, int, bool
+// and timestamps as typed values. And encoding/json base64s any []byte, so
+// `SELECT sum(file_size)` on Postgres once answered `"MS41"` for the number the
+// query existed to read.
 //
-// Three cases, in order:
+// Deciding from the bytes instead — "it parses as a JSON object, so it is one" —
+// made a value's JSON type depend on what it happened to spell. Measured on
+// SQLite, one document written two ways:
 //
-//   - An object or an array is a JSON document (`meta`, `section_config`, and any
-//     jsonb column) and is inlined as structure so a reader can address into it.
-//   - Anything else that is valid UTF-8 is the driver's *text representation* of
-//     the value, and is emitted as the string it spells. A bare JSON scalar is
-//     deliberately included here: a text column containing `123` is the string
-//     "123", and re-parsing it would make the value's type depend on what the
-//     cell happens to spell.
+//	SELECT json_object('a', 1)                -> "{\"a\":1}"  (a JSON string)
+//	SELECT CAST(json_object('a', 1) AS BLOB)  -> {"a":1}      (a JSON object)
+//
+// and on Postgres a bytea holding the bytes 7b 22 61 22 3a 31 7d became an
+// object, while `'123'::jsonb` — a column whose declared purpose is to hold a
+// JSON document — came back as the string "123".
+//
+// So:
+//
+//   - A column declared json/jsonb (Postgres) or JSON (the SQLite decltype GORM
+//     writes for models.Group.Meta and friends) holds a JSON *document*, and a
+//     document is allowed to be a scalar. Its value is parsed, whether the driver
+//     handed it over as bytes or as a string, so both drivers answer alike.
+//     Content that does not parse falls through to the text case rather than
+//     failing the query — a legacy row is still readable.
+//   - Everything else that is a []byte is the driver's *text representation* of
+//     the value (numeric, uuid, arrays) and is emitted as the string it spells.
 //   - Bytes that are not valid UTF-8 have no text form, so they keep the base64
 //     encoding. That is what a bytea column of real binary gets, and it is the
 //     only honest answer for it.
-func cellValue(val any) any {
+//
+// What this deliberately does not do is give SQLite *expressions* a type: SQLite
+// has no declared type for a computed column, so `SELECT json_group_array(name)`
+// stays a string there while `SELECT json_agg(name)` is structure on Postgres.
+// That difference is in SQLite's type system, not in this function, and inventing
+// a type by sniffing is the defect this replaced.
+func cellValue(val any, dbType string) any {
+	if isJSONColumnType(dbType) {
+		if parsed, ok := jsonDocument(val); ok {
+			return parsed
+		}
+	}
 	raw, ok := val.([]uint8)
 	if !ok {
 		return val
-	}
-	if embedded, ok := embeddedJSON(raw); ok {
-		return embedded
 	}
 	if utf8.Valid(raw) {
 		return string(raw)
@@ -92,16 +132,27 @@ func cellValue(val any) any {
 	return raw
 }
 
-// embeddedJSON reports whether a text/blob column holds a JSON object or array
-// that should be re-emitted as structure rather than as a string.
-//
-// Only an object or an array counts. Attempting json.Unmarshal on every value
-// would make a text column containing `123` come back as the number 123, `true`
-// as a boolean and `null` as null — a silent type change driven by the contents
-// of the cell rather than by its column.
-func embeddedJSON(raw []byte) (json.RawMessage, bool) {
-	trimmed := bytes.TrimLeft(raw, " \t\r\n")
-	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
+// isJSONColumnType reports whether a driver's declared type name says the column
+// holds a JSON document. lib/pq reports JSON and JSONB; go-sqlite3 reports the
+// decltype, which is JSON for the columns GORM creates from datatypes.JSON.
+func isJSONColumnType(dbType string) bool {
+	return strings.EqualFold(dbType, "json") || strings.EqualFold(dbType, "jsonb")
+}
+
+// jsonDocument re-emits an already-valid JSON document verbatim. json.RawMessage
+// round-trips the exact bytes, so a number too large for a float64 keeps its
+// digits instead of being re-rendered through one.
+func jsonDocument(val any) (json.RawMessage, bool) {
+	var raw []byte
+	switch v := val.(type) {
+	case []uint8:
+		raw = v
+	case string:
+		raw = []byte(v)
+	default:
+		return nil, false
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, false
 	}
 	var out json.RawMessage
@@ -206,7 +257,7 @@ func GetRunQueryHandler(ctx contracts.QueryRunner) func(writer http.ResponseWrit
 		}
 		defer result.Close()
 
-		resultSet, err := sQLToResultSet(result)
+		resultSet, err := SQLToResultSet(result)
 
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)

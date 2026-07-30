@@ -1123,3 +1123,98 @@ could be `cancelled` with a resource attached. Making the status honest without 
 have hidden the file — creating the exact orphan the old behaviour was defending against. A
 decision like this is not done when the state machine agrees; it is done when everything that reads
 the state agrees.
+
+## Deciding a value's type from its bytes makes one datum have two types, so read the column instead
+
+A raw-SQL endpoint has to decide what a scanned cell becomes in JSON, and the tempting rule is
+"if it parses as an object or an array, it is a document". That rule makes the answer a function of
+what the value happens to spell. Measured on SQLite, one document written two ways in a single
+query:
+
+    SELECT json_object('a', 1)                -> "{\"a\":1}"   a JSON string
+    SELECT CAST(json_object('a', 1) AS BLOB)  -> {"a":1}        a JSON object
+
+Nothing about the data differs; the driver handed one back as a `string` and the other as a
+`[]byte`, and only the `[]byte` reached the sniffing. On Postgres the same rule turned a `bytea`
+whose bytes spell JSON into structure, and left `'123'::jsonb` — a column whose declared purpose is
+to hold a document — as the string `"123"`.
+
+`rows.ColumnTypes()` is the right instrument, and it is worth knowing exactly how much it gives you
+before you build on it:
+
+- **lib/pq** answers for every column, expressions included: `NUMERIC`, `UUID`, `_TEXT`, `INT4`,
+  `JSON`, `JSONB`, `BYTEA`, and so on.
+- **go-sqlite3** answers with the *decltype*, so a direct table column is `JSON`/`TEXT`/`INTEGER`
+  and every expression or literal is the empty string.
+
+That asymmetry is not a reason to fall back to sniffing — it is the answer. An empty type name means
+"this column has no declared type", so the value is text, and `SELECT json_group_array(...)` staying
+a string on SQLite while `SELECT json_agg(...)` is structure on Postgres is a property of SQLite's
+type system. Write that difference down in the code; inventing a type to paper over it is the defect
+you just removed.
+
+## A synthetic per-row key lives in the same namespace as the data's own column names
+
+An endpoint that returns rows as objects keyed by column name will sooner or later want to add
+something of its own — a stable `id` for a client's `x-for` key, a `_meta`, a row number. Ours added
+`row["id"] = "row_0"` after copying the columns in, so `SELECT 42 AS id` — the single most common
+column in the application — answered `{"id":"row_0"}` and the table rendered `row_0` where the id
+should be. The duplicate-column bug filed against the same three lines (`SELECT 10 AS dup, 20 AS
+dup` keeping only 20) is the same defect with the collision coming from the data instead of from us.
+
+Two rules. **A key you add must come from a namespace the data cannot reach** — positional ids
+(`col_0`, `col_1`) for the columns, which also makes repeats impossible, so both halves of the bug
+close with one change. And when a wire format is a *view model* rather than the raw result — this one
+is rendered by `x-text` and by a pongo2 filter, each producing exactly one text node — say so and
+flatten structure to text there, rather than letting `[object Object]` reach the page. Ours had been
+doing that on Postgres for as long as jsonb has existed, and nobody had looked.
+
+## Two operations that each validate their own request id can still make each other stale
+
+The standard guard against a late response overwriting a newer one is a per-operation counter:
+increment on start, compare before installing. It is correct and it is only about *one* operation.
+An editor with a Run button and an Explain button has two counters, so an Explain started for query A
+and a Run started for query B are each, by their own reckoning, entirely current — and whichever
+lands last leaves A's plan beside B's rows. Both orderings fail, and both were invisible to tests
+that changed the query text between two *sequential* calls.
+
+The fix is not another id. It is to notice that the two operations describe **one** thing — the
+request the reader is asking about — and that the reader names it by whichever operation they start
+last. So on starting an operation, abort any companion still in flight for a different request. Where
+the two agree, both must survive: Explain-then-Run of one query is the entire reason the Explain
+button exists, and a fix that always clears the other panel would have destroyed the feature while
+passing every staleness test.
+
+## Decoding a JSON body into `any` rounds every integer past 2^53, and the raw-passthrough path hides it
+
+`json.Unmarshal` into `[][]any` turns every number into a `float64`. A CLI that formats those for a
+text table printed `9007199254740992` for a column the server had sent as `9007199254740993`, while
+`--json` — which passes the response bytes through untouched — was correct. So the wire was right,
+one of the two output modes was wrong, and the mode nobody scripts against was the wrong one.
+
+Two details worth keeping. `json.Decoder` with `UseNumber()` yields `json.Number`, whose `String()`
+is the literal the sender wrote, digit for digit, and `json.Marshal` re-emits it verbatim, so nested
+structures are fixed by the same one-line change. And the threshold is **2^53**, not 2^23 as the
+report claimed: `strconv.FormatFloat(v, 'f', -1, 64)` is shortest-round-trip, so every integer a
+float64 can hold exactly still prints its own digits, and the loss begins exactly where the float64
+stops being able to hold the value. Getting the magnitude right mattered — an order-of-magnitude
+overstatement is the kind of thing that makes a real finding easy to dismiss.
+
+## The lifecycle of a server does not end at Start, and a flag that only Start writes will go stale
+
+A round of review made a share server's bind synchronous and had it record a positive "I am
+listening" fact, which fixed the reported bug: a deployment no longer advertised a port whose bind
+had failed. `Stop` was left writing nothing. So a process that shut its share server down went on
+telling every page that sharing worked and went on minting tokens for `/s/<token>` URLs nothing
+would answer — the original finding, reached through state that had merely gone out of date rather
+than through a missing check.
+
+The same omission produced two more defects in the same twenty lines. The `Serve` goroutine read
+`s.server` instead of the server it was started with, so after a restart it was serving one
+listener's traffic against a field that had been replaced, and reporting its own exit against the
+wrong one. And neither `Start` nor `Stop` took a lock, which `-race` reports directly.
+
+When a component records a fact about itself, enumerate every transition that can falsify it —
+started, stopped, restarted, crashed, superseded — and give each one a line. A long-lived goroutine
+should capture what it owns at entry and be judged against that, which is the same rule a download
+worker needed for its attempt identity, one level up.

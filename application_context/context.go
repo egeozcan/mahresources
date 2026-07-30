@@ -412,6 +412,17 @@ func (ctx *MahresourcesContext) MarkShareServerFailed() {
 	}
 }
 
+// MarkShareServerStopped records that the share server was shut down deliberately.
+// It writes the same fact as MarkShareServerFailed — nothing is listening — and
+// exists so that server.ShareServer.Stop does not have to say "failed" about an
+// orderly shutdown. Round 3, finding 3: Stop used to write nothing at all, so a
+// stopped share server went on being advertised.
+func (ctx *MahresourcesContext) MarkShareServerStopped() {
+	if ctx != nil && ctx.shareServerListening != nil {
+		ctx.shareServerListening.Store(false)
+	}
+}
+
 // ShareServerListening reports whether a share server is known to be serving.
 func (ctx *MahresourcesContext) ShareServerListening() bool {
 	return ctx != nil && ctx.shareServerListening != nil && ctx.shareServerListening.Load()

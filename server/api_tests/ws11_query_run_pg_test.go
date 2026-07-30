@@ -181,3 +181,159 @@ func TestPG_QueryRunKeepsBinaryColumnsAsBase64(t *testing.T) {
 		t.Errorf("textual = %#v, want %q", out.Rows[0][1], "readable")
 	}
 }
+
+// WS11 round 3 — the cases the round-2 Postgres coverage did not name, and the
+// two it got wrong. All four are decided by the column's declared type now
+// (rows.ColumnTypes()), not by what the bytes happen to spell. Measured on
+// lib/pq before the change:
+//
+//	'{"a":1}'::json / ::jsonb      -> object      (right, by accident of the bytes)
+//	'123'::jsonb                   -> "123"       (wrong: a JSON document that is a scalar)
+//	'"x"'::jsonb                   -> "\"x\""     (wrong: quoted twice)
+//	'null'::jsonb                  -> "null"      (wrong: a string spelling null)
+//	'true'::jsonb                  -> "true"      (wrong: a string spelling true)
+//	'\x7b2261223a317d'::bytea      -> {"a":1}     (wrong: binary re-parsed as a document)
+//
+// A `json`/`jsonb` column holds a JSON *document*, and a document is allowed to
+// be a scalar; a `bytea` column holds bytes and never a document, however they
+// happen to read.
+func TestPG_QueryRunTypesCellsByColumnType(t *testing.T) {
+	tc := SetupPostgresTestEnv(t)
+
+	// Built with jsonb functions rather than JSON literals: the saved-query runner
+	// passes the text through sqlx's NamedQuery, which reads the `:1` inside
+	// `'{"a":1}'` as a bind placeholder and 400s the query.
+	q := createSavedQuery(t, tc, "ws11r3 pg column typing",
+		`SELECT jsonb_build_object('a', 1) AS doc, to_jsonb(123) AS jnum, to_jsonb('x'::text) AS jstr,
+		        'null'::jsonb AS jnull, 'true'::jsonb AS jbool,
+		        '\x7b2261223a317d'::bytea AS jsonlooking_bytes, 'plain'::text AS wordy`)
+
+	resp := tc.MakeRequest(http.MethodPost, fmt.Sprintf("/v1/query/run?id=%d", q.ID), map[string]any{})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("POST /v1/query/run = %d, want 200: %s", resp.Code, resp.Body.String())
+	}
+	var out struct {
+		Columns []string `json:"columns"`
+		Rows    [][]any  `json:"rows"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v — body %s", err, resp.Body.String())
+	}
+	if len(out.Rows) != 1 || len(out.Rows[0]) != 7 {
+		t.Fatalf("want one 7-value row — body %s", resp.Body.String())
+	}
+
+	// Positive control: an ordinary text column is still its text, so a rule that
+	// stringified or structured everything would not pass this.
+	if got, ok := out.Rows[0][6].(string); !ok || got != "plain" {
+		t.Fatalf("wordy = %#v, want \"plain\" — this test measured nothing", out.Rows[0][6])
+	}
+
+	if doc, ok := out.Rows[0][0].(map[string]any); !ok || doc["a"] != float64(1) {
+		t.Errorf("doc = %#v, want the object {\"a\":1}", out.Rows[0][0])
+	}
+	if n, ok := out.Rows[0][1].(float64); !ok || n != 123 {
+		t.Errorf("jnum = %#v, want the number 123 — a jsonb column holding a scalar still holds a document",
+			out.Rows[0][1])
+	}
+	if s, ok := out.Rows[0][2].(string); !ok || s != "x" {
+		t.Errorf("jstr = %#v, want the string \"x\" (not the two-character JSON text `\"x\"`)", out.Rows[0][2])
+	}
+	if out.Rows[0][3] != nil {
+		t.Errorf("jnull = %#v, want JSON null", out.Rows[0][3])
+	}
+	if b, ok := out.Rows[0][4].(bool); !ok || b != true {
+		t.Errorf("jbool = %#v, want the boolean true", out.Rows[0][4])
+	}
+	if s, ok := out.Rows[0][5].(string); !ok || s != `{"a":1}` {
+		t.Errorf("jsonlooking_bytes = %#v, want the string `{\"a\":1}` — a bytea is bytes, not a document",
+			out.Rows[0][5])
+	}
+}
+
+// NULL and an empty value, on the two column types where lib/pq's answer differs
+// from SQLite's. Not a behaviour change in this round; named because a rule about
+// column types has to say what it does when there is no value to type.
+func TestPG_QueryRunKeepsNullAndEmptyCells(t *testing.T) {
+	tc := SetupPostgresTestEnv(t)
+
+	q := createSavedQuery(t, tc, "ws11r3 pg null and empty",
+		`SELECT NULL::text AS nulltext, NULL::jsonb AS nulljson, ''::bytea AS emptybytes,
+		        ''::text AS emptytext, 'plain'::text AS wordy`)
+
+	resp := tc.MakeRequest(http.MethodPost, fmt.Sprintf("/v1/query/run?id=%d", q.ID), map[string]any{})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("POST /v1/query/run = %d, want 200: %s", resp.Code, resp.Body.String())
+	}
+	var out struct {
+		Columns []string `json:"columns"`
+		Rows    [][]any  `json:"rows"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v — body %s", err, resp.Body.String())
+	}
+	if len(out.Rows) != 1 || len(out.Rows[0]) != 5 {
+		t.Fatalf("want one 5-value row — body %s", resp.Body.String())
+	}
+	if got, ok := out.Rows[0][4].(string); !ok || got != "plain" {
+		t.Fatalf("wordy = %#v, want \"plain\" — this test measured nothing", out.Rows[0][4])
+	}
+	for _, c := range []struct {
+		index int
+		name  string
+	}{{0, "nulltext"}, {1, "nulljson"}} {
+		if out.Rows[0][c.index] != nil {
+			t.Errorf("%s = %#v, want JSON null", c.name, out.Rows[0][c.index])
+		}
+	}
+	for _, c := range []struct {
+		index int
+		name  string
+	}{{2, "emptybytes"}, {3, "emptytext"}} {
+		if got, ok := out.Rows[0][c.index].(string); !ok || got != "" {
+			t.Errorf("%s = %#v, want the empty string", c.name, out.Rows[0][c.index])
+		}
+	}
+}
+
+// The cross-driver claim, stated as one assertion instead of left implicit in two
+// files. groups.meta is jsonb on Postgres and declared JSON on SQLite, and until
+// this round POST /v1/query/run answered with an object on one and a quoted
+// string on the other for the identical row. The SQLite half of this pair is
+// TestQueryRunInlinesADeclaredJSONColumnOnEveryDriver in ws11r3_query_cells_test.go.
+func TestPG_QueryRunInlinesTheMetaColumnLikeSQLite(t *testing.T) {
+	tc := SetupPostgresTestEnv(t)
+
+	g := tc.CreateDummyGroup("ws11r3 pg meta carrier")
+	if err := tc.DB.Exec(`UPDATE groups SET meta = ? WHERE id = ?`,
+		`{"camera":"X100","iso":400}`, g.ID).Error; err != nil {
+		t.Fatalf("set meta: %v", err)
+	}
+	q := createSavedQuery(t, tc, "ws11r3 pg meta column",
+		fmt.Sprintf("SELECT name, meta FROM groups WHERE id = %d", g.ID))
+
+	resp := tc.MakeRequest(http.MethodPost, fmt.Sprintf("/v1/query/run?id=%d", q.ID), map[string]any{})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("POST /v1/query/run = %d, want 200: %s", resp.Code, resp.Body.String())
+	}
+	var out struct {
+		Columns []string `json:"columns"`
+		Rows    [][]any  `json:"rows"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v — body %s", err, resp.Body.String())
+	}
+	if len(out.Rows) != 1 || len(out.Rows[0]) != 2 {
+		t.Fatalf("want one 2-value row — body %s", resp.Body.String())
+	}
+	if name, ok := out.Rows[0][0].(string); !ok || name != "ws11r3 pg meta carrier" {
+		t.Fatalf("name = %#v, want the group name — this test measured nothing", out.Rows[0][0])
+	}
+	meta, ok := out.Rows[0][1].(map[string]any)
+	if !ok {
+		t.Fatalf("meta = %#v, want a decoded JSON object", out.Rows[0][1])
+	}
+	if meta["camera"] != "X100" {
+		t.Errorf(`meta["camera"] = %#v, want "X100"`, meta["camera"])
+	}
+}

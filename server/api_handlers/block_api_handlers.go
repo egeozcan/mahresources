@@ -1,17 +1,21 @@
 package api_handlers
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/jmoiron/sqlx"
 	"mahresources/constants"
 	"mahresources/contracts"
 	"mahresources/models/block_types"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
-	"net/http"
-	"strconv"
-	"time"
 )
 
 func GetBlocksHandler(ctx contracts.BlockReader) func(http.ResponseWriter, *http.Request) {
@@ -297,6 +301,91 @@ type TableBlockQueryResponse struct {
 	IsStatic bool                `json:"isStatic"`
 }
 
+// TableBlockColumnID is the column identifier a table block's rows are keyed by:
+// the column's **position**, not its name. Both the block editor and the shared
+// note template render `row[col.id]` and label the header with `col.label`.
+//
+// Finding 5, round 3. Keying by the raw column name lost two things the ordered
+// column list was added to preserve. A repeated name overwrote itself, so
+// `SELECT 10 AS dup, 20 AS dup` rendered `20 | 20`. And the synthetic per-row key
+// — this endpoint adds `id` so the client has a stable `x-for` `:key` — collided
+// with a column genuinely called `id`, which in this application is the most
+// common column there is: `SELECT 42 AS id` answered `{"id":"row_0"}` and the
+// reader saw `row_0` where the id should be. Positional ids make both impossible,
+// and they are the same `col_N` spelling blockTable.js already generates for a
+// manual table's columns.
+func TableBlockColumnID(index int) string {
+	return "col_" + strconv.Itoa(index)
+}
+
+// tableBlockColumnsAndRows converts a result set into the labelled columns and
+// keyed rows the table block renders. Shared with the public share server so a
+// shared note and the block editor cannot present the same query differently.
+func tableBlockColumnsAndRows(resultSet *contracts.SQLResultSet) ([]map[string]string, []map[string]any) {
+	columns := make([]map[string]string, 0, len(resultSet.Columns))
+	for i, colName := range resultSet.Columns {
+		columns = append(columns, map[string]string{
+			"id":    TableBlockColumnID(i),
+			"label": colName,
+		})
+	}
+
+	rows := make([]map[string]any, len(resultSet.Rows))
+	for i, row := range resultSet.Rows {
+		keyed := make(map[string]any, len(resultSet.Columns)+1)
+		for j := range resultSet.Columns {
+			if j < len(row) {
+				keyed[TableBlockColumnID(j)] = tableBlockDisplayValue(row[j])
+			}
+		}
+		keyed["id"] = "row_" + strconv.Itoa(i)
+		rows[i] = keyed
+	}
+
+	return columns, rows
+}
+
+// tableBlockDisplayValue flattens a cell to something a one-line text cell can
+// show. This is the one place the table block deliberately differs from
+// POST /v1/query/run, and it differs because its two consumers are HTML tables
+// that render exactly one text node per cell: blockEditor.tpl's
+// `x-text="row[col.id]"` and sharedBlock.tpl's `{{ row|lookup:col.id }}`.
+//
+// A structured cell — which any json/jsonb column now is — renders as
+// "[object Object]" through x-text and as a Go byte slice through pongo2. That
+// was already true on Postgres before this round, where lib/pq has always handed
+// jsonb back as bytes. Compact JSON text is what a reader can actually read, and
+// keeping the flattening here means neither template has to know about it.
+func tableBlockDisplayValue(value any) any {
+	switch v := value.(type) {
+	case json.RawMessage:
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, v); err != nil {
+			return string(v)
+		}
+		return compact.String()
+	case []byte:
+		// Bytes with no text form. encoding/json would base64 these on the API
+		// path anyway; doing it here means the shared page shows the same thing
+		// instead of a rendered byte slice.
+		return base64.StdEncoding.EncodeToString(v)
+	default:
+		return value
+	}
+}
+
+// TableBlockQueryData runs the conversion above over a result set and returns the
+// `columns`/`rows` map the shared-note template reads. The share server has no
+// access to unexported helpers and must not grow a second copy of this rule.
+func TableBlockQueryData(rows *sqlx.Rows) (map[string]any, error) {
+	resultSet, err := SQLToResultSet(rows)
+	if err != nil {
+		return nil, err
+	}
+	columns, keyedRows := tableBlockColumnsAndRows(resultSet)
+	return map[string]any{"columns": columns, "rows": keyedRows}, nil
+}
+
 // GetTableBlockQueryDataHandler returns query data for a table block.
 // Route: GET /v1/note/block/table/query?blockId=X
 // The handler reads the block content to get queryId and queryParams,
@@ -356,35 +445,13 @@ func GetTableBlockQueryDataHandler(ctx contracts.TableBlockQueryRunner) func(htt
 		}
 		defer rows.Close()
 
-		resultSet, err := sQLToResultSet(rows)
+		resultSet, err := SQLToResultSet(rows)
 		if err != nil {
 			http_utils.HandleError(err, writer, request, http.StatusInternalServerError)
 			return
 		}
 
-		// Build column definitions preserving database order
-		columns := make([]map[string]string, 0, len(resultSet.Columns))
-		for _, colName := range resultSet.Columns {
-			columns = append(columns, map[string]string{
-				"id":    colName,
-				"label": colName,
-			})
-		}
-
-		// This endpoint's own response shape is unchanged: it already carries an
-		// ordered `columns` list of its own, so its rows never depended on JSON
-		// member order and stay keyed objects.
-		rowsWithIDs := make([]map[string]any, len(resultSet.Rows))
-		for i, row := range resultSet.Rows {
-			rowWithID := make(map[string]any, len(resultSet.Columns)+1)
-			for j, colName := range resultSet.Columns {
-				if j < len(row) {
-					rowWithID[colName] = row[j]
-				}
-			}
-			rowWithID["id"] = "row_" + strconv.Itoa(i)
-			rowsWithIDs[i] = rowWithID
-		}
+		columns, rowsWithIDs := tableBlockColumnsAndRows(resultSet)
 
 		// Build response
 		response := TableBlockQueryResponse{

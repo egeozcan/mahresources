@@ -801,13 +801,23 @@ curl "http://localhost:8181/v1/note/block/table/query?blockId=10"
 
 ```json
 {
-  "columns": [{"id": "name", "label": "name"}, {"id": "value", "label": "value"}],
-  "rows": [{"id": "row_0", "name": "Example", "value": 42}],
+  "columns": [{"id": "col_0", "label": "name"}, {"id": "col_1", "label": "value"}],
+  "rows": [{"id": "row_0", "col_0": "Example", "col_1": 42}],
   "cachedAt": "2024-01-15T10:00:00Z",
   "queryId": 5,
   "isStatic": false
 }
 ```
+
+Each column's `id` is its **position** in the SELECT list and its `label` is the
+name the query gave it. Rows are keyed by those positional ids, plus a synthetic
+`id` the client uses as a list key. Keying by the column name instead would lose a
+value whenever a query selects the same name twice (`select 10 as dup, 20 as dup`)
+or selects a column actually called `id`, which the synthetic key would overwrite.
+
+A cell holding a JSON document (any `json`/`jsonb` column) arrives as its compact
+JSON **text**, because both renderers of this response produce one text node per
+cell. `POST /v1/query/run` returns the same cell as structure.
 
 ## Get Calendar Block Events
 

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -238,13 +239,36 @@ type sqlResultSet struct {
 // carried its column list, `run` had nothing to build a header from and fell back
 // to printing the raw JSON in both modes.
 func printQueryResult(opts output.Options, raw json.RawMessage) {
-	var result sqlResultSet
-	if opts.JSON || json.Unmarshal(raw, &result) != nil {
+	if opts.JSON {
 		output.PrintSingle(opts, nil, raw)
 		return
 	}
+	columns, rows, ok := queryResultTable(raw)
+	if !ok {
+		output.PrintSingle(opts, nil, raw)
+		return
+	}
+	output.Print(opts, columns, rows, nil)
+}
 
-	rows := make([][]string, 0, len(result.Rows))
+// queryResultTable turns a /v1/query/run body into the header and cells
+// output.Print takes, reporting false for a body that is not a result set so the
+// caller can fall back to printing the raw JSON.
+//
+// UseNumber, because the default decodes every JSON number into a float64 and
+// float64 holds integers exactly only up to 2^53. Without it `mr query run`
+// printed 9007199254740992 for a column the server sent as 9007199254740993 —
+// the digits were correct on the wire, correct under --json (which passes the
+// raw bytes through), and rounded on the way to the text table.
+func queryResultTable(raw json.RawMessage) (columns []string, rows [][]string, ok bool) {
+	var result sqlResultSet
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
+		return nil, nil, false
+	}
+
+	rows = make([][]string, 0, len(result.Rows))
 	for _, values := range result.Rows {
 		cells := make([]string, 0, len(result.Columns))
 		for i := range result.Columns {
@@ -257,7 +281,7 @@ func printQueryResult(opts output.Options, raw json.RawMessage) {
 		rows = append(rows, cells)
 	}
 
-	output.Print(opts, result.Columns, rows, nil)
+	return result.Columns, rows, true
 }
 
 // formatCell renders one result cell for the text table. Strings print as
@@ -271,7 +295,13 @@ func formatCell(value any) string {
 		return output.Truncate(v, 80)
 	case bool:
 		return strconv.FormatBool(v)
+	case json.Number:
+		// The literal the server wrote, digit for digit. This is the whole point
+		// of decoding with UseNumber; see queryResultTable.
+		return output.Truncate(v.String(), 80)
 	case float64:
+		// Unreachable through queryResultTable, kept for any caller that decodes
+		// without UseNumber.
 		return strconv.FormatFloat(v, 'f', -1, 64)
 	default:
 		encoded, err := json.Marshal(v)
