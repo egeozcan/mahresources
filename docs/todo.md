@@ -3698,6 +3698,7 @@ _To be filled in on completion._
 | `cd e2e && npm run test:with-server:all` | **1917 passed, 0 failed, 0 flaky**, 6 skipped (7.1m) |
 | `cd e2e && npm run test:with-server:a11y` | **195 passed** (184 → 195: the nine new `STATIC_PAGES` and two new `DYNAMIC_PAGES`), `KNOWN_ISSUES` still `[]` |
 | `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/...` | pass |
+| `cd e2e && npm run test:with-server:postgres` | **1918 passed, 0 failed, 0 flaky**, 5 skipped (7.3m) |
 | `./mr docs lint` | OK (16 pre-existing warnings); `docs-site/docs/cli/mrql/run.md` regenerated |
 
 **The first full E2E run went red on a real defect, and it is the reason the brief asked for these
@@ -3734,14 +3735,15 @@ stretching 12.8m → 27.1m in step.
 Changed to **2**. Raising `navigationTimeout` was considered and rejected: a longer timeout makes the
 suite *less* able to notice a genuine slowdown, which is the opposite of what a timeout is for.
 
-**Confidence in the measurement is moderate, and the reason is the machine.** Both runs were taken at
-a 1-minute load average of 3.7–4.4 with the rest of the campaign active, which is the "moderately
-loaded" band that used to produce ~3 flakes. Both reported **0 flaky**, and wall clock was 7.4m —
-faster than the 12.8m recorded on an *idle* machine with the old setting. That is consistent with the
-change helping, and it is two samples: a single green run is not evidence of "0 flaky", and this is
-not the idle-machine measurement the brief asked for, because the machine was never idle. What can be
-said with confidence is the mechanism (one connection serialises every query on a worker's server,
-including the fan-out a page render performs) and that nothing regressed.
+**Confidence in the measurement is moderate, and the reason is the machine.** All three runs were
+taken at a 1-minute load average of 3.7–4.4 with the rest of the campaign active, which is the
+"moderately loaded" band that used to produce ~3 flakes. All three reported **0 flaky**, at 7.4m,
+7.1m and 7.3m — against the 12.8m recorded on an *idle* machine with the old setting, and the 27.1m
+recorded loaded. That is consistent with the change helping, and it is three samples: a green run is
+not evidence of "0 flaky", and this is not the idle-machine measurement the brief asked for, because
+the machine was never idle. What can be said with confidence is the mechanism (one connection
+serialises every query on a worker's server, including the fan-out a page render performs), that the
+wall clock roughly halved at a load that used to slow it down, and that nothing regressed.
 
 ### Batch 10-fix (the review remediation) — verification run
 
