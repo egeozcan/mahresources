@@ -2979,3 +2979,36 @@ reload-shortcode {
 fieldset {
   min-inline-size: 0;
 }
+
+/* ── WS14 finding 104: the export progress bar ────────────────────────────────
+   /admin/export rendered a bare native <progress class="w-full">, which paints
+   as the OS's bright green bar — the only green in a stone/amber UI, and the
+   only control on the page that ignores the design system. A native <progress>
+   is still the right element (it announces value/max to assistive tech for
+   free); only its painted parts are restyled. Firefox needs the -moz rule,
+   WebKit/Blink the ::-webkit- pair. */
+progress.export-progress-bar {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 0.5rem;
+  border: none;
+  border-radius: 9999px;
+  background-color: #e7e5e4; /* stone-200 */
+  color: #b45309;            /* amber-700, the Firefox track fill colour */
+}
+
+progress.export-progress-bar::-webkit-progress-bar {
+  background-color: #e7e5e4; /* stone-200 */
+  border-radius: 9999px;
+}
+
+progress.export-progress-bar::-webkit-progress-value {
+  background-color: #b45309; /* amber-700 */
+  border-radius: 9999px;
+}
+
+progress.export-progress-bar::-moz-progress-bar {
+  background-color: #b45309; /* amber-700 */
+  border-radius: 9999px;
+}

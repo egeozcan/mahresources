@@ -87,8 +87,11 @@ export class RelationPage extends BasePage {
   async delete(id: number) {
     await this.gotoDisplay(id);
     await this.submitDelete();
-    // The server redirects to /groups after deleting a relation
-    await this.verifyRedirectContains('/groups');
+    // UI bug hunt 2026-07-29, finding 137: this used to land on /groups — the
+    // Groups list, which is neither the relation's own list nor either endpoint
+    // group — so confirming a deletion meant navigating to Admin > Relations by
+    // hand.
+    await this.verifyRedirectContains('/relations');
   }
 
   async verifyRelationInList(name: string) {

@@ -66,7 +66,7 @@
         </a>
         {% endif %}
         {% if deleteAction %}
-            {% include "/partials/form/deleteButton.tpl" with action=deleteAction.Url text=deleteAction.Name id=deleteAction.ID %}
+            {% include "/partials/form/deleteButton.tpl" with action=deleteAction.Url text=deleteAction.Name id=deleteAction.ID confirmMessage=deleteAction.Confirm %}
         {% endif %}
     </div>
 </section>

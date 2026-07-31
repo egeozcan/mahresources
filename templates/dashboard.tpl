@@ -76,6 +76,10 @@
     <section class="dashboard-section" aria-label="Recent activity">
         <header class="dashboard-section-header">
             <h2 class="dashboard-section-title">Recent Activity</h2>
+            {# Finding 117: the four sibling widgets all link to their full view; #}
+            {# this one did not, and /logs is otherwise only reachable through the #}
+            {# Admin dropdown. #}
+            <a href="/logs" class="dashboard-view-all">View All &rarr;</a>
         </header>
         {% if activityFeed %}
         <ol class="dashboard-activity">

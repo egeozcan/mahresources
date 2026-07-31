@@ -5288,6 +5288,11 @@
       }
     }
   }
+  .\[id\$\=\"-error\"\]\:visible {
+    &:is(id$="-error") {
+      visibility: visible;
+    }
+  }
   .\[role\=\"option\"\]\:visible {
     &:is(role="option") {
       visibility: visible;

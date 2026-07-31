@@ -39,17 +39,15 @@
             {% include "/partials/form/searchButton.tpl" with text="Update Dimensions" %}
         </div>
     </form>
-    <div class="px-4" x-show="[...$store.bulkSelection.selectedIds].length === 2">
-        <a :href="'/resource/compare?r1=' + [...$store.bulkSelection.selectedIds][0] + '&r2=' + [...$store.bulkSelection.selectedIds][1]"
-           class="inline-flex justify-center py-2 px-4 mt-3 border border-transparent items-center shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
-            Compare
-        </a>
-    </div>
+    {% include "/partials/form/bulkCompareAction.tpl" with comparePath="/resource/compare" p1="r1" p2="r2" noun="resources" hintId="bulk-compare-resources-hint" %}
     <form
             class="px-4 no-ajax"
             method="post"
             :action="'/v1/resources/delete?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)"
-            x-data="confirmAction('Are you sure you want to delete the selected resources?')"
+            {# Finding 78: this message was written and never shown — confirmAction #}
+            {# destructured the string and fell back to its default, so one row and #}
+            {# a full Select All both asked "Are you sure you want to delete?".      #}
+            x-data="confirmAction('Delete {count} resource{s}? This cannot be undone.')"
             x-bind="events"
     >
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}

@@ -576,13 +576,20 @@
                     </div>
                 </template>
 
-                {# Aggregated GROUP BY results — render as table #}
+                {# Aggregated GROUP BY results — render as table                          #}
+                {# The header used to be Object.keys(result.rows[0]), which discards the  #}
+                {# order the query was written in: Go marshals a map's keys sorted, so    #}
+                {# `GROUP BY width, height, contentType COUNT()` rendered                 #}
+                {# contentType | count | height | width, byte-identical to the same       #}
+                {# GROUP BY written in reverse. `result.columns` is the authored order,   #}
+                {# the same list the CSV export has always used. The Object.keys fallback #}
+                {# keeps an older cached response rendering rather than blank.            #}
                 <template x-if="result.mode === 'aggregated' && result.rows && result.rows.length > 0">
-                    <div class="overflow-x-auto">
+                    <div class="overflow-x-auto" x-data="{ get cols() { return (result.columns && result.columns.length) ? result.columns : Object.keys(result.rows[0]); } }">
                         <table class="min-w-full text-sm font-mono border border-stone-200 rounded-md">
                             <thead class="bg-stone-100">
                                 <tr>
-                                    <template x-for="key in Object.keys(result.rows[0])" :key="key">
+                                    <template x-for="key in cols" :key="key">
                                         <th class="px-3 py-2 text-left text-xs font-semibold text-stone-600 uppercase tracking-wider border-b border-stone-200" x-text="key"></th>
                                     </template>
                                 </tr>
@@ -590,7 +597,7 @@
                             <tbody class="divide-y divide-stone-100">
                                 <template x-for="(row, idx) in result.rows" :key="idx">
                                     <tr class="hover:bg-stone-50">
-                                        <template x-for="key in Object.keys(result.rows[0])" :key="key">
+                                        <template x-for="key in cols" :key="key">
                                             <td class="px-3 py-2 text-stone-800 whitespace-nowrap" x-text="row[key] ?? '(null)'"></td>
                                         </template>
                                     </tr>

@@ -171,8 +171,12 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// downloadCockpit can render consistent values without a bespoke provider
 		// on each route. The ms value is consumed by downloadCockpit.js; the
 		// human-readable string is rendered directly in adminExport.tpl.
+		//
+		// Finding 104: this was retention.String(), so the helper text read
+		// "24h0m0s" while /admin/settings showed the same setting as "24h".
+		// ShortDuration is the Go twin of that page's nanosToShort.
 		retention := appContext.Settings().ExportRetention()
-		ctx["exportRetention"] = retention.String()
+		ctx["exportRetention"] = template_context_providers.ShortDuration(retention)
 		ctx["exportRetentionMs"] = retention.Milliseconds()
 		docsLinksEnabled := !appContext.Settings().DocsLinksDisabled() && appContext.Settings().DocsSiteBaseURL() != ""
 		ctx["docsLinksEnabled"] = docsLinksEnabled

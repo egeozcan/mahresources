@@ -13,6 +13,12 @@ either a standard result with an `entityType` plus the matching entity
 arrays, or — for `GROUP BY` queries — a grouped result with `mode`
 (`aggregated` or `bucketed`) and `rows` / `groups`.
 
+An `aggregated` result also carries `columns`: the column names in the
+order the query wrote them, group-by fields first and then aggregates.
+The table output and `mrql export --format csv` both follow it, so the
+two agree. Read `columns` rather than the key order of a `rows` entry —
+a JSON object carries no order.
+
 Pagination and shaping flags (`--limit`, `--buckets`, `--offset`, plus
 the global `--page`) apply to the stored query exactly as they would to
 an inline `mrql` invocation. Pass `--render` to request server-side

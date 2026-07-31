@@ -142,15 +142,17 @@ test.describe.serial('Version Compare UI', () => {
     // Wait for bulk editor to update
     await page.waitForTimeout(300);
 
-    // Compare link should appear when exactly 2 resources are selected
-    const compareLink = page.locator('.bulk-editors a:has-text("Compare")');
-    await expect(compareLink).toBeVisible({ timeout: 5000 });
+    // UI bug hunt 2026-07-29, finding 131: the Compare action was an <a> that
+    // was x-shown at exactly two selections and vanished at three with no
+    // explanation. It is a <button> now so it can be disabled rather than
+    // absent, which means there is no href to read — clicking it and checking
+    // where it lands proves the same thing and more.
+    const compareButton = page.getByTestId('bulk-compare-action');
+    await expect(compareButton).toBeVisible({ timeout: 5000 });
+    await expect(compareButton).toBeEnabled();
 
-    // Verify link format
-    const href = await compareLink.getAttribute('href');
-    expect(href).toContain('/resource/compare');
-    expect(href).toContain('r1=');
-    expect(href).toContain('r2=');
+    await compareButton.click();
+    await expect(page).toHaveURL(new RegExp(`/resource/compare\\?r1=\\d+&r2=\\d+`));
   });
 
   test('should load compare page with metadata section', async ({ page, apiClient }) => {

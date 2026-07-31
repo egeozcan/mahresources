@@ -36,7 +36,8 @@
             class="px-4 no-ajax"
             method="post"
             :action="'/v1/notes/delete?redirect=' + encodeURIComponent(window.location.pathname + window.location.search)"
-            x-data="confirmAction('Are you sure you want to delete the selected notes?')"
+            {# Finding 78's sibling: authored, discarded, and count-less. #}
+            x-data="confirmAction('Delete {count} note{s}? This cannot be undone.')"
             x-bind="events"
     >
         {% include "/partials/form/formParts/connected/selectedIds.tpl" %}

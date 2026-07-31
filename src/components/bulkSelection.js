@@ -189,50 +189,59 @@ export function registerBulkSelectionStore(Alpine) {
       form.insertAdjacentElement("beforebegin", btn);
 
       this.editors.push(form);
+    },
 
-      if (form.classList.contains("no-ajax")) {
-        return;
-      }
-
-      form.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        try {
-          form.parentElement.classList.add("pointer-events-none");
-          const response = await fetch(form.action, { method: "POST", body: new FormData(form) });
-          if (!response.ok) {
-            throw new Error(`Server error: ${response.status}`);
-          }
-          const url = new URL(window.location);
-          url.pathname = url.pathname + ".body";
-          const refreshResponse = await fetch(url.toString());
-          if (!refreshResponse.ok) {
-            throw new Error(`Could not refresh list: ${refreshResponse.status}`);
-          }
-          const newHtml = await refreshResponse.text();
-          const parser = new DOMParser();
-          const refreshedDocument = parser.parseFromString(newHtml, 'text/html');
-          const listContainer = findListContainer(document);
-          const refreshedListContainer = findListContainer(refreshedDocument);
-
-          if (!listContainer || !refreshedListContainer) {
-            throw new Error('Could not find refreshed list');
-          }
-
-          form.reset();
-          this.deselectAll();
-          Alpine.morph(
-            listContainer,
-            refreshedListContainer,
-            morphOptionsWithShortcodeElements(),
-          );
-          this.announce('Bulk operation completed successfully');
-        } catch (err) {
-          this.announce(`Bulk operation failed: ${err.message}`);
-          alert(`Bulk operation failed: ${err.message}`);
-        } finally {
-          form.parentElement.classList.remove("pointer-events-none");
+    /**
+     * Run one bulk editor form over fetch and morph the refreshed list in.
+     *
+     * Called from a *delegated* submit listener on the toolbar container rather
+     * than from a listener on each form — see bulkSelectionForms. This used to
+     * be a per-form listener registered here, in the parent component's init,
+     * which meant it was always registered before the form's own
+     * `x-bind="events"` and therefore always ran first. It calls preventDefault
+     * unconditionally, so a confirm the reader *dismissed* and a selection guard
+     * that *blocked* the submit were both ignored and the request went out
+     * anyway: measured on the tag bulk-merge form, where dismissing "Selected
+     * tags will be merged. Are you sure?" still performed the merge, and
+     * pressing Merge with no winner still produced a 400 (findings 16/92/153).
+     */
+    async submitEditorForm(form) {
+      try {
+        form.parentElement.classList.add("pointer-events-none");
+        const response = await fetch(form.action, { method: "POST", body: new FormData(form) });
+        if (!response.ok) {
+          throw new Error(`Server error: ${response.status}`);
         }
-      })
+        const url = new URL(window.location);
+        url.pathname = url.pathname + ".body";
+        const refreshResponse = await fetch(url.toString());
+        if (!refreshResponse.ok) {
+          throw new Error(`Could not refresh list: ${refreshResponse.status}`);
+        }
+        const newHtml = await refreshResponse.text();
+        const parser = new DOMParser();
+        const refreshedDocument = parser.parseFromString(newHtml, 'text/html');
+        const listContainer = findListContainer(document);
+        const refreshedListContainer = findListContainer(refreshedDocument);
+
+        if (!listContainer || !refreshedListContainer) {
+          throw new Error('Could not find refreshed list');
+        }
+
+        form.reset();
+        this.deselectAll();
+        Alpine.morph(
+          listContainer,
+          refreshedListContainer,
+          morphOptionsWithShortcodeElements(),
+        );
+        this.announce('Bulk operation completed successfully');
+      } catch (err) {
+        this.announce(`Bulk operation failed: ${err.message}`);
+        alert(`Bulk operation failed: ${err.message}`);
+      } finally {
+        form.parentElement.classList.remove("pointer-events-none");
+      }
     },
   });
 }
@@ -240,7 +249,28 @@ export function registerBulkSelectionStore(Alpine) {
 export function bulkSelectionForms() {
   return {
     init() {
-      this.$root.querySelectorAll("form").forEach(form => this.$store.bulkSelection.registerForm(form));
+      // $root dies with the subtree, so capture it while it is attached.
+      const root = this.$root;
+      const store = this.$store.bulkSelection;
+      root.querySelectorAll("form").forEach(form => store.registerForm(form));
+
+      // Delegated on the container, not bound per form. `submit` bubbles, so a
+      // listener here runs after every listener on the form itself whatever the
+      // registration order — and registration order is exactly the problem:
+      // Alpine initialises this component before it walks the forms inside it,
+      // so a per-form listener added above would run before the form's own
+      // `x-bind="events"` and could not see their preventDefault. This handler
+      // therefore honours a dismissed confirm and a blocked empty selection
+      // instead of firing the request regardless.
+      root.addEventListener("submit", (event) => {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement)) return;
+        if (form.classList.contains("no-ajax")) return;
+        if (!store.editors.includes(form)) return;
+        if (event.defaultPrevented) return;
+        event.preventDefault();
+        void store.submitEditorForm(form);
+      });
     }
   }
 }

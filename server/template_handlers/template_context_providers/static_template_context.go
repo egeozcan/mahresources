@@ -211,6 +211,55 @@ func activeNavURL(path string) string {
 	return navSectionByFirstSegment[first]
 }
 
+// formCancelURL is where a create or edit form's Cancel goes: the entity's own
+// page when editing, its list when creating, "" everywhere else.
+//
+// Finding 129: no create or edit form in the app had a Cancel, a Back or a
+// breadcrumb, so abandoning an edit meant the browser's Back button and a
+// keyboard user tabbing off the end of the form found nothing. It is derived
+// from the URL rather than set by each of the twelve providers because the
+// answer *is* a property of the URL — /X/new and /X/edit?id=N — and
+// navSectionByFirstSegment already knows every entity's list path, including
+// the four whose plural is not mechanical (query→queries,
+// resourceCategory→resourceCategories, noteType→noteTypes, category→categories).
+func formCancelURL(request *http.Request) string {
+	segments := strings.Split(strings.Trim(request.URL.Path, "/"), "/")
+	if len(segments) != 2 {
+		return ""
+	}
+	entity, action := segments[0], segments[1]
+	if action != "new" && action != "edit" {
+		return ""
+	}
+	if _, known := navSectionByFirstSegment[entity]; !known {
+		return ""
+	}
+	// gorilla/schema decodes the id case-insensitively, so both spellings reach
+	// the same page and both have to reach the same Cancel target.
+	id := request.URL.Query().Get("id")
+	if id == "" {
+		id = request.URL.Query().Get("ID")
+	}
+	if isDecimal(id) {
+		return "/" + entity + "?id=" + id
+	}
+	return navSectionByFirstSegment[entity]
+}
+
+// isDecimal reports whether s is a non-empty run of ASCII digits. An id that is
+// anything else is not an id, and must not be reflected into an href.
+func isDecimal(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func contains(s []string, e string) bool {
 	for _, a := range s {
 		if a == e {
@@ -263,6 +312,10 @@ var StaticTemplateCtx = func(request *http.Request) pongo2.Context {
 		"activeNavIsExact": func() bool {
 			return activeNavURL(request.URL.Path) == request.URL.Path
 		}(),
+		// WS14 finding 129: where partials/form/createFormSubmit.tpl's Cancel
+		// link points. Empty on every page that is not a create/edit form, and
+		// the partial renders no link then.
+		"cancelUrl": formCancelURL(request),
 		"getNextId": func(elName string) string {
 			currentId += 1
 			return fmt.Sprintf("input_%v_%v", elName, currentId)

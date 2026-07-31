@@ -215,6 +215,15 @@ export function selectorFieldAdapter({ _profileBridge: profileBridge }) {
                 }
                 return;
             }
+            // Finding 57: the submit guard below set "Please select at least 1
+            // value" and nothing ever cleared it, so /relationType/new kept the
+            // red message and aria-invalid="true" under From Category after the
+            // user had picked one — the form looked invalid because it once was.
+            // Any change that satisfies the minimum retires the message; a search
+            // or creation error is about a request the user has now superseded.
+            if (this.errorMessage && this.selectedResults.length >= this.min) {
+                this.errorMessage = '';
+            }
             profileBridge.onChange?.(change);
             // Publish the atomic change to whoever named this field in this form. Registry
             // delivery is scoped to the owning form, so it cannot reach an unrelated form that

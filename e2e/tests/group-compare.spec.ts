@@ -159,13 +159,32 @@ test.describe.serial('Group Compare', () => {
     await selectGroupByName(page, rightGroupName);
     await page.waitForTimeout(300);
 
-    const compareLink = page.locator('.bulk-editors a:has-text("Compare")');
-    await expect(compareLink).toBeVisible({ timeout: 5000 });
+    // UI bug hunt 2026-07-29, finding 131: this was an <a> that was x-shown at
+    // exactly two selections and vanished at three. It is a <button> now, so
+    // that it can be genuinely disabled rather than absent — a link has no
+    // disabled state. There is no href to read; clicking it is the stronger
+    // assertion anyway, since it proves the ids reach the destination.
+    const compareButton = page.getByTestId('bulk-compare-action');
+    await expect(compareButton).toBeVisible({ timeout: 5000 });
+    await expect(compareButton).toBeEnabled();
 
-    const href = await compareLink.getAttribute('href');
-    expect(href).toContain('/group/compare');
-    expect(href).toContain(`g1=${leftGroupId}`);
-    expect(href).toContain(`g2=${rightGroupId}`);
+    await compareButton.click();
+    await expect(page).toHaveURL(new RegExp(`/group/compare\\?g1=${leftGroupId}&g2=${rightGroupId}`));
+  });
+
+  test('the compare bulk action is disabled, not hidden, at three selections', async ({ page }) => {
+    await page.goto(`/groups?Name=${encodeURIComponent(testRunId)}`);
+    await page.waitForLoadState('load');
+
+    await selectGroupByName(page, leftGroupName);
+    await selectGroupByName(page, rightGroupName);
+    await selectGroupByName(page, `Compare Relation Target Shared ${testRunId}`);
+    await page.waitForTimeout(300);
+
+    const compareButton = page.getByTestId('bulk-compare-action');
+    await expect(compareButton).toBeVisible();
+    await expect(compareButton).toBeDisabled();
+    await expect(page.locator('#bulk-compare-groups-hint')).toHaveText('Select exactly two groups to compare.');
   });
 
   test('shows compare bulk action on the text view too', async ({ page }) => {
@@ -176,7 +195,8 @@ test.describe.serial('Group Compare', () => {
     await selectGroupByName(page, rightGroupName);
     await page.waitForTimeout(300);
 
-    await expect(page.locator('.bulk-editors a:has-text("Compare")')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId('bulk-compare-action')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId('bulk-compare-action')).toBeEnabled();
   });
 
   test('renders the compare page with metadata and diff sections', async ({ page }) => {

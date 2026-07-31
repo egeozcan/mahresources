@@ -49,8 +49,13 @@ type mrqlSavedQuery struct {
 
 // mrqlGroupedResponse matches the MRQLGroupedResult struct.
 type mrqlGroupedResponse struct {
-	EntityType  string           `json:"entityType"`
-	Mode        string           `json:"mode"`
+	EntityType string `json:"entityType"`
+	Mode       string `json:"mode"`
+	// Columns is the aggregated result's column names in the order the query
+	// wrote them. The server did not always send it; when it is absent the
+	// table falls back to sorting the first row's keys, which is what this
+	// command used to do unconditionally.
+	Columns     []string         `json:"columns,omitempty"`
 	Rows        []map[string]any `json:"rows,omitempty"`
 	Groups      []mrqlBucket     `json:"groups,omitempty"`
 	Warnings    []string         `json:"warnings,omitempty"`
@@ -549,7 +554,7 @@ func printMRQLResponse(opts output.Options, raw json.RawMessage) {
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 		}
 		if grouped.Mode == "aggregated" {
-			columns, rows := aggregatedToTable(grouped.Rows)
+			columns, rows := aggregatedToTable(grouped.Columns, grouped.Rows)
 			if len(rows) == 0 && !opts.JSON && !opts.Quiet {
 				output.PrintMessage("No results found.")
 			} else {
@@ -612,17 +617,31 @@ func mrqlResponseToRows(resp mrqlResponse) [][]string {
 }
 
 // aggregatedToTable converts aggregated rows to table columns/rows.
-func aggregatedToTable(rows []map[string]any) ([]string, [][]string) {
+//
+// `order` is the server's column list, which is the order the GROUP BY was
+// written in. This used to sort the first row's keys instead, so
+// `GROUP BY width, height, contentType COUNT()` printed
+// CONTENTTYPE COUNT HEIGHT WIDTH — while `mr mrql export --format csv` of the
+// same query printed width,height,contentType,count. The sort survives as the
+// fallback for a server old enough not to send `columns`, because a stable
+// order is still better than a map's iteration order.
+func aggregatedToTable(order []string, rows []map[string]any) ([]string, [][]string) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
 
-	// Collect column names from the first row and sort for stable order
-	var columns []string
-	for k := range rows[0] {
-		columns = append(columns, k)
+	columns := make([]string, 0, len(rows[0]))
+	for _, c := range order {
+		if _, ok := rows[0][c]; ok {
+			columns = append(columns, c)
+		}
 	}
-	sort.Strings(columns)
+	if len(columns) == 0 {
+		for k := range rows[0] {
+			columns = append(columns, k)
+		}
+		sort.Strings(columns)
+	}
 
 	var tableRows [][]string
 	for _, row := range rows {

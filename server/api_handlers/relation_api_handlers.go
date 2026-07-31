@@ -229,7 +229,11 @@ func GetRemoveRelationHandler(ctx contracts.RelationshipDeleter) func(writer htt
 			return
 		}
 
-		if http_utils.RedirectIfHTMLAccepted(writer, request, "/groups") {
+		// Finding 137: this landed on /groups — neither the relation's own list
+		// nor either endpoint group — so confirming a deletion meant navigating
+		// to Admin > Relations by hand. An explicit ?redirect= still wins, which
+		// is how a group page's relation card sends the reader back to itself.
+		if http_utils.RedirectIfHTMLAccepted(writer, request, "/relations") {
 			return
 		}
 

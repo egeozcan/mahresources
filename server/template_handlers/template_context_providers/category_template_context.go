@@ -1,6 +1,8 @@
 package template_context_providers
 
 import (
+	"fmt"
+
 	"github.com/flosch/pongo2/v4"
 	"mahresources/constants"
 	"mahresources/models/query_models"
@@ -121,21 +123,47 @@ func CategoryContextProvider(context CategoryPageContext) func(request *http.Req
 			return addErrContext(err, baseContext)
 		}
 
+		// Finding 98: a category still in use was deleted behind the generic
+		// "Are you sure you want to delete?" and its groups silently fell back to
+		// Uncategorized. A count query rather than len(category.Groups), which is
+		// a preloaded association capped at pageLimit.
+		groupsInUse, err := context.GetGroupsCount(&query_models.GroupQuery{CategoryId: category.ID})
+		if err != nil {
+			return addErrContext(err, baseContext)
+		}
+
 		return pongo2.Context{
-			"pageTitle": "Category: " + category.Name,
-			"prefix":    "Category",
-			"category":  category,
+			"pageTitle":   "Category: " + category.Name,
+			"prefix":      "Category",
+			"category":    category,
+			"groupsInUse": groupsInUse,
 			"action": template_entities.Entry{
 				Name: "Edit",
 				Url:  "/category/edit?id=" + strconv.Itoa(int(query.ID)),
 			},
 			"deleteAction": template_entities.Entry{
-				Name: "Delete",
-				Url:  "/v1/category/delete",
-				ID:   category.ID,
+				Name:    "Delete",
+				Url:     "/v1/category/delete",
+				ID:      category.ID,
+				Confirm: categoryDeleteConfirm(category.Name, groupsInUse),
 			},
 			"mainEntity":     category,
 			"mainEntityType": "category",
 		}.Update(baseContext)
 	}
+}
+
+// categoryDeleteConfirm states what deleting a category destroys. Finding 98:
+// the groups keep existing, they just lose their category, and nothing said so
+// at any point — before or after. Singular/plural because "1 groups" reads as a
+// bug in the very message that is meant to be trusted.
+func categoryDeleteConfirm(name string, groups int64) string {
+	if groups == 0 {
+		return fmt.Sprintf("Delete category '%s'?", name)
+	}
+	noun := "groups"
+	if groups == 1 {
+		noun = "group"
+	}
+	return fmt.Sprintf("Delete category '%s'? %d %s will become Uncategorized.", name, groups, noun)
 }

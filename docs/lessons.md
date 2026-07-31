@@ -1218,3 +1218,53 @@ When a component records a fact about itself, enumerate every transition that ca
 started, stopped, restarted, crashed, superseded — and give each one a line. A long-lived goroutine
 should capture what it owns at entry and be judged against that, which is the same rule a download
 worker needed for its attempt identity, one level up.
+
+## Destructuring a function's argument silently accepts a string and then ignores everything the caller wrote
+
+`confirmAction` is declared `function confirmAction({ message = 'Are you sure you want to delete?' } = {})`,
+and four bulk toolbars call it as `confirmAction('Are you sure you want to delete the selected notes?')`.
+JavaScript boxes the string, finds no `message` property on it, applies the default, and reports
+nothing. Every one of those four authored messages had been dead for as long as the toolbars have
+existed, and the UI bug hunt filed two separate findings against the symptom — a bulk delete with no
+item count, and a merge that asks about deleting — with the same stated cause: "the toolbar reuses
+the generic delete confirm". It does not reuse it; it is overwritten by it. A fixer working from
+that description would have rewritten the four strings, watched nothing change, and had no reason to
+look at the component.
+
+Two rules come out of it. When a function destructures its only argument, decide what a non-object
+means and say so in code — normalising `typeof options === 'string'` is one line and it ends the
+class, where fixing the four call sites only ends this instance. And when several findings describe
+the same wrong text appearing where different text was written, suspect the sink before the sources:
+identical wrong output from independently authored inputs is a merge point, not a coincidence.
+
+## A submit handler that calls preventDefault unconditionally makes every guard on that form decorative
+
+The bulk toolbar's AJAX handler was attached in the parent component's `init`, which Alpine runs
+before it walks the forms inside it — so it was always registered first, and listeners on one element
+fire in registration order. It called `preventDefault()` and fetched, unconditionally. The
+`confirmAction` bound to the form ran afterwards, asked the reader, and prevented an event that had
+already been consumed: dismissing "Selected tags will be merged. Are you sure?" still performed the
+merge, and the empty-selection guard still let a submit through to a 400. Both guards were written,
+tested at the unit level, and inert in the browser.
+
+Ordering cannot be fixed by adding a check, because the handler that must decide last is the one that
+runs first. Move it to an ancestor instead: `submit` bubbles, so a delegated listener on the
+container runs after every listener on the form whatever the registration order, and `defaultPrevented`
+is then meaningful. Whenever two independent components handle the same event on the same element,
+ask which one Alpine initialises first — and if the answer decides behaviour, that is the bug.
+
+## An attribute the browser interprets is not the only thing a probe can read off the wrong element
+
+Three findings in this hunt reported a missing feature that was present. Finding 60 said a validation
+banner had no `role="alert"`; the role is on the banner `<div>`, and the probe recorded the `<h3>`
+inside it and that element's immediate parent. Finding 61 said no taxonomy type could be deleted from
+the UI; the delete control is an `<input type="submit" value="Delete">`, and the probe collected
+`button` elements, so a page that had offered Delete for years reported `["Edit","Edit Tags"]`.
+Finding 143 said a metadata value rendered empty; it lives in a custom element's shadow root, and the
+probe read `innerText`.
+
+The pattern is not "the probe was careless" — each was a reasonable one-liner. It is that a negative
+observation about a page is a claim about the *selector*, and a selector is exactly as trustworthy as
+its positive control. Before recording "X is absent", find something the same query *does* return on
+a page where X is known present. And when re-checking a report's negative finding, re-derive it from
+the markup rather than re-running the report's own query: the query is the thing under suspicion.

@@ -48,11 +48,6 @@
             Export selected
         </button>
     </div>
-    <div class="px-4" x-show="[...$store.bulkSelection.selectedIds].length === 2">
-        <a :href="'/group/compare?g1=' + [...$store.bulkSelection.selectedIds][0] + '&g2=' + [...$store.bulkSelection.selectedIds][1]"
-           class="inline-flex justify-center py-2 px-4 mt-3 border border-transparent items-center shadow-sm text-sm font-mono font-medium rounded-md text-white bg-amber-700 hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600">
-            Compare
-        </a>
-    </div>
+    {% include "/partials/form/bulkCompareAction.tpl" with comparePath="/group/compare" p1="g1" p2="g2" noun="groups" hintId="bulk-compare-groups-hint" %}
     {% include "partials/pluginActionsBulk.tpl" with entityType="group" %}
 </div>

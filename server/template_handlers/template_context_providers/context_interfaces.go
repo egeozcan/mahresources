@@ -81,6 +81,11 @@ type CategoryPageContext interface {
 	contracts.CategoryReader
 	GetCategoriesCount(query *query_models.CategoryQuery) (int64, error)
 	GetCategory(id uint) (*models.Category, error)
+	// GetGroupsCount answers how many groups a category still holds. Finding 98:
+	// the delete confirm has to name that number, and category.Groups is a
+	// preloaded association capped at pageLimit, so it would under-report any
+	// category with more than 50 groups — exactly the ones worth warning about.
+	GetGroupsCount(query *query_models.GroupQuery) (int64, error)
 }
 
 // ComparePageContext serves /resource/compare.

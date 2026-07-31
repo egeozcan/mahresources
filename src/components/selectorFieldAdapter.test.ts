@@ -708,4 +708,62 @@ describe('selector rendering adapter and registry integration', () => {
 
         selector.destroy();
     });
+    /**
+     * WS14 finding 57. The submit guard sets "Please select at least 1 value"
+     * when a required field is empty, and nothing ever retired it: on
+     * /relationType/new the red message and aria-invalid="true" stayed under
+     * From Category after the user had chosen one, so a form the user had
+     * already fixed went on looking broken.
+     */
+    test('retires the minimum-not-met message once the field holds enough', () => {
+        const form = createForm();
+        const { selector } = mountSelector(
+            tagPicker({ selected: [], form: { name: 'tags', minimum: 1 } }),
+            form,
+        );
+        selector.init();
+
+        const submitHandler = vi.mocked(form.addEventListener).mock.calls
+            .find(([type]) => type === 'submit')?.[1] as (e: { preventDefault: () => void }) => void;
+        expect(submitHandler, 'the field registers no submit guard').toBeTruthy();
+
+        const event = { preventDefault: vi.fn() };
+        submitHandler(event);
+        expect(event.preventDefault).toHaveBeenCalled();
+        expect(selector.errorMessage).toBe('Please select at least 1 value');
+
+        selector.selectResult({ ID: 1, Name: 'Alpha' });
+
+        expect(selector.selectedResults).toEqual([{ ID: 1, Name: 'Alpha' }]);
+        expect(selector.errorMessage).toBe('');
+
+        selector.destroy();
+    });
+
+    /**
+     * The other half of the same rule: a selection that still does not reach the
+     * minimum must keep the message. Without this control the fix could be
+     * "clear it on any change" and nobody would notice.
+     */
+    test('keeps the message while the selection is still short of the minimum', () => {
+        const form = createForm();
+        const { selector } = mountSelector(
+            tagPicker({ selected: [], form: { name: 'tags', minimum: 2 } }),
+            form,
+        );
+        selector.init();
+
+        const submitHandler = vi.mocked(form.addEventListener).mock.calls
+            .find(([type]) => type === 'submit')?.[1] as (e: { preventDefault: () => void }) => void;
+        submitHandler({ preventDefault: vi.fn() });
+        expect(selector.errorMessage).toBe('Please select at least 2 values');
+
+        selector.selectResult({ ID: 1, Name: 'Alpha' });
+        expect(selector.errorMessage).toBe('Please select at least 2 values');
+
+        selector.selectResult({ ID: 2, Name: 'Beta' });
+        expect(selector.errorMessage).toBe('');
+
+        selector.destroy();
+    });
 });

@@ -192,6 +192,16 @@ none. So 61 is **not** a missing feature needing a product decision — it is wi
 working endpoint to the existing UI pattern. Moved out of the product-decision bucket into WS14 as a
 mechanical fix.
 
+> **Corrected in Batch 12 — there was nothing to wire.** The sentence above is wrong in the same way
+> the report was, from the other direction. The delete control is *not* rendered by the display
+> template: it comes from each **context provider**'s `deleteAction`, through `partials/title.tpl`,
+> and every one of the four taxonomy providers has had one for years (`06610837`, `8a976084`,
+> `9438ff9a`). Grepping the templates finds only `displayTag.tpl` because that is the one entity
+> whose delete form is written inline. The report's own probe missed the control for a third,
+> unrelated reason: `partials/form/deleteButton.tpl` renders `<input type="submit" value="Delete">`,
+> and the probe collected `button` elements. **61 is rejected as not reproducible**; see the WS14
+> section.
+
 **51 — confirmed from this session's own server log**, before any deliberate test:
 
     Share server error: listen tcp 127.0.0.1:8383: bind: address already in use
@@ -282,15 +292,15 @@ Statuses are filled in during Phase 1.
 | 54 | med | ux | recovered | WS6 | verify | **CONFIRMED** — zero articles, main text is chrome only  · **FIXED** |
 | 55 | med | ux | recovered | WS7 | verify | **CONFIRMED, worse than filed** — at 390 px **both** view-toggle buttons are offscreen: Month 343-407 and Agenda 407-479, against `innerWidth` 390 and `document.scrollWidth` 390. The immediate ancestor is `overflow-x:hidden` with `clientWidth` 110 against `scrollWidth` 136 · **FIXED** — the calendar header row wraps; Month/Agenda now at 142-206 and 206-277, zero offscreen, and the clipping ancestor no longer overflows (`clientWidth` 136 = `scrollWidth` 136) |
 | 56 | med | ux | recovered | WS3 | verify | **CONFIRMED** — full-page 400 at /v1/groups/addTags  · **FIXED** — guard + `tag ID` → `tag` |
-| 57 | med | ux | recovered | WS14 | verify | |
+| 57 | med | ux | recovered | WS14 | verify | **CONFIRMED** — after a failed submit on `/relationType/new`, picking From Category left `Please select at least 1 value` under it and `aria-invalid="true"` on the combobox  · **FIXED** — `selectorFieldAdapter`'s submit guard set the message and nothing ever retired it; a change that meets the minimum now clears it |
 | 58 | med | a11y | recovered | WS5 | verify | **CONFIRMED** — the two category fields pass `min=1` (so the form knows they are required) yet `autocompleter.tpl` emits no `aria-required`, no `*`/Required marker and no `aria-invalid`; only Name is marked · **FIXED** — `autocompleter.tpl` derives the `*`/Required marker and `aria-required` from the `min` it is already passed, and binds `aria-invalid` to `errorMessage` |
 | 59 | med | a11y | recovered | WS5 | Dup → 64 | **CONFIRMED** — Dup → 64 · **FIXED** — Dup → 64 |
-| 60 | med | ux | recovered | WS14 | Dup → 65 | |
-| 61 | med | ux | recovered | WS14 | product | **PARTLY REJECTED** — see below |
+| 60 | med | ux | recovered | WS14 | Dup → 65 | **PARTLY REJECTED — the a11y half is a probe artefact.** `role="alert"` is on the banner `<div>` (`layouts/base.tpl:133`, since `027399a9`); the report read the `<h3>` and its immediate parent. The bare `category mismatch` text is real  · **FIXED** — the message names both sides and what each requires |
+| 61 | med | ux | recovered | WS14 | product | **REJECTED — not reproducible.** All four taxonomy types render Delete on their detail page, and have since long before this campaign. The report's probe collected `button` elements; `deleteButton.tpl` renders `<input type="submit" value="Delete">`. Phase 1's own correction ("only displayTag renders one") was wrong too — the control comes from the provider's `deleteAction` through `partials/title.tpl`  · **NOT FIXED — struck**, pinned by a Go test over all five detail pages, the deliberate default-resource-category exception, and a POST that deletes |
 | 62 | med | ux | recovered | WS7 | Dup → 25 | **CONFIRMED** — Dup → 25; first card y=1574 on `/notes` · **FIXED** — Dup → 25; first card 1574 → 420 |
 | 63 | med | design | verified-run | WS7 | spot | **CONFIRMED** — Dup → 25 · **FIXED** — Dup → 25 |
 | 64 | med | a11y | verified-run | WS5 | spot | **CONFIRMED, one claim corrected** — a relation created with no Name renders `<h1>` whose text is `''` (only an empty `<inline-edit>`), while `<title>` computes "Relation from BugHunt Second Person to BugHunt Reykjavik Studio". The report's #199 claim that a **named** relation also has an empty h1 is wrong at HEAD: its h1 carries the name (it is duplicated into the h2 instead) · **FIXED** — `inline-edit` gained `value-is-placeholder`; `title.tpl` renders `pageTitle` as the fallback **server-side**, so the heading is correct with JS off and the editor still opens empty |
-| 65 | med | ux | verified-run | WS14 | spot | |
+| 65 | med | ux | verified-run | WS14 | spot | **CONFIRMED, in two halves.** The picker half reproduces (`?GroupRelationTypeId=3` still listed all 38 groups) but is a **separately tracked product decision** — `selectorFormParameters.js` documents why the lookup is unfiltered and the archived selector plan holds the open UX question  · **FIXED (message half only)**; picker narrowing deliberately not taken |
 | 66 | med | a11y | verified-run | WS4 | spot | **CONFIRMED** — `BUTTON` at 0/200ms, `BODY` from 400ms  · **FIXED** — focus follows to the control that replaces it |
 | 67 | med | design | verified-run | WS7 | spot | **CONFIRMED** — table 2005 px inside an 822 px `overflow-x:auto` wrap; the Name column alone spans 85-1305 (1220 px); Preview/Size/Created/Updated/Original all beyond 1305 · **FIXED** — `.detail-table-name` capped at 32ch with an ellipsis and a `title`; table 2005 → 1026, Name column 1220 → 231 |
 | 68 | med | ux | verified-run | WS6 | spot | **CONFIRMED** — both halves  · **FIXED** — `{% empty %}`, Select All gated, out-of-range page 302s |
@@ -303,7 +313,7 @@ Statuses are filled in during Phase 1.
 | 75 | med | design | recovered | WS7 | verify | **CONFIRMED** — two cards at **1721 px** against a median card height of **416 px**; the second is the tall image's row neighbour, dragged up by row height-matching · **FIXED** — `max-height: 320px` on the card media box rather than a forced aspect ratio, so ordinary cards (image 402×284) are untouched; tallest card 1721 → 435 against a median of 413 |
 | 76 | med | a11y | recovered | WS5 | Dup → 139 | **CONFIRMED** — Dup → 139 · **FIXED** — Dup → 139 |
 | 77 | med | ux | recovered | WS6 | Dup → 68 | **CONFIRMED** — Dup → 68  · **FIXED** |
-| 78 | med | ux | recovered | WS14 | verify | |
+| 78 | med | ux | recovered | WS14 | verify | **CONFIRMED** — `Are you sure you want to delete?` at 1 and at 4 selected  · **FIXED, wrong cause in the plan** — the toolbar does *not* reuse the generic confirm; it authored `'…the selected resources?'` and `confirmAction` destructured the string and got `undefined`. After: `Delete 1 resource? This cannot be undone.` / `Delete 4 resources? …` |
 | 79 | med | bug | recovered | WS2 | verify (suspect) | **REJECTED — not reproducible** in 9 runs; the invisible checked boxes are the header settings toggles and the zero-checked Select All is a `nth=1` locator hitting hidden "Deselect All". See WS2 |
 | 80 | med | ux | recovered | WS7 | Dup → 25 | **CONFIRMED** — Dup → 25; `mainTop` 1978, first card 2124, sidebar 1834 px tall · **FIXED** — Dup → 25; first card 2124 → 420 |
 | 81 | med | design | recovered | WS7 | verify | **CONFIRMED** — the visible `input[name=mrql]` measures **149 px** at a 390 px viewport (the hidden desktop copy measures 0) · **FIXED** — `basis-full sm:basis-0` makes the row wrap; 149 → 358 px at a 390 px viewport |
@@ -323,26 +333,26 @@ Statuses are filled in during Phase 1.
 | 95 | med | bug | recovered | WS12 | verify | **CONFIRMED, exact counts** — 6 console errors on load (3× CORS on `/v1/account/settings` from origin `null` + 3× `ERR_FAILED`, one pair per `LOAD_RETRIES` attempt), 6 → 12 after one Refresh  · **FIXED** — the host page seeds `window.__mahUserSettings` into the srcdoc and `userSettings.js` serves reads from that snapshot without ever touching the network. After: 0 on load, 0 after Refresh, with the bundle still running in the frame |
 | 96 | med | ux | recovered | WS12 | verify | **REJECTED — works as intended.** "Format JSON" *does* report the failure: clicking it on `{ not valid json ][` renders `Expected property name or '}' in JSON at position 2 (line 1 column 3)` in a `role="alert"` computing `display:block`, 32 px tall. The report's live-region sweep looked at `[aria-live]` nodes and this one is not inside any. Its *other* observation — `lintMarkers:0` — is real and is finding 17/93  · **NOT FIXED — rejected**, and pinned by a Playwright assertion that the alert is painted |
 | 97 | med | a11y | recovered | WS4 | verify | **CONFIRMED, cause corrected** — the restore existed and `$el` scoping broke it; x-trap was already present  · **FIXED** |
-| 98 | med | ux | recovered | WS14 | verify | |
+| 98 | med | ux | recovered | WS14 | verify | **CONFIRMED** — `Are you sure you want to delete?` on `/category?id=72`  · **FIXED** — `Delete category 'X'? N groups will become Uncategorized.`, from a count query rather than the 50-capped preloaded association, which also fixes the page's Groups meta-strip |
 | 99 | med | a11y | recovered | WS5 | verify | **CONFIRMED** — three Delete buttons at **35.3×16** with `opacity: 0` at both 1280 and 390 px; `aria-label="Delete saved query: …"` is already correct, so this is target size + hover-only reveal · **FIXED** — always painted, muted until hover, 24px tall |
 | 100 | med | ux | recovered | WS3 | verify | **CONFIRMED** — raw JSON body rendered as the message  · **FIXED** — shared `errorMessageFromResponse` |
 | 101 | med | design | verified-run | WS7 | Dup → 19 | **CONFIRMED** — Dup → 19 · **FIXED** — Dup → 19 |
 | 102 | low | design | verified-run | WS10 | spot | **CONFIRMED** — `/logs` at 1280×720: the "After" input is at `[864,665,400,38]` and the hit test over its picker icon returned the FAB's `svg`. The report's "unreachable by mouse" is too strong — the page scrolls (`scrollHeight` 2187) — but the corner is genuinely covered  · **FIXED** — Dup → 83; after: the hit returns `INPUT` |
 | 103 | low | ux | verified-run | WS3 | spot | **CONFIRMED** — bare id, broken grammar, internal reason  · **FIXED** — sentence + link to the colliding resource; JSON `details[]` contract kept |
-| 104 | low | design | verified-run | WS14 | spot | |
+| 104 | low | design | verified-run | WS14 | spot | **CONFIRMED** — `24h0m0s`, `text-blue-700`, bare `<progress class="w-full">`  · **FIXED** — `ShortDuration` is the Go twin of the settings page's `nanosToShort` (`24h`), the link is amber, and the native `<progress>` keeps the element and restyles its painted parts |
 | 105 | low | a11y | verified-run | WS5 | Dup → 36 | **CONFIRMED** — Dup → 36 · **FIXED** — Dup → 36 |
 | 106 | low | ux | verified-run | WS3 | spot | **CONFIRMED** — internal Go chain, printed twice  · **FIXED** — message moved to `archive.Reader`, printed once |
-| 107 | low | ux | verified-run | WS14 | product | |
+| 107 | low | ux | verified-run | WS14 | product | **CONFIRMED — needs-product-decision.** The only per-row action is Delete; `POST /v1/user` (`UpdateUserHandler`) and `SetUserPassword` already exist and no UI reaches them. The report's "the create form carries a hidden `id`" is a misread — that hidden input belongs to the delete form  · **NOT IMPLEMENTED**, recommendation returned |
 | 108 | low | a11y | verified-run | WS5 | spot | **CONFIRMED** — `/category/edit?id=72` renders H1 "Edit Category" then **14 consecutive H3s** with no content H2 anywhere; two of them are the identical string "Associations" · **FIXED** — the whole h3 run promoted to h2 across the three taxonomy templates and `sectionConfigForm`/`templatePreviewPane`/`schemaEditorModal`; no h4 exists in any of them, so nothing new can skip |
 | 109 | low | ux | recovered | WS3 | verify | **CONFIRMED** — `minLength: -1`  · **FIXED** — `minlength` and the rule, both from `auth.MinPasswordLength` |
 | 110 | low | a11y | recovered | WS5 | verify | **CONFIRMED** — `/admin/shares` → `H1: Shared Notes`, `H1: Shared Notes`; `/admin/settings` → `H1: Settings`, `H1: Runtime Settings` · **FIXED** — the body heading demoted to h2 on both pages; `title.tpl`'s h1 is the page's. `admin-settings.spec.ts` updated from `level: 1` to `level: 2` |
 | 111 | low | ux | recovered | WS3 | verify | **CONFIRMED** — `Error 404 / record not found`  · **FIXED** — says an id is required and links to /resources; no index page added, deliberately |
-| 112 | low | design | recovered | WS14 | verify | |
+| 112 | low | design | recovered | WS14 | verify | **CONFIRMED** — `<h2 … capitalize>remote_downloads</h2>`  · **FIXED** — a label map; the machine key stays as the `id` `aria-labelledby` points at |
 | 113 | low | a11y | recovered | WS9 | verify | **CONFIRMED** — `formatProgress` returns `''` for an unknown total, so the name was the bare prefix  · **FIXED** — `progressLabel/progressValueNow/progressValueText`: named after the job, `aria-valuenow` omitted (bound to `null`) when the total is unknown, `aria-valuetext` describing it instead |
 | 114 | low | bug | ✅ VERIFIED | WS3 | accept | **CONFIRMED** — HTTP 404, `text/html`  · **FIXED** — /v1 answers JSON; `not_found_test.go` inverted, not deleted |
 | 115 | low | ux | recovered | WS3 | verify | **CONFIRMED** — role textbox on an int64 setting  · **FIXED** — int types become number inputs; found `admin-settings.spec.ts` locating by `input[type="text"]` |
 | 116 | low | a11y | recovered | WS10 | verify | **CONFIRMED** — `/resource?id=63`, `/note?id=61`, `/group?id=70` all highlighted **nothing**; `aria-current` absent on every nav link on all 8 pages checked  · **FIXED** — a `activeNavURL` section table server-side; a detail page lights its section with `aria-current="true"` and a list page with `aria-current="page"` |
-| 117 | low | ux | verified-run | WS14 | spot | |
+| 117 | low | ux | verified-run | WS14 | spot | **CONFIRMED** — 4 `View All` for 5 widgets  · **FIXED** — Recent Activity links to `/logs` |
 | 118 | low | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — `datetime="…13:59:40Z"` at local 13:59+03:00  · **FIXED** |
 | 119 | low | ux | verified-run | WS3 | spot | **CONFIRMED** — two 404 presentations, `record not found` as the body  · **FIXED** — one presentation, a message per entity, and a recovery link |
 | 120 | low | design | verified-run | WS10 | spot | **CONFIRMED, cause corrected** — the body grid is not the binding constraint; `overflow-x: hidden` on `.site` computes `overflow-y: auto`, which makes `<body>` a scroll container that never scrolls. One declaration (`clip`) with the grid untouched took the header from `bottom:-1464` to `top:0` at scrollY 1500  · **FIXED** — and the footer's equally-inert `sticky bottom-0` was **dropped**, not activated: pinning it measurably re-created finding 102 |
@@ -354,31 +364,31 @@ Statuses are filled in during Phase 1.
 | 126 | low | design | verified-run | WS6 | spot | **CONFIRMED** — todos alone has no zero-length branch  · **FIXED** |
 | 127 | low | a11y | verified-run | WS5 | spot | **CONFIRMED, the report's own URL does not show it** — `/note?id=61` has no owner group and its outline is clean (H1 → H2). On `/note?id=1` it reproduces exactly: `H1: Note Weekly Engineering Standup` → **`H3: Engineering Backend`** (`<h3 class="card-title">`) → `H2: Note Type` · **FIXED** — `card-title` promoted h3→h2 in all eleven card templates, and `.card-title` added by name to the one `.list-container … h3` CSS rule that reached it by element name |
 | 128 | low | ux | verified-run | WS13 | spot | **CONFIRMED** — Unshare fired **0** dialogs and revoked; re-sharing minted `43a6f040…` where `3ca5263f…` had been. Control: the note Delete button fires `confirm "Are you sure you want to delete?"`  · **FIXED — wording only**, per the campaign decision: a `window.confirm` naming the action, that every holder of the URL loses access immediately, and that a new link cannot restore the old one |
-| 129 | low | ux | recovered | WS14 | verify | |
-| 130 | low | design | recovered | WS14 | product | |
-| 131 | low | ux | recovered | WS14 | verify | |
+| 129 | low | ux | recovered | WS14 | verify | **CONFIRMED** — every create/edit form ended in a lone Save  · **FIXED** — a Cancel derived from the URL (`/X/new` → list, `/X/edit?id=N` → `/X?id=N`), on all fifteen create/edit routes; the three forms that had inlined their own submit block now share the partial |
+| 130 | low | design | recovered | WS14 | product | **CONFIRMED — needs-product-decision.** ~23 destructive confirmations, all native: 13 `confirmAction` call sites + `confirmGroupDelete`, 4 inline `onsubmit="return confirm(…)"`, `blockEditor.tpl:60`, `noteShare.tpl:58`, and 3 in `src/`  · **NOT IMPLEMENTED**, recommendation returned |
+| 131 | low | ux | recovered | WS14 | verify | **CONFIRMED** — 92.8×38 px at 2 selections, `boundingBox()` null at 3, stale `href="/group/compare?g1=80&g2=79"`  · **FIXED** — a `<button>` (a link has no disabled state) that stays visible, disables, and points at a hint; groups and resources share one partial |
 | 132 | low | ux | recovered | WS3 | Dup → 119 | **CONFIRMED**  · **FIXED** — Dup → 119 |
 | 133 | low | a11y | recovered | WS5 | verify | **CONFIRMED** — `createFormTextareaInput.tpl:17-24` declares `role=combobox` + `aria-autocomplete=list` + `aria-haspopup=listbox` + `:aria-activedescendant` but no `aria-controls`/`aria-owns`, and `mentionDropdown.tpl` has no `id` to point at. `autocompleter.tpl` in the same directory sets both · **FIXED** — `aria-controls`/`aria-owns` on all three mention textareas, and `mentionDropdown.tpl` gained a per-field id (bound per block in the block editor, so a note with several text blocks has no duplicate ids) |
 | 134 | low | ux | recovered | WS11 | verify | **REJECTED — works as intended.** The bar renders the parse error in a `role="alert"` paragraph at `[16,294,824,20]`, `display:block visibility:visible opacity:1`, with `aria-invalid="true"` on the input; the text is `expected value (string, number, date, function, or identifier), got "'"`. The report caveats itself — "only the first 400 characters of main were captured, so an error banner further down cannot be fully ruled out" — and that is exactly what happened. The `role="alert"` predates this branch (`master`, 843b7ac4)  · **NOT FIXED — rejected**, pinned in Go (the server hands the bar the error) and in Playwright (it is painted) |
 | 135 | low | ux | verified-run | WS3 | Dup → 119 | **CONFIRMED**  · **FIXED** — Dup → 119 |
-| 136 | low | bug | verified-run | WS14 | spot | |
-| 137 | low | ux | verified-run | WS14 | spot | |
-| 138 | low | design | verified-run | WS14 | spot | |
+| 136 | low | bug | verified-run | WS14 | spot | **CONFIRMED, wrong cause in the plan** — the POST answers `{"ok":true}` to a fetch and re-renders nothing; the next `GET /dashboard` already carried the new greeting. The stale output is the page the reader is already on  · **FIXED** — an explicit save reloads, so the plugin's own output is the acknowledgement |
+| 137 | low | ux | verified-run | WS14 | spot | **CONFIRMED** — `Location: /groups`  · **FIXED** — `/relations`, with an explicit `?redirect=` still winning |
+| 138 | low | design | verified-run | WS14 | spot | **CONFIRMED** — on `/relations` the from-half renders badge-then-name and the to-half name-then-badge; `/relation?id=N` is mirrored the other way  · **FIXED** — the badge always follows the name; `reverse` keeps its other job |
 | 139 | low | a11y | verified-run | WS5 | spot | **CONFIRMED** — 14×14, `padding: 0px`, no wrapping `<label>`, inside a 30×45 `<td>`; grid `card-checkbox` is 24×24; still 14×14 at 390 px · **FIXED** — `.detail-table-checkbox` 14px → 24px, matching `.card-checkbox`; the first column grew 2rem → 2.5rem and row height is unchanged |
-| 140 | low | ux | recovered | WS14 | verify | |
+| 140 | low | ux | recovered | WS14 | verify | **CONFIRMED** — `Delete this version?` on every row  · **FIXED** — `Delete version 1 (Initial version, 1.1 KB)?`, with the parenthetical collapsing when there is no comment |
 | 141 | low | ux | recovered | WS7 | verify | **CONFIRMED, worse than filed** — the shadow-root input measures **166 px** with `scrollWidth` 1774 for a 166-character value: ~9 % visible, not the reported 15 % · **FIXED, downstream of 89** — the host goes block-level for the edit and the wrapping span is `w-full`; input 166 → 358 px. Three links in the chain, each measured |
 | 142 | low | ux | recovered | WS3 | verify | **CONFIRMED** — no `required`, whole form in the query string  · **FIXED, cause corrected** — plain `required` breaks the URL-download path; the guard is conditional |
 | 143 | low | bug | recovered | WS8 | verify (suspect) | **REJECTED — not reproducible.** The value *is* rendered: the `<td>` measures 133×36 with an `<expandable-text>` of 109×17 inside it, `textContent` is `"hunt value 123"`, and a screenshot shows `hunt_key │ hunt value 123`. What is empty is `innerText`, because the value lives in that custom element's **shadow root** — the report's `{"metaSection":["META DATA\nExpand\nhunt_key\t"]}` is an innerText read, which cannot see it. Self-caveated as "may be inside a collapsed element"; it is not collapsed  · **NOT FIXED — rejected**, and pinned by a Playwright test that asserts a painted box, the shadow text, *and* the empty innerText |
 | 144 | low | ux | recovered | WS5 | verify | **CONFIRMED, broader than filed** — the dialog reads "Upload to Unknown" on `/resource?id=63`, `/group?id=78` **and** `/note?id=61`; `$store.pasteUpload.context?.name` is null on every one, so the `|| 'Unknown'` fallback always wins. Not resource-specific · **FIXED** — the heading reads "Upload to <name>" when a target is known and "Upload files" otherwise; it no longer invents one |
-| 145 | low | ux | recovered | WS14 | product | |
+| 145 | low | ux | recovered | WS14 | product | **CONFIRMED — needs-product-decision.** `/v1/resource/view?id=63` answers `302 → /files/resources/…png`; the card thumbnail on the same page calls `$store.lightbox.openFromClick`  · **NOT IMPLEMENTED**, recommendation returned |
 | 146 | low | ux | recovered | WS6 | Dup → 68 | **CONFIRMED** — `/resources?page=99` 200s blank, Previous → page 98  · **FIXED** — 302 to the last real page; JSON/.body routes deliberately exempt |
 | 147 | low | bug | verified-run | WS11 | spot | **CONFIRMED; the report's comparison to /mrql is wrong** — `SELECT name AS zebra, id AS apple, description AS mango` returned `{"apple":…,"mango":…,"zebra":…}`  · **FIXED — the response is `{columns, rows}`.** Batch 11 kept the object shape and marshalled members in column order; the review showed that cannot work in JavaScript (`Object.keys()` enumerates integer-like keys first, numerically), measured in a browser as `2024, 2023, dup, dup` rendering as `2023, 2024, dup`. `contracts.SQLResultSet` instead: an ordered `columns` array and one array of values per row. Breaking change taken once, with the OpenAPI entry, `mr query run`/`run-by-name`, the docs and the doctests in the same commit. Empty results now name their columns too. Cell values: on lib/pq every `numeric`, `uuid` and array column was base64 (`sum(file_size)` → `"MS41"`); non-embedded `[]byte` that is valid UTF-8 is emitted as its text, binary keeps base64. See "What the review of 8772ab96 caught" |
 | 148 | low | design | verified-run | WS7 | spot | **CONFIRMED, broader than filed** — `word-break:break-all` with `overflow-wrap:normal` on six `.compare-meta-card-value` nodes (including "Jul 30, 2026 04:16 → Jul 3…"), on the resource Metadata `dd.break-all` cards, on the GUID span, on the hash/path cards **and** on `h3.card-title` + its `<a>` in the grid list · **FIXED** — `overflow-wrap: anywhere` replaces `word-break: break-all` in `index.css` (3), `jsonTable.css` (3) and a new `.wrap-anywhere` class swapped into `displayResource.tpl` (8) and `lightbox.tpl` (10, where `OriginalName` had the identical word-splitting) |
-| 149 | low | ux | verified-run | WS14 | spot | |
+| 149 | low | ux | verified-run | WS14 | spot | **CONFIRMED, and the plan's cause no longer exists** — `@dblclick="editing = !!descriptionEditUrl"` was replaced by Batch 4 with `startEditing()`, which already returns early. The surviving half is the unconditional `title`: `/tags` served 50 cards, 50 tooltips and 50 `descriptionEditor({ url: '' })`  · **FIXED** — title and handler both bound to the url |
 | 150 | low | design | verified-run | WS7 | spot | **CONFIRMED** — breadcrumb nav is 88 px tall at 390 px against 44 px at 1280 px, and the second `flex-shrink-0 w-6 h-full` arrow sits at `top:96 left:40` — stranded at the left margin on its own row, connecting nothing. At 1280 px both arrows share `top:52` · **FIXED, first attempt was wrong** — swapping the arrows for an inline `›` below 900 px fixed the reported viewport and left the defect at **1280 px** on a seven-crumb trail. The trail does not wrap at all now: 1 row and 0 stranded separators at both widths, with the connected-arrow design kept |
 | 151 | low | bug | verified-run | WS2 | spot | **CONFIRMED**  · **FIXED** — `inline-edit:saved` → `[data-entity-field]`; the card's Copy button is left stale on purpose (see WS2) |
 | 152 | low | ux | verified-run | WS2 | spot | **CONFIRMED** — `UNIQUE constraint failed: tags.name` reached the client  · **FIXED** — server message humanised, client stops swallowing it |
-| 153 | low | ux | recovered | WS14 | verify | |
+| 153 | low | ux | recovered | WS14 | verify | **CONFIRMED — same one-line cause as 78**, and worse than filed: the merge form is an AJAX bulk form, so dismissing the confirm still performed the merge and pressing Merge with no winner still produced a 400  · **FIXED** — the message names the count and the winner, the AJAX submit is delegated on the container so it honours `defaultPrevented`, and the form requires a winner |
 | 154 | low | ux | recovered | WS12 | verify | **CONFIRMED** — applying the `contact-card` preset took `CustomHeader` from 107 characters of authored template to 353 of preset with **0** dialogs  · **FIXED** — one `confirmOverwrite` gate on all **three** clobber paths (preset, copy-from, bundle import), naming the source and counting the fields at risk. Silent when every slot is empty, which is the create form. **Review correction:** the count covered the slots and `MetaSchema` but not `SectionConfig`, which `applyBundle` also writes for a same-carrier bundle — so a form whose only authored content was the section layout scored zero fields at risk and was clobbered with no prompt. `willReplaceSectionConfig()` mirrors `applyBundle`'s branch |
 | 155 | low | ux | recovered | WS12 | verify | **CONFIRMED** — 1 lint marker, covering `query='SELECT bogus FROM nothing']` only; the `[partial name="does-not-exist"]` beside it had none  · **FIXED** — `LintOptions.PartialExists` (memoised per run, nil disables) reports `no template partial named "…" exists; this renders nothing` as a **warning**, wired into both `/v1/shortcodes/lint` and the preview endpoint's issue list |
 | 156 | low | design | recovered | WS12 | verify | **CONFIRMED** — pill "Template Partial" above an h1 reading "Template Partial: b11-probe-partial". The cause is that the provider has no `mainEntity` (deliberately: `routes.go:640` records that a partial has **no** `/editName`, because a rename would break every `[partial name=…]` pointing at it), so `title.tpl` falls back to `pageTitle`, which also feeds `<title>` and therefore carries the type  · **FIXED** — a `headingTitle` override lets the page name the heading separately from the document title. After: pill "Template Partial", h1 text "b11v-heading", `<title>Template Partial: b11v-heading` |
@@ -2526,7 +2536,9 @@ evidence, and it is more dangerous than no test, because it certifies the fix.**
 **Where the review's framing needed adjusting.** Finding 1 was reported as undermining the argued
 `completed`-despite-cancel decision. It does not: it is a separate defect on the other side of that
 decision, and fixing it makes the argued case *narrower* rather than wrong. The decision stands as
-recorded, and the open half of it is still the wording of Cancel's reply, carried to Batch 12.
+recorded, and the open half of it — the wording of Cancel's reply — was answered by the user on
+2026-07-30 (see the RESOLVED note below): the status was made honest and the `cancelling` rename was
+not taken.
 
 
 #### Round 5 — five real, one argued down, one already recorded
@@ -3143,50 +3155,239 @@ because the test calls the share-server markers.
 
 ### WS14 — Long tail and product decisions
 
-Findings **57, 60/65, 65, 78, 98, 104, 107, 112, 117, 129, 130, 131, 136, 137, 138, 140, 145, 149, 153, 61**.
+Findings **57, 60/65, 65, 78, 98, 104, 107, 112, 117, 129, 130, 131, 136, 137, 138, 140, 145, 149,
+153, 61**. Twenty rows: **thirteen fixed**, **one rejected** (61), **three returned for a product
+decision** (107, 130, 145), and one half of 65 left alone because it is a *separately tracked*
+product decision that predates this campaign.
 
-- [ ] **Confirmation wording (decided: wording only).** "Are you sure you want to delete?" for a
-      **merge** (153); no item count on bulk delete (78); no version identified on version delete
-      (140); no affected-group count when deleting a category in use (98). Give each message the
-      action and its blast radius. Default: *"Delete 4 resources? This cannot be undone."*,
-      *"Merge 3 tags into 'design'? The other 3 will be deleted."*,
-      *"Delete version 3 (Rotated 90 degrees, 37 KB)?"*,
-      *"Delete category 'Person'? 12 groups will become Uncategorized."*
-- [ ] **Relations (57, 60/65, 137, 138)** — a validation message that persists after the user fixes
-      the field; a bare "category mismatch" with no `role=alert` and no indication which side is wrong,
-      while the picker happily offers all 90 groups regardless of the selected type; delete redirecting
-      to `/groups`; mirrored badge/name order between the two halves of a relation card.
-- [ ] **136** — saving a plugin setting re-renders the page with the **old** value in the plugin's
-      injected output while the input shows the new one, so a successful save reads as a failure.
-- [ ] **104, 112** — a raw Go duration `24h0m0s` where `/admin/settings` shows `24h`; an off-palette
-      blue "Download tar" link and a bare native green `<progress>`; raw snake_case config group keys
-      (`remote_downloads`) as section headings.
-- [ ] **117, 129, 131, 149** — Recent Activity is the only dashboard widget with no "View All →";
-      edit forms have no Cancel or Back; the Compare action vanishes at 3 selections instead of
-      disabling with a hint; similar-resource cards advertise `title="Double-click to edit"` on a
-      handler that can never fire (`descriptionEditUrl` is `''`).
-- [ ] **Needs a product decision — propose, do not guess:**
-  - ~~**61**~~ — **no longer a product decision.** Verification found working delete endpoints for
-    all four taxonomy types; only the UI affordance is missing. Reclassified as a mechanical fix:
-    copy `templates/displayTag.tpl`'s delete form into the four taxonomy display templates, pointing
-    at the existing routes. Keep the in-use guard question (what happens to groups in a deleted
-    category — finding 98) as the only decision.
-  - **107** — `/admin/users` can only create and delete. The create form already carries a hidden
-    `id` field and the context layer already has `UpdateUser` / `SetUserPassword`.
-    *Proposed default:* add role, password-reset and disable to the row.
-  - **130** — native `confirm()` everywhere. *Proposed default:* keep for now (decided); file the
-    accessible in-app modal as a follow-up.
-  - **145** — the main preview link 302s to the raw file while card thumbnails open the in-app
-    lightbox. *Proposed default:* make the main preview open the lightbox too.
-  - ~~**Cancelling an in-flight download answers with a fact it cannot promise**~~ — **RESOLVED by
-    user decision, 2026-07-30: the status honours the control.** A cancel accepted while the attempt
-    was running now reports `cancelled` even when `AddResource` then succeeded, and the job keeps
-    the id of whatever it saved so the file stays reachable rather than hidden. The proposed
-    `{"status":"cancelling"}` rename was **not** taken — with the status honest, the reply is no
-    longer a promise the worker can break. Full reasoning under the round-3 section above.
-  - **The jobs panel still lives inside the header** (round 2's `x-teleport` decision, unchanged).
-    Round 3 removed the a11y consequence — the panel declines to open while a modal is up — but not
-    the cause. `x-teleport` into `.overlays` remains the structural answer.
+- [x] **Confirmation wording — and the plan's cause is wrong, on both findings.** The plan says the
+      bulk toolbar "reuses the generic delete confirm". It does not. All four bulk toolbars author
+      their own message — `confirmAction('Are you sure you want to delete the selected resources?')`,
+      `confirmAction('Selected tags will be merged. Are you sure?')` — and `confirmAction`
+      **destructures its argument**. Destructuring a string yields `undefined` for every named
+      property, so every one of those messages was silently replaced by the default. That is findings
+      **78** and **153** in one line of JavaScript, and it had been true for as long as those
+      toolbars have existed. `confirmAction` now normalises a string argument (so the mistake cannot
+      be made again rather than being fixed once at four call sites) and resolves `{count}`, `{s}`
+      and `{winner}` at submit time, because a message baked into an `x-data` attribute cannot know
+      what is ticked. Measured after: *"Delete 1 resource? This cannot be undone."* /
+      *"Delete 4 resources? …"*, and *"Merge 2 tags into ws14-winner-… ? The merged tags will be
+      deleted."*
+      **140** and **98** did pass an object and so did reach the dialog; they were simply generic.
+      Version delete now reads *"Delete version 1 (Initial version, 1.1 KB)?"*, and category delete
+      *"Delete category 'BugHunt Business'? 1 group will become Uncategorized."* — from a
+      `GetGroupsCount` query, not `len(category.Groups)`, which is a preloaded association capped at
+      50 and would under-report exactly the categories worth warning about. The same count now feeds
+      the page's Groups meta-strip, which had the same cap.
+- [x] **A defect found while verifying 153: a dismissed confirm still performed the operation.**
+      `bulkSelection.registerForm` attached the AJAX submit handler from the *parent* component's
+      `init`, so it was always registered before each form's own `x-bind="events"` and always ran
+      first. It calls `preventDefault()` unconditionally and then fetches, so `confirmAction`'s
+      Cancel and `selectionRequired`'s empty-selection block were both invisible to it. Measured on
+      the tag bulk-merge form: dismissing the dialog still issued the merge, and pressing Merge with
+      no winner still produced `Bulk operation failed: Server error: 400`. The handler is now
+      delegated on the toolbar container — `submit` bubbles, so a listener there runs after every
+      listener on the form regardless of registration order — and returns when `defaultPrevented`.
+      The merge form also gained `requireSelection: { field: 'winner' }`, which is findings 16/92's
+      guard on the one surface that fix missed.
+- [x] **57 — the message was set and never retired.** `selectorFieldAdapter`'s submit guard sets
+      *"Please select at least 1 value"* when a required selector is empty; nothing cleared it. So
+      on `/relationType/new` the red text and `aria-invalid="true"` stayed under From Category after
+      the user had picked one — a form the user had already fixed went on looking broken. Any change
+      that satisfies the minimum now retires it, and the sibling field that is *still* empty keeps
+      its message (the positive control in the spec).
+- [x] **60/65 — one half was never a defect and one half is somebody else's decision.**
+      The report's evidence for "no `role=alert`, nothing is announced" is
+      `{"tag":"H3","role":null,"parentRole":null}`. It read the `<h3>` and its immediate parent;
+      `role="alert"` is on the *grandparent* (`layouts/base.tpl:133`) and has been since `027399a9`,
+      long before this campaign. The probe measured the wrong element.
+      The "picker offers all 90 groups regardless of type" half **reproduces** — with
+      `?GroupRelationTypeId=3` preset, the To Group picker still listed all 38 groups including a
+      Business one — but it is **deliberate and separately tracked**:
+      `src/components/selectorFormParameters.js` documents why the lookup is unfiltered, and
+      `docs/plans/archive/2026-07-26-headless-selector-todo.md` §"Follow-up: make relation
+      cross-filtering actually filter" holds the open UX decision (with filtering live, two
+      uncategorized groups produce an empty relation-type list and a dead end). Not decided here.
+      What *is* fixed is the message, which both 60 and 65 actually ask for: the server now names
+      both sides and what each requires.
+- [x] **136 — the POST re-renders nothing.** The plan says the save "re-renders /plugins/manage with
+      the OLD value in the plugin's injected output". Measured: `POST /v1/plugin/settings` answers
+      `{"ok":true}` to a `fetch`, and the very next `GET /dashboard` already carries the new
+      greeting. The page the reader is looking at is simply the one rendered *before* the save, with
+      the plugin's server-rendered slots frozen at the previous setting — so the input and the live
+      output disagree and a successful save reads as a failure. The save now reloads, the same trade
+      `descriptionEditor` takes for the same reason: only the server renders that output, and the
+      plugin's own text changing is a stronger acknowledgement than the "Saved!" flash it replaces.
+- [x] **104** — `/admin/export` printed Go's `time.Duration.String()` (`24h0m0s`) for the setting
+      `/admin/settings` shows as `24h`, because the settings page formats it in the browser and the
+      export page did not format it at all. New `ShortDuration` is the Go twin of that page's
+      `nanosToShort`, rule for rule, with a comment on each pointing at the other. "Download tar" is
+      `text-amber-700` like every other link on the page, and the bare native `<progress>` — which
+      paints as the OS's bright green bar, the only green in a stone/amber UI — keeps the element
+      (it is what announces value/max) and restyles its painted parts in `public/index.css`.
+- [x] **112** — the section headings printed the raw config group key under `text-transform:
+      capitalize`, which cannot reach an underscore, so the reader saw "Remote_downloads". A label
+      map; the machine key stays as the section `id` that `aria-labelledby` points at.
+- [x] **117** — Recent Activity was the only dashboard widget without "View All →", and `/logs` is
+      otherwise reachable only through the Admin dropdown.
+- [x] **129** — no create or edit form in the app had a Cancel, a Back or a breadcrumb. The
+      destination is derived from the URL (`/X/new` → the list, `/X/edit?id=N` → `/X?id=N`) rather
+      than set by each of the twelve providers, because `navSectionByFirstSegment` already knows
+      every entity's list path including the four whose plural is not mechanical. The three forms
+      that had inlined their own copy of the submit block now share the partial, so all fifteen
+      create/edit routes gained it at once.
+- [x] **131** — Compare was `x-show`n at exactly two selections: measured 92.8×38 px with two ticked
+      and gone at three, still holding the href for the first two. It is now a `<button>` that stays
+      visible and is genuinely disabled, with a hint saying *"Select exactly two groups to compare."*
+      A `<button>` and not an `aria-disabled` `<a>`: a link has no disabled state, is still followed
+      on Enter, and stays in the tab order leading nowhere. Both bulk toolbars that had this control
+      (groups and resources) now share one partial.
+- [x] **137** — relation delete redirected to `/groups`, which is neither the relation's list nor
+      either endpoint group. Now `/relations`, with an explicit `?redirect=` still winning (a test
+      says so, because replacing one hardcoded destination with another that ignores the caller
+      would be the same bug).
+- [x] **138** — `partials/group.tpl` moved the relation badge above the group name when `reverse`
+      was set, so the two halves of one pair rendered in opposite orders *and* the list page and the
+      detail page were mirrored from each other, because they pass `reverse` on opposite sides. The
+      badge now always follows the name; `reverse` keeps its other job (suppressing the relation
+      description on the second half so it is not printed twice).
+- [x] **149 — the plan's cause no longer exists.** It blames
+      `@dblclick="editing = !!descriptionEditUrl"`. Batch 4 replaced that with `startEditing()`,
+      which returns early when the url is empty, so the handler has been harmless for a while. The
+      surviving half is the *unconditional* `title="Double-click to edit"`: every card whose include
+      passes no `descriptionEditUrl` — list cards, similar-resource cards, both relation halves —
+      promised an editor that cannot open. Measured on `/tags`: 50 cards, 50 tooltips, 50
+      `descriptionEditor({ url: '' })`. Both the title and the handler are now bound to the url.
+- [x] **61 — REJECTED, not reproducible.** All four taxonomy types *do* offer Delete on their detail
+      page, and have since long before this campaign (`06610837`, `8a976084`, `9438ff9a`). The
+      report's probe collected `button` elements (`"btns":["Edit","Edit Tags"]`);
+      `partials/form/deleteButton.tpl` renders `<input type="submit" value="Delete">`, which a
+      button sweep cannot see. Phase 1's own note — "only `templates/displayTag.tpl` renders a
+      delete form" — was wrong for the same reason from the other direction: the control comes from
+      the *context provider*'s `deleteAction`, through `partials/title.tpl`, not from the display
+      template. The one page with no Delete is the **default** resource category, which is
+      deliberate (`IsDefaultResourceCategory`). Pinned by a Go test over all five detail pages plus
+      that exception, and by a POST that actually deletes.
+- [x] **The user-approved `/mrql` column ordering, folded in.** `MRQLGroupedResult` gained
+      `columns`, populated from the `mrql.AggregatedColumns` helper that
+      `/v1/mrql/export?format=csv` already used — so the app stopped disagreeing with itself between
+      two exports of one query. `templates/mrql.tpl` reads it with an `Object.keys` fallback,
+      `aggregatedToTable` in `cmd/mr/commands/mrql.go` drops its `sort.Strings` (keeping it as the
+      fallback for a server too old to send `columns`), and the OpenAPI entry, `mr mrql run`'s help,
+      the regenerated `docs-site/docs/cli/mrql/run.md` and the docs-site MRQL page all say so.
+      `rows` is unchanged and no doctest broke.
+
+**Tests.** `server/api_tests/ws14_long_tail_test.go` (16 tests: the taxonomy-delete rejection pin
+and its default-resource-category control, the category and version confirms including the
+past-the-preload-cap and singular cases, the export duration and palette, the settings headings, the
+dashboard widgets, fifteen create/edit Cancel destinations, the relation redirect and its explicit
+`?redirect=` control, the relation pair order on both surfaces, and the tooltip),
+`server/api_tests/mrql_column_order_test.go` (the authored order, its reverse, the bucketed control,
+and agreement with the CSV header), `src/components/confirmAction.test.ts` (8 tests over the
+argument shapes and the placeholders), two added to
+`src/components/selectorFieldAdapter.test.ts`, and
+`e2e/tests/regressions/ws14-long-tail.spec.ts` (7 tests over what only a browser knows). Seen red
+first: **12 of 16** Go WS14, **4 of 4** MRQL-ordering, **4 of 8** confirmAction, **2 of 2** adapter,
+and **7 of 7** Playwright.
+
+#### Where the plan was wrong
+
+1. **78 and 153 are one bug, and it is not "the toolbar reuses the generic confirm".** Every bulk
+   toolbar authored its own message and `confirmAction` discarded it, because
+   `function confirmAction({ message = … } = {})` called with a string gets `undefined` for
+   `message`. Four call sites, one line. A fixer working from the plan would have edited the four
+   strings, watched nothing change, and had no reason to look at the component.
+2. **60's a11y half is a probe artefact.** `role="alert"` is on the banner `<div>`; the report read
+   the `<h3>` inside it and that element's immediate parent. Third time in this campaign that a
+   finding measured the wrong property or the wrong element (with 14 and 39).
+3. **61 is a probe artefact too, and Phase 1's correction of it was also wrong.** The delete control
+   is an `<input type="submit">`, invisible to a `button` sweep, and it is contributed by the
+   context provider rather than by the display template — so both the report's "no UI anywhere" and
+   Phase 1's "only displayTag renders one" are false.
+4. **149's stated cause was fixed by an earlier batch of this same campaign** and the finding still
+   reproduces, through the half nobody looked at.
+5. **136's stated cause inverts the mechanism.** The response re-renders nothing; the staleness is
+   the page the reader was already on. The fix that follows from the plan (something server-side
+   about the POST response) would have found nothing to change.
+6. **65's picker half is real and is *already* an open, documented product decision** from the
+   selector refactor, with a stated hazard. Acting on it here would have re-taken a decision the
+   repo deliberately deferred — and reverted a revert (`73fab2df`, reverted 2026-07-27).
+
+#### Defects the tests did not catch, and three this batch nearly shipped
+
+- **The first version of the 138 test passed against the mirrored page.** It compared badge and
+  title positions across the whole document; on `/relations` the row's own
+  `<h2 class="card-title">` (the relation's name) precedes both halves and shifts every index, so
+  both comparisons came out `false` and the two `false`s matched. Scoped to each
+  `card group-card` article, it goes red on both surfaces with a message naming which half is which.
+  This is `docs/lessons.md`'s "a test whose locator is wider than its subject", and it took writing
+  it wrong to see it.
+- **The first version of the `selectCards` E2E helper asked for four and produced three.** A card
+  checkbox toggles, so clicking `nth(0)` again after an earlier selection deselects it. It now
+  starts from `deselectAll()` and asserts zero before it starts.
+- **Three existing specs described the markup this batch changed**, and the full suite caught all
+  three: `RelationPage.delete` asserted the redirect to `/groups` (137), and `group-compare` and
+  `version-compare` both located the Compare action as `.bulk-editors a:has-text("Compare")` (131).
+  The two compare specs now click the button and assert the destination URL, which is a stronger
+  assertion than reading an `href` — and `group-compare` gained the three-selection case that the
+  old `<a>` could not have.
+
+#### Needs a product decision — verified, recommended, not taken
+
+All three were reproduced on a fresh seeded instance so the ledger records what the behaviour *is*.
+None was implemented or rejected. The fourth decision in this campaign (what Cancel means once a
+download's file has been saved) was returned to the user and answered on 2026-07-30; these follow the
+same shape.
+
+- **107 — `/admin/users` can create and delete, and nothing else.** Verified: the only per-row
+  action is a `POST /v1/user/delete` form; the table contains no links at all. `POST /v1/user`
+  (`UpdateUserHandler`), `UpdateUser` and `SetUserPassword` all exist and no UI reaches them, so
+  this is a UI-only gap. The report's supporting inference — "the create form already carries a
+  hidden `id`" — is a misread: that hidden input belongs to the per-row delete form.
+  *Recommendation: implement it, as a per-row Edit page.* Against: an operator who can reach
+  `/admin/users` can already delete and re-create an account, so nothing is strictly unreachable,
+  and every new write path is new attack surface on the one screen that grants privilege. For: the
+  three things an operator routinely needs — change a role, reset a password, disable an account —
+  currently require deleting the user, which destroys their API tokens and sessions and nulls
+  `CreatedByUserId` across fifteen tables. That is a destructive workaround for a routine task.
+- **130 — every destructive confirmation is a native `confirm()`.** Verified: ~23 sites — 13
+  `confirmAction` call sites plus `confirmGroupDelete`, 4 inline `onsubmit="return confirm(…)"`
+  (`adminShares.tpl` ×2, `adminUsers.tpl`, `managePlugins.tpl`), `blockEditor.tpl:60`,
+  `noteShare.tpl:58`, and 3 in `src/` (`mrqlEditor`, `templateBundle`, `shortcodeLint`).
+  *Recommendation: keep `window.confirm` for now*, which is what the pre-planning decision already
+  said, and treat the in-app modal as its own piece of work. For changing it: a native dialog cannot
+  be styled, cannot carry a link, and cannot mark the destructive button as destructive. Against:
+  `window.confirm` is *modal to the browser*, so it cannot be missed, cannot be dismissed by a
+  stray click, and traps focus correctly by construction — an in-app replacement has to re-earn all
+  three across 23 sites, and this campaign has already found two focus-trap defects in the app's own
+  modals. This batch removed the reason the finding was filed: the messages now say what will be
+  destroyed.
+- **The jobs panel still lives inside the header** — round 2's `x-teleport` decision, unchanged and
+  **not re-opened here**. Round 3 removed its a11y consequence (the panel declines to open while a
+  modal is up) but not its cause; `x-teleport` into `.overlays` remains the structural answer and is
+  a change to `x-ref`, `x-trap` and fifteen tests, not a long-tail fix.
+- **145 — the main preview leaves the app; the card thumbnail does not.** Verified:
+  `/v1/resource/view?id=63` answers `302 → /files/resources/…/<hash>.png`, so clicking the large
+  preview hands the browser the raw file; a thumbnail in the same page's Similar Resources calls
+  `$store.lightbox.openFromClick`. *Recommendation: make the main preview open the lightbox, and add
+  a plain "Open original" link beside it.* For: two identical-looking images on one page behave
+  differently, and the lightbox is where the app's own zoom, crop, rotate and navigation live —
+  leaving for the browser's image view loses all of them and the back button is the only way home.
+  Against: "click the picture to get the actual file" is a real workflow (save-as, copy the URL,
+  open in another tool), and the raw link is currently the only way to reach it; that is why the
+  recommendation keeps an explicit link rather than simply swapping the behaviour.
+
+#### Deliberately not done, and why
+
+- **The bucketed `/mrql` result's key badges have the same ordering defect** — `templates/mrql.tpl`
+  renders them with `x-for="(val, key) in bucket.key"`, and `mrql.BucketKeyColumns` already exists
+  to fix it the same way. The approved change named the aggregated table; a bucketed key list is a
+  second surface with its own consumers, so it is measured and reported rather than taken.
+- **Relation cross-filtering (65's picker half)** — see above; a tracked decision with a stated
+  hazard, not this batch's to take.
+- **Note-type and resource-category delete confirms still do not name their blast radius.** 98 is
+  about categories, and both siblings would need their own "what happens to the notes/resources"
+  answer, which is the product question 98's fix deliberately answered only for groups.
 
 ---
 
@@ -3248,7 +3449,8 @@ Filled in during Phase 1. Pre-populated with what is already known:
 | 159 | **Expect not-reproducible** | Finding 33's own evidence shows the hunt changed `mrql_default_limit` to 3 mid-run. |
 | 6 | **Confirmed symptom, wrong diagnosis** | The arrow-key handlers exist (`blockEditor.tpl:947-950`). Re-test after fixing 47. |
 | 160, 143, 79 | **Verify before acting** | Self-caveated by the report, or fixed by a reload. |
-| 61, 107, 130, 145 | **Needs product decision** | Plausibly deliberate. Defaults proposed in WS14. |
+| 61 | **Rejected — not reproducible** | All four taxonomy types already offer Delete on their detail page. The report's probe collected `button` elements; the control is an `<input type="submit">` contributed by the context provider. |
+| 107, 130, 145 | **Needs product decision** | Plausibly deliberate. Verified in Batch 12, recommendations returned to the user 2026-07-31; still open. |
 
 ---
 
@@ -3279,7 +3481,8 @@ the cheapest high-confidence work clears the ledger early.
 - [x] **Batch 11 round 3** — the five findings from the *second* review, which said the work had
       not converged, plus the cell matrix that turned up three more. See WS11 "Round 3 — the cell
       matrix". Leaves the `/mrql` ordering decision with the user, with the blast radius measured.
-- [ ] **Batch 12** — WS14 long tail; bring the four product decisions back for sign-off.
+- [x] **Batch 12** — WS14 long tail, the user-approved `/mrql` column ordering, and the three
+      remaining product decisions returned for sign-off (107, 130, 145).
 - [ ] **Batch 13** — Phase 3 guards.
 - [ ] **Batch 14** — final verification, docs, and a lessons entry.
 

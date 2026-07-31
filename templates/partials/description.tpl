@@ -6,7 +6,12 @@
     @click.away="editing && save({ event: $event })"
 >
     <template x-if="!editing">
-        <div class="contents" @dblclick="startEditing()" title="Double-click to edit" data-description-display>
+        {# Finding 149: the title was unconditional, so every card whose include #}
+        {# passes no descriptionEditUrl (list cards, similar-resource cards, the #}
+        {# relation halves) promised an editor that startEditing() refuses to    #}
+        {# open. The handler is bound only where it can fire, so the element     #}
+        {# does not claim an interaction it does not have either. #}
+        <div class="contents"{% if descriptionEditUrl %} @dblclick="startEditing()" title="Double-click to edit"{% endif %} data-description-display>
             {% autoescape off %}
                 {% if description %}
                     {% if !preview %}{% process_shortcodes description|markdown2|render_mentions descriptionEntity %}{% endif %}

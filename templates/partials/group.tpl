@@ -16,17 +16,20 @@
             {% endif %}
 
             <div class="card-title-section">
-                {% if relation && reverse %}
-                    <a href="/relation?id={{ relation.ID }}" class="card-badge card-badge--relation mb-1">
-                        {{ relation.RelationType.Name }}
-                    </a>
-                {% endif %}
-
+                {# Finding 138: `reverse` used to move the relation badge above  #}
+                {# the group name, so the two halves of one pair rendered in     #}
+                {# opposite orders and their names never sat on the same         #}
+                {# baseline across the arrow — and the list page and the detail  #}
+                {# page were mirrored from each other as well, because they pass #}
+                {# `reverse` on opposite sides. The badge now always follows the #}
+                {# name. `reverse` keeps its other job: suppressing the          #}
+                {# relation description on the second half so it is not printed  #}
+                {# twice. #}
                 <h2 class="card-title">
                     <a href="/group?id={{ entity.ID }}" title="{{ entity.GetName() }}">{{ entity.GetName() }}</a>
                 </h2>
 
-                {% if relation && !reverse %}
+                {% if relation %}
                     <a href="/relation?id={{ relation.ID }}" class="card-badge card-badge--relation mt-1">
                         {{ relation.RelationType.Name }}
                     </a>

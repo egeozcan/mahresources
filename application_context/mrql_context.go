@@ -218,8 +218,26 @@ type MRQLResult struct {
 
 // MRQLGroupedResult holds the results of a GROUP BY MRQL query.
 type MRQLGroupedResult struct {
-	EntityType  string           `json:"entityType"`
-	Mode        string           `json:"mode"` // "aggregated" or "bucketed"
+	EntityType string `json:"entityType"`
+	Mode       string `json:"mode"` // "aggregated" or "bucketed"
+	// Columns is the aggregated result's column names in the order the query
+	// wrote them, and is empty for a bucketed result.
+	//
+	// Rows are JSON objects, and JavaScript does not promise a consumer the key
+	// order of an object — /mrql built its table header from
+	// Object.keys(rows[0]), and encoding/json writes map keys sorted, so
+	// `GROUP BY width, height, contentType COUNT()` rendered alphabetically and
+	// was indistinguishable from the same GROUP BY written in reverse. The CSV
+	// export has always emitted the authored order (mrql.AggregatedColumns), so
+	// the app disagreed with itself between two exports of one query.
+	//
+	// Additive rather than a shape change, and deliberately so: the two
+	// properties that made an object shape unfixable for /v1/query/run are both
+	// absent from MRQL by grammar. An integer-like column name cannot be spelled
+	// (`meta.2024` fails to parse), so ECMAScript's integer-key-first
+	// enumeration cannot reorder anything, and a name cannot repeat, because
+	// `GROUP BY width, width` collapses to one column in the SQL as well.
+	Columns     []string         `json:"columns,omitempty"`
 	Rows        []map[string]any `json:"rows,omitempty"`
 	Groups      []MRQLBucket     `json:"groups,omitempty"`
 	Warnings    []string         `json:"warnings,omitempty"`
@@ -566,6 +584,7 @@ func (ctx *MahresourcesContext) executeAggregatedQuery(reqCtx context.Context, p
 	return &MRQLGroupedResult{
 		EntityType: parsed.EntityType.String(),
 		Mode:       "aggregated",
+		Columns:    mrql.AggregatedColumns(parsed),
 		Rows:       rows,
 	}, nil
 }
@@ -1675,6 +1694,7 @@ func (ctx *MahresourcesContext) executeAggregatedQueryScoped(reqCtx context.Cont
 	return &MRQLGroupedResult{
 		EntityType: parsed.EntityType.String(),
 		Mode:       "aggregated",
+		Columns:    mrql.AggregatedColumns(parsed),
 		Rows:       rows,
 	}, nil
 }

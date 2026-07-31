@@ -50,8 +50,19 @@ export function pluginSettings(pluginName) {
                     return;
                 }
 
+                // Finding 136: the save was reported as failed because the page
+                // still showed the old value. The report blames the POST response
+                // for "re-rendering the page with the OLD value"; it re-renders
+                // nothing — it answers {"ok":true} to this fetch. What the reader
+                // sees is the page as it was rendered *before* the save, and a
+                // plugin's injected output (footer, header, sidebar, its own
+                // pages) is server-rendered from these very settings. Only the
+                // server can produce it, exactly as with the inline description
+                // editor, so an explicit save reloads. The reload replaces the
+                // "Saved!" flash with something stronger: the plugin's own output
+                // changing in front of the reader.
                 this.saved = true;
-                setTimeout(() => { this.saved = false; }, 3000);
+                window.location.reload();
             } catch (err) {
                 this.error = err.message;
             }

@@ -16,7 +16,10 @@
 
   {% for group in settingsByGroup %}
   <section class="rounded-lg bg-white border border-stone-200 p-5" aria-labelledby="grp-{{ group.Group }}">
-    <h2 id="grp-{{ group.Group }}" class="text-base font-semibold font-mono text-stone-800 mb-4 capitalize">{{ group.Group }}</h2>
+    {# Finding 112: this printed group.Group — the raw config key — under a #}
+    {# `capitalize` that cannot reach an underscore, so a reader saw #}
+    {# "Remote_downloads". The key stays as the section id for aria-labelledby. #}
+    <h2 id="grp-{{ group.Group }}" class="text-base font-semibold font-mono text-stone-800 mb-4">{{ group.Label }}</h2>
     <div class="space-y-4">
       {% for s in group.Items %}
       <div class="border border-stone-200 rounded-md p-4"
@@ -119,6 +122,10 @@
 
 <script>
 (function () {
+  // The Go twin of this function is ShortDuration in
+  // server/template_handlers/template_context_providers/admin_settings_template_context.go,
+  // which /admin/export uses so the two pages cannot disagree (finding 104).
+  // Change one and change the other.
   function nanosToShort(n) {
     if (typeof n !== 'number' || n === 0) return '0s';
     const ms = Math.floor(n / 1e6);

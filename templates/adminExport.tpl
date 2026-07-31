@@ -157,7 +157,10 @@
         <span x-show="(job?.progressPercent || -1) >= 0"> (<span x-text="Math.min(100, Math.round(job?.progressPercent || 0))"></span>%)</span>
       </div>
 
-      <progress :value="job?.progress || 0" :max="(job?.totalSize || 0) > 0 ? job.totalSize : 100" class="w-full"></progress>
+      {# Finding 104: a bare native <progress> paints as the OS's bright green #}
+      {# bar, the only green in a stone/amber UI. The element stays — it is what #}
+      {# announces value/max — and public/index.css restyles its painted parts. #}
+      <progress :value="job?.progress || 0" :max="(job?.totalSize || 0) > 0 ? job.totalSize : 100" class="w-full export-progress-bar"></progress>
 
       <div class="flex gap-2">
         <button type="button"
@@ -167,9 +170,11 @@
                 data-testid="export-cancel-button">
           Cancel
         </button>
+        {# Finding 104: this was text-blue-700 on a page whose every other link #}
+        {# ("Export/import guide", right above it) is text-amber-700. #}
         <a x-show="job?.status === 'completed'"
            :href="downloadUrl" download
-           class="text-blue-700 underline self-center"
+           class="text-amber-700 hover:text-amber-900 underline self-center"
            data-testid="export-download-link">
           Download tar
         </a>

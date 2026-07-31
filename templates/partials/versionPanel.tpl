@@ -36,8 +36,11 @@
                             Restore
                         </button>
                     </form>
+                    {# Finding 140: every row asked "Delete this version?", so    #}
+                    {# nothing in the dialog said which of them it applied to.    #}
+                    {# The comment is optional, hence the two shapes.             #}
                     <form action="/v1/resource/version/delete?resourceId={{ resourceId }}&versionId={{ version.ID }}" method="post" class="inline"
-                          x-data="confirmAction({ message: 'Delete this version?' })" x-bind="events">
+                          x-data="confirmAction({ message: 'Delete version {{ version.VersionNumber }} ({% if version.Comment %}{{ version.Comment|escapejs }}, {% endif %}{{ version.FileSize|humanReadableSize }})?' })" x-bind="events">
                         <button type="submit" class="px-3 py-1 text-sm font-mono text-red-700 hover:text-red-800">
                             Delete
                         </button>

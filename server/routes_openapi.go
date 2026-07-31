@@ -1782,7 +1782,15 @@ Request body fields:
 
 Query parameter:
   - render (0 or 1) — when 1, populates each result row's RenderedHTML using
-    the entity's CustomMRQLResult template.`,
+    the entity's CustomMRQLResult template.
+
+An aggregated GROUP BY response carries "columns": the result's column names in
+the order the query wrote them (group-by fields first, then aggregates), matching
+the header /v1/mrql/export?format=csv emits. "rows" is unchanged — each row is
+still an object keyed by column name — so "columns" is additive. Read it rather
+than the key order of a row: JSON objects carry no order, and a JavaScript
+consumer enumerating a row's keys will not see the order the query was written
+in.`,
 		Tags:                mrqlTag,
 		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ExtraQueryParams: []openapi.QueryParam{

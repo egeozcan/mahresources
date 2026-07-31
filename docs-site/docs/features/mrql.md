@@ -454,6 +454,8 @@ type = resource AND fileSize > 10mb GROUP BY contentType MIN(fileSize) MAX(fileS
 
 Each result row includes the grouped field values plus one key per aggregate function (e.g., `count`, `sum_fileSize`, `avg_fileSize`).
 
+The response also carries a `columns` array: the column names in the order the query wrote them, grouped fields first and then aggregates. The `/mrql` results table, `mr mrql run` and `mrql export --format csv` all follow it, so the three agree. Read `columns` rather than the key order of a `rows` entry — a JSON object carries no order, and enumerating a row's keys gives you the parser's order, not the query's.
+
 Add `HAVING` after the aggregate list to keep only buckets whose aggregates match; conditions use aggregate functions (never plain fields) and combine with `AND` / `OR` / `NOT`:
 
 ```
