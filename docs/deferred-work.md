@@ -193,7 +193,39 @@ and `auth` — is written up under "Recommendation: add the browser E2E suite to
 
 ---
 
-## 6. Smaller items, each with its reason for being open
+## 6. The Postgres E2E harness has never had contention tuning
+
+**Status: measured, deliberately not changed.** This is the one item here that is a known live cause
+of red in a suite people actually run, so it is called out separately rather than left as a footnote.
+
+`e2e/fixtures/server-manager.ts` builds two argument lists, and Batch 13's `-max-db-connections=2`
+— with the ten-line comment explaining the measurement behind it — is only in the **SQLite**
+branch. That is defensible on its face (the serialisation the comment describes is a SQLite
+property), but the Postgres suite is the harder case: four Playwright workers each get their own
+database inside **one** container, so they contend on one server process and Docker's I/O layer.
+Batch 14's run reported **4 flaky at 8.5m** against the SQLite run's **0 flaky at 7.7m** on the
+same machine within the hour, all four the usual `page.goto: Timeout 15000ms exceeded`, all four in
+`tests/schema/`, all four green on retry. The isolated rate is **0 of 258** —
+`run-tests-postgres.js test tests/schema/ --retries=0 --repeat-each=2`, 2.3 minutes, at a 1-minute
+load average of 2.4–4.0 — which points at whole-suite contention rather than at those four specs,
+and is *weak* evidence precisely because a directory run is a different load profile from a
+4-worker full-suite run. Do not add a connection limit on the strength of that: get the rate under
+the load that produces it, the way Batch 13 did for the SQLite branch, and split server from client
+before theorising. This matters more if the browser suite goes into CI (item 5), because a CI
+runner is a smaller machine than this one.
+
+**What to do, in order.** Reproduce under the load that produces it — a full 4-worker Postgres run, not
+a directory run — and get a rate the way Batch 13 got one for SQLite (three consecutive full runs, load
+average recorded each time). Only then decide the value. `-max-db-connections=2` is the obvious
+candidate because it is what fixed the SQLite branch and what `CLAUDE.md` recommends, but Postgres
+contends on a container's single server process and I/O layer rather than on SQLite's writer lock, so
+the number that helps may not be the same number. Do **not** raise `navigationTimeout` instead: that
+removes the symptom by making the suite less able to notice a genuine slowdown, which is the opposite
+of what these guards are for.
+
+---
+
+## 7. Smaller items, each with its reason for being open
 
 - **`x-teleport` the jobs panel into `.overlays`.** Round 2's structural answer to the modal-stacking
   defect. Round 3 removed the *consequence* — the panel now declines to open while a modal is up — but
@@ -212,26 +244,9 @@ and `auth` — is written up under "Recommendation: add the browser E2E suite to
   the shade list when the palette changes.
 - **`mr docs lint` carries 16 standing warnings.** Pre-existing throughout the campaign, never
   triaged.
-- **The Postgres E2E harness has never had any contention tuning.**
-  `e2e/fixtures/server-manager.ts` builds two argument lists, and Batch 13's `-max-db-connections=2`
-  — with the ten-line comment explaining the measurement behind it — is only in the **SQLite**
-  branch. That is defensible on its face (the serialisation the comment describes is a SQLite
-  property), but the Postgres suite is the harder case: four Playwright workers each get their own
-  database inside **one** container, so they contend on one server process and Docker's I/O layer.
-  Batch 14's run reported **4 flaky at 8.5m** against the SQLite run's **0 flaky at 7.7m** on the
-  same machine within the hour, all four the usual `page.goto: Timeout 15000ms exceeded`, all four in
-  `tests/schema/`, all four green on retry. The isolated rate is **0 of 258** —
-  `run-tests-postgres.js test tests/schema/ --retries=0 --repeat-each=2`, 2.3 minutes, at a 1-minute
-  load average of 2.4–4.0 — which points at whole-suite contention rather than at those four specs,
-  and is *weak* evidence precisely because a directory run is a different load profile from a
-  4-worker full-suite run. Do not add a connection limit on the strength of that: get the rate under
-  the load that produces it, the way Batch 13 did for the SQLite branch, and split server from client
-  before theorising. This matters more if the browser suite goes into CI (item 5), because a CI
-  runner is a smaller machine than this one.
-
 ---
 
-## 7. Findings from the final independent review (2026-07-31), deferred
+## 8. Findings from the final independent review (2026-07-31), deferred
 
 The closing review of the whole branch raised seven items. Two were confirmed and fixed immediately
 (the ledger arithmetic, and the missing modal guard on `globalSearch` — see `docs/todo.md`). The five
