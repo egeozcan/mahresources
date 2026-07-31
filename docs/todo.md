@@ -279,7 +279,7 @@ Statuses are filled in during Phase 1.
 | 41 | med | ux | verified-run | WS9 | spot | **CONFIRMED, and the data was never lost** — a paused job still reports `progress:196608 totalSize:52428800` over the API; only the panel stopped rendering it (`x-if="job.status === 'downloading'"`)  · **FIXED** — `showsProgress(job)` covers paused; live after: `240 KB / 50 MB (0.5%)` with a grey bar, and a Cancel button |
 | 42 | med | bug | verified-run | WS8 | spot |  · **FIXED** |
 | 43 | med | bug | verified-run | WS8 | **confirmed (source)** | **CONFIRMED** — level-6 absent, level-2 renders  · **FIXED** |
-| 44 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — exactly 50 root links  · **FIXED** |
+| 44 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — exactly 50 root links  · **FIXED**; had no test naming it until Batch 13's coverage audit, now pinned by `TestGroupTreeRootListSaysWhenItIsCutOff` with a fixture that crosses the 50-root threshold |
 | 45 | med | bug | ⚠️ DISPUTED | WS8 | **confirmed (source)** | **CONFIRMED** — relative `href="groups"` in rendered page  · **FIXED** |
 | 46 | med | bug | verified-run | WS11 | Dup → 23 | **CONFIRMED** — Dup → 23 · **FIXED** — Dup → 23 |
 | 47 | med | bug | verified-run | WS8 | spot | **CONFIRMED** — 8 distinct orders in 20 calls  · **FIXED** |
@@ -295,7 +295,7 @@ Statuses are filled in during Phase 1.
 | 57 | med | ux | recovered | WS14 | verify | **CONFIRMED** — after a failed submit on `/relationType/new`, picking From Category left `Please select at least 1 value` under it and `aria-invalid="true"` on the combobox  · **FIXED** — `selectorFieldAdapter`'s submit guard set the message and nothing ever retired it; a change that meets the minimum now clears it |
 | 58 | med | a11y | recovered | WS5 | verify | **CONFIRMED** — the two category fields pass `min=1` (so the form knows they are required) yet `autocompleter.tpl` emits no `aria-required`, no `*`/Required marker and no `aria-invalid`; only Name is marked · **FIXED** — `autocompleter.tpl` derives the `*`/Required marker and `aria-required` from the `min` it is already passed, and binds `aria-invalid` to `errorMessage` |
 | 59 | med | a11y | recovered | WS5 | Dup → 64 | **CONFIRMED** — Dup → 64 · **FIXED** — Dup → 64 |
-| 60 | med | ux | recovered | WS14 | Dup → 65 | **PARTLY REJECTED — the a11y half is a probe artefact.** `role="alert"` is on the banner `<div>` (`layouts/base.tpl:133`, since `027399a9`); the report read the `<h3>` and its immediate parent. The bare `category mismatch` text is real  · **FIXED** — the message names both sides and what each requires |
+| 60 | med | ux | recovered | WS14 | Dup → 65 | **PARTLY REJECTED — the a11y half is a probe artefact.** `role="alert"` is on the banner `<div>` (`layouts/base.tpl:133`, since `027399a9`); the report read the `<h3>` and its immediate parent. The bare `category mismatch` text is real  · **FIXED IN BATCH 13, not Batch 12** — this row claimed the message half was done and `relation_context.go:68` still returned the bare string, untouched since the auth merge; a live POST answered `{"error":"category mismatch"}`. Found because the Batch 13 coverage audit reported it as named by no test. It now names both groups, the relation type and the category each side requires |
 | 61 | med | ux | recovered | WS14 | product | **REJECTED — not reproducible.** All four taxonomy types render Delete on their detail page, and have since long before this campaign. The report's probe collected `button` elements; `deleteButton.tpl` renders `<input type="submit" value="Delete">`. Phase 1's own correction ("only displayTag renders one") was wrong too — the control comes from the provider's `deleteAction` through `partials/title.tpl`  · **NOT FIXED — struck**, pinned by a Go test over all five detail pages, the deliberate default-resource-category exception, and a POST that deletes |
 | 62 | med | ux | recovered | WS7 | Dup → 25 | **CONFIRMED** — Dup → 25; first card y=1574 on `/notes` · **FIXED** — Dup → 25; first card 1574 → 420 |
 | 63 | med | design | verified-run | WS7 | spot | **CONFIRMED** — Dup → 25 · **FIXED** — Dup → 25 |
@@ -306,7 +306,7 @@ Statuses are filled in during Phase 1.
 | 68 | med | ux | verified-run | WS6 | spot | **CONFIRMED** — both halves  · **FIXED** — `{% empty %}`, Select All gated, out-of-range page 302s |
 | 69 | med | bug | verified-run | WS1 | spot | **CONFIRMED** — 0×0 preview served 200  · **FIXED** — Dup → 72 |
 | 70 | med | bug | ✅ VERIFIED | WS8 | accept | **CONFIRMED** — simple p1=75, p2=4; grid p2=25  · **FIXED** |
-| 71 | med | bug | recovered | WS8 | verify |  · **FIXED** |
+| 71 | med | bug | recovered | WS8 | verify |  · **FIXED**; had no test naming it until Batch 13, now pinned as a template-source guard (`TestDetailPagesGiveCardPartialsATagBaseURL`) rather than at runtime — the two surfaces the finding names do not preload the Tags association, so a card with a chip cannot be built from a fixture |
 | 72 | med | bug | ✅ VERIFIED | WS1 | accept | **CONFIRMED, cause corrected** — see below  · **FIXED** — zero-dim previews never persisted, 0×0 rows no longer canonical, SVG viewBox read at upload, poisoned rows repaired on read |
 | 73 | med | bug | recovered | WS1 | verify | **CAUSE WRONG** — see below  · **FIXED by 72's fix**; rotate confirmed atomic (it fails before any write) |
 | 74 | med | a11y | recovered | WS4 | verify | **CONFIRMED, cause corrected** — the restore already existed and was stomped twice; see below  · **FIXED** — blur deleted, `.noreturn`, restore deferred two frames |
@@ -555,6 +555,28 @@ Tasks:
 
 **Regression risk:** medium. Rotate's extension/`content_type` handling is load-bearing for the
 versions table; `resource-versioning.spec.ts` and `version-compare.spec.ts` must stay green.
+
+#### Where the plan was wrong — found in Batch 13, by the Phase 3 sweep
+
+**The gate was missing on a third endpoint, and this section is why nobody looked.** Root cause 1
+above says "`CropResource` in the same file (`:1520-1568`) already does it right: it decodes, reads
+the returned `format`, and switches encoder per format." Every word of that is true about the
+*encoder*, and it is silent about the *gate*. Crop tested `resource.IsImage()` — the same bare
+`image/` prefix that root cause 2 identifies as too loose for rotate — and returned
+`errors.New("resource is not an image")`, a message `statusCodeForError` has no pattern for. So
+`POST /v1/resources/crop` answered **HTTP 500** for `text/plain`, `text/markdown`, `text/csv`,
+`application/json`, `application/pdf`, `application/zip`, `application/octet-stream`, `video/mp4`,
+`audio/mpeg` and a zero-byte file: exactly findings 10 and 11, on the endpoint the plan cited as the
+example to copy.
+
+Green 2 gated "both entry points". There were three. Crop now uses `errNotRasterImage` for the type
+refusal and `errUndecodableImage` for an empty or undecodable payload, which is what maps them to
+415, and `resource_crop_context_test.go`'s two message assertions were updated rather than deleted —
+they still assert a refusal, and now assert one that names the format.
+
+The general form is in `docs/lessons.md`: when a workstream's finding is "endpoint X mishandles input
+class Y", the guard's axes are every endpoint of that kind and every input of that class, and both
+lists should be asked of the code rather than copied from the report.
 
 ### WS8 — Backend one-liners ★ best effort ratio, run first or in parallel
 
@@ -3210,6 +3232,16 @@ product decision that predates this campaign.
       uncategorized groups produce an empty relation-type list and a dead end). Not decided here.
       What *is* fixed is the message, which both 60 and 65 actually ask for: the server now names
       both sides and what each requires.
+      > **Corrected in Batch 13 — this paragraph was written and the edit was not made.** The Phase 3
+      > coverage audit reported 60/65 as named by no test; chasing that found
+      > `application_context/relation_context.go:68` still returning the bare string
+      > `"category mismatch"`, untouched since the auth merge, and a live `POST /v1/relation` on a
+      > seeded instance still answering `{"error":"category mismatch"}`. It is fixed now, and reads
+      > *`category mismatch: "BugHunt Northwind Labs" is the From group and relation type "BugHunt
+      > Address" requires its From group to be in category "BugHunt Person"`*, with a clause per
+      > offending side. Pinned by `TestRelationCategoryMismatchNamesBothSides` plus a positive
+      > control that a correctly categorised relation is still created. This is the campaign's first
+      > case of a fix being recorded rather than made, and it is the argument for the audit.
 - [x] **136 — the POST re-renders nothing.** The plan says the save "re-renders /plugins/manage with
       the OLD value in the plugin's injected output". Measured: `POST /v1/plugin/settings` answers
       `{"ok":true}` to a `fetch`, and the very next `GET /dashboard` already carries the new
@@ -3399,42 +3431,189 @@ copy is `internal/arch/layering_test.go` — a filesystem walk plus a plain loop
 `t.Errorf` — and `server/openapi/drift_test.go`, which shows the house "allowlist with a documented
 reason" pattern.
 
-- [ ] **`internal/arch/templates_test.go`** (new; `layering_test.go`'s walker skips `templates/`, so
-      write a separate one):
-  - [ ] Every `templates/list*.tpl` whose loop renders a collection has an `{% empty %}` branch.
-        Allowlist with reasons for genuine exceptions. Catches findings 54/68/77/126/146.
-  - [ ] No breadcrumb `HomeUrl` is relative — every value passed to `partials/breadcrumb.tpl` starts
-        with `/`. Catches finding 45 and its two latent siblings.
-  - [ ] No template renders a `types.JSON` field directly. Catches finding 26.
-  - [ ] Every template that includes `partials/bulkEditor*.tpl` also renders a `.list-container` or
-        `.items-container`. Catches finding 9 — the exact class of bug that produced a high-severity
-        false-failure alert.
-- [ ] **`server/api_tests/image_transform_guard_test.go`** — table-driven over every content type the
-      app accepts: no image endpoint may return 5xx for a type it cannot decode, and
-      `/v1/resource/preview` may never return 200 with a zero dimension. Catches WS1 wholesale.
-- [ ] **`server/api_tests/deterministic_ordering_test.go`** — call `/v1/note/block/types` 20 times
-      and assert an identical order. Generalise to any endpoint built by ranging a map. Catches
-      finding 47.
-- [ ] **`server/api_tests/api_404_json_test.go`** — every unmatched path under `/v1/` returns JSON.
-      This inverts the existing `not_found_test.go:40`.
-- [ ] **`server/api_tests/error_page_chrome_test.go`** — an HTML-accepting 4xx from any `/v1/` handler
-      renders the app shell (nav landmark present), never a chrome-less document.
-- [ ] **Playwright sweeps** (local-only, but still worth having):
-  - [ ] Focus-restore matrix: for a table of `(page, action)` pairs, `document.activeElement` is never
-        `<body>` afterwards. This is the single biggest gap — only 10 specs repo-wide use
-        `toBeFocused`, and there is no focus-trap or focus-restore sweep at all.
-  - [ ] Mobile overflow: at 390×844, `document.body.scrollWidth <= window.innerWidth` on every page in
-        `a11y-config.ts`'s page list. Catches findings 19/101/55.
-  - [ ] Mobile burial: at 390×844, the first result on every list page is within one viewport height.
-  - [ ] One `regressions/` spec per fixed finding, following the house convention — filename names the
-        bug, doc-comment header names the template and repro steps.
-- [ ] **Extend the a11y fixture.** `e2e/helpers/accessibility/a11y-config.ts` keeps
-      `KNOWN_ISSUES = []` deliberately ("all accessibility violations should be fixed in the code") —
-      preserve that. Add the new pages to `STATIC_PAGES`/`DYNAMIC_PAGES` so
-      `01-a11y-pages.spec.ts` picks them up automatically.
+**Every guard below was driven red before being kept**, by reintroducing the defect it forbids and
+watching it fail with a message that names the defect. The one that could not be driven red by the
+obvious revert says so in its own test body, and says what it pins instead. See "Red proofs, one
+guard at a time" below.
+
+- [x] **`internal/arch/templates_test.go`** (new; `layering_test.go`'s walker skips `templates/`, so
+      it has its own walk):
+  - [x] Every `templates/list*.tpl` whose loop renders a collection has an `{% empty %}` branch.
+        Loops inside the `sidebar` block are excluded (popular tags, filter option lists — "nothing
+        to show" correctly renders nothing there); the six `*Timeline.tpl` views are allowlisted with
+        the reason that they render a chart from `/v1/<entity>/timeline` in the browser and have no
+        server-side collection at all. Catches findings 54/68/77/126/146. **21 loops swept.**
+  - [x] No breadcrumb `HomeUrl` is relative. A *source* scan over `server/` and `templates/` rather
+        than a rendered-page assertion, so a new provider is caught before anyone renders its page.
+        Catches finding 45 and its two latent siblings.
+  - [x] No template renders a `types.JSON` field bare. The field-name set is derived by parsing
+        `models/` with `go/ast`, so a model that grows a new JSON column is covered the day it is
+        added. `{# … #}` comments are stripped first — `displayLog.tpl`'s own comment quotes the
+        defective expression to explain the fix, and reading it as code failed the test against the
+        fix for the bug it names. One documented exception (`TemplatePartial.Content` is a `string`
+        whose name collides with `NoteBlock.Content`), and the exception itself fails if it stops
+        matching. Catches finding 26.
+  - [x] Every template that includes `partials/bulkEditor*.tpl` also exposes a list container. The
+        guard checks all three hooks `src/utils/listContainer.js` actually queries
+        (`data-list-container`, `.list-container`, `.items-container`), not the two the plan named —
+        `data-list-container` is the opt-in hook a new view should use, because the other two carry
+        layout. Catches finding 9.
+  - [x] **Not in the plan, and it should have been: no `{# … #}` comment spans a newline.** Pongo2
+        matches a comment on one line; a multi-line one is a parse error that answers
+        `ERR_EMPTY_RESPONSE` for every page extending the template. Batch 8 wrote eight in one pass
+        and took the whole app down. **810 comments swept**, all currently single-line, and the guard
+        is narrow enough that comments stay usable.
+  - [x] **Also not in the plan: every card-partial include on a `display*.tpl` passes `tagBaseUrl`.**
+        That is finding 71's class — a tag chip built with `withQuery()` appends to the *current*
+        URL, so on a detail page it links back to the same page with a parameter that page ignores.
+        List pages are deliberately exempt (there `withQuery()` builds the page's own filter), and
+        the test asserts that exemption is still exercised so the rule cannot creep.
+- [x] **`server/api_tests/image_transform_guard_test.go`** — table-driven over eleven non-raster
+      payloads × three pixel endpoints (rotate, **crop**, recalculate: the plan named two and the
+      third shares the decoder). The table's premise is asserted against `models.RasterImageContentTypes`,
+      and the companion test drives the allowlist from the other side: every entry on it must be
+      refused for its *content*, never for its *type*. **This found a live defect — see below.**
+- [x] **`server/api_tests/deterministic_ordering_test.go`** — generalised as the plan asked, but from
+      the router rather than by hand: every parameterless `GET` under `/v1/` is called 20 times and
+      must answer one distinct body. **63 endpoints**, three skipped with reasons (two SSE streams
+      whose handler never returns, and `/v1/admin/server-stats`, which reports live process metrics).
+      Catches finding 47 and anything else assembled by ranging a map.
+- [x] **`server/api_tests/api_404_json_test.go`** — a near-miss derived from every registered `/v1/`
+      route (a wrong segment, a trailing segment, a bare namespace), each requested as a JSON client,
+      as a browser, and with no Accept header at all. **272 responses asserted.** The control is the
+      other direction: a browser that mistypes a *page* URL must still get the app's own 404, which
+      is finding 119's whole point.
+- [x] **`server/api_tests/error_page_chrome_test.go`** — every parameterless `/v1/` POST submitted
+      empty with a browser Accept header. **109 endpoints reach the HTML rejection branch**, and each
+      must carry a nav landmark and an in-app recovery link and must not be the old inline document.
+      Four endpoints answer a non-HTML body whatever the Accept header says and are excluded with the
+      reason: `/v1/auth/login` renders its message inline in the login form's `fetch`, and the three
+      group export/import routes are driven by `adminExport.js`/`adminImport.js`, whose
+      `errorMessageFromResponse` reads a plain-text body. Ten more are skipped as side-effecting.
+- [x] **Playwright sweeps** — `e2e/tests/regressions/phase3-sweeps.spec.ts`, 45 tests:
+  - [x] Focus-restore matrix over three overlays (global search, mobile nav, jobs cockpit).
+        `document.activeElement` is read after it *settles*, never on the first sample, and each case
+        asserts its own precondition (Tab reaches a control first; the overlay takes focus on open)
+        so "focus is not on `<body>`" cannot hold for the wrong reason.
+  - [x] Mobile overflow at 390×844 over every entry in `a11y-config.ts`'s `STATIC_PAGES` — now 42
+        pages, including the eight this batch added. A failure names the first five offending
+        elements and their right edges. Catches findings 19/101/55.
+  - [x] Mobile burial at 390×844 on five list pages, each creating its own row first, because a list
+        with no cards satisfies "nothing is buried" for the wrong reason.
+  - [x] One `regressions/` spec or Go test **naming** each fixed finding — enforced, not eyeballed:
+        `internal/arch/findings_coverage_test.go` parses the ledger in this file and requires every
+        row carrying a **FIXED** note to be named by a test. It found three gaps, and one of the
+        three had no fix either (see below).
+- [x] **Extend the a11y fixture.** `STATIC_PAGES` gained `/search?q=a`, `/group/tree`,
+      `/plugins/manage`, `/admin/export`, `/admin/import`, `/admin/users`, `/account`, `/mrql` and
+      `/resourceCategory/new`; `DYNAMIC_PAGES` gained the resource-category detail and edit pages,
+      with a `resourceCategoryId` added to `a11y.fixture.ts` to carry them. `KNOWN_ISSUES` is still
+      `[]`.
 - [ ] **Propose separately: add the browser E2E suite to CI.** Today a Playwright guard gates nothing.
       Even a fast subset (accessibility + regressions) as a fourth job would change what this campaign
       can promise. Not part of this plan's scope — raise it as its own decision.
+
+#### What the guards found
+
+Three defects, all of them the guard doing exactly the job it was written for.
+
+**`POST /v1/resources/crop` answered HTTP 500 for every non-image content type.** WS1 closed that
+class on rotate (finding 11) and dimension recalculation (finding 10) and left it open on the third
+pixel endpoint, and the plan's own WS1 text is why: it says "`CropResource` in the same file already
+does it right", which is true about the *encoder table* and false about the *gate*. Crop tested
+`resource.IsImage()` — the bare `image/` prefix — and returned a bare `"resource is not an image"`,
+which `statusCodeForError` cannot classify, so text, JSON, PDF, ZIP, video and audio resources all
+came back 5xx. It now shares rotate's gate and wording (`errNotRasterImage`), which maps to 415 and
+names the format; its two other refusals (an empty file, an undecodable payload) go through
+`errUndecodableImage` for the same reason. Measured after, live on a seeded instance: `image/svg+xml`
+500 → **415**, `text/plain` 500 → **415**, PNG still 200.
+
+**The relation category-mismatch message was recorded as fixed and never was.** The coverage audit
+reported finding 60/65 as named by no test; chasing that found
+`application_context/relation_context.go:68` still returning the string `"category mismatch"`,
+untouched since the auth merge, and a live `POST /v1/relation` still answering
+`{"error":"category mismatch"}`. WS14's entry above claims "the server now names both sides and what
+each requires". It does now: *`category mismatch: "BugHunt Northwind Labs" is the From group and
+relation type "BugHunt Address" requires its From group to be in category "BugHunt Person"`*. This is
+the campaign's first case of a fix being *written down* rather than written, and it is the argument
+for the audit existing.
+
+**Three findings marked FIXED had no test naming them at all** (44/52, 60/65, 71). All three now do:
+44/52 and 60/65 in `server/api_tests/phase3_coverage_gap_test.go` (with the fixture crossing the
+50-root threshold, because a three-row fixture cannot prove a fix to a fifty-row cap), and 71 as a
+template-source guard, because reproducing it at runtime needs a detail-page card whose Tags
+association is preloaded and neither surface the finding names preloads one.
+
+#### Red proofs, one guard at a time
+
+A bulk "N of M failed with the fixes stashed" run is what let three unfalsifiable assertions through
+in Batch 10, so each guard was driven red on its own, by reverting exactly the behaviour it claims to
+cover and reading the message.
+
+| Guard | How it was seen red |
+|---|---|
+| multi-line `{# … #}` | A two-line comment prepended to `listCategories.tpl`: *"templates/listCategories.tpl:1: `{# … #}` comment spans a newline"* |
+| `{% empty %}` sweep | `{% empty %}` deleted from `listCategories.tpl`: *"templates/listCategories.tpl:9: `{% for %}` over a collection has no `{% empty %}` branch"* |
+| relative `HomeUrl` | `"/groups"` → `"groups"` in `group_template_context.go`: both call sites reported, by file and line |
+| bare `types.JSON` | `{{ log.Details.String }}` → `{{ log.Details }}`: *"templates/displayLog.tpl:65 … renders a types.JSON field bare"* |
+| bulk editor container | `items-container` removed from `listGroups.tpl`: *"includes a bulkEditor partial but exposes no list container"* |
+| `tagBaseUrl` on detail pages | `tagBaseUrl` removed from `displayResource.tpl`: both includes reported |
+| findings coverage audit | One finding's header line removed from its test file: *"2 findings are recorded as FIXED … and named by no test: [44 52]"* |
+| pixel endpoints never 5xx | **Not reverted — found the live defect.** 10 of 33 subtests failed against unmodified `master` code, all of them crop |
+| allowlist coupling | `IsRasterImage` narrowed to exclude `image/gif`: all three endpoints reported *"refused image/gif as an unsupported format, but it is on models.RasterImageContentTypes"* |
+| preview never 0×0 | See the caveat below |
+| deterministic ordering | `sort.Slice` removed from `block_types/registry.go`: *"GET /v1/note/block/types … answered 8 distinct bodies across 20 identical requests"* |
+| `/v1/` 404s are JSON | The `/v1/` branch removed from `wantsJSONError`: **272** responses reported, and the non-`/v1` control stayed green — which is what a control is for |
+| error page keeps the shell | `HandleError`'s renderer hop disabled: **109** endpoints reported *"rendered the standalone inline error document"* |
+| focus-restore matrix | `restoreFocus` removed from `mobileNav.js`: *"closing … left focus on `<body>`"* |
+| mobile overflow | `fieldset { min-inline-size: 0 }` removed: `/category/new`, `/noteType/new` and `/resourceCategory/new` all reported, with the offending element and its right edge |
+| mobile burial | The disclosure's collapse script neutered: *"the first item on /notes starts at y=1402 on an 844px viewport"* |
+
+**The one guard that could not be driven red by the obvious revert, and what it pins instead.**
+`TestPreviewGuard_NeverServes200WithAZeroDimension` stays green when `resizeForThumbnail` is reverted
+to a bare `imaging.Resize(src, w, h)`. Two independent changes closed finding 72/73 — the resize
+derives the missing axis from the source, *and* `LoadOrCreateThumbnailForResource` refuses to persist
+a zero-dimension row so the handler redirects to the placeholder — and either alone satisfies the
+invariant. Driving it red took reverting both, which it then does across every payload in the table.
+So it guards the composite promise ("no reader is ever served a 0×0 preview") and not the mechanism,
+and it is written down in the test body that a change removing one of the two layers will not be
+caught there.
+
+#### On `WCAG_AA_TAGS` — measured, recommended, not taken
+
+`WCAG_AA_TAGS` in `e2e/helpers/accessibility/axe-helper.ts` is
+`['wcag2a','wcag2aa','wcag21a','wcag21aa']`. Everything WS5 fixed by hand — heading order,
+`page-has-heading-one`, `empty-heading` (all `best-practice`) and `target-size` (`wcag22aa`) — is
+therefore guarded by hand-written tests only; axe never looks at it.
+
+Measured on 55 pages (`STATIC_PAGES` + `DYNAMIC_PAGES` as extended by this batch), counting only what
+the current tag set does *not* already catch:
+
+| rule | tags | violating nodes | pages |
+|---|---|---|---|
+| `region` | best-practice | 63 | 54 |
+| `aria-allowed-role` | best-practice | 5 | 5 |
+| `target-size` | **wcag22aa** | 1 | 1 |
+| `page-has-heading-one` | best-practice | 1 | 1 |
+
+`heading-order` and `empty-heading` do not fire at all, which is a real result: WS5's heading work is
+clean under the wider tag set too.
+
+Two separable recommendations, both for the user to schedule:
+
+1. **Add `wcag22a` + `wcag22aa` now.** One violation, on one page: the `/groups` filter sidebar's
+   autocompleter input misses the 24×24 target minimum. That is the same class as findings 48, 99 and
+   139, it is the standard this project already aims at one version behind, and the blast radius is a
+   single control.
+2. **Add `best-practice` as its own piece of work, not as a flag flip.** 69 violations across 54
+   pages, but they are three problems, not sixty-nine: 63 of them are one `region` failure — the
+   `<section class="title">` in `layouts/base.tpl` sits outside every landmark, on every page — and
+   five are `aria-allowed-role` on the mention textareas, where `role="combobox"` on a `<textarea>`
+   is not an allowed role in ARIA-in-HTML (worth knowing, because finding 133 built on that role).
+   The remaining one is `/resources/simple` having no `<h1>`. Fixing the first two would clear 68 of
+   the 69.
+
+---
 
 ---
 
@@ -3483,7 +3662,7 @@ the cheapest high-confidence work clears the ledger early.
       matrix". Leaves the `/mrql` ordering decision with the user, with the blast radius measured.
 - [x] **Batch 12** — WS14 long tail, the user-approved `/mrql` column ordering, and the three
       remaining product decisions returned for sign-off (107, 130, 145).
-- [ ] **Batch 13** — Phase 3 guards.
+- [x] **Batch 13** — Phase 3 guards, the bucketed `/mrql` key ordering, and the E2E harness contention fix.
 - [ ] **Batch 14** — final verification, docs, and a lessons entry.
 
 ## Verification (final)
@@ -3507,6 +3686,62 @@ the cheapest high-confidence work clears the ledger early.
 ## Review
 
 _To be filled in on completion._
+
+### Batch 13 (Phase 3 guards) — verification run
+
+| Gate | Result |
+|---|---|
+| `go test --tags 'json1 fts5' ./...` | pass (37 packages) |
+| `staticcheck ./...` | clean |
+| `npm run build` | clean |
+| `npm run test:unit` | **898 passed / 55 files** (+6: the bucket key-order component tests) |
+| `cd e2e && npm run test:with-server:all` | **1917 passed, 0 failed, 0 flaky**, 6 skipped (7.1m) |
+| `cd e2e && npm run test:with-server:a11y` | **195 passed** (184 → 195: the nine new `STATIC_PAGES` and two new `DYNAMIC_PAGES`), `KNOWN_ISSUES` still `[]` |
+| `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/...` | pass |
+| `./mr docs lint` | OK (16 pre-existing warnings); `docs-site/docs/cli/mrql/run.md` regenerated |
+
+**The first full E2E run went red on a real defect, and it is the reason the brief asked for these
+pages.** `/admin/users` had never been in the accessibility sweep; the moment it entered,
+`color-contrast` flagged its "Create user" submit at **3.19:1** — `bg-amber-600` with `text-white`,
+where the app's own primary button (`partials/form/createFormSubmit.tpl`) is `bg-amber-700` at
+5.05:1. Two more buttons had drifted the same way (`/account`'s two, and the template bundle
+"Apply"); all three are `bg-amber-700` now, and a new static guard
+(`TestNoWhiteTextOnALowContrastBackground`) reads every template rather than only the pages a sweep
+happens to visit — which is how this one hid.
+
+Live re-verification on a freshly seeded ephemeral instance (:8281), on the shipped binary:
+
+| | before | after |
+|---|---|---|
+| `POST /v1/resources/crop` on an SVG | 500 | **415** `cropping needs a raster image, but content type "image/svg+xml" …` |
+| the same on `text/plain` | 500 | **415**, naming the type |
+| the same on a PNG (control) | 200 | 200 |
+| `POST /v1/relation` with mismatched categories | `{"error":"category mismatch"}` | names both groups, the relation type and the required category |
+| `POST /v1/mrql` `GROUP BY width, height, contentType` | key order `contentType, height, width` | `keyColumns: ["width","height","contentType"]`, key object unchanged |
+| the same query written in reverse | identical output | `keyColumns: ["contentType","height","width"]` |
+| `GROUP BY owner` | — | `keyColumns: ["owner"]`, key still carries `owner_id` |
+| `/group/tree` with >50 roots | 50 links, nothing said | 50 links + "Showing the first 50 root groups" + a link to `/groups` |
+
+#### The E2E harness — measured, changed at the source
+
+`e2e/fixtures/server-manager.ts` gave each of four parallel workers a server capped at
+`-max-db-connections=1`, while `CLAUDE.md` has recommended 2 for the E2E harness since before that
+file existed. Every flake observed across this whole campaign has been
+`TimeoutError: page.goto: Timeout 15000ms exceeded`, and the count tracked machine load precisely: 0
+idle, 3 moderately loaded, 12 straight after another agent's two full suites, with wall clock
+stretching 12.8m → 27.1m in step.
+
+Changed to **2**. Raising `navigationTimeout` was considered and rejected: a longer timeout makes the
+suite *less* able to notice a genuine slowdown, which is the opposite of what a timeout is for.
+
+**Confidence in the measurement is moderate, and the reason is the machine.** Both runs were taken at
+a 1-minute load average of 3.7–4.4 with the rest of the campaign active, which is the "moderately
+loaded" band that used to produce ~3 flakes. Both reported **0 flaky**, and wall clock was 7.4m —
+faster than the 12.8m recorded on an *idle* machine with the old setting. That is consistent with the
+change helping, and it is two samples: a single green run is not evidence of "0 flaky", and this is
+not the idle-machine measurement the brief asked for, because the machine was never idle. What can be
+said with confidence is the mechanism (one connection serialises every query on a worker's server,
+including the fan-out a page render performs) and that nothing regressed.
 
 ### Batch 10-fix (the review remediation) — verification run
 

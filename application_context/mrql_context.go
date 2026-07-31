@@ -237,12 +237,28 @@ type MRQLGroupedResult struct {
 	// (`meta.2024` fails to parse), so ECMAScript's integer-key-first
 	// enumeration cannot reorder anything, and a name cannot repeat, because
 	// `GROUP BY width, width` collapses to one column in the SQL as well.
-	Columns     []string         `json:"columns,omitempty"`
-	Rows        []map[string]any `json:"rows,omitempty"`
-	Groups      []MRQLBucket     `json:"groups,omitempty"`
-	Warnings    []string         `json:"warnings,omitempty"`
-	NextOffset  *int             `json:"nextOffset,omitempty"`  // bucketed: offset for next page (nil if no more)
-	TotalGroups int              `json:"totalGroups,omitempty"` // bucketed: total group count (before pagination)
+	Columns []string         `json:"columns,omitempty"`
+	Rows    []map[string]any `json:"rows,omitempty"`
+	// KeyColumns is the bucketed result's group-by key names in the order the
+	// query wrote them, and is empty for an aggregated result. Same defect as
+	// Columns, one surface further on: /mrql renders each bucket's badges with
+	// `x-for="(val, key) in bucket.key"`, which is Object.keys over a map
+	// encoding/json wrote sorted, so `GROUP BY width, height` and
+	// `GROUP BY height, width` labelled their badges identically. The CSV
+	// export's bucketed header has always led with mrql.BucketKeyColumns, so
+	// this is the same "the app disagrees with itself" argument.
+	//
+	// It names an order, it does not replace the key object: a bucket keyed on a
+	// relation field also carries a `<field>_id` entry, written by
+	// executeBucketedQuery so two same-named groups stay distinguishable, and
+	// that entry is not a group-by column. The renderer orders by this list and
+	// then appends whatever is left, so nothing that used to be shown stops
+	// being shown.
+	KeyColumns  []string     `json:"keyColumns,omitempty"`
+	Groups      []MRQLBucket `json:"groups,omitempty"`
+	Warnings    []string     `json:"warnings,omitempty"`
+	NextOffset  *int         `json:"nextOffset,omitempty"`  // bucketed: offset for next page (nil if no more)
+	TotalGroups int          `json:"totalGroups,omitempty"` // bucketed: total group count (before pagination)
 	// DefaultLimitApplied is true when the query had no explicit LIMIT clause
 	// and the server applied the configured default.
 	DefaultLimitApplied bool `json:"default_limit_applied"`
@@ -725,6 +741,7 @@ func (ctx *MahresourcesContext) executeBucketedQuery(reqCtx context.Context, par
 	return &MRQLGroupedResult{
 		EntityType:  parsed.EntityType.String(),
 		Mode:        "bucketed",
+		KeyColumns:  mrql.BucketKeyColumns(parsed),
 		Groups:      buckets,
 		Warnings:    warnings,
 		NextOffset:  nextOffset,
@@ -1829,6 +1846,7 @@ func (ctx *MahresourcesContext) executeBucketedQueryScoped(reqCtx context.Contex
 	return &MRQLGroupedResult{
 		EntityType:  parsed.EntityType.String(),
 		Mode:        "bucketed",
+		KeyColumns:  mrql.BucketKeyColumns(parsed),
 		Groups:      buckets,
 		Warnings:    warnings,
 		NextOffset:  nextOffset,

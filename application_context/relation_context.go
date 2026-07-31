@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"gorm.io/gorm"
@@ -64,8 +65,33 @@ func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationType
 			return errors.New("both groups and the relation type must have categories assigned")
 		}
 
+		// Findings 60 and 65 both ask for this message to say what is wrong.
+		// "category mismatch" names neither side, neither requirement, and not
+		// even which of the two groups is the problem — a reader who picked one
+		// wrong group out of two has to guess. Naming both sides is also what
+		// makes the message actionable without opening the relation type.
+		//
+		// docs/todo.md recorded this as fixed in Batch 12 and it was not: the
+		// line below was untouched since the auth merge, and a live POST still
+		// answered {"error":"category mismatch"}. Found by the Phase 3 coverage
+		// audit, which asks whether every finding marked FIXED is named by a test.
 		if *toGroup.CategoryId != *relationType.ToCategoryId || *fromGroup.CategoryId != *relationType.FromCategoryId {
-			return errors.New("category mismatch")
+			var fromCategory, toCategory models.Category
+			fromName := ctx.categoryNameFor(tx, relationType.FromCategoryId, &fromCategory)
+			toName := ctx.categoryNameFor(tx, relationType.ToCategoryId, &toCategory)
+
+			var problems []string
+			if *fromGroup.CategoryId != *relationType.FromCategoryId {
+				problems = append(problems, fmt.Sprintf(
+					"%q is the From group and relation type %q requires its From group to be in category %s",
+					fromGroup.Name, relationType.Name, fromName))
+			}
+			if *toGroup.CategoryId != *relationType.ToCategoryId {
+				problems = append(problems, fmt.Sprintf(
+					"%q is the To group and relation type %q requires its To group to be in category %s",
+					toGroup.Name, relationType.Name, toName))
+			}
+			return errors.New("category mismatch: " + strings.Join(problems, "; "))
 		}
 
 		relation = models.GroupRelation{
@@ -398,4 +424,17 @@ func (ctx *MahresourcesContext) DeleteRelationshipType(relationshipTypeId uint) 
 		ctx.InvalidateSearchCacheByType(EntityTypeRelationType)
 	}
 	return err
+}
+
+// categoryNameFor resolves a category id to a quoted name for an error message,
+// falling back to the id when the row cannot be read. An error message must not
+// be the thing that fails.
+func (ctx *MahresourcesContext) categoryNameFor(tx *gorm.DB, id *uint, into *models.Category) string {
+	if id == nil {
+		return "(none)"
+	}
+	if err := tx.First(into, *id).Error; err != nil || into.Name == "" {
+		return fmt.Sprintf("#%d", *id)
+	}
+	return fmt.Sprintf("%q", into.Name)
 }

@@ -25,6 +25,21 @@ export const STATIC_PAGES = [
   { path: '/templatePartials', name: 'Template partials list' },
   { path: '/logs', name: 'Logs list' },
 
+  // Pages the 2026-07-29 UI bug hunt touched that this sweep did not cover.
+  // /search was added by Batch 6 (finding 32) and had never been audited at all;
+  // /group/tree is finding 8's subject; /plugins/manage is finding 136's;
+  // /admin/export and /admin/import carry the comboboxes finding 36/105 rebuilt;
+  // /admin/users is finding 34/107/109's; /account and /mrql are the two
+  // remaining top-level pages with no entry here.
+  { path: '/search?q=a', name: 'Search results' },
+  { path: '/group/tree', name: 'Group tree' },
+  { path: '/plugins/manage', name: 'Plugin management' },
+  { path: '/admin/export', name: 'Admin export' },
+  { path: '/admin/import', name: 'Admin import' },
+  { path: '/admin/users', name: 'Admin users' },
+  { path: '/account', name: 'Account' },
+  { path: '/mrql', name: 'MRQL console' },
+
   // Create/new forms
   { path: '/note/new', name: 'Create note form' },
   { path: '/group/new', name: 'Create group form' },
@@ -36,6 +51,7 @@ export const STATIC_PAGES = [
   { path: '/templatePartial/new', name: 'Create template partial form' },
   { path: '/relationType/new', name: 'Create relation type form' },
   { path: '/relation/new', name: 'Create relation form' },
+  { path: '/resourceCategory/new', name: 'Create resource category form' },
 
   // Alternative views
   { path: '/resources/details', name: 'Resources details view' },
@@ -57,6 +73,7 @@ export const DYNAMIC_PAGES = [
   { path: '/noteType?id={noteTypeId}', name: 'Note type detail', requiredData: ['noteTypeId'] },
   { path: '/relationType?id={relationTypeId}', name: 'Relation type detail', requiredData: ['relationTypeId'] },
   { path: '/relation?id={relationId}', name: 'Relation detail', requiredData: ['relationId'] },
+  { path: '/resourceCategory?id={resourceCategoryId}', name: 'Resource category detail', requiredData: ['resourceCategoryId'] },
 
   // Edit forms
   { path: '/note/edit?id={noteId}', name: 'Edit note form', requiredData: ['noteId'] },
@@ -67,6 +84,7 @@ export const DYNAMIC_PAGES = [
   { path: '/noteType/edit?id={noteTypeId}', name: 'Edit note type form', requiredData: ['noteTypeId'] },
   { path: '/relationType/edit?id={relationTypeId}', name: 'Edit relation type form', requiredData: ['relationTypeId'] },
   { path: '/relation/edit?id={relationId}', name: 'Edit relation form', requiredData: ['relationId'] },
+  { path: '/resourceCategory/edit?id={resourceCategoryId}', name: 'Edit resource category form', requiredData: ['resourceCategoryId'] },
 ] as const;
 
 /**
@@ -161,6 +179,7 @@ export const COMPONENT_SCENARIOS = [
  */
 export interface A11yTestData {
   categoryId: number;
+  resourceCategoryId: number;
   tagId: number;
   noteTypeId: number;
   relationTypeId: number;
@@ -179,6 +198,7 @@ export function buildPath(pathTemplate: string, data: Partial<A11yTestData>): st
 
   const replacements: Record<string, keyof A11yTestData> = {
     '{categoryId}': 'categoryId',
+    '{resourceCategoryId}': 'resourceCategoryId',
     '{tagId}': 'tagId',
     '{noteTypeId}': 'noteTypeId',
     '{relationTypeId}': 'relationTypeId',

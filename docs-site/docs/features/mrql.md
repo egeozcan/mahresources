@@ -481,6 +481,8 @@ type = note GROUP BY owner ORDER BY name ASC LIMIT 3
 
 In bucketed mode, `LIMIT` applies **per bucket** (maximum items per group), not to the total result set.
 
+A bucketed response carries a `keyColumns` array, the counterpart of `columns` above: the group-by key names in the order the query wrote them, matching the leading columns of `mrql export --format csv`. Each bucket's `key` object may carry entries `keyColumns` does not name — a bucket keyed on a relation field also gets `<field>_id` so two same-named groups stay distinguishable — so read `keyColumns` for order and the `key` object for values.
+
 ### ORDER BY with GROUP BY
 
 - **Aggregated mode:** ORDER BY can reference group fields or aggregate output keys (`count`, `sum_fileSize`, etc.)

@@ -3616,6 +3616,13 @@ paths:
                 than the key order of a row: JSON objects carry no order, and a JavaScript
                 consumer enumerating a row's keys will not see the order the query was written
                 in.
+
+                A bucketed GROUP BY response carries "keyColumns" for the same reason: the
+                group-by key names in the order the query wrote them, matching the leading
+                columns of the CSV export's bucketed header. Each bucket's "key" object is
+                unchanged, and may carry entries "keyColumns" does not name — a bucket keyed on
+                a relation field also gets "<field>_id", so two same-named groups stay
+                distinguishable.
             operationId: executeMRQL
             parameters:
                 - description: Set to 1 to render CustomMRQLResult templates

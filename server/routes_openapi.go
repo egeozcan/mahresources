@@ -1790,7 +1790,14 @@ the header /v1/mrql/export?format=csv emits. "rows" is unchanged — each row is
 still an object keyed by column name — so "columns" is additive. Read it rather
 than the key order of a row: JSON objects carry no order, and a JavaScript
 consumer enumerating a row's keys will not see the order the query was written
-in.`,
+in.
+
+A bucketed GROUP BY response carries "keyColumns" for the same reason: the
+group-by key names in the order the query wrote them, matching the leading
+columns of the CSV export's bucketed header. Each bucket's "key" object is
+unchanged, and may carry entries "keyColumns" does not name — a bucket keyed on
+a relation field also gets "<field>_id", so two same-named groups stay
+distinguishable.`,
 		Tags:                mrqlTag,
 		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ExtraQueryParams: []openapi.QueryParam{

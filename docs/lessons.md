@@ -1268,3 +1268,77 @@ observation about a page is a claim about the *selector*, and a selector is exac
 its positive control. Before recording "X is absent", find something the same query *does* return on
 a page where X is known present. And when re-checking a report's negative finding, re-derive it from
 the markup rather than re-running the report's own query: the query is the thing under suspicion.
+
+## A defect fixed on two of three sibling endpoints is a defect that is not fixed, and the plan will say it is
+
+WS1 of the UI bug hunt closed "an image endpoint must not 5xx on content it cannot decode" for rotate
+and for dimension recalculation. The third endpoint that decodes a resource's bytes — crop — kept
+answering HTTP 500 for text, JSON, PDF, ZIP, video and audio, and nothing noticed for the length of
+the campaign.
+
+What made it invisible is worth naming precisely, because it was not an oversight so much as a
+correct observation applied to the wrong property. The plan says "`CropResource` in the same file
+already does it right: it decodes, reads the returned `format`, and switches encoder per format." All
+of that is true, and all of it is about the *encoder*. The defect was in the *gate*: crop tested
+`resource.IsImage()`, the bare `image/` prefix, and returned a bare `"resource is not an image"`,
+which the status classifier cannot recognise. Having read that sentence, nobody looked at crop again.
+
+The guard that found it is the reason to write guards as sweeps rather than as cases. The per-finding
+tests enumerate the payloads the report named against the endpoints the report named; a table built
+from `models.RasterImageContentTypes` × *every* endpoint that decodes pixels has no such gap, and it
+failed 10 of 33 subtests against unmodified code the first time it ran. When a workstream's finding
+is "endpoint X mishandles input class Y", the guard's axes are "every endpoint of that kind" and
+"every input of that class", and it should be built by asking the code for both lists rather than by
+copying the report's.
+
+## An invariant closed by two independent mechanisms cannot be driven red by reverting one of them
+
+A guard's red proof is supposed to answer "would this have caught the bug". Reverting
+`resizeForThumbnail` — the change that stopped `imaging.Resize(img, 0, 0)` manufacturing a 0×0 image
+— left the preview guard green, and for a moment that reads as an unsound guard. It is not: the same
+batch also made `LoadOrCreateThumbnailForResource` refuse to persist a zero-dimension row, so the
+handler redirects to the placeholder and the invariant ("no reader is ever served a 0×0 preview")
+still holds with either layer alone. Driving it red took reverting both.
+
+Two things follow. Before concluding a guard is unfalsifiable, count how many independent mechanisms
+satisfy the property it asserts — a defence in depth is exactly the shape that resists a single-line
+revert, and it is a *good* shape. And when the count is more than one, say so in the test body: what
+that guard pins is the composite promise, not the mechanism, so a change that removes one of the two
+layers will pass it. A reader who does not know that will believe the guard covers more than it does,
+which is the failure mode this whole family of rules exists to prevent.
+
+## A fix recorded in a plan is not a fix, and the only cheap way to tell is to ask which test names it
+
+`docs/todo.md` recorded finding 60/65 as fixed — "the server now names both sides and what each
+requires" — in a workstream whose every other item was real. It was not fixed.
+`application_context/relation_context.go` had not been touched since a merge months earlier, the line
+still returned the string `"category mismatch"`, and a live POST against a seeded instance answered
+exactly that. The claim survived a batch, an independent review of that batch, and a green suite.
+
+Nothing about the code smelled wrong; the sentence in the plan was simply written and the edit was
+not made. What found it was a mechanical audit — parse the ledger, collect every finding marked
+FIXED, and require each to be *named* by some test file — which reported three findings that no test
+mentioned. Two were genuine coverage gaps. The third was this.
+
+The audit is deliberately weak: it checks that a number appears in a test file, not that the test
+covers anything, because no static check can tell those apart and pretending otherwise would be the
+"guard that advertises coverage it does not have" mistake. It is still worth having, for the reason
+it earned its keep here — a fix that was never made also never had a test written for it, so
+"nothing names this finding" is a cheap proxy for "look at this again". Any campaign that tracks work
+in a document should end by diffing that document against the test suite.
+
+## A precondition a test establishes can change the page it is about to measure
+
+A focus-restore sweep pressed `Tab` before opening each overlay, to prove a control was reachable at
+all — otherwise "focus is not on `<body>` afterwards" can hold on a page that never booted. The first
+tabbable element in this app is the "Skip to main content" link, which is `sr-only` until focused and
+then paints over the header. So the precondition put a full-width link on top of the nav toggle the
+test then tried to click, and Playwright timed out waiting for the toggle to become clickable, in a
+product that was working perfectly.
+
+The rule that already exists here is that a test API can fabricate the state you meant to test for
+(`locator.focus()` on a `tabindex`-less `<div>`). This is the mirror: a test action can fabricate a
+state that *prevents* the thing you meant to test. Both come from the same place — a setup step
+chosen for what it proves rather than for what it does to the page. When a precondition involves
+focus, hover, scroll position or viewport size, ask what the page now looks like, not just what the
+assertion now knows.

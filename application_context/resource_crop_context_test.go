@@ -226,7 +226,12 @@ func TestCropResource_NotAnImage(t *testing.T) {
 
 	err := ctx.CropResource(context.Background(), r.ID, 0, 0, 10, 10, "")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not an image")
+	// The refusal used to be a bare "resource is not an image", which
+	// statusCodeForError could not classify — so cropping a text, JSON, PDF,
+	// video or audio resource answered HTTP 500. Crop now shares rotate's and
+	// recalculate's gate and wording, which maps to 415 and names the format.
+	assert.Contains(t, err.Error(), "not a raster image format")
+	assert.Contains(t, err.Error(), "text/plain", "the message must name the format the caller supplied")
 }
 
 func TestCropResource_ResourceNotFound(t *testing.T) {
@@ -240,14 +245,18 @@ func TestCropResource_ResourceNotFound(t *testing.T) {
 func TestCropResource_UnsupportedFormat(t *testing.T) {
 	ctx := setupCropTestCtx(t)
 
-	// SVG is content-type image/* and IsImage() returns true, but image.Decode
-	// has no registered SVG handler → decode error → "image cannot be cropped".
+	// SVG is content-type image/* — IsImage() returns true — and image.Decode has
+	// no registered SVG handler. It used to reach the decoder and come back with
+	// a decode error; it is now refused by the content-type gate before any file
+	// is opened, exactly as rotate and dimension recalculation refuse it
+	// (findings 10 and 11). Either way it must be a 4xx that names the format.
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="red"/></svg>`)
 	resourceID := seedImageResource(t, ctx, "image/svg+xml", svg, 40, 40)
 
 	err := ctx.CropResource(context.Background(), resourceID, 0, 0, 10, 10, "")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot be cropped")
+	assert.Contains(t, err.Error(), "image/svg+xml", "the message must name the format the caller supplied")
+	assert.Contains(t, err.Error(), "not a raster image format")
 }
 
 func TestCropResource_LazyMigrationCreatesV1(t *testing.T) {

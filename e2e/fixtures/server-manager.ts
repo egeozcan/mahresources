@@ -149,7 +149,22 @@ export function startServerProcess(port: number, sharePort: number, opts: StartS
       '-hash-worker-disabled',
       '-thumb-worker-disabled',
       '-skip-version-migration',
-      '-max-db-connections=1',
+      // 2, not 1. Every flake observed across the 2026-07-29 UI bug hunt was
+      // `TimeoutError: page.goto: Timeout 15000ms exceeded`, and the count
+      // tracked machine load precisely: 0 on an idle machine, 3 moderately
+      // loaded, 12 straight after another agent's two full suites, with
+      // wall-clock stretching 12.8m -> 27.1m in step.
+      //
+      // With one connection every request that touches SQLite serialises against
+      // every other request on this worker's server, including the background
+      // reads a page render fans out over — so a page under contention does not
+      // slow down gracefully, it queues. CLAUDE.md has recommended 2 for the E2E
+      // harness since before this file existed; the 1 here was never argued for.
+      //
+      // Raising `navigationTimeout` instead was considered and rejected: it would
+      // make the suite less able to notice a genuine slowdown, which is the
+      // opposite of what a timeout is for.
+      '-max-db-connections=2',
       '-plugin-path=./e2e/test-plugins',
       ...authArgs,
     ];

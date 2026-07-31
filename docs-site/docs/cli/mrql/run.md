@@ -19,6 +19,14 @@ The table output and `mrql export --format csv` both follow it, so the
 two agree. Read `columns` rather than the key order of a `rows` entry —
 a JSON object carries no order.
 
+A `bucketed` result carries `keyColumns` for the same reason: the
+group-by key names in the order the query wrote them. The per-bucket
+header line and the CSV export's leading columns both follow it. A
+bucket's `key` object may hold entries `keyColumns` does not name — a
+bucket keyed on a relation field also gets `<field>_id` so two
+same-named groups stay apart — and those are printed after the named
+ones.
+
 Pagination and shaping flags (`--limit`, `--buckets`, `--offset`, plus
 the global `--page`) apply to the stored query exactly as they would to
 an inline `mrql` invocation. Pass `--render` to request server-side

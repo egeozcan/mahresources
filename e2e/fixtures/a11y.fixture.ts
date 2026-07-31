@@ -52,6 +52,16 @@ async function createTestData(baseURL: string): Promise<A11yTestData & { cleanup
   );
   createdIds.categoryId = category.ID;
 
+  // 1b. Resource Category — the resource-side twin of Category, and the carrier
+  // whose /resourceCategory/new and /resourceCategory/edit pages the 2026-07-29
+  // UI bug hunt reworked (findings 17/93, 19/101, 108, 154) without either page
+  // ever entering this sweep.
+  const resourceCategory = await client.createResourceCategory(
+    `A11y Test Resource Category ${uniqueSuffix}`,
+    'Resource category for accessibility tests'
+  );
+  createdIds.resourceCategoryId = resourceCategory.ID;
+
   // 2. Tag
   const tag = await client.createTag(
     `a11y-test-tag-${uniqueSuffix}`,
@@ -128,6 +138,7 @@ async function createTestData(baseURL: string): Promise<A11yTestData & { cleanup
 
   return {
     categoryId: category.ID,
+    resourceCategoryId: resourceCategory.ID,
     tagId: tag.ID,
     noteTypeId: noteType.ID,
     relationTypeId: relationType.ID,
@@ -164,6 +175,9 @@ async function createTestData(baseURL: string): Promise<A11yTestData & { cleanup
       } catch { /* ignore cleanup errors */ }
       try {
         if (createdIds.categoryId) await client.deleteCategory(createdIds.categoryId);
+      } catch { /* ignore cleanup errors */ }
+      try {
+        if (createdIds.resourceCategoryId) await client.deleteResourceCategory(createdIds.resourceCategoryId);
       } catch { /* ignore cleanup errors */ }
       await requestContext.dispose();
     },

@@ -111,6 +111,27 @@ export function mrqlEditor() {
       return `(${n} ${n === 1 ? 'item' : 'items'})`;
     },
 
+    // The bucket key badges used to render `x-for="(val, key) in bucket.key"`,
+    // which is Object.keys over an object Go wrote from a map — and
+    // encoding/json sorts map keys. So `GROUP BY width, height` and
+    // `GROUP BY height, width` produced byte-identical badge rows, discarding
+    // the order the author wrote. `result.keyColumns` carries that order now,
+    // the same list the CSV export's header has always led with.
+    //
+    // Ordering, not filtering: a bucket keyed on a relation field also carries a
+    // `<field>_id` entry the server adds so two same-named groups stay
+    // distinguishable, and that is not a group-by column. Named columns come
+    // first, in the author's order; anything else keeps its place after them, so
+    // no badge that used to be shown disappears.
+    bucketKeyOrder(bucket) {
+      const key = bucket?.key;
+      if (!key) return [];
+      const present = Object.keys(key);
+      const named = Array.isArray(this.result?.keyColumns) ? this.result.keyColumns : [];
+      const ordered = named.filter((k) => present.includes(k));
+      return [...ordered, ...present.filter((k) => !ordered.includes(k))];
+    },
+
     // Finding 125: the default-limit banner fired whenever the server applied a
     // default LIMIT, which is *every* query without an explicit one — so a
     // full-width yellow warning saying "add LIMIT / OFFSET to paginate" sat over

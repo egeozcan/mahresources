@@ -613,10 +613,11 @@
                         <template x-for="(bucket, bIdx) in result.groups" :key="bIdx">
                             <div class="border border-stone-200 rounded-md overflow-hidden">
                                 <div class="bg-stone-100 px-3 py-2 flex items-center gap-2">
-                                    <template x-for="(val, key) in bucket.key" :key="key">
+                                    {# The badges used to iterate bucket.key directly, which is Object.keys over a map Go marshals sorted — so GROUP BY width, height and GROUP BY height, width labelled identically. bucketKeyOrder() puts result.keyColumns first and keeps every other entry (the relation `<field>_id` disambiguator) after them. #}
+                                    <template x-for="key in bucketKeyOrder(bucket)" :key="key">
                                         <span class="inline-flex items-center text-xs font-mono">
                                             <span class="text-stone-500" x-text="key + ': '"></span>
-                                            <span class="font-semibold text-stone-700" x-text="val ?? '(null)'"></span>
+                                            <span class="font-semibold text-stone-700" x-text="bucket.key[key] ?? '(null)'"></span>
                                         </span>
                                     </template>
                                     <span class="ml-auto text-xs text-stone-400 font-mono" x-text="(bucket.items?.length || 0) + ' items'"></span>

@@ -25,7 +25,7 @@
         <input id="new-pw" name="newPassword" type="password" required autocomplete="new-password"
                class="w-full border border-stone-300 rounded px-3 py-2">
       </div>
-      <button type="submit" class="bg-amber-600 hover:bg-amber-700 text-white font-mono py-2 px-4 rounded">Update password</button>
+      <button type="submit" class="bg-amber-700 hover:bg-amber-800 text-white font-mono py-2 px-4 rounded">Update password</button>
     </form>
   </section>
 
@@ -51,7 +51,7 @@
       </div>
       <button type="button"
               @click="fetch('/v1/account/tokens', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: name || 'mr cli'})}).then(r => r.json()).then(d => { created = d.token || ''; name=''; }).catch(() => { created=''; })"
-              class="bg-amber-600 hover:bg-amber-700 text-white font-mono py-2 px-4 rounded">Create</button>
+              class="bg-amber-700 hover:bg-amber-800 text-white font-mono py-2 px-4 rounded">Create</button>
     </div>
 
     <div class="overflow-x-auto">

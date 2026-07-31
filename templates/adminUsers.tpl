@@ -85,7 +85,7 @@
         <input id="u-disabled" name="disabled" type="checkbox" value="true">
         <label for="u-disabled" class="text-sm font-mono">Disabled</label>
       </div>
-      <button type="submit" class="bg-amber-600 hover:bg-amber-700 text-white font-mono py-2 px-4 rounded">Create user</button>
+      <button type="submit" class="bg-amber-700 hover:bg-amber-800 text-white font-mono py-2 px-4 rounded">Create user</button>
     </form>
   </section>
 </div>

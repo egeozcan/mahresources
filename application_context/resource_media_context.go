@@ -1552,8 +1552,15 @@ func (ctx *MahresourcesContext) CropResource(
 		return err
 	}
 
-	if !resource.IsImage() {
-		return errors.New("resource is not an image")
+	// Gate on what the pipeline can decode, exactly as rotate and dimension
+	// recalculation do. This used to be `!resource.IsImage()` — a bare "image/"
+	// prefix test — returning a bare "resource is not an image", which
+	// statusCodeForError could not classify, so cropping a text, JSON, PDF,
+	// video or audio resource answered HTTP 500. Findings 10 and 11 closed that
+	// class on the other two pixel endpoints and left it open on this one; the
+	// Phase 3 sweep over all three found it.
+	if !resource.IsRasterImage() {
+		return errNotRasterImage("cropping", resource.ContentType)
 	}
 
 	fs, err := ctx.GetFsForStorageLocation(resource.StorageLocation)
@@ -1571,7 +1578,8 @@ func (ctx *MahresourcesContext) CropResource(
 		return fmt.Errorf("failed to read source image: %w", readErr)
 	}
 	if len(srcBytes) == 0 {
-		return fmt.Errorf("source image at %q is empty (size %d), cannot be cropped", resource.GetCleanLocation(), resource.FileSize)
+		return errUndecodableImage("cropping", resource.ContentType,
+			fmt.Errorf("the stored file at %q is empty (recorded size %d)", resource.GetCleanLocation(), resource.FileSize))
 	}
 
 	img, format, decodeErr := image.Decode(bytes.NewReader(srcBytes))
@@ -1580,7 +1588,8 @@ func (ctx *MahresourcesContext) CropResource(
 		// (HEIC, AVIF, etc.) — same path used by the thumbnail pipeline.
 		fallbackImg, fbErr := ctx.decodeImageWithFallback(httpContext, bytes.NewReader(srcBytes))
 		if fbErr != nil {
-			return fmt.Errorf("image cannot be cropped: decode failed (source %d bytes, content-type %q): %w", len(srcBytes), resource.ContentType, decodeErr)
+			return errUndecodableImage("cropping", resource.ContentType,
+				fmt.Errorf("source is %d bytes: %w", len(srcBytes), decodeErr))
 		}
 		img = fallbackImg
 		format = decodeFallbackFormat

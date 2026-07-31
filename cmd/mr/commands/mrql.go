@@ -55,12 +55,18 @@ type mrqlGroupedResponse struct {
 	// wrote them. The server did not always send it; when it is absent the
 	// table falls back to sorting the first row's keys, which is what this
 	// command used to do unconditionally.
-	Columns     []string         `json:"columns,omitempty"`
-	Rows        []map[string]any `json:"rows,omitempty"`
-	Groups      []mrqlBucket     `json:"groups,omitempty"`
-	Warnings    []string         `json:"warnings,omitempty"`
-	NextOffset  *int             `json:"nextOffset,omitempty"`
-	TotalGroups int              `json:"totalGroups,omitempty"`
+	Columns []string         `json:"columns,omitempty"`
+	Rows    []map[string]any `json:"rows,omitempty"`
+	// KeyColumns is the bucketed result's group-by key names in the order the
+	// query wrote them. Same reason as Columns: the bucket header used to sort
+	// the key names alphabetically, so `GROUP BY width, height` and
+	// `GROUP BY height, width` printed identical headers. Absent on an older
+	// server, in which case the sort is still the fallback.
+	KeyColumns  []string     `json:"keyColumns,omitempty"`
+	Groups      []mrqlBucket `json:"groups,omitempty"`
+	Warnings    []string     `json:"warnings,omitempty"`
+	NextOffset  *int         `json:"nextOffset,omitempty"`
+	TotalGroups int          `json:"totalGroups,omitempty"`
 }
 
 type mrqlBucket struct {
@@ -661,6 +667,32 @@ func aggregatedToTable(order []string, rows []map[string]any) ([]string, [][]str
 	return headers, tableRows
 }
 
+// bucketKeyParts formats a bucket's key as "name=value" pairs, ordered by the
+// query's own GROUP BY. Keys the server did not name — the "<field>_id"
+// disambiguator a relation bucket carries — follow, sorted, so nothing the
+// header used to show disappears. With no keyColumns at all (an older server)
+// the whole thing falls back to the alphabetical order this used to print
+// unconditionally.
+func bucketKeyParts(keyColumns []string, key map[string]any) []string {
+	named := make(map[string]bool, len(keyColumns))
+	parts := make([]string, 0, len(key))
+	for _, k := range keyColumns {
+		if v, ok := key[k]; ok {
+			named[k] = true
+			parts = append(parts, fmt.Sprintf("%s=%v", k, v))
+		}
+	}
+
+	rest := make([]string, 0, len(key))
+	for k, v := range key {
+		if !named[k] {
+			rest = append(rest, fmt.Sprintf("%s=%v", k, v))
+		}
+	}
+	sort.Strings(rest)
+	return append(parts, rest...)
+}
+
 // printBucketedOutput renders bucketed results with headers per group.
 // In quiet mode, only entity IDs are printed (no headers, no bucket separators).
 func printBucketedOutput(opts output.Options, grouped mrqlGroupedResponse, raw json.RawMessage) {
@@ -684,13 +716,9 @@ func printBucketedOutput(opts output.Options, grouped mrqlGroupedResponse, raw j
 			continue
 		}
 
-		// Print bucket header
-		var keyParts []string
-		for k, v := range bucket.Key {
-			keyParts = append(keyParts, fmt.Sprintf("%s=%v", k, v))
-		}
-		sort.Strings(keyParts) // stable order
-		output.PrintMessage(fmt.Sprintf("--- %s ---", strings.Join(keyParts, ", ")))
+		// Print bucket header, in the order the query wrote the GROUP BY.
+		output.PrintMessage(fmt.Sprintf("--- %s ---",
+			strings.Join(bucketKeyParts(grouped.KeyColumns, bucket.Key), ", ")))
 
 		columns := []string{"ID", "NAME", "CREATED"}
 		var rows [][]string

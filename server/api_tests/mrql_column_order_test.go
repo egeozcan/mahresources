@@ -3,6 +3,7 @@ package api_tests
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"mahresources/models"
@@ -197,4 +198,129 @@ func joinCSV(cols []string) string {
 		out += c
 	}
 	return out
+}
+
+// The bucketed half of the same finding. `9ab65b12` fixed the aggregated table
+// header and left the bucket key badges reading
+// `x-for="(val, key) in bucket.key"` — Object.keys over a Go map that
+// encoding/json wrote sorted, so `GROUP BY width, height` and
+// `GROUP BY height, width` labelled their badges identically. mrql.BucketKeyColumns
+// already existed for the CSV export's header; this carries the same list on the
+// JSON response, in the same additive shape as `columns`.
+func TestMRQLBucketedResultCarriesTheAuthoredKeyOrder(t *testing.T) {
+	tc := SetupTestEnv(t)
+	seedResourcesForGrouping(t, tc)
+
+	cases := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{
+			name:  "as written",
+			query: `type = resource GROUP BY width, height, contentType`,
+			want:  []string{"width", "height", "contentType"},
+		},
+		{
+			// The reverse. Before the fix both answered with the same key order.
+			name:  "reversed",
+			query: `type = resource GROUP BY contentType, height, width`,
+			want:  []string{"contentType", "height", "width"},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			resp := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{"query": c.query})
+			if resp.Code != http.StatusOK {
+				t.Fatalf("POST /v1/mrql = %d: %s", resp.Code, resp.Body.String())
+			}
+			var body struct {
+				Mode       string   `json:"mode"`
+				KeyColumns []string `json:"keyColumns"`
+				Groups     []struct {
+					Key map[string]any `json:"key"`
+				} `json:"groups"`
+			}
+			if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if body.Mode != "bucketed" {
+				t.Fatalf("mode = %q, want bucketed", body.Mode)
+			}
+			if len(body.Groups) == 0 {
+				t.Fatal("precondition failed: no buckets, so a key-column list proves nothing")
+			}
+			if !equalStrings(body.KeyColumns, c.want) {
+				t.Errorf("keyColumns = %v, want %v", body.KeyColumns, c.want)
+			}
+			// keyColumns names an order; it does not replace the key object.
+			for _, col := range body.KeyColumns {
+				if _, ok := body.Groups[0].Key[col]; !ok {
+					t.Errorf("key column %q is not a key of the first bucket (%v)",
+						col, body.Groups[0].Key)
+				}
+			}
+		})
+	}
+}
+
+// An aggregated GROUP BY has no buckets and must not sprout a key-column list.
+// Control for the case above, mirroring TestMRQLBucketedResultCarriesNoAggregateColumns.
+func TestMRQLAggregatedResultCarriesNoKeyColumns(t *testing.T) {
+	tc := SetupTestEnv(t)
+	seedResourcesForGrouping(t, tc)
+
+	resp := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{
+		"query": `type = resource GROUP BY contentType COUNT()`,
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("POST /v1/mrql = %d: %s", resp.Code, resp.Body.String())
+	}
+	var body struct {
+		Mode       string   `json:"mode"`
+		KeyColumns []string `json:"keyColumns"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Mode != "aggregated" {
+		t.Fatalf("mode = %q, want aggregated", body.Mode)
+	}
+	if len(body.KeyColumns) != 0 {
+		t.Errorf("aggregated result carries keyColumns %v; it has no buckets", body.KeyColumns)
+	}
+}
+
+// The CSV export's bucketed header has always led with mrql.BucketKeyColumns.
+// Pin that the JSON API agrees, since "the app disagrees with itself between two
+// exports of one query" is the argument that made this change worth taking.
+func TestMRQLJSONKeyColumnsMatchTheCSVExportPrefix(t *testing.T) {
+	tc := SetupTestEnv(t)
+	seedResourcesForGrouping(t, tc)
+
+	const query = `type = resource GROUP BY width, height, contentType`
+
+	resp := tc.MakeRequest(http.MethodPost, "/v1/mrql", map[string]any{"query": query})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("POST /v1/mrql = %d: %s", resp.Code, resp.Body.String())
+	}
+	var body struct {
+		KeyColumns []string `json:"keyColumns"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.KeyColumns) == 0 {
+		t.Fatal("no keyColumns, so this comparison proves nothing")
+	}
+
+	csv := tc.MakeRequest(http.MethodPost, "/v1/mrql/export?format=csv", map[string]any{"query": query})
+	if csv.Code != http.StatusOK {
+		t.Fatalf("POST /v1/mrql/export = %d: %s", csv.Code, csv.Body.String())
+	}
+	header := firstLine(csv.Body.String())
+	if prefix := joinCSV(body.KeyColumns); !strings.HasPrefix(header, prefix+",") {
+		t.Errorf("CSV header %q does not lead with the JSON key columns %q", header, prefix)
+	}
 }
