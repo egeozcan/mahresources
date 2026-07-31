@@ -1370,3 +1370,72 @@ reading it is worth much less than a loop that runs it 200 times.
 the listener in `Stop` made `Shutdown` return "use of closed network connection" on every clean stop,
 which would have made every successful teardown look broken to its caller. The second error is not a
 regression — it is the first fix arriving, and it needs its own line of code and its own reason.
+
+## An audit that scans the repository for evidence must exclude itself, or its own prose closes the gap it found
+
+`internal/arch/findings_coverage_test.go` walks every `_test.go`, `.spec.ts` and `.test.ts` in the
+repository and requires each finding the plan marks resolved to be *named* by one of them. Batch 14
+extended it to cover rejected findings as well, found that finding 79 was pinned by nothing, wrote a
+spec for it — and then, checking the guard by deleting that spec again, watched it stay green.
+
+The guard is itself a `_test.go`, and the sentence explaining what it had caught said "finding 79".
+So the walk found the number in the audit's own commentary and reported the finding as covered. The
+way to close a coverage gap had silently become: write about the gap in the guard.
+
+The general shape is worth naming, because it is not specific to test files. **Any check whose input
+is "the contents of the repository" includes the check.** A grep for a forbidden pattern matches the
+line that defines the pattern; a lint rule that scans for TODOs finds the one in its own docstring; a
+drift test that compares a generated file against a source list matches its own example. The failure
+is quiet and it is in the safe-looking direction: the check passes.
+
+Two rules. Skip yourself explicitly, by filename, with a comment saying why — a future reader will
+otherwise "simplify" the skip away. And prove the exclusion works the same way you prove any guard:
+remove the thing the check is supposed to require and confirm it goes red. Here that took thirty
+seconds and it is the only reason the hole was found at all; the guard had been green, and green for
+the wrong reason, from the moment its comment was written.
+
+## A confidence label on a bug report is a claim about the reporter's process or about the reporter's judgement, and only the first kind predicts anything
+
+The 2026-07-29 hunt shipped 160 findings under four provenance labels, and the plan built its effort
+tiers on them: accept the verified ones, spot-check the corroborated ones, re-verify every
+`recovered` one. Measured against the finished ledger:
+
+| label | what it claimed | rows | rejected |
+|---|---|---|---|
+| ✅ VERIFIED | "I re-ran this myself" | 13 | 0 |
+| verified-run | "a second agent reproduced it" | 64 | 0 |
+| ⚠️ DISPUTED | "my own re-check did not reproduce it — treat with suspicion" | 4 | **0** |
+| `recovered` | "reconstructed from a killed agent's transcript; nobody re-ran it" | 79 | **8** |
+
+Every rejection in the campaign came out of one tier, at a rate of about 10 %, and that tier's label
+describes a **process fact**: nobody re-ran these. That label earned its place in the plan.
+
+`DISPUTED` describes a **judgement**, and it predicted nothing at all. All four were real, and each
+re-check had failed for a different mechanical reason: one curl'd the list page for a finding about
+the detail page, one called a server-rendered cap "client-rendered" and stopped, and two were never
+actually re-checked. The label recorded that the reporter had become uncertain; it did not record
+anything about the bug. A plan that had triaged by that label would have dropped four confirmed
+defects, one of which was a hardcoded 50-row cap on the group tree.
+
+The sharper half is what the tiers were *for*. They were built to sort out **false positives**, and
+there were 8. The dominant failure mode was something else: **34 ledger rows had a real symptom and a
+wrong stated cause**, four times as many, and each of those was a fix the plan would have sent
+somebody to write in the wrong file. Measured against the same tiers:
+
+| label | rows | wrong stated cause |
+|---|---|---|
+| ✅ VERIFIED | 13 | 1 (8 %) |
+| ⚠️ DISPUTED | 4 | 0 |
+| verified-run | 64 | 10 (16 %) |
+| `recovered` | 79 | 23 (**29 %**) |
+
+That gradient is the useful result, and it is not the one the plan expected. A finding nobody re-ran
+is not merely more likely to be imaginary — it is *three times* more likely to come with a wrong
+diagnosis attached, and the wrong diagnosis is the expensive half, because it produces a change to
+real code in the wrong place. Being re-run by a second party halves it and does not remove it: even
+the tier the reporter personally re-verified still had one.
+
+So: read a provenance label as a statement about how the observation was produced, and weight both
+risks by it. Read a confidence label as a statement about the author's state of mind, and ignore it.
+And do not let either buy you out of asking *why* — agreeing that a symptom is real is the cheap half,
+and it is not the half that decides which file you open.

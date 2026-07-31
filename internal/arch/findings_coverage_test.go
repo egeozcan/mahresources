@@ -82,8 +82,62 @@ func TestEveryFixedFindingIsNamedByATest(t *testing.T) {
 	}
 }
 
+// TestEveryRejectedFindingIsPinnedByATest is the same audit for the other
+// direction, and it is the one Batch 14 added.
+//
+// A rejection is a claim — "the reported behaviour is not a defect" — and it can
+// stop being true without anyone touching the ledger. The campaign's standing
+// rule is that a rejected finding gets a test as well, pinning the rejection so
+// that it cannot quietly become wrong; such a test passes in *both* directions
+// for the assertions that describe the probe's mistake, and fails in one for the
+// assertion that describes the behaviour the report claimed was broken.
+//
+// Run against the ledger as written this found one gap: finding 79 (the grid
+// selection checkboxes desynchronising from the bulk-selection store) was
+// rejected in Batch 4 and named by nothing. The rejection rested entirely on a
+// paragraph of prose in docs/todo.md, so a real desynchronisation would have had
+// to be re-found from scratch.
+func TestEveryRejectedFindingIsPinnedByATest(t *testing.T) {
+	root := moduleRoot(t)
+
+	rejected := ledgerFindings(t, root, func(line string) bool {
+		return (strings.Contains(line, "REJECTED") || strings.Contains(line, "NOT FIXED")) &&
+			!strings.Contains(line, "**FIXED")
+	})
+	if len(rejected) < 5 {
+		t.Fatalf("found only %d rejected findings in docs/todo.md; the ledger parse is "+
+			"broken, not the coverage", len(rejected))
+	}
+
+	named := findingsNamedInTests(t, root)
+
+	var missing []int
+	for _, n := range rejected {
+		if !named[n] {
+			missing = append(missing, n)
+		}
+	}
+	sort.Ints(missing)
+
+	if len(missing) > 0 {
+		t.Errorf("%d findings are recorded as REJECTED in docs/todo.md and pinned by no test: %v\n"+
+			"\tA rejection is a claim that can stop being true. Each needs a test that\n"+
+			"\tasserts the behaviour the report said was broken, so the rejection cannot\n"+
+			"\tquietly become wrong — and, where the rejection is a probe artefact,\n"+
+			"\treproduces the artefact so the next reader of that evidence does not\n"+
+			"\tre-open the finding.", len(missing), missing)
+	}
+}
+
 // fixedFindings returns the ledger row numbers whose status carries a FIXED note.
 func fixedFindings(t *testing.T, root string) []int {
+	t.Helper()
+	return ledgerFindings(t, root, func(line string) bool { return strings.Contains(line, "**FIXED") })
+}
+
+// ledgerFindings returns the row numbers of every verification-ledger line the
+// predicate accepts.
+func ledgerFindings(t *testing.T, root string, keep func(line string) bool) []int {
 	t.Helper()
 
 	body, err := os.ReadFile(filepath.Join(root, "docs", "todo.md"))
@@ -97,7 +151,7 @@ func fixedFindings(t *testing.T, root string) []int {
 		if m == nil {
 			continue
 		}
-		if !strings.Contains(line, "**FIXED") {
+		if !keep(line) {
 			continue
 		}
 		var n int
@@ -131,6 +185,14 @@ func findingsNamedInTests(t *testing.T, root string) map[int]bool {
 		if !strings.HasSuffix(base, "_test.go") &&
 			!strings.HasSuffix(base, ".spec.ts") &&
 			!strings.HasSuffix(base, ".test.ts") {
+			return nil
+		}
+		// Never let the audit satisfy itself. This file is a _test.go and its own
+		// prose names the findings it has caught, so without this skip the way to
+		// close a coverage gap is to write about the gap here — the guard would
+		// certify a finding as covered on the strength of its own commentary. It
+		// went green exactly that way once, before this line existed.
+		if base == "findings_coverage_test.go" {
 			return nil
 		}
 		src, rerr := os.ReadFile(path)

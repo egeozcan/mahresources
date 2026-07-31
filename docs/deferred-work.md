@@ -28,10 +28,19 @@ than re-litigating it.
 ### Current behaviour, verified
 
 Every destructive confirmation in the app is a native `window.confirm()`. Batch 12's audit found ~23
-sites: 13 `confirmAction` calls plus `confirmGroupDelete`, 4 inline `onsubmit="return confirm(…)"`,
-`templates/partials/blockEditor.tpl:60`, `templates/noteShare.tpl:58`, and 3 in `src/`. A raw grep for
-`confirm(` across `src/` and `templates/` returns ~39 candidate lines, so **do a fresh sweep rather
-than trusting the count**.
+sites, and Batch 14 re-counted it to **exactly 23**: 13 `confirmAction(` call sites in `templates/`,
+plus `confirmGroupDelete`, plus 4 inline `onsubmit="return confirm(…)"` (`adminShares.tpl` ×2,
+`adminUsers.tpl`, `managePlugins.tpl`), plus `templates/partials/blockEditor.tpl:60`,
+`templates/partials/noteShare.tpl:58`, plus 3 in `src/` (`mrqlEditor.js`, `templateBundle.js`,
+`shortcodeLint.js`).
+
+A raw `grep -rn 'confirm(' src/ templates/` returns **15** lines, not the ~39 this document claimed
+before Batch 14 measured it. Five of those 15 are noise — three are `$store.entityPicker.confirm()`,
+a picker's own commit method and not a dialog at all; one is a doc comment in
+`confirmGroupDelete.js`; one is `confirmAction.js`'s own implementation. Grep for `confirmAction(`
+separately: it is the majority of the surface and the raw grep does not see through it. **Still do a
+fresh sweep** — the point of this paragraph is that the naive grep undercounts by more than half,
+which is the opposite of the error the old wording warned about.
 
 Batch 12 (`9ab65b12`) already fixed `confirmAction` to accept a string argument and to resolve
 `{count}`/`{s}`/`{winner}` at submit time, so the messages now say what will be destroyed. That was
@@ -169,9 +178,18 @@ Raised repeatedly through the campaign and deliberately left as its own decision
 
 The whole guard strategy above is shaped by the browser suite **not** running in CI. That is a large
 standing constraint: every focus, computed-style, and Alpine-branch property in the app is currently
-verified only when someone runs the suite locally. Batch 13's harness fix makes this materially more
-practical than it was — the full run is now **~7.2 minutes with 0 flaky**, down from 12.8 minutes with
-3 flaky, after raising `-max-db-connections` from 1 to 2 in `e2e/fixtures/server-manager.ts`.
+verified only when someone runs the suite locally. Three findings in the campaign (5, 74, 90) are
+runtime focus properties that no Go test can assert at all.
+
+Batch 13's harness fix makes this materially more practical than it was — after raising
+`-max-db-connections` from 1 to 2 in `e2e/fixtures/server-manager.ts`, four full runs have now
+measured **7.1, 7.3, 7.4 and 7.7 minutes, all at 0 flaky**, against 12.8 minutes with 3 flaky before.
+All four were taken at a 1-minute load average in the 3.4–5.7 band, i.e. a loaded machine; none is
+the idle measurement that would settle it.
+
+The staged proposal — accessibility + regressions first, then the full `default` project, then `cli`
+and `auth` — is written up under "Recommendation: add the browser E2E suite to CI" in
+`docs/todo.md`'s Review section, together with the two things that need deciding alongside it.
 
 ---
 
@@ -186,9 +204,27 @@ practical than it was — the full run is now **~7.2 minutes with 0 flaky**, dow
 - **The three plain-text `/v1/groups/export|import` error bodies.** Flagged by Batch 13's error-chrome
   sweep and excluded with a reason: they are fetch-only and `errorMessageFromResponse` reads plain
   text. Not that finding's class, but worth revisiting if those endpoints ever gain a browser surface.
-- **Contrast guard is a hand-maintained denylist** (`server/api_tests/`). It pins class *combinations*,
+- **Contrast guard is a hand-maintained denylist** (`TestNoWhiteTextOnALowContrastBackground` in
+  `internal/arch/templates_test.go`, not `server/api_tests/` as this document said before Batch 14
+  looked for it). It pins class *combinations*,
   not computed contrast, so `text-white` + an unlisted shade passes. axe remains the authority; the
   guard exists because axe only sees pages that are in the sweep. It will rot — budget for refreshing
   the shade list when the palette changes.
 - **`mr docs lint` carries 16 standing warnings.** Pre-existing throughout the campaign, never
   triaged.
+- **The Postgres E2E harness has never had any contention tuning.**
+  `e2e/fixtures/server-manager.ts` builds two argument lists, and Batch 13's `-max-db-connections=2`
+  — with the ten-line comment explaining the measurement behind it — is only in the **SQLite**
+  branch. That is defensible on its face (the serialisation the comment describes is a SQLite
+  property), but the Postgres suite is the harder case: four Playwright workers each get their own
+  database inside **one** container, so they contend on one server process and Docker's I/O layer.
+  Batch 14's run reported **4 flaky at 8.5m** against the SQLite run's **0 flaky at 7.7m** on the
+  same machine within the hour, all four the usual `page.goto: Timeout 15000ms exceeded`, all four in
+  `tests/schema/`, all four green on retry. The isolated rate is **0 of 258** —
+  `run-tests-postgres.js test tests/schema/ --retries=0 --repeat-each=2`, 2.3 minutes, at a 1-minute
+  load average of 2.4–4.0 — which points at whole-suite contention rather than at those four specs,
+  and is *weak* evidence precisely because a directory run is a different load profile from a
+  4-worker full-suite run. Do not add a connection limit on the strength of that: get the rate under
+  the load that produces it, the way Batch 13 did for the SQLite branch, and split server from client
+  before theorising. This matters more if the browser suite goes into CI (item 5), because a CI
+  runner is a smaller machine than this one.

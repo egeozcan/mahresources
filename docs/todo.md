@@ -314,7 +314,7 @@ Statuses are filled in during Phase 1.
 | 76 | med | a11y | recovered | WS5 | Dup → 139 | **CONFIRMED** — Dup → 139 · **FIXED** — Dup → 139 |
 | 77 | med | ux | recovered | WS6 | Dup → 68 | **CONFIRMED** — Dup → 68  · **FIXED** |
 | 78 | med | ux | recovered | WS14 | verify | **CONFIRMED** — `Are you sure you want to delete?` at 1 and at 4 selected  · **FIXED, wrong cause in the plan** — the toolbar does *not* reuse the generic confirm; it authored `'…the selected resources?'` and `confirmAction` destructured the string and got `undefined`. After: `Delete 1 resource? This cannot be undone.` / `Delete 4 resources? …` |
-| 79 | med | bug | recovered | WS2 | verify (suspect) | **REJECTED — not reproducible** in 9 runs; the invisible checked boxes are the header settings toggles and the zero-checked Select All is a `nth=1` locator hitting hidden "Deselect All". See WS2 |
+| 79 | med | bug | recovered | WS2 | verify (suspect) | **REJECTED — not reproducible** in 9 runs; the invisible checked boxes are the header settings toggles and the zero-checked Select All is a `nth=1` locator hitting hidden "Deselect All". See WS2  · **NOT FIXED — struck**, and the campaign's only rejection that was pinned by nothing until Batch 14's audit; now `e2e/tests/regressions/ws2-select-all-rejection.spec.ts` |
 | 80 | med | ux | recovered | WS7 | Dup → 25 | **CONFIRMED** — Dup → 25; `mainTop` 1978, first card 2124, sidebar 1834 px tall · **FIXED** — Dup → 25; first card 2124 → 420 |
 | 81 | med | design | recovered | WS7 | verify | **CONFIRMED** — the visible `input[name=mrql]` measures **149 px** at a 390 px viewport (the hidden desktop copy measures 0) · **FIXED** — `basis-full sm:basis-0` makes the row wrap; 149 → 358 px at a 390 px viewport |
 | 82 | med | bug | ✅ VERIFIED | WS11 | accept | **CONFIRMED** — `&ldquo; &ndash; &hellip; &lsquo; &rsquo;` (live: 17 `&lsquo;`, 17 `&rsquo;`, 3 `&ldquo;`, 2 `&ndash;`, 1 `&hellip;`)  · **FIXED** — `partials/query.tpl` renders `entity.Text` verbatim in a `<pre><code>`; it no longer goes through `description.tpl` at all, so the Batch 4 editor work is untouched. After: 50 cards, 0 smart characters, `!= 'x' … -- range 1--5 and dots...` intact |
@@ -397,11 +397,20 @@ Statuses are filled in during Phase 1.
 | 159 | low | bug | recovered | WS11 | verify (expect reject) | **REJECTED — not reproducible, with the mechanism proved.** Three identical `POST /v1/mrql` calls all returned `applied_limit: 500`. Setting `mrql_default_limit=3` made both of a pair return **3**; resetting returned both to **500**. The value is a pure function of the configuration, and finding 33's own evidence records the hunt changing that setting mid-run  · **NOT FIXED — struck**, pinned by a Go test asserting stability *and* that the setting is what moves it |
 | 160 | low | bug | recovered | WS11 | verify (self-caveated) | **CONFIRMED despite the caveat — and it is the same bug as 22.** For `type = resource AND tags.c` no popup opened automatically or on Ctrl+Space, while `POST /v1/mrql/complete` at that cursor returned 29 suggestions including `tags.count`. The cause is not the dot: CodeMirror filters options by their **label**, and the label was the description, so `tags.c` is not a subsequence of "relation count" and every option was filtered out  · **FIXED by 22's one-line change.** After: the popup opens with `tags.count` |
 
-**Ledger arithmetic.** 160 findings → 26 marked `Dup` → **134 distinct defects**, of which 13 are
-accepted without re-verification, 6 are already confirmed from source, and 4 route straight to a
-product decision. That leaves ~111 to verify, ~60 of them in the expensive `recovered` tier.
+**Ledger arithmetic.** 160 findings → ~~26~~ **23** marked `Dup` → ~~**134**~~ **137 distinct
+defects**, of which 13 are accepted without re-verification, 6 are already confirmed from source, and
+4 route straight to a product decision. That leaves ~111 to verify, ~60 of them in the expensive
+`recovered` tier.
 
-**Running tally after Batch 11** (WS1–WS13 complete; only WS14 left):
+> **Corrected in Batch 14.** The `26`/`134` pair was an estimate written before the `Dup` column was
+> filled and it was never re-derived. Counted from the column itself there are **23** duplicate rows
+> (37, 46, 52, 53, 59, 60, 62, 76, 77, 80, 86, 87, 88, 91, 92, 93, 101, 105, 121, 132, 135, 146, 158),
+> and the "Rejected and reclassified" table below repeats the same wrong total. The final arithmetic
+> is under "## Review".
+
+**Running tally after Batch 11** (WS1–WS13 complete; only WS14 left). Kept as the snapshot it was;
+**the final numbers are the arithmetic table under "## Review"**, and two rows here moved after it was
+written — every row is resolved now, and the rejections pinned by a test went from 6 to 8 of 8:
 
 | | count |
 |---|---|
@@ -809,6 +818,15 @@ Findings **9, 15/53/87, 21/88/152, 50, 79, 151**. Four shared components; 79 rej
       - Selection is in-memory only (no `localStorage`/`sessionStorage` entries exist) and the view
         switcher is a full navigation (`boxSelect.tpl:3` is a plain `<a href>`), so a grid selection
         is *expected* not to survive the switch.
+      - **Pinned in Batch 14, and it was the campaign's only unpinned rejection.** The whole
+        rejection above lived in this paragraph and nowhere else, so a real desynchronisation would
+        have had to be found from scratch. `e2e/tests/regressions/ws2-select-all-rejection.spec.ts`
+        asserts the subject — after the real Select All every row checkbox is checked *and*
+        `$store.bulkSelection.selectedIds.size` equals the row count, from an asserted precondition
+        of zero — and reproduces both halves of the report's evidence so the next reader of it does
+        not re-open the finding. Seen red by making `selectAll()` select nothing and rebuilding the
+        bundle: 3 checked → 0. The other two tests pass in both directions, which is what a rejection
+        control is for.
 
 **Regression risk:** medium-high. `inlineedit.js` and `description.tpl` are on almost every detail
 page. `docs/lessons.md` is explicit here: *"A UI-only assertion cannot tell a successful write from
@@ -3538,9 +3556,11 @@ guard at a time" below.
       `/resourceCategory/new`; `DYNAMIC_PAGES` gained the resource-category detail and edit pages,
       with a `resourceCategoryId` added to `a11y.fixture.ts` to carry them. `KNOWN_ISSUES` is still
       `[]`.
-- [ ] **Propose separately: add the browser E2E suite to CI.** Today a Playwright guard gates nothing.
+- [x] **Propose separately: add the browser E2E suite to CI.** Today a Playwright guard gates nothing.
       Even a fast subset (accessibility + regressions) as a fourth job would change what this campaign
-      can promise. Not part of this plan's scope — raise it as its own decision.
+      can promise. Not part of this plan's scope — raised as its own decision in **Batch 14**, with a
+      staged proposal and the current cost measured: see "Recommendation: add the browser E2E suite to
+      CI" under "## Review", and item 5 of `docs/deferred-work.md`.
 
 #### What the guards found
 
@@ -3653,12 +3673,13 @@ Filled in during Phase 1. Pre-populated with what is already known:
 | # | Disposition | Reason |
 |---|---|---|
 | 26, 44, 45, 85 | **Un-disputed → confirmed** | All four ⚠️ DISPUTED findings are real; the re-checks were wrong (wrong URL, wrong assumption about client vs server rendering, and two not checked at all). Evidence in Phase 1. |
-| 37, 46, 52, 53, 59, 60, 62, 76, 77, 80, 86, 87, 88, 91, 92, 93, 101, 105, 121, 132, 135, 146, 158 | **Duplicate** | Closed by another finding's fix. Not rejections — merged so the work is not counted twice. 26 entries total; see the `Dup` column. |
+| 37, 46, 52, 53, 59, 60, 62, 76, 77, 80, 86, 87, 88, 91, 92, 93, 101, 105, 121, 132, 135, 146, 158 | **Duplicate** | Closed by another finding's fix. Not rejections — merged so the work is not counted twice. ~~26~~ **23** entries total (counted in Batch 14 from the row list beside it, which has always had 23); see the `Dup` column. |
 | 159 | **Expect not-reproducible** | Finding 33's own evidence shows the hunt changed `mrql_default_limit` to 3 mid-run. |
 | 6 | **Confirmed symptom, wrong diagnosis** | The arrow-key handlers exist (`blockEditor.tpl:947-950`). Re-test after fixing 47. |
 | 160, 143, 79 | **Verify before acting** | Self-caveated by the report, or fixed by a reload. |
 | 61 | **Rejected — not reproducible** | All four taxonomy types already offer Delete on their detail page. The report's probe collected `button` elements; the control is an `<input type="submit">` contributed by the context provider. |
-| 107, 130, 145 | **Needs product decision** | Plausibly deliberate. Verified in Batch 12, recommendations returned to the user 2026-07-31; still open. |
+| 107, 130, 145 | **Needs product decision** | Plausibly deliberate. Verified in Batch 12, recommendations returned to the user 2026-07-31. **Decided and deferred** by the user the same day — not open, not implemented; the decision and the acceptance criteria for each are in `docs/deferred-work.md`. |
+| 79 | **Rejected — pinned late** | Rejected in Batch 4 and pinned by nothing until Batch 14's audit found it. The campaign's rule is that a rejection gets a test too; `TestEveryRejectedFindingIsPinnedByATest` now enforces it rather than leaving it to a reviewer. |
 
 ---
 
@@ -3692,29 +3713,330 @@ the cheapest high-confidence work clears the ledger early.
 - [x] **Batch 12** — WS14 long tail, the user-approved `/mrql` column ordering, and the three
       remaining product decisions returned for sign-off (107, 130, 145).
 - [x] **Batch 13** — Phase 3 guards, the bucketed `/mrql` key ordering, and the E2E harness contention fix.
-- [ ] **Batch 14** — final verification, docs, and a lessons entry.
+- [x] **Batch 14** — final verification, the coverage audit, the ledger arithmetic, and the closing
+      lessons entry.
 
 ## Verification (final)
 
-- [ ] `go test --tags 'json1 fts5' ./...` passes.
-- [ ] `staticcheck ./...` passes.
-- [ ] `npm run build` and `npm run test:unit` pass.
-- [ ] `cd e2e && npm run test:with-server:all` — browser and CLI E2E pass together.
-- [ ] `cd e2e && npm run test:with-server:a11y` passes with `KNOWN_ISSUES` still empty.
-- [ ] Postgres: `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/... -count=1`
+- [x] `go test --tags 'json1 fts5' ./...` passes.
+- [x] `staticcheck ./...` passes.
+- [x] `npm run build` and `npm run test:unit` pass.
+- [x] `cd e2e && npm run test:with-server:all` — browser and CLI E2E pass together.
+- [x] `cd e2e && npm run test:with-server:a11y` passes with `KNOWN_ISSUES` still empty.
+- [x] Postgres: `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/... -count=1`
       and `cd e2e && npm run test:with-server:postgres` (Docker required).
-- [ ] `./mr docs lint` and `./mr docs check-examples` pass; regenerated CLI docs are committed.
-- [ ] Every confirmed finding has a `regressions/` spec or a Go test naming it.
-- [ ] Re-run a browser pass over the seeded edge-case instance and diff against the original report.
-- [ ] Add a `docs/lessons.md` entry (newest first, `## <full-sentence claim>`, prose). Candidate:
-      *"A bug report's confidence label is a claim about the reporter, not about the bug"* — all four
-      ⚠️ DISPUTED findings here were real, and each re-check failed for a different methodological
-      reason: the wrong URL, a wrong assumption about client vs server rendering, and two that were
-      never actually re-checked at all.
+- [x] `./mr docs lint` and `./mr docs check-examples` pass; regenerated CLI docs are committed.
+      **`check-examples` must be run the way CI runs it** — `cd e2e && npm run
+      test:with-server:cli-doctest`. Invoked bare against an ordinary ephemeral server it reports 7
+      failures, all of them `plugin "test-actions"/"test-banner" not found`: those examples need the
+      test plugin fixtures the E2E harness installs, and the bare run is measuring their absence.
+- [x] Every confirmed finding has a `regressions/` spec or a Go test naming it — and, from this
+      batch, every **rejected** finding too. Both are enforced by
+      `internal/arch/findings_coverage_test.go` rather than eyeballed.
+- [x] Re-run a browser pass over the seeded edge-case instance and diff against the original report.
+- [x] Add a `docs/lessons.md` entry.
 
 ## Review
 
-_To be filled in on completion._
+### Final ledger arithmetic
+
+Counted from the ledger rows themselves, not carried forward from any earlier estimate — the
+"26 Dup / 134 distinct" pair at the head of the ledger had been wrong since Phase 1 and was repeated
+unchanged through thirteen batches. See "What the ledger claimed that was not true" below.
+
+| | count | notes |
+|---|---|---|
+| Findings in the report | **160** | 24 high / 77 medium / 59 low; 52 bug, 57 ux, 31 a11y, 20 design |
+| Ledger rows | **160** | one per finding; every row has a recorded disposition |
+| Marked `Dup` | **23** | 37, 46, 52, 53, 59, 60, 62, 76, 77, 80, 86, 87, 88, 91, 92, 93, 101, 105, 121, 132, 135, 146, 158 |
+| **Distinct defects** | **137** | 160 − 23 |
+| Rows carrying a **FIXED** note | **149** | of which 23 are `Dup` rows closed by their primary → **126 distinct fixes** |
+| **Rejected — not a defect** | **8** | 14, 39, 61, 79, 96, 134, 143, 159 |
+| **Needs a product decision — verified, recommended, not implemented** | **3** | 107, 130, 145; all three **decided and deferred** by the user on 2026-07-31, written up in `docs/deferred-work.md` |
+| Still open | **0** | 149 + 8 + 3 = 160 |
+| Reclassified (`Dup` → closed by another finding's fix) | **23** | not rejections; merged so the work is not counted twice |
+| **Cause-corrected — real symptom, wrong stated cause** | **34** | 2, 4, 6, 8, 9, 19, 22, 24, 31, 34, 36, 48, 49, 55, 64, 72, 73, 74, 78, 94, 95, 97, 120, 136, 141, 142, 144, 148, 149, 150, 153, 156, 157, 160 |
+| "Where the plan was wrong" subsections | **13** | 57 numbered corrections between them |
+| "Defects the tests did not catch" subsections | **8** | |
+| Independent review rounds on work this campaign produced | **9** | `download_queue` 1–6, query surfaces 1–3 |
+| Rejections pinned by a test | **8 of 8** | 79 was the last, added in Batch 14; enforced by `TestEveryRejectedFindingIsPinnedByATest` |
+
+**Rejection rate by provenance tier**, which is the number the effort tiers were designed around:
+
+| label | rows | rejected | rate |
+|---|---|---|---|
+| ✅ VERIFIED | 13 | 0 | 0 % |
+| verified-run | 64 | 0 | 0 % |
+| ⚠️ DISPUTED | 4 | **0** | **0 %** |
+| `recovered` | 79 | **8** | **10 %** |
+
+Every rejection in the campaign came out of `recovered`, and none out of any other tier. The
+`DISPUTED` label — the one the report told the reader to "treat with suspicion" — has a rejection
+rate of zero: all four were real.
+
+The same tiers against the *other* failure mode, which is the one the triage was not built for and
+which cost four times as much:
+
+| label | rows | wrong stated cause |
+|---|---|---|
+| ✅ VERIFIED | 13 | 1 (8 %) |
+| ⚠️ DISPUTED | 4 | 0 |
+| verified-run | 64 | 10 (16 %) |
+| `recovered` | 79 | 23 (**29 %**) |
+
+A finding nobody re-ran is not merely three times more likely to be imaginary — it is three times
+more likely to arrive with a wrong diagnosis attached, which is the expensive half, because it
+produces a change to real code in the wrong file. Being re-run by a second party halves that and does
+not remove it. The lesson recorded for this is at the end of `docs/lessons.md`.
+
+### Batch 14 (final verification) — verification run
+
+| Gate | Result |
+|---|---|
+| `go test --tags 'json1 fts5' ./...` | pass (37 packages) |
+| `staticcheck ./...` | clean |
+| `npm run build` | clean |
+| `npm run test:unit` | **898 passed / 55 files** |
+| `cd e2e && npm run test:with-server:all` | **1920 passed, 0 failed, 0 flaky**, 6 skipped (7.7m) — 1917 + the 3 new finding-79 tests |
+| `cd e2e && npm run test:with-server:a11y` | **195 passed**, `KNOWN_ISSUES` still `[]` |
+| `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/... -count=1` | pass (`mrql` 6.6 s, `server/api_tests` 30.2 s) |
+| `cd e2e && npm run test:with-server:postgres` | **1917 passed, 0 failed, 4 flaky**, 5 skipped (8.5m) — see below |
+| `./mr docs lint` | OK, 16 standing warnings, unchanged; no CLI surface changed, nothing to regenerate |
+| `cd e2e && npm run test:with-server:cli-doctest` | pass |
+
+**The SQLite run was 0 flaky, at a 1-minute load average of 3.4–5.7** — the "moderately loaded" band
+that used to produce ~3 flakes before Batch 13 raised `-max-db-connections` to 2. That is a fourth
+consecutive clean run at that load. It is still not an idle-machine measurement.
+
+#### The four Postgres flakes, and the harness asymmetry behind them
+
+All four are `TimeoutError: page.goto: Timeout 15000ms exceeded`, the only flake signature this
+campaign has ever produced, and all four retried green. They are `tests/schema/editor.spec.ts:558`,
+`note-section-config.spec.ts:206`, `search-fields.spec.ts:367` and `section-config.spec.ts:37` — four
+specs in one directory, which is the shape of one worker's server being slow for a window rather than
+four independent defects.
+
+**What is worth recording is why the Postgres run is not covered by Batch 13's fix.**
+`e2e/fixtures/server-manager.ts` builds two different argument lists, and `-max-db-connections=2` —
+with the ten-line comment explaining the measurement behind it — is only in the **SQLite** branch.
+The Postgres branch passes no connection limit at all. That is defensible on its face (the SQLite
+serialisation the comment describes is a SQLite property), but it means the Postgres suite has never
+had *any* contention tuning, and it is the harder case: four workers each get their own database
+inside **one** Postgres container, so they contend on one server process and Docker's I/O layer
+rather than on four independent files.
+
+The wall clock says the same thing: **8.5m against the SQLite run's 7.7m**, on the same machine
+within the hour. Batch 13 measured 7.3m / 0 flaky for the Postgres suite at a comparable load, so
+this is not a step change — it is the same load-sensitivity, one branch behind.
+
+**The rate, because "flaky" is a symptom and not a diagnosis.**
+`node scripts/run-tests-postgres.js test tests/schema/ --retries=0 --repeat-each=2` at a 1-minute
+load average of 2.4–4.0: **258 passed, 0 failed, 0 flaky, 0 `page.goto` timeouts** in 2.3 minutes.
+So 4 in 1921 across a full 4-worker run, and **0 in 258** for the same specs on their own. That is
+the signature of whole-suite contention rather than a defect in these four specs, and it is
+consistent with every other flake this campaign has measured. It is not a *disproof* — a 4-worker
+full-suite run is a different load profile from a directory run, which is exactly why the isolated
+green is weak evidence and is labelled as such.
+
+Not fixed here, deliberately: adding a connection limit to the Postgres branch on the strength of one
+loaded run and one clean isolated run would be changing a harness on a guess. What it needs is a
+measurement under the load that produces it — the same method Batch 13 used on the SQLite branch,
+which is why that one is defensible. Recorded in `docs/deferred-work.md` as a follow-up with the
+measurement it needs.
+
+**`mr docs check-examples` cannot be run bare.** Against a plain ephemeral server it reports 7
+failures, all `plugin "test-actions"/"test-banner" not found`: three plugin examples need fixtures
+that only `e2e/scripts/run-tests.js` installs. The CI-equivalent invocation is
+`cd e2e && npm run test:with-server:cli-doctest`, and that passes. Worth stating because the bare run
+looks like a real regression and is not one.
+
+### The coverage audit
+
+The Phase 3 guard `internal/arch/findings_coverage_test.go` already required every finding marked
+**FIXED** to be *named* by a Go test or a spec, and it reported **zero** gaps: all 149 are named.
+Batch 13 built it and it is doing its job.
+
+What it did not cover is the other half of the campaign's own rule — *"rejected findings get a test
+too, pinning the rejection so it cannot quietly become wrong"*. Audited by hand, then made
+mechanical:
+
+- **Finding 79 was pinned by nothing.** It is the report's claim that the grid selection checkboxes
+  desynchronise from the bulk-selection store, rejected in Batch 4 on nine scripted re-runs. The
+  rejection rested entirely on a paragraph of prose, so a real desynchronisation would have had to be
+  found from scratch. `e2e/tests/regressions/ws2-select-all-rejection.spec.ts` now asserts the
+  subject (after Select All every row checkbox is checked **and** the store holds exactly that many
+  ids, from an asserted precondition of zero) and reproduces both halves of the report's evidence:
+  that `button:has-text('Select All')` is a substring match which also matches **"Deselect All"**, so
+  `nth=1` addresses a hidden control; and that the two checked, class-less, `aria-label`-less
+  checkboxes are the header settings toggles inside the collapsed gear dropdown. Driven red by
+  breaking `bulkSelection.selectAll()` and rebuilding the bundle: 3 checked → **0**.
+- **`TestEveryRejectedFindingIsPinnedByATest`** makes it mechanical. Driven red by removing the new
+  spec: *"1 findings are recorded as REJECTED in docs/todo.md and pinned by no test: [79]"*.
+- **The audit was satisfying itself, and that is the batch's own near-miss.** The guard is a
+  `_test.go` and it walks every `_test.go` in the repository — including itself — so the sentence in
+  its doc comment naming finding 79 as the gap it had found made the gap look closed. Removing the
+  new spec left it green. It skips its own filename now, with the reason written down, and both
+  halves were re-driven red afterwards (the FIXED half at `[51]`, with `ws13_sharing_test.go` and
+  `ws13-sharing.spec.ts` both hidden). Lesson recorded.
+
+Three rows carry a **FIXED** note and no recorded verification verdict at all — **42, 71, 84**, all
+`WS8` spot-check-tier rows that were simply fixed. Closed out live on a fresh seeded instance rather
+than left ambiguous:
+
+| | measured on :8283 |
+|---|---|
+| **42** — group compare phantom "changed" fields | `/group/compare?g1=78&g2=79` renders exactly **2** `compare-meta-card--diff` cards, both genuine (Name, Category), beside **4** identical cards as the control. No timestamp field is reported as changed. |
+| **71** — tag chips on a detail page | **Not verifiable at runtime, and the first attempt at it was vacuous.** `/resource?id=63` carries **0** hrefs of the form `/resource?id=…&tags=…` — and **0** tag chips of any kind, because the surfaces the finding names do not preload the Tags association. "No chip has the wrong base URL" is trivially true where no chip exists; the ledger row already says this, and it is why Batch 13 pinned 71 as a template-source guard. The evidence that stands is `displayResource.tpl` passing `tagBaseUrl` at all **3** card-partial includes, enforced by `TestDetailPagesGiveCardPartialsATagBaseURL`. |
+| **84** — astral character in Copy Name | `/resource?id=70` emits `updateClipboard('Ünïcødé Ñame 测试 🎨')` — the correct surrogate pair for 🎨, not the 5-hex-digit escape. |
+
+That middle row is worth reading twice. This batch wrote a negative assertion with no positive
+control, in the document that argues against them, and it took a deliberate second look to notice —
+which is the whole reason the rule in `docs/lessons.md` is phrased as "every negative assertion needs
+a positive control **in the same test**" rather than "be careful".
+
+### The browser pass, diffed against the original report
+
+Walked the report's own repro steps on a fresh ephemeral instance on `:8283`, seeded with
+`seed.sh` + `scripts/seed-edge-cases.sh`, across all fourteen workstreams — 47 probes. Everything
+sampled is either fixed or recorded as rejected. The eleven measurements marked ✎ came back
+**byte-for-byte identical** to the numbers the fixing batch recorded, on a different instance built
+from a different seed run, which is worth more than the individual assertions: it says the fixes are
+deterministic rather than incidentally true of one server.
+
+| WS | probe | result |
+|---|---|---|
+| 1 | rotate / crop / recalculate an SVG | **415** ×3, each naming the content type and the supported list (was 500) |
+| 1 | rotate an alpha PNG | `image/png` **1390 B**, path still `.png` ✎ |
+| 1 | preview `?id=64&height=300` → `?id=64` → `&height=300` → `&height=400` | 10959 / 1718 / 10959 / 15902 B, no 0×0 anywhere ✎ |
+| 2 | Select All ↔ store on `/resources` | tracks exactly, both directions (finding 79 rejection re-confirmed) |
+| 3 | `/note?id=999999` | *"That note doesn't exist, or it has been deleted."* + Back to Notes |
+| 3 | `/v1/nope` as a browser | `{"error":"no such endpoint: GET /v1/nope"}`; `/does-not-exist` still `<title>Error 404` |
+| 3 | empty tag merge / empty addTags | 400 *"at least one tag to merge is required"* / *"at least one tag is required"*, in-app page |
+| 3 | `value="__meta__"` sort option | present on tags/groups/notes/resources, **absent** on categories and noteTypes |
+| 4 | Cmd+K dialog | 8 consecutive Tabs all stay inside; Escape returns focus to **"Open search dialog"** |
+| 4 | group tree ArrowRight | focus settles on `LI[role=treeitem]` (was `BODY`) |
+| 4 | metadata Expand overlay | `role=dialog` `aria-modal=true` while open, trap arms, Escape closes it, focus returns to **"Expand metadata to fullscreen"** |
+| 5 | `.detail-table-wrap` | `tabindex="0" role="region" aria-label="Resources table, scrolls horizontally"`, 822 CW / 1026 SW |
+| 5 | admin export/import pickers | 4 `role="combobox"`, 4 `aria-autocomplete`, 4 `aria-controls`, `aria-activedescendant`, `role="listbox"`; import's group input has `aria-label="Search parent group"` |
+| 5 | `/relationType/new` | 3 × `aria-required="true"`, 3 × "Required" |
+| 5 | calendar day cells on note 61 | **35** `role=gridcell`, **35** "Add an event on …" buttons (was 0 focusable) |
+| 5 | paste-upload heading | *"Upload files"* (was *"Upload to Unknown"*) |
+| 6 | 6 list pages filtered to nothing | all six render *"No <entity> match these filters"* |
+| 6 | `/resources?page=99` | **302 → `?page=2`**; `/resources.json?page=99` still **200** |
+| 7 | mobile nav at 390×844 | Escape sets `aria-expanded=false` and hides the panel; focus lands on "Toggle menu"; `role="group"`, not dialog |
+| 7 | `/category/new`, `/noteType/new`, `/resourceCategory/new` at 390 | `body.scrollWidth` **390**, **0** offscreen controls (was 483 / 1198) |
+| 7 | `/groups`, `/notes`, `/resources` at 390 | disclosure present and closed; first card at **y=420** (was 1745 / 1574 / 2124) ✎ |
+| 7 | calendar toggles at 390 | Month **142-206**, Agenda **206-277**, 0 offscreen ✎ |
+| 7 | mobile MRQL input | **358 px** (was 149) ✎ |
+| 7 | long-name resource `h1` at 390 | **358×220** (was 166×500) ✎ |
+| 7 | `/group/tree?containing=70` | `highlightedPath [65,66,67,68,69,70]`, level-6 node rendered; 0 clipped |
+| 8 | `/log?id=518` | **0** occurrences of `types.JSON` |
+| 8 | `/group/tree` | **0** relative `href="groups"`; *"Showing the first 50 root groups"* present |
+| 8 | `/v1/note/block/types` ×5 | **1** distinct body |
+| 8 | dashboard `datetime` | `2026-07-31T09:10:17+03:00` (was a bare `Z` on local time) |
+| 8 | `/resources/simple?page=2` | **302** (was a blank page) |
+| 9 | pause → cancel → cancel → unknown id | 200 `paused` → 200 `cancelled` → **409** `cannot be cancelled (status: cancelled)` → **404** `not found` ✎ |
+| 9 | `POST /v1/jobs/clearCompleted` | `{"cleared":1,"ids":["774fe9ef"]}` |
+| 10 | header at scrollY 1500, 1280×720 | `top: 0`, height 36 (was `bottom: -1464`) ✎ |
+| 10 | `/queries` Next-link hit sweep | **12 of 12** samples reach the link ✎ |
+| 10 | `/logs` "After" picker icon | `INPUT` (was the FAB's `svg`) ✎ |
+| 10 | `aria-current` | `/resources` → `page`; `/resource?id=63` → `true`; `/account` → nothing |
+| 11 | `/queries` typography | **0** `&ldquo; &rsquo; &lsquo; &ndash; &hellip;` across 50 `query-card-sql` blocks |
+| 11 | `POST /v1/query/run?id=63` | `{"columns":["zebra","apple","mango"],"rows":[[…]]}` — authored order, array shape |
+| 11 | `POST /v1/mrql` ×3 | `applied_limit` **500, 500, 500** (finding 159's rejection re-confirmed) |
+| 12 | invalid `MetaSchema` on category / note type / resource category | **400** ×3, each naming the JSON parse error |
+| 12 | `[partial name="does-not-exist-b14"]` lint | `warning: no template partial named "…" exists; this renders nothing` |
+| 13 | `POST /v1/note/share` with `SHARE_PORT` unset | **503** naming the flag; **0** "Share Note" buttons on `/note?id=61` |
+| 14 | `POST /v1/relation` with mismatched categories | names both groups, the relation type **and** the category each side requires |
+| 14 | category delete confirm | *"Delete category 'BugHunt Templated'? 1 group will become Uncategorized."* |
+| 14 | `/admin/export` | `24h`, not `24h0m0s`; **0** `text-blue-700` |
+| 14 | `/admin/settings` section headings | *"Remote downloads"*, with `remote_downloads` kept as the `id` |
+| 14 | Delete control on the 5 taxonomy detail pages | 1 each, **0** on the default resource category (the documented exception) — finding 61's rejection re-confirmed |
+| 14 | Cancel on 5 create forms | present on all five |
+
+**Two of my own probes measured the wrong thing, and both are the campaign's recurring shape.** They
+are recorded because a reader of this document will otherwise take the raw reading as a regression:
+
+1. **The MRQL completion endpoint still returns `label: "relation count"` four times.** That looks
+   like finding 22 unfixed. It is not: the server's shape never changed, and the fix is one line in
+   `src/components/mrqlEditor.js` (`label: s.value, detail: s.label`). Reading the API answers a
+   question about the server; the finding is about what CodeMirror filters on.
+2. **The metadata Expand overlay looked like Escape was inert on `/resource?id=63`.** The resource
+   has `Meta: {}`, so its metadata card and the Expand button are hidden — `getByRole` cannot see the
+   button at all. A programmatic `element.click()` opened an overlay with nothing focusable in it, so
+   `x-trap` never armed and Escape (delivered to `<body>`) was never handled. Driven properly, from a
+   group that has metadata, every assertion holds. This is `locator.focus()` manufactures the state
+   you meant to test for, one door along: `element.click()` will operate a control the user cannot
+   reach.
+
+Finding 64's *unnamed*-relation half could not be re-reproduced on this seed: the edge-case seeder's
+second, deliberately nameless relation collides with the first on
+`UNIQUE (from_group_id, to_group_id, relation_type_id)` and is silently rejected, so the instance
+carries one relation and it has a name. The named half was checked (`h1` carries the name, `<title>`
+carries the type) and the unnamed half is covered by `ws5_keyboard_names_headings_test.go`, which
+plants the row directly. Worth fixing in the seeder if anyone reseeds for finding 64 again.
+
+### What the ledger claimed that was not true
+
+Three, and none of them is a defect in the product. They are recorded because the campaign's own
+argument for the coverage audit is that a document is not evidence.
+
+1. **"160 findings → 26 marked `Dup` → 134 distinct defects".** Counted from the `Dup` column there
+   are **23**, and therefore **137** distinct defects. The estimate was written in Phase 1, before
+   the column it summarises was filled, and was carried unchanged through thirteen batches — as was
+   the same "26 entries total" in the "Rejected and reclassified" table, whose own row list has
+   always had 23 entries in it. Both corrected in place.
+2. **`docs/deferred-work.md` said a raw grep for `confirm(` returns ~39 candidate lines.** It returns
+   **15**, five of which are not dialogs at all. The real surface is 23 sites and the majority of it
+   is `confirmAction(`, which that grep does not see through. The document's warning was pointed the
+   wrong way: the naive grep *under*-counts by more than half. Corrected, with the enumeration.
+3. **`docs/deferred-work.md` located the contrast guard in `server/api_tests/`.** It is
+   `TestNoWhiteTextOnALowContrastBackground` in `internal/arch/templates_test.go`. Corrected.
+
+Everything else in `docs/deferred-work.md` was re-checked against the code and is accurate: all three
+product decisions are still unimplemented in exactly the state it describes (`/admin/users` has one
+per-row action and **0** links in its table, while `UpdateUserHandler`/`UpdateUser`/`SetUserPassword`
+all exist; `/v1/resource/view?id=63` still answers `302 → /files/…`; there is **no** `role="alertdialog"`
+anywhere in `templates/` or `src/`), `WCAG_AA_TAGS` is unchanged at four tags, `KNOWN_ISSUES` is `[]`,
+`ci.yml` still runs exactly the three jobs, the jobs panel is still an include inside `.header` with
+**0** `x-teleport`, and `mr docs lint` carries exactly **16** warnings. One thing it does not say and
+now does: `server-manager.ts` passes `-max-db-connections=2` on the **SQLite** branch only, which is
+the harness asymmetry behind this batch's four Postgres flakes; added as a seventh smaller item there.
+
+### Recommendation: add the browser E2E suite to CI
+
+Raised here as its own decision and deliberately **not** taken, because it is a change to what gates
+a PR rather than a fix.
+
+This is the single structural finding behind every "put it in Go" decision in this plan. `ci.yml`
+runs three jobs — `go test` + `staticcheck`, `mr docs lint`, and one CLI doctest — and the browser
+suite is not one of them. So today **a Playwright guard gates nothing**. That is not a hypothetical:
+this campaign wrote 45 Phase-3 sweep tests, an 11-test focus matrix, and a measured-geometry spec per
+workstream, and every one of them is verified only when a person remembers to run it locally. Three
+findings in this campaign (5, 74, 90) are properties no Go test can assert at all, because focus is a
+runtime property of a live document.
+
+The cost has changed, which is why it is worth re-asking now. Batch 13 traced every flake in the
+campaign to `page.goto: Timeout 15000ms exceeded` under load, root-caused it to
+`-max-db-connections=1` in `e2e/fixtures/server-manager.ts`, and raised it to 2. Four full runs since
+then measure **7.1, 7.3, 7.4 and 7.7 minutes, every one at 0 flaky**, against 12.8 minutes with 3
+flaky before — all four on a moderately loaded machine (1-minute load average 3.4–5.7), none of them
+the idle measurement that would settle it. A fourth CI job at that cost is a different proposition
+from one at the 27 minutes a loaded run used to take.
+
+Concretely, cheapest first:
+
+1. **`tests/accessibility/` + `tests/regressions/` as one job.** 195 tests in 22 files and 482 in
+   114 — the two directories whose entire purpose is "this must not come back". This alone would have
+   gated every guard this campaign wrote, and `tests/accessibility/` runs in **1.5 minutes** on its
+   own.
+2. **The full `default` project.** Adds the feature suites; ~7.7 minutes wall clock at 4 workers.
+3. **`cli` and `auth`** last — the CLI doctest already covers the highest-value slice of `cli`.
+
+Two things to decide alongside it, both of them measured and both in `docs/deferred-work.md`: whether
+to widen `WCAG_AA_TAGS` to `wcag22a`/`wcag22aa` (one violation, one page) before or after wiring the
+job up, and whether a CI runner's core count changes the `-max-db-connections` figure — the value is
+a contention trade-off against worker count, and 2 was chosen against 4 local workers.
 
 ### Batch 13 (Phase 3 guards) — verification run
 
