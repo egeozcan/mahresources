@@ -204,3 +204,44 @@ func TestShareServerStartStopIsSafeUnderConcurrency(t *testing.T) {
 		t.Error("listening flag is clear after a final successful Start")
 	}
 }
+
+// Stop must not return until the port is actually free.
+//
+// Round 3 gave Stop the job of retiring the server, but not of releasing the
+// listener: it called srv.Shutdown, and the listener is closed by the `defer
+// l.Close()` inside srv.Serve — which runs on the goroutine Start spawned. Stop
+// therefore returned while that goroutine had not been scheduled yet, and the
+// port stayed bound for an unbounded moment afterwards. The next Start called
+// net.Listen on it, failed with EADDRINUSE, and called MarkShareServerFailed, so
+// a restart that was refused for a purely internal reason reported that sharing
+// itself was broken.
+//
+// This is not hypothetical and not test-only: the share port is restartable from
+// runtime settings, so the observable defect is that changing it can silently
+// leave sharing switched off until the process is restarted.
+//
+// Found by the full api_tests suite under load, not in isolation — this test
+// fails ~40% of iterations against the unfixed code and never in a single
+// Start/Stop pair, which is why the round-3 review reasoned past it.
+func TestShareServerStopLeavesThePortFree(t *testing.T) {
+	port := freeShareTestPort(t)
+	tc := setupTestEnvWithConfig(t, func(c *application_context.MahresourcesConfig) {
+		c.ShareBindAddress = "127.0.0.1"
+		c.SharePort = port
+	})
+
+	ss := server.NewShareServer(tc.AppCtx)
+
+	// Tight enough that Start races the previous Stop's unfinished teardown.
+	for i := 0; i < 200; i++ {
+		if err := ss.Start("127.0.0.1", port); err != nil {
+			t.Fatalf("iteration %d: Start after a completed Stop failed, so Stop returned before the port was free: %v", i, err)
+		}
+		if !tc.AppCtx.ShareServerListening() {
+			t.Fatalf("iteration %d: the listening flag is clear after a successful Start", i)
+		}
+		if err := ss.Stop(); err != nil {
+			t.Fatalf("iteration %d: Stop returned %v", i, err)
+		}
+	}
+}

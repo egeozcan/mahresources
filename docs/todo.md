@@ -3175,6 +3175,35 @@ because the test calls the share-server markers.
    `setupShareEnabledTestEnv`. This is the "grep the specs for what you are changing"
    rule applied to behaviour rather than markup.
 
+
+#### Round 4 — a Stop that returned before the port was free
+
+Found by the orchestrator's own full-suite run at `085523f9`, not by a batch and not by either of the
+two reviews that read this function and passed it.
+
+- [x] **`ShareServer.Stop` reported success while the port was still bound.** It called
+      `srv.Shutdown` and treated that as releasing the listener. `http.Server.Shutdown` closes the
+      listeners `Serve` has *registered*, and `Serve` runs on the goroutine `Start` spawned — so with
+      that goroutine unscheduled, `Shutdown` found nothing to close and returned at once, leaving the
+      port bound until the goroutine ran and its own `defer l.Close()` fired. The next `Start` then
+      hit `EADDRINUSE` and called `MarkShareServerFailed`. **The user-visible defect is that changing
+      the share port at runtime can silently switch sharing off**, since the restart is refused for a
+      purely internal reason and reported as sharing being broken.
+- [x] **The fix is that whoever acquires the resource releases it.** `ShareServer` holds the
+      `net.Listener` and `Stop` closes it inside the same critical section that stops tracking it, so
+      "Stop has returned" now means "the port is free" — the only contract a restartable server can
+      be used through.
+- [x] **A second error surfaced the moment the first was fixed**, and it is the fix arriving rather
+      than a regression: `Shutdown` then reported `use of closed network connection` on every clean
+      stop, which would have made every successful teardown look broken to its caller. `net.ErrClosed`
+      is now the expected outcome of a stop we performed ourselves.
+
+**Why three passes missed it.** It failed **0 times in 10** runs of its own test in isolation and
+showed up only in a full-package run, because only a loaded machine delays the goroutine long enough.
+The round-3 review reasoned about this exact function's locking and called releasing the lock before
+the blocking call a safety property — true of deadlock, and irrelevant to the defect. The red test
+that finally pinned it is a 200-iteration `Start`/`Stop` loop, which fails on **iteration 1**.
+
 ### WS14 — Long tail and product decisions
 
 Findings **57, 60/65, 65, 78, 98, 104, 107, 112, 117, 129, 130, 131, 136, 137, 138, 140, 145, 149,

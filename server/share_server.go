@@ -47,8 +47,16 @@ type ShareServer struct {
 	// two of them racing wrote and read s.server concurrently (the detector flags
 	// it) and could leave the context's listening flag disagreeing with what is
 	// actually bound.
-	mu          sync.Mutex
-	server      *http.Server
+	mu     sync.Mutex
+	server *http.Server
+	// listener is held so Stop can release the port itself. srv.Shutdown does not
+	// close a listener that srv.Serve has not registered yet, and Serve runs on the
+	// goroutine Start spawned — so Stop used to return while the port was still
+	// bound for as long as that goroutine went unscheduled. The next Start then hit
+	// EADDRINUSE and reported sharing as failed. Closing it here makes "Stop has
+	// returned" mean "the port is free", which is the only useful contract for a
+	// restartable server.
+	listener    net.Listener
 	appContext  *application_context.MahresourcesContext
 	templateSet *pongo2.TemplateSet
 }
@@ -179,6 +187,7 @@ func (s *ShareServer) Start(bindAddress string, port string) error {
 	}
 
 	s.server = srv
+	s.listener = listener
 	s.appContext.MarkShareServerListening()
 	log.Printf("Share server listening on %s", addr)
 	// srv, not s.server: the goroutine outlives the field. Round 3, finding 3 —
@@ -220,8 +229,15 @@ func (s *ShareServer) isCurrentServer(srv *http.Server) bool {
 // is the clearest possible evidence that it is not listening.
 func (s *ShareServer) Stop() error {
 	s.mu.Lock()
-	srv := s.server
-	s.server = nil
+	srv, listener := s.server, s.listener
+	s.server, s.listener = nil, nil
+	// The port is released here, inside the critical section, so a Start that is
+	// waiting on this lock cannot find the old listener still bound. Serve's own
+	// `defer l.Close()` will close it a second time on its way out; net listeners
+	// tolerate that, and Serve wraps it in onceCloseListener anyway.
+	if listener != nil {
+		_ = listener.Close()
+	}
 	s.mu.Unlock()
 
 	if srv == nil {
@@ -231,7 +247,15 @@ func (s *ShareServer) Stop() error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return srv.Shutdown(ctx)
+	// Shutdown reports the first error from closing the server's listeners, and we
+	// closed this one ourselves a few lines up so the port would be free before
+	// this function returned. "already closed" is therefore the expected outcome
+	// of a clean stop, not a failure to stop, and reporting it would make every
+	// successful Stop look like a broken one to its caller.
+	if err := srv.Shutdown(ctx); err != nil && !errors.Is(err, net.ErrClosed) {
+		return err
+	}
+	return nil
 }
 
 // registerShareRoutes sets up all routes for the share server

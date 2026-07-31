@@ -1342,3 +1342,31 @@ state that *prevents* the thing you meant to test. Both come from the same place
 chosen for what it proves rather than for what it does to the page. When a precondition involves
 focus, hover, scroll position or viewport size, ask what the page now looks like, not just what the
 assertion now knows.
+
+## A teardown that returns before its resource is free is not a teardown, and the bug hides behind a goroutine
+
+`ShareServer.Stop` called `srv.Shutdown` and considered the port released. It was not.
+`http.Server.Shutdown` closes the listeners that `Serve` has registered, and `Serve` was running on
+the goroutine `Start` had spawned — so when that goroutine had not been scheduled yet, `Shutdown`
+found nothing to close, returned promptly, and the port stayed bound until the goroutine finally ran
+and its own `defer l.Close()` fired. `Stop` had already returned success by then. The next `Start`
+called `net.Listen` on a port that was still taken, failed with `EADDRINUSE`, and marked sharing as
+broken — so changing the share port at runtime could silently switch sharing off.
+
+Three things generalise, and the third is the one that cost the time:
+
+**A teardown's contract is about the resource, not about the object.** "I told the server to shut
+down" and "the port is free" are different claims, and only the second is useful to the next caller.
+Whoever acquires the resource should release it, in the same critical section that stops tracking it.
+
+**A defect that lives in a scheduling window will not reproduce in isolation.** This failed zero times
+in ten runs of its own test and once in a full-package run, because only a loaded machine delays the
+goroutine long enough. Two independent reviews read this exact function and passed it — one of them
+explicitly reasoned about the locking and called releasing the lock before the blocking call a safety
+property, which is true of deadlock and irrelevant to the actual bug. Reasoning about a race by
+reading it is worth much less than a loop that runs it 200 times.
+
+**When you take over releasing a resource, expect the old owner's release to start failing.** Closing
+the listener in `Stop` made `Shutdown` return "use of closed network connection" on every clean stop,
+which would have made every successful teardown look broken to its caller. The second error is not a
+regression — it is the first fix arriving, and it needs its own line of code and its own reason.
