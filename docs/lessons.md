@@ -1439,3 +1439,32 @@ So: read a provenance label as a statement about how the observation was produce
 risks by it. Read a confidence label as a statement about the author's state of mind, and ignore it.
 And do not let either buy you out of asking *why* — agreeing that a symptom is real is the cheap half,
 and it is not the half that decides which file you open.
+
+## A check that shares the original's blind spot is not a check
+
+The ledger said "26 duplicate findings, 134 distinct defects". It was an estimate written before the
+column it summarised had been filled, and it survived thirteen batches. A late batch finally counted
+the column and got **23**, and wrote that the row list "has always had 23". The orchestrator verified
+that with `grep -c "| Dup"`, saw 23, and reported it as confirmed.
+
+Both were wrong. There are **27**. Four rows carry the `Dup → N` marker somewhere other than the
+start of a cell — two of them record a substantive confirmation first and are marked duplicate only
+in their *fixed* half — so a pattern anchored to "cell begins with Dup" cannot see them. The batch's
+count and the orchestrator's verification had the same blind spot, so the check could only ever
+agree with the claim.
+
+The rule this codebase already had was *a test whose locator is wider than its subject passes for
+reasons unrelated to the thing it guards*. This is its mirror: **a probe narrower than its subject
+confirms whatever you already believed.** Both fail the same way — the measurement stops being about
+the thing.
+
+Two practical consequences:
+
+**Verify a count by a different route than the one that produced it.** Re-running the original method
+tests nothing. Here the honest check was to list the matching row numbers and compare them against the
+claimed list, which takes the same ten seconds and would have shown four extra immediately.
+
+**Be suspicious when a correction lands neatly.** The estimate was 26 and the correction was 23; the
+truth was 27, so the number that had been called wrong for thirteen batches was nearly right, and
+"fixing" it made it worse. A correction that moves a number *away* from a long-standing figure
+deserves more scrutiny than one that confirms it, not less.

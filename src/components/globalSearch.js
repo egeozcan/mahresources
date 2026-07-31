@@ -1,6 +1,7 @@
 import { abortableFetch } from '../index.js';
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { captureTrigger, focusedElement, restoreFocus } from '../utils/focus.js';
+import { blockingModal } from '../utils/modality.js';
 
 // Client-side search cache with TTL
 const searchCache = new Map();
@@ -193,6 +194,20 @@ export function globalSearch() {
 
         toggle(event) {
             if (!this.isOpen) {
+                // Only on the way in. A guard on the way out would find this
+                // dialog's own markup and refuse to close, which is the one failure
+                // mode worse than the one it prevents.
+                //
+                // The jobs cockpit has had this check since the round-3 audit, and
+                // the comment above its copy named this dialog as one it could
+                // collide with — but the guard lived on the cockpit alone, so
+                // Cmd+K with the panel open still opened a second aria-modal
+                // dialog and armed a second x-trap over the first.
+                const blocker = blockingModal();
+                if (blocker) {
+                    this.announce('A dialog is already open, so search was not opened. Close it, then press Command or Control and K.');
+                    return;
+                }
                 // Read before the flip: once the x-if mounts and the $nextTick
                 // above runs, document.activeElement is the dialog's own input.
                 // The activeElement fallback is what makes Cmd+K work — that

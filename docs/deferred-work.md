@@ -228,3 +228,47 @@ and `auth` — is written up under "Recommendation: add the browser E2E suite to
   the load that produces it, the way Batch 13 did for the SQLite branch, and split server from client
   before theorising. This matters more if the browser suite goes into CI (item 5), because a CI
   runner is a smaller machine than this one.
+
+---
+
+## 7. Findings from the final independent review (2026-07-31), deferred
+
+The closing review of the whole branch raised seven items. Two were confirmed and fixed immediately
+(the ledger arithmetic, and the missing modal guard on `globalSearch` — see `docs/todo.md`). The five
+below are plausible and unverified: the mechanism in each case is sound on its face, but none has
+been reproduced, so treat each as a lead with a citation rather than a diagnosis.
+
+- **`server/api_tests/bughunt_ws8_test.go:133-153` is vacuous on a UTC machine.**
+  `TestDashboardTimeAttributeIsARealInstant` only fires when the machine's UTC offset exceeds one
+  minute: the pre-fix stamp (local wall-clock with a literal `Z`) parses as valid RFC3339 with
+  `drift = offset`, so on a UTC host — which is the typical CI host — it passes against the unfixed
+  code. This is the worst of the five, because it is a guard in the one suite CI actually runs. The
+  suggested fix is to compare against the server's own local zone rather than against UTC.
+
+- **`templates/partials/mentionDropdown.tpl:19-26` — `<button role="option">` with no
+  `tabindex="-1"`.** Under an activedescendant combobox, Tab walks into the listbox and DOM focus
+  diverges from `aria-selected`; `role="option"` also strips the button role. axe does not catch this,
+  which is why it survived a sweep that keeps `KNOWN_ISSUES` empty.
+
+- **`role="combobox"` on a `<textarea>` drops multiline semantics** — no `aria-multiline`. This branch
+  extended the pattern rather than introducing it. Related: `aria-allowed-role` flags it under
+  axe's `best-practice` tag set, which is item 4 above.
+
+- **`src/components/pluginSettings.js:63` sets `saved = true` and then reloads immediately**, so the
+  "Saved!" live region at `templates/managePlugins.tpl:138` can never paint. Cosmetic, but it means an
+  announcement the code believes it makes is never made.
+
+- **`templates/partials/blockEditor.tpl:252-255` — the gallery remove button stays `opacity-0` until
+  hover or `focus-visible`**, so it is invisible on touch. Finding 48's hit-area half was fixed; its
+  discoverability half was not.
+
+Two further observations from the same review that are **not** defects, recorded so they are not
+re-raised as ones:
+
+- The `{columns, rows}` change to `POST /v1/query/run` ships with no compatibility shim. That was a
+  deliberate decision, taken once and knowingly. The fair sub-point is that the Postgres half of the
+  new cell typing is pinned only by `ws11_query_run_pg_test.go`, which CI does not run — that is a
+  real gap, and it is an argument for item 5 (browser/Postgres suites in CI) rather than a defect in
+  the change.
+- `fieldset { min-inline-size: 0 }` is global and applies to all nine `<fieldset>` templates. Inert
+  today; a latent clipping trap for future non-wrapping content, and no Go test sees it.

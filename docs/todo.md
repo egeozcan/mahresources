@@ -397,16 +397,29 @@ Statuses are filled in during Phase 1.
 | 159 | low | bug | recovered | WS11 | verify (expect reject) | **REJECTED — not reproducible, with the mechanism proved.** Three identical `POST /v1/mrql` calls all returned `applied_limit: 500`. Setting `mrql_default_limit=3` made both of a pair return **3**; resetting returned both to **500**. The value is a pure function of the configuration, and finding 33's own evidence records the hunt changing that setting mid-run  · **NOT FIXED — struck**, pinned by a Go test asserting stability *and* that the setting is what moves it |
 | 160 | low | bug | recovered | WS11 | verify (self-caveated) | **CONFIRMED despite the caveat — and it is the same bug as 22.** For `type = resource AND tags.c` no popup opened automatically or on Ctrl+Space, while `POST /v1/mrql/complete` at that cursor returned 29 suggestions including `tags.count`. The cause is not the dot: CodeMirror filters options by their **label**, and the label was the description, so `tags.c` is not a subsequence of "relation count" and every option was filtered out  · **FIXED by 22's one-line change.** After: the popup opens with `tags.count` |
 
-**Ledger arithmetic.** 160 findings → ~~26~~ **23** marked `Dup` → ~~**134**~~ **137 distinct
-defects**, of which 13 are accepted without re-verification, 6 are already confirmed from source, and
-4 route straight to a product decision. That leaves ~111 to verify, ~60 of them in the expensive
-`recovered` tier.
+**Ledger arithmetic.** 160 findings → ~~26~~ ~~23~~ **27** marked `Dup` → ~~**134**~~ ~~**137**~~
+**133 distinct defects**, of which 13 are accepted without re-verification, 6 are already confirmed
+from source, and 4 route straight to a product decision. That leaves ~111 to verify, ~60 of them in
+the expensive `recovered` tier.
 
-> **Corrected in Batch 14.** The `26`/`134` pair was an estimate written before the `Dup` column was
-> filled and it was never re-derived. Counted from the column itself there are **23** duplicate rows
-> (37, 46, 52, 53, 59, 60, 62, 76, 77, 80, 86, 87, 88, 91, 92, 93, 101, 105, 121, 132, 135, 146, 158),
-> and the "Rejected and reclassified" table below repeats the same wrong total. The final arithmetic
-> is under "## Review".
+> **Corrected twice, and the first correction was worse than the estimate it replaced.**
+>
+> The original `26`/`134` was an estimate written before the `Dup` column was filled, and it was
+> never re-derived. Batch 14 re-derived it and got **23**, which the final review then showed was
+> wrong in the other direction — and by more. Counted from the column itself there are **27** rows
+> carrying a `Dup → N` marker: 37, 46, 52, 53, 59, 60, 62, **63**, 69, 76, 77, 80, 86, 87, 88, 91,
+> 92, 93, 101, **102**, 105, 121, **122**, 132, 135, 146, 158. So the distinct-defect count is
+> **133**.
+>
+> Batch 14's count missed 63, 69, 102 and 122 because it looked for cells that *begin* with `Dup`,
+> while those four carry the marker later in the row — 69 and 102 record a substantive confirmation
+> first and are marked `Dup` only in their **FIXED** half. The orchestrator then "verified" the 23
+> with `grep -c "| Dup"`, which has exactly the same blind spot, so the check could only ever agree
+> with the claim it was checking.
+>
+> That is this campaign's own lesson (*a probe narrower than its subject passes for reasons unrelated
+> to the thing it measures*) applied to the ledger that records the lesson. It is also why the
+> original estimate looked closer than it was: `26` was near-right by luck, not by counting.
 
 **Running tally after Batch 11** (WS1–WS13 complete; only WS14 left). Kept as the snapshot it was;
 **the final numbers are the arithmetic table under "## Review"**, and two rows here moved after it was
@@ -3673,7 +3686,7 @@ Filled in during Phase 1. Pre-populated with what is already known:
 | # | Disposition | Reason |
 |---|---|---|
 | 26, 44, 45, 85 | **Un-disputed → confirmed** | All four ⚠️ DISPUTED findings are real; the re-checks were wrong (wrong URL, wrong assumption about client vs server rendering, and two not checked at all). Evidence in Phase 1. |
-| 37, 46, 52, 53, 59, 60, 62, 76, 77, 80, 86, 87, 88, 91, 92, 93, 101, 105, 121, 132, 135, 146, 158 | **Duplicate** | Closed by another finding's fix. Not rejections — merged so the work is not counted twice. ~~26~~ **23** entries total (counted in Batch 14 from the row list beside it, which has always had 23); see the `Dup` column. |
+| 37, 46, 52, 53, 59, 60, 62, 63, 69, 76, 77, 80, 86, 87, 88, 91, 92, 93, 101, 102, 105, 121, 122, 132, 135, 146, 158 | **Duplicate** | Closed by another finding's fix. Not rejections — merged so the work is not counted twice. ~~26~~ ~~23~~ **27** entries total, counted from the `Dup → N` markers in the ledger itself rather than from this list, which was missing 63, 69, 102 and 122 and asserted it "has always had 23". All four markers were in the column from `2cc4d4f6`, seventeen commits before that claim was written. |
 | 159 | **Expect not-reproducible** | Finding 33's own evidence shows the hunt changed `mrql_default_limit` to 3 mid-run. |
 | 6 | **Confirmed symptom, wrong diagnosis** | The arrow-key handlers exist (`blockEditor.tpl:947-950`). Re-test after fixing 47. |
 | 160, 143, 79 | **Verify before acting** | Self-caveated by the report, or fixed by a reload. |
@@ -3740,21 +3753,25 @@ the cheapest high-confidence work clears the ledger early.
 
 ### Final ledger arithmetic
 
-Counted from the ledger rows themselves, not carried forward from any earlier estimate — the
-"26 Dup / 134 distinct" pair at the head of the ledger had been wrong since Phase 1 and was repeated
-unchanged through thirteen batches. See "What the ledger claimed that was not true" below.
+Counted from the `Dup → N` markers in the ledger rows themselves. This table has now been wrong
+twice: the "26 Dup / 134 distinct" pair at the head of the ledger was an unchecked Phase 1 estimate
+repeated through thirteen batches, and Batch 14's re-derivation of it to **23** was wrong by more,
+because it looked only for cells *beginning* with `Dup` and so missed the four rows that carry the
+marker later (63, 69, 102, 122). The orchestrator's check used a grep with the same blind spot and
+could only agree. Corrected to **27** by the final review. See "What the ledger claimed that was not
+true" below.
 
 | | count | notes |
 |---|---|---|
 | Findings in the report | **160** | 24 high / 77 medium / 59 low; 52 bug, 57 ux, 31 a11y, 20 design |
 | Ledger rows | **160** | one per finding; every row has a recorded disposition |
-| Marked `Dup` | **23** | 37, 46, 52, 53, 59, 60, 62, 76, 77, 80, 86, 87, 88, 91, 92, 93, 101, 105, 121, 132, 135, 146, 158 |
-| **Distinct defects** | **137** | 160 − 23 |
-| Rows carrying a **FIXED** note | **149** | of which 23 are `Dup` rows closed by their primary → **126 distinct fixes** |
+| Marked `Dup` | **27** | 37, 46, 52, 53, 59, 60, 62, 63, 69, 76, 77, 80, 86, 87, 88, 91, 92, 93, 101, 102, 105, 121, 122, 132, 135, 146, 158 |
+| **Distinct defects** | **133** | 160 − 27 |
+| Rows carrying a **FIXED** note | **149** | of which 27 are `Dup` rows closed by their primary → **122 distinct fixes** |
 | **Rejected — not a defect** | **8** | 14, 39, 61, 79, 96, 134, 143, 159 |
 | **Needs a product decision — verified, recommended, not implemented** | **3** | 107, 130, 145; all three **decided and deferred** by the user on 2026-07-31, written up in `docs/deferred-work.md` |
 | Still open | **0** | 149 + 8 + 3 = 160 |
-| Reclassified (`Dup` → closed by another finding's fix) | **23** | not rejections; merged so the work is not counted twice |
+| Reclassified (`Dup` → closed by another finding's fix) | **27** | not rejections; merged so the work is not counted twice |
 | **Cause-corrected — real symptom, wrong stated cause** | **34** | 2, 4, 6, 8, 9, 19, 22, 24, 31, 34, 36, 48, 49, 55, 64, 72, 73, 74, 78, 94, 95, 97, 120, 136, 141, 142, 144, 148, 149, 150, 153, 156, 157, 160 |
 | "Where the plan was wrong" subsections | **13** | 57 numbered corrections between them |
 | "Defects the tests did not catch" subsections | **8** | |

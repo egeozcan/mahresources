@@ -1,5 +1,6 @@
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 import { captureTrigger, focusedElement, focusFirstIn, restoreFocus } from '../utils/focus.js';
+import { blockingModal, isRendered } from '../utils/modality.js';
 
 export function downloadCockpit() {
     return {
@@ -129,26 +130,23 @@ export function downloadCockpit() {
          *
          * Two aria-modal dialogs open at once is the defect whichever way it paints,
          * so the panel declines rather than fighting for the top.
+         *
+         * The implementation moved to `utils/modality.js` after the final review
+         * found the reason it had to be shared: this comment already named
+         * globalSearch.tpl as a dialog the panel could collide with, and the guard
+         * still lived only here — so Cmd+K with the panel open opened a second
+         * dialog and armed a second trap from the other side. A rule one side
+         * enforces is not a rule.
+         *
+         * `this._root` so the panel never finds itself: on the paths reachable while
+         * it is open, that would make it refuse to do anything.
          */
         blockingModal() {
-            for (const el of document.querySelectorAll('[aria-modal="true"]')) {
-                // Never this panel: on the paths that can be reached while it is open,
-                // finding itself would make it refuse to do anything.
-                if (this._root?.contains?.(el)) continue;
-                if (this.isRendered(el)) return el;
-            }
-            return null;
+            return blockingModal(this._root);
         },
 
-        /**
-         * Whether an element is actually painted. Three of the four overlays use
-         * x-show, so they stay in the document with `display: none` and querying for
-         * them is not enough on its own.
-         */
         isRendered(el) {
-            if (!el || !el.isConnected) return false;
-            if (typeof el.checkVisibility === 'function') return el.checkVisibility();
-            return !!(el.offsetWidth || el.offsetHeight || el.getClientRects?.().length);
+            return isRendered(el);
         },
 
         /**
