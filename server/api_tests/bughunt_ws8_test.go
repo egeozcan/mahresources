@@ -119,10 +119,13 @@ func TestVersionDownloadFilenameHasExtension(t *testing.T) {
 //     passed against the unfixed code on precisely the machine that matters.
 //   - The drift check below is one-sided as originally written, so even off UTC it
 //     could only ever fire east of Greenwich.
-//   - It can vanish entirely: the dashboard provider fans out over five goroutines
-//     and the api_tests DSN uses cache=private, which gives each pooled connection
-//     a fresh empty in-memory database. The activity feed then renders no <time> at
-//     all and this test t.Skips — measured at 6 runs in 10 — which CI scores green.
+//   - It could vanish entirely: the dashboard provider fans out over five
+//     goroutines and the api_tests DSN used cache=private, which gave each pooled
+//     connection a fresh empty in-memory database. The activity feed then rendered
+//     no <time> at all and this test t.Skipped — measured at 12 runs in 20 — which
+//     CI scores green. Fixed on 2026-08-05 by moving the harness to cache=shared;
+//     re-measured at 0 skips in 20. The skip branch stays, because it is still the
+//     honest thing to do if the feed is ever legitimately empty.
 //
 // What it still earns its place doing is checking that whatever the dashboard does
 // render parses as RFC3339 and is not absurd. The two-sided bound below is the fix

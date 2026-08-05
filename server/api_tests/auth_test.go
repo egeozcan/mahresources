@@ -19,12 +19,19 @@ func setupAuthEnv(t *testing.T) *TestContext {
 		c.AuthEnabled = true
 		c.SessionTTL = time.Hour
 	})
-	// Pin the in-memory test DB to a single connection. With mode=memory&
-	// cache=private each new connection is a separate, empty database, so under
-	// any concurrent access a token/session lookup can hit a fresh connection and
-	// spuriously fail auth (401 instead of the expected 403). Real deployments use
-	// a file/WAL or Postgres DB where connections share data, so this only affects
-	// the in-memory test harness.
+	// Pin the in-memory test DB to a single connection.
+	//
+	// The original reason is gone: the harness DSN was `cache=private`, where each
+	// new connection is a separate empty database, so a concurrent token/session
+	// lookup could land on a fresh connection and spuriously fail auth. It is
+	// `cache=shared` now and connections see each other's rows.
+	//
+	// The pin stays because a *second* reason applies. Shared-cache SQLite takes
+	// table-level locks, and a writer conflicting with a reader raises
+	// SQLITE_LOCKED, which busy_timeout does not retry — it needs the
+	// sqlite_unlock_notify build tag this project does not use. The concurrent-write
+	// tests built on this helper (user_settings_test.go) would surface that as a
+	// hard error. Serialising the pool sidesteps it, and costs nothing here.
 	if sqlDB, err := tc.DB.DB(); err == nil {
 		sqlDB.SetMaxOpenConns(1)
 	}

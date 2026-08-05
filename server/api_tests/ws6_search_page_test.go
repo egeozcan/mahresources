@@ -22,12 +22,13 @@ import (
 
 // setupSearchEnv is SetupTestEnv with the connection pool pinned to one.
 //
-// SetupTestEnv opens "file:<test>?mode=memory&cache=private", where every new
-// connection is a separate, empty database — and GlobalSearch fans out over ten
-// goroutines, one per entity type, which forces the pool open. Without the pin,
-// nine of those ten see an empty schema, every search returns
-// {"total":0,"results":[]}, and any assertion of the form "the out-of-scope item
-// is absent" passes for free. auth_test.go:22-30 already documents the same trap.
+// GlobalSearch fans out over ten goroutines, one per entity type, which forces the
+// pool open. Under the harness's old `cache=private` DSN every new connection was a
+// separate empty database, so up to nine of the ten saw an empty schema, every
+// search returned {"total":0,"results":[]}, and any assertion of the form "the
+// out-of-scope item is absent" passed for free. The DSN is `cache=shared` now, so
+// that specific trap is closed; the pin stays because unpinning the seventeen tests
+// that carry it is its own change. See setupAuthEnv.
 func setupSearchEnv(t *testing.T) *TestContext {
 	t.Helper()
 	tc := SetupTestEnv(t)

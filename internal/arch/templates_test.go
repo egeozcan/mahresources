@@ -896,10 +896,12 @@ var dateFilterLayout = regexp.MustCompile(`\|\s*date\s*:\s*"([^"]*)"`)
 //     the machine that matters, and only ever failed on its author's UTC+3 laptop.
 //   - It was also one-sided: `drift > time.Minute` cannot fire west of Greenwich,
 //     where the bogus stamp resolves into the past instead.
-//   - And it can skip. The dashboard provider fans out over five goroutines, and
-//     the api_tests DSN uses `cache=private`, which hands each pooled connection a
-//     brand-new empty in-memory database — so the activity feed often renders no
-//     <time> at all and the test t.Skips, which CI scores as a pass.
+//   - And it could skip. The dashboard provider fans out over five goroutines, and
+//     the api_tests DSN used `cache=private`, which handed each pooled connection a
+//     brand-new empty in-memory database — so the activity feed often rendered no
+//     <time> at all and the test t.Skipped, which CI scores as a pass. That half is
+//     fixed (the harness is cache=shared as of 2026-08-05), but the first two
+//     points are not, and they are why this static guard exists.
 //
 // The layout is decidable from the template source, on any host, with no database
 // and no rendering. That is the whole reason to assert it here.

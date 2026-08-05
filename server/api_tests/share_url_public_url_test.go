@@ -1,6 +1,7 @@
 package api_tests
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -19,9 +20,17 @@ import (
 
 // setupTestEnvWithShareConfig builds a test context with a specific
 // SharePublicURL value so BH-033 can exercise the conditional URL rendering.
+//
+// A second setup helper in this package, with its own hand-maintained AutoMigrate
+// list, so it carries the same DSN as SetupTestEnv for the same reason: under
+// `cache=private` every pooled connection is a brand-new empty database, and any
+// handler that fans out over goroutines has most of them querying an unmigrated DB
+// and quietly returning nothing. The tests here render share URLs and do not fan
+// out, so it was inert — but a helper with the opposite cache semantics sitting
+// beside the one that was just fixed is how the trap gets walked back into.
 func setupTestEnvWithShareConfig(t *testing.T, sharePublicURL string) *TestContext {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=private"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s_%d?mode=memory&cache=shared", t.Name(), nextTestDBSeq())), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open in-memory sqlite: %v", err)
 	}

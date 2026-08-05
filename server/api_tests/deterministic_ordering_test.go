@@ -49,13 +49,17 @@ var nonDeterministicEndpoints = map[string]string{
 // twenty times and requires one distinct response body.
 func TestParameterlessGETsAreByteStable(t *testing.T) {
 	tc := SetupTestEnv(t)
-	// SetupTestEnv opens "file:<test>?mode=memory&cache=private", where every
-	// new pool connection is a separate, empty database. Several endpoints in
-	// this sweep fan out over goroutines (/v1/admin/data-stats counts eight
-	// tables concurrently, /v1/search queries ten), which forces the pool open —
-	// so without the pin they answer 500 "no such table" a random number of
-	// times out of twenty and this guard fails on the harness rather than on
-	// the product. docs/lessons.md records the same trap for GlobalSearch.
+	// Several endpoints in this sweep fan out over goroutines (/v1/admin/data-stats
+	// runs fifteen count queries concurrently, /v1/search one per entity type),
+	// which forces the pool open. That used to be fatal: the harness DSN was
+	// `cache=private`, where every new pool connection is a separate empty
+	// database, so those endpoints answered 500 "no such table" a random number of
+	// times out of twenty and this guard failed on the harness rather than on the
+	// product. The DSN is `cache=shared` now, so that is no longer what the pin is
+	// for. It stays because unpinning seventeen tests at once is its own change and
+	// deserves its own measurement (shared-cache SQLite has a locking hazard
+	// setupAuthEnv spells out), and because twenty byte-identical responses are
+	// easier to reason about on one connection anyway.
 	if sqlDB, err := tc.DB.DB(); err == nil {
 		sqlDB.SetMaxOpenConns(1)
 	}

@@ -9,6 +9,7 @@ import (
 	"mahresources/constants"
 	"net/url"
 	"strings"
+	"sync/atomic"
 
 	"github.com/jmoiron/sqlx"
 	"mahresources/models"
@@ -23,6 +24,13 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+// testDBSeq makes every database name in this package distinct, whatever the test
+// name is. See the DSN comment in setupTestEnvWithConfig for why that matters under
+// a shared cache; it also covers the five tests that call the setup helper twice.
+var testDBSeq atomic.Uint64
+
+func nextTestDBSeq() uint64 { return testDBSeq.Add(1) }
 
 // TestContext holds the application context and the router for testing
 type TestContext struct {
@@ -40,9 +48,39 @@ func SetupTestEnv(t *testing.T) *TestContext {
 // mutate callback adjusts the MahresourcesConfig before the context is built,
 // letting tests enable auth or tweak other settings without duplicating setup.
 func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.MahresourcesConfig)) *TestContext {
-	// Use unique in-memory SQLite database per test to avoid interference
-	// The test name is sanitized to create a unique database name
-	dbName := fmt.Sprintf("file:%s?mode=memory&cache=private", t.Name())
+	// One in-memory SQLite database per test, keyed on the test name so tests never
+	// see each other's rows.
+	//
+	// `cache=shared` and not `cache=private`, which is what this was and which was
+	// quietly wrong. Under a private cache the name is decoration: *every pooled
+	// connection gets its own brand-new empty database*. A handler that runs on one
+	// connection sees the migrated, seeded DB; anything that fans out over
+	// goroutines has the rest of them opening fresh connections into empty
+	// databases and logging `no such table: …`.
+	//
+	// Three fan-out sites are affected. The dashboard provider runs five goroutines
+	// (dashboard_template_context.go), GetDataStats fifteen, and global search one
+	// per entity type. Measured effect before the change:
+	// TestDashboardTimeAttributeIsARealInstant took the "rendered no <time datetime>
+	// elements" branch and t.Skip'd in **12 of 20** separate runs — and a skip
+	// scores green, so a guard in the one suite CI runs was silently not running,
+	// most of the time.
+	//
+	// Nothing holds a connection open deliberately, and nothing needs to: Go keeps
+	// up to MaxIdleConns (default 2) connections alive with no idle timeout, and
+	// gorm.Open pings, so a connection exists from open until the pool is closed —
+	// which nothing in this package does. Deliberately NOT an explicit
+	// sqlDB.Conn() keepalive: seventeen tests pin the pool with
+	// SetMaxOpenConns(1), and checking out the single permitted connection would
+	// deadlock every one of them on a context.Background() wait.
+	//
+	// The sequence number is what `cache=private` used to give for free. Under a
+	// shared cache the name is a real lookup key, and `t.Name()` is identical on
+	// every iteration of `go test -count=N` — so iterations 2..N would attach to
+	// iteration 1's database, still holding its rows. That is not hypothetical: with
+	// the name alone, `-count=3` over four of this package's tests failed, and the
+	// same four passed under `cache=private`. Measured before shipping the change.
+	dbName := fmt.Sprintf("file:%s_%d?mode=memory&cache=shared", t.Name(), nextTestDBSeq())
 	db, err := gorm.Open(sqlite.Open(dbName), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("Failed to open test database: %v", err)
