@@ -5,6 +5,34 @@ speculative: each item has a verified current behaviour, a decision already take
 that produced it. The campaign's own history is in `docs/todo.md`; the reusable rules it generated are
 in `docs/lessons.md`.
 
+---
+
+## Status after the 2026-08-05 pass
+
+| item | status |
+|---|---|
+| 1. Accessible confirm modal | **done** — all 23 sites, Go + vitest + e2e guards |
+| 2. User edit page | **not started** |
+| 3. Preview opens lightbox | **done** |
+| 4. Widen `WCAG_AA_TAGS` | **not done** — re-measured, and the doc's diagnosis was wrong (see below) |
+| 5. Browser E2E in CI | **stage 1 done** — accessibility + regressions job added |
+| 6. Postgres harness | **done** — measured, no limit adopted, a different defect fixed |
+| 7. Smaller items | **partly** — docs-lint triaged, error-body defect fixed; teleport still open |
+| 8. Five review findings | **done** — all five, plus corrections to three of them |
+
+Gates at the end of that pass: `go test --tags 'json1 fts5' ./...` green, `staticcheck` clean,
+`npm run test:unit` 923 passing (was 902), `npm run build` clean, full
+`cd e2e && npm run test:with-server:all` **1921 passed / 0 failed** (12 flaky, all
+`page.goto: Timeout 15000ms exceeded` on a heavily loaded machine — the known load class, none in the
+new specs), and three full Postgres runs at 0 flaky.
+
+**Five factual corrections to this document were made in that pass.** They are recorded inline with
+their items rather than listed here, but the pattern is worth naming: in each case the stated *reason*
+for a decision was checkable in seconds and wrong — a path that does not exist, a landmark in the wrong
+file, an ARIA fix that adds a violation, a client that never calls the function it was excused by, and
+a target-size failure of a different kind than the one filed. **Check a cited path or symbol before
+building on the sentence around it.**
+
 Read `docs/lessons.md` before starting any of these. The rules in it were each paid for by a specific
 failure in this codebase, and several of them apply directly to the work below.
 
@@ -20,6 +48,60 @@ browser has three.
 ---
 
 ## 1. Accessible in-app confirm modal (product decision 130)
+
+**Status: IMPLEMENTED 2026-08-05.** The original entry follows the result, because its acceptance
+criteria are what the implementation was measured against.
+
+### What shipped
+
+- `src/components/confirmDialog.js` — an Alpine store with a promise API, `ask()` / `accept()` /
+  `cancel()`, plus an `askToConfirm()` helper for plain modules. It **fails closed**: if the store is
+  missing the answer is "no", because the right behaviour when the confirmation mechanism is broken is
+  that the destructive action does not happen.
+- `templates/partials/confirmDialog.tpl` — `role="alertdialog"`, `aria-modal`, labelled and described,
+  `x-trap.noscroll.noreturn`, included last in `.overlays` in `layouts/base.tpl`.
+- All 23 sites converted. The four inline `onsubmit="return confirm(…)"` forms now route through
+  `confirmAction`, so they gain the selection guard and the `{count}`/`{s}`/`{winner}` resolution they
+  never had.
+
+### Three things worth knowing that were not in the original entry
+
+**`x-trap.inert` does not set `inert`.** It sets `aria-hidden="true"` on siblings, which removes the
+page from the accessibility tree but leaves it clickable and focusable — so the acceptance criterion
+"the page beneath is inert, not merely covered" was *not* reachable through `x-trap`. The store sets the
+real `inert` property itself, walking `<body>`'s children and descending into `.overlays` so a modal the
+confirm was raised *from* goes inert too. It records exactly which elements it touched, so an element
+already inert for another reason is left alone.
+
+**The synchronous coupling was the whole risk, and it is the opposite of what it looks like.**
+`bulkSelection.js:265-272` is a delegated submit listener that reads `event.defaultPrevented`
+synchronously. An async confirm must therefore re-submit with `form.requestSubmit()` and **not**
+`form.submit()` — `submit()` dispatches no submit event, so the delegated listener would never run and
+every confirmed bulk operation would silently become a no-op. The second pass through the handler must
+also *not* call `preventDefault()`, for the same reason. Both are pinned by unit tests.
+
+**A latent escaping bug fell out of the conversion.** `adminShares.tpl` used `{{ note.Name|escape }}`,
+but Pongo2 autoescapes by default (verified empirically, not assumed), so that was double-escaping: a
+note named `it's` was announced as `it&#39;s`. Worse, single-escaping it would have *broken* the JS,
+because the HTML parser decodes entities before any JS in an attribute is parsed. Messages carrying
+user text now travel in `data-confirm-message`, where the value is only ever a DOM string.
+
+### Guards
+
+- `internal/arch/templates_test.go` (**not** `server/api_tests/templates_test.go`, which does not
+  exist — see the correction under item 7): `TestNoNativeConfirm`, `TestNoInlineOnsubmitConfirm`,
+  `TestConfirmDialogIsReachableFromEveryPage`. These strip comments before scanning, and require a
+  non-empty argument, so a doc comment describing `confirm()` and the entity picker's zero-argument
+  `confirm()` commit method are not swept up.
+- `src/components/confirmDialog.test.ts` (12 tests) and a rewritten `confirmAction.test.ts`.
+- `e2e/tests/regressions/confirm-dialog.spec.ts` — every dismissal test asserts **the world is
+  unchanged** via the API, not that the dialog appeared.
+- `e2e/helpers/confirm-dialog.ts` — the shared driver. Note the deliberate consequence: a spec that
+  forgets to answer a confirm now *fails* rather than silently proceeding on Playwright's auto-dismiss.
+
+---
+
+### Original entry (2026-07-31)
 
 **Status: decided, not started.** The user chose this on 2026-07-31, against the recommendation of
 both the batch that investigated it and the orchestrator. That is the decision; implement it rather
@@ -129,6 +211,26 @@ See the "Root admin invariant & creator attribution" section of `CLAUDE.md`.
 
 ## 3. Main preview opens the lightbox, plus an explicit "Open original" (product decision 145)
 
+**Status: IMPLEMENTED 2026-08-05.**
+
+The template half was the easy half. The load-bearing part was in
+`src/components/lightbox/navigation.js`: this resource is absent from the page's lightbox item list
+**by construction** — `GetSeriesSiblings` excludes the resource itself, and the sidebar is not a
+scanned lightbox container — so wiring the preview to `openFromClick` without more would have produced
+a *dead click*, which is strictly worse than the plain link it replaced. `openFromClick` now falls back
+to opening a gallery of one, and `close()` restores the page's own list afterwards. Without that
+restore, opening the main preview once would leave `items` holding a single resource, and every later
+thumbnail click on that page would fall into the standalone branch too — losing sibling-to-sibling
+navigation for the rest of the page's life.
+
+Non-image and non-video content types are untouched: `openFromClick` returns early for them and
+follows the href, so the PDF and other branches behave exactly as before.
+
+Guarded by `e2e/tests/regressions/main-preview-opens-lightbox.spec.ts` (4 tests, including the
+`close()` restore and WCAG 2.5.3 Label in Name on the new link).
+
+### Original entry (2026-07-31)
+
 **Status: decided, not started.** Approved as recommended on 2026-07-31.
 
 ### Current behaviour, verified
@@ -159,8 +261,32 @@ Measured over 55 pages, counting only what the current tag set misses:
 `heading-order` and `empty-heading` do not fire at all — WS5's heading work is clean under the wider
 set too.
 
-1. **Add `wcag22a` + `wcag22aa` now.** One violation on one page: the `/groups` sidebar autocompleter
-   misses 24×24. Same class as findings 48/99/139.
+1. **Add `wcag22a` + `wcag22aa` now.** ~~One violation on one page: the `/groups` sidebar autocompleter
+   misses 24×24. Same class as findings 48/99/139.~~ **Re-measured 2026-08-05, and the diagnosis in
+   that sentence is wrong in a way that matters.** Measured live at 1280×720 over 9 pages, diffing the
+   current tag set against the widened one:
+
+   ```
+   /groups  +target-size  impact=serious  nodes=1
+       target: #input_autocompleter_6
+       data: {messageKey: "partiallyObscured", minSize: 24, width: 400, height: 19}
+       data: {closestOffset: 19, minOffset: 24}
+   ```
+
+   Still exactly one violation on one page, and it is stable — three consecutive identical runs give
+   byte-identical output. But it is **not** "misses 24×24": the control is 400px wide. The failure is
+   its 19px height plus a spacing ring of 19 against a required 24, and axe classifies it
+   `partiallyObscured` — an overlap, not merely an undersized box.
+
+   **Do not fix it by adding a 24px class. That was tried and measured, and it makes things worse.**
+   Adding `py-1` to `templates/partials/form/autocompleter.tpl` dropped the reported height from 19 to
+   **3** and introduced a *second* violation on `/notes` (the "Add new field" button, 79.2×16, spacing
+   13 against 24) as the taller input reflowed the sidebar. Reverted. The remedy has to address what
+   overlaps the input, which means understanding the sidebar's stacking first — this is the
+   `partiallyObscured` branch the recon warned about, not the finding-48/99/139 hit-area class it was
+   filed as.
+
+   Cost of the flip is therefore still one violation, but the fix behind it is not a one-liner.
 2. **Add `best-practice` as its own piece of work.** 69 violations, but 63 are a single `region`
    failure — `<section class="title">` in `layouts/base.tpl` sits outside every landmark, on every
    page — and 5 are `role="combobox"` on `<textarea>`, which is not an allowed ARIA-in-HTML role
@@ -173,6 +299,26 @@ scheduled work rather than a flip.
 ---
 
 ## 5. Add the browser E2E suite to CI
+
+**Status: STAGE 1 IMPLEMENTED 2026-08-05.** `.github/workflows/ci.yml` gains an `e2e-browser` job
+running `tests/accessibility/` + `tests/regressions/` — the two directories whose entire purpose is
+"this must not come back". Stages 2 (the whole `default` project) and 3 (`auth`, `cli`) are still open,
+and the job carries a comment saying so.
+
+Two details that are easy to get wrong:
+
+- **`playwright.config.ts`'s CI branch is `workers: 1, retries: 4`**, which is far too slow for ~677
+  tests and masks flakes behind four retries. The job overrides both on the command line
+  (`--workers=2 --retries=2`) rather than editing the config, so local runs stay byte-identical.
+- **The harness never builds the server.** `e2e/fixtures/server-manager.ts` only *spawns*
+  `<repo>/mahresources`, and `run-tests.js` rebuilds it only when the file is absent. The job therefore
+  runs `npm run build` first — which also means the suite exercises the PR's `src/` rather than the
+  bundle committed under `public/dist/`.
+
+Sequencing note now settled: widening `WCAG_AA_TAGS` (item 4) comes **after** this job is green, so the
+first red run here is never ambiguous between "the gate works" and "the tag set changed".
+
+### Original entry (2026-07-31)
 
 Raised repeatedly through the campaign and deliberately left as its own decision.
 
@@ -195,7 +341,71 @@ and `auth` — is written up under "Recommendation: add the browser E2E suite to
 
 ## 6. The Postgres E2E harness has never had contention tuning
 
-**Status: measured, deliberately not changed.** This is the one item here that is a known live cause
+**Status: RESOLVED 2026-08-05 — measured three times, no connection limit adopted, and a different
+defect fixed instead.** The original entry is kept below the result because its reasoning is what
+made the measurement worth doing.
+
+### The measurement that was asked for
+
+Three consecutive full Postgres runs (`npm run test:with-server:postgres`, the whole config, matching
+Batch 14's baseline), load average recorded either side of each:
+
+| run | wall clock | passed | failed | flaky | `page.goto` timeouts | 1-min load, before → after |
+|---|---|---|---|---|---|---|
+| 1 | 10.3m | 1921 | 0 | **0** | 0 | 3.75 → 11.31 |
+| 2 | 10.6m | 1921 | 0 | **0** | 0 | 11.31 → 5.52 |
+| 3 | 10.6m | 1921 | 0 | **0** | 0 | 5.52 → 8.58 |
+
+**Batch 14's 4 flaky at 8.5m does not reproduce**, and it fails to reproduce at a load band of
+3.75–11.97 — materially *above* the 3.4–5.7 band every Batch 13/14 number was taken in. Zero
+`TimeoutError: page.goto` occurrences across all three runs, against four in the single run that
+prompted this item.
+
+**Decision: no connection limit on the Postgres branch.** Adopting `-max-db-connections=2` here would
+mean adopting a value with no measured problem to fix and no after-measurement to justify it, which is
+the exact mistake this item was written to prevent. Recorded as measured-and-declined rather than
+untouched, so the next person does not re-open it without new evidence. Note also that the flag is
+per-pool and Postgres mode runs **two** pools per worker server (GORM/pgx at
+`application_context/context.go:1070`, read-only lib/pq at :1088), so `2` would have meant four
+connections per worker, not two — the SQLite value would not have transferred even in effect.
+
+### What was actually wrong, and is now fixed
+
+`createWorkerDatabase` (`e2e/fixtures/server-manager.ts`) shelled out to `testpg createdb` with a 10s
+timeout and, on **any** failure, logged to stderr and returned the *admin* DSN. Every affected worker
+then silently shared one database. Nothing failed, and no Playwright report could show it — so a run
+that had quietly lost its test isolation was indistinguishable from one that had not, except that the
+cross-talk surfaces as unrelated specs going flaky.
+
+That makes it a measurement hazard rather than a robustness gap, and it is the most plausible
+explanation on the table for four unreproducible flakes clustered in one directory. It is now three
+attempts at a 30s timeout and then a hard failure with an explanatory message. None of the three runs
+above hit it (`Failed to create worker database` count: 0, 0, 0), so the numbers in the table are from
+genuinely isolated workers.
+
+Also corrected in the same file: the header comment claimed SQLite mode gives each worker "an
+in-memory SQLite database". `-ephemeral` produces a per-PID **file** under `/tmp` in WAL mode
+(`application_context/context.go:998-1001`).
+
+### Newly surfaced, not fixed, needs its own scoping
+
+`server/api_tests/api_test_utils.go:45` builds its DSN as
+`file:<TestName>?mode=memory&cache=private`. With a private cache **every pooled connection is a
+brand-new empty database**. Any handler that fans out across goroutines therefore has most of them
+querying an unmigrated DB: the dashboard provider fans out over five
+(`server/template_handlers/template_context_providers/dashboard_template_context.go:31-82`) and logs
+`no such table: tags`. Measured: `TestDashboardTimeAttributeIsARealInstant` skipped in **6 of 10**
+separate runs for this reason, and a skip is scored green.
+
+This is not confined to that one test — it is a property of the shared api_tests harness, so the fix
+(`cache=shared`, which needs a held connection so the in-memory DB is not dropped when the pool
+drains) should be scoped and measured on its own rather than folded into an unrelated change.
+
+---
+
+### Original entry (2026-07-31)
+
+This is the one item here that is a known live cause
 of red in a suite people actually run, so it is called out separately rather than left as a footnote.
 
 `e2e/fixtures/server-manager.ts` builds two argument lists, and Batch 13's `-max-db-connections=2`
@@ -230,23 +440,134 @@ of what these guards are for.
 - **`x-teleport` the jobs panel into `.overlays`.** Round 2's structural answer to the modal-stacking
   defect. Round 3 removed the *consequence* — the panel now declines to open while a modal is up — but
   not the cause. The panel still lives inside `.header`, which is a stacking context.
+
+  **Still open, but scoped on 2026-08-05 — it is not the one-line change the bullet implies.** Nine
+  files plus a Go test, and three traps worth knowing before starting:
+
+  1. **`x-if` and `x-teleport` must not share a `<template>`.** Alpine's `directiveOrder` runs `if`
+     before `teleport`, and the teleport handler is unconditional — putting both on one element
+     produces a second, *permanent* `fixed inset-0` overlay in `.overlays`. Wrap, never combine.
+     Use bare `x-teleport`; `.prepend`/`.append` place the clone as a sibling of `.overlays`, i.e.
+     outside the layer.
+  2. **`z-[60]` has to become `z-40`.** Inside `.overlays` the siblings are lightbox 50, pasteUpload
+     50, plugin-action 60, entity-picker 70, and a teleport always appends last — so at any tie the
+     panel wins. 40 is the only value that keeps all four true modals above it while `.overlays`' own
+     41 still lifts the panel over the whole header layer.
+  3. **`server/api_tests/ws9_jobs_cockpit_test.go:406-452` will fail**, and correctly so: it parses the
+     *served* HTML, where a teleported template's markup still sits inside `<header>`. It has to learn
+     that a dialog inside an `x-teleport` template is not header-local.
+
+  Also needs fixing in the same change: `downloadCockpit.js:58` captures `this._root = this.$el`, and
+  after the teleport `.download-cockpit` no longer contains the panel — so `blockingModal(this._root)`
+  would find the component's own dialog. Nothing breaks today only because both call sites are gated
+  on `!this.isOpen`. Three e2e specs assume DOM containment and need their locators updated.
 - **Finding 65's picker half.** `src/components/selectorFormParameters.js` documents a deliberate
   no-filter, and the archived selector plan holds the open UX question with a stated hazard: this was
   a revert of a revert (`73fab2df`). Genuinely a product question, not a defect.
-- **The three plain-text `/v1/groups/export|import` error bodies.** Flagged by Batch 13's error-chrome
-  sweep and excluded with a reason: they are fetch-only and `errorMessageFromResponse` reads plain
-  text. Not that finding's class, but worth revisiting if those endpoints ever gain a browser surface.
+- **The three plain-text `/v1/groups/export|import` error bodies.** ~~Excluded with a reason: they are
+  fetch-only and `errorMessageFromResponse` reads plain text.~~ **That reason was wrong, and the
+  exclusion hid a live defect. Fixed 2026-08-05.** `errorMessageFromResponse` is *never called* by
+  either component — `grep` it in `src/components/adminImport.js` and `src/components/adminExport.js`
+  and there are no hits. What they actually did:
+
+  - `adminImport.js` (two sites) did `throw new Error(await resp.text())`, so any **JSON** error body
+    reached the reader verbatim. The reachable case is not hypothetical: a 403 from the CSRF
+    middleware is `{"error":"invalid or missing CSRF token"}`, and that whole string was the error
+    message shown in the UI.
+  - `adminExport.js` was worse. Both `estimate()` and `submit()` returned silently on `!res.ok`, and
+    the component had **no error field at all** — so a rejected export was indistinguishable from a
+    button that does nothing.
+
+  Both now call `errorMessageFromResponse`, and `adminExport` gained a `role="alert"` banner matching
+  the form-error chrome every create page already uses. The lesson is the general one: "these
+  endpoints return plain text" was a claim about the *server*, and the bug was in the *client* that
+  never looked.
+- **`server/api_tests/templates_test.go` does not exist, anywhere in this document.** Batch 14 caught
+  it once for the contrast guard; item 1 cited it again for the markup-contract sweep. The path is a
+  *symlink* — `server/api_tests/templates` → `../../templates`, a data path for tests that render, not
+  a test file. Every template-source sweep in this repo lives in `internal/arch/templates_test.go`,
+  which is where item 1's new guards went. Check the path before citing it a third time.
 - **Contrast guard is a hand-maintained denylist** (`TestNoWhiteTextOnALowContrastBackground` in
   `internal/arch/templates_test.go`, not `server/api_tests/` as this document said before Batch 14
   looked for it). It pins class *combinations*,
   not computed contrast, so `text-white` + an unlisted shade passes. axe remains the authority; the
   guard exists because axe only sees pages that are in the sweep. It will rot — budget for refreshing
   the shade list when the palette changes.
-- **`mr docs lint` carries 16 standing warnings.** Pre-existing throughout the campaign, never
-  triaged.
+- **`mr docs lint` carries 16 standing warnings.** ~~Never triaged.~~ **Triaged 2026-08-05.** All 16
+  are the same rule — `cmd/mr/commands/docs_lint.go:115`, "no `# mr-doctest:` examples" — and it is a
+  warning rather than a failure, so CI is green with them. They are not neglect; they cluster:
+
+  | group | commands | why there is no doctest |
+  |---|---|---|
+  | auth | `auth login`, `auth logout`, `auth whoami` | 3 |
+  | token | `token create`, `token list`, `token revoke` | 3 |
+  | user | `user create`, `user delete`, `user get`, `user list`, `user update` | 5 |
+  | docs meta | `docs dump`, `docs lint`, `docs check-examples` | 3 |
+  | admin similarity | `admin similarity recompute`, `admin similarity retry-failed` | 2 |
+
+  **Eleven of the sixteen are structurally blocked, not forgotten.** The doctest harness
+  (`npm run test:with-server:cli-doctest`) runs examples against the standard ephemeral server, which
+  is *not* started with `-auth`. Every `auth`, `token` and `user` command needs an auth-enabled server,
+  so their examples cannot execute there. Fixing those means giving the doctest runner an auth-enabled
+  server (or a second doctest project), which is its own piece of work and is coupled to item 5 —
+  the `auth` Playwright project is stage 3 of putting the browser suite in CI.
+
+  **Five are genuinely addressable now**: the three `docs` meta commands need no server at all, and
+  the two `admin similarity` commands already have live coverage in
+  `e2e/tests/cli/admin-similarity.spec.ts`, so an example that runs is known to be possible. Left
+  undone deliberately rather than rushed: each new `# mr-doctest:` example is executed by the
+  `cli-doctest` CI job, so adding one without running that job locally risks turning a standing
+  warning into a red gate — which is a strictly worse trade than the warning.
 ---
 
 ## 8. Findings from the final independent review (2026-07-31), deferred
+
+**Status: ALL FIVE VERIFIED AND FIXED, 2026-08-05.** Every one was confirmed by reading the code; two
+were worse than described and one had a fix that would have made things worse. Details per finding
+below, inline with the original text.
+
+| # | verdict | note |
+|---|---|---|
+| 1 | **confirmed, and worse** | also one-sided, and skips ~60% of runs |
+| 2 | confirmed | path in the doc was wrong (`partials/form/`, not `partials/`) |
+| 3 | **confirmed, obvious fix is wrong** | `aria-multiline` would add a *new* WCAG 2 A violation |
+| 4 | confirmed as a defect | the stated mechanism ("can never paint") is overstated |
+| 5 | confirmed | fixed as a shared class, not 3 ad-hoc edits |
+
+Both recorded non-defects were re-checked and are indeed non-defects.
+
+### The corrections that matter
+
+**Finding 1's suggested fix does not work.** "Compare against the server's own local zone" cannot
+separate the buggy layout from the fixed one, because on a UTC host they emit *identical bytes* — and
+CI runs UTC. The fix has to be independent of the host, so it is now a template-source sweep,
+`TestMachineReadableDatesCarryAZone` in `internal/arch/templates_test.go`, proved red against the
+original bug and green after. The runtime test's one-sided `drift > time.Minute` is now two-sided, and
+its doc comment records that it is *not* the guard.
+
+**Finding 3's obvious fix would have added a violation.** ARIA 1.2 has no multiline combobox:
+`aria-multiline` is not in `role=combobox`'s allowed attributes, and `aria-allowed-attr` is tagged
+wcag2a/wcag412 at critical impact — so "add `aria-multiline="true"`" trades a best-practice warning for
+a WCAG 2 A failure. The conforming fix is to drop `role="combobox"` and keep native textbox semantics,
+**and to remove `:aria-expanded` at the same time** (not allowed on a textbox, not global). The state
+it carried is still announced: `mentionTextarea.js` builds a live region at :45 and announces the
+result count at :266-272. This also clears the `aria-allowed-role` rows of item 4.
+
+**Finding 3 had a tripwire nobody had spotted.** `TestMentionTextarea_DeclaresTheListboxItControls`
+(`server/api_tests/ws5_keyboard_names_headings_test.go`) located its subject by
+`role="combobox"` — so removing the role would have sent that test straight to its own
+"this test measured nothing" `t.Fatalf`. Its marker is now `x-ref="mentionInput"`, which is what
+actually identifies a mention textarea.
+
+**Finding 5 is a class, not a button.** Fourteen call sites use `opacity-0 group-hover:opacity-100`;
+eleven are copy-to-clipboard buttons that sit beside the text they copy and are deliberately left
+alone. The three that are the *only* path to their action — the block editor's gallery remove and the
+lightbox quick-tag Add and Clear — now share a `.touch-reachable` class next to `.saved-query-delete`,
+the precedent from finding 99. Deliberately *not* gated behind `@media (hover: none)`: that fixes only
+the touch half, and misreads hybrids, since a touchscreen laptop reports `hover: hover` while its owner
+taps the screen.
+
+### Original entry (2026-07-31)
 
 The closing review of the whole branch raised seven items. Two were confirmed and fixed immediately
 (the ledger arithmetic, and the missing modal guard on `globalSearch` — see `docs/todo.md`). The five

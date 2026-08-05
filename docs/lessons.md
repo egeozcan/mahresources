@@ -1468,3 +1468,48 @@ claimed list, which takes the same ten seconds and would have shown four extra i
 truth was 27, so the number that had been called wrong for thirteen batches was nearly right, and
 "fixing" it made it worse. A correction that moves a number *away* from a long-standing figure
 deserves more scrutiny than one that confirms it, not less.
+
+## An Alpine directive outside every `x-data` tree is not a broken directive, it is an absent one
+
+Product decision 145 wired the resource detail page's main preview to the lightbox by adding
+`@click.prevent="$store.lightbox.openFromClick(...)"` to the anchor that had previously been a plain
+link. The e2e test failed with "element(s) not found" waiting for the lightbox, and the obvious
+readings were all wrong: the handler was not throwing (the console was clean), the content type was
+right, and the store existed with `items: 0` as expected.
+
+A live probe showed the actual state after the click: `location.pathname` was
+`/files/resources/f1/b5/…png`. The browser had simply followed the href. `@click.prevent` had not
+fired at all, because **Alpine only binds directives on elements inside an `x-data` tree**, and that
+`.sidebar-group` never had one — the preview had always been a plain `<a>`, so nothing had ever needed
+a scope there. The neighbouring group has `x-data="customThumbnail(…)"` of its own, which is the tell:
+sibling scopes mean the parent supplies none. The fix is a bare `x-data` on the wrapper.
+
+This is a silent failure mode with no error anywhere, and it degrades to *exactly the old behaviour* —
+so on a resource page it looks like "the feature didn't ship" rather than "the feature is broken",
+and a reviewer clicking around would conclude the change had simply been lost.
+
+**When adding an Alpine directive to markup that did not have one, check for an `x-data` ancestor
+before debugging anything else.** The generalisation of the existing rule that a guard must fail when
+its subject is broken: here the *feature* fails by reverting, which is the hardest kind of failure to
+notice.
+
+## Restoring focus while the trap is still armed lands the reader on `<body>`
+
+The in-app confirm dialog (deferred-work item 1) owns its own focus return, because `x-trap`'s restore
+aims at whatever had focus when the trap armed — a settled decision in this codebase, written up in
+`partials/pluginActionModal.tpl`. The store therefore called `restoreFocus(opener)` in its settle path,
+directly after flipping `isOpen = false`.
+
+Measured on a real page, focus after Cancel was `BODY`. The sequence: `isOpen = false` schedules
+Alpine's teardown on a microtask, so at the moment `restoreFocus` runs the dialog is *still mounted and
+the trap is still active* — focus-trap pulls focus straight back inside — and then `x-if` removes the
+subtree and focus falls to `<body>`. Both halves of the mechanism worked; only the ordering was wrong.
+
+Deferring the restore by one macrotask (`setTimeout(…, 0)`, which runs after Alpine's
+microtask-flushed effects) puts focus back on the control that opened the dialog — verified live as
+`INPUT:Delete`, not merely as "not BODY".
+
+**A focus restore has to happen after the thing holding focus has actually gone, not after the state
+flag that will eventually remove it.** The same distinction as
+`reference_alpine_morph_updated_before_children`: a state change and the DOM catching up with it are
+two different moments, and focus code has to target the second.
