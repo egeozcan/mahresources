@@ -30,6 +30,10 @@ export const navigationState = {
   // Reference to trigger element for focus restoration
   triggerElement: null,
 
+  // The page's own gallery, parked while a standalone item is open. See
+  // openFromClick's fallback branch and the restore in close().
+  _itemsBeforeStandalone: null,
+
   // Cache of preloaded image URLs (kept in-memory by the Image objects we hold)
   _preloadedUrls: new Set(),
   _preloadedImages: [],
@@ -111,7 +115,27 @@ export const navigationMethods = {
     const index = this.items.findIndex(item => item.id === resourceId);
     if (index !== -1) {
       this.open(index);
+      return;
     }
+
+    // Not in the page's gallery: open it as a gallery of one.
+    //
+    // The resource detail page's own main preview is absent from `items` by
+    // construction — GetSeriesSiblings excludes the resource itself, and the
+    // sidebar is not a scanned lightbox container — so without this branch the
+    // preview would call openFromClick, find nothing, and do nothing at all. A
+    // dead click is worse than the plain link it replaced.
+    const single = this._extractItemsFromLinks([event.currentTarget]);
+    if (single.length === 0) return;
+
+    this._itemsBeforeStandalone = this.items;
+    this.items = single;
+    this.baseUrl = '';
+    this.currentPage = 1;
+    this.loadedPages = new Set([1]);
+    this.hasNextPage = false;
+    this.hasPrevPage = false;
+    this.open(0);
   },
 
   _openFromSourceContainer(container, resourceId) {
@@ -287,6 +311,18 @@ export const navigationMethods = {
     if (!this.editPanelOpen && !this.quickTagPanelOpen && this.needsRefreshOnClose) {
       this.needsRefreshOnClose = false;
       this.refreshPageContent();
+    }
+
+    // Give the page its own gallery back after a standalone item.
+    //
+    // Without this, opening the detail page's main preview and closing it leaves
+    // `items` holding that one resource — so a later click on a series-sibling
+    // card would miss the lookup, take the standalone branch itself, and lose
+    // sibling-to-sibling navigation for the rest of the page's life.
+    if (this._itemsBeforeStandalone) {
+      const restore = this._itemsBeforeStandalone;
+      this._itemsBeforeStandalone = null;
+      this.items = restore;
     }
 
     this.isOpen = false;

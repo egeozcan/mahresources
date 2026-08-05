@@ -288,10 +288,42 @@
     </div>
 
     {% if sc.PreviewImage %}
-    <div class="sidebar-group">
-        <a href="/v1/resource/view?id={{ resource.ID }}&v={{ resource.Hash }}#{{ resource.ContentType }}">
+    {# Product decision 145. Two identical-looking images used to behave           #}
+    {# differently: a thumbnail on this same page opened the lightbox, while the   #}
+    {# main preview 302'd straight to the file. The preview now opens the lightbox #}
+    {# like every other image, and "Open original" keeps the workflow that link    #}
+    {# was the only route to — save-as, copy URL, open elsewhere.                  #}
+    {#                                                                             #}
+    {# openFromClick falls back to a gallery of one here: this resource is absent  #}
+    {# from the page's item list by construction (GetSeriesSiblings excludes self, #}
+    {# and the sidebar is not a scanned lightbox container). It also passes        #}
+    {# non-image/non-video content types straight through to the href, so the PDF  #}
+    {# and other branches keep their current behaviour.                            #}
+    {# The bare x-data is load-bearing: Alpine only binds directives inside an     #}
+    {# x-data tree, and this sidebar group never had one because the preview used  #}
+    {# to be a plain <a>. Without it @click.prevent is inert and the anchor simply  #}
+    {# navigates to the file — which is the old behaviour, silently restored.       #}
+    <div class="sidebar-group" x-data>
+        <a href="/v1/resource/view?id={{ resource.ID }}&v={{ resource.Hash }}#{{ resource.ContentType }}"
+           @click.prevent="$store.lightbox.openFromClick($event, {{ resource.ID }}, '{{ resource.ContentType }}')"
+           data-lightbox-item
+           data-testid="resource-main-preview"
+           data-resource-id="{{ resource.ID }}"
+           data-content-type="{{ resource.ContentType }}"
+           data-resource-name="{{ resource.Name }}"
+           data-resource-hash="{{ resource.Hash }}"
+           data-resource-width="{{ resource.Width }}"
+           data-resource-height="{{ resource.Height }}"
+           {% if resource.Owner %}data-owner-name="{{ resource.Owner.Name }}" data-owner-id="{{ resource.Owner.ID }}"{% endif %}>
             <img height="300" src="/v1/resource/preview?id={{ resource.ID }}&height=300&v={{ resource.Hash }}" alt="Preview of {{ resource.Name }}" loading="lazy">
         </a>
+        {# py-1 lifts the hit box to 28px, clearing WCAG 2.2's 24px target minimum, #}
+        {# without the px-3 that would misalign it from the image's left edge. The  #}
+        {# accessible name contains the visible text, so 2.5.3 Label in Name holds. #}
+        <a href="/v1/resource/view?id={{ resource.ID }}&v={{ resource.Hash }}#{{ resource.ContentType }}"
+           class="inline-block py-1 text-sm text-amber-700 hover:text-amber-800"
+           data-testid="resource-open-original"
+           aria-label="Open original file for {{ resource.Name }}">Open original</a>
     </div>
     <div class="sidebar-group" x-data='customThumbnail({"resourceId": {{ resource.ID }}})' @paste.window="onPaste">
         {% include "/partials/sideTitle.tpl" with title="Custom Thumbnail" %}
