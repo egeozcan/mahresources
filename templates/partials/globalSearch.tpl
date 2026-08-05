@@ -21,10 +21,17 @@
     </button>
 
     <template x-if="isOpen">
-        {# z-[60] for the reason downloadCockpit.tpl spells out: this dialog is inside #}
-        {# the sticky z-index:40 header, so it is ordered against its header siblings,  #}
-        {# and the settings and account dropdowns are later siblings at z-50. At z-50   #}
-        {# an open dropdown painted over this dialog and stayed clickable through it.   #}
+        {# z-[60] because this dialog is inside the sticky z-index:40 header, so it is #}
+        {# a stacking context: the number orders this dialog against its header         #}
+        {# siblings and against nothing else. The settings and account dropdowns are    #}
+        {# later siblings at z-50, so at z-50 an open dropdown painted over this dialog #}
+        {# and stayed clickable through it.                                             #}
+        {#                                                                              #}
+        {# The jobs panel had the identical problem and answered it differently:        #}
+        {# deferred-work item 7 teleports it into `.overlays`, where its z-index is     #}
+        {# ordered against the app's other overlays. This dialog has not been moved —   #}
+        {# it is the last header-local dialog, and that is what                         #}
+        {# TestHeaderDialogs_StackAboveHeaderDropdowns now measures.                    #}
         <div class="fixed inset-0 z-[60] overflow-y-auto">
             <div
                 class="fixed inset-0 bg-black/40 backdrop-blur-sm transition-opacity"

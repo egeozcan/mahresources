@@ -44,9 +44,9 @@
             {# Findings 83/102: the jobs trigger used to be a fixed bottom-right FAB #}
             {# that won the hit test over the pagination "Next" link on every        #}
             {# paginated page and over the /logs date picker at 1280x720. It is      #}
-            {# header chrome now. The panel it opens is still position:fixed, so it   #}
-            {# renders over the page from here — see .overlays' z-index note in       #}
-            {# public/index.css for why the true modals still stack above it.        #}
+            {# header chrome now. Only the trigger is here: deferred-work item 7     #}
+            {# teleports the panel it opens into `.overlays`, so the markup below is #}
+            {# in the header but the dialog never renders in it.                     #}
             {% include "/partials/downloadCockpit.tpl" %}
             <div x-cloak x-data="{ active: false }" class="settings relative">
                 <button class="p-1 text-lg" @click="active = !active" @click.outside="setTimeout(() => active = false, 100)" title="Settings" aria-label="Settings" :aria-expanded="active.toString()" aria-haspopup="true"><span aria-hidden="true">⚙</span></button>

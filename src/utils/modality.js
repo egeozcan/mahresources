@@ -14,12 +14,13 @@
  * one side enforces is not a rule; sharing the implementation is what keeps the next
  * dialog from re-learning this.
  *
- * Note what this deliberately does not do: it does not decide a winner. Both of the
- * two dialogs in `.header` are `fixed inset-0 z-[60]`, and `.header` is itself a
- * stacking context at `z-index: 40`, so `z-[60]` orders them against each other and
- * not against the page — the later DOM sibling paints on top. "Who wins" is
- * therefore an accident of template order, which is exactly why the rule is that
- * neither opens over the other.
+ * Note what this deliberately does not do: it does not decide a winner. The global
+ * search dialog is `fixed inset-0 z-[60]` inside `.header`, which is itself a
+ * stacking context at `z-index: 40`, so that `z-[60]` orders it against its header
+ * siblings and not against the page. The jobs panel used to be in the same position
+ * and is now teleported into `.overlays`, so the two are not even in the same
+ * stacking context. "Who wins" is an accident of structure either way, which is
+ * exactly why the rule is that neither opens over the other.
  */
 
 /**
@@ -38,13 +39,20 @@ export function isRendered(el) {
 /**
  * The first painted `aria-modal` dialog, or null.
  *
- * `ignoreWithin` is the caller's own root: on the paths that can be reached while a
- * component is already open, finding its own dialog would make it refuse to do
- * anything — including close.
+ * `ignoreWithin` is the caller's own root, or several of them: on the paths that can
+ * be reached while a component is already open, finding its own dialog would make it
+ * refuse to do anything — including close.
+ *
+ * It takes a list because a component's dialog need not be inside its component root
+ * any more. The jobs cockpit teleports its panel into `.overlays` while its `x-data`
+ * root stays in the header, so "the caller's own markup" is two disjoint subtrees.
+ * Nullish entries are dropped, which is what lets a caller pass an `$refs` entry
+ * that exists only while it is open.
  */
 export function blockingModal(ignoreWithin = null) {
+    const roots = (Array.isArray(ignoreWithin) ? ignoreWithin : [ignoreWithin]).filter(Boolean);
     for (const el of document.querySelectorAll('[aria-modal="true"]')) {
-        if (ignoreWithin?.contains?.(el)) continue;
+        if (roots.some((root) => root === el || root.contains?.(el))) continue;
         if (isRendered(el)) return el;
     }
     return null;

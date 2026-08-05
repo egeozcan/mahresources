@@ -31,21 +31,43 @@
     </button>
 
     <!-- Panel overlay and content -->
+    {# The trigger above is header chrome; the panel is not. It is teleported into  #}
+    {# `.overlays` (position:fixed, z-index:41, root stacking context), which is    #}
+    {# where every other overlay in this app lives.                                 #}
+    {#                                                                              #}
+    {# It used to render in place, carrying a z-index of 60 for a reason that was    #}
+    {# true and useless: .header is position:sticky at z-index 40, so it is a        #}
+    {# stacking context, and 60 ordered the panel against the settings and account   #}
+    {# dropdowns (50) and against nothing else. Raise a dropdown above 60 and the    #}
+    {# panel goes back under an aria-modal dialog with no test failing, because the  #}
+    {# app's real overlay ordering was in a layer the panel was not part of.         #}
+    {# Teleporting it there makes its z-index mean what the others' mean.            #}
+    {#                                                                              #}
+    {# The numbers above are spelled out rather than written as Tailwind classes on  #}
+    {# purpose: index.css declares `@source "./templates/**/*.tpl"`, so a class name #}
+    {# in a comment is scanned like any other and emits a rule nothing uses.         #}
+    {#                                                                              #}
+    {# z-40 is *a* correct value, not the only one: `.overlays` is itself the        #}
+    {# stacking context, so any value below the lowest sibling works. The siblings   #}
+    {# are lightbox 50, paste-upload 50 and its info toast 50, plugin-action 60,     #}
+    {# entity-picker 70 and confirm 50 — so anything <= 49. 40 is chosen because it  #}
+    {# reads as "below the modals" and matches the header layer it came from. A      #}
+    {# teleport appends last, so a tie would go to the panel; staying under 50       #}
+    {# settles it on z-index instead of on DOM order.                                #}
+    {#                                                                              #}
+    {# The nesting is load-bearing and fails *silently* if reversed. x-if must be    #}
+    {# the OUTER template. With x-teleport outside, x-if inserts its clone with      #}
+    {# `el.after(clone)` — a sibling of the teleported node, not a descendant — so   #}
+    {# Alpine's `_x_teleportBack` hop is never taken, `closestRoot` finds no         #}
+    {# [x-data], and x-ref="panel" never registers; focusFirstIn($refs.panel) then   #}
+    {# does nothing and no error is raised. They must also never share one           #}
+    {# <template>: directiveOrder runs `if` before `teleport` and the teleport       #}
+    {# handler is unconditional, so one template produces a second, permanent        #}
+    {# overlay. Bare x-teleport, not .prepend/.append — those place the clone        #}
+    {# outside `.overlays`, where `.overlays > *` never restores pointer-events.     #}
     <template x-if="isOpen">
-        {# z-[60] and not the app's usual z-50 for a dialog, because this dialog is    #}
-        {# *inside* the header. .header is position:sticky with z-index:40, so it is a  #}
-        {# stacking context and every descendant paints inside its layer — the panel   #}
-        {# is ordered against its header siblings, not against the page. The settings  #}
-        {# and account dropdowns are later siblings at z-50, so at z-50 they painted   #}
-        {# above an aria-modal dialog and stayed hit-testable over it: open Settings,   #}
-        {# then press Cmd/Ctrl+Shift+D, and elementFromPoint over the dropdown         #}
-        {# returned the dropdown. Raising .overlays does nothing for header-local       #}
-        {# siblings. Pinned by the hit test in ws9-jobs-cockpit.spec.ts.               #}
-        {#                                                                            #}
-        {# The true modals still stack above this panel, and for a reason that is not  #}
-        {# this number: they live in .overlays at z-index 41 in the *root* stacking     #}
-        {# context, above the whole z-40 header layer.                                 #}
-        <div class="fixed inset-0 z-[60] overflow-hidden">
+        <template x-teleport=".overlays">
+        <div class="fixed inset-0 z-40 overflow-hidden" data-testid="cockpit-overlay">
             <!-- Backdrop -->
             <div class="fixed inset-0 bg-black/20" @click="close()"></div>
 
@@ -330,5 +352,6 @@
                 </div>
             </div>
         </div>
+        </template>
     </template>
 </div>

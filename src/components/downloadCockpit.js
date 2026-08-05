@@ -55,7 +55,9 @@ export function downloadCockpit() {
             // it is somewhere real to land whenever there was no trigger to capture.
             this._trigger = this.$el.querySelector('.cockpit-trigger');
             // Captured for the same reason: blockingModal() sweeps the whole document
-            // for open dialogs, and this panel is one of them.
+            // for open dialogs, and this panel is one of them. Since the teleport this
+            // is only half the component's markup — the dialog is $refs.panel, inside
+            // `.overlays` — so blockingModal() is passed both.
             this._root = this.$el;
 
             // BH-036: pick up the retention window from the meta tag emitted by base.tpl.
@@ -113,23 +115,20 @@ export function downloadCockpit() {
         /**
          * The dialog, if any, that is already open when the panel is asked to open.
          *
-         * The panel is header chrome: `.header` is a stacking context at z-index 40,
-         * so the panel's own z-[60] only orders it against its *header* siblings. The
-         * app's true modals live in `.overlays` at z-index 41 in the root stacking
-         * context, above the whole header layer, so the panel opens behind one, moves
-         * focus into itself and x-trap holds it there — inside a dialog nobody can
-         * see, with Escape going to whichever component hears it first.
+         * Two aria-modal dialogs open at once is the defect this prevents, and it is
+         * not a paint problem: each arms its own x-trap, so the reader is held by one
+         * while looking at the other, with Escape going to whichever component hears
+         * it first. The panel is now teleported into `.overlays` alongside the true
+         * modals rather than stranded in the header's stacking context, so it can at
+         * least be *ordered* against them — but ordering was never the fix. It still
+         * declines rather than fighting for the top.
          *
          * The query is every `aria-modal` in the document and not just `.overlays`.
-         * Scoping it to that layer was wrong twice over: the global search dialog is a
-         * *header sibling* of this panel, so two dialogs at the same z-index fight on
-         * DOM order alone, and six more live elsewhere (mrql.tpl, json.tpl, menu.tpl,
-         * blockEditor.tpl, schemaEditorModal.tpl, globalSearch.tpl). A guard that
-         * covers four of ten dialogs recreates the defect it exists to prevent, for
-         * the other six.
-         *
-         * Two aria-modal dialogs open at once is the defect whichever way it paints,
-         * so the panel declines rather than fighting for the top.
+         * Scoping it to that layer was wrong twice over: the global search dialog is
+         * still header-local, so it would be missed entirely, and six more live
+         * elsewhere (mrql.tpl, json.tpl, menu.tpl, blockEditor.tpl,
+         * schemaEditorModal.tpl, globalSearch.tpl). A guard that covers four of ten
+         * dialogs recreates the defect it exists to prevent, for the other six.
          *
          * The implementation moved to `utils/modality.js` after the final review
          * found the reason it had to be shared: this comment already named
@@ -138,11 +137,18 @@ export function downloadCockpit() {
          * dialog and armed a second trap from the other side. A rule one side
          * enforces is not a rule.
          *
-         * `this._root` so the panel never finds itself: on the paths reachable while
-         * it is open, that would make it refuse to do anything.
+         * Both of the component's own roots, so the panel never finds itself: on the
+         * paths reachable while it is open, that would make it refuse to do anything.
+         * It takes two because the teleport split them — `_root` is the `x-data`
+         * element in the header and holds only the trigger now, while the dialog
+         * itself is `$refs.panel` over in `.overlays`. Passing `_root` alone stopped
+         * being enough the moment the panel moved, and nothing would have failed:
+         * both call sites are gated on `!this.isOpen`, so the panel is never open
+         * when this runs and the self-match is unreachable *today*. `$refs.panel` is
+         * undefined while closed and `blockingModal` drops nullish roots.
          */
         blockingModal() {
-            return blockingModal(this._root);
+            return blockingModal([this._root, this.$refs.panel]);
         },
 
         isRendered(el) {

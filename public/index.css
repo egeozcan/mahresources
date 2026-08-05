@@ -60,11 +60,17 @@ html {
 }
 
 /*
- * Findings 83/102: the jobs cockpit moved out of here and into the header, so its
- * panel now paints inside the header's stacking context (z-index 40). The overlays
- * layer is raised one step so the true modals — the lightbox, paste-upload, the
- * plugin action modal and the entity picker — still stack above that panel, which
- * is the order they had when the cockpit was the third of five includes here.
+ * z-index 41, one step above the z-40 header layer, so an overlay is never ordered
+ * against header chrome. Findings 83/102 moved the jobs cockpit's *trigger* into the
+ * header and left its panel painting inside the header's stacking context; the step
+ * kept the true modals above that panel. Deferred-work item 7 then teleported the
+ * panel back in here, so the layer holds every overlay again and the step is now
+ * doing the simpler job it looks like it is doing.
+ *
+ * pointer-events is none on the layer and auto on its children, so the empty layer
+ * does not swallow clicks over the page. A teleport target has to land a *direct*
+ * child for that to work — which is why the cockpit uses bare `x-teleport` and not
+ * `.prepend`/`.append`, both of which insert as siblings of this element.
  */
 .overlays {
     position: fixed;
@@ -85,12 +91,18 @@ html {
  * The header is a stacking context (position:sticky + z-index), and that has a
  * consequence worth stating where the z-index is: every descendant paints inside
  * this one z-40 layer, ordered against its header siblings and not against the
- * page. Two of those descendants are dialogs (the global search dialog and the jobs
- * panel) and two are dropdowns (settings, account). The dropdowns are the *later*
- * siblings, so at equal z-index they win — an open dropdown painted over an
- * aria-modal dialog and stayed clickable through it. The dialogs are therefore
- * z-[60] and the dropdowns z-50; see the comment in templates/partials/downloadCockpit.tpl.
- * A new dialog in this header needs to sit above 50 as well.
+ * page. One of those descendants is a dialog (the global search dialog) and two are
+ * dropdowns (settings, account). The dropdowns are the *later* siblings, so at equal
+ * z-index they win — an open dropdown painted over an aria-modal dialog and stayed
+ * clickable through it. The dialog is therefore z-[60] and the dropdowns z-50; see
+ * the comment in templates/partials/globalSearch.tpl. A new dialog in this header
+ * needs to sit above 50 as well.
+ *
+ * The jobs panel used to be the second such dialog and no longer is: deferred-work
+ * item 7 teleports it into `.overlays`, where its z-index is ordered against the
+ * other overlays instead of against this header's internal numbering. A dialog that
+ * can be teleported should be — needing a number above 50 to clear page chrome is a
+ * sign of being in the wrong layer.
  */
 .header {
     grid-row: 1 / 2;

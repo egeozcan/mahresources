@@ -68,7 +68,11 @@ test.describe('Download cockpit SVG aria-hidden', () => {
       return true;
     });
 
-    const emptyStateSvg = page.locator('.download-cockpit svg.w-16');
+    // Scoped to the panel, not to `.download-cockpit`: item 7 teleports the panel
+    // into `.overlays`, so the component root holds only the trigger. The
+    // `Alpine.$data` read above still uses `.download-cockpit` and still works — the
+    // teleported clone shares the component's reactive data stack.
+    const emptyStateSvg = page.locator('[data-testid="cockpit-panel"] svg.w-16');
     await expect(emptyStateSvg).toBeVisible();
     await expect(emptyStateSvg).toHaveAttribute('aria-hidden', 'true');
   });

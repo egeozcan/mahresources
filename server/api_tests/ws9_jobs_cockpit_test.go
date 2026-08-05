@@ -392,17 +392,21 @@ func TestJobsPanel_RowCarriesItsJobID(t *testing.T) {
 // TestHeaderDialogs_StackAboveHeaderDropdowns is review remediation finding 3.
 //
 // `.header` is position:sticky with z-index:40, so it is a stacking context and its
-// descendants are ordered against each other rather than against the page. Two of
-// them are dialogs (the global search dialog and the jobs panel, both `fixed
-// inset-0`) and two are dropdowns (settings, account). The dropdowns are the later
-// siblings, so at equal z-index they painted over an aria-modal dialog and stayed
-// clickable through it.
+// descendants are ordered against each other rather than against the page. The
+// global search dialog is one of them (`fixed inset-0`), and so are the settings and
+// account dropdowns. The dropdowns are the later siblings, so at equal z-index they
+// painted over an aria-modal dialog and stayed clickable through it.
+//
+// Deferred-work item 7 removed the jobs panel from this set: it is teleported into
+// `.overlays`, so its markup is still textually inside <header> but it never renders
+// there. Markup inside an `x-teleport` template is therefore excluded below —
+// without that, the panel's deliberately-low z-40 reads as a header dialog that
+// fails to outrank the z-50 dropdowns, which is the opposite of what it means.
 //
 // What the browser does with these numbers is asserted by hit-testing in
-// ws9-jobs-cockpit.spec.ts, which is the assertion that can actually fail against
-// the bug. This is the drift guard for the invariant behind it, in the suite CI
-// runs: every full-viewport overlay in the header outranks every other z-index
-// class in the header.
+// ws9-jobs-cockpit.spec.ts. This is the drift guard for the invariant behind it:
+// every full-viewport overlay that actually renders in the header outranks every
+// other z-index class in the header.
 func TestHeaderDialogs_StackAboveHeaderDropdowns(t *testing.T) {
 	tc := SetupTestEnv(t)
 	_, body := tc.getHTML(t, "/dashboard")
@@ -410,6 +414,16 @@ func TestHeaderDialogs_StackAboveHeaderDropdowns(t *testing.T) {
 	header := between(body, "<header", "</header>")
 	if header == "" {
 		t.Fatalf("no <header> in the page — this test measured nothing")
+	}
+
+	// The control: something really is teleported out, so the strip below is not
+	// silently a no-op that leaves the old classification in place.
+	if !strings.Contains(header, "<template x-teleport") {
+		t.Fatalf("no x-teleport template in the header — the jobs panel is supposed to be one, so this test measured the wrong thing")
+	}
+	header = stripTeleportedTemplates(header)
+	if strings.Contains(header, `data-testid="cockpit-panel"`) {
+		t.Fatalf("the jobs panel survived the teleport strip — stripTeleportedTemplates did not match its nesting")
 	}
 
 	zClass := regexp.MustCompile(`(?:^|\s)z-(?:\[(\d+)\]|(\d+))(?:\s|"|$)`)
@@ -437,8 +451,10 @@ func TestHeaderDialogs_StackAboveHeaderDropdowns(t *testing.T) {
 		}
 	}
 
-	if len(dialogs) < 2 {
-		t.Fatalf("expected the search dialog and the jobs panel overlay in the header, found %d full-viewport overlays", len(dialogs))
+	// One, not two: the jobs panel used to be the second and now teleports out. The
+	// global search dialog is the only full-viewport overlay that still renders here.
+	if len(dialogs) < 1 {
+		t.Fatalf("expected the global search dialog overlay in the header, found %d full-viewport overlays", len(dialogs))
 	}
 	if len(others) == 0 {
 		t.Fatalf("expected the settings and account dropdowns to carry a z-index class — this test measured nothing")
@@ -450,6 +466,137 @@ func TestHeaderDialogs_StackAboveHeaderDropdowns(t *testing.T) {
 				t.Errorf("review finding 3: a header dialog at z-index %d does not outrank header chrome at z-index %d, so the chrome paints over an aria-modal dialog.\n dialog: %s\n chrome: %s", z, otherZ, tag, otherTag)
 			}
 		}
+	}
+}
+
+// stripTeleportedTemplates removes every `<template x-teleport …>…</template>` block,
+// nesting included, from a fragment of served HTML.
+//
+// A teleported template's contents sit in the document where they were authored but
+// never render there, so any test that reads *placement* out of the served HTML has
+// to skip them.
+//
+// Depth counting rather than "the next </template>": the jobs panel contains
+// seventeen <template> elements of its own, so a naive scan would stop inside it and
+// leave most of the panel still classified as header markup — the test would pass,
+// for the wrong reason.
+func stripTeleportedTemplates(markup string) string {
+	const openTag, closeTag = "<template", "</template>"
+	for {
+		start := strings.Index(markup, "<template x-teleport")
+		if start < 0 {
+			return markup
+		}
+		depth, i, end := 0, start, -1
+		for i < len(markup) {
+			nextOpen := strings.Index(markup[i:], openTag)
+			nextClose := strings.Index(markup[i:], closeTag)
+			if nextClose < 0 {
+				// Unterminated. Dropping the remainder is the safe direction: it can
+				// only make the caller see less, never misclassify teleported markup.
+				return markup[:start]
+			}
+			if nextOpen >= 0 && nextOpen < nextClose {
+				depth++
+				i += nextOpen + len(openTag)
+				continue
+			}
+			depth--
+			i += nextClose + len(closeTag)
+			if depth == 0 {
+				end = i
+				break
+			}
+		}
+		if end < 0 {
+			return markup[:start]
+		}
+		markup = markup[:start] + markup[end:]
+	}
+}
+
+// TestJobsPanel_IsTeleportedIntoTheOverlaysLayer is deferred-work item 7's markup
+// contract, and it replaces what TestHeaderDialogs_StackAboveHeaderDropdowns used to
+// assert about the panel.
+//
+// The panel carried z-[60] inside `.header`, a stacking context at z-index 40. That
+// number was true and useless: it ordered the panel against the settings and account
+// dropdowns and against nothing else, so raising a dropdown to z-index 70 would have put an
+// aria-modal dialog back underneath page chrome with no test failing. Teleporting the
+// panel into `.overlays` puts it in the layer where the app's overlay ordering
+// actually lives, and its z-index finally means what every other overlay's means.
+//
+// Three things have to hold, and each of them fails silently if it stops holding:
+//
+//  1. `x-if` is the OUTER template and `x-teleport` the INNER one. Reversed, x-if
+//     inserts its clone with `el.after(clone)` — a sibling of the teleported node —
+//     so Alpine's `_x_teleportBack` hop is never taken, `closestRoot` finds no
+//     [x-data], and `x-ref="panel"` never registers. focusFirstIn($refs.panel) then
+//     does nothing and raises no error.
+//  2. They never share one <template>. directiveOrder runs `if` before `teleport`
+//     and the teleport handler is unconditional, so one template yields a second,
+//     permanent `fixed inset-0` overlay.
+//  3. The z-index stays below the lowest `.overlays` sibling (lightbox 50,
+//     paste-upload 50 and its toast 50, plugin-action 60, entity-picker 70,
+//     confirm 50), because a teleport appends last and would win every tie.
+//
+// The computed-style and focus halves are in ws9-jobs-cockpit.spec.ts; this is the
+// source contract, in the suite that gates every PR.
+func TestJobsPanel_IsTeleportedIntoTheOverlaysLayer(t *testing.T) {
+	tc := SetupTestEnv(t)
+	_, body := tc.getHTML(t, "/dashboard")
+
+	cockpit := between(body, `class="download-cockpit"`, "\n</div>")
+	if cockpit == "" {
+		cockpit = body
+	}
+
+	ifIdx := strings.Index(cockpit, `<template x-if="isOpen">`)
+	teleIdx := strings.Index(cockpit, `<template x-teleport=".overlays">`)
+	panelIdx := strings.Index(cockpit, `data-testid="cockpit-panel"`)
+	if ifIdx < 0 {
+		t.Fatalf(`no <template x-if="isOpen"> in the cockpit — this test measured nothing`)
+	}
+	if panelIdx < 0 {
+		t.Fatalf(`no data-testid="cockpit-panel" in the cockpit — this test measured nothing`)
+	}
+	if teleIdx < 0 {
+		t.Fatalf(`item 7: the jobs panel is not wrapped in <template x-teleport=".overlays">, so it renders inside the header's stacking context again`)
+	}
+	if teleIdx < ifIdx {
+		t.Errorf("item 7: x-teleport is outside x-if. Reversed, x-if inserts its clone as a *sibling* of the teleported node, x-ref=\"panel\" never registers, and focus is never moved into the panel — with no error. x-if must be the outer template.")
+	}
+	if panelIdx < teleIdx {
+		t.Errorf("item 7: the panel dialog is outside the x-teleport template, so it still renders in the header")
+	}
+
+	// The two directives must not end up on one <template>.
+	for _, tag := range openTagsWithin(cockpit, "template") {
+		if strings.Contains(tag, "x-teleport") && strings.Contains(tag, "x-if") {
+			t.Errorf("item 7: x-if and x-teleport share a <template>. directiveOrder runs `if` before `teleport` and the teleport handler is unconditional, so this renders a second, permanent overlay.\ntag: %s", tag)
+		}
+	}
+
+	// The teleported overlay's z-index, below the lowest `.overlays` sibling.
+	overlay := findOpenTag(cockpit, `data-testid="cockpit-overlay"`, "div")
+	if overlay == "" {
+		t.Fatalf(`no data-testid="cockpit-overlay" in the cockpit — the teleported wrapper is what carries the z-index, and the browser test locates it by this marker`)
+	}
+	m := regexp.MustCompile(`(?:^|\s)z-(?:\[(\d+)\]|(\d+))(?:\s|"|$)`).FindStringSubmatch(overlay)
+	if m == nil {
+		t.Fatalf("the teleported overlay carries no z-index class — this test measured nothing.\ntag: %s", overlay)
+	}
+	raw := m[1]
+	if raw == "" {
+		raw = m[2]
+	}
+	z, err := strconv.Atoi(raw)
+	if err != nil {
+		t.Fatalf("unreadable z-index %q on the teleported overlay", raw)
+	}
+	// 50 is the lowest z-index among the .overlays children.
+	if z >= 50 {
+		t.Errorf("item 7: the teleported jobs panel is at z-index %d, which is not below the lowest .overlays sibling (50). A teleport appends last, so at a tie the panel paints over a true modal.\ntag: %s", z, overlay)
 	}
 }
 
@@ -468,12 +615,15 @@ func between(body, from, to string) string {
 }
 
 // The jobs panel declines to open while a true modal is up, and it recognises one by
-// querying `.overlays [aria-modal="true"]`. That selector is a contract with the
-// markup, and the markup is where it can silently stop being true: a fifth overlay
-// added without the attribute would be a dialog the panel happily opens underneath,
-// with focus trapped in the panel nobody can see.
+// sweeping the document for `[aria-modal="true"]` (src/utils/modality.js). That is a
+// contract with the markup, and the markup is where it can silently stop being true:
+// an overlay added without the attribute would be a dialog the panel happily opens
+// underneath, with focus trapped in the panel nobody can see.
 //
-// CI does not run the browser suite, so the drift guard lives here.
+// This counts the overlays in `.overlays` because that is the layer where a new one
+// is most likely to be added. The browser half is in ws9-jobs-cockpit.spec.ts, which
+// CI does run (the e2e-browser job covers tests/regressions/); this is the cheaper
+// source-level guard that fails in seconds rather than minutes.
 func TestOverlayModals_AreAllReachableByTheJobsPanelsGuard(t *testing.T) {
 	tc := SetupTestEnv(t)
 	_, body := tc.getHTML(t, "/dashboard")
@@ -542,8 +692,9 @@ func TestOverlaysLayer_OutranksTheEntireHeaderLayer(t *testing.T) {
 // reader announces. `close()` owns the return now, and every way the dialog closes
 // goes through it, so the trap must be `.noreturn` or the two fight.
 //
-// A markup assertion because CI does not run the browser suite, and because the whole
-// contract is one modifier that is easy to drop in a refactor.
+// A markup assertion because the whole contract is one modifier that is easy to drop
+// in a refactor, and a source sweep says so precisely where a behavioural test would
+// only say "focus went somewhere odd".
 func TestPluginActionModal_LeavesTheFocusReturnToItsComponent(t *testing.T) {
 	tc := SetupTestEnv(t)
 	_, body := tc.getHTML(t, "/dashboard")
@@ -580,7 +731,8 @@ func TestPluginActionModal_LeavesTheFocusReturnToItsComponent(t *testing.T) {
 // the easier half to lose, because "show the link when the download completed" is the
 // obvious thing to write and was what the template said before.
 //
-// A markup assertion because CI does not run the browser suite.
+// A markup assertion: the condition is a template expression, and reading it is a
+// more direct statement of the decision than driving a job to completion would be.
 func TestJobsCockpit_LinksASavedFileWhateverTheJobsFinalStatus(t *testing.T) {
 	tc := SetupTestEnv(t)
 	_, body := tc.getHTML(t, "/dashboard")

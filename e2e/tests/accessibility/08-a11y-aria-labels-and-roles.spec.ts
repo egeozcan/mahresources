@@ -24,9 +24,17 @@ test.describe('Jobs Panel - Close button aria-label', () => {
     const jobsHeading = page.locator('h2:has-text("Jobs")');
     await jobsHeading.waitFor({ state: 'visible', timeout: 5000 });
 
-    // Find the close button - it's in the same header div as the h2, after the heading's parent div
-    // The header structure is: div.flex > div(h2 + status) + button(close)
-    const closeButton = page.locator('.download-cockpit button[aria-label="Close jobs panel"], .download-cockpit .flex.items-center.justify-between > button:has(svg)').first();
+    // Scoped to the panel by its testid, which is the only locator that means "the
+    // panel's own close button".
+    //
+    // It used to be `.download-cockpit button[aria-label="Close jobs panel"], …` with
+    // `.first()`, and that was already vacuous before the panel moved: the *trigger*
+    // is inside `.download-cockpit` and its aria-label flips to "Close jobs panel"
+    // while the panel is open, so `.first()` always resolved to the trigger and this
+    // test asserted the trigger's label, not the close button's. Since deferred-work
+    // item 7 teleported the panel into `.overlays` the old selector cannot reach the
+    // close button at all.
+    const closeButton = page.locator('[data-testid="cockpit-panel"] button[aria-label="Close jobs panel"]').first();
     await closeButton.waitFor({ state: 'visible', timeout: 5000 });
 
     // The close button should have an aria-label since it's icon-only

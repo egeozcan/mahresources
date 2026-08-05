@@ -330,6 +330,12 @@ test('review finding 3 — an open header dropdown must not paint or click throu
   // and account dropdowns are *later* siblings at z-50, so at z-50 the panel painted
   // below them and they stayed hit-testable over an aria-modal dialog.
   //
+  // Item 7 answered that structurally — the panel is teleported into `.overlays`
+  // (z-index 41, root stacking context), so it outranks the whole header layer at 40
+  // rather than out-numbering two of its siblings. This test is unchanged in what it
+  // measures; only the locator moved, because `.download-cockpit` is now just the
+  // trigger's wrapper and no longer contains the panel.
+  //
   // Asserted with elementFromPoint over a point inside the dropdown, not with the
   // computed z-index: reading the z-index back would pass against the bug.
   await page.goto('/dashboard');
@@ -360,7 +366,7 @@ test('review finding 3 — an open header dropdown must not paint or click throu
     const hit = document.elementFromPoint(x, y) as HTMLElement | null;
     return {
       inDropdown: hit?.closest('.settings') !== null,
-      inCockpit: hit?.closest('.download-cockpit') !== null,
+      inCockpit: hit?.closest('[data-testid="cockpit-overlay"]') !== null,
       tag: hit?.tagName.toLowerCase() ?? 'null',
       point: [Math.round(x), Math.round(y)],
     };
@@ -443,12 +449,17 @@ test('review finding 4 — with focus nowhere, the panel still hands it back to 
 /**
  * Round-3 audit: the panel must not open underneath a true modal.
  *
- * `.header` is position:sticky with z-index 40, so it is a stacking context and the
- * panel's z-[60] only orders it against its header siblings. The app's four modals
- * live in `.overlays` at z-index 41 in the *root* stacking context — above the whole
- * header layer — so the panel opened behind one, moved focus inside itself and
- * x-trap held it there. Two aria-modal dialogs open at once is the defect whichever
- * one paints on top, so the panel declines.
+ * The panel used to live in `.header` — position:sticky with z-index 40, so a
+ * stacking context — and its z-[60] only ordered it against its header siblings. The
+ * app's modals live in `.overlays` at z-index 41 in the *root* stacking context,
+ * above the whole header layer, so the panel opened behind one, moved focus inside
+ * itself and x-trap held it there.
+ *
+ * Deferred-work item 7 teleports the panel into `.overlays` too, so it is now
+ * ordered against those modals rather than stranded below them — but that is not
+ * what makes this safe, and the guard stays. Two aria-modal dialogs open at once is
+ * the defect whichever one paints on top: each arms its own trap. The panel declines
+ * rather than winning.
  *
  * A browser test because it depends on which `<template x-if>` branch Alpine
  * instantiated and on where focus actually is; the decision itself is unit-tested in
@@ -462,7 +473,13 @@ test('round 3 — the jobs panel declines to open underneath an open modal', asy
   // filter({ visible }) rather than a `:visible` suffix: Tailwind scans this
   // directory, and the suffixed form makes it emit an arbitrary-variant rule into
   // the committed stylesheet.
-  const modals = page.locator('.overlays [aria-modal="true"]').filter({ visible: true });
+  //
+  // The cockpit panel is excluded explicitly. Since item 7 it is teleported into
+  // `.overlays` and matches `[aria-modal="true"]` like everything else there, so
+  // without this the counts below would stop meaning "the *other* dialog".
+  const modals = page
+    .locator('.overlays [aria-modal="true"]:not([data-testid="cockpit-panel"])')
+    .filter({ visible: true });
   const panel = page.locator('[data-testid="cockpit-panel"]');
 
   await page.evaluate(() => {
@@ -494,4 +511,98 @@ test('round 3 — the jobs panel declines to open underneath an open modal', asy
   await expect(modals).toHaveCount(0);
   await page.keyboard.press('ControlOrMeta+Shift+KeyD');
   await expect(panel).toBeVisible();
+});
+
+/**
+ * Deferred-work item 7: the panel is teleported into `.overlays`.
+ *
+ * Round 2 diagnosed the cause and round 3 removed only the consequence. `.header`
+ * is `position: sticky; z-index: 40`, so it is a stacking context: the panel's
+ * `z-[60]` ordered it against the settings and account dropdowns and against
+ * nothing else. The number was meaningless outside the header — raise a dropdown
+ * above 60 and the panel goes under an aria-modal dialog again, with no test
+ * failing, because the app's real overlay ordering lives in `.overlays` (z-index
+ * 41, root stacking context) and the panel was not part of it.
+ *
+ * `x-teleport` moves the panel into that layer, where its z-index means what every
+ * other overlay's z-index means. Nothing about paint order changes today, which is
+ * the point: the invariant stops depending on the header's internal numbering.
+ *
+ * The wrap direction is load-bearing and fails silently if reversed. `x-if` must be
+ * the outer template: with `x-teleport` outside, x-if inserts its clone with
+ * `el.after(clone)` — a *sibling* of the teleported node — so Alpine's
+ * `_x_teleportBack` hop is never taken, `closestRoot` finds no `[x-data]`, and
+ * `x-ref="panel"` never registers. `focusFirstIn(this.$refs.panel)` would then do
+ * nothing, with no error. Hence the focus assertion below.
+ */
+test('item 7 — the open panel lives in the .overlays layer, not in the header', async ({ page }) => {
+  await page.goto('/dashboard');
+  await page.waitForSelector('[data-testid="cockpit-trigger"]');
+
+  // The trigger stays where findings 83/102 put it: header chrome.
+  const triggerInHeader = await page
+    .locator('[data-testid="cockpit-trigger"]')
+    .evaluate((el) => el.closest('header') !== null);
+  expect(triggerInHeader, 'the trigger must remain in the header').toBe(true);
+
+  await page.locator('[data-testid="cockpit-trigger"]').click();
+  const panel = page.locator('[data-testid="cockpit-panel"]');
+  await expect(panel).toBeVisible();
+
+  const placement = await panel.evaluate((el) => {
+    const overlay = el.closest('[data-testid="cockpit-overlay"]');
+    const overlays = document.querySelector('.overlays');
+    return {
+      inOverlays: el.closest('.overlays') !== null,
+      inHeader: el.closest('header') !== null,
+      // The teleported node must be a *direct* child of .overlays: `.overlays > *`
+      // is what restores pointer-events on the pointer-events:none layer.
+      overlayIsDirectChild: !!overlay && overlay.parentElement === overlays,
+      overlayZ: overlay ? getComputedStyle(overlay).zIndex : null,
+      // Every other overlay layer must still stack above it.
+      //
+      // "Layer" means a `position: fixed` element inside `.overlays`, not every
+      // descendant with a z-index. Two of the six overlays put their z-index on a
+      // descendant of a wrapper with no z-index (pluginActionModal's `.plugin-action-overlay`
+      // at 60, confirmDialog's inner div at 50), so direct children alone would miss
+      // them. But the lightbox also has a `sticky top-0 z-10` toolbar and an
+      // crop overlay at z-index 40, both sealed inside the lightbox's own
+      // stacking context — sweeping all descendants compares against numbers that
+      // mean nothing here. `position: fixed` is what distinguishes a modal layer from
+      // chrome inside one.
+      siblingZ: overlays
+        ? [...overlays.children]
+            .filter((c) => c !== overlay)
+            .flatMap((c) => [c, ...c.querySelectorAll('*')])
+            .filter((c) => getComputedStyle(c).position === 'fixed')
+            .map((c) => parseInt(getComputedStyle(c).zIndex, 10))
+            .filter((z) => Number.isFinite(z))
+        : [],
+    };
+  });
+
+  expect(placement.inOverlays, 'the panel must be teleported into .overlays').toBe(true);
+  expect(placement.inHeader, 'the panel must no longer paint inside the header stacking context').toBe(false);
+  expect(placement.overlayIsDirectChild, 'the teleported overlay must be a direct child of .overlays').toBe(true);
+
+  const z = parseInt(placement.overlayZ ?? '', 10);
+  expect(Number.isFinite(z), `the teleported overlay needs a numeric z-index, got ${placement.overlayZ}`).toBe(true);
+  for (const siblingZ of placement.siblingZ) {
+    expect(
+      z,
+      `the jobs panel at z-index ${z} must stay below every other overlay (found ${siblingZ})`,
+    ).toBeLessThan(siblingZ);
+  }
+
+  // x-ref still resolves through the teleport, which is what moves focus in. If the
+  // templates were nested the wrong way round this is the only thing that notices.
+  const focusInPanel = await page.evaluate(
+    () => document.activeElement?.closest('[data-testid="cockpit-panel"]') !== null,
+  );
+  expect(focusInPanel, 'focus was not moved into the teleported panel — check the x-if/x-teleport nesting').toBe(true);
+
+  // And the round-3 behaviour survives: Escape closes, focus returns to the trigger.
+  await page.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+  await expect(page.locator('[data-testid="cockpit-trigger"]')).toBeFocused();
 });

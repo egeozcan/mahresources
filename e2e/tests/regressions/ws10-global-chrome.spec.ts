@@ -167,8 +167,8 @@ test.describe('findings 83 and 102 — the jobs trigger must not cover page cont
 
     const panel = page.locator('[data-testid="cockpit-panel"]');
     await expect(panel).toBeVisible();
-    // The panel is fixed and now paints from inside the header's stacking context;
-    // if that went wrong it would render behind the page rather than over it.
+    // The panel is fixed and teleported into `.overlays` (deferred-work item 7); if
+    // that went wrong it would render behind the page rather than over it.
     const covers = await page.evaluate(() => {
       const p = document.querySelector('[data-testid="cockpit-panel"]')!.getBoundingClientRect();
       const el = document.elementFromPoint(p.left + p.width / 2, p.top + p.height / 2) as HTMLElement | null;

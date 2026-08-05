@@ -30,6 +30,12 @@ beforeEach(() => {
     // init() touches the DOM and opens an EventSource; the predicates under test do
     // not need either, so the component is used unmounted.
     component._dismissedIds = new Set();
+    // Alpine gives every component a $refs object, empty until an x-ref registers.
+    // blockingModal() reads $refs.panel — the panel is teleported into `.overlays`,
+    // so it is no longer inside the component root — and an unmounted component has
+    // to model that rather than have the production code optional-chain a magic
+    // that always exists.
+    component.$refs = {};
 });
 
 afterEach(() => {
@@ -447,8 +453,15 @@ describe('round 4 — the guard covers every dialog, not one layer of them', () 
         // The sweep is document-wide now, and this panel is an aria-modal dialog. A
         // path that consults the guard while the panel is open would otherwise find
         // itself and refuse.
+        //
+        // Item 7 split the component's markup in two: `_root` is the x-data element
+        // in the header and holds only the trigger, while the dialog is `$refs.panel`
+        // over in `.overlays`. `_root` alone stopped covering the panel the moment it
+        // was teleported, so the guard is given both — and this asserts through the
+        // ref, which is the half that actually contains the dialog now.
         const ownPanel = { ...shown };
-        component._root = { contains: (el: any) => el === ownPanel };
+        component._root = { contains: () => false };
+        component.$refs = { panel: ownPanel };
         vi.stubGlobal('document', {
             querySelectorAll: (sel: string) =>
                 sel === '[aria-modal="true"]' ? [ownPanel] : [],
@@ -456,6 +469,21 @@ describe('round 4 — the guard covers every dialog, not one layer of them', () 
         });
 
         expect(component.blockingModal()).toBeNull();
+    });
+
+    test('a dialog that is neither of the component roots still blocks', () => {
+        // The control for the test above: an ignore list that matched everything
+        // would pass it and disable the guard entirely.
+        const other = { ...shown, id: 'entity-picker' };
+        component._root = { contains: () => false };
+        component.$refs = { panel: { ...shown, id: 'own-panel' } };
+        vi.stubGlobal('document', {
+            querySelectorAll: (sel: string) =>
+                sel === '[aria-modal="true"]' ? [other] : [],
+            activeElement: null, body: {}, documentElement: {},
+        });
+
+        expect(component.blockingModal()).toBe(other);
     });
 });
 
