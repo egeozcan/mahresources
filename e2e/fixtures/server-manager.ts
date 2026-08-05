@@ -4,7 +4,9 @@
  * Each Playwright worker starts its own mahresources server, eliminating
  * all cross-worker database contention.
  *
- * SQLite mode (default): each worker gets an in-memory SQLite database.
+ * SQLite mode (default): each worker gets its own ephemeral SQLite database —
+ * a per-PID file under /tmp in WAL mode (see MemoryDB in
+ * application_context/context.go), not an in-memory one, despite `-memory-db`.
  * Postgres mode (PG_DSN env var set): each worker creates its own database
  * in the shared Postgres testcontainer and starts a server against it.
  */
@@ -77,17 +79,45 @@ export async function waitForServer(port: number, timeout = 30000): Promise<void
  */
 function createWorkerDatabase(adminDsn: string): string {
   const testpgBinary = path.join(PROJECT_ROOT, 'testpg');
-  try {
-    const result = execSync(`"${testpgBinary}" createdb "${adminDsn}"`, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 10000,
-    });
-    return result.toString().trim();
-  } catch (err: any) {
-    console.error(`[server-manager] Failed to create worker database: ${err.stderr?.toString() || err.message}`);
-    // Fall back to using the admin DSN (shared, less isolated)
-    return adminDsn;
+  const attempts = 3;
+  let lastError = '';
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const result = execSync(`"${testpgBinary}" createdb "${adminDsn}"`, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        // 30s, not 10s. CREATE DATABASE is cheap, but this runs while four
+        // workers are starting Chromium and four Go servers against one
+        // postmaster, and a timeout here used to cost test isolation silently.
+        timeout: 30000,
+      });
+      return result.toString().trim();
+    } catch (err: any) {
+      lastError = err.stderr?.toString() || err.message;
+      console.error(
+        `[server-manager] createdb attempt ${attempt}/${attempts} failed: ${lastError}`,
+      );
+    }
   }
+
+  // Fail loudly rather than falling back to the shared admin DSN.
+  //
+  // The fallback used to be silent: on any failure — most plausibly the timeout,
+  // and most plausibly under exactly the load worth measuring — every affected
+  // worker got the *same* database. Four workers then contended on one database
+  // and interfered with each other's fixtures, which surfaces as unrelated specs
+  // going flaky. Nothing failed, and no report could show it, so a run that had
+  // quietly lost its isolation was indistinguishable from one that had not.
+  //
+  // That makes it a measurement hazard rather than merely a robustness gap: the
+  // deferred-work item this harness sits under (docs/deferred-work.md item 6) is
+  // about not adopting a contention fix on the strength of a number nobody can
+  // trust. A suite that degrades silently produces exactly that number.
+  throw new Error(
+    `[server-manager] could not create an isolated worker database after ${attempts} attempts: ${lastError}\n` +
+      'Refusing to fall back to the shared admin DSN: workers would silently share one ' +
+      'database, and the cross-talk would surface as unrelated specs going flaky.',
+  );
 }
 
 /** Bootstrap admin credentials for auth-enabled test servers. */

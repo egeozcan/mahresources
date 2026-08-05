@@ -2741,6 +2741,9 @@
   .px-4 {
     padding-inline: calc(var(--spacing) * 4);
   }
+  .px-5 {
+    padding-inline: calc(var(--spacing) * 5);
+  }
   .px-6 {
     padding-inline: calc(var(--spacing) * 6);
   }
@@ -4572,11 +4575,6 @@
   .focus-visible\:text-stone-950 {
     &:focus-visible {
       color: var(--color-stone-950);
-    }
-  }
-  .focus-visible\:opacity-100 {
-    &:focus-visible {
-      opacity: 100%;
     }
   }
   .focus-visible\:ring-2 {
