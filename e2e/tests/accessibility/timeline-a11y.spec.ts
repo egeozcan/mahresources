@@ -1,7 +1,7 @@
 /**
  * Accessibility tests for Timeline views
  *
- * Tests timeline pages for WCAG 2.1 Level AA compliance using axe-core,
+ * Tests timeline pages for WCAG 2.2 Level AA compliance using axe-core,
  * and verifies custom ARIA attributes on timeline-specific components.
  */
 import { test, expect } from '../../fixtures/a11y.fixture';

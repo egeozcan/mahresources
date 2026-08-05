@@ -1,7 +1,7 @@
 /**
  * Accessibility tests for all pages
  *
- * Tests all pages in the application for WCAG 2.1 Level AA compliance
+ * Tests all pages in the application for WCAG 2.2 Level AA compliance
  * using axe-core.
  */
 import { test, expect } from '../../fixtures/a11y.fixture';

@@ -1,7 +1,7 @@
 /**
  * Accessibility tests for Schema Search Fields
  *
- * Tests the schemaSearchFields Alpine.js component for WCAG 2.1 Level AA
+ * Tests the schemaSearchFields Alpine.js component for WCAG 2.2 Level AA
  * compliance using axe-core. The component renders schema-driven filter
  * inputs in list-view sidebars when a category with a MetaSchema is selected.
  */

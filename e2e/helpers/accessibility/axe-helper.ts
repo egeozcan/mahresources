@@ -3,14 +3,26 @@ import AxeBuilder from '@axe-core/playwright';
 import type { Result, NodeResult } from 'axe-core';
 
 /**
- * WCAG 2.1 Level AA tags for axe-core
- * These are the standards we test against
+ * WCAG 2.2 Level AA tags for axe-core. These are the standards we test against.
+ *
+ * `wcag22a` + `wcag22aa` were added on 2026-08-05 (deferred-work item 4). Measured
+ * across all 37 static pages in a11y-config.ts at 1280x720, the widening added
+ * exactly one node: a `target-size` `partiallyObscured` on the /groups Categories
+ * autocompleter. That was not a hit-area problem — the control is 400px wide — but
+ * finding 102 a second time: `partials/form/searchButton.tpl` pinned the submit to
+ * the viewport bottom and painted it over the field. Fixing that cleared it, so the
+ * widened set is at zero.
+ *
+ * `best-practice` is deliberately still out. It is a larger, separate piece of work
+ * (see docs/deferred-work.md item 4).
  */
 export const WCAG_AA_TAGS = [
   'wcag2a',
   'wcag2aa',
   'wcag21a',
   'wcag21aa',
+  'wcag22a',
+  'wcag22aa',
 ];
 
 /**

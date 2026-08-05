@@ -1,7 +1,7 @@
 /**
  * Accessibility tests for interactive components
  *
- * Tests various component states for WCAG 2.1 Level AA compliance.
+ * Tests various component states for WCAG 2.2 Level AA compliance.
  * Components are tested in their different states (closed, open, with data, etc.)
  */
 import { test, expect } from '../../fixtures/a11y.fixture';

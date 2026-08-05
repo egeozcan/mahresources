@@ -2,7 +2,7 @@
  * Accessibility tests for Schema Editor
  *
  * Tests the schema editor modal (schemaEditorModal Alpine.js component and
- * schema-editor web component) for WCAG 2.1 Level AA compliance using
+ * schema-editor web component) for WCAG 2.2 Level AA compliance using
  * axe-core.  The modal is accessible via the "Visual Editor" button on the
  * category create/edit form.
  */

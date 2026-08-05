@@ -464,3 +464,49 @@ test('finding 39 (rejected) — settings controls paint a focus ring via box-sha
     `no opaque focus ring found; outlineStyle=${painted.outlineStyle} boxShadow=${painted.boxShadow}`,
   ).toBe(true);
 });
+
+/**
+ * Deferred-work item 4: widening WCAG_AA_TAGS to wcag22a/wcag22aa turned
+ * `target-size` on, and it found two controls in the sidebar's multi-sort widget
+ * that the 55-page sweep behind that item had never seen, because a sort row only
+ * exists once a sort has been added.
+ *
+ * `templates/partials/form/multiSortInput.tpl` gave the reorder arrows `h-3`
+ * (18x12) and the remove button `w-[18px] h-6` (18x24). Same class as findings
+ * 48/99/139, and the same remedy the calendar day number took in WS5 finding 49:
+ * a real 24px box rather than a hit area faked with a pseudo-element, because axe
+ * and the pointer both measure the element's own rect.
+ *
+ * Pinned here rather than left to the axe sweep alone: axe only reached these
+ * through /notes?tags=… and /resources?tags=…, where a sort row happens to exist.
+ * Nothing said it had to.
+ */
+for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 844 }]) {
+  test(`item 4 — every multi-sort control is a 24px target at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto('/notes');
+
+    if (viewport.width < 1024) {
+      // Below the breakpoint the sidebar is a real <details> disclosure.
+      await page.locator('#sidebar-disclosure > summary').click();
+    }
+
+    await page.getByRole('button', { name: 'Add another sort criteria' }).click();
+
+    const row = page.locator('[aria-label="Sort options"] select').first();
+    await expect(row, 'adding a sort must render a sort row').toBeVisible();
+
+    const controls = page.locator('[aria-label="Sort options"] button[title]');
+    const count = await controls.count();
+    expect(count, 'the sort row must render its direction, reorder and remove controls').toBeGreaterThanOrEqual(4);
+
+    for (let i = 0; i < count; i++) {
+      const control = controls.nth(i);
+      const title = await control.getAttribute('title');
+      const box = await control.boundingBox();
+      expect(box, `"${title}" must be rendered`).not.toBeNull();
+      expect(box!.width, `"${title}" width ${box!.width}px`).toBeGreaterThanOrEqual(MIN_TARGET);
+      expect(box!.height, `"${title}" height ${box!.height}px`).toBeGreaterThanOrEqual(MIN_TARGET);
+    }
+  });
+}

@@ -1,7 +1,7 @@
 /**
  * Accessibility tests for the MRQL query page
  *
- * Tests the MRQL page for WCAG 2.1 Level AA compliance using axe-core.
+ * Tests the MRQL page for WCAG 2.2 Level AA compliance using axe-core.
  */
 import { test, expect } from '../../fixtures/a11y.fixture';
 

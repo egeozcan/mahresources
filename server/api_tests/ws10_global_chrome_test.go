@@ -277,6 +277,65 @@ func TestFooter_IsNotSticky(t *testing.T) {
 	}
 }
 
+// TestSidebarSubmit_IsNotSticky is the second instance of finding 102, found
+// while widening WCAG_AA_TAGS to WCAG 2.2 (deferred-work item 4).
+//
+// TestFooter_IsNotSticky above dropped the footer's pin because "a bar fixed to
+// the viewport bottom covers page content at every scroll offset", measured on
+// the /logs "After" date input. templates/partials/form/searchButton.tpl was
+// doing the same thing with `sticky bottom-12 ... z-10` and had never been
+// checked against that ruling — and it reproduced the defect on that same input.
+// Measured at 1280x720, the submit covered a filter control on 6 of the 37 pages
+// in the accessibility sweep, and elementFromPoint inside the overlap returned
+// the button rather than the field.
+//
+// axe saw only one of the six, as a target-size `partiallyObscured` node on
+// /groups, which is what blocked the WCAG 2.2 tag flip. The geometry half of the
+// guard is e2e/tests/regressions/sidebar-apply-button-covers-filters.spec.ts;
+// this half is here so CI, which does not run the browser suite in full, still
+// catches the class being put back.
+func TestSidebarSubmit_IsNotSticky(t *testing.T) {
+	tc := SetupTestEnv(t)
+
+	// /logs is the page finding 102 was measured on; /groups is the one axe saw.
+	for _, path := range []string{"/logs", "/groups"} {
+		_, body := tc.getHTML(t, path)
+
+		start := strings.Index(body, `<aside class="sidebar"`)
+		if start < 0 {
+			t.Fatalf("%s: no <aside class=\"sidebar\"> in the page — this test measured nothing", path)
+		}
+		end := strings.Index(body[start:], "</aside>")
+		if end < 0 {
+			t.Fatalf("%s: <aside class=\"sidebar\"> is never closed — this test measured nothing", path)
+		}
+		sidebar := body[start : start+end]
+
+		// The control: there is still a submit inside the sidebar, so a template that
+		// simply stopped rendering one cannot pass this silently.
+		submits := 0
+		for _, tag := range openTagsWithin(sidebar, "button") {
+			if strings.Contains(tag, `type="submit"`) {
+				submits++
+			}
+		}
+		if submits == 0 {
+			t.Fatalf("%s: no submit button in the sidebar — this test measured nothing", path)
+		}
+
+		// Only bottom-pinning is forbidden. A `sticky top-…` filter header would be
+		// fine: it covers content the reader has already scrolled past, not content
+		// they are scrolling towards.
+		for _, tag := range openTagsWithin(sidebar, "div") {
+			pinned := strings.Contains(tag, "sticky") || strings.Contains(tag, "fixed")
+			if pinned && strings.Contains(tag, "bottom-") {
+				t.Errorf("finding 102: %s pins a sidebar element to the viewport bottom again, which covers whatever filter field is there — measured on the /logs \"After\" date input and the /groups Categories autocompleter at 1280x720.\ntag: %s",
+					path, whitespaceRe.ReplaceAllString(tag, " "))
+			}
+		}
+	}
+}
+
 // navLinkTo returns the first desktop nav <a> whose href is exactly url.
 func navLinkTo(body, url string) string {
 	for _, tag := range openTagsWithin(body, "a") {

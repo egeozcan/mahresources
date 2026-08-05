@@ -51,33 +51,45 @@
                 <span x-text="sort.direction === 'asc' ? '\u2191' : '\u2193'"></span>
             </button>
 
-            <div class="flex flex-col shrink-0 w-[18px]">
-                <button
-                    type="button"
-                    @click="moveUp(index)"
-                    :disabled="index === 0"
-                    class="h-3 flex items-center justify-center text-stone-400 hover:text-stone-700 disabled:opacity-30 focus:outline-none focus:text-amber-700"
-                    :aria-label="'Move sort ' + (index + 1) + ' up'"
-                    title="Move up"
-                >
-                    <span class="text-[8px] leading-none">&#9650;</span>
-                </button>
-                <button
-                    type="button"
-                    @click="moveDown(index)"
-                    :disabled="index === sortColumns.length - 1"
-                    class="h-3 flex items-center justify-center text-stone-400 hover:text-stone-700 disabled:opacity-30 focus:outline-none focus:text-amber-700"
-                    :aria-label="'Move sort ' + (index + 1) + ' down'"
-                    title="Move down"
-                >
-                    <span class="text-[8px] leading-none">&#9660;</span>
-                </button>
-            </div>
+            {# Deferred-work item 4: these three were 18x12, 18x12 and 18x24, which is #}
+            {# WCAG 2.2 SC 2.5.8 (findings 48/99/139 again). Turning on wcag22aa found #}
+            {# the two arrows; the remove button is the same defect one axe check away #}
+            {# (18px wide), so it is fixed with them.                                  #}
+            {#                                                                         #}
+            {# A pseudo-element hit area would not do: axe and the pointer both measure #}
+            {# the element's own rect, so the box has to be real — the remedy WS5       #}
+            {# finding 49 took for .calendar-day-number.                                #}
+            {#                                                                         #}
+            {# The arrows moved from a stacked 18px column to side by side so the row  #}
+            {# stays one line tall, which is what it has to be: this widget sits among  #}
+            {# fifteen other single-line filter fields. The cost is 40px of the select, #}
+            {# measured at 328px wide on a 400px sidebar for a longest option of 15     #}
+            {# characters, and 260px at 390px viewport — slack either way.              #}
+            <button
+                type="button"
+                @click="moveUp(index)"
+                :disabled="index === 0"
+                class="w-6 h-6 flex items-center justify-center text-stone-400 hover:text-stone-700 disabled:opacity-30 focus:outline-none focus:text-amber-700 shrink-0"
+                :aria-label="'Move sort ' + (index + 1) + ' up'"
+                title="Move up"
+            >
+                <span class="text-[10px] leading-none">&#9650;</span>
+            </button>
+            <button
+                type="button"
+                @click="moveDown(index)"
+                :disabled="index === sortColumns.length - 1"
+                class="w-6 h-6 flex items-center justify-center text-stone-400 hover:text-stone-700 disabled:opacity-30 focus:outline-none focus:text-amber-700 shrink-0"
+                :aria-label="'Move sort ' + (index + 1) + ' down'"
+                title="Move down"
+            >
+                <span class="text-[10px] leading-none">&#9660;</span>
+            </button>
 
             <button
                 type="button"
                 @click="removeSort(index)"
-                class="w-[18px] h-6 flex items-center justify-center text-stone-300 hover:text-red-600 focus:outline-none focus:text-red-600 shrink-0 transition-colors duration-100"
+                class="w-6 h-6 flex items-center justify-center text-stone-300 hover:text-red-600 focus:outline-none focus:text-red-600 shrink-0 transition-colors duration-100"
                 :aria-label="'Remove sort ' + (index + 1)"
                 title="Remove"
             >
