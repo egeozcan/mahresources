@@ -72,6 +72,7 @@ import { globalSearch } from './components/globalSearch.js';
 import { registerLightboxStore } from './components/lightbox.js';
 import { registerEntityPickerStore } from './components/picker/index.js';
 import { registerPasteUploadStore, setupPasteListener } from './components/pasteUpload.js';
+import { registerConfirmDialogStore } from './components/confirmDialog.js';
 import { setupHoverCard } from './components/hoverCard.js';
 import { multiSort } from './components/multiSort.js';
 import { downloadCockpit } from './components/downloadCockpit.js';
@@ -169,6 +170,7 @@ registerSavedSettingStore(Alpine);
 registerLightboxStore(Alpine);
 registerEntityPickerStore(Alpine);
 registerPasteUploadStore(Alpine);
+registerConfirmDialogStore(Alpine);
 
 // Register Alpine data components
 Alpine.data('singleEntitySelector', singleEntitySelector);

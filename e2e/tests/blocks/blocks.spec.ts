@@ -1,4 +1,5 @@
 import { test, expect } from '../../fixtures/base.fixture';
+import { acceptConfirm } from '../../helpers/confirm-dialog';
 
 test.describe('Block CRUD Operations via API', () => {
   let categoryId: number;
@@ -380,14 +381,14 @@ test.describe('Block Editor UI', () => {
     // Count blocks before deletion
     const blocksBefore = await page.locator('.block-card').count();
 
-    // Accept the confirmation dialog
-    page.once('dialog', async dialog => {
-      await dialog.accept();
-    });
-
     // Click delete button on the last block (BH-027: aria-label instead of title)
     const deleteButtons = page.locator('[data-block-control="delete"]');
     await deleteButtons.last().click();
+
+    // The confirm is in-app DOM, not window.confirm, so the click above returns as
+    // soon as the dialog opens — deleteBlock() only runs once it is accepted. The
+    // count assertion therefore has to come after this line.
+    await acceptConfirm(page);
 
     // Wait for block to be removed
     await expect(page.locator('.block-card')).toHaveCount(blocksBefore - 1);

@@ -25,10 +25,11 @@
     {# Finding 128: unshare() confirms first. Revoking is irreversible for every #}
     {# holder of the URL, because re-sharing mints a NEW token and the old link is #}
     {# dead for good — so the prompt names the action and its blast radius, per the #}
-    {# campaign's confirmation-wording decision. window.confirm is deliberate; an #}
-    {# in-app modal is a separate follow-up. The comment lives out here rather than #}
-    {# inside the x-data attribute: a // comment in an attribute value survives #}
-    {# only as long as the newline does. #}
+    {# campaign's confirmation-wording decision. It goes through the in-app #}
+    {# alertdialog ($store.confirmDialog), which is what replaced window.confirm #}
+    {# across the app. The comment lives out here rather than inside the x-data #}
+    {# attribute: a // comment in an attribute value survives only as long as the #}
+    {# newline does. #}
     <div x-data="{
         shared: {% if note.ShareToken %}true{% else %}false{% endif %},
         shareToken: '{{ note.ShareToken|default:'' }}',
@@ -55,7 +56,7 @@
             }
         },
         async unshare() {
-            if (!window.confirm('Revoke this public link? Anyone holding the current URL loses access immediately, and sharing again creates a different link — the old one cannot be restored.')) {
+            if (!await $store.confirmDialog.ask('Revoke this public link? Anyone holding the current URL loses access immediately, and sharing again creates a different link — the old one cannot be restored.')) {
                 return;
             }
             this.loading = true;

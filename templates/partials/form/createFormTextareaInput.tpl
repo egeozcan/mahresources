@@ -14,15 +14,26 @@
                     @input="onInput($event)"
                     @keydown="onKeydown($event)"
                     {% if required %}required aria-required="true"{% endif %}
-                    role="combobox"
+                    {# Deferred-work item 8: this used to declare role="combobox".    #}
+                    {# On a <textarea> that override replaces the implicit textbox    #}
+                    {# role and takes aria-multiline="true" with it, so the field     #}
+                    {# stopped announcing as multiline. Adding aria-multiline back is #}
+                    {# NOT the fix: ARIA 1.2 has no multiline combobox and the        #}
+                    {# attribute is not in axe's allowed set for role=combobox, so it #}
+                    {# would trade this for an aria-allowed-attr failure (wcag2a,     #}
+                    {# wcag412, impact critical). The native textbox role is kept     #}
+                    {# instead — it allows aria-activedescendant, aria-autocomplete   #}
+                    {# and aria-multiline, and aria-controls/-owns/-haspopup are      #}
+                    {# global. :aria-expanded had to go with the role: it is neither  #}
+                    {# global nor allowed on a textbox. The open/closed state it      #}
+                    {# carried is not lost — mentionTextarea.js announces the result  #}
+                    {# count through its live region on every search.                 #}
                     aria-autocomplete="list"
-                    :aria-expanded="mentionActive && mentionResults.length > 0"
                     aria-haspopup="listbox"
-                    {# Finding 133: this declared role=combobox, aria-autocomplete,   #}
-                    {# aria-haspopup and aria-activedescendant but never named the    #}
-                    {# listbox it controls, so assistive tech could not follow the    #}
-                    {# suggestion list. autocompleter.tpl, in this directory, sets    #}
-                    {# both aria-controls and aria-owns; this matches it.             #}
+                    {# Finding 133: this named none of the listbox it drives, so      #}
+                    {# assistive tech could not follow the suggestion list.           #}
+                    {# autocompleter.tpl, in this directory, sets both aria-controls  #}
+                    {# and aria-owns; this matches it.                                #}
                     aria-controls="{{ field_id }}-mention-listbox"
                     aria-owns="{{ field_id }}-mention-listbox"
                     :aria-activedescendant="activeDescendantId"

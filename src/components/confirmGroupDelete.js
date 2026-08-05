@@ -22,6 +22,8 @@
  * Fallback: on fetch failure, we still prompt with a generic confirm so
  * delete keeps working — the user just doesn't get the count breakdown.
  */
+import { askToConfirm } from './confirmDialog.js';
+
 const PAGE_LIMIT = 50;
 
 function isAtLimit(n) {
@@ -118,10 +120,18 @@ export function confirmGroupDelete() {
                 message = `Delete ${nGroups}? This will orphan ${parts.join(' and ')} (they'll move to top level).`;
             }
 
-            if (window.confirm(message)) {
-                // User confirmed — submit natively.
+            if (await askToConfirm(message)) {
+                // requestSubmit(), not submit(): submit() dispatches no submit event,
+                // so anything listening for one — the delegated bulk AJAX listener,
+                // and this component's own re-entry guard — never sees it. This form
+                // is `no-ajax`, so the browser still performs a native submit, but
+                // relying on submit()'s silence was luck rather than design.
                 this._inFlight = true;
-                form.submit();
+                try {
+                    form.requestSubmit();
+                } finally {
+                    this._inFlight = false;
+                }
             }
         },
     };

@@ -1,4 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { acceptConfirm } from '../helpers/confirm-dialog';
 
 export class BasePage {
   readonly page: Page;
@@ -139,12 +140,11 @@ export class BasePage {
   }
 
   async submitDelete() {
-    // Set up dialog handler for the confirm() prompt
-    this.page.once('dialog', async (dialog) => {
-      await dialog.accept();
-    });
+    // The confirmation is the in-app alertdialog now, not window.confirm, so it
+    // is answered as ordinary DOM rather than through page.on('dialog').
     const deleteButton = this.page.locator('input[type="submit"][value="Delete"], button:has-text("Delete")').first();
     await deleteButton.click();
+    await acceptConfirm(this.page);
     await this.page.waitForLoadState('load');
   }
 }

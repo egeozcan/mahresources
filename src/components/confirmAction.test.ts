@@ -24,9 +24,11 @@ function mountOn(component: ReturnType<typeof confirmAction>, form: HTMLFormElem
     return mounted;
 }
 
-function fakeForm(): HTMLFormElement {
+function fakeForm(dataset: Record<string, string> = {}): HTMLFormElement {
     const form = {
         tagName: 'FORM',
+        dataset,
+        requestSubmit: vi.fn(),
         closest: (sel: string) => (sel === 'form' ? form : null),
     };
     return form as unknown as HTMLFormElement;
@@ -40,26 +42,50 @@ function submitEvent(target: HTMLFormElement) {
     };
 }
 
-function setSelectionSize(size: number) {
-    // The component reads window.Alpine, which is what the app sets. Stub both
-    // through vi so afterEach's unstubAllGlobals restores them — a direct
-    // assignment to globalThis.window would outlive this file.
+let currentSelectionSize = 0;
+
+// Module scope, because installAlpine closes over it and is defined outside the
+// describe block.
+let confirmSpy: ReturnType<typeof vi.fn>;
+
+/**
+ * Install the two stores the component reads: bulkSelection for {count}/{s}, and
+ * confirmDialog for the confirmation itself. Stubbed through vi so afterEach's
+ * unstubAllGlobals restores them — a direct assignment to globalThis.window would
+ * outlive this file.
+ */
+function installAlpine(size: number) {
+    currentSelectionSize = size;
     vi.stubGlobal('Alpine', {
-        store: (name: string) => (name === 'bulkSelection'
-            ? { selectedIds: new Set(Array.from({ length: size }, (_, i) => i + 1)) }
-            : undefined),
+        store: (name: string) => {
+            if (name === 'bulkSelection') {
+                return { selectedIds: new Set(Array.from({ length: currentSelectionSize }, (_, i) => i + 1)) };
+            }
+            if (name === 'confirmDialog') {
+                return { ask: (message: string) => confirmSpy(message) };
+            }
+            return undefined;
+        },
     });
     vi.stubGlobal('window', globalThis);
 }
 
-describe('confirmAction message handling', () => {
-    let confirmSpy: ReturnType<typeof vi.fn>;
+function setSelectionSize(size: number) {
+    currentSelectionSize = size;
+}
 
+describe('confirmAction message handling', () => {
+    /**
+     * The confirmation is asked of the in-app alertdialog store now, not of
+     * window.confirm, and it answers with a promise. setSelectionSize re-stubs
+     * Alpine, so the confirmDialog store is installed from here too — otherwise a
+     * mid-test call to setSelectionSize would silently drop it and askToConfirm
+     * would fail closed.
+     */
     beforeEach(() => {
-        confirmSpy = vi.fn(() => true);
-        vi.stubGlobal('confirm', confirmSpy);
+        confirmSpy = vi.fn(async () => true);
+        installAlpine(0);
         vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
-        setSelectionSize(0);
     });
 
     afterEach(() => {
@@ -67,41 +93,41 @@ describe('confirmAction message handling', () => {
         vi.unstubAllGlobals();
     });
 
-    test('a message passed as a bare string is used, not silently dropped', () => {
+    test('a message passed as a bare string is used, not silently dropped', async () => {
         const form = fakeForm();
         const c = mountOn(confirmAction('Delete the selected notes?'), form);
-        c.events['@submit'].call(c, submitEvent(form));
+        await c.events['@submit'].call(c, submitEvent(form));
         expect(confirmSpy).toHaveBeenCalledWith('Delete the selected notes?');
     });
 
-    test('a message passed in an options object is still used', () => {
+    test('a message passed in an options object is still used', async () => {
         const form = fakeForm();
         const c = mountOn(confirmAction({ message: 'Clone this group and all its associations?' }), form);
-        c.events['@submit'].call(c, submitEvent(form));
+        await c.events['@submit'].call(c, submitEvent(form));
         expect(confirmSpy).toHaveBeenCalledWith('Clone this group and all its associations?');
     });
 
-    test('no argument keeps the historic default', () => {
+    test('no argument keeps the historic default', async () => {
         const form = fakeForm();
         const c = mountOn(confirmAction(), form);
-        c.events['@submit'].call(c, submitEvent(form));
+        await c.events['@submit'].call(c, submitEvent(form));
         expect(confirmSpy).toHaveBeenCalledWith('Are you sure you want to delete?');
     });
 
-    test('{count} and {s} report the live bulk selection, pluralised', () => {
+    test('{count} and {s} report the live bulk selection, pluralised', async () => {
         const form = fakeForm();
         const c = mountOn(confirmAction('Delete {count} resource{s}? This cannot be undone.'), form);
 
         setSelectionSize(1);
-        c.events['@submit'].call(c, submitEvent(form));
+        await c.events['@submit'].call(c, submitEvent(form));
         expect(confirmSpy).toHaveBeenLastCalledWith('Delete 1 resource? This cannot be undone.');
 
         setSelectionSize(4);
-        c.events['@submit'].call(c, submitEvent(form));
+        await c.events['@submit'].call(c, submitEvent(form));
         expect(confirmSpy).toHaveBeenLastCalledWith('Delete 4 resources? This cannot be undone.');
     });
 
-    test('{winner} names the item the merge form is merging into', () => {
+    test('{winner} names the item the merge form is merging into', async () => {
         const form = fakeForm();
         const unregister = selectorRegistry.register(form, 'winner', {
             getRawValues: () => [{ ID: 7, Name: 'design' }],
@@ -112,33 +138,78 @@ describe('confirmAction message handling', () => {
         setSelectionSize(3);
 
         const c = mountOn(confirmAction('Merge {count} tag{s} into {winner}? The merged tag{s} will be deleted.'), form);
-        c.events['@submit'].call(c, submitEvent(form));
+        await c.events['@submit'].call(c, submitEvent(form));
         expect(confirmSpy).toHaveBeenCalledWith('Merge 3 tags into design? The merged tags will be deleted.');
         unregister();
     });
 
-    test('a message with no placeholders is passed through untouched', () => {
+    test('a message with no placeholders is passed through untouched', async () => {
         const form = fakeForm();
         setSelectionSize(9);
         const c = mountOn(confirmAction('All the similar resources will be deleted. Are you sure?'), form);
-        c.events['@submit'].call(c, submitEvent(form));
+        await c.events['@submit'].call(c, submitEvent(form));
         expect(confirmSpy).toHaveBeenCalledWith('All the similar resources will be deleted. Are you sure?');
     });
 
-    test('dismissing the confirm prevents the submit', () => {
-        confirmSpy.mockReturnValue(false);
+    test('dismissing the confirm prevents the submit and re-submits nothing', async () => {
+        confirmSpy.mockResolvedValue(false);
         const form = fakeForm();
         const c = mountOn(confirmAction('Delete {count} tag{s}?'), form);
         const event = submitEvent(form);
-        c.events['@submit'].call(c, event);
+        await c.events['@submit'].call(c, event);
+
         expect(event.defaultPrevented).toBe(true);
+        // The assertion that matters: dismissal left the world unchanged. A
+        // dismissed confirm that still performed the action is the exact defect
+        // this whole mechanism was rebuilt around.
+        expect(form.requestSubmit).not.toHaveBeenCalled();
     });
 
-    test('accepting the confirm leaves the submit alone', () => {
+    test('accepting re-submits the form, because the answer arrives too late for this event', async () => {
         const form = fakeForm();
         const c = mountOn(confirmAction('Delete {count} tag{s}?'), form);
         const event = submitEvent(form);
-        c.events['@submit'].call(c, event);
-        expect(event.defaultPrevented).toBe(false);
+        await c.events['@submit'].call(c, event);
+
+        // This event is always prevented — the answer cannot arrive synchronously,
+        // and a submit left to proceed while we wait is one that happened without
+        // a confirmation. The confirmed submit is a fresh event instead.
+        expect(event.defaultPrevented).toBe(true);
+        expect(form.requestSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    test('the re-submit passes through WITHOUT preventDefault, or every AJAX bulk op is a no-op', async () => {
+        const form = fakeForm();
+        const c = mountOn(confirmAction('Delete {count} tag{s}?'), form);
+
+        // bulkSelection.js listens for submit on the toolbar container and reads
+        // event.defaultPrevented synchronously to decide whether to fetch. If the
+        // second pass prevented its event too, the delegated listener would bail
+        // and the confirmed operation would silently do nothing.
+        await c.events['@submit'].call(c, submitEvent(form));
+        expect(form.requestSubmit).toHaveBeenCalledTimes(1);
+
+        const reSubmit = submitEvent(form);
+        (c as unknown as { _confirmed: boolean })._confirmed = true;
+        await c.events['@submit'].call(c, reSubmit);
+        expect(reSubmit.defaultPrevented).toBe(false);
+    });
+
+    test('a message in data-confirm-message is used, and is never parsed as JS', async () => {
+        // Pongo2 autoescapes, and the HTML parser decodes the entity before any JS
+        // in the attribute is parsed — so a name containing an apostrophe would
+        // terminate the string literal in an x-data expression. Read via dataset it
+        // is only ever a DOM string.
+        const form = fakeForm({ confirmMessage: "Delete user o'brien?" });
+        const c = mountOn(confirmAction(), form);
+        await c.events['@submit'].call(c, submitEvent(form));
+        expect(confirmSpy).toHaveBeenCalledWith("Delete user o'brien?");
+    });
+
+    test('an explicit message wins over data-confirm-message', async () => {
+        const form = fakeForm({ confirmMessage: 'from the attribute' });
+        const c = mountOn(confirmAction('from the argument'), form);
+        await c.events['@submit'].call(c, submitEvent(form));
+        expect(confirmSpy).toHaveBeenCalledWith('from the argument');
     });
 });

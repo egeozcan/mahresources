@@ -16,7 +16,15 @@
      aria-label="Mention suggestions"
      class="bg-white border border-stone-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
     <template x-for="(result, index) in mentionResults" :key="result.type + ':' + result.id">
+        {# Deferred-work item 8: a <button> is natively focusable, so without      #}
+        {# tabindex="-1" every option sat in the tab order. The owning textarea    #}
+        {# drives this list with aria-activedescendant and never yields focus      #}
+        {# (mentionTextarea.js refocuses it after a pick, and its keydown handler  #}
+        {# only knows Arrow/Enter/Escape), so Tab walked into the listbox and DOM  #}
+        {# focus diverged from the option aria says is active. The house pattern   #}
+        {# is adminExport.tpl and adminImport.tpl: tabindex="-1" on the button.    #}
         <button type="button"
+                tabindex="-1"
                 :id="'mention-option-' + result.type + '-' + result.id"
                 @click.prevent="selectMention(result)"
                 @mouseenter="mentionSelectedIndex = index"

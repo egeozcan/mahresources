@@ -2924,6 +2924,38 @@ reload-shortcode {
   padding-inline: 0.375rem;
 }
 
+/* ── Deferred-work item 8: a control that is the ONLY path to its action ─────
+   Finding 99 above was not the last of its kind. Three more buttons were
+   `opacity-0 group-hover:opacity-100`: the block editor's gallery remove
+   (partials/blockEditor.tpl) and the lightbox quick-tag Add and Clear
+   (partials/lightbox.tpl). A touch device has no hover, and no :focus-visible
+   before the tap, so the only way to remove a gallery item or to configure a
+   quick-tag slot was invisible. Same defect, same remedy: always painted.
+
+   No `@media (hover: none)` / `pointer: coarse` gate, which would have been the
+   first in this codebase. It fixes only the touch half — a mouse user still has
+   to discover a control that is not drawn — and it misreads hybrids: a
+   touchscreen laptop reports `hover: hover` while its owner taps the screen.
+   Unconditional paint covers every pointer, and is what finding 99 chose.
+
+   The paint is not dimmed, either. Opacity composites the whole button against
+   whatever is behind it, and the gallery remove sits on arbitrary user images:
+   white-on-red-700 at 0.7 over a light photo measures about 2.3:1, so a
+   "visible but quiet" resting opacity would trade the hover bug for a contrast
+   bug. Quiet comes from size and colour at the call sites instead.
+
+   `!important` because layouts/base.tpl links this file *before* tailwind.css:
+   without it, a call site that re-added `opacity-0` would silently win the
+   cascade and restore the defect. internal/arch/templates_test.go is the guard
+   that keeps that class off these three tags; this is the belt to its braces.
+
+   Deliberately NOT applied to the eleven `opacity-0 group-hover:opacity-100`
+   copy buttons in displayResource.tpl: each duplicates a value already printed
+   next to it, so hiding one hides no information and reaches no dead end. */
+.touch-reachable {
+  opacity: 1 !important;
+}
+
 /* ── WS5 finding 49: the calendar day cell's keyboard control ────────────────
    The cell cannot be the button — it holds the event chips, the "+N more"
    toggle and the expanded-day popover, and interactive elements may not nest.

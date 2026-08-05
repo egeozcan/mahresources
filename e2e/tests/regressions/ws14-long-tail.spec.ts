@@ -3,9 +3,9 @@
  *
  * The server-visible half of WS14 lives in server/api_tests/ws14_long_tail_test.go,
  * because CI runs `go test` and does not run this suite. What is here is what only
- * a browser knows: the text of a window.confirm at submit time, which Alpine
- * `x-show` branch a live selection produced, and whether a page still shows a
- * value the server has already replaced.
+ * a browser knows: the text the confirm dialog carries at submit time, which
+ * Alpine `x-show` branch a live selection produced, and whether a page still shows
+ * a value the server has already replaced.
  *
  * Two findings turned out to have a different cause than the plan states, and the
  * tests say so where it matters:
@@ -20,16 +20,7 @@
  */
 import { test, expect } from '../../fixtures/base.fixture';
 import type { Page } from '@playwright/test';
-
-/** Collect every native dialog, dismissing each so the page is left alone. */
-function captureDialogs(page: Page): string[] {
-  const seen: string[] = [];
-  page.on('dialog', async (dialog) => {
-    seen.push(dialog.message());
-    await dialog.dismiss();
-  });
-  return seen;
-}
+import { confirmDialog, dismissConfirm } from '../../helpers/confirm-dialog';
 
 /** Fail loudly on an uncaught page error rather than letting a spec pass around one. */
 function failOnPageErrors(page: Page): string[] {
@@ -130,18 +121,18 @@ test.describe('WS14 findings 78/153: a destructive confirm states its blast radi
         name: `ws14-del-${suffix}-${i}`,
       });
     }
-    const dialogs = captureDialogs(page);
     await page.goto(`/resources?name=ws14-del-${suffix}`);
 
+    // Both confirms are dismissed, as they were when this ran against
+    // window.confirm: the claim under test is the wording, and the four resources
+    // have to survive the first submit for the second one to have four to tick.
     await selectCards(page, 1);
     await submitBulkForm(page, 'resources/delete');
-    await expect.poll(() => dialogs.length).toBe(1);
-    expect(dialogs[0]).toBe('Delete 1 resource? This cannot be undone.');
+    expect(await dismissConfirm(page)).toBe('Delete 1 resource? This cannot be undone.');
 
     await selectCards(page, 4);
     await submitBulkForm(page, 'resources/delete');
-    await expect.poll(() => dialogs.length).toBe(2);
-    expect(dialogs[1]).toBe('Delete 4 resources? This cannot be undone.');
+    expect(await dismissConfirm(page)).toBe('Delete 4 resources? This cannot be undone.');
   });
 
   test('bulk merge names the count and the winner, and refuses an empty winner', async ({ page, apiClient }) => {
@@ -150,16 +141,16 @@ test.describe('WS14 findings 78/153: a destructive confirm states its blast radi
     await apiClient.createTag(`ws14-merge-${suffix}-b`);
     const winner = await apiClient.createTag(`ws14-winner-${suffix}`);
 
-    const dialogs = captureDialogs(page);
     await page.goto(`/tags?Name=ws14-merge-${suffix}`);
     await selectCards(page, 2);
 
     // No winner picked yet: the guard must stop the submit before the confirm,
     // and before the request that used to answer 400 (findings 16/92's class on
-    // the one surface that fix missed).
+    // the one surface that fix missed). The wait is what gives a broken guard
+    // time to open the dialog, so the assertion below means something.
     await submitBulkForm(page, 'tags/merge');
     await page.waitForTimeout(500);
-    expect(dialogs, 'an empty selection is not something to confirm').toEqual([]);
+    await expect(confirmDialog(page), 'an empty selection is not something to confirm').toBeHidden();
     await expect(page).toHaveURL(/\/tags\?Name=ws14-merge-/);
 
     // Pick the winner, then submit again.
@@ -172,12 +163,11 @@ test.describe('WS14 findings 78/153: a destructive confirm states its blast radi
     await option.click();
 
     await submitBulkForm(page, 'tags/merge');
-    await expect.poll(() => dialogs.length).toBe(1);
-    expect(dialogs[0]).toBe(
+    expect(await dismissConfirm(page)).toBe(
       `Merge 2 tags into ws14-winner-${suffix}? The merged tags will be deleted.`,
     );
 
-    // The dialog was dismissed, so nothing may have been merged. Before this
+    // The confirm was dismissed, so nothing may have been merged. Before this
     // batch the AJAX bulk handler ran regardless of what the reader answered.
     await page.waitForTimeout(500);
     const stillThere = await apiClient.request.get(`/v1/tags?Name=ws14-merge-${suffix}`);

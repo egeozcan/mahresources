@@ -12,6 +12,8 @@
 
 // Slot key -> hidden-input field name on the form. listHeader is additive to the
 // schemaVersion-1 bundle: older bundles simply omit it and import leaves it empty.
+import { askToConfirm } from './confirmDialog.js';
+
 const SLOT_FIELDS = {
   header: 'CustomHeader',
   sidebar: 'CustomSidebar',
@@ -201,7 +203,7 @@ export function templateBundle({ carrier } = {}) {
     // slots alone meant a form whose *only* authored content was the section
     // layout scored zero fields at risk, returned true without prompting, and had
     // that layout replaced silently — finding 154 surviving for exactly one field.
-    confirmOverwrite(sourceLabel, bundle = null) {
+    async confirmOverwrite(sourceLabel, bundle = null) {
       const filled = Object.values(SLOT_FIELDS)
         .filter((field) => this.getEditor(field).trim() !== '');
       if (this.getEditor('MetaSchema').trim() !== '') filled.push('MetaSchema');
@@ -210,7 +212,7 @@ export function templateBundle({ carrier } = {}) {
       }
       if (filled.length === 0) return true;
       const what = filled.length === 1 ? '1 template field' : `${filled.length} template fields`;
-      return window.confirm(
+      return askToConfirm(
         `Replace ${what} with ${sourceLabel}? The current content is discarded (undo in the editor still works, and nothing is saved until you press Save).`,
       );
     },
@@ -293,7 +295,7 @@ export function templateBundle({ carrier } = {}) {
       }
     },
 
-    copyFrom() {
+    async copyFrom() {
       if (!this.copyChoice) return;
       const sep = this.copyChoice.indexOf(':');
       const sourceCarrier = this.copyChoice.slice(0, sep);
@@ -306,7 +308,7 @@ export function templateBundle({ carrier } = {}) {
       }
       // Finding 154: copy clobbers exactly as hard as a preset does.
       const bundle = this.entityToBundle(obj, sourceCarrier);
-      if (!this.confirmOverwrite(`the template from "${obj.Name || 'the selected source'}"`, bundle)) return;
+      if (!await this.confirmOverwrite(`the template from "${obj.Name || 'the selected source'}"`, bundle)) return;
       this.applyBundle(bundle);
     },
 
@@ -334,7 +336,7 @@ export function templateBundle({ carrier } = {}) {
       const file = event.target.files && event.target.files[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = () => {
+      reader.onload = async () => {
         let bundle;
         try {
           bundle = JSON.parse(reader.result);
@@ -343,7 +345,7 @@ export function templateBundle({ carrier } = {}) {
           return;
         }
         // Finding 154: import is the third path into applyBundle.
-        if (!this.confirmOverwrite(`the imported bundle "${file.name}"`, bundle)) return;
+        if (!await this.confirmOverwrite(`the imported bundle "${file.name}"`, bundle)) return;
         this.applyBundle(bundle);
       };
       reader.readAsText(file);
@@ -375,12 +377,12 @@ export function templateBundle({ carrier } = {}) {
       });
     },
 
-    applyPreset() {
+    async applyPreset() {
       if (!this.presetChoice) return;
       const preset = this.presets.find((p) => p.name === this.presetChoice);
       if (!preset) return;
       // Finding 154: this is the path the report reproduced on.
-      if (!this.confirmOverwrite(`the "${preset.name}" preset`, preset)) return;
+      if (!await this.confirmOverwrite(`the "${preset.name}" preset`, preset)) return;
       this.applyBundle(preset);
     },
 

@@ -2,6 +2,7 @@ import { test, expect } from '../fixtures/base.fixture';
 import { Page } from '@playwright/test';
 import path from 'path';
 import { uniqueAssetFile } from '../helpers/unique-upload';
+import { acceptConfirm } from '../helpers/confirm-dialog';
 
 /**
  * Ensures the version panel is expanded. Handles the case where the panel
@@ -260,13 +261,22 @@ test.describe.serial('Resource Versioning', () => {
     const nonCurrentRow = versionContent.locator('div.p-4:not(:has(.bg-amber-100))').first();
     await expect(nonCurrentRow).toBeVisible({ timeout: 5000 });
 
-    // Set up dialog handler for confirmation
-    page.on('dialog', async dialog => {
-      await dialog.accept();
-    });
+    // Read this row's version number before the POST reloads the page, so the
+    // wording assertion below is about the row we actually clicked. Finding 140:
+    // every row used to ask the identical "Delete this version?", which told the
+    // reader nothing about which of them was about to go.
+    const rowLabel = (
+      (await nonCurrentRow.locator('span.font-medium.font-mono').first().textContent()) ?? ''
+    ).trim();
+    expect(rowLabel, 'version row should show its number').toMatch(/^v\d+/);
+    const versionNumber = rowLabel.replace(/^v/, '');
 
-    // Click delete button
+    // Click delete button. The click only opens the in-app confirm now, so the
+    // POST and the reload happen after it is accepted — hence the load wait sits
+    // below the accept rather than directly after the click.
     await nonCurrentRow.locator('button:has-text("Delete")').click();
+    const message = await acceptConfirm(page);
+    expect(message).toContain(`Delete version ${versionNumber}`);
     await page.waitForLoadState('load');
 
     // Version count should decrease by 1

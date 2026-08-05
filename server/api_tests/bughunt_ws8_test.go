@@ -109,6 +109,24 @@ func TestVersionDownloadFilenameHasExtension(t *testing.T) {
 // local wall-clock time and a literal "Z" suffix, so every timestamp parsed as
 // the UTC offset into the future. The pongo2 `date` layout used a bare Z, which
 // Go treats as a literal character rather than a zone.
+//
+// THIS TEST IS NOT THE GUARD FOR FINDING 118. It cannot be, and the real one is
+// TestMachineReadableDatesCarryAZone in internal/arch. Three reasons, all measured
+// (docs/deferred-work.md item 8):
+//
+//   - On a UTC host the buggy and the fixed layout emit identical bytes, so no
+//     assertion over rendered output can separate them. CI runs UTC. This test
+//     passed against the unfixed code on precisely the machine that matters.
+//   - The drift check below is one-sided as originally written, so even off UTC it
+//     could only ever fire east of Greenwich.
+//   - It can vanish entirely: the dashboard provider fans out over five goroutines
+//     and the api_tests DSN uses cache=private, which gives each pooled connection
+//     a fresh empty in-memory database. The activity feed then renders no <time> at
+//     all and this test t.Skips — measured at 6 runs in 10 — which CI scores green.
+//
+// What it still earns its place doing is checking that whatever the dashboard does
+// render parses as RFC3339 and is not absurd. The two-sided bound below is the fix
+// for the second point; the first and third are why the static guard exists.
 func TestDashboardTimeAttributeIsARealInstant(t *testing.T) {
 	tc := SetupTestEnv(t)
 
@@ -131,8 +149,15 @@ func TestDashboardTimeAttributeIsARealInstant(t *testing.T) {
 			t.Errorf("datetime=%q is not RFC3339: %v", m[1], err)
 			continue
 		}
-		if drift := time.Until(parsed); drift > time.Minute {
-			t.Errorf("datetime=%q resolves to %v in the future.\n"+
+		// Two-sided. A bogus zone resolves into the future east of Greenwich and
+		// into the past west of it, and `drift > time.Minute` only ever saw the
+		// first of those.
+		drift := time.Until(parsed)
+		if drift < 0 {
+			drift = -drift
+		}
+		if drift > time.Minute {
+			t.Errorf("datetime=%q is %v away from now.\n"+
 				"Local wall-clock time is being stamped with a literal Z. Use Z07:00, or emit UTC.",
 				m[1], drift.Round(time.Second))
 		}

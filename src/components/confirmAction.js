@@ -1,5 +1,6 @@
 import { selectionRequiredState } from './selectionRequired.js';
 import { selectorRegistry } from '../selector/selectorRegistry.ts';
+import { askToConfirm } from './confirmDialog.js';
 
 const DEFAULT_MESSAGE = 'Are you sure you want to delete?';
 
@@ -61,6 +62,12 @@ export function confirmAction(options = {}) {
         ? selectionRequiredState(requireSelection)
         : null;
 
+    // Whether a message was actually supplied, as opposed to defaulted. Needed so
+    // `data-confirm-message` can fill in without overriding a real argument.
+    const messageWasGiven = typeof options === 'string'
+        ? options !== ''
+        : !!(options && options.message);
+
     return {
         message,
         _shiftHeld: false,
@@ -75,6 +82,20 @@ export function confirmAction(options = {}) {
             // $el is the component root here, and the node is attached; a later
             // handler cannot rely on either.
             this._formEl = this.$el.closest?.('form') || (this.$el.tagName === 'FORM' ? this.$el : null);
+
+            // A message carrying user-controlled text belongs in a data attribute,
+            // not in the x-data expression.
+            //
+            // Pongo2 autoescapes, so `{{ note.Name }}` inside an attribute becomes
+            // `&#39;` for an apostrophe — and the HTML parser decodes that back to a
+            // real quote *before* any JS in that attribute is parsed. A name like
+            // "it's" would therefore terminate the string literal in
+            // `x-data="confirmAction({message: '…'})"`. Read through `dataset` the
+            // value is only ever a DOM string, so there is no literal to break.
+            if (!messageWasGiven) {
+                const fromAttr = this.$el.dataset?.confirmMessage;
+                if (fromAttr) this.message = fromAttr;
+            }
             if (selectionGuard) {
                 this.initSelectionRequired(this.$el);
             }
@@ -91,7 +112,18 @@ export function confirmAction(options = {}) {
             return resolvePlaceholders(this.message, form || this._formEl);
         },
         events: {
-            ["@submit"](e) {
+            async ["@submit"](e) {
+                // The re-submit fired after the reader confirms passes straight
+                // through — and, critically, without calling preventDefault. The
+                // delegated AJAX listener in bulkSelection.js reads
+                // `event.defaultPrevented` synchronously to decide whether to fetch,
+                // so preventing this one would turn every confirmed bulk operation
+                // into a no-op.
+                if (this._confirmed) {
+                    this._confirmed = false;
+                    return;
+                }
+
                 // Before the shift bypass and before the confirm: an empty
                 // selection is not something to confirm, it is something to stop.
                 if (selectionGuard && this.blockEmptySubmit(e)) {
@@ -102,11 +134,43 @@ export function confirmAction(options = {}) {
                     return;
                 }
 
-                if (confirm(this.confirmMessage(e.target))) {
-                    return;
+                const form = e.target;
+
+                // Always stop this submit. The answer arrives from a dialog rather
+                // than from `window.confirm`, so it cannot arrive synchronously, and
+                // a submit left to proceed while we wait is a submit that happened
+                // without a confirmation.
+                e.preventDefault();
+
+                // Re-entry guard: a second Enter while the dialog is up must not
+                // stack a second dialog on the same form.
+                if (this._awaiting) return;
+                this._awaiting = true;
+                let confirmed = false;
+                try {
+                    confirmed = await askToConfirm(this.confirmMessage(form));
+                } finally {
+                    this._awaiting = false;
                 }
 
-                e.preventDefault();
+                if (!confirmed) return;
+
+                // requestSubmit(), not submit(): submit() does not fire a submit
+                // event at all, so the delegated AJAX listener would never see the
+                // form and a bulk operation would go out as a full-page POST.
+                // requestSubmit() also runs constraint validation, which is what the
+                // old native-submit path did.
+                //
+                // The flag is cleared in `finally` and not by the re-entry above,
+                // because validation can reject the submit and dispatch no event —
+                // which would leave the flag set and let the *next* submit through
+                // unconfirmed.
+                this._confirmed = true;
+                try {
+                    form.requestSubmit();
+                } finally {
+                    this._confirmed = false;
+                }
             }
         }
     }

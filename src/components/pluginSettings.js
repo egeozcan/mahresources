@@ -1,12 +1,29 @@
+/**
+ * How long the "Saved!" status stands before the reload navigates away from it.
+ * Same 1500ms as the sibling plugin surface (src/components/pluginActionModal.js),
+ * so the two "a plugin admin action succeeded" confirmations behave alike.
+ * Exported so the test asserts the scheduling, not the number.
+ */
+export const SAVED_ANNOUNCEMENT_MS = 1500;
+
 export function pluginSettings(pluginName) {
     return {
         pluginName,
         saved: false,
         error: '',
+        /** Timer id of the pending post-save reload; see saveSettings. */
+        _reloadTimer: null,
 
         async saveSettings(event) {
             this.saved = false;
             this.error = '';
+            // The price of delaying the reload below: a save made inside that window
+            // would otherwise be cut short by the *previous* save's navigation, and the
+            // page would come back carrying the value the reader had just replaced.
+            if (this._reloadTimer !== null) {
+                clearTimeout(this._reloadTimer);
+                this._reloadTimer = null;
+            }
 
             const form = event.target;
             const formData = new FormData(form);
@@ -58,11 +75,24 @@ export function pluginSettings(pluginName) {
                 // plugin's injected output (footer, header, sidebar, its own
                 // pages) is server-rendered from these very settings. Only the
                 // server can produce it, exactly as with the inline description
-                // editor, so an explicit save reloads. The reload replaces the
-                // "Saved!" flash with something stronger: the plugin's own output
+                // editor, so an explicit save reloads. The reload backs the
+                // "Saved!" status with something stronger: the plugin's own output
                 // changing in front of the reader.
                 this.saved = true;
-                window.location.reload();
+                // Final review of 2026-07-31, finding 4: this line used to be followed
+                // immediately by window.location.reload(). reload() is asynchronous, so
+                // Alpine's microtask-scheduled effect does run and the status text can
+                // paint for a few hundred ms — the defect is not that nothing is
+                // rendered. It is that the navigation has already begun in this same
+                // task, so the live-region mutation is not reliably observed before the
+                // document is torn down, and the announcement this code believes it
+                // makes is effectively never delivered.
+                //
+                // The reload stays, for the reason above. The navigation is what waits.
+                this._reloadTimer = setTimeout(() => {
+                    this._reloadTimer = null;
+                    window.location.reload();
+                }, SAVED_ANNOUNCEMENT_MS);
             } catch (err) {
                 this.error = err.message;
             }

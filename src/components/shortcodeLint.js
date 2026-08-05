@@ -87,7 +87,14 @@ export function installSubmitGuard(form, view) {
   if (form.__shortcodeLintGuard) return;
   form.__shortcodeLintGuard = true;
 
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
+    // The re-submit issued after the reader says "save anyway" passes straight
+    // through, or the guard would ask again forever.
+    if (form.__shortcodeLintConfirmed) {
+      form.__shortcodeLintConfirmed = false;
+      return;
+    }
+
     let errors = 0;
     for (const v of form.__shortcodeViews) {
       try {
@@ -98,12 +105,27 @@ export function installSubmitGuard(form, view) {
         /* view torn down — ignore */
       }
     }
-    if (errors > 0) {
-      const msg = `This template has ${errors} issue${errors === 1 ? '' : 's'} that may break rendering. Save anyway?`;
-      if (!window.confirm(msg)) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
+    if (errors === 0) return;
+
+    // Fails OPEN, unlike every other confirmation in the app. This is a soft warn
+    // on a save, not a destructive action: the trust model allows arbitrary HTML,
+    // so a false positive must never cost someone their work. If the dialog is
+    // unreachable there is no question to ask, and the save proceeds.
+    const store = globalThis.Alpine?.store('confirmDialog');
+    if (!store) return;
+
+    // Asking is asynchronous, so this submit has to stop before the answer exists.
+    e.preventDefault();
+    e.stopPropagation();
+
+    const msg = `This template has ${errors} issue${errors === 1 ? '' : 's'} that may break rendering. Save anyway?`;
+    if (!await store.ask(msg, { title: 'Save anyway?', confirmLabel: 'Save anyway' })) return;
+
+    form.__shortcodeLintConfirmed = true;
+    try {
+      form.requestSubmit();
+    } finally {
+      form.__shortcodeLintConfirmed = false;
     }
   });
 }

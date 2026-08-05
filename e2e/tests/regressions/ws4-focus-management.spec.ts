@@ -17,6 +17,7 @@
 import path from 'path';
 import type { Page } from '@playwright/test';
 import { test, expect } from '../../fixtures/base.fixture';
+import { acceptConfirm } from '../../helpers/confirm-dialog';
 
 /** Identify the focused element the way a reader would experience it. */
 async function activeElement(page: Page) {
@@ -278,7 +279,6 @@ test.describe('WS4: focus survives a re-render', () => {
       expect(resp.ok()).toBe(true);
     }
 
-    page.on('dialog', (d) => d.accept());
     await page.goto('/mrql');
 
     // The saved-query list is server state the whole worker shares, so an exact
@@ -294,9 +294,17 @@ test.describe('WS4: focus survives a re-render', () => {
     await del.focus();
     await del.click();
 
+    // The confirmation is in-app DOM now, not window.confirm, so the click above
+    // returns the moment the dialog opens and the DELETE only fires once it is
+    // accepted. Everything that asserts on the post-delete state has to come
+    // after this line.
+    await acceptConfirm(page);
+
     await expect(rows).toHaveCount(before - 1);
     // The x-for rebuild destroys the button that was activated, so <body> is
-    // the honest signature of the bug.
+    // the honest signature of the bug. The confirm's own focus return does not
+    // cover it: that restores focus to the Delete button, and the rebuild then
+    // destroys exactly that button — which is what _focusAfterSavedDelete is for.
     await settlesOn(page, (a) => a.tag !== 'BODY');
   });
 });

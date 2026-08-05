@@ -7,6 +7,7 @@
  * notes/resources (they'll move to top level)."
  */
 import { test, expect } from '../../fixtures/base.fixture';
+import { dismissConfirm } from '../../helpers/confirm-dialog';
 
 test.describe('BH-014: group delete orphan-warning dialog', () => {
   let categoryId: number;
@@ -40,13 +41,6 @@ test.describe('BH-014: group delete orphan-warning dialog', () => {
       ownerId: parent.ID,
     });
 
-    // Observe the confirm() invocation
-    const confirmMessages: string[] = [];
-    page.on('dialog', async (dialog) => {
-      confirmMessages.push(dialog.message());
-      await dialog.dismiss(); // Cancel — we're only checking the message
-    });
-
     // Filter the groups list to a single group we know (unique name)
     await page.goto(`/groups?name=${encodeURIComponent(`BH014 Parent ${testRunId}`)}`);
     await page.waitForLoadState('load');
@@ -55,12 +49,13 @@ test.describe('BH-014: group delete orphan-warning dialog', () => {
 
     // Open the Delete editor (toggle button is injected by bulkSelectionForms)
     await page.getByRole('button', { name: 'Toggle Delete editor' }).click();
-    // Click the Delete submit button inside the bulk-delete form
+    // Click the Delete submit button inside the bulk-delete form. The click only
+    // starts confirmGroupDelete's per-group count fetch; the dialog opens once
+    // those resolve, so dismissConfirm's wait is what gives the fetch its time.
     await page.locator('form[action*="groups/delete"] button[type="submit"]').click();
 
-    // Give the async count-fetch a moment to resolve and fire confirm()
-    await expect.poll(() => confirmMessages.length, { timeout: 5000 }).toBeGreaterThan(0);
-    const msg = confirmMessages[0];
+    // Cancel — we're only checking the message.
+    const msg = await dismissConfirm(page);
     expect(msg).toMatch(/2\s*child group/i);
     expect(msg).toMatch(/1\s*note/i);
     expect(msg).toMatch(/orphan|top level/i);
@@ -72,12 +67,6 @@ test.describe('BH-014: group delete orphan-warning dialog', () => {
       categoryId,
     });
 
-    const confirmMessages: string[] = [];
-    page.on('dialog', async (dialog) => {
-      confirmMessages.push(dialog.message());
-      await dialog.dismiss();
-    });
-
     await page.goto(`/groups?name=${encodeURIComponent(`BH014 Leaf ${testRunId}`)}`);
     await page.waitForLoadState('load');
 
@@ -86,8 +75,8 @@ test.describe('BH-014: group delete orphan-warning dialog', () => {
     await page.getByRole('button', { name: 'Toggle Delete editor' }).click();
     await page.locator('form[action*="groups/delete"] button[type="submit"]').click();
 
-    await expect.poll(() => confirmMessages.length, { timeout: 5000 }).toBeGreaterThan(0);
+    const msg = await dismissConfirm(page);
     // Leaf group: no children/items → dialog should NOT mention orphaning
-    expect(confirmMessages[0]).not.toMatch(/orphan|child group/i);
+    expect(msg).not.toMatch(/orphan|child group/i);
   });
 });

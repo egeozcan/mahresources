@@ -1,5 +1,6 @@
 import * as userSettings from '../userSettings.js';
 import { focusOn, parkFocus } from '../utils/focus.js';
+import { askToConfirm } from './confirmDialog.js';
 
 export function mrqlEditor() {
   return {
@@ -989,7 +990,7 @@ export function mrqlEditor() {
     },
 
     async deleteSavedQuery(id, name) {
-      if (!window.confirm('Delete saved query "' + (name || id) + '"?')) return;
+      if (!await askToConfirm('Delete saved query "' + (name || id) + '"?')) return;
       // Recorded before the delete: fetchSavedQueries() replaces the array
       // wholesale, so the x-for rebuilds every <li> and the captured button is
       // a disconnected node by the time it matters (WS4 finding 124).

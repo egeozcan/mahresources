@@ -3,19 +3,22 @@
  *
  * Bug: both are plain HTML form POSTs to `/v1/…` carrying a `?redirect=`, so
  * submitting one with nothing selected navigated the whole page to the API URL
- * and rendered an error. The merge form was worse: it fired
- * `confirm('Selected tags will be deleted and merged to X. Are you sure?')`
- * first, so the reader accepted a destructive-sounding prompt and was then
- * ejected from the app with the message "one or more losers required".
+ * and rendered an error. The merge form was worse: it raised
+ * 'Selected tags will be deleted and merged to X. Are you sure?' first, so the
+ * reader accepted a destructive-sounding prompt and was then ejected from the
+ * app with the message "one or more losers required".
  *
  * The server-rendered half (the guard is declared, the submit is bound to the
  * selection, the message no longer says "losers") is covered by
  * server/api_tests/ws3_error_surface_test.go. This spec covers the behaviour:
- * the button is unavailable, no dialog fires, the page does not move, and the
- * happy path still works.
+ * the button is unavailable, no confirmation fires, the page does not move, and
+ * the happy path still works. That confirmation is the in-app
+ * `role="alertdialog"` rather than `window.confirm`, so it is driven through
+ * e2e/helpers/confirm-dialog.ts and asserted as ordinary DOM.
  */
 import type { Page } from '@playwright/test';
 import { test, expect } from '../../fixtures/base.fixture';
+import { acceptConfirm, expectNoConfirm } from '../../helpers/confirm-dialog';
 
 /** Fails the test on any uncaught page error, per docs/lessons.md. */
 function failOnPageError(page: Page, sink: string[]) {
@@ -43,11 +46,6 @@ test.describe('An empty selection cannot submit a merge or an Add Tags', () => {
     failOnPageError(page, errors);
 
     const winner = await apiClient.createTag(`ws3 merge winner ${runId}`);
-    const dialogs: string[] = [];
-    page.on('dialog', async (dialog) => {
-      dialogs.push(dialog.message());
-      await dialog.dismiss();
-    });
 
     try {
       await page.goto(`/tag?id=${winner.ID}`);
@@ -64,9 +62,12 @@ test.describe('An empty selection cannot submit a merge or an Add Tags', () => {
       // :action binding rewrites that attribute to the ?redirect= form at init.
       const form = page.locator('form:has([data-selector-field="losers"])');
       await form.evaluate((el: HTMLFormElement) => el.requestSubmit());
+      // The window in which a confirm would have opened, or a navigation started.
+      // The guard runs before the confirm in confirmAction's submit handler, so
+      // both must still be absent when it closes.
       await page.waitForTimeout(300);
 
-      expect(dialogs).toEqual([]);
+      await expectNoConfirm(page);
       expect(page.url()).toContain(`/tag?id=${winner.ID}`);
       expect(errors).toEqual([]);
     } finally {
@@ -83,7 +84,6 @@ test.describe('An empty selection cannot submit a merge or an Add Tags', () => {
 
     const winner = await apiClient.createTag(`ws3 keep ${runId}`);
     const loser = await apiClient.createTag(`ws3 gone ${runId}`);
-    page.on('dialog', (dialog) => dialog.accept());
 
     await page.goto(`/tag?id=${winner.ID}`);
     await page.waitForLoadState('load');
@@ -95,6 +95,16 @@ test.describe('An empty selection cannot submit a merge or an Add Tags', () => {
     const mergeButton = page.getByRole('button', { name: 'Merge' });
     await expect(mergeButton).toBeEnabled();
     await mergeButton.click();
+
+    // The click only opens the confirm; the POST is re-issued from the dialog's
+    // Confirm, so the load wait has to come after the answer, not after the click.
+    const message = await acceptConfirm(page);
+    // The confirm has to say what it is about to destroy and where it goes —
+    // findings 78 and 153 were confirmations that could not. Nothing else checks
+    // this wording: ws3_error_surface_test.go asserts the `requireSelection`
+    // declaration is rendered, not what the reader is asked.
+    expect(message).toContain('deleted');
+    expect(message).toContain(`ws3 keep ${runId}`);
     await page.waitForLoadState('load');
 
     // Assert the persisted state, not the page: the loser must be gone.

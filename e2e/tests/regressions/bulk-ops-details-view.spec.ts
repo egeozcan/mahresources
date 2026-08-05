@@ -14,16 +14,43 @@
  * before form.reset() and deselectAll(), so the row stays ticked and the editor
  * stays open — the page reads as "nothing happened" and invites a retry.
  *
- * Assertions therefore cover all three: no dialog, the tag actually persisted
- * (read back through the API, never off the DOM), and the list did refresh.
- * The /resources grid view runs the same steps as a positive control, since it
- * was never affected — if the control fails, the procedure is wrong, not the fix.
+ * Assertions therefore cover all three: no failure report on either surface, the
+ * tag actually persisted (read back through the API, never off the DOM), and the
+ * list did refresh. The /resources grid view runs the same steps as a positive
+ * control, since it was never affected — if the control fails, the procedure is
+ * wrong, not the fix.
  */
-import type { Dialog, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { test, expect } from '../../fixtures/base.fixture';
+import { expectNoConfirm } from '../../helpers/confirm-dialog';
 import path from 'path';
 
 const IMAGE = path.join(__dirname, '../../test-assets/sample-image.png');
+
+/**
+ * Record every native `window.alert` this page raises, and hand back a reader.
+ *
+ * Deliberately not `page.on('dialog', …)`. The in-app confirm replaced
+ * `window.confirm` at every destructive site, so dialog handlers are gone from
+ * this suite — but the bulk *failure* path is a different animal: it still calls
+ * the real `alert()` (src/components/bulkSelection.js), and that call is the
+ * visible symptom finding 9 is about. An unobserved alert is auto-dismissed by
+ * Playwright and leaves no trace behind to assert on, so it has to be captured.
+ *
+ * Stubbing it in an init script rather than listening for the event also means
+ * the evidence outlives the moment it fires, which is what lets the assertion
+ * below read it after polling instead of racing it.
+ */
+async function recordAlerts(page: Page): Promise<() => Promise<string[]>> {
+  await page.addInitScript(() => {
+    (window as any).__alerts = [];
+    window.alert = (message?: unknown) => {
+      (window as any).__alerts.push(String(message));
+    };
+  });
+
+  return () => page.evaluate(() => ((window as any).__alerts ?? []) as string[]);
+}
 
 test.describe('Bulk operations on the details view do not report a false failure', () => {
   let runId: string;
@@ -69,15 +96,14 @@ test.describe('Bulk operations on the details view do not report a false failure
   });
 
   /**
-   * Ticks one row, adds `tag` through the bulk Add Tag editor and returns every
-   * dialog the page raised while doing it.
+   * Ticks one row, adds `tag` through the bulk Add Tag editor and returns a
+   * reader for every alert the page raised while doing it.
+   *
+   * Add Tag carries no `confirmAction`, so nothing in this flow opens the in-app
+   * confirm — the only report the page can produce here is the failure alert.
    */
   async function bulkAddTag(page: Page, listUrl: string, resourceName: string, tag: string) {
-    const dialogs: string[] = [];
-    page.on('dialog', async (dialog: Dialog) => {
-      dialogs.push(dialog.message());
-      await dialog.dismiss();
-    });
+    const readAlerts = await recordAlerts(page);
 
     await page.goto(listUrl);
     await page.waitForLoadState('load');
@@ -93,14 +119,14 @@ test.describe('Bulk operations on the details view do not report a false failure
     await page.locator('[role="option"]').filter({ hasText: tag }).click();
     await form.getByRole('button', { name: 'Add', exact: true }).click();
 
-    return { dialogs, checkbox };
+    return { readAlerts, checkbox };
   }
 
   test('adding a tag from /resources/details neither alerts nor strands the selection', async ({
     page,
     apiClient,
   }) => {
-    const { dialogs, checkbox } = await bulkAddTag(
+    const { readAlerts, checkbox } = await bulkAddTag(
       page,
       `/resources/details?ownerId=${ownerGroupId}`,
       resourceNames[0],
@@ -117,13 +143,21 @@ test.describe('Bulk operations on the details view do not report a false failure
       .toBe(true);
 
     // The submit handler is fire-and-forget, so wait for it to reach *some*
-    // conclusion before judging which one. Without this the dialog assertion
+    // conclusion before judging which one. Without this the alert assertion
     // can run before the alert has been raised and pass for the wrong reason.
     await expect
-      .poll(async () => dialogs.length > 0 || !(await checkbox.isChecked()), { timeout: 15000 })
+      .poll(async () => (await readAlerts()).length > 0 || !(await checkbox.isChecked()), {
+        timeout: 15000,
+      })
       .toBe(true);
 
-    expect(dialogs, `the page raised: ${JSON.stringify(dialogs)}`).toEqual([]);
+    const alerts = await readAlerts();
+    expect(alerts, `the page raised: ${JSON.stringify(alerts)}`).toEqual([]);
+
+    // Both surfaces, not just the alert: if the failure report is ever moved onto
+    // the in-app dialog, a silent `window.alert` would make the check above pass
+    // for exactly the reason the test exists to catch.
+    await expectNoConfirm(page);
 
     // The success path resets the form and clears the selection; the failure
     // path throws before either, leaving the row ticked and the editor open.
@@ -135,7 +169,7 @@ test.describe('Bulk operations on the details view do not report a false failure
     page,
     apiClient,
   }) => {
-    const { dialogs, checkbox } = await bulkAddTag(
+    const { readAlerts, checkbox } = await bulkAddTag(
       page,
       `/resources?ownerId=${ownerGroupId}`,
       resourceNames[1],
@@ -150,10 +184,14 @@ test.describe('Bulk operations on the details view do not report a false failure
       .toBe(true);
 
     await expect
-      .poll(async () => dialogs.length > 0 || !(await checkbox.isChecked()), { timeout: 15000 })
+      .poll(async () => (await readAlerts()).length > 0 || !(await checkbox.isChecked()), {
+        timeout: 15000,
+      })
       .toBe(true);
 
-    expect(dialogs, `the page raised: ${JSON.stringify(dialogs)}`).toEqual([]);
+    const alerts = await readAlerts();
+    expect(alerts, `the page raised: ${JSON.stringify(alerts)}`).toEqual([]);
+    await expectNoConfirm(page);
     await expect(checkbox).not.toBeChecked();
   });
 

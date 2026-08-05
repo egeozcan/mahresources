@@ -47,7 +47,8 @@
                     </form>
                     {% if not plugin.Enabled %}
                     <form method="POST" action="/v1/plugin/purge-data"
-                          onsubmit="return confirm('Purge all stored data for {{ plugin.Name }}? This cannot be undone.')">
+                          x-data="confirmAction()" x-bind="events"
+                          data-confirm-message="Purge all stored data for {{ plugin.Name }}? This cannot be undone.">
                         <input type="hidden" name="name" value="{{ plugin.Name }}">
                         <button type="submit"
                                 class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-red-700 hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-600"
@@ -135,7 +136,12 @@
                         data-testid="save-settings-{{ plugin.Name }}">
                     Save Settings
                 </button>
-                <span x-show="saved" x-transition role="status" class="text-amber-700 text-sm ml-2">Saved!</span>
+                {# Finding 4: the status region stays in the tree and only its text changes. #}
+                {# A role="status" that is display:none until the moment it has something to say #}
+                {# is the unreliable half of that finding — the app's own announcer #}
+                {# (src/utils/ariaLiveRegion.js) inserts the region first and sets the text a task #}
+                {# later for exactly this reason. x-show + x-transition did the opposite. #}
+                <span role="status" class="text-amber-700 text-sm ml-2" x-text="saved ? 'Saved!' : ''"></span>
                 <span x-show="error" x-transition role="alert" class="text-red-700 text-sm ml-2" x-text="error"></span>
             </form>
         </div>

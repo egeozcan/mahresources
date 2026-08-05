@@ -1,4 +1,5 @@
 import { test, expect } from '../fixtures/base.fixture';
+import { acceptConfirm } from '../helpers/confirm-dialog';
 
 test.describe('Note Sharing', () => {
   let categoryId: number;
@@ -171,8 +172,12 @@ test.describe('Note Sharing UI', () => {
     // Finding 128: revoking a public link now asks first, because re-sharing mints
     // a different token and every distributed URL dies. The prompt's wording is
     // asserted in e2e/tests/regressions/ws13-sharing.spec.ts.
-    page.once('dialog', (d) => d.accept());
     await unshareButton.click();
+
+    // The confirm is in-app DOM, not window.confirm, so the click above returns as
+    // soon as the dialog opens — the DELETE only fires once it is accepted. Every
+    // assertion about the post-revoke state therefore has to come after this line.
+    await acceptConfirm(page);
 
     // Should show share button again
     await expect(page.locator('button:has-text("Share Note")')).toBeVisible({ timeout: 5000 });

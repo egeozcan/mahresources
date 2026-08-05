@@ -35,15 +35,20 @@ test.describe('BH-035: admin shares dashboard', () => {
     await page.goto('/admin/shares');
     await expect(page.getByTestId('admin-shares-table')).toBeVisible();
 
-    // Check a and b, leave c unchecked. Suppress the confirm() dialog so
-    // the form submits unattended. Dispatch the form's submit event
-    // directly instead of clicking the button: the default a11y test
-    // rendering of the page has overlay DOM (downloadCockpit,
-    // pluginActionModal, pasteUpload) whose backdrops can intercept
-    // pointer events even when x-show is false, before Alpine finishes
-    // initializing. Form submission reaches the server regardless of
-    // which element is on top.
-    page.once('dialog', (dialog) => dialog.accept());
+    // Check a and b, leave c unchecked, then submit from script rather than
+    // clicking "Revoke Selected": the default a11y test rendering of the page
+    // has overlay DOM (downloadCockpit, pluginActionModal, pasteUpload) whose
+    // backdrops can intercept pointer events even when x-show is false, before
+    // Alpine finishes initializing. A scripted submit reaches the server
+    // regardless of which element is on top.
+    //
+    // That scripted submit also means no confirmation is answered here. The
+    // form carries x-data="confirmAction(...)" x-bind="events", which hangs the
+    // in-app confirm dialog off the @submit event — and form.submit() dispatches
+    // no submit event at all. This test has always taken that bypass (it read
+    // the same way when the confirm was window.confirm); it covers the revoke
+    // reaching the server, not the confirmation standing in front of it.
+    //
     // Use page.evaluate so we set .checked on the actual DOM checkboxes and
     // call form.submit() in the same turn, avoiding an overlay-intercept
     // race between the click-to-check and the click-to-submit.
@@ -60,8 +65,9 @@ test.describe('BH-035: admin shares dashboard', () => {
           '[data-testid="admin-shares-form"]',
         ) as HTMLFormElement | null;
         if (!form) throw new Error('admin-shares-form missing');
-        // form.submit() skips the onsubmit confirm() handler, which is the
-        // intended UX for browser users but just noise in an automated test.
+        // submit(), not requestSubmit(): submit() fires no submit event, so the
+        // confirmAction handler — and the confirm dialog a browser user is shown
+        // — never runs. Intended UX there, just noise in an automated test.
         form.submit();
       },
       { ids: [a.ID, b.ID] },
@@ -86,8 +92,12 @@ test.describe('BH-035: admin shares dashboard', () => {
     // admin-share-revoke-form-<noteId>) to avoid the overlay-click
     // interception that sometimes happens while Alpine is still
     // initializing the layout's lightbox / paste-upload / download-cockpit
-    // modals. form.submit() sidesteps the onsubmit confirm() handler too.
-    page.once('dialog', (dialog) => dialog.accept());
+    // modals.
+    //
+    // form.submit() fires no submit event, so it also sidesteps the
+    // confirmAction @submit handler that opens the in-app confirm dialog — the
+    // same bypass this test has always taken, back when that confirm was
+    // window.confirm. Nothing to accept, and nothing left open to hang on.
     await page.evaluate((noteId) => {
       const form = document.getElementById(`admin-share-revoke-form-${noteId}`) as HTMLFormElement | null;
       if (!form) throw new Error('per-row form missing');

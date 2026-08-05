@@ -129,13 +129,18 @@ describe('finding 154 — a clobber is confirmed, and only when there is somethi
     return b;
   }
 
-  // The vitest environment here is plain node, so there is no window at all.
-  // confirmOverwrite calls window.confirm (the app's own idiom for a blocking
-  // prompt), so the double has to be a window object rather than a bare confirm.
+  // confirmOverwrite asks the in-app alertdialog store now, not window.confirm,
+  // and the answer arrives as a promise — so confirmOverwrite is async and every
+  // assertion below has to await it. The double is the store rather than a bare
+  // confirm; askToConfirm reads it off globalThis.Alpine.
   let confirmSpy: ReturnType<typeof vi.fn>;
   function stubConfirm(answer: boolean) {
-    confirmSpy = vi.fn(() => answer);
-    vi.stubGlobal('window', { confirm: confirmSpy });
+    confirmSpy = vi.fn(async () => answer);
+    vi.stubGlobal('Alpine', {
+      store: (name: string) => (name === 'confirmDialog'
+        ? { ask: (message: string) => confirmSpy(message) }
+        : undefined),
+    });
   }
 
   beforeEach(() => {
@@ -145,21 +150,21 @@ describe('finding 154 — a clobber is confirmed, and only when there is somethi
     vi.unstubAllGlobals();
   });
 
-  it('does not prompt when every slot is empty', () => {
+  it('does not prompt when every slot is empty', async () => {
     const b = bundleWith({});
-    expect(b.confirmOverwrite('the "contact-card" preset')).toBe(true);
+    expect(await b.confirmOverwrite('the "contact-card" preset')).toBe(true);
     expect(confirmSpy).not.toHaveBeenCalled();
   });
 
-  it('does not prompt when the only content is whitespace', () => {
+  it('does not prompt when the only content is whitespace', async () => {
     const b = bundleWith({ CustomHeader: '   \n  ' });
-    expect(b.confirmOverwrite('the "contact-card" preset')).toBe(true);
+    expect(await b.confirmOverwrite('the "contact-card" preset')).toBe(true);
     expect(confirmSpy).not.toHaveBeenCalled();
   });
 
-  it('prompts once authored content exists, naming the source and the blast radius', () => {
+  it('prompts once authored content exists, naming the source and the blast radius', async () => {
     const b = bundleWith({ CustomHeader: '<div>[property name]</div>' });
-    expect(b.confirmOverwrite('the "contact-card" preset')).toBe(true);
+    expect(await b.confirmOverwrite('the "contact-card" preset')).toBe(true);
 
     expect(confirmSpy).toHaveBeenCalledTimes(1);
     const msg = confirmSpy.mock.calls[0][0] as string;
@@ -168,45 +173,45 @@ describe('finding 154 — a clobber is confirmed, and only when there is somethi
     expect(msg).toContain('discarded');
   });
 
-  it('counts every filled slot, including the Meta JSON Schema', () => {
+  it('counts every filled slot, including the Meta JSON Schema', async () => {
     const b = bundleWith({
       CustomHeader: '<div>a</div>',
       CustomSidebar: '<div>b</div>',
       MetaSchema: '{"type":"object"}',
     });
-    b.confirmOverwrite('the imported bundle "x.json"');
+    await b.confirmOverwrite('the imported bundle "x.json"');
     const msg = confirmSpy.mock.calls[0][0] as string;
     expect(msg).toContain('3 template fields');
   });
 
-  it('applyPreset leaves the editors untouched when the confirm is declined', () => {
+  it('applyPreset leaves the editors untouched when the confirm is declined', async () => {
     stubConfirm(false);
     const b = bundleWith({ CustomHeader: '<div>authored</div>' });
     b.presets = [{ name: 'contact-card', carrier: 'category', slots: { header: '<div>preset</div>' } }];
     b.presetChoice = 'contact-card';
 
-    b.applyPreset();
+    await b.applyPreset();
 
     expect(editors.CustomHeader).toBe('<div>authored</div>');
   });
 
-  it('applyPreset replaces the content when the confirm is accepted', () => {
+  it('applyPreset replaces the content when the confirm is accepted', async () => {
     const b = bundleWith({ CustomHeader: '<div>authored</div>' });
     b.presets = [{ name: 'contact-card', carrier: 'category', slots: { header: '<div>preset</div>' } }];
     b.presetChoice = 'contact-card';
 
-    b.applyPreset();
+    await b.applyPreset();
 
     expect(editors.CustomHeader).toBe('<div>preset</div>');
   });
 
-  it('copyFrom is gated by the same confirm', () => {
+  it('copyFrom is gated by the same confirm', async () => {
     stubConfirm(false);
     const b = bundleWith({ CustomHeader: '<div>authored</div>' });
     b.sources.category = [{ ID: 7, Name: 'Person', CustomHeader: '<div>copied</div>' }];
     b.copyChoice = 'category:7';
 
-    b.copyFrom();
+    await b.copyFrom();
 
     expect(editors.CustomHeader).toBe('<div>authored</div>');
     const msg = confirmSpy.mock.calls[0][0] as string;
@@ -217,17 +222,17 @@ describe('finding 154 — a clobber is confirmed, and only when there is somethi
   // one, and the confirmation counted only the slots and MetaSchema. A form whose
   // only authored content was the section layout therefore scored zero fields at
   // risk, returned true without prompting, and lost the layout silently.
-  it('counts SectionConfig when a same-carrier bundle will replace it', () => {
+  it('counts SectionConfig when a same-carrier bundle will replace it', async () => {
     const b = bundleWith({ SectionConfig: '{"showMeta":true}' });
     const incoming = { carrier: 'category', slots: {}, sectionConfig: '{"showMeta":false}' };
 
-    expect(b.confirmOverwrite('the "contact-card" preset', incoming)).toBe(true);
+    expect(await b.confirmOverwrite('the "contact-card" preset', incoming)).toBe(true);
 
     expect(confirmSpy).toHaveBeenCalledTimes(1);
     expect(confirmSpy.mock.calls[0][0] as string).toContain('1 template field');
   });
 
-  it('applyPreset prompts when the section layout is the only thing at risk', () => {
+  it('applyPreset prompts when the section layout is the only thing at risk', async () => {
     stubConfirm(false);
     const applied: string[] = [];
     const b = bundleWith({ SectionConfig: '{"showMeta":true}' });
@@ -235,29 +240,29 @@ describe('finding 154 — a clobber is confirmed, and only when there is somethi
     b.presets = [{ name: 'contact-card', carrier: 'category', slots: {}, sectionConfig: '{"showMeta":false}' }];
     b.presetChoice = 'contact-card';
 
-    b.applyPreset();
+    await b.applyPreset();
 
     expect(confirmSpy).toHaveBeenCalledTimes(1);
     expect(applied).toEqual([]);
   });
 
-  it('does not count SectionConfig for a cross-carrier bundle, which never writes it', () => {
+  it('does not count SectionConfig for a cross-carrier bundle, which never writes it', async () => {
     // Positive control on the branch: applyBundle skips setSectionConfig when the
     // carriers differ, so counting it there would prompt about a field that is
     // not at risk.
     const b = bundleWith({ SectionConfig: '{"showMeta":true}' });
     const incoming = { carrier: 'noteType', slots: {}, sectionConfig: '{"showMeta":false}' };
 
-    expect(b.confirmOverwrite('the template from "A Note Type"', incoming)).toBe(true);
+    expect(await b.confirmOverwrite('the template from "A Note Type"', incoming)).toBe(true);
     expect(confirmSpy).not.toHaveBeenCalled();
   });
 
-  it('does not count SectionConfig when the incoming bundle has none', () => {
+  it('does not count SectionConfig when the incoming bundle has none', async () => {
     // setSectionConfig no-ops on an empty string, so nothing is replaced.
     const b = bundleWith({ SectionConfig: '{"showMeta":true}' });
     const incoming = { carrier: 'category', slots: {}, sectionConfig: '' };
 
-    expect(b.confirmOverwrite('the "contact-card" preset', incoming)).toBe(true);
+    expect(await b.confirmOverwrite('the "contact-card" preset', incoming)).toBe(true);
     expect(confirmSpy).not.toHaveBeenCalled();
   });
 });

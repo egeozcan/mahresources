@@ -165,6 +165,13 @@
         {% include "/partials/pasteUpload.tpl" %}
         {% include "/partials/pluginActionModal.tpl" %}
         {% include "partials/entityPicker.tpl" %}
+        {# Last, so that when it is open it is the last painted sibling in the      #}
+        {# overlay layer. A destructive confirm can be raised from inside another   #}
+        {# overlay — the block editor and the jobs panel both host destructive      #}
+        {# actions — and it has to be on top of the thing that raised it. The store #}
+        {# also makes every sibling here inert while it is open, so ordering is the #}
+        {# paint story and inert is the interaction story.                          #}
+        {% include "/partials/confirmDialog.tpl" %}
         {% plugin_slot "scripts" %}
     </div>
 </body>

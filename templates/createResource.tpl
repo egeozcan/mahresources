@@ -59,9 +59,12 @@
                                 rows="3"
                                 @input="onInput($event)"
                                 @keydown="onKeydown($event)"
-                                role="combobox"
+                                {# Deferred-work item 8: role="combobox" and :aria-expanded  #}
+                                {# dropped. Native textbox semantics keep the implicit       #}
+                                {# aria-multiline that the role override was discarding; see #}
+                                {# partials/form/createFormTextareaInput.tpl for why adding  #}
+                                {# aria-multiline to the combobox is not the conforming fix. #}
                                 aria-autocomplete="list"
-                                :aria-expanded="mentionActive && mentionResults.length > 0"
                                 aria-haspopup="listbox"
                                 {# Finding 133: aria-controls was absent here too. #}
                                 aria-controls="description-mention-listbox"

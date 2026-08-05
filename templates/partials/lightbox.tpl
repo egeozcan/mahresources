@@ -711,10 +711,14 @@
                                     <span class="text-xs font-semibold line-clamp-2 max-w-full text-center leading-tight" x-text="tagNames()"></span>
                                 </button>
                                 <!-- Add button (QUICK tabs only) -->
+                                {# Deferred-work item 8: this was `opacity-0 group-hover:opacity-100`, #}
+                                {# and it is the only way to put tags into a quick-tag slot. On touch  #}
+                                {# there is no hover and no :focus-visible before the tap, so the slot #}
+                                {# could not be configured at all. .touch-reachable owns the opacity.  #}
                                 <template x-if="$store.lightbox.isQuickTab()">
                                     <button
                                         @click.stop="$store.lightbox.editingSlotIndex = idx"
-                                        class="absolute top-1 left-1 p-0.5 hover:bg-white/10 rounded-full opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity focus:outline-none focus:ring-1 focus:ring-white"
+                                        class="touch-reachable absolute top-1 left-1 p-0.5 hover:bg-white/10 rounded-full focus:outline-none focus:ring-1 focus:ring-white"
                                         :aria-label="'Add tags to slot ' + $store.lightbox.quickTagKeyLabel(idx)"
                                     >
                                         <svg class="w-3 h-3 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -723,10 +727,12 @@
                                     </button>
                                 </template>
                                 <!-- Clear button (QUICK tabs only) -->
+                                {# Deferred-work item 8: same defect as the Add button above, and the #}
+                                {# only way to empty a slot. See .touch-reachable in public/index.css. #}
                                 <template x-if="$store.lightbox.isQuickTab()">
                                     <button
                                         @click.stop="$store.lightbox.clearQuickTagSlot(idx)"
-                                        class="absolute top-1 right-1 p-0.5 hover:bg-white/10 rounded-full opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity focus:outline-none focus:ring-1 focus:ring-white"
+                                        class="touch-reachable absolute top-1 right-1 p-0.5 hover:bg-white/10 rounded-full focus:outline-none focus:ring-1 focus:ring-white"
                                         :aria-label="'Clear slot ' + $store.lightbox.quickTagKeyLabel(idx)"
                                     >
                                         <svg class="w-3 h-3 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

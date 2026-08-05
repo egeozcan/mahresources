@@ -672,3 +672,500 @@ func hasClass(classes, name string) bool {
 	}
 	return false
 }
+
+// nativeConfirmCall matches a call to the browser's own confirm(), in a template
+// or in a frontend module. It deliberately does not match `$store.confirmDialog`
+// or `askToConfirm(`, which are the replacements, and the leading boundary keeps
+// it off `confirmDialog(` and off the entity picker's own `confirm()` commit
+// method (`$store.entityPicker.confirm()`), which is not a dialog at all.
+// The trailing `[^)\s]` requires a non-empty first argument. A confirmation
+// always carries a message, so this distinguishes a real call from a zero-argument
+// method *definition* — `$store.entityPicker.confirm()` is the picker's own commit
+// method and not a dialog at all, and it must not be swept up here.
+var nativeConfirmCall = regexp.MustCompile(`(^|[^.\w$])(window\.)?confirm\s*\(\s*[^)\s]`)
+
+// blockComment and fullLineComment strip the places a guard like this otherwise
+// trips over its own subject matter: a doc comment that *describes* confirm() is
+// not a call to it, and this file's own explanatory prose is the single most
+// likely thing to fail the sweep first.
+// `pongoComment` is declared above and reused here: it is single-line by
+// construction, which TestNoMultiLinePongoComment is what makes safe to assume.
+var (
+	blockComment    = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	fullLineComment = regexp.MustCompile(`(?m)^[ \t]*(//|\*).*$`)
+	htmlComment     = regexp.MustCompile(`(?s)<!--.*?-->`)
+)
+
+// withoutComments blanks comments while preserving byte offsets, so lineOf still
+// reports the right line for whatever survives.
+//
+// Only *whole-line* `//` comments are stripped, never trailing ones: a line such
+// as `const u = 'http://x'; confirm(msg)` would lose its real call to a naive
+// strip-to-end-of-line, turning a false positive into a false negative.
+func withoutComments(body string) string {
+	blank := func(s string) string {
+		out := []byte(s)
+		for i := range out {
+			if out[i] != '\n' {
+				out[i] = ' '
+			}
+		}
+		return string(out)
+	}
+	for _, re := range []*regexp.Regexp{pongoComment, htmlComment, blockComment, fullLineComment} {
+		body = re.ReplaceAllStringFunc(body, blank)
+	}
+	return body
+}
+
+// srcFiles returns every .js/.ts under src/, keyed by module-root-relative path.
+func srcFiles(t *testing.T) map[string]string {
+	t.Helper()
+
+	root := moduleRoot(t)
+	dir := filepath.Join(root, "src")
+	out := map[string]string{}
+
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".js") && !strings.HasSuffix(path, ".ts") {
+			return nil
+		}
+		body, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			return rerr
+		}
+		out[filepath.ToSlash(rel)] = string(body)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking src/: %v", err)
+	}
+	if len(out) < 50 {
+		t.Fatalf("found only %d source files; the walk is broken, not the sources", len(out))
+	}
+	return out
+}
+
+// TestNoNativeConfirm pins the replacement of window.confirm by the in-app
+// alertdialog (docs/deferred-work.md item 1).
+//
+// window.confirm is modal to the *browser*, not to the page. That bought three
+// properties for free — it cannot be missed, it cannot be dismissed by accident,
+// and it traps focus by construction — and the in-app dialog re-earns all three.
+// The reason to forbid the native call rather than merely to have replaced it is
+// that the replacement is invisible at a call site: `confirm(msg)` keeps working
+// forever, so the next destructive feature would reintroduce the class without
+// anything noticing.
+//
+// This is a Go guard and not a Playwright spec because ci.yml runs `go test` and,
+// as of the e2e-browser job, only the accessibility and regression directories of
+// the browser suite.
+func TestNoNativeConfirm(t *testing.T) {
+	// The dialog's own implementation is the one place allowed to name it — and
+	// today does not, but an explicit allow-list is cheaper than a guard that
+	// fires on its own replacement the first time someone adds a fallback.
+	allowed := map[string]bool{
+		"src/components/confirmDialog.js":      true,
+		"src/components/confirmDialog.test.ts": true,
+	}
+
+	scanned := 0
+	for _, group := range []map[string]string{templateFiles(t), srcFiles(t)} {
+		for _, name := range sortedKeys(group) {
+			if allowed[name] {
+				continue
+			}
+			scanned++
+			body := withoutComments(group[name])
+			for _, m := range nativeConfirmCall.FindAllStringSubmatchIndex(body, -1) {
+				t.Errorf("%s:%d: native confirm() — use $store.confirmDialog.ask() in a template,\n"+
+					"\tor askToConfirm() from src/components/confirmDialog.js in a module.\n"+
+					"\tA native confirm cannot be styled, cannot be labelled as an alertdialog,\n"+
+					"\tand returns synchronously, which is the shape the async replacement broke.",
+					name, lineOf(body, m[0]))
+			}
+		}
+	}
+
+	if scanned < 100 {
+		t.Errorf("only %d files scanned; the sweep is not reading the tree it claims to guard", scanned)
+	}
+}
+
+// TestNoInlineOnsubmitConfirm forbids the other spelling of the same thing.
+//
+// Four sites used `onsubmit="return confirm(...)"`, which is not merely a native
+// confirm: it is a native confirm that no component can see, so the selection
+// guards, the message placeholders and the focus handling all skip it. The
+// regexp above already matches these, but a dedicated failure names the actual
+// mistake instead of pointing at the word `confirm`.
+func TestNoInlineOnsubmitConfirm(t *testing.T) {
+	files := templateFiles(t)
+
+	for _, name := range sortedKeys(files) {
+		body := withoutComments(files[name])
+		for _, m := range inlineOnsubmit.FindAllStringSubmatchIndex(body, -1) {
+			t.Errorf("%s:%d: inline onsubmit= handler — route the form through\n"+
+				"\tx-data=\"confirmAction({message: '…'})\" x-bind=\"events\" instead.\n"+
+				"\tAn inline handler is invisible to the component that owns the\n"+
+				"\tconfirmation, so it cannot resolve {count}/{s}/{winner} and cannot\n"+
+				"\tbe blocked by the empty-selection guard.",
+				name, lineOf(body, m[0]))
+		}
+	}
+}
+
+var inlineOnsubmit = regexp.MustCompile(`\sonsubmit\s*=`)
+
+// TestConfirmDialogIsReachableFromEveryPage pins the two wiring facts the whole
+// replacement rests on: the partial is in the universal overlay layer, and the
+// store that drives it is registered.
+//
+// Without either, askToConfirm() fails closed and every destructive control in
+// the app silently stops working — which is the safe direction, but is still the
+// entire feature being off.
+func TestConfirmDialogIsReachableFromEveryPage(t *testing.T) {
+	files := templateFiles(t)
+
+	base, ok := files["templates/layouts/base.tpl"]
+	if !ok {
+		t.Fatal("templates/layouts/base.tpl not found; every page layout extends it")
+	}
+	if !strings.Contains(base, "partials/confirmDialog.tpl") {
+		t.Error("templates/layouts/base.tpl does not include partials/confirmDialog.tpl.\n" +
+			"\tIt belongs inside the .overlays container, which sits at z-index 41 —\n" +
+			"\tabove the .header stacking context at 40 — and is present on every page.")
+	}
+
+	dialog, ok := files["templates/partials/confirmDialog.tpl"]
+	if !ok {
+		t.Fatal("templates/partials/confirmDialog.tpl not found")
+	}
+	for _, needle := range []string{`role="alertdialog"`, `aria-modal="true"`, "aria-labelledby", "aria-describedby"} {
+		if !strings.Contains(dialog, needle) {
+			t.Errorf("partials/confirmDialog.tpl is missing %s.\n"+
+				"\tA confirm is an alertdialog, not a dialog: it interrupts to demand a\n"+
+				"\tdecision, and the description has to be announced with it.", needle)
+		}
+	}
+	// The backdrop must not dismiss. That is the one accident window.confirm
+	// could not have, and re-earning it is the point of the replacement.
+	if strings.Contains(withoutComments(dialog), "click.self=") {
+		t.Error("partials/confirmDialog.tpl has a @click.self dismissal on its backdrop.\n" +
+			"\tA stray click must not discard a destructive confirm.")
+	}
+
+	main, err := os.ReadFile(filepath.Join(moduleRoot(t), "src", "main.js"))
+	if err != nil {
+		t.Fatalf("reading src/main.js: %v", err)
+	}
+	if !strings.Contains(string(main), "registerConfirmDialogStore(Alpine)") {
+		t.Error("src/main.js does not call registerConfirmDialogStore(Alpine); " +
+			"the dialog's markup would render but never open.")
+	}
+}
+
+// dateFilterLayout captures the Go time layout passed to pongo2's `date` filter.
+var dateFilterLayout = regexp.MustCompile(`\|\s*date\s*:\s*"([^"]*)"`)
+
+// TestMachineReadableDatesCarryAZone is the real guard behind finding 118, and
+// behind the observation in docs/deferred-work.md item 8 that the runtime guard
+// for it is vacuous.
+//
+// The defect: `date:"2006-01-02T15:04:05Z"` looks like RFC3339 and is not. In a Go
+// layout a trailing bare `Z` is a *literal character*, while `Z07:00` is the zone.
+// pongo2's date filter is a bare t.Format(param) with no zone conversion, so the
+// buggy layout printed the value's local wall clock and stapled a "Z" onto it —
+// every timestamp then parsed as that many hours into the future.
+//
+// Why this is a source sweep and not (only) a rendered-output assertion:
+//
+//   - On a UTC host the buggy and fixed layouts emit *identical bytes*, so no
+//     assertion over rendered output can tell them apart. CI hosts run UTC. The
+//     existing runtime test therefore passed against the unfixed code on exactly
+//     the machine that matters, and only ever failed on its author's UTC+3 laptop.
+//   - It was also one-sided: `drift > time.Minute` cannot fire west of Greenwich,
+//     where the bogus stamp resolves into the past instead.
+//   - And it can skip. The dashboard provider fans out over five goroutines, and
+//     the api_tests DSN uses `cache=private`, which hands each pooled connection a
+//     brand-new empty in-memory database — so the activity feed often renders no
+//     <time> at all and the test t.Skips, which CI scores as a pass.
+//
+// The layout is decidable from the template source, on any host, with no database
+// and no rendering. That is the whole reason to assert it here.
+func TestMachineReadableDatesCarryAZone(t *testing.T) {
+	files := templateFiles(t)
+
+	checked := 0
+	for _, name := range sortedKeys(files) {
+		body := withoutComments(files[name])
+		for _, m := range dateFilterLayout.FindAllStringSubmatchIndex(body, -1) {
+			layout := body[m[2]:m[3]]
+			checked++
+
+			// Only layouts that carry a time-of-day claim to identify an instant. A
+			// date-only layout ("Jan 02, 2006") is a human-facing label and has no
+			// zone to get wrong.
+			if !strings.Contains(layout, "15:04") {
+				continue
+			}
+			// A trailing literal Z with no offset directive anywhere in the layout.
+			if !strings.HasSuffix(layout, "Z") {
+				continue
+			}
+			if strings.Contains(layout, "Z07:00") || strings.Contains(layout, "Z0700") {
+				continue
+			}
+
+			t.Errorf("%s:%d: date layout %q ends in a bare literal Z.\n"+
+				"\tIn a Go layout `Z` is the character Z; the zone directive is `Z07:00`.\n"+
+				"\tThis stamps local wall-clock time and calls it UTC, so the value parses\n"+
+				"\tas the UTC offset into the future. Use \"2006-01-02T15:04:05Z07:00\".",
+				name, lineOf(body, m[0]), layout)
+		}
+	}
+
+	// Positive control: this guard is worthless if the walk finds no date filters.
+	if checked < 10 {
+		t.Errorf("only %d `|date:` layouts found across templates/; expected dozens. "+
+			"The scan is not reading the templates it claims to guard.", checked)
+	}
+}
+
+// -- deferred-work item 8 -----------------------------------------------------
+
+// templateOpenTag returns the `<name …>` open tag in body that contains marker,
+// or "" if there is none.
+//
+// The scan is quote-aware, for the reason findOpenTag in
+// server/api_tests/ws5_keyboard_names_headings_test.go documents: a `[^>]*`
+// regex stops inside an attribute value the moment an Alpine expression contains
+// a `>` (`:aria-expanded="results.length > 0"`), so every attribute after it
+// looks absent. An absence check that truncates reports a defect that is not
+// there, which is the worse of the two failure modes.
+func templateOpenTag(body, name, marker string) string {
+	needle := "<" + name
+	for i := 0; i < len(body); {
+		start := strings.Index(body[i:], needle)
+		if start < 0 {
+			return ""
+		}
+		start += i
+
+		end, quote := -1, byte(0)
+		for j := start + len(needle); j < len(body) && end < 0; j++ {
+			switch c := body[j]; {
+			case quote != 0:
+				if c == quote {
+					quote = 0
+				}
+			case c == '"' || c == '\'':
+				quote = c
+			case c == '>':
+				end = j
+			}
+		}
+		if end < 0 {
+			return ""
+		}
+		if tag := body[start : end+1]; strings.Contains(tag, marker) {
+			return tag
+		}
+		i = end + 1
+	}
+	return ""
+}
+
+// soleActionControls are the controls whose *only* affordance was a hover
+// reveal. Each is identified by its handler, which is what makes it that
+// control; matching on the class list would match the thing under test.
+var soleActionControls = []struct {
+	file, marker, what string
+}{
+	{
+		"templates/partials/blockEditor.tpl",
+		`@click="removeResource(resId)"`,
+		"the block editor's gallery remove",
+	},
+	{
+		"templates/partials/lightbox.tpl",
+		`$store.lightbox.editingSlotIndex = idx`,
+		"the lightbox quick-tag Add",
+	},
+	{
+		"templates/partials/lightbox.tpl",
+		`$store.lightbox.clearQuickTagSlot(idx)`,
+		"the lightbox quick-tag Clear",
+	},
+}
+
+// TestSoleActionControlsAreNotHoverOnly is deferred-work item 8's third finding,
+// and the sequel to finding 99 (server/api_tests/ws5_keyboard_names_headings_test.go,
+// TestSavedQueryDelete_IsNotHoverOnly). These three buttons were `opacity-0
+// group-hover:opacity-100`: a touch device has no hover, and no :focus-visible
+// before the tap, so the only way to remove a gallery item or to configure a
+// quick-tag slot was drawn at zero opacity.
+//
+// The eleven other users of that idiom, all in displayResource.tpl, are
+// deliberately outside this table: they are copy-to-clipboard buttons sitting
+// beside the value they copy, so a hidden one hides nothing and blocks nothing.
+// The rule being pinned is "not the sole path", not "never hover-revealed".
+func TestSoleActionControlsAreNotHoverOnly(t *testing.T) {
+	files := templateFiles(t)
+
+	for _, c := range soleActionControls {
+		body, ok := files[c.file]
+		if !ok {
+			t.Fatalf("%s not found", c.file)
+		}
+		tag := templateOpenTag(body, "button", c.marker)
+		if tag == "" {
+			t.Fatalf("%s: no <button> carrying %s — this test measured nothing", c.file, c.marker)
+		}
+		flat := strings.Join(strings.Fields(tag), " ")
+
+		if strings.Contains(tag, "opacity-0") {
+			t.Errorf("%s:%d: %s is opacity-0 until hover, so on touch it does not exist.\ntag: %s",
+				c.file, lineOf(body, strings.Index(body, tag)), c.what, flat)
+		}
+		if !strings.Contains(tag, "touch-reachable") {
+			t.Errorf("%s:%d: %s does not carry .touch-reachable, the class that pins its resting paint\n"+
+				"\t(public/index.css). Three call sites share it so they cannot drift apart again.\ntag: %s",
+				c.file, lineOf(body, strings.Index(body, tag)), c.what, flat)
+		}
+		if !strings.Contains(tag, "aria-label") {
+			t.Errorf("%s:%d: %s lost its accessible name.\ntag: %s",
+				c.file, lineOf(body, strings.Index(body, tag)), c.what, flat)
+		}
+	}
+
+	css, err := os.ReadFile(filepath.Join(moduleRoot(t), "public", "index.css"))
+	if err != nil {
+		t.Fatalf("reading public/index.css: %v", err)
+	}
+	if !strings.Contains(string(css), ".touch-reachable") {
+		t.Error("public/index.css does not define .touch-reachable, so the class the three call sites " +
+			"name resolves to nothing and they are unstyled, not always-painted.")
+	}
+}
+
+// TestTextareasKeepTheirNativeRole is deferred-work item 8's second finding.
+//
+// Three mention textareas declared role="combobox". That override replaces the
+// implicit textbox role and takes aria-multiline="true" with it, so a multi-line
+// field stopped announcing as one. Adding aria-multiline back is not available:
+// ARIA 1.2 has no multiline combobox, the attribute is not in axe's allowed set
+// for role=combobox, and aria-allowed-attr is tagged wcag2a/wcag412 with impact
+// critical — the fix would have been a worse violation than the defect.
+//
+// So the rule is the general one: never override a textarea's role. A textbox
+// already allows aria-activedescendant, aria-autocomplete and aria-multiline,
+// and aria-controls, aria-owns and aria-haspopup are global, which is every
+// attribute the mention pattern needs.
+//
+// aria-expanded is checked in the same sweep because it is the attribute that
+// cannot come along: it is neither global nor allowed on a textbox, so leaving
+// it behind on a de-roled textarea trades one aria-allowed-attr failure for
+// another. The state it carried is announced by mentionTextarea.js's live
+// region instead.
+func TestTextareasKeepTheirNativeRole(t *testing.T) {
+	files := templateFiles(t)
+
+	seen := 0
+	for _, name := range sortedKeys(files) {
+		body := withoutComments(files[name])
+		for i := 0; i < len(body); {
+			start := strings.Index(body[i:], "<textarea")
+			if start < 0 {
+				break
+			}
+			start += i
+			tag := templateOpenTag(body[start:], "textarea", "")
+			if tag == "" {
+				break
+			}
+			i = start + len(tag)
+			seen++
+
+			flat := strings.Join(strings.Fields(tag), " ")
+			if strings.Contains(tag, "role=") {
+				t.Errorf("%s:%d: a <textarea> overrides its role. That discards the implicit\n"+
+					"\taria-multiline=\"true\", and no ARIA 1.2 role restores it — role=combobox\n"+
+					"\trejects aria-multiline outright.\ntag: %s", name, lineOf(body, start), flat)
+			}
+			if strings.Contains(tag, "aria-expanded") {
+				t.Errorf("%s:%d: a <textarea> declares aria-expanded, which is not global and not\n"+
+					"\tallowed on role=textbox (aria-allowed-attr, wcag2a/wcag412). Announce the\n"+
+					"\topen/closed state through a live region instead.\ntag: %s", name, lineOf(body, start), flat)
+			}
+		}
+	}
+
+	// Positive control: the sweep has to be finding textareas at all.
+	if seen < 10 {
+		t.Errorf("only %d <textarea> open tags found; the scan is broken, not the templates", seen)
+	}
+}
+
+// TestMentionOptionsAreOutOfTheTabOrder is deferred-work item 8's first finding.
+//
+// mentionDropdown.tpl renders each suggestion as a <button role="option">. A
+// button is natively focusable, so without tabindex="-1" the options sat in the
+// tab order — while the owning textarea drives the list with
+// aria-activedescendant and never yields focus. Tab therefore walked into the
+// listbox and DOM focus diverged from the option ARIA reported as active. axe
+// does not catch this, which is why it survived a sweep that keeps KNOWN_ISSUES
+// empty.
+//
+// The rule is scoped to <button>, not to every role="option": templatePreviewPane.tpl
+// and blockEditor.tpl's block picker are roving-tabindex listboxes on <li>, where
+// tabindex="0" on the active option is correct. Requiring the attribute to be
+// *declared* rather than to equal "-1" keeps a future roving <button> listbox
+// legal while still failing the omission, which is the defect.
+func TestMentionOptionsAreOutOfTheTabOrder(t *testing.T) {
+	files := templateFiles(t)
+
+	seen := 0
+	for _, name := range sortedKeys(files) {
+		body := withoutComments(files[name])
+		for i := 0; i < len(body); {
+			start := strings.Index(body[i:], "<button")
+			if start < 0 {
+				break
+			}
+			start += i
+			tag := templateOpenTag(body[start:], "button", "")
+			if tag == "" {
+				break
+			}
+			i = start + len(tag)
+
+			if !strings.Contains(tag, `role="option"`) {
+				continue
+			}
+			seen++
+			if !strings.Contains(tag, "tabindex") {
+				t.Errorf("%s:%d: a <button role=\"option\"> declares no tabindex, so it is in the tab\n"+
+					"\torder. Under an aria-activedescendant listbox that lets DOM focus and\n"+
+					"\taria-activedescendant point at different things. adminExport.tpl and\n"+
+					"\tadminImport.tpl are the house pattern: tabindex=\"-1\".\ntag: %s",
+					name, lineOf(body, start), strings.Join(strings.Fields(tag), " "))
+			}
+		}
+	}
+
+	if seen == 0 {
+		t.Error("no <button role=\"option\"> in the tree; partials/form/mentionDropdown.tpl renders one, " +
+			"so the scan is broken rather than the templates being clean.")
+	}
+}

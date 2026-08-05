@@ -35,7 +35,9 @@
             <td class="py-2 pr-4">{% if u.ScopeGroupId %}{{ u.ScopeGroupId }}{% else %}—{% endif %}</td>
             <td class="py-2 pr-4">{% if u.Disabled %}yes{% else %}no{% endif %}</td>
             <td class="py-2 pr-4">
-              <form method="post" action="/v1/user/delete" onsubmit="return confirm('Delete user {{ u.Username }}?');" class="inline">
+              <form method="post" action="/v1/user/delete" class="inline"
+                    x-data="confirmAction()" x-bind="events"
+                    data-confirm-message="Delete user {{ u.Username }}? This also destroys their tokens and sessions, and clears them as the creator of everything they made.">
                 <input type="hidden" name="id" value="{{ u.ID }}">
                 <button type="submit" class="text-red-700 hover:underline">Delete</button>
               </form>

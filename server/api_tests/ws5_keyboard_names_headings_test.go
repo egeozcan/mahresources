@@ -659,22 +659,29 @@ func TestNoteDetail_DoesNotSkipToH3ForTheOwnerCard(t *testing.T) {
 // ---------------------------------------------------------------- finding 133
 
 // TestMentionTextarea_DeclaresTheListboxItControls is finding 133. The
-// description textarea declares role=combobox, aria-autocomplete=list,
-// aria-haspopup=listbox and aria-activedescendant, but no aria-controls — so
-// assistive tech cannot follow the suggestion list. autocompleter.tpl, in the
-// same directory, sets both aria-controls and aria-owns.
+// description textarea declares aria-autocomplete=list, aria-haspopup=listbox
+// and aria-activedescendant, but no aria-controls — so assistive tech cannot
+// follow the suggestion list. autocompleter.tpl, in the same directory, sets
+// both aria-controls and aria-owns.
+//
+// The subject used to be located by role="combobox". Deferred-work item 8
+// removed that role — it overrode the textarea's implicit textbox role and took
+// aria-multiline with it, and ARIA 1.2 has no multiline combobox — so the marker
+// is now x-ref="mentionInput", which is what actually makes this a mention
+// textarea. TestTextareasKeepTheirNativeRole in internal/arch/templates_test.go
+// is what keeps the role from coming back.
 func TestMentionTextarea_DeclaresTheListboxItControls(t *testing.T) {
 	tc := SetupTestEnv(t)
 	group := tc.createGroupNamed(t, "ws5 mention host")
 
 	_, body := tc.getHTML(t, fmt.Sprintf("/group/edit?id=%d", group.ID))
 
-	tag := findOpenTag(body, `role="combobox"`, "textarea")
+	tag := findOpenTag(body, `x-ref="mentionInput"`, "textarea")
 	if tag == "" {
-		t.Fatalf("no role=combobox textarea on the group edit form — this test measured nothing")
+		t.Fatalf("no mention textarea on the group edit form — this test measured nothing")
 	}
 	if !strings.Contains(tag, "aria-controls=") {
-		t.Errorf("finding 133: the combobox textarea does not declare aria-controls.\ntag: %s", whitespaceRe.ReplaceAllString(tag, " "))
+		t.Errorf("finding 133: the mention textarea does not declare aria-controls.\ntag: %s", whitespaceRe.ReplaceAllString(tag, " "))
 	}
 
 	ctrlRe := regexp.MustCompile(`aria-controls="([^"]+)"`)

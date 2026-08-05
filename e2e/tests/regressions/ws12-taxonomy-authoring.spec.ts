@@ -4,8 +4,8 @@
  * The server-visible half lives in server/api_tests/ws12_taxonomy_authoring_test.go
  * — CI runs `go test` and does not run this suite. Here is what only a browser
  * knows: what the CodeMirror gutter shows, how many options a <select> really has
- * after its Alpine component has loaded them, what the console holds, and whether a
- * window.confirm fires.
+ * after its Alpine component has loaded them, what the console holds, and whether
+ * the in-app confirm dialog fires.
  *
  * Finding 96 is a REJECTION and is pinned here: "Format JSON" does report the parse
  * error. The report's live-region sweep looked for [aria-live] elements and the
@@ -14,6 +14,7 @@
  * and belongs to 17/93, which is why both are in this file.
  */
 import { test, expect } from '../../fixtures/base.fixture';
+import { acceptConfirm, dismissConfirm, expectNoConfirm } from '../../helpers/confirm-dialog';
 
 const DESKTOP = { width: 1280, height: 900 };
 const INVALID_SCHEMA = '{ not valid json ][';
@@ -86,9 +87,12 @@ test.describe('findings 17/93 — an unparseable Meta JSON Schema is marked in t
     await setEditor(page, 'MetaSchema', INVALID_SCHEMA);
     await page.waitForTimeout(1200);
 
-    // The pre-save confirm (extended to cover the JSON editor) fires first.
-    page.on('dialog', (d) => d.accept());
+    // The pre-save lint confirm (extended to cover the JSON editor) fires first.
+    // Submitting now only *opens* that dialog — the save does not start until it
+    // is accepted — so every assertion about the outcome comes after the accept.
     await page.locator('form').first().evaluate((f: HTMLFormElement) => f.requestSubmit());
+    const askedBeforeSaving = await acceptConfirm(page);
+    expect(askedBeforeSaving).toMatch(/save anyway/i);
 
     await expect(page.locator('[data-testid="form-error-banner"]')).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('[data-testid="form-error-banner"]')).toContainText(/json/i);
@@ -256,22 +260,22 @@ test.describe('finding 154 — applying a preset over authored content asks firs
     await expect.poll(async () => page.locator('#tb-preset option').count(), { timeout: 20_000 })
       .toBeGreaterThan(1);
 
-    const messages: string[] = [];
-    page.on('dialog', (d) => {
-      messages.push(d.message());
-      d.dismiss();
-    });
-
     await page.locator('#tb-preset').selectOption({ index: 1 });
+    // The click only *opens* the confirm now; applyPreset is awaiting the answer,
+    // so nothing is written until the dialog is dismissed below.
     await page.locator('[data-testid="tb-apply-preset"]').click();
-    await page.waitForTimeout(800);
 
     // Measured on the unfixed page: CustomHeader went 107 -> 353 characters with
-    // zero dialogs.
-    expect(messages.length, 'no confirmation fired before replacing authored content').toBeGreaterThan(0);
-    expect(messages[0]).toMatch(/replace/i);
-    expect(messages[0]).toMatch(/template field/i);
+    // zero dialogs. dismissConfirm waits for the dialog, so it is also the
+    // "a confirmation fired before replacing authored content" assertion — it
+    // fails on a page that replaces silently.
+    const asked = await dismissConfirm(page);
+    expect(asked).toMatch(/replace/i);
+    expect(asked).toMatch(/template field/i);
 
+    // Give a wrongly-proceeding apply time to land before reading the field, so
+    // "unchanged" is not just measured before the write.
+    await page.waitForTimeout(800);
     const after = await page.locator('input[name="CustomHeader"]').inputValue();
     expect(after, 'the declined preset was applied anyway').toBe(authored);
   });
@@ -284,17 +288,14 @@ test.describe('finding 154 — applying a preset over authored content asks firs
     await expect.poll(async () => page.locator('#tb-preset option').count(), { timeout: 20_000 })
       .toBeGreaterThan(1);
 
-    const messages: string[] = [];
-    page.on('dialog', (d) => {
-      messages.push(d.message());
-      d.accept();
-    });
-
     await page.locator('#tb-preset').selectOption({ index: 1 });
     await page.locator('[data-testid="tb-apply-preset"]').click();
+    // The confirm would open asynchronously, so give it the same window the apply
+    // gets before asserting it never came — checking immediately would pass even
+    // on a page that prompts one tick later.
     await page.waitForTimeout(800);
+    await expectNoConfirm(page);
 
-    expect(messages).toHaveLength(0);
     expect(await page.locator('input[name="CustomHeader"]').inputValue()).not.toBe('');
   });
 });

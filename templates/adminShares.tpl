@@ -28,14 +28,20 @@
   {% else %}
   {# BH-035: per-row revoke forms live outside the bulk form and are targeted via the HTML5 form="..." button attribute (nested forms are invalid HTML). #}
   {% for note in shares %}
+  {# The name goes through data-confirm-message rather than into the x-data        #}
+  {# expression: Pongo2 autoescapes, the HTML parser decodes the entity before any #}
+  {# JS in the attribute is parsed, and a note named "it's" would then terminate   #}
+  {# the string literal. This also drops a |escape that was double-escaping, so    #}
+  {# such a name used to be announced as it&#39;s.                                  #}
   <form id="admin-share-revoke-form-{{ note.ID }}" method="post" action="/v1/admin/shares/bulk-revoke" class="hidden"
-        onsubmit="return confirm('Revoke share for &quot;{{ note.Name|escape }}&quot;?');">
+        x-data="confirmAction()" x-bind="events"
+        data-confirm-message="Revoke share for “{{ note.Name }}”?">
     <input type="hidden" name="ids" value="{{ note.ID }}">
   </form>
   {% endfor %}
 
   <form method="post" action="/v1/admin/shares/bulk-revoke" data-testid="admin-shares-form"
-        onsubmit="return confirm('Revoke share tokens for all selected notes?');">
+        x-data="confirmAction('Revoke share tokens for all selected notes?')" x-bind="events">
     <div class="flex items-center justify-between mb-2">
       <span class="text-xs text-stone-500" data-testid="admin-shares-count">{{ shares|length }} shared note{% if shares|length != 1 %}s{% endif %}</span>
       <button type="submit"

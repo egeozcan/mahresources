@@ -6,6 +6,7 @@
  * group, overriding the server's redirect to the new clone.
  */
 import { test, expect } from '../../fixtures/base.fixture';
+import { acceptConfirm } from '../../helpers/confirm-dialog';
 
 test.describe('Group clone redirects to the new clone', () => {
   let categoryId: number;
@@ -32,15 +33,20 @@ test.describe('Group clone redirects to the new clone', () => {
     await page.goto(`/group?id=${groupId}`);
     await page.waitForLoadState('load');
 
-    // Accept the confirm dialog that will appear
-    page.on('dialog', (dialog) => dialog.accept());
-
     // Find and click the Clone button
     const cloneButton = page.locator('form[action*="clone"] button[type="submit"]');
     await expect(cloneButton).toBeVisible({ timeout: 5000 });
     await cloneButton.click();
 
-    // Wait for navigation after clone
+    // The click no longer carries the POST with it: confirmAction preventDefaults
+    // the submit, opens the in-app confirm, and only re-submits the form once the
+    // reader accepts. So the navigation waiter has to be armed *around the accept*,
+    // not around the click — `waitForLoadState('load')` on its own would find the
+    // still-live original document already loaded, return immediately, and read the
+    // original group's id back out of `page.url()`.
+    const navigated = page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame());
+    await acceptConfirm(page);
+    await navigated;
     await page.waitForLoadState('load');
 
     // The URL should point to a DIFFERENT group (the clone), not the original

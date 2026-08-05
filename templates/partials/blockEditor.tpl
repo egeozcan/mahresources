@@ -57,7 +57,7 @@
                             </svg>
                         </button>
                         <button
-                            @click="if(confirm('Delete this block?')) deleteBlock(block.id)"
+                            @click="if (await $store.confirmDialog.ask('Delete this block?')) deleteBlock(block.id)"
                             data-block-control="delete"
                             :aria-label="'Delete block ' + (index + 1)"
                             class="p-1 text-red-400 hover:text-red-700"
@@ -88,9 +88,11 @@
                                             @blur="saveBlock()"
                                             class="w-full min-h-[100px] p-2 border border-stone-300 rounded resize-y"
                                             placeholder="Enter text..."
-                                            role="combobox"
+                                            {# Deferred-work item 8: role="combobox" and :aria-expanded    #}
+                                            {# dropped so the textarea keeps its implicit textbox role,   #}
+                                            {# and with it aria-multiline. See the long note in           #}
+                                            {# partials/form/createFormTextareaInput.tpl.                 #}
                                             aria-autocomplete="list"
-                                            :aria-expanded="mentionActive && mentionResults.length > 0"
                                             aria-haspopup="listbox"
                                             {# Finding 133: aria-controls was absent. The id is per block  #}
                                             {# because a note renders one mention textarea per text block, #}
@@ -248,10 +250,15 @@
                                                          class="w-full h-full object-cover" loading="lazy">
                                                     {# Finding 48/99: named "Remove" with no object, and a 20x20 target #}
                                                     {# revealed only on hover — unreachable on a touch device.          #}
+                                                    {# Deferred-work item 8: only the hit-area half of that was fixed.  #}
+                                                    {# The button was still `opacity-0 group-hover:opacity-100`, and a  #}
+                                                    {# touch device has neither hover nor :focus-visible before the     #}
+                                                    {# tap, so removing a gallery item had no visible affordance at     #}
+                                                    {# all. .touch-reachable (public/index.css) now owns the opacity.   #}
                                                     <button
                                                         @click="removeResource(resId)"
                                                         :aria-label="'Remove ' + ((resourceMeta[resId]?.name) || ('resource ' + resId))"
-                                                        class="remove-target absolute top-1 right-1 bg-red-700 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+                                                        class="remove-target touch-reachable absolute top-1 right-1 bg-red-700 text-white rounded-full text-xs"
                                                     >&times;</button>
                                                 </div>
                                             </template>
