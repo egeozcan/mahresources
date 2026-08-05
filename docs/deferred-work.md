@@ -7,31 +7,43 @@ in `docs/lessons.md`.
 
 ---
 
-## Status after the 2026-08-05 pass
+## Status after the 2026-08-05/06 passes
 
 | item | status |
 |---|---|
 | 1. Accessible confirm modal | **done** — all 23 sites, Go + vitest + e2e guards |
-| 2. User edit page | **not started** |
+| 2. User edit page | **done** — `/admin/users/edit`, plus the authz hole a naive version would have opened |
 | 3. Preview opens lightbox | **done** |
-| 4. Widen `WCAG_AA_TAGS` | **not done** — re-measured, and the doc's diagnosis was wrong (see below) |
+| 4. Widen `WCAG_AA_TAGS` | **wcag22 done** — and the blocker was finding 102 again, not a hit-area miss. `best-practice` still open |
 | 5. Browser E2E in CI | **stage 1 done** — accessibility + regressions job added |
 | 6. Postgres harness | **done** — measured, no limit adopted, a different defect fixed |
-| 7. Smaller items | **partly** — docs-lint triaged, error-body defect fixed; teleport still open |
+| 6b. api_tests `cache=private` | **done** — 12-in-20 silent skips → 0 in 20 |
+| 7. Smaller items | **done** — docs-lint triaged, error-body defect fixed, jobs panel teleported |
 | 8. Five review findings | **done** — all five, plus corrections to three of them |
 
-Gates at the end of that pass: `go test --tags 'json1 fts5' ./...` green, `staticcheck` clean,
+What is left in this document: the `best-practice` half of item 4, finding 65's picker half (a product
+question, not a defect), the five addressable `mr docs lint` doctests, and stages 2–3 of item 5.
+
+Gates at the end of the 08-05 pass: `go test --tags 'json1 fts5' ./...` green, `staticcheck` clean,
 `npm run test:unit` 923 passing (was 902), `npm run build` clean, full
 `cd e2e && npm run test:with-server:all` **1921 passed / 0 failed** (12 flaky, all
 `page.goto: Timeout 15000ms exceeded` on a heavily loaded machine — the known load class, none in the
 new specs), and three full Postgres runs at 0 flaky.
 
-**Five factual corrections to this document were made in that pass.** They are recorded inline with
-their items rather than listed here, but the pattern is worth naming: in each case the stated *reason*
-for a decision was checkable in seconds and wrong — a path that does not exist, a landmark in the wrong
-file, an ARIA fix that adds a violation, a client that never calls the function it was excused by, and
-a target-size failure of a different kind than the one filed. **Check a cited path or symbol before
-building on the sentence around it.**
+At the end of the 08-06 pass: the same four green, `npm run test:unit` at 924, and
+`npm run test:with-server:all` **1943 passed / 0 failed** (4 flaky, all 60s timeouts on the same load
+class). Postgres was **not** run — Docker was unavailable on the machine — and that is the one
+outstanding gate; see `docs/deferred-work-next-session.md` §3.
+
+**Nine factual corrections to this document have now been made, five in the first pass and four in the
+second.** They are recorded inline with their items rather than listed here, but the pattern is worth
+naming: in each case the stated *reason* for a decision was checkable in seconds and wrong — a path
+that does not exist, a landmark in the wrong file, an ARIA fix that adds a violation, a client that
+never calls the function it was excused by, a target-size failure of a different kind than the one
+filed, "UI-only wiring" for a change that needed an authz fix, a z-index claimed to be the only valid
+value, an overlay sibling list missing a third of its entries, and a count of affected e2e specs that
+was both too low and wrong about which ones. **Check a cited path or symbol before building on the
+sentence around it.**
 
 Read `docs/lessons.md` before starting any of these. The rules in it were each paid for by a specific
 failure in this codebase, and several of them apply directly to the work below.
@@ -184,6 +196,57 @@ the component's own implementation.
 
 ## 2. User edit page (product decision 107)
 
+**Status: IMPLEMENTED 2026-08-06.** `/admin/users/edit?id=N`, linked from each row of `/admin/users`.
+Every field is prefilled; a blank password means unchanged.
+
+### It was not UI-only wiring, and the reason matters
+
+The recon sentence below ("`UpdateUserHandler`, `UpdateUser` and `SetUserPassword` all already exist
+… so this is UI-only wiring") is **wrong in two ways**, and one of them is a security hole.
+
+**`isSystemPath` matches template paths by exact string** (`server/authz_policy.go`). A new admin page
+that is not added to that list falls through to the default branch, where a GET is `safe` and yields
+`capRead` — so `/admin/users/edit` would have rendered every account's username, role, scope group and
+disabled state to **editors, users and guests**, while working perfectly for the admin who built it,
+with nothing failing anywhere. Measured: with the path removed from `isSystemPath`, all three roles
+get `200` on all three registrations (`/admin/users/edit`, `.json`, `.body` — authz strips the two
+suffixes before matching, so one omission opens all three). Pinned by
+`TestAdminUserEditPage_IsAdminOnly`, proved red against the missing entry.
+
+**`UpdateUserHandler`'s error branch called `HandleError`**, not `HandleFormErrorWithStatus` like
+`CreateUserHandler` does. For a browser that renders a full-page error document and discards every
+typed value — so the `ErrLastAdmin` → 409 this item exists to surface would have arrived as something
+indistinguishable from a crash. It now redirects back to the edit page with the values and an `error`
+param, and still answers a plain 409 for JSON callers.
+
+Two smaller corrections: `SetUserPassword` **is** reached from the UI today (`/account`'s own password
+form), and the new page belongs in the e2e `DYNAMIC_PAGES` list, not `STATIC_PAGES` — it needs a user
+id, and `STATIC_PAGES` is explicitly the set that needs no pre-existing data. The id is *read* from
+`/v1/users` rather than created, because the root-admin invariant guarantees one exists and a
+throwaway account would need a delete that the last-admin guard could refuse.
+
+### Two things the form had to get right
+
+`UpdateUser` is **full-replace** for username, display name, role, scope group and disabled — only the
+password is "empty means unchanged". So an omitted field is a cleared field: an unchecked `Disabled`
+box re-enables a disabled account, and an omitted role decodes to `""` and hard-fails validation. Every
+field is therefore prefilled from the stored value, and the Go test asserts each one is present.
+
+The guard fires only on the dangerous transition — it is computed from the pre-update state (*was* an
+enabled admin) **and** the post-update state (no longer admin, or now disabled). Renaming the sole
+admin or setting a new password takes the ordinary save path and is allowed. The page says so.
+
+### Guards
+
+`TestAdminUserEditPage_RendersPrefilledForTheAdmin`, `TestAdminUserEdit_LastAdminConflictComesBackToTheForm`,
+`TestAdminUserEdit_AnAllowedSaveGoesThrough`, `TestAdminUserEditPage_IsAdminOnly`, plus three browser
+tests in `e2e/tests/auth/02-role-access.spec.ts`. The browser tests are not redundant: the form carries
+no authored CSRF field — `src/csrf.js` appends one at submit time — and every Go test supplies the
+header itself, so none of them would notice if that wrapper failed to claim this form and every save
+came back 403.
+
+### Original entry (2026-07-31)
+
 **Status: decided, not started.** Approved as recommended on 2026-07-31.
 
 ### Current behaviour, verified
@@ -247,7 +310,58 @@ only route.
 
 ---
 
-## 4. Widen `WCAG_AA_TAGS` (recommended by Batch 13, not taken)
+## 4. Widen `WCAG_AA_TAGS` (recommended by Batch 13)
+
+**Status: wcag22a + wcag22aa DONE 2026-08-05. `best-practice` still open.**
+
+### The blocker was finding 102 a second time, and it was covering six pages
+
+The one `target-size` node this item was blocked on is not a hit-area problem, and the control is not
+the thing at fault. `templates/partials/form/searchButton.tpl` wrapped its submit in
+`sticky bottom-12 bg-stone-50 pt-3 z-10 w-full`, so on every list page the "Apply Filters" button
+floated 48px above the viewport bottom and **painted over whichever sidebar filter field was there**.
+Measured at 1280×720 across all 37 pages in the accessibility sweep, a control was covered on six:
+
+| page | control | overlap | `elementFromPoint` returned |
+|---|---|---|---|
+| `/notes` | `#input_autocompleter_4` | 33px | the sticky wrapper |
+| `/groups` | `#input_autocompleter_6` (Categories) | 19px | the button |
+| `/resources` | `#OriginalLocation` | 38px | the sticky wrapper |
+| `/resources/details` | `#OriginalLocation` | 38px | the sticky wrapper |
+| `/groups/text` | `#input_SearchChildrenForTags_5` | 14px | the button |
+| `/logs` | `#CreatedAfter` | 7px | the button |
+
+That last row is the point. `templates/layouts/base.tpl` and
+`server/api_tests/ws10_global_chrome_test.go`'s `TestFooter_IsNotSticky` had **already ruled on this
+exact defect**, on **that exact input** — "a bar fixed to the viewport bottom covers page content at
+every scroll offset", measured on the /logs "After" date input — and dropped the footer's
+`sticky bottom-0` rather than making it work. `searchButton.tpl` was doing the same thing and had never
+been checked against the ruling. It is dropped for the same reason. A bottom-stuck element inside a
+page-scrolled column always renders above its own preceding siblings; the only fix that keeps the pin
+is to make the sidebar its own scroll container, which is a layout change across 37 templates and the
+mobile disclosure.
+
+axe saw one of the six because only one field happens to sit under the bar at scroll 0. Six of six are
+now pinned by `e2e/tests/regressions/sidebar-apply-button-covers-filters.spec.ts` (geometry) and
+`TestSidebarSubmit_IsNotSticky` (source, in the suite CI runs).
+
+### The flip also found two undersized controls the 55-page sweep never saw
+
+`target-size` fired on `templates/partials/form/multiSortInput.tpl`'s reorder arrows (18×12) and remove
+button (18×24) — genuine findings 48/99/139, invisible to every earlier measurement because **a sort
+row only exists once a sort has been added**, and the sweep never added one. The remedy is the one WS5
+finding 49 took for `.calendar-day-number`: a real 24px box. A pseudo-element hit area would not do —
+axe and the pointer both measure the element's own rect. The arrows moved from a stacked 18px column to
+side by side so the row stays one line tall among fifteen other single-line filter fields; measured
+cost is 40px of a select that was 328px wide for a longest option of 15 characters.
+
+### Where it stands
+
+`WCAG_AA_TAGS` is `wcag2a, wcag2aa, wcag21a, wcag21aa, wcag22a, wcag22aa`. Re-measured after the two
+fixes: **0 added nodes across all 37 static pages**, and the full accessibility suite (195 tests,
+including component states the page sweep cannot reach) is green.
+
+### Original entry (2026-07-31)
 
 Measured over 55 pages, counting only what the current tag set misses:
 
@@ -387,7 +501,32 @@ Also corrected in the same file: the header comment claimed SQLite mode gives ea
 in-memory SQLite database". `-ephemeral` produces a per-PID **file** under `/tmp` in WAL mode
 (`application_context/context.go:998-1001`).
 
-### Newly surfaced, not fixed, needs its own scoping
+### Newly surfaced — FIXED 2026-08-06
+
+Measured before: `TestDashboardTimeAttributeIsARealInstant` t.Skip'd in **12 of 20** separate runs.
+After moving the harness DSN to `cache=shared`: **0 of 20**. Full Go suite green, `staticcheck` clean.
+
+Three things this turned up that the scoping note below did not have:
+
+- **The pool pins stay.** Seventeen tests call `SetMaxOpenConns(1)`, and it is tempting to remove them
+  now that the private cache is gone. Do not: shared-cache SQLite takes table-level locks and raises
+  `SQLITE_LOCKED` on a writer/reader conflict, which `busy_timeout` does not retry — it needs the
+  `sqlite_unlock_notify` build tag this project does not use. Their comments now say *that* rather than
+  the reason that expired.
+- **No held connection.** The obvious "keep the shared DB alive" move is `sqlDB.Conn()`, and it would
+  deadlock all seventeen of those tests on the one connection they permit. None is needed: Go keeps
+  idle connections with no timeout and nothing closes the pool, so the database lives from `gorm.Open`
+  to process exit.
+- **The name needs a sequence number.** Under a shared cache the DSN name is a real lookup key, and
+  `t.Name()` is identical on every iteration of `go test -count=N` — so iterations 2..N attach to
+  iteration 1's still-populated database. Measured, not theorised: four tests that pass under
+  `-count=3` today failed with the name alone, and passed under the old `cache=private`.
+
+`server/api_tests/share_url_public_url_test.go`'s second setup helper carried the same DSN and is
+fixed with it — a helper with the opposite cache semantics beside the fixed one is how the trap gets
+walked back in.
+
+### The original scoping note (2026-08-05)
 
 `server/api_tests/api_test_utils.go:45` builds its DSN as
 `file:<TestName>?mode=memory&cache=private`. With a private cache **every pooled connection is a
@@ -437,12 +576,46 @@ of what these guards are for.
 
 ## 7. Smaller items, each with its reason for being open
 
-- **`x-teleport` the jobs panel into `.overlays`.** Round 2's structural answer to the modal-stacking
-  defect. Round 3 removed the *consequence* — the panel now declines to open while a modal is up — but
-  not the cause. The panel still lives inside `.header`, which is a stacking context.
+- **`x-teleport` the jobs panel into `.overlays`. DONE 2026-08-06.**
 
-  **Still open, but scoped on 2026-08-05 — it is not the one-line change the bullet implies.** Nine
-  files plus a Go test, and three traps worth knowing before starting:
+  Nothing about paint order changes, and that is the point: the panel's `z-[60]` was true and useless.
+  `.header` is a stacking context at z-index 40, so the number ordered the panel against the settings
+  and account dropdowns and against nothing else — raise a dropdown to z-index 70 and an aria-modal dialog
+  goes back under page chrome with no test failing, because the app's real overlay ordering lives in
+  `.overlays` and the panel was not part of it. It is now, at `z-40`.
+
+  **Two corrections to the scoping below, one of which would have failed silently.**
+
+  *The wrap direction is load-bearing.* "Wrap one template in the other" is not enough: `x-if` must be
+  the **outer** template. With `x-teleport` outside, `x-if` inserts its clone with `el.after(clone)` —
+  a *sibling* of the teleported node — so Alpine's `_x_teleportBack` hop is never taken, `closestRoot`
+  finds no `[x-data]`, and `x-ref="panel"` never registers. `focusFirstIn(this.$refs.panel)` then does
+  nothing, raises no error, and the panel opens without moving focus into it. The e2e test asserts
+  focus lands inside the panel precisely because that is the only symptom.
+
+  *"z-40 is the only value" is false.* `.overlays` is `position: fixed; z-index: 41`, so it is itself
+  the stacking context and every descendant clears the z-40 header layer whatever its own z-index. Any
+  value ≤ 49 works. The sibling list was also short: there are **six** children, not four —
+  confirmDialog (inner overlay z-50, included last) and the paste-upload info toast (z-50) were
+  missing, and two of the four named put their z-index on a descendant of a z-index auto wrapper.
+
+  Also fixed with it: `blockingModal()` was passed only `this._root`, which after the teleport no
+  longer contains the panel — latent, because both call sites are gated on `!this.isOpen`, but latent
+  is not fixed. `src/utils/modality.js` now takes a list of ignore roots and the component passes both
+  `_root` and `$refs.panel`.
+
+  Guards: `TestJobsPanel_IsTeleportedIntoTheOverlaysLayer` (nesting order, no shared template,
+  z-index < 50), a rewritten `TestHeaderDialogs_StackAboveHeaderDropdowns` that excludes teleported
+  markup before classifying header divs, and `item 7 — the open panel lives in the .overlays layer` in
+  `ws9-jobs-cockpit.spec.ts`. Three e2e locators and eight comments across `index.css`, `base.tpl`,
+  `globalSearch.tpl`, `modality.js`, `downloadCockpit.js`, `downloadCockpit.test.ts`,
+  `ws10-global-chrome.spec.ts` and `ws9_jobs_cockpit_test.go` asserted the old model and were corrected
+  — including three claiming "CI does not run the browser suite", which stopped being true when item 5
+  landed.
+
+  ### The 2026-08-05 scoping, for the record
+
+  Nine files plus a Go test, and three traps worth knowing before starting:
 
   1. **`x-if` and `x-teleport` must not share a `<template>`.** Alpine's `directiveOrder` runs `if`
      before `teleport`, and the teleport handler is unconditional — putting both on one element

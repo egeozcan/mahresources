@@ -90,6 +90,26 @@ pool to one connection**, or the test measures an empty database. The tell is a 
 plausibly empty — zero hits, zero rows, nothing found — which is exactly the result an assertion of
 the form "X is absent" is happiest to receive.
 
+**Fixed at the source on 2026-08-05: the harness DSN is `cache=shared` now.** Pinning the pool was
+always a workaround applied one test at a time, and it only ever protected the tests that thought to
+apply it. `TestDashboardTimeAttributeIsARealInstant` did not — the dashboard provider fans out over
+five goroutines, the activity feed rendered no `<time>` at all, and the test hit its `t.Skip` branch
+in **12 of 20** separate runs, which CI scores green. A guard in the one suite CI actually runs was
+silently not running, most of the time. After the change: 0 skips in 20.
+
+Two things that fix does *not* mean. The `SetMaxOpenConns(1)` pins stay, for a different reason:
+shared-cache SQLite takes table-level locks and raises `SQLITE_LOCKED` on a writer/reader conflict,
+which `busy_timeout` does not retry — it needs the `sqlite_unlock_notify` build tag this project does
+not use. And the shared cache turns the database *name* into a real lookup key, so `t.Name()` alone
+is not enough: it is identical on every iteration of `go test -count=N`, and iterations 2..N would
+attach to iteration 1's still-populated database. That was measured, not theorised — four tests that
+pass under `-count=3` today failed with the name alone. The DSN carries a process-wide sequence
+number for exactly that.
+
+The general lesson underneath both: **a workaround applied per-test is a workaround that the next
+test will not know to apply.** When the same comment has been copy-pasted into five files, the thing
+being worked around is the thing to fix.
+
 ## An HTML `pattern` attribute is compiled with the regex `v` flag, and an invalid pattern is ignored rather than reported
 
 Finding 157 wanted the template-partial name rule "stated *and* checked next to the field". The
@@ -1513,3 +1533,42 @@ microtask-flushed effects) puts focus back on the control that opened the dialog
 flag that will eventually remove it.** The same distinction as
 `reference_alpine_morph_updated_before_children`: a state change and the DOM catching up with it are
 two different moments, and focus code has to target the second.
+
+## `x-if` and `x-teleport` have a required nesting order, and reversing it fails without an error
+
+Combining them is not a matter of taste. `x-if` must be the **outer** template.
+
+Alpine's `directiveOrder` puts `if` before `teleport`, and the `x-teleport` handler is unconditional —
+it clones and inserts at directive-run time with no reactive effect around it. So the two must not
+share one `<template>`: that renders a second, *permanent* `fixed inset-0` overlay that nothing ever
+removes.
+
+The direction then matters for a subtler reason. With `x-teleport` on the outside, its clone is the
+`<template x-if>` element, and `x-if` inserts the panel with `el.after(clone)` — as a **sibling** of the
+teleported node, not a descendant. Alpine's `findClosest` only follows the `_x_teleportBack` link when
+it lands on the element carrying it, so the panel's ancestor walk goes `.overlays` → `<body>` →
+`<html>`, finds no `[x-data]`, and `closestRoot` returns undefined. `x-ref` therefore never registers.
+
+Nothing throws. The panel opens, looks right, and `focusFirstIn(this.$refs.panel)` quietly does
+nothing, so a keyboard user is left outside a dialog that has just trapped focus. This is the same
+shape as "an Alpine directive outside every `x-data` tree is an absent one": the failure mode of a
+mis-wired Alpine directive is silence, so **the test has to assert the consequence** — focus is inside
+the panel — and not the markup.
+
+Also: use bare `x-teleport`, never `.prepend`/`.append`. Those insert the clone as a *sibling* of the
+target, and `.overlays > *` is what restores `pointer-events` on that `pointer-events: none` layer.
+
+## Tailwind's `.sr-only` is `position: absolute`, so it escapes the scroll container it looks like it is in
+
+An `<span class="sr-only">` was added inside an "Edit" link in `/admin/users`' table to name the row for
+a screen reader. The table sits in an `overflow-x-auto` wrapper, which scrolls correctly — but
+`.sr-only` is `position: absolute`, so its containing block is the nearest *positioned* ancestor, which
+is outside that wrapper. It escaped the clip, contributed to the document's scrollable overflow, and
+took `documentElement.scrollWidth` from 390 to 458 at a 390px viewport. `body.scrollWidth` stayed at
+390, so only the second of the mobile sweep's two assertions caught it.
+
+A 1px element moved the page width by 68px, and it did so from inside a container whose whole job is to
+absorb overflow. **Inside a scroll container, name a control with `aria-label`, not with a
+visually-hidden element** — the label does the same work for a reader and occupies no box at all. When
+the visible text is a substring of the label ("Edit" inside "Edit root"), WCAG 2.5.3 Label in Name is
+satisfied too.

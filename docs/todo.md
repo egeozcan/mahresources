@@ -1329,6 +1329,10 @@ Same shape as the earlier batches: something that measured nothing.
    nothing; `TestGlobalSearch_ExactTotalIsNotFlaggedAsAFloor` "passed" against zero results.
    `auth_test.go:22-30` already documents the trap for sessions and tokens. `setupSearchEnv` pins
    `SetMaxOpenConns(1)`.
+   **Fixed at the source on 2026-08-06: the harness DSN is `cache=shared`.** The per-test pin was a
+   workaround the next test would not know to apply, and one that mattered did not —
+   `TestDashboardTimeAttributeIsARealInstant` skipped in 12 of 20 runs, which CI scores green. The
+   pins remain, for the shared-cache locking reason recorded in `docs/lessons.md`.
 
 ### WS5 — Keyboard operability, accessible names, headings, target sizes
 

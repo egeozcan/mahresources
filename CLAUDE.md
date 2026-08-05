@@ -184,7 +184,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 
 Auth is **opt-in**. With `-auth` set, requests must authenticate via a browser session cookie (login at `/login`) or a per-user API token (`Authorization: Bearer <token>`, used by the `mr` CLI). Four roles:
 
-- **admin** — full access, including system settings, plugin management, categories, and user administration (`/admin/users`).
+- **admin** — full access, including system settings, plugin management, categories, and user administration (`/admin/users`, and `/admin/users/edit?id=N` for changing a role, scope, disabled state or password without deleting the account). Both paths must stay listed in `isSystemPath` (`server/authz_policy.go`), which matches template paths exactly — a new admin page omitted from it falls through to `capRead` and becomes readable by every authenticated role.
 - **editor** — CRUD on entities, except creating/editing Categories and Resource Categories, and no system settings.
 - **user** — CRUD on resources and notes (plus subgroups, tagging, note sharing, group import/export, and plugin-action execution); optionally confined to a single Group's subtree.
 - **guest** — read-only, always confined to a single Group's subtree.
