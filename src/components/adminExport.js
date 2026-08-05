@@ -1,7 +1,14 @@
+import { errorMessageFromResponse } from '../index.js';
+
 import { focusOn } from '../utils/focus.js';
 export function adminExport(initial = {}) {
   return {
     selectedGroups: [],
+    // The last failure from estimate() or submit(), shown in the page's alert
+    // region. Before this existed both paths returned silently on !res.ok, so a
+    // rejected export — a 403 from the CSRF middleware being the reachable case —
+    // looked exactly like a button that does nothing.
+    error: null,
     groupQuery: '',
     groupResults: [],
     // -1 = no option marked. Drives aria-activedescendant on the combobox input
@@ -160,8 +167,10 @@ export function adminExport(initial = {}) {
       });
       if (!res.ok) {
         this.estimateResult = null;
+        this.error = await errorMessageFromResponse(res);
         return;
       }
+      this.error = null;
       this.estimateResult = await res.json();
     },
 
@@ -174,8 +183,10 @@ export function adminExport(initial = {}) {
       });
       if (!res.ok) {
         this.jobInProgress = false;
+        this.error = await errorMessageFromResponse(res);
         return;
       }
+      this.error = null;
       const data = await res.json();
       this.job = { id: data.jobId, status: 'pending', phase: 'queued' };
       this.downloadUrl = '/v1/exports/' + encodeURIComponent(data.jobId) + '/download';

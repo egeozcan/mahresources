@@ -94,6 +94,16 @@
     </p>
   </section>
 
+  {# Both estimate() and submit() used to return silently on a failed response, so #}
+  {# a rejected export — a 403 from the CSRF middleware being the reachable case —  #}
+  {# was indistinguishable from a button that does nothing. role="alert" so the     #}
+  {# message is announced when it appears, matching the form-error banner every     #}
+  {# create page uses.                                                              #}
+  <div x-show="error" x-cloak class="mb-4 rounded-md bg-red-50 border border-red-200 p-4"
+       role="alert" data-testid="export-error-banner">
+    <p class="text-sm text-red-800" x-text="error"></p>
+  </div>
+
   <section aria-label="Estimate" class="border-t border-stone-200 pt-5 space-y-3">
     <h2 class="text-sm font-medium font-mono text-stone-700">Estimate</h2>
     <button type="button" @click="estimate()" :disabled="selectedGroups.length === 0"

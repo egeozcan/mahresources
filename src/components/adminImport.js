@@ -1,3 +1,5 @@
+import { errorMessageFromResponse } from '../index.js';
+
 export function adminImport() {
   return {
     selectedFile: null,
@@ -61,8 +63,13 @@ export function adminImport() {
           body: formData,
         });
         if (!resp.ok) {
-          const text = await resp.text();
-          throw new Error(text || `HTTP ${resp.status}`);
+          // errorMessageFromResponse, not resp.text(): these endpoints answer JSON
+          // for the errors a reader can actually provoke — a 403 from the CSRF
+          // middleware is `{"error":"invalid or missing CSRF token"}` — and the raw
+          // text of that is a JSON blob shown verbatim in the UI. It also handles
+          // the plain-text bodies these two endpoints still return, and falls back
+          // to the status line for an HTML error document.
+          throw new Error(await errorMessageFromResponse(resp));
         }
         const data = await resp.json();
         this.jobId = data.jobId;
@@ -572,8 +579,13 @@ export function adminImport() {
           body: JSON.stringify(this.decisions),
         });
         if (!resp.ok) {
-          const text = await resp.text();
-          throw new Error(text || `HTTP ${resp.status}`);
+          // errorMessageFromResponse, not resp.text(): these endpoints answer JSON
+          // for the errors a reader can actually provoke — a 403 from the CSRF
+          // middleware is `{"error":"invalid or missing CSRF token"}` — and the raw
+          // text of that is a JSON blob shown verbatim in the UI. It also handles
+          // the plain-text bodies these two endpoints still return, and falls back
+          // to the status line for an HTML error document.
+          throw new Error(await errorMessageFromResponse(resp));
         }
         const data = await resp.json();
         this.applyJobId = data.jobId;
