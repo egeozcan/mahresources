@@ -123,9 +123,19 @@ func isReadViaPost(path string) bool {
 
 // isSystemPath matches admin-only system surfaces: settings, server/data stats,
 // plugin management, and user administration (the latter added in a later phase).
+//
+// The template paths are matched exactly, so every new admin page has to be added
+// here by hand. That is a real hazard and worth naming: a page omitted from this
+// list falls through to the default branch below, where a GET is `safe` and returns
+// capRead — so it works perfectly for the admin who built it and is *also* readable
+// by editors, users and guests, with nothing failing. `/admin/users/edit` renders
+// one account's username, role, scope group and disabled state, so it is listed
+// here alongside the list page it edits. The /v1 side is already covered by the
+// `/v1/user` prefix case below.
 func isSystemPath(path string) bool {
 	switch path {
-	case "/admin/overview", "/admin/settings", "/plugins/manage", "/admin/users", "/logs", "/log":
+	case "/admin/overview", "/admin/settings", "/plugins/manage",
+		"/admin/users", "/admin/users/edit", "/logs", "/log":
 		return true
 	case "/v1/plugin/enable", "/v1/plugin/disable", "/v1/plugin/settings", "/v1/plugin/purge-data", "/v1/plugins/manage":
 		return true

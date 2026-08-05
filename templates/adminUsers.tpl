@@ -35,6 +35,18 @@
             <td class="py-2 pr-4">{% if u.ScopeGroupId %}{{ u.ScopeGroupId }}{% else %}—{% endif %}</td>
             <td class="py-2 pr-4">{% if u.Disabled %}yes{% else %}no{% endif %}</td>
             <td class="py-2 pr-4">
+              {# Product decision 107: Delete was the only per-row action, so #}
+              {# changing a role, resetting a password or disabling an account #}
+              {# all meant destroying it first. #}
+              {# aria-label rather than a `sr-only` span, and not for style. Tailwind's #}
+              {# .sr-only is position:absolute, so its containing block is the nearest #}
+              {# positioned ancestor — outside this table's `overflow-x-auto` wrapper. #}
+              {# It therefore escaped the scroll container and contributed to the      #}
+              {# document's scrollable overflow: documentElement.scrollWidth went from #}
+              {# 390 to 458 at a 390px viewport, failing the mobile-overflow sweep in  #}
+              {# phase3-sweeps.spec.ts. The label still names the row for a reader, and #}
+              {# "Edit" is a substring of it, so WCAG 2.5.3 Label in Name holds.       #}
+              <a href="/admin/users/edit?id={{ u.ID }}" aria-label="Edit {{ u.Username }}" class="text-amber-700 hover:underline mr-3">Edit</a>
               <form method="post" action="/v1/user/delete" class="inline"
                     x-data="confirmAction()" x-bind="events"
                     data-confirm-message="Delete user {{ u.Username }}? This also destroys their tokens and sessions, and clears them as the creator of everything they made.">

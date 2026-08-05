@@ -1,7 +1,9 @@
 package api_tests
 
 import (
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -154,4 +156,234 @@ func extractJSONString(body, key string) string {
 		return ""
 	}
 	return rest[:end]
+}
+
+// Product decision 107: the user edit page.
+//
+// Before it, /admin/users offered exactly one per-row action — Delete — so
+// changing a role, resetting a password or disabling an account all meant
+// destroying it first, which also destroys its tokens and sessions and nulls
+// CreatedByUserId across fifteen tables.
+func TestAdminUserEditPage_RendersPrefilledForTheAdmin(t *testing.T) {
+	tc := setupAuthEnv(t)
+	login := doReq(tc, http.MethodPost, "/v1/auth/login",
+		map[string]string{"Content-Type": "application/json"}, nil,
+		strings.NewReader(`{"username":"admin","password":"adminpw1"}`))
+	cookie := sessionCookie(t, login)
+	htmlH := map[string]string{"Accept": "text/html"}
+
+	admin, err := tc.AppCtx.GetUserByUsername("admin")
+	if err != nil {
+		t.Fatalf("load the admin: %v", err)
+	}
+
+	// The list page offers the way in.
+	list := doReq(tc, http.MethodGet, "/admin/users", htmlH, []*http.Cookie{cookie}, nil)
+	if list.Code != http.StatusOK {
+		t.Fatalf("/admin/users should render for admin, got %d", list.Code)
+	}
+	editHref := fmt.Sprintf(`/admin/users/edit?id=%d`, admin.ID)
+	if !strings.Contains(list.Body.String(), editHref) {
+		t.Errorf("decision 107: /admin/users has no link to %s, so the only per-row action is still Delete", editHref)
+	}
+
+	page := doReq(tc, http.MethodGet, editHref, htmlH, []*http.Cookie{cookie}, nil)
+	if page.Code != http.StatusOK {
+		t.Fatalf("%s should render for admin, got %d", editHref, page.Code)
+	}
+	body := page.Body.String()
+
+	// Prefilled, and that is a correctness requirement rather than a nicety:
+	// UpdateUser is full-replace, so a field the form omits is a field the save
+	// clears. An empty role is a 400; an unchecked Disabled box re-enables.
+	for _, want := range []string{
+		`name="id" value=` + fmt.Sprintf(`"%d"`, admin.ID),
+		`value="admin"`,
+		`name="role"`,
+		`name="disabled"`,
+		`name="scopeGroupId"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the edit form is missing %s — UpdateUser is full-replace, so an absent field is a cleared field.\nbody: %s", want, body)
+		}
+	}
+	// The password field exists but is not required: blank means unchanged.
+	if !strings.Contains(body, `id="ue-password"`) {
+		t.Errorf("the edit form has no password field, so resetting a password still needs a delete")
+	}
+	if strings.Contains(body, `id="ue-password" name="password" type="password" required`) {
+		t.Errorf("the password field is required, but UpdateUser treats blank as unchanged — requiring it forces a reset on every save")
+	}
+	// Finding 129: an edit form with no way out.
+	if !strings.Contains(body, `data-testid="form-cancel"`) {
+		t.Errorf("finding 129: the edit form has no Cancel. formCancelURL only answers for two-segment paths, so this three-segment one has to set cancelUrl itself")
+	}
+}
+
+// The ErrLastAdmin 409 has to *surface*, not look like a success and not throw the
+// admin at a full-page error that discards what they typed.
+func TestAdminUserEdit_LastAdminConflictComesBackToTheForm(t *testing.T) {
+	tc := setupAuthEnv(t)
+	login := doReq(tc, http.MethodPost, "/v1/auth/login",
+		map[string]string{"Content-Type": "application/json"}, nil,
+		strings.NewReader(`{"username":"admin","password":"adminpw1"}`))
+	cookie := sessionCookie(t, login)
+
+	admin, err := tc.AppCtx.GetUserByUsername("admin")
+	if err != nil {
+		t.Fatalf("load the admin: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("id", fmt.Sprintf("%d", admin.ID))
+	form.Set("username", "admin")
+	form.Set("displayName", "Kept Value")
+	form.Set("password", "supersecret1")
+	form.Set("role", string(models.RoleEditor)) // the demotion the invariant forbids
+
+	res := doReq(tc, http.MethodPost, "/v1/user", map[string]string{
+		"Accept":       "text/html",
+		"Content-Type": "application/x-www-form-urlencoded",
+		"X-CSRF-Token": csrfFor(t, tc, cookie),
+	}, []*http.Cookie{cookie}, strings.NewReader(form.Encode()))
+
+	if res.Code != http.StatusFound {
+		t.Fatalf("a rejected HTML form save should redirect back to the form, got %d. HandleError renders a full-page error document and loses every typed value.\nbody: %s",
+			res.Code, res.Body.String())
+	}
+	loc := res.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/admin/users/edit?id=") {
+		t.Errorf("the rejection should come back to the edit form, got Location %q", loc)
+	}
+	if !strings.Contains(loc, "error=") {
+		t.Errorf("the redirect carries no error param, so the page has nothing to render: %q", loc)
+	}
+	if !strings.Contains(loc, "cannot+remove+the+last+enabled+administrator") {
+		t.Errorf("the redirect should say what was refused, got %q", loc)
+	}
+	if !strings.Contains(loc, "Kept+Value") {
+		t.Errorf("the typed display name was not carried back, so the admin has to retype the form: %q", loc)
+	}
+	if strings.Contains(loc, "supersecret1") {
+		t.Errorf("the password was echoed into the URL: %q", loc)
+	}
+	// Only the id, once.
+	if strings.Count(loc, "id=") != 1 {
+		t.Errorf("the id appears more than once in %q", loc)
+	}
+
+	// The account is unchanged, so the conflict really was a refusal.
+	after, err := tc.AppCtx.GetUser(admin.ID)
+	if err != nil {
+		t.Fatalf("reload the admin: %v", err)
+	}
+	if after.Role != models.RoleAdmin {
+		t.Errorf("the sole admin was demoted to %q despite the guard", after.Role)
+	}
+
+	// The control: the JSON contract still answers 409 rather than redirecting.
+	js := doReq(tc, http.MethodPost, "/v1/user", map[string]string{
+		"Accept":       "application/json",
+		"Content-Type": "application/json",
+		"X-CSRF-Token": csrfFor(t, tc, cookie),
+	}, []*http.Cookie{cookie},
+		strings.NewReader(fmt.Sprintf(`{"id":%d,"username":"admin","role":"editor"}`, admin.ID)))
+	if js.Code != http.StatusConflict {
+		t.Errorf("the JSON path should still be 409, got %d: %s", js.Code, js.Body.String())
+	}
+}
+
+// A save the invariant allows must actually go through, or the tests above would
+// pass against a page that can never save anything.
+func TestAdminUserEdit_AnAllowedSaveGoesThrough(t *testing.T) {
+	tc := setupAuthEnv(t)
+	login := doReq(tc, http.MethodPost, "/v1/auth/login",
+		map[string]string{"Content-Type": "application/json"}, nil,
+		strings.NewReader(`{"username":"admin","password":"adminpw1"}`))
+	cookie := sessionCookie(t, login)
+
+	admin, err := tc.AppCtx.GetUserByUsername("admin")
+	if err != nil {
+		t.Fatalf("load the admin: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("id", fmt.Sprintf("%d", admin.ID))
+	form.Set("username", "admin")
+	form.Set("displayName", "Renamed Admin")
+	form.Set("password", "") // blank means unchanged
+	form.Set("role", string(models.RoleAdmin))
+
+	res := doReq(tc, http.MethodPost, "/v1/user", map[string]string{
+		"Accept":       "text/html",
+		"Content-Type": "application/x-www-form-urlencoded",
+		"X-CSRF-Token": csrfFor(t, tc, cookie),
+	}, []*http.Cookie{cookie}, strings.NewReader(form.Encode()))
+	// 303, not the 302 the rejection path uses: RedirectIfHTMLAccepted turns a
+	// successful POST into a GET with See Other, while HandleFormErrorWithStatus
+	// keeps Found. The difference is deliberate on both sides.
+	if res.Code != http.StatusSeeOther {
+		t.Fatalf("an accepted save should redirect, got %d: %s", res.Code, res.Body.String())
+	}
+	if loc := res.Header().Get("Location"); loc != "/admin/users" {
+		t.Errorf("an accepted save should return to the list, got %q", loc)
+	}
+
+	after, err := tc.AppCtx.GetUser(admin.ID)
+	if err != nil {
+		t.Fatalf("reload the admin: %v", err)
+	}
+	if after.DisplayName != "Renamed Admin" {
+		t.Errorf("the display name was not saved, got %q", after.DisplayName)
+	}
+	// Blank password left it alone, which is the whole reason the field is optional.
+	if _, err := tc.AppCtx.AuthenticateUser("admin", "adminpw1"); err != nil {
+		t.Errorf("a blank password field changed the password: %v", err)
+	}
+}
+
+// A user id that does not exist is a 404, and a missing one is a 400 — the same
+// contract every other entity page keeps (entity-not-found-returns-404.spec.ts).
+//
+// Both need `addMessageErrContext`, not a bare `errorMessage`: the status code is
+// what makes render_template render error.tpl rather than the page, so setting only
+// the message answers 200 with an alert above an empty edit form. And GetUser
+// translates gorm.ErrRecordNotFound into ErrUserNotFound, whose text is "user not
+// found" — addErrContext keys on the literal "record not found", so without the
+// explicit branch a missing account is a 500.
+func TestAdminUserEdit_MissingAndUnknownIdsAreNot500(t *testing.T) {
+	tc := setupAuthEnv(t)
+	login := doReq(tc, http.MethodPost, "/v1/auth/login",
+		map[string]string{"Content-Type": "application/json"}, nil,
+		strings.NewReader(`{"username":"admin","password":"adminpw1"}`))
+	cookie := sessionCookie(t, login)
+	htmlH := map[string]string{"Accept": "text/html"}
+
+	for _, tc2 := range []struct {
+		path string
+		want int
+	}{
+		{"/admin/users/edit?id=99999", http.StatusNotFound},
+		{"/admin/users/edit", http.StatusBadRequest},
+	} {
+		res := doReq(tc, http.MethodGet, tc2.path, htmlH, []*http.Cookie{cookie}, nil)
+		if res.Code != tc2.want {
+			t.Errorf("GET %s = %d, want %d.\nbody: %s", tc2.path, res.Code, tc2.want, truncate(res.Body.String()))
+		}
+		// The error page, not the edit form with a nil user in it.
+		if strings.Contains(res.Body.String(), `data-testid="user-edit-form"`) {
+			t.Errorf("GET %s rendered the edit form instead of the error page", tc2.path)
+		}
+	}
+
+	// The control: a real id still renders the form, so the assertions above are not
+	// passing because the page stopped working.
+	admin, err := tc.AppCtx.GetUserByUsername("admin")
+	if err != nil {
+		t.Fatalf("load the admin: %v", err)
+	}
+	ok := doReq(tc, http.MethodGet, fmt.Sprintf("/admin/users/edit?id=%d", admin.ID), htmlH, []*http.Cookie{cookie}, nil)
+	if ok.Code != http.StatusOK || !strings.Contains(ok.Body.String(), `data-testid="user-edit-form"`) {
+		t.Fatalf("a real id should render the form, got %d — this test measured nothing", ok.Code)
+	}
 }

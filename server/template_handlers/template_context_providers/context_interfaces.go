@@ -54,9 +54,10 @@ var (
 	_ contracts.SeriesReader      = (*application_context.MahresourcesContext)(nil)
 )
 
-// AccountPageContext serves /admin/users and /account.
+// AccountPageContext serves /admin/users, /admin/users/edit and /account.
 type AccountPageContext interface {
 	GetUsers(offset, limit int) ([]models.User, error)
+	GetUser(id uint) (*models.User, error)
 	ListApiTokens(userID uint) ([]models.ApiToken, error)
 }
 

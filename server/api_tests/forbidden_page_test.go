@@ -42,3 +42,42 @@ func TestForbidden_HTMLStyledPage(t *testing.T) {
 		t.Fatalf("JSON 403 should carry the error message, got: %s", js.Body.String())
 	}
 }
+
+// Every admin template path has to be named in isSystemPath by hand, because it
+// matches exactly rather than by prefix. A page left out of that list falls through
+// to the default branch, where a GET is `safe` and yields capRead — so it works for
+// the admin who built it and is *also* readable by every editor, user and guest,
+// with nothing failing anywhere.
+//
+// /admin/users/edit renders one account's username, role, scope group and disabled
+// state, so this asserts the deny for each of the three registrations the templates
+// map creates (the bare path plus .json and .body). authz strips those two suffixes
+// before matching, so a single omission would open all three at once.
+func TestAdminUserEditPage_IsAdminOnly(t *testing.T) {
+	tc := setupAuthEnv(t)
+
+	for _, role := range []models.Role{models.RoleEditor, models.RoleUser, models.RoleGuest} {
+		bearer := roleBearer(t, tc, role)
+		for _, path := range []string{
+			"/admin/users/edit?id=1",
+			"/admin/users/edit.json?id=1",
+			"/admin/users/edit.body?id=1",
+		} {
+			res := doReq(tc, http.MethodGet, path,
+				map[string]string{"Accept": "text/html", "Authorization": bearer}, nil, nil)
+			if res.Code != http.StatusForbidden {
+				t.Errorf("%s GET %s should be 403, got %d — add the path to isSystemPath in server/authz_policy.go",
+					role, path, res.Code)
+			}
+		}
+	}
+
+	// The control: an admin does reach it, so the assertions above are not passing
+	// because the route is missing.
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	ok := doReq(tc, http.MethodGet, "/admin/users/edit?id=1",
+		map[string]string{"Accept": "text/html", "Authorization": admin}, nil, nil)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("admin GET /admin/users/edit should be 200, got %d — this test measured nothing", ok.Code)
+	}
+}

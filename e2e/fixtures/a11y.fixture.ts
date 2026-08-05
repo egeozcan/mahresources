@@ -136,7 +136,22 @@ async function createTestData(baseURL: string): Promise<A11yTestData & { cleanup
   });
   createdIds.relationId = relation.ID;
 
+  // The user id for /admin/users/edit (product decision 107). Read, not created:
+  // the root-admin invariant guarantees at least one enabled admin exists on every
+  // boot, and creating a throwaway account here would need a delete in cleanup that
+  // could fail against the "last enabled admin" guard. Nothing is added, so nothing
+  // has to be removed.
+  const usersResponse = await requestContext.get('/v1/users');
+  if (!usersResponse.ok()) {
+    throw new Error(`a11y setup: GET /v1/users answered ${usersResponse.status()}`);
+  }
+  const users = await usersResponse.json();
+  if (!Array.isArray(users) || users.length === 0) {
+    throw new Error('a11y setup: no user accounts exist, so /admin/users/edit has nothing to render');
+  }
+
   return {
+    userId: users[0].ID,
     categoryId: category.ID,
     resourceCategoryId: resourceCategory.ID,
     tagId: tag.ID,

@@ -85,6 +85,12 @@ export const DYNAMIC_PAGES = [
   { path: '/relationType/edit?id={relationTypeId}', name: 'Edit relation type form', requiredData: ['relationTypeId'] },
   { path: '/relation/edit?id={relationId}', name: 'Edit relation form', requiredData: ['relationId'] },
   { path: '/resourceCategory/edit?id={resourceCategoryId}', name: 'Edit resource category form', requiredData: ['resourceCategoryId'] },
+
+  // Product decision 107. In DYNAMIC_PAGES and not STATIC_PAGES because it needs a
+  // user id — STATIC_PAGES is explicitly the set that needs no pre-existing data.
+  // The id is read rather than created: the root-admin invariant guarantees at least
+  // one account exists, so the sweep does not have to mint one and clean it up.
+  { path: '/admin/users/edit?id={userId}', name: 'Edit user form', requiredData: ['userId'] },
 ] as const;
 
 /**
@@ -188,6 +194,7 @@ export interface A11yTestData {
   noteId: number;
   queryId: number;
   relationId: number;
+  userId: number;
 }
 
 /**
@@ -207,6 +214,7 @@ export function buildPath(pathTemplate: string, data: Partial<A11yTestData>): st
     '{noteId}': 'noteId',
     '{queryId}': 'queryId',
     '{relationId}': 'relationId',
+    '{userId}': 'userId',
   };
 
   for (const [placeholder, key] of Object.entries(replacements)) {

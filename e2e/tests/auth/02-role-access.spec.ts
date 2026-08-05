@@ -47,3 +47,109 @@ test.describe('auth: per-role access boundaries', () => {
     expect(res.status()).toBe(403);
   });
 });
+
+/**
+ * Product decision 107: the user edit page.
+ *
+ * The three routine operations — change role, reset password, disable — used to
+ * require deleting the account, which also destroys its tokens and sessions and
+ * nulls CreatedByUserId across fifteen tables.
+ *
+ * A browser test because the form's CSRF token is not authored into the markup:
+ * `src/csrf.js` appends a hidden `csrf_token` input at submit time, reading it from
+ * the page's meta tag. Every Go test supplies the header itself, so none of them
+ * would notice if that wrapper failed to claim this form and every save came back
+ * 403.
+ */
+test.describe('auth: admin user editing', () => {
+  test('an admin can change a role and reset a password without deleting the account', async ({ page, request, authSeed }) => {
+    await loginAs(page, authSeed.admin);
+
+    // A throwaway account, not one of the seeded roles: authSeed is worker-scoped
+    // and shared, so demoting the seeded editor would break whichever test in this
+    // file happens to run after this one.
+    const username = `edit_target_${Date.now()}`;
+    const me = await page.request.get('/v1/auth/me');
+    const csrf = (await me.json()).csrfToken as string;
+    const created = await page.request.post('/v1/users', {
+      headers: { 'X-CSRF-Token': csrf },
+      data: { username, password: 'password1', role: 'editor' },
+    });
+    expect(created.ok(), `creating the target account: ${created.status()}`).toBe(true);
+
+    await page.goto('/admin/users');
+    const row = page.locator('tr', { hasText: username });
+    await expect(row, 'the new account should be listed').toHaveCount(1);
+    await row.getByRole('link', { name: /^Edit/ }).click();
+
+    await expect(page).toHaveURL(/\/admin\/users\/edit\?id=\d+/);
+    await expect(page.locator('#ue-username')).toHaveValue(username);
+    await expect(page.locator('#ue-role')).toHaveValue('editor');
+
+    // Demote, and set a new password in the same save.
+    await page.locator('#ue-role').selectOption('user');
+    await page.locator('#ue-password').fill('password2');
+    await page.getByRole('button', { name: 'Save' }).click();
+
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    await expect(page.locator('tr', { hasText: username })).toContainText('user');
+
+    // The account survived, and the new password works. `request` rather than
+    // `page.request`, so this authenticates from a clean cookie jar.
+    const login = await request.post('/v1/auth/login', {
+      data: { username, password: 'password2' },
+    });
+    expect(login.ok(), `the edited account should still log in: ${login.status()}`).toBe(true);
+  });
+
+  test('a blank password field leaves the password alone', async ({ page, request, authSeed }) => {
+    // The control for the test above: if the form treated blank as "set empty", the
+    // role change would silently lock the account out.
+    await loginAs(page, authSeed.admin);
+
+    const username = `blank_pw_${Date.now()}`;
+    const me = await page.request.get('/v1/auth/me');
+    const csrf = (await me.json()).csrfToken as string;
+    const created = await page.request.post('/v1/users', {
+      headers: { 'X-CSRF-Token': csrf },
+      data: { username, password: 'password1', role: 'editor' },
+    });
+    expect(created.ok()).toBe(true);
+
+    await page.goto('/admin/users');
+    await page.locator('tr', { hasText: username }).getByRole('link', { name: /^Edit/ }).click();
+    await page.locator('#ue-display').fill('Renamed Only');
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(page).toHaveURL(/\/admin\/users$/);
+
+    const login = await request.post('/v1/auth/login', {
+      data: { username, password: 'password1' },
+    });
+    expect(login.ok(), `the original password should still work: ${login.status()}`).toBe(true);
+  });
+
+  test('demoting the last admin is refused on the form, not on an error page', async ({ page, authSeed }) => {
+    await loginAs(page, authSeed.admin);
+
+    await page.goto('/admin/users');
+    const row = page.locator('tr', { hasText: authSeed.admin.username });
+    await row.getByRole('link', { name: /^Edit/ }).click();
+    await expect(page).toHaveURL(/\/admin\/users\/edit\?id=\d+/);
+
+    await page.locator('#ue-display').fill('Typed And Kept');
+    await page.locator('#ue-role').selectOption('editor');
+    await page.getByRole('button', { name: 'Save' }).click();
+
+    // Back on the form, with the conflict shown and the typing preserved — not a
+    // full-page error document, and emphatically not a silent success.
+    await expect(page).toHaveURL(/\/admin\/users\/edit\?id=\d+/);
+    const banner = page.locator('[data-testid="form-error-banner"]');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText(/last enabled administrator/i);
+    await expect(page.locator('#ue-display')).toHaveValue('Typed And Kept');
+
+    // And the account is untouched.
+    await page.goto('/admin/users');
+    await expect(page.locator('tr', { hasText: authSeed.admin.username })).toContainText('admin');
+  });
+});

@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 
 	"mahresources/application_context"
 	"mahresources/auth"
@@ -140,7 +143,27 @@ func UpdateUserHandler(ctx UserAdminContext) func(http.ResponseWriter, *http.Req
 		}
 		user, err := ctx.UpdateUser(req.ID, req.toInput())
 		if err != nil {
-			http_utils.HandleError(err, w, r, userErrorStatus(err))
+			// The same treatment finding 34 gave CreateUserHandler, for the same
+			// reason: this used to be HandleError, which renders a full-page error
+			// document for a browser and discards everything the admin typed. The
+			// rejection that matters most here is ErrLastAdmin -> 409, and a 409 the
+			// admin can only recover from by retyping the form is a conflict that
+			// looks like a crash.
+			//
+			// `id` is dropped from the echoed values because it is already in the
+			// redirect path; without that the address carries it twice.
+			// HandleFormErrorWithStatus falls through to HandleError for JSON and
+			// `.json` callers, so the API's 409 contract is untouched.
+			echoed := url.Values{}
+			for k, vs := range r.PostForm {
+				if strings.EqualFold(k, "id") {
+					continue
+				}
+				echoed[k] = vs
+			}
+			http_utils.HandleFormErrorWithStatus(w, r,
+				"/admin/users/edit?id="+strconv.FormatUint(uint64(req.ID), 10),
+				err, echoed, userErrorStatus(err))
 			return
 		}
 		// A disabled account's sessions/tokens are invalidated immediately.

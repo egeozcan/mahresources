@@ -134,7 +134,10 @@ Passwords must be at least **8 characters** (and at most bcrypt's 72-byte input 
 
 ## Managing users and your own account
 
-- **Administrators** manage all accounts from the user administration page at `/admin/users` -- create users, set roles, assign a scope group, enable or disable accounts, and reset passwords. The same operations are available from the [`mr user`](../cli/user/index.md) CLI commands.
+- **Administrators** manage all accounts from the user administration page at `/admin/users` -- create users, and delete them. Each row links to `/admin/users/edit?id=N`, where an existing account's username, display name, role, scope group and disabled state can be changed, and its password reset. Leave the password field blank to keep the current one; every other field is saved exactly as the form submits it. The same operations are available from the [`mr user`](../cli/user/index.md) CLI commands.
+- Saving a disabled account revokes its sessions and API tokens immediately.
+- The last enabled administrator cannot be demoted or disabled: the save is refused with `409 Conflict`, and the edit page comes back with the message and the values you typed. Renaming that account or setting a new password is allowed.
+- Both `/admin/users` and `/admin/users/edit` are admin-only. Editors, users and guests receive `403`.
 - **Every signed-in user** has a self-service account page at `/account` where they can change their own password and manage their own API tokens.
 
 ## Configuration flags reference

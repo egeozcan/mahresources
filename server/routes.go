@@ -137,6 +137,10 @@ var templates = map[string]templateInformation{
 
 	"/admin/overview": {adaptTemplate(template_context_providers.AdminOverviewContextProvider), "adminOverview.tpl", http.MethodGet},
 	"/admin/users":    {adaptTemplate(template_context_providers.AdminUsersContextProvider), "adminUsers.tpl", http.MethodGet},
+	// Admin-only, like the list page. isSystemPath matches template paths by exact
+	// string, so this one is listed there too — omitted, it would fall through to
+	// capRead and be readable by every authenticated role.
+	"/admin/users/edit": {adaptTemplate(template_context_providers.AdminUserEditContextProvider), "adminUserEdit.tpl", http.MethodGet},
 	"/account":        {adaptTemplate(template_context_providers.AccountContextProvider), "account.tpl", http.MethodGet},
 	"/admin/export":   {adaptTemplate(template_context_providers.AdminExportContextProvider), "adminExport.tpl", http.MethodGet},
 	"/admin/import":   {adaptTemplate(template_context_providers.AdminImportContextProvider), "adminImport.tpl", http.MethodGet},
