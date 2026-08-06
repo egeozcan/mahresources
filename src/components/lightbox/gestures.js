@@ -38,7 +38,14 @@ export const gestureState = {
 
   // Shared navigation debounce — prevents touch→synthesized-mouse double-fire
   _navDebounce: false,
+
+  // Set when a drag ends far enough from where it began that the click the browser
+  // synthesizes on top of it is a leftover, not an intent. See consumeDragClick.
+  _suppressNextClick: false,
 };
+
+// Below this the pointer barely moved, so the click really is a click.
+const DRAG_CLICK_SUPPRESSION_PX = 5;
 
 export const gestureMethods = {
   getPinchDistance(touches) {
@@ -345,6 +352,7 @@ export const gestureMethods = {
     if (event.target.closest('[data-edit-panel]')) return;
 
     event.preventDefault();
+    this._suppressNextClick = false;
     this.isDragging = true;
     this.dragStartX = event.clientX;
     this.dragStartY = event.clientY;
@@ -391,6 +399,11 @@ export const gestureMethods = {
     const speed = Math.sqrt(this.dragVelocityX ** 2 + this.dragVelocityY ** 2);
 
     this.isDragging = false;
+    // mousedown, move, mouseup on the same element still synthesizes a click, and the
+    // letterbox area around the image closes the viewer on @click.self. Panning a zoomed
+    // image or swiping to the next one therefore dismissed the lightbox outright whenever
+    // the pointer happened to be released over the background.
+    this._suppressNextClick = distance > DRAG_CLICK_SUPPRESSION_PX;
 
     if (!this.isZoomed()) {
       const threshold = 0.3;
@@ -414,5 +427,13 @@ export const gestureMethods = {
 
     const dialog = document.querySelector('[role="dialog"][aria-modal="true"]');
     if (dialog) dialog.focus();
+  },
+
+  // True when the click about to be handled is the tail of a drag the user just finished.
+  // One-shot: a genuine click that follows is unaffected.
+  consumeDragClick() {
+    const suppress = this._suppressNextClick;
+    this._suppressNextClick = false;
+    return suppress;
   },
 };

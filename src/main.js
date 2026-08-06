@@ -110,8 +110,8 @@ import { templateBundle } from './components/templateBundle.js';
 // Import utility modules
 import { renderMentions } from './utils/renderMentions.js';
 import { createLiveRegion } from './utils/ariaLiveRegion.js';
-import { morphOptionsWithShortcodeElements } from './utils/shortcodeElementMorph.js';
-import { findListContainer } from './utils/listContainer.js';
+import { morphAndReinitChangedComponents } from './utils/shortcodeElementMorph.js';
+import { findListContainer, LIST_CONTAINER_SELECTOR } from './utils/listContainer.js';
 
 // Import web components
 import './webcomponents/expandabletext.js';
@@ -270,27 +270,21 @@ window.addEventListener('download-completed', async (e) => {
     const newListContainer = findListContainer(doc);
 
     if (newListContainer) {
-      // Remember x-data texts before morph so we can detect changes.
-      const xDataBefore = new Map();
-      listContainer.querySelectorAll('[x-data]').forEach((el) => {
-        xDataBefore.set(el, el.getAttribute('x-data'));
-      });
+      // A page can hold several lists (a group page has its own resources beside its
+      // related ones). Morphing only the first left the others showing pre-download
+      // content, so pair them up when the refreshed document has the same shape and fall
+      // back to the single container when it does not.
+      const current = Array.from(document.querySelectorAll(LIST_CONTAINER_SELECTOR));
+      const refreshed = Array.from(doc.querySelectorAll(LIST_CONTAINER_SELECTOR));
 
-      // Morph: Alpine copies _x_dataStack across elements, then
-      // patchAttributes updates the x-data *attribute*, but Alpine never
-      // re-reads the attribute — the stale _x_dataStack persists.
-      Alpine.morph(listContainer, newListContainer, morphOptionsWithShortcodeElements());
+      if (current.length > 1 && current.length === refreshed.length) {
+        current.forEach((el, i) => morphAndReinitChangedComponents(el, refreshed[i]));
+      } else {
+        morphAndReinitChangedComponents(listContainer, newListContainer);
+      }
 
-      // Destroy + re-init any element whose x-data attribute changed.
-      xDataBefore.forEach((oldVal, el) => {
-        if (!el.isConnected) return; // removed by morph
-        if (el.getAttribute('x-data') !== oldVal) {
-          window.Alpine.destroyTree(el);
-          window.Alpine.initTree(el);
-        }
-      });
-
-      // Re-initialize lightbox for new images
+      // Re-collect lightbox items for the new cards. This reconciles rather than rebuilds
+      // when the viewer is open — see initFromDOM.
       Alpine.store('lightbox').initFromDOM();
     }
   } catch (err) {

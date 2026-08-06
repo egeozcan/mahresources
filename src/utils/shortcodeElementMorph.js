@@ -48,3 +48,32 @@ export function morphOptionsWithShortcodeElements(options = {}) {
 }
 
 export const morphOptionsWithDeferredShortcodes = morphOptionsWithShortcodeElements;
+
+/**
+ * Morph `from` into `to`, then repair the Alpine components the morph left holding stale
+ * state.
+ *
+ * Alpine's morph copies `_x_dataStack` across matched elements and then patches the `x-data`
+ * *attribute*, but it never re-reads that attribute — so an element whose x-data expression
+ * changed keeps running the component built from the old one. Destroying and re-initialising
+ * exactly those elements is the repair. Doing it for the whole tree instead would throw away
+ * the live state the morph exists to preserve.
+ *
+ * Every "re-fetch the page and morph the list back in" path needs this, not just the first
+ * one that hit the problem.
+ */
+export function morphAndReinitChangedComponents(from, to, options = {}) {
+  const before = new Map();
+  from.querySelectorAll('[x-data]').forEach((el) => {
+    before.set(el, el.getAttribute('x-data'));
+  });
+
+  window.Alpine.morph(from, to, morphOptionsWithShortcodeElements(options));
+
+  before.forEach((oldValue, el) => {
+    if (!el.isConnected) return; // removed by the morph
+    if (el.getAttribute('x-data') === oldValue) return;
+    window.Alpine.destroyTree(el);
+    window.Alpine.initTree(el);
+  });
+}

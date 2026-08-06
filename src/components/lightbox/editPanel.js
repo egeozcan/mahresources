@@ -1,6 +1,6 @@
 import { abortableFetch } from '../../index.js';
-import { morphOptionsWithShortcodeElements } from '../../utils/shortcodeElementMorph.js';
-import { findListContainer } from '../../utils/listContainer.js';
+import { morphAndReinitChangedComponents } from '../../utils/shortcodeElementMorph.js';
+import { findListContainer, LIST_CONTAINER_SELECTOR } from '../../utils/listContainer.js';
 import { focusFirstIn, focusOn } from '../../utils/focus.js';
 
 /**
@@ -20,6 +20,20 @@ export const editPanelState = {
   // Monotonic token so a stale/aborted fetch cannot flip detailsLoading off while a
   // newer fetch is still in flight (BH: M2).
   _detailsReq: 0,
+  // Per-resource write counter, bumped when a write starts AND when it finishes. A GET that
+  // was in flight across either edge describes the pre-write state, so committing it would
+  // visually undo the edit; comparing generations lets both the foreground fetch and the
+  // background prefetch discard those. Kept separate from _detailsReq on purpose: that token
+  // also owns the loading flag, and bumping it from a write would strand the spinner.
+  _detailsGen: new Map(),
+  // Writes currently in flight, per resource. The generation alone cannot catch a GET that
+  // both starts and finishes inside the write window, because the generation does not move
+  // while the write is open.
+  _detailsWrites: new Map(),
+  // Generations are drawn from one process-wide sequence rather than counting per resource,
+  // so an entry evicted by the cap below and later recreated can never reissue a number a
+  // still-pending read is holding.
+  _detailsSeq: 0,
 
   // Tag editing
   _savingTagIds: new Set(),
@@ -29,6 +43,68 @@ export const editPanelState = {
 };
 
 export const editPanelMethods = {
+  _detailsGeneration(resourceId) {
+    return this._detailsGen.get(resourceId) ?? 0;
+  },
+
+  // Call before mutating `resourceId`, and pair with _endDetailsWrite in a finally. Every
+  // read in flight across the write now describes the past, so neither fetchResourceDetails
+  // nor _preloadDetailsUpcoming may commit its result on top of the change.
+  // Returns the generation issued to this write, for _settleDetailsCache.
+  _beginDetailsWrite(resourceId) {
+    if (resourceId == null) return 0;
+    const generation = ++this._detailsSeq;
+    this._detailsGen.set(resourceId, generation);
+    this._detailsWrites.set(resourceId, (this._detailsWrites.get(resourceId) ?? 0) + 1);
+    // Unbounded growth would outlive the details cache it guards; the cap matches it.
+    if (this._detailsGen.size > 500) {
+      this._detailsGen.delete(this._detailsGen.keys().next().value);
+    }
+    return generation;
+  },
+
+  _endDetailsWrite(resourceId) {
+    if (resourceId == null) return;
+    const outstanding = (this._detailsWrites.get(resourceId) ?? 0) - 1;
+    if (outstanding > 0) this._detailsWrites.set(resourceId, outstanding);
+    else this._detailsWrites.delete(resourceId);
+    // Bump again: a read that started AFTER the write began is just as stale as one that
+    // started before it, and only this second edge rejects it.
+    this._detailsGen.set(resourceId, ++this._detailsSeq);
+
+    // A write that could not leave an authoritative cache entry dropped it instead, so the
+    // panel may still be showing the pre-write copy. Converge now, but only in that case:
+    // a write that did update the cache has already left resourceDetails correct, which
+    // keeps batch tagging from firing a request per toggle.
+    if ((this.editPanelOpen || this.quickTagPanelOpen) &&
+        this.getCurrentItem()?.id === resourceId &&
+        !this.detailsCache.has(resourceId) &&
+        !this._detailsWrites.has(resourceId)) {
+      this.fetchResourceDetails(resourceId, true);
+    }
+  },
+
+  // Commit a writer's own snapshot, unless another write to the same resource landed while
+  // this one was open. That snapshot was captured before the other write, so caching it
+  // would quietly undo the newer edit; dropping the entry makes the next read fetch the
+  // authoritative version instead.
+  // Returns whether the snapshot was accepted, so callers that also paint it can tell.
+  _settleDetailsCache(resourceId, writeGeneration, snapshot) {
+    if (snapshot && this._detailsGeneration(resourceId) === writeGeneration) {
+      this.detailsCache.set(resourceId, snapshot);
+      return true;
+    }
+    this.detailsCache.delete(resourceId);
+    return false;
+  },
+
+  // A fetched snapshot may be committed only when no write has touched this resource since
+  // the fetch started, and none is open right now.
+  _mayCommitDetails(resourceId, generation) {
+    return this._detailsGeneration(resourceId) === generation &&
+      !this._detailsWrites.has(resourceId);
+  },
+
   handleEscape() {
     this.close();
     return true;
@@ -126,13 +202,13 @@ export const editPanelMethods = {
         const scrollX = window.scrollX;
         const scrollY = window.scrollY;
 
-        window.Alpine.morph(listContainer, newListContainer, morphOptionsWithShortcodeElements({
+        morphAndReinitChangedComponents(listContainer, newListContainer, {
           updating(el, toEl, childrenOnly, skip) {
             if (el._x_dataStack) {
               toEl._x_dataStack = el._x_dataStack;
             }
           }
-        }));
+        });
 
         window.scrollTo(scrollX, scrollY);
         this.updateItemsFromDOM();
@@ -143,7 +219,7 @@ export const editPanelMethods = {
   },
 
   updateItemsFromDOM() {
-    const container = document.querySelector('.list-container, .gallery');
+    const container = document.querySelector(`${LIST_CONTAINER_SELECTOR}, .gallery, .dashboard-grid`);
     if (!container) return;
 
     const links = container.querySelectorAll('[data-lightbox-item]');
@@ -177,7 +253,10 @@ export const editPanelMethods = {
     const resourceId = id ?? this.getCurrentItem()?.id;
     if (!resourceId) return;
 
-    const cached = this.detailsCache.get(resourceId);
+    // A write is open on this resource, so any cached copy predates it. Painting it would
+    // show — and let the user act on — values the write is about to change, and the write
+    // itself may end by dropping the entry rather than replacing it.
+    const cached = this._detailsWrites.has(resourceId) ? null : this.detailsCache.get(resourceId);
     if (cached) {
       this.resourceDetails = cached;
       // Fast path: use the cache for an instant paint. When forceRefresh is set (a panel
@@ -192,6 +271,7 @@ export const editPanelMethods = {
     }
 
     const reqId = ++this._detailsReq;
+    const generation = this._detailsGeneration(resourceId);
     this.detailsLoading = true;
 
     if (this.detailsAborter) {
@@ -210,7 +290,11 @@ export const editPanelMethods = {
       const data = await response.json();
       const fetchedDetails = data.resource || data;
 
-      if (this.getCurrentItem()?.id === resourceId) {
+      // The id check alone is not enough: a write to this same resource can land while the
+      // GET is in flight, and this response predates it. Committing it would reinstate the
+      // pre-write name/tags and read as the user's edit reverting itself a moment later.
+      if (this.getCurrentItem()?.id === resourceId &&
+          this._mayCommitDetails(resourceId, generation)) {
         this.resourceDetails = fetchedDetails;
         this.detailsCache.set(resourceId, fetchedDetails);
       }
@@ -295,6 +379,7 @@ export const editPanelMethods = {
     const oldName = details.Name;
     if (newName === oldName) return;
 
+    const writeGeneration = this._beginDetailsWrite(resourceId);
     details.Name = newName;
     if (item) {
       item.name = newName;
@@ -314,7 +399,7 @@ export const editPanelMethods = {
         throw new Error(`Failed to update name: ${response.status}`);
       }
 
-      this.detailsCache.set(resourceId, { ...details });
+      this._settleDetailsCache(resourceId, writeGeneration, { ...details });
       this.needsRefreshOnClose = true;
       this.announce('Name updated');
     } catch (err) {
@@ -326,6 +411,8 @@ export const editPanelMethods = {
       // The cached copy for this resource is now uncertain — drop it so a later view refetches.
       this.detailsCache.delete(resourceId);
       this.announce('Failed to update name');
+    } finally {
+      this._endDetailsWrite(resourceId);
     }
   },
 
@@ -339,6 +426,7 @@ export const editPanelMethods = {
     const oldDescription = details.Description;
     if (newDescription === oldDescription) return;
 
+    const writeGeneration = this._beginDetailsWrite(resourceId);
     details.Description = newDescription;
 
     try {
@@ -355,7 +443,7 @@ export const editPanelMethods = {
         throw new Error(`Failed to update description: ${response.status}`);
       }
 
-      this.detailsCache.set(resourceId, { ...details });
+      this._settleDetailsCache(resourceId, writeGeneration, { ...details });
       this.needsRefreshOnClose = true;
       this.announce('Description updated');
     } catch (err) {
@@ -363,6 +451,8 @@ export const editPanelMethods = {
       details.Description = oldDescription;
       this.detailsCache.delete(resourceId);
       this.announce('Failed to update description');
+    } finally {
+      this._endDetailsWrite(resourceId);
     }
   },
 
@@ -384,6 +474,7 @@ export const editPanelMethods = {
     if (!resourceId || this._savingTagIds.has(tag.ID)) return;
 
     this._savingTagIds.add(tag.ID);
+    const writeGeneration = this._beginDetailsWrite(resourceId);
 
     // Only mutate/cache the live details when they belong to the current resource. During a
     // cache-miss load window resourceDetails still describes the previous image, so caching
@@ -414,14 +505,10 @@ export const editPanelMethods = {
         throw new Error(`Failed to add tag: ${response.status}`);
       }
 
-      if (details) {
-        this.detailsCache.set(resourceId, { ...details });
-      } else {
-        // Written during a cache-miss load window (details still described the previous
-        // image): an in-flight details fetch for this id may cache a pre-write snapshot, so
-        // drop any entry and force a later refetch — mirrors _batchToggleTags' non-current path.
-        this.detailsCache.delete(resourceId);
-      }
+      // A null `details` means the write happened during a cache-miss load window, where
+      // resourceDetails still described the previous image: there is no trustworthy snapshot
+      // to cache, so _settleDetailsCache drops the entry and a later view refetches.
+      this._settleDetailsCache(resourceId, writeGeneration, details ? { ...details } : null);
       this.needsRefreshOnClose = true;
       this.announce(`Added tag: ${tag.Name}`);
 
@@ -445,12 +532,15 @@ export const editPanelMethods = {
       throw err;
     } finally {
       this._savingTagIds.delete(tag.ID);
+      this._endDetailsWrite(resourceId);
     }
   },
 
   async saveTagRemoval(tag) {
     const resourceId = this.getCurrentItem()?.id;
     if (!resourceId) return;
+
+    const writeGeneration = this._beginDetailsWrite(resourceId);
 
     // Only mutate/cache the live details when they belong to the current resource — a
     // cache-miss load window otherwise misdirects this onto the previous image (BH: H5).
@@ -477,13 +567,9 @@ export const editPanelMethods = {
         throw new Error(`Failed to remove tag: ${response.status}`);
       }
 
-      if (details) {
-        this.detailsCache.set(resourceId, { ...details });
-      } else {
-        // Written during a cache-miss load window: drop any stale entry so a later view
-        // refetches the authoritative tag set (mirrors _batchToggleTags' non-current path).
-        this.detailsCache.delete(resourceId);
-      }
+      // Null `details` (a cache-miss load window) has no trustworthy snapshot to cache, so
+      // _settleDetailsCache drops the entry and a later view refetches the authoritative set.
+      this._settleDetailsCache(resourceId, writeGeneration, details ? { ...details } : null);
       this.needsRefreshOnClose = true;
       this.announce(`Removed tag: ${tag.Name}`);
     } catch (err) {
@@ -494,6 +580,8 @@ export const editPanelMethods = {
       this.detailsCache.delete(resourceId);
       this.announce('Failed to remove tag');
       throw err;
+    } finally {
+      this._endDetailsWrite(resourceId);
     }
   },
 

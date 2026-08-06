@@ -490,9 +490,12 @@ export const quickTagPanelMethods = {
         Name: t.name ?? t.Name,
       }));
 
-      const state = this.slotMatchState(index);
+      // Decide from the tags this press captured, not from slotMatchState(index), which
+      // re-reads getActiveTabSlots() — a tab switch during the await above points that at a
+      // different slot, so the decision would be made about tags the user never pressed.
+      const allPresent = tags.length > 0 && tags.every(tag => this.isTagOnResource(tag.ID));
 
-      if (state === 'all') {
+      if (allPresent) {
         await this._batchToggleTags(tags, 'remove');
       } else {
         const missing = tags.filter(tag => !this.isTagOnResource(tag.ID));
@@ -551,6 +554,10 @@ export const quickTagPanelMethods = {
 
     const endpoint = action === 'add' ? '/v1/resources/addTags' : '/v1/resources/removeTags';
 
+    // Any details GET in flight across this write describes the pre-write tags, so neither
+    // the panel nor the background prefetch may commit it on top of the change.
+    const writeGeneration = this._beginDetailsWrite(resourceId);
+
     // Only mutate the live resourceDetails optimistically when it actually describes the
     // target resource. A non-current target (cross-image undo), a write that lands after the
     // user navigated, OR the cache-miss load window where resourceDetails still holds the
@@ -584,13 +591,10 @@ export const quickTagPanelMethods = {
         throw new Error(`Failed to ${action} tags: ${response.status}`);
       }
 
-      if (details) {
-        this.detailsCache.set(resourceId, { ...details });
-      } else {
-        // Non-current target: any cached copy is now stale — drop it so a later view of
-        // that resource refetches the authoritative tag set.
-        this.detailsCache.delete(resourceId);
-      }
+      // A non-current target (cross-image undo, or a write during a cache-miss load window)
+      // leaves no trustworthy snapshot, so _settleDetailsCache drops the entry instead and a
+      // later view of that resource refetches the authoritative tag set.
+      this._settleDetailsCache(resourceId, writeGeneration, details ? { ...details } : null);
       this.needsRefreshOnClose = true;
 
       // Record an undo-ring entry for every non-undo batch write (Item 6).
@@ -631,6 +635,8 @@ export const quickTagPanelMethods = {
       this.detailsCache.delete(resourceId);
       this.announce(`Failed to ${action} tags`);
       return false;
+    } finally {
+      this._endDetailsWrite(resourceId);
     }
   },
 
@@ -684,11 +690,18 @@ export const quickTagPanelMethods = {
   // Advance to the next image after a flow-mode add. Threads a one-shot prefix into
   // announcePosition so the applied tag(s) and the new position are announced together
   // (the shared single-slot live region would otherwise clobber a separate message).
-  _advanceFlow(addedTags) {
+  async _advanceFlow(addedTags) {
     const names = addedTags.map(t => t.Name).join(', ');
     if (this.currentIndex < this.items.length - 1 || this.hasNextPage) {
       this._pendingFlowPrefix = `Added ${names}. `;
-      this.next();
+      await this.next();
+      // next() consumes the prefix through announcePosition. If it could not advance after
+      // all (the next page came back empty), nothing consumed it, and leaving it set would
+      // attach this acknowledgement to whatever navigation happens next instead.
+      if (this._pendingFlowPrefix) {
+        this._pendingFlowPrefix = '';
+        this.announce(`Added ${names}. End of list`);
+      }
     } else {
       this.announce(`Added ${names}. End of list`);
     }
@@ -952,7 +965,10 @@ export const quickTagPanelMethods = {
       return;
     }
 
-    // Multi-tag: start long-press timer
+    // Multi-tag: start long-press timer. Cancel any press still pending on another slot
+    // first — there is only one timer, so an unreleased press would otherwise fire later
+    // and expand a slot the user is no longer holding.
+    this._cancelLongPress();
     this._longPressSlotIdx = idx;
     this._longPressTimer = setTimeout(() => {
       this._expandSlot(idx);
@@ -965,7 +981,9 @@ export const quickTagPanelMethods = {
     const tagCount = this._slotTagCount(idx);
     if (tagCount <= 1) return; // already fired on keydown
 
-    if (this._longPressTimer) {
+    // Only the slot that started the press may end it; a release on a different slot must
+    // not claim this timer and toggle the wrong tags.
+    if (this._longPressTimer && this._longPressSlotIdx === idx) {
       // Short press: cancel timer, fire batch toggle
       this._cancelLongPress();
       this.toggleTabTag(idx);
@@ -980,6 +998,8 @@ export const quickTagPanelMethods = {
     const tagCount = this._slotTagCount(idx);
     if (tagCount <= 1) return; // single-tag: normal click handler fires
 
+    // See handleSlotKeydown: one shared timer, so drop any press still pending elsewhere.
+    this._cancelLongPress();
     this._longPressSlotIdx = idx;
     this._longPressTimer = setTimeout(() => {
       this._expandSlot(idx);
@@ -992,14 +1012,15 @@ export const quickTagPanelMethods = {
     const tagCount = this._slotTagCount(idx);
     if (tagCount <= 1) return;
 
-    if (this._longPressTimer) {
+    if (this._longPressTimer && this._longPressSlotIdx === idx) {
       this._cancelLongPress();
       this.toggleTabTag(idx);
     }
   },
 
   handleSlotMouseleave(idx) {
-    if (this._longPressTimer) {
+    // Leaving a slot cancels only its own press, not one running on another slot.
+    if (this._longPressTimer && this._longPressSlotIdx === idx) {
       this._cancelLongPress();
     }
   },

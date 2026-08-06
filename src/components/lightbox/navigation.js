@@ -13,6 +13,12 @@ export const navigationState = {
   items: [],
   loading: false,
   pageLoading: false,
+  // Id of the item whose media failed to load. Reconciliation deliberately keeps entries the
+  // DOM no longer lists, because "paged off the first page" and "deleted elsewhere" are
+  // indistinguishable there — so a resource deleted from another session stays in the list
+  // and 404s when reached. Announcing that was not enough; the viewer showed a broken image
+  // with no on-screen explanation.
+  mediaErrorId: null,
 
   // Pagination state
   currentPage: 1,
@@ -33,6 +39,19 @@ export const navigationState = {
   // The page's own gallery, parked while a standalone item is open. See
   // openFromClick's fallback branch and the restore in close().
   _itemsBeforeStandalone: null,
+  // Its pagination context, parked alongside. Restoring `items` without this leaves the
+  // page's gallery holding the standalone item's "one page, no neighbours" cursor.
+  _paginationBeforeStandalone: null,
+
+  // True while `items` came from a page's small inline preview (a `[data-lightbox-source]`
+  // container) rather than from a page of the paging endpoint. The first fetch must then ask
+  // for page 1 and replace the preview, not ask for page 2 and skip everything in between.
+  _previewSeeded: false,
+
+  // True while `items` is the page's own gallery, so a DOM re-scan describes the same list.
+  // Cleared for the standalone and source-container sessions, whose lists come from
+  // elsewhere. See initFromDOM.
+  _ownsPageGallery: true,
 
   // Cache of preloaded image URLs (kept in-memory by the Image objects we hold)
   _preloadedUrls: new Set(),
@@ -71,11 +90,38 @@ export const navigationMethods = {
       const links = container.querySelectorAll('[data-lightbox-item]');
       allItems.push(...this._extractItemsFromLinks(links));
     });
-    this.items = allItems;
 
+    // A background refresh must not take the gallery away from a viewer that is already
+    // open. `items` legitimately holds more than the DOM does once loadNextPage has appended
+    // a page the document never rendered, and `_extractItemsFromLinks` drops non-media cards,
+    // so a wholesale rebuild here can leave the list shorter than a `currentIndex` that was
+    // valid a moment ago. getCurrentItem() then returns undefined, every media branch in
+    // lightbox.tpl unmounts, and the viewer sits open over nothing until it is reopened.
+    // Every caller that can land here mid-session is fire-and-forget: the download-completed
+    // listener in main.js (dispatched off an SSE stream, so with no user action at all),
+    // plus pasteUpload, timeline and mrqlEditor.
+    if (this.isOpen) {
+      // Only a viewer that is actually paging the page's own gallery may take this scan.
+      // A standalone item and a source-container preview both hold a different list from a
+      // different endpoint, so merging these cards in would grow a deliberately narrow
+      // viewer with resources the user never opened. Leaving them untouched is also safe:
+      // nothing shrinks, so nothing can strand the index.
+      if (this._ownsPageGallery) {
+        this._reconcileOpenItems(allItems);
+      }
+      return;
+    }
+
+    this.items = allItems;
+    this._readPaginationFromDOM(containers);
+  },
+
+  _readPaginationFromDOM(containers) {
     const urlParams = new URLSearchParams(window.location.search);
     this.currentPage = parseInt(urlParams.get('page'), 10) || 1;
     this.baseUrl = window.location.pathname + window.location.search;
+    this._previewSeeded = false;
+    this._ownsPageGallery = true;
 
     const paginationNav = document.querySelector('nav[aria-label="Pagination"]');
     if (paginationNav) {
@@ -86,7 +132,11 @@ export const navigationMethods = {
       this.hasNextPage = false;
     }
 
-    this.loadedPages.add(this.currentPage);
+    // A fresh Set, not an add. `loadedPages` describes which pages are inside `items`, and
+    // `items` was just rebuilt from one page of DOM. Carrying entries over from an earlier
+    // paging session makes loadNextPage's already-loaded check fire for a page whose items
+    // are no longer there, so Next does nothing at all for one press per stale page.
+    this.loadedPages = new Set([this.currentPage]);
 
     const pageSizeAttr = containers[0].dataset.pageSize;
     if (pageSizeAttr) {
@@ -94,6 +144,90 @@ export const navigationMethods = {
     } else if (window.location.pathname.includes('/simple')) {
       this.pageSize = 200;
     }
+  },
+
+  // Merge a fresh DOM scan into the list a live viewer is paging through, without ever
+  // shortening it. Entries the scan still shows are patched in place (a crop or rotate
+  // rewrites viewUrl and hash), genuinely new cards are inserted where the DOM puts them, and
+  // entries the DOM no longer shows are kept: dropping them is what strands currentIndex, and
+  // we cannot tell "scrolled off page 1" from "deleted" here anyway. The viewer then
+  // re-anchors on the resource it was actually displaying, so an insert above it cannot
+  // silently slide the user onto a neighbour.
+  _reconcileOpenItems(freshItems) {
+    const anchor = this.getCurrentItem();
+    const anchorId = anchor?.id;
+    const anchorUrl = anchor?.viewUrl;
+
+    const existingIds = new Set(this.items.map(item => item.id));
+    const patches = new Map();
+    const insertBefore = new Map();
+    const trailing = [];
+
+    freshItems.forEach((fresh, index) => {
+      if (existingIds.has(fresh.id)) {
+        patches.set(fresh.id, fresh);
+        return;
+      }
+      // Anchor each new card to the first card after it that we already hold, so a
+      // newest-first list keeps its order instead of collecting arrivals at the tail.
+      let successorId = null;
+      for (let i = index + 1; i < freshItems.length; i++) {
+        if (existingIds.has(freshItems[i].id)) {
+          successorId = freshItems[i].id;
+          break;
+        }
+      }
+      if (successorId === null) {
+        trailing.push(fresh);
+        return;
+      }
+      const bucket = insertBefore.get(successorId);
+      if (bucket) bucket.push(fresh);
+      else insertBefore.set(successorId, [fresh]);
+    });
+
+    const merged = [];
+    for (const item of this.items) {
+      const pending = insertBefore.get(item.id);
+      if (pending) {
+        merged.push(...pending);
+        insertBefore.delete(item.id);
+      }
+      const patch = patches.get(item.id);
+      merged.push(patch ? { ...item, ...patch } : item);
+    }
+    merged.push(...trailing);
+
+    this.items = merged;
+    this._reanchorIndex(anchorId);
+
+    // Zoom and pan are clamped against the bitmap that was on screen. If the merge put a
+    // different resource (or a new version of the same one) under the viewer, a pan that was
+    // legal a moment ago can translate the new image clear out of the overflow-hidden media
+    // column: loaded, present in the DOM, and invisible. cropPanel drops zoom on its own
+    // image swap for exactly this reason.
+    const current = this.getCurrentItem();
+    if (current?.id !== anchorId || current?.viewUrl !== anchorUrl) {
+      this.resetZoom();
+    }
+  },
+
+  // Keep the viewer on the resource it was showing after `items` is rebuilt or reordered.
+  // Clamping alone would silently move the user to a different image, so the clamp is only
+  // the fallback for when the resource really has gone.
+  _reanchorIndex(anchorId) {
+    if (!this.items.length) {
+      this.currentIndex = 0;
+      return;
+    }
+    if (anchorId != null) {
+      const index = this.items.findIndex(item => item.id === anchorId);
+      if (index !== -1) {
+        this.currentIndex = index;
+        return;
+      }
+    }
+    this.currentIndex = Math.max(0, Math.min(this.currentIndex, this.items.length - 1));
   },
 
   openFromClick(event, resourceId, contentType) {
@@ -114,6 +248,7 @@ export const navigationMethods = {
 
     const index = this.items.findIndex(item => item.id === resourceId);
     if (index !== -1) {
+      this._ownsPageGallery = true;
       this.open(index);
       return;
     }
@@ -129,12 +264,15 @@ export const navigationMethods = {
     if (single.length === 0) return;
 
     this._itemsBeforeStandalone = this.items;
+    this._paginationBeforeStandalone = this._capturePaginationContext();
     this.items = single;
     this.baseUrl = '';
     this.currentPage = 1;
     this.loadedPages = new Set([1]);
     this.hasNextPage = false;
     this.hasPrevPage = false;
+    this._previewSeeded = false;
+    this._ownsPageGallery = false;
     this.open(0);
   },
 
@@ -153,12 +291,19 @@ export const navigationMethods = {
     // Configure lightbox for this container's resources
     this.items = containerItems;
     this.baseUrl = url.pathname + url.search;
-    this.currentPage = 1;
-    this.loadedPages = new Set([1]);
     this.pageSize = 50;
-    // The group/series page preloads up to 5 resources (pageLimitCustom(5) server-side),
-    // counted BEFORE filtering out non-media. Deriving this from the filtered `containerItems`
-    // would hide collection media whenever the preview mixes media and non-media (BH: H1).
+    // These items came from the page's 5-resource preview (pageLimitCustom(5) server-side),
+    // not from a page of the endpoint we are about to page through. Treating them as page 1
+    // made the first Next ask for page 2 and skip resources 6..50 outright. `loadedPages`
+    // therefore starts empty and loadNextPage fetches page 1, which is a superset of the
+    // preview in the same order, and replaces it.
+    this.currentPage = 1;
+    this.loadedPages = new Set();
+    this._previewSeeded = true;
+    this._ownsPageGallery = false;
+    // Counted BEFORE filtering out non-media. Deriving this from the filtered
+    // `containerItems` would hide collection media whenever the preview mixes media and
+    // non-media (BH: H1).
     this.hasNextPage = links.length >= 5;
     this.hasPrevPage = false;
 
@@ -261,11 +406,16 @@ export const navigationMethods = {
       if (this._detailsInFlight.has(item.id)) continue;
 
       this._detailsInFlight.add(item.id);
+      const generation = this._detailsGeneration(item.id);
       const { ready } = abortableFetch(`/resource.json?id=${item.id}`);
       ready
         .then(response => (response.ok ? response.json() : null))
         .then(data => {
           if (!data) return;
+          // A write to this resource landed while the prefetch was in flight, so this
+          // response predates it. Caching it would quietly put the pre-write tags back, and
+          // the panel would show the user's change undoing itself when they navigate here.
+          if (!this._mayCommitDetails(item.id, generation)) return;
           const details = data.resource || data;
           // Respect the same cache cap fetchResourceDetails enforces.
           if (this.detailsCache.size > 100) {
@@ -323,6 +473,14 @@ export const navigationMethods = {
       const restore = this._itemsBeforeStandalone;
       this._itemsBeforeStandalone = null;
       this.items = restore;
+    }
+    // The items alone are not the whole context: openFromClick also blanked `baseUrl` and
+    // collapsed the page cursor to a single page with no neighbours. Restoring only `items`
+    // leaves the page's own gallery unable to load any further page for the rest of its life.
+    if (this._paginationBeforeStandalone) {
+      const parked = this._paginationBeforeStandalone;
+      this._paginationBeforeStandalone = null;
+      this._restorePaginationContext(parked);
     }
 
     this.isOpen = false;
@@ -433,6 +591,43 @@ export const navigationMethods = {
     }
   },
 
+  _capturePaginationContext() {
+    return {
+      baseUrl: this.baseUrl,
+      currentPage: this.currentPage,
+      loadedPages: this.loadedPages,
+      hasNextPage: this.hasNextPage,
+      hasPrevPage: this.hasPrevPage,
+      pageSize: this.pageSize,
+      previewSeeded: this._previewSeeded,
+      ownsPageGallery: this._ownsPageGallery,
+    };
+  },
+
+  _restorePaginationContext(parked) {
+    this.baseUrl = parked.baseUrl;
+    this.currentPage = parked.currentPage;
+    this.loadedPages = parked.loadedPages;
+    this.hasNextPage = parked.hasNextPage;
+    this.hasPrevPage = parked.hasPrevPage;
+    this.pageSize = parked.pageSize;
+    this._previewSeeded = parked.previewSeeded;
+    this._ownsPageGallery = parked.ownsPageGallery;
+  },
+
+  // The cursor for growing the buffer is the edge of what is loaded, not `currentPage`.
+  // `currentPage` moves backwards when the user pages back across a boundary, which made the
+  // next forward press ask for a page already inside `items` and silently do nothing.
+  _nextPageNumber() {
+    if (!this.loadedPages.size) return (this.currentPage || 1) + 1;
+    return Math.max(...this.loadedPages) + 1;
+  },
+
+  _prevPageNumber() {
+    if (!this.loadedPages.size) return (this.currentPage || 1) - 1;
+    return Math.min(...this.loadedPages) - 1;
+  },
+
   announcePosition(prefix = '') {
     const item = this.getCurrentItem();
     // Consume any pending flow-mode prefix once so the applied tag(s) and the new
@@ -443,33 +638,100 @@ export const navigationMethods = {
   },
 
   async loadNextPage() {
-    const nextPage = this.currentPage + 1;
-
-    if (this.loadedPages.has(nextPage)) {
-      this.currentPage = nextPage;
-      return 0;
-    }
+    // A preview-seeded buffer holds the page's 5-resource teaser, not a page of the endpoint,
+    // so its first fetch is page 1 and it replaces rather than appends.
+    const seeded = this._previewSeeded;
 
     this.pageLoading = true;
     this.announce('Loading more items...');
 
     try {
-      const { items: newItems, hasNextPage } = await this.fetchPage(nextPage);
+      const known = new Set(this.items.map(item => item.id));
+      let page = seeded ? 1 : this._nextPageNumber();
+      let addedCount = 0;
+      let serverHasNext = false;
+      let replacedPreview = false;
+      let hopsExhausted = true;
 
-      if (newItems.length === 0) {
-        this.hasNextPage = false;
-        this.announce('No more items');
+      // A whole page can filter down to nothing when its resources are all non-media (PDFs,
+      // archives). That is not the end of the gallery, so keep walking while the server still
+      // reports a next page, rather than declaring "No more items" over the top of it.
+      const MAX_HOPS = 20;
+      for (let hop = 0; hop < MAX_HOPS; hop++) {
+        const { items: newItems, hasNextPage } = await this.fetchPage(page);
+        this.loadedPages.add(page);
+        this.currentPage = page;
+        serverHasNext = hasNextPage;
+
+        if (seeded && !replacedPreview) {
+          // Page 1 usually contains the preview, so replacing beats appending: the user gets
+          // the endpoint's real ordering instead of a five-item teaser followed by a jump.
+          //
+          // "Usually" is doing work there. The preview comes from a bare Limit(5) with no
+          // ORDER BY (pageLimitCustom, application_context/context.go:894) while the paging
+          // endpoint sorts created_at desc, so on a collection larger than a page the two
+          // need not overlap at all. Replacing then throws away the very item the user
+          // clicked and drops them somewhere unrelated, so fall back to appending whenever
+          // page 1 does not actually contain the anchor.
+          const anchorId = this.getCurrentItem()?.id;
+          const fresh = newItems.filter(item => !known.has(item.id));
+          replacedPreview = true;
+          this._previewSeeded = false;
+
+          if (anchorId == null || newItems.some(item => item.id === anchorId)) {
+            this.items = newItems;
+            this._reanchorIndex(anchorId);
+            known.clear();
+            newItems.forEach(item => known.add(item.id));
+          } else {
+            this.items = [...this.items, ...fresh];
+            fresh.forEach(item => known.add(item.id));
+          }
+
+          addedCount += fresh.length;
+          // Only stop if this actually produced a forward step. Page 1 can contain the
+          // anchor at its very last position, in which case the caller still cannot advance
+          // and the keypress would be wasted; keep hopping to page 2 instead.
+          if (fresh.length && this.currentIndex < this.items.length - 1) {
+            hopsExhausted = false;
+            break;
+          }
+        } else {
+          const added = newItems.filter(item => !known.has(item.id));
+          added.forEach(item => known.add(item.id));
+          if (added.length) {
+            this.items = [...this.items, ...added];
+            addedCount += added.length;
+            hopsExhausted = false;
+            break;
+          }
+        }
+
+        if (!hasNextPage) {
+          hopsExhausted = false;
+          break;
+        }
+        page++;
+      }
+
+      this.hasNextPage = serverHasNext;
+
+      // Bounded so a pathological run of non-media pages cannot spin. Say so rather than
+      // presenting the give-up as the end of the gallery; hasNextPage is still set above, so
+      // pressing again resumes from where this left off.
+      if (hopsExhausted) {
+        this.announce(`No media found in the next ${MAX_HOPS} pages. Press again to keep looking.`);
         return 0;
       }
 
-      this.items = [...this.items, ...newItems];
-      this.loadedPages.add(nextPage);
-      this.currentPage = nextPage;
-      this.hasNextPage = hasNextPage;
+      if (addedCount === 0) {
+        if (!serverHasNext) this.announce('No more items');
+        return 0;
+      }
 
       // The "loaded N more" status is announced (combined with position) by next() so it
       // is not immediately clobbered by the position announcement (BH: M9).
-      return newItems.length;
+      return addedCount;
     } catch (err) {
       if (err.name !== 'AbortError') {
         console.error('Failed to load next page:', err);
@@ -482,13 +744,9 @@ export const navigationMethods = {
   },
 
   async loadPrevPage() {
-    if (this.currentPage <= 1) return 0;
-
-    const prevPage = this.currentPage - 1;
-
-    if (this.loadedPages.has(prevPage)) {
-      this.currentPage = prevPage;
-      this.hasPrevPage = prevPage > 1;
+    const prevPage = this._prevPageNumber();
+    if (prevPage < 1) {
+      this.hasPrevPage = false;
       return 0;
     }
 
@@ -496,19 +754,26 @@ export const navigationMethods = {
     this.announce('Loading previous items...');
 
     try {
+      const known = new Set(this.items.map(item => item.id));
       const { items: newItems } = await this.fetchPage(prevPage);
-      const prevItemCount = newItems.length;
+      // Page boundaries shift when a resource is added or removed while the viewer is open,
+      // so the same resource can come back on two different pages. Prepending it twice would
+      // show it twice and put the anchor arithmetic below out by one.
+      const added = newItems.filter(item => !known.has(item.id));
 
-      this.items = [...newItems, ...this.items];
-      this.currentIndex += prevItemCount;
       this.loadedPages.add(prevPage);
       // Track the page the user is now viewing, matching loadNextPage. Without this the
       // backward-pagination boundary stalls for one keypress (BH: M1).
       this.currentPage = prevPage;
       this.hasPrevPage = prevPage > 1;
 
+      if (added.length === 0) return 0;
+
+      this.items = [...added, ...this.items];
+      this.currentIndex += added.length;
+
       // Status announced (combined with position) by prev() to avoid clobbering (BH: M9).
-      return prevItemCount;
+      return added.length;
     } catch (err) {
       if (err.name !== 'AbortError') {
         console.error('Failed to load previous page:', err);
@@ -581,35 +846,99 @@ export const navigationMethods = {
     return this.items[this.currentIndex];
   },
 
-  onMediaLoaded() {
-    this.loading = false;
+  // True when the item under currentIndex is the one that failed to load. Keyed on the id so
+  // it clears by itself the moment the user navigates elsewhere.
+  hasMediaError() {
+    const item = this.getCurrentItem();
+    return !!item && this.mediaErrorId === item.id;
   },
 
-  onMediaError() {
+  // The URL a media element is actually showing, as an absolute URL. <object> carries it on
+  // `data` rather than `src`, so reading only src/currentSrc left every SVG event unfenced.
+  // Use the IDL property, never getAttribute('data'): the attribute is the raw relative
+  // string from the template, which never equals the resolved URL we compare it against.
+  _mediaEventUrl(event) {
+    return this._mediaElementUrl(event?.target);
+  },
+
+  _mediaElementUrl(el) {
+    if (!el) return '';
+    return el.currentSrc || el.src || el.data || '';
+  },
+
+  // The media element is reused across navigation, so an event queued for the previous item
+  // can run after the swap. Acting on it would clear the new item's spinner early or flag a
+  // perfectly good image as broken. Fails open: when either URL is unknown we handle the
+  // event, because a stuck spinner is worse than a mis-attributed one.
+  _isEventForCurrentMedia(event) {
+    const wanted = this.getCurrentItem()?.viewUrl;
+    const actual = this._mediaEventUrl(event);
+    if (!wanted || !actual) return true;
+    return new URL(wanted, document.baseURI).href === actual;
+  },
+
+  onMediaLoaded(event) {
+    if (!this._isEventForCurrentMedia(event)) return;
+    this.loading = false;
+    this.mediaErrorId = null;
+    // Re-clamp against the bitmap that just arrived. Pan bounds come from the live media
+    // element, so a pan still holding limits computed for the previous image can translate
+    // this one outside the media column and read as a blank viewer.
+    this.constrainPan();
+  },
+
+  onMediaError(event) {
+    if (!this._isEventForCurrentMedia(event)) return;
+    const item = this.getCurrentItem();
     // A broken/404 media file otherwise leaves the spinner silently vanishing with no
     // signal to assistive tech that the load failed (BH: M8).
     this.loading = false;
-    const item = this.getCurrentItem();
+    this.mediaErrorId = item?.id ?? null;
     const mediaType = this.isVideo(item?.contentType) ? 'video' : this.isSvg(item?.contentType) ? 'SVG' : 'image';
     this.announce(`Failed to load ${mediaType}: ${item?.name || 'media'}`);
   },
 
+  // This runs when the element was already complete before any @load could fire (a cached
+  // bitmap), so it is a second success path and has to clear the error state too — otherwise
+  // an error left by a previous item with the same id shows over media that did load.
   checkIfMediaLoaded(el) {
     if (!el) return;
     if (el.tagName === 'IMG' && el.complete) {
+      // Same fence as the event handlers: a complete element may still be showing the
+      // previous item's bitmap for a frame after the swap.
+      if (!this._isElementShowingCurrentMedia(el)) return;
       const isSvg = this.isSvg(this.getCurrentItem()?.contentType);
       if (isSvg || el.naturalWidth > 0) {
         this.loading = false;
+        this.mediaErrorId = null;
         return;
       }
     }
-    if (el.tagName === 'OBJECT' && el.contentDocument) {
-      this.loading = false;
+    if (el.tagName === 'OBJECT') {
+      // The <object> is reused across navigation, so contentDocument still holds the PREVIOUS
+      // SVG while the new one loads; clearing the spinner off that would present the old
+      // drawing as the new one. Gate on the element's own `data` rather than on
+      // contentDocument.URL: /v1/resource/view redirects to the stored file, so the loaded
+      // document's URL is never the viewUrl we would be comparing it to, and that check could
+      // only ever reject — which is exactly how it stranded the SVG spinner.
+      if (el.contentDocument && this._isElementShowingCurrentMedia(el)) {
+        this.loading = false;
+        this.mediaErrorId = null;
+      }
       return;
     }
     if (el.tagName === 'VIDEO' && el.readyState >= 3) {
+      if (!this._isElementShowingCurrentMedia(el)) return;
       this.loading = false;
+      this.mediaErrorId = null;
     }
+  },
+
+  _isElementShowingCurrentMedia(el) {
+    const wanted = this.getCurrentItem()?.viewUrl;
+    const actual = this._mediaElementUrl(el);
+    if (!wanted || !actual) return true;
+    return new URL(wanted, document.baseURI).href === actual;
   },
 
   scheduleMediaCheck() {

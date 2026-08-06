@@ -127,6 +127,11 @@ export const cropPanelMethods = {
   async refreshCurrentItem(targetId) {
     if (!targetId) return;
 
+    // A crop or rotate rewrites the hash, dimensions and content type, so any details GET
+    // in flight for this resource now describes the pre-edit version. Without this fence it
+    // resolves after refreshCurrentItem has committed and puts the old metadata back —
+    // including the old Hash, which is what the viewer's cache-busting URL is built from.
+    const writeGeneration = this._beginDetailsWrite(targetId);
     let data;
     try {
       const response = await fetch(`/resource.json?id=${targetId}`, {
@@ -138,12 +143,16 @@ export const cropPanelMethods = {
       data = await response.json();
     } catch (err) {
       console.error('Failed to refresh resource after edit:', err);
+      this._endDetailsWrite(targetId);
       return;
     }
 
     const r = data.resource ?? data;
     const idx = this.items.findIndex(i => i.id === targetId);
-    if (idx === -1) return; // resource navigated away and dropped from the list
+    if (idx === -1) {
+      this._endDetailsWrite(targetId);
+      return; // resource navigated away and dropped from the list
+    }
 
     const hash = r.Hash || '';
     const versionParam = hash ? `&v=${hash}` : '';
@@ -158,12 +167,16 @@ export const cropPanelMethods = {
       height: r.Height || 0,
     };
 
-    // Keep cached/open panel details consistent with the new version.
-    this.detailsCache.set(targetId, r);
+    // Keep cached/open panel details consistent with the new version, unless another write
+    // to this resource landed while the refetch was out — its result is newer than ours.
+    const committed = this._settleDetailsCache(targetId, writeGeneration, r);
 
     // Only touch the viewer if the edited resource is still the one on screen.
     if (this.currentIndex === idx) {
-      if (this.editPanelOpen || this.quickTagPanelOpen) {
+      // Only paint the snapshot the cache accepted. If another write landed while this
+      // refetch was out, `r` predates it and showing it would visibly revert that edit;
+      // _endDetailsWrite's convergence refetch supplies the authoritative version instead.
+      if (committed && (this.editPanelOpen || this.quickTagPanelOpen)) {
         this.resourceDetails = r;
       }
       // The image is a different size now — drop any stale zoom/pan and show the
@@ -176,5 +189,9 @@ export const cropPanelMethods = {
     // The underlying gallery thumbnail is now stale; refresh it when the
     // lightbox (or its last panel) closes, mirroring the tag/name edit path.
     this.needsRefreshOnClose = true;
+
+    // Closed only now, after the cache and panel have been updated, so no read can slip
+    // between the fetch returning and the commit landing.
+    this._endDetailsWrite(targetId);
   },
 };

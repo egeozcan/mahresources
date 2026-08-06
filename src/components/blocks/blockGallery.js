@@ -108,6 +108,9 @@ export function blockGallery(block, saveContentFn, getEditMode, noteId) {
       lightbox.loadedPages = new Set([1]);
       lightbox.hasNextPage = false;
       lightbox.hasPrevPage = false;
+      // This block's gallery is not the page's list, so a background DOM re-scan must not
+      // merge the page's own cards into it. See initFromDOM.
+      lightbox._ownsPageGallery = false;
       lightbox.triggerElement = event?.currentTarget || null;
       lightbox.open(index);
     },
