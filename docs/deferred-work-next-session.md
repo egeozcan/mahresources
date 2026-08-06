@@ -96,6 +96,8 @@ Genuinely a product question, not a defect. Unchanged.
 | `npm run build` | clean |
 | `./mr docs lint` | `OK: 16 warnings` (unchanged) |
 | `cd e2e && npm run test:with-server:all` | see below |
+| `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/...` | pass |
+| `cd e2e && npm run test:with-server:postgres` | **1948 passed / 0 failed**, 5 skipped, 7.4m |
 
 The first full e2e run of this pass was **1929 passed / 2 failed / 16 flaky** in 45.2m. Both failures
 were this pass's own and are fixed: the `sr-only` overflow above, and a control test whose premise was
@@ -105,11 +107,17 @@ wrong (the sidebar filter form submits through the MRQL filter bar as `?mrql=nam
 The 16 flaky are the known load class — `page.goto: Timeout 15000ms exceeded` on a 45-minute run
 against a 7.7m baseline, spread over unrelated specs, all green on retry.
 
-**Postgres was not run.** Docker was not available on this machine (`docker ps` times out). `CLAUDE.md`
-asks for `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/... -count=1` and
-`cd e2e && npm run test:with-server:postgres` when finishing a change, and both are outstanding. The
-`api_tests` DSN change is the one that most deserves a Postgres run: `api_test_utils.go` has no build
-tag, so the whole SQLite-backed suite still compiles and runs under the `postgres` tag.
+**Postgres ran green, on the second attempt.** Worth knowing why the first failed, because it looks
+alarming and is not: all nine `postgres`-tagged tests in `server/api_tests` failed together with
+`failed to connect to admin DB … dial tcp 127.0.0.1:32915: connect: connection refused`.
+`TestMain` calls `testpgutil.StartContainer`, which returned a mapped port before the container was
+actually accepting connections — Docker had just woken up on this machine. An immediate retry passed
+with no changes. **If every `postgres` test fails at `pg_test_helper_test.go` with connection refused,
+retry once before investigating anything.**
+
+That run matters more than usual for this pass: `api_test_utils.go` carries no build tag, so the whole
+SQLite-backed suite compiles and runs under the `postgres` tag too, and the DSN change is exercised
+there as well.
 
 ---
 

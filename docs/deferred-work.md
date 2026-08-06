@@ -30,10 +30,15 @@ Gates at the end of the 08-05 pass: `go test --tags 'json1 fts5' ./...` green, `
 `page.goto: Timeout 15000ms exceeded` on a heavily loaded machine — the known load class, none in the
 new specs), and three full Postgres runs at 0 flaky.
 
-At the end of the 08-06 pass: the same four green, `npm run test:unit` at 924, and
+At the end of the 08-06 pass: the same four green, `npm run test:unit` at 924,
 `npm run test:with-server:all` **1943 passed / 0 failed** (4 flaky, all 60s timeouts on the same load
-class). Postgres was **not** run — Docker was unavailable on the machine — and that is the one
-outstanding gate; see `docs/deferred-work-next-session.md` §3.
+class), and Postgres green on both halves — `go test --tags 'json1 fts5 postgres' ./mrql/...
+./server/api_tests/...` ok, and `npm run test:with-server:postgres` **1948 passed / 0 failed** across
+the `default` and `cli` projects.
+
+The Postgres run matters more than usual for this pass: `api_test_utils.go` carries no build tag, so
+the whole SQLite-backed suite compiles and runs under the `postgres` tag too — the DSN change is
+exercised there as well.
 
 **Nine factual corrections to this document have now been made, five in the first pass and four in the
 second.** They are recorded inline with their items rather than listed here, but the pattern is worth
