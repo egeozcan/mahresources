@@ -37,7 +37,8 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		}
 	}
 
-	return ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+	var deleteEffects []groupDeleteEffect
+	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
 		// Load losers WITHOUT associations — we only need their basic fields for backup
 		var losers []*models.Group
 		if loadErr := altCtx.db.Find(&losers, &loserIds).Error; loadErr != nil {
@@ -238,9 +239,14 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 			if err := transferUserScopeReferences(altCtx.db, loser.ID, winner.ID); err != nil {
 				return err
 			}
-			if err := altCtx.DeleteGroup(loser.ID); err != nil {
+			if err := altCtx.prepareGroupDelete(loser.ID); err != nil {
 				return err
 			}
+			effect, err := altCtx.deleteGroupInTransaction(loser.ID)
+			if err != nil {
+				return err
+			}
+			deleteEffects = append(deleteEffects, effect)
 		}
 
 		// Save backups to winner's meta
@@ -268,6 +274,11 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	ctx.emitGroupDeleteEffects(deleteEffects)
+	return nil
 }
 
 func (ctx *MahresourcesContext) GroupMetaKeys() ([]contracts.MetaKey, error) {
@@ -378,14 +389,25 @@ func (ctx *MahresourcesContext) BulkAddMetaToGroups(query *query_models.BulkEdit
 }
 
 func (ctx *MahresourcesContext) BulkDeleteGroups(query *query_models.BulkQuery) error {
-	return ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+	var deleteEffects []groupDeleteEffect
+	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
 		for _, id := range query.ID {
-			if err := altCtx.DeleteGroup(id); err != nil {
+			if err := altCtx.prepareGroupDelete(id); err != nil {
 				return err
 			}
+			effect, err := altCtx.deleteGroupInTransaction(id)
+			if err != nil {
+				return err
+			}
+			deleteEffects = append(deleteEffects, effect)
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	ctx.emitGroupDeleteEffects(deleteEffects)
+	return nil
 }
 
 func (ctx *MahresourcesContext) FindParentsOfGroup(id uint) ([]models.Group, error) {

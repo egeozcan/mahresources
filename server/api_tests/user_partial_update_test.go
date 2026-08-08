@@ -2,6 +2,7 @@ package api_tests
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -86,6 +87,107 @@ func TestUserPartialUpdateExplicitNullClearsScope(t *testing.T) {
 	}
 	if reloaded.ScopeGroupId != nil {
 		t.Fatalf("explicit null did not clear scope: %v", *reloaded.ScopeGroupId)
+	}
+}
+
+func TestUserFullFormDisabledPresenceMarkerAndPartialPreservation(t *testing.T) {
+	tc := setupAuthEnv(t)
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	user, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "disabled-form", Password: "password1", Role: models.RoleEditor, Disabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	headers := map[string]string{
+		"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded", "Authorization": admin,
+	}
+
+	// A partial form that happens to carry username and role is still partial
+	// unless the edit form's explicit checkbox-presence marker is supplied.
+	partial := url.Values{"id": {uintString(user.ID)}, "username": {user.Username}, "role": {string(user.Role)}}
+	if response := doReq(tc, http.MethodPost, "/v1/user", headers, nil, strings.NewReader(partial.Encode())); response.Code != http.StatusOK {
+		t.Fatalf("partial update status=%d body=%s", response.Code, response.Body.String())
+	}
+	if reloaded, _ := tc.AppCtx.GetUser(user.ID); !reloaded.Disabled {
+		t.Fatal("partial form without disabledPresent re-enabled the account")
+	}
+
+	full := url.Values{"id": {uintString(user.ID)}, "username": {user.Username}, "role": {string(user.Role)}, "disabledPresent": {"true"}}
+	if response := doReq(tc, http.MethodPost, "/v1/user", headers, nil, strings.NewReader(full.Encode())); response.Code != http.StatusOK {
+		t.Fatalf("full update status=%d body=%s", response.Code, response.Body.String())
+	}
+	if reloaded, _ := tc.AppCtx.GetUser(user.ID); reloaded.Disabled {
+		t.Fatal("full form's explicitly unchecked disabled checkbox did not re-enable the account")
+	}
+}
+
+func TestUserUpdateRejectsJSONNullForNonNullableFields(t *testing.T) {
+	for _, field := range []string{"username", "displayName", "password", "role", "disabled"} {
+		t.Run(field, func(t *testing.T) {
+			tc := setupAuthEnv(t)
+			admin := roleBearer(t, tc, models.RoleAdmin)
+			user, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+				Username: "null-" + strings.ToLower(field), DisplayName: "Before", Password: "password1", Role: models.RoleEditor, Disabled: true,
+			})
+			if err != nil {
+				t.Fatalf("create user: %v", err)
+			}
+			response := doReq(tc, http.MethodPost, "/v1/user", map[string]string{
+				"Accept": "application/json", "Content-Type": "application/json", "Authorization": admin,
+			}, nil, strings.NewReader(`{"id":`+uintString(user.ID)+`,"`+field+`":null}`))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("null %s status=%d, want 400; body=%s", field, response.Code, response.Body.String())
+			}
+			reloaded, err := tc.AppCtx.GetUser(user.ID)
+			if err != nil {
+				t.Fatalf("reload: %v", err)
+			}
+			if reloaded.Username != user.Username || reloaded.DisplayName != user.DisplayName || reloaded.PasswordHash != user.PasswordHash || reloaded.Role != user.Role || reloaded.Disabled != user.Disabled {
+				t.Fatalf("null %s changed account: before=%+v after=%+v", field, user, reloaded)
+			}
+		})
+	}
+}
+
+func TestUserCreateRejectsJSONNullForNonNullableFields(t *testing.T) {
+	for _, field := range []string{"username", "displayName", "password", "role", "disabled"} {
+		t.Run(field, func(t *testing.T) {
+			tc := setupAuthEnv(t)
+			admin := roleBearer(t, tc, models.RoleAdmin)
+			body := map[string]any{"username": "create-null", "displayName": "Name", "password": "password1", "role": "editor", "disabled": false}
+			body[field] = nil
+			encoded, _ := json.Marshal(body)
+			response := doReq(tc, http.MethodPost, "/v1/users", map[string]string{
+				"Accept": "application/json", "Content-Type": "application/json", "Authorization": admin,
+			}, nil, strings.NewReader(string(encoded)))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("null %s status=%d, want 400; body=%s", field, response.Code, response.Body.String())
+			}
+			if _, err := tc.AppCtx.GetUserByUsername("create-null"); !errors.Is(err, application_context.ErrUserNotFound) {
+				t.Fatalf("null %s persisted an account: %v", field, err)
+			}
+		})
+	}
+}
+
+func TestUserUpdateLegacyQueryStringPresence(t *testing.T) {
+	tc := setupAuthEnv(t)
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	user, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "query-update", DisplayName: "Before", Password: "password1", Role: models.RoleEditor,
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	path := "/v1/user?id=" + uintString(user.ID) + "&displayName=After"
+	response := doReq(tc, http.MethodPost, path, map[string]string{"Accept": "application/json", "Authorization": admin}, nil, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("query update status=%d body=%s", response.Code, response.Body.String())
+	}
+	reloaded, _ := tc.AppCtx.GetUser(user.ID)
+	if reloaded.DisplayName != "After" || reloaded.Username != user.Username || reloaded.Role != user.Role {
+		t.Fatalf("query update did not preserve partial semantics: %+v", reloaded)
 	}
 }
 

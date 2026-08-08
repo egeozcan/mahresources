@@ -3,6 +3,7 @@ package application_context
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -106,6 +107,94 @@ func TestEnsureRootAdmin_ReusesDisabledRootAdmin(t *testing.T) {
 	}
 	if _, _, err := ctx.ValidateApiToken(oldToken); !errors.Is(err, ErrApiTokenInvalid) {
 		t.Errorf("disabled root's old token survived password reset: %v", err)
+	}
+}
+
+func TestEnsureAdminUserReclassifiesConcurrentRename(t *testing.T) {
+	ctx := newSharedFileContext(t)
+	existing, err := ctx.CreateUser(&UserInput{Username: "bootstrap", Password: "password1", Role: models.RoleEditor})
+	if err != nil {
+		t.Fatalf("create existing: %v", err)
+	}
+	paused := make(chan struct{})
+	release := make(chan struct{})
+	var used atomic.Bool
+	ctx.identityReuseBarrier = func(operation string, expected *models.User) {
+		if operation == "ensure-admin" && used.CompareAndSwap(false, true) {
+			close(paused)
+			<-release
+		}
+	}
+	done := make(chan struct {
+		user *models.User
+		err  error
+	}, 1)
+	go func() {
+		user, ensureErr := ctx.EnsureAdminUser("bootstrap", "new-password")
+		done <- struct {
+			user *models.User
+			err  error
+		}{user, ensureErr}
+	}()
+	<-paused
+	if err := ctx.db.Model(&models.User{}).Where("id = ?", existing.ID).Update("username", "renamed-away").Error; err != nil {
+		t.Fatalf("concurrent rename: %v", err)
+	}
+	close(release)
+	result := <-done
+	if result.err != nil {
+		t.Fatalf("EnsureAdminUser: %v", result.err)
+	}
+	if result.user.Username != "bootstrap" || result.user.Role != models.RoleAdmin || result.user.Disabled {
+		t.Fatalf("bootstrap did not converge on requested enabled admin: %+v", result.user)
+	}
+	moved, err := ctx.GetUser(existing.ID)
+	if err != nil || moved.Username != "renamed-away" || moved.Role != models.RoleEditor {
+		t.Fatalf("renamed identity was hijacked: user=%+v err=%v", moved, err)
+	}
+}
+
+func TestEnsureRootAdminReclassifiesConcurrentStaleRole(t *testing.T) {
+	ctx := newSharedFileContext(t)
+	root, err := ctx.CreateUser(&UserInput{Username: "root", Password: "password1", Role: models.RoleAdmin, Disabled: true})
+	if err != nil {
+		t.Fatalf("create disabled root: %v", err)
+	}
+	paused := make(chan struct{})
+	release := make(chan struct{})
+	var used atomic.Bool
+	ctx.identityReuseBarrier = func(operation string, expected *models.User) {
+		if operation == "ensure-root" && used.CompareAndSwap(false, true) {
+			close(paused)
+			<-release
+		}
+	}
+	done := make(chan struct {
+		user *models.User
+		err  error
+	}, 1)
+	go func() {
+		user, ensureErr := ctx.EnsureRootAdmin()
+		done <- struct {
+			user *models.User
+			err  error
+		}{user, ensureErr}
+	}()
+	<-paused
+	if err := ctx.db.Model(&models.User{}).Where("id = ?", root.ID).Update("role", models.RoleEditor).Error; err != nil {
+		t.Fatalf("concurrent role change: %v", err)
+	}
+	close(release)
+	result := <-done
+	if result.err != nil {
+		t.Fatalf("EnsureRootAdmin: %v", result.err)
+	}
+	if result.user.Username != "root2" || result.user.Role != models.RoleAdmin || result.user.Disabled {
+		t.Fatalf("root bootstrap did not reclassify stale role: %+v", result.user)
+	}
+	original, err := ctx.GetUser(root.ID)
+	if err != nil || original.Role != models.RoleEditor || !original.Disabled {
+		t.Fatalf("stale root identity was re-enabled: user=%+v err=%v", original, err)
 	}
 }
 

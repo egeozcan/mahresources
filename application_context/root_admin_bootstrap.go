@@ -5,9 +5,11 @@ import (
 	"fmt"
 
 	"mahresources/auth"
+	"mahresources/constants"
 	"mahresources/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // EnsureRootAdmin guarantees at least one enabled admin exists. If one already
@@ -58,50 +60,93 @@ func (ctx *MahresourcesContext) EnsureRootAdmin() (*models.User, error) {
 // to an auto-generated password); if "root" is a non-admin it does not hijack it
 // and instead creates the first unused rootN name.
 func (ctx *MahresourcesContext) createOrReuseRootAdmin(hash string) (*models.User, error) {
-	existing, err := ctx.GetUserByUsername("root")
-	if err != nil && !errors.Is(err, ErrUserNotFound) {
-		return nil, err
+	for attempt := 0; attempt < 5; attempt++ {
+		existing, err := ctx.GetUserByUsername("root")
+		if err != nil && !errors.Is(err, ErrUserNotFound) {
+			return nil, err
+		}
+		if existing == nil {
+			created, createErr := ctx.createAutoRootAdmin("root", hash)
+			if errors.Is(createErr, ErrUsernameTaken) {
+				continue
+			}
+			return created, createErr
+		}
+		if ctx.identityReuseBarrier != nil {
+			ctx.identityReuseBarrier("ensure-root", existing)
+		}
+		if existing.Role == models.RoleAdmin {
+			reused, reuseErr := ctx.reuseExpectedRootAdmin(existing, hash)
+			if errors.Is(reuseErr, errIdentityReclassified) {
+				continue
+			}
+			return reused, reuseErr
+		}
+
+		// "root" is a real non-admin account; find an unused rootN instead.
+		for i := 2; i < 10000; i++ {
+			name := fmt.Sprintf("root%d", i)
+			u, getErr := ctx.GetUserByUsername(name)
+			if getErr != nil && !errors.Is(getErr, ErrUserNotFound) {
+				return nil, getErr
+			}
+			if u == nil {
+				created, createErr := ctx.createAutoRootAdmin(name, hash)
+				if errors.Is(createErr, ErrUsernameTaken) {
+					break
+				}
+				return created, createErr
+			}
+		}
 	}
-	if existing == nil {
-		return ctx.createAutoRootAdmin("root", hash)
-	}
-	if existing.Role == models.RoleAdmin {
-		var reused models.User
-		if txErr := ctx.db.Transaction(func(tx *gorm.DB) error {
-			res := tx.Model(&models.User{}).Where("id = ?", existing.ID).Updates(map[string]any{
-				"password_hash": hash, "password_auto_generated": true,
-				"disabled": false, "scope_group_id": nil,
-			})
+	return nil, errors.New("could not stabilize root administrator identity")
+}
+
+func (ctx *MahresourcesContext) reuseExpectedRootAdmin(expected *models.User, hash string) (*models.User, error) {
+	var reused models.User
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		query := tx.Where("id = ? AND username = ? AND role = ?", expected.ID, "root", expected.Role)
+		if ctx.Config.DbType == constants.DbTypeSqlite {
+			res := tx.Exec("UPDATE users SET id = id WHERE id = ? AND username = ? AND role = ?", expected.ID, "root", expected.Role)
 			if res.Error != nil {
 				return res.Error
 			}
 			if res.RowsAffected == 0 {
-				return ErrUserNotFound
+				return errIdentityReclassified
 			}
-			if err := deleteUserSessions(tx, existing.ID, nil); err != nil {
-				return err
+		} else if err := query.Clauses(clause.Locking{Strength: "UPDATE"}).First(&reused).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errIdentityReclassified
 			}
-			if err := deleteUserAPITokens(tx, existing.ID); err != nil {
-				return err
-			}
-			return tx.First(&reused, existing.ID).Error
-		}); txErr != nil {
-			return nil, txErr
+			return err
 		}
-		return &reused, nil
-	}
-	// "root" is a real non-admin account; find an unused rootN instead.
-	for i := 2; i < 10000; i++ {
-		name := fmt.Sprintf("root%d", i)
-		u, gErr := ctx.GetUserByUsername(name)
-		if gErr != nil && !errors.Is(gErr, ErrUserNotFound) {
-			return nil, gErr
+		res := tx.Model(&models.User{}).
+			Where("id = ? AND username = ? AND role = ?", expected.ID, "root", expected.Role).
+			Updates(map[string]any{
+				"password_hash": hash, "password_auto_generated": true,
+				"disabled": false, "scope_group_id": nil,
+			})
+		if res.Error != nil {
+			return res.Error
 		}
-		if u == nil {
-			return ctx.createAutoRootAdmin(name, hash)
+		if res.RowsAffected == 0 {
+			return errIdentityReclassified
 		}
-	}
-	return nil, errors.New("could not find an available root admin username")
+		if err := deleteUserSessions(tx, expected.ID, nil); err != nil {
+			return err
+		}
+		if err := deleteUserAPITokens(tx, expected.ID); err != nil {
+			return err
+		}
+		if err := tx.First(&reused, expected.ID).Error; err != nil {
+			return err
+		}
+		if reused.Username != "root" || reused.Role != models.RoleAdmin || reused.Disabled {
+			return errIdentityReclassified
+		}
+		return nil
+	})
+	return &reused, err
 }
 
 // createAutoRootAdmin inserts a fresh enabled admin with an auto-generated

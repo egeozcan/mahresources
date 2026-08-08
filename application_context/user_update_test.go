@@ -3,6 +3,7 @@ package application_context
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"mahresources/models"
@@ -60,6 +61,25 @@ func TestStaleNonAdminUpdateCannotRemoveLastAdmin(t *testing.T) {
 		t.Fatalf("create editor: %v", err)
 	}
 
+	paused := make(chan struct{})
+	release := make(chan struct{})
+	var barrierUsed atomic.Bool
+	ctx.userUpdateBarrier = func() {
+		if barrierUsed.CompareAndSwap(false, true) {
+			close(paused)
+			<-release
+		}
+	}
+	staleDone := make(chan error, 1)
+	go func() {
+		_, staleErr := ctx.UpdateUser(editor.ID, &UserUpdate{
+			DisplayName: UserField[string]{Set: true, Value: "stale write"},
+			Role:        UserField[models.Role]{Set: true, Value: models.RoleEditor},
+		})
+		staleDone <- staleErr
+	}()
+	<-paused // stale editor-valued update is now genuinely in flight
+
 	if _, err := ctx.UpdateUser(editor.ID, &UserUpdate{
 		Role: UserField[models.Role]{Set: true, Value: models.RoleAdmin},
 	}); err != nil {
@@ -70,13 +90,9 @@ func TestStaleNonAdminUpdateCannotRemoveLastAdmin(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("demote old admin: %v", err)
 	}
+	close(release)
 
-	// Applying an editor-valued stale write must classify against the role now
-	// stored in the transaction, not against the role observed by the caller.
-	if _, err := ctx.UpdateUser(editor.ID, &UserUpdate{
-		DisplayName: UserField[string]{Set: true, Value: "stale write"},
-		Role:        UserField[models.Role]{Set: true, Value: models.RoleEditor},
-	}); !errors.Is(err, ErrLastAdmin) {
+	if err := <-staleDone; !errors.Is(err, ErrLastAdmin) {
 		t.Fatalf("stale demotion: want ErrLastAdmin, got %v", err)
 	}
 	if n, err := ctx.CountEnabledAdmins(); err != nil || n != 1 {

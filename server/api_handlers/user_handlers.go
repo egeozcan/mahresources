@@ -67,21 +67,33 @@ func bindUserUpdate(req *userRequest, r *http.Request) (map[string]bool, error) 
 				}
 			case "username":
 				present[name] = true
+				if isJSONNull(value) {
+					return nil, errors.New("username cannot be null")
+				}
 				if err := json.Unmarshal(value, &req.Username); err != nil {
 					return nil, err
 				}
 			case "displayName":
 				present[name] = true
+				if isJSONNull(value) {
+					return nil, errors.New("displayName cannot be null")
+				}
 				if err := json.Unmarshal(value, &req.DisplayName); err != nil {
 					return nil, err
 				}
 			case "password":
 				present[name] = true
+				if isJSONNull(value) {
+					return nil, errors.New("password cannot be null")
+				}
 				if err := json.Unmarshal(value, &req.Password); err != nil {
 					return nil, err
 				}
 			case "role":
 				present[name] = true
+				if isJSONNull(value) {
+					return nil, errors.New("role cannot be null")
+				}
 				if err := json.Unmarshal(value, &req.Role); err != nil {
 					return nil, err
 				}
@@ -94,6 +106,9 @@ func bindUserUpdate(req *userRequest, r *http.Request) (map[string]bool, error) 
 				}
 			case "disabled":
 				present[name] = true
+				if isJSONNull(value) {
+					return nil, errors.New("disabled cannot be null")
+				}
 				if err := json.Unmarshal(value, &req.Disabled); err != nil {
 					return nil, err
 				}
@@ -104,17 +119,51 @@ func bindUserUpdate(req *userRequest, r *http.Request) (map[string]bool, error) 
 	if err := tryFillStructValuesFromRequest(req, r); err != nil {
 		return nil, err
 	}
-	for _, name := range []string{"username", "displayName", "password", "role", "scopeGroupId", "disabled"} {
-		_, present[name] = r.PostForm[name]
+	queryValues := r.URL.Query()
+	// Preserve the historical query-string update shape. When a form body is
+	// also present, body values win while omitted body fields can still be
+	// supplied by query for backwards compatibility.
+	if len(queryValues) > 0 && r.PostForm != nil {
+		var queryReq userRequest
+		if err := decoder.Decode(&queryReq, queryValues); err != nil {
+			return nil, err
+		}
+		if _, ok := r.PostForm["id"]; !ok && queryValues.Has("id") {
+			req.ID = queryReq.ID
+		}
+		if _, ok := r.PostForm["username"]; !ok && queryValues.Has("username") {
+			req.Username = queryReq.Username
+		}
+		if _, ok := r.PostForm["displayName"]; !ok && queryValues.Has("displayName") {
+			req.DisplayName = queryReq.DisplayName
+		}
+		if _, ok := r.PostForm["password"]; !ok && queryValues.Has("password") {
+			req.Password = queryReq.Password
+		}
+		if _, ok := r.PostForm["role"]; !ok && queryValues.Has("role") {
+			req.Role = queryReq.Role
+		}
+		if _, ok := r.PostForm["scopeGroupId"]; !ok && queryValues.Has("scopeGroupId") {
+			req.ScopeGroupId = queryReq.ScopeGroupId
+		}
+		if _, ok := r.PostForm["disabled"]; !ok && queryValues.Has("disabled") {
+			req.Disabled = queryReq.Disabled
+		}
 	}
-	// The existing full edit form represents an unchecked checkbox by omitting
-	// disabled. Username+role identify that full-body form, so preserve its
-	// historical ability to re-enable an account without making genuinely
-	// partial form requests clear the field.
-	if present["username"] && present["role"] {
+	for _, name := range []string{"username", "displayName", "password", "role", "scopeGroupId", "disabled"} {
+		_, inBody := r.PostForm[name]
+		present[name] = inBody || queryValues.Has(name)
+	}
+	// Only the full Task 5 edit form may interpret an omitted checkbox as an
+	// explicit false value. Partial form clients preserve Disabled.
+	if r.PostForm.Has("disabledPresent") || queryValues.Has("disabledPresent") {
 		present["disabled"] = true
 	}
 	return present, nil
+}
+
+func isJSONNull(value json.RawMessage) bool {
+	return strings.EqualFold(strings.TrimSpace(string(value)), "null")
 }
 
 // scopeGroupId distinguishes "no scope group given" from "group 0".
@@ -188,7 +237,7 @@ func GetUserHandler(ctx UserAdminContext) func(http.ResponseWriter, *http.Reques
 func CreateUserHandler(ctx UserAdminContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req userRequest
-		if err := tryFillStructValuesFromRequest(&req, r); err != nil {
+		if _, err := bindUserUpdate(&req, r); err != nil {
 			http_utils.HandleError(err, w, r, http.StatusBadRequest)
 			return
 		}

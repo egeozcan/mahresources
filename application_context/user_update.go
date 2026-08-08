@@ -125,6 +125,10 @@ func (ctx *MahresourcesContext) UpdateUser(id uint, update *UserUpdate) (*models
 		return result, nil
 	}
 
+	if ctx.userUpdateBarrier != nil {
+		ctx.userUpdateBarrier()
+	}
+
 	var result models.User
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		// SQLite has no row-level FOR UPDATE. Make a no-op write the first
@@ -161,7 +165,7 @@ func (ctx *MahresourcesContext) UpdateUser(id uint, update *UserUpdate) (*models
 		}
 		effectiveScope = normalizeScopeGroup(effectiveRole, effectiveScope)
 		if update.Role.Set || update.ScopeGroupID.Set {
-			if err := validateScopeGroupDB(tx, effectiveRole, effectiveScope); err != nil {
+			if err := ctx.validateAndLockScopeGroup(tx, effectiveRole, effectiveScope); err != nil {
 				return err
 			}
 			updates["scope_group_id"] = effectiveScope
@@ -212,22 +216,4 @@ func (ctx *MahresourcesContext) UpdateUser(id uint, update *UserUpdate) (*models
 	}
 	ctx.refreshRootAdmin()
 	return &result, nil
-}
-
-func validateScopeGroupDB(db *gorm.DB, role models.Role, scope *uint) error {
-	scope = normalizeScopeGroup(role, scope)
-	if scope == nil {
-		if role.RequiresScopeGroup() {
-			return ErrScopeGroupRequired
-		}
-		return nil
-	}
-	var count int64
-	if err := db.Model(&models.Group{}).Where("id = ?", *scope).Count(&count).Error; err != nil {
-		return err
-	}
-	if count == 0 {
-		return ErrScopeGroupMissing
-	}
-	return nil
 }

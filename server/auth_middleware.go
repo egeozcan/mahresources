@@ -39,9 +39,10 @@ func withAuthentication(appCtx *application_context.MahresourcesContext, next ht
 			return
 		}
 
-		principal, csrfToken := resolvePrincipal(appCtx, r)
+		principal, csrfToken, mechanism := resolvePrincipal(appCtx, r)
 		if principal != nil {
 			ctx := auth.WithPrincipal(r.Context(), principal)
+			ctx = auth.WithAuthenticationMechanism(ctx, mechanism)
 			if csrfToken != "" {
 				ctx = auth.WithCSRFToken(ctx, csrfToken)
 			}
@@ -75,22 +76,22 @@ func withAuthentication(appCtx *application_context.MahresourcesContext, next ht
 // neither yields a valid, enabled account. The second return value is the
 // session's CSRF token, set only for cookie-authenticated requests ("" for
 // Bearer, which carries no ambient cookie and is exempt from CSRF).
-func resolvePrincipal(appCtx *application_context.MahresourcesContext, r *http.Request) (*auth.Principal, string) {
+func resolvePrincipal(appCtx *application_context.MahresourcesContext, r *http.Request) (*auth.Principal, string, auth.AuthenticationMechanism) {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		raw := strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
 		if user, _, err := appCtx.ValidateApiToken(raw); err == nil {
-			return auth.FromUser(user), ""
+			return auth.FromUser(user), "", auth.AuthenticationMechanismBearer
 		}
 		// An explicit but invalid bearer token is a failed auth attempt; do not
 		// fall through to cookie resolution.
-		return nil, ""
+		return nil, "", ""
 	}
 	if c, err := r.Cookie(appCtx.SessionCookieName()); err == nil {
 		if user, session, err := appCtx.ValidateSession(c.Value); err == nil {
-			return auth.FromUser(user), session.CsrfToken
+			return auth.FromUser(user), session.CsrfToken, auth.AuthenticationMechanismCookie
 		}
 	}
-	return nil, ""
+	return nil, "", ""
 }
 
 // isPublicPath lists the paths reachable without authentication so a logged-out

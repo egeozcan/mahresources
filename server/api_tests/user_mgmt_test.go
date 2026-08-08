@@ -153,7 +153,7 @@ func TestAdminUserDisabledReplayUsesSubmittedIntent(t *testing.T) {
 	// Stored enabled, submitted checked. Demoting the last admin forces replay.
 	enableToDisabled := url.Values{
 		"id": {fmt.Sprint(admin.ID)}, "username": {admin.Username},
-		"role": {string(models.RoleEditor)}, "disabled": {"true"},
+		"role": {string(models.RoleEditor)}, "disabled": {"true"}, "disabledPresent": {"true"},
 	}
 	res := doReq(tc, http.MethodPost, "/v1/user", headers, []*http.Cookie{cookie}, strings.NewReader(enableToDisabled.Encode()))
 	page := doReq(tc, http.MethodGet, res.Header().Get("Location"), map[string]string{"Accept": "text/html"}, []*http.Cookie{cookie}, nil)
@@ -171,7 +171,7 @@ func TestAdminUserDisabledReplayUsesSubmittedIntent(t *testing.T) {
 	}
 	disabledToEnabled := url.Values{
 		"id": {fmt.Sprint(target.ID)}, "username": {admin.Username},
-		"role": {string(models.RoleEditor)},
+		"role": {string(models.RoleEditor)}, "disabledPresent": {"true"},
 	}
 	res = doReq(tc, http.MethodPost, "/v1/user", headers, []*http.Cookie{cookie}, strings.NewReader(disabledToEnabled.Encode()))
 	page = doReq(tc, http.MethodGet, res.Header().Get("Location"), map[string]string{"Accept": "text/html"}, []*http.Cookie{cookie}, nil)
@@ -267,18 +267,19 @@ func TestAdminUserEditPage_RendersPrefilledForTheAdmin(t *testing.T) {
 	}
 	body := page.Body.String()
 
-	// Prefilled, and that is a correctness requirement rather than a nicety:
-	// UpdateUser is full-replace, so a field the form omits is a field the save
-	// clears. An empty role is a 400; an unchecked Disabled box re-enables.
+	// Prefilled so the full edit form submits the intended account state. The
+	// explicit marker distinguishes its unchecked Disabled box from a partial
+	// form client that omitted the property and expects it preserved.
 	for _, want := range []string{
 		`name="id" value=` + fmt.Sprintf(`"%d"`, admin.ID),
 		`value="admin"`,
 		`name="role"`,
 		`name="disabled"`,
+		`name="disabledPresent" value="true"`,
 		`name="scopeGroupId"`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("the edit form is missing %s — UpdateUser is full-replace, so an absent field is a cleared field.\nbody: %s", want, body)
+			t.Errorf("the edit form is missing %s.\nbody: %s", want, body)
 		}
 	}
 	// The password field exists but is not required: blank means unchanged.
@@ -310,6 +311,7 @@ func TestAdminUserEdit_LastAdminConflictComesBackToTheForm(t *testing.T) {
 
 	form := url.Values{}
 	form.Set("id", fmt.Sprintf("%d", admin.ID))
+	form.Set("disabledPresent", "true")
 	form.Set("username", "admin")
 	form.Set("displayName", "Kept Value")
 	form.Set("password", "supersecret1")
@@ -383,6 +385,7 @@ func TestAdminUserEdit_AnAllowedSaveGoesThrough(t *testing.T) {
 
 	form := url.Values{}
 	form.Set("id", fmt.Sprintf("%d", admin.ID))
+	form.Set("disabledPresent", "true")
 	form.Set("username", "admin")
 	form.Set("displayName", "Renamed Admin")
 	form.Set("password", "") // blank means unchanged

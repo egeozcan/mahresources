@@ -3,7 +3,6 @@ package api_handlers
 import (
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"mahresources/application_context"
@@ -38,7 +37,7 @@ func ChangeOwnPasswordHandler(ctx AccountContext) func(http.ResponseWriter, *htt
 			return
 		}
 		var keepSessionTokenHash *string
-		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Authorization"))), "bearer ") {
+		if auth.AuthenticationMechanismFromContext(r.Context()) == auth.AuthenticationMechanismCookie {
 			if cookie, err := r.Cookie(ctx.SessionCookieName()); err == nil {
 				hash := auth.HashToken(cookie.Value)
 				keepSessionTokenHash = &hash

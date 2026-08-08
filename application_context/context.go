@@ -348,6 +348,12 @@ type MahresourcesContext struct {
 	icsCache *ICSCache
 	// pluginManager manages Lua plugin loading and hook execution
 	pluginManager *plugin_system.PluginManager
+	// Narrow internal seams used to coordinate scope-integrity concurrency tests
+	// and to record post-commit group-delete effects. Derived contexts share them.
+	scopeLockBarrier      func(operation string, groupID uint)
+	userUpdateBarrier     func()
+	identityReuseBarrier  func(operation string, expected *models.User)
+	groupDeleteEffectSink groupDeleteEffectSink
 	// DefaultResourceCategoryID is the resolved ID of the default resource category.
 	// Set at startup; used as the fallback when no category is specified and as the
 	// reassignment target when a category is deleted.

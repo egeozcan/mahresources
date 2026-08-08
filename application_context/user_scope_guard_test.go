@@ -2,7 +2,9 @@ package application_context
 
 import (
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -91,6 +93,135 @@ func TestMergeGroupsTransfersUserScopeToWinner(t *testing.T) {
 	}
 	if loserCount != 0 {
 		t.Fatalf("loser group count = %d, want 0", loserCount)
+	}
+}
+
+func TestScopeAssignmentAndDeleteSerializeWithoutDanglingReference(t *testing.T) {
+	for _, useUpdate := range []bool{false, true} {
+		method := "create"
+		if useUpdate {
+			method = "update"
+		}
+		for _, assignmentWins := range []bool{false, true} {
+			name := method + "/delete-wins"
+			if assignmentWins {
+				name = method + "/assignment-wins"
+			}
+			t.Run(name, func(t *testing.T) {
+				ctx := newSharedFileContext(t)
+				group := makeTestGroup(t, ctx, name)
+				var assignmentUser *models.User
+				if useUpdate {
+					var err error
+					assignmentUser, err = ctx.CreateUser(&UserInput{Username: "racer-" + method, Password: "password1", Role: models.RoleUser})
+					if err != nil {
+						t.Fatalf("create update target: %v", err)
+					}
+				}
+				locked := make(chan struct{})
+				release := make(chan struct{})
+				var once sync.Once
+				winningOperation := "delete"
+				if assignmentWins {
+					winningOperation = "assign"
+				}
+				ctx.scopeLockBarrier = func(operation string, groupID uint) {
+					if operation == winningOperation && groupID == group.ID {
+						once.Do(func() {
+							close(locked)
+							<-release
+						})
+					}
+				}
+
+				deleteDone := make(chan error, 1)
+				assignDone := make(chan error, 1)
+				startAssign := func() {
+					go func() {
+						if useUpdate {
+							_, err := ctx.UpdateUser(assignmentUser.ID, &UserUpdate{ScopeGroupID: UserField[*uint]{Set: true, Value: &group.ID}})
+							assignDone <- err
+							return
+						}
+						var err error
+						assignmentUser, err = ctx.CreateUser(&UserInput{
+							Username: "racer-" + method, Password: "password1", Role: models.RoleUser, ScopeGroupId: &group.ID,
+						})
+						assignDone <- err
+					}()
+				}
+				startDelete := func() { go func() { deleteDone <- ctx.DeleteGroup(group.ID) }() }
+				if assignmentWins {
+					startAssign()
+				} else {
+					startDelete()
+				}
+				<-locked // real barrier: the winning transaction holds the DB lock
+				if assignmentWins {
+					startDelete()
+				} else {
+					startAssign()
+				}
+				select {
+				case err := <-deleteDone:
+					t.Fatalf("losing operation completed before lock release: %v", err)
+				case err := <-assignDone:
+					t.Fatalf("losing operation completed before lock release: %v", err)
+				case <-time.After(50 * time.Millisecond):
+				}
+				close(release)
+
+				deleteErr, assignErr := <-deleteDone, <-assignDone
+				if assignmentWins {
+					if assignErr != nil || !errors.Is(deleteErr, ErrGroupIsUserScope) {
+						t.Fatalf("assignment wins: assign=%v delete=%v", assignErr, deleteErr)
+					}
+					if assignmentUser == nil {
+						t.Fatal("assignment succeeded without a user")
+					}
+					assertGroupPresent(t, ctx, group.ID)
+					assertUserScope(t, ctx, assignmentUser.ID, group.ID)
+				} else {
+					if deleteErr != nil || !errors.Is(assignErr, ErrScopeGroupMissing) {
+						t.Fatalf("delete wins: delete=%v assign=%v", deleteErr, assignErr)
+					}
+					var groupCount, danglingCount int64
+					ctx.db.Model(&models.Group{}).Where("id = ?", group.ID).Count(&groupCount)
+					ctx.db.Model(&models.User{}).Where("scope_group_id = ?", group.ID).Count(&danglingCount)
+					if groupCount != 0 || danglingCount != 0 {
+						t.Fatalf("delete winner left group=%d dangling users=%d", groupCount, danglingCount)
+					}
+				}
+			})
+		}
+	}
+}
+
+type recordingGroupDeleteEffects struct {
+	logs, hooks, invalidations int
+}
+
+func (r *recordingGroupDeleteEffects) LogDeleted(*MahresourcesContext, groupDeleteEffect) { r.logs++ }
+func (r *recordingGroupDeleteEffects) RunAfterHook(*MahresourcesContext, groupDeleteEffect) {
+	r.hooks++
+}
+func (r *recordingGroupDeleteEffects) InvalidateCache(*MahresourcesContext, groupDeleteEffect) {
+	r.invalidations++
+}
+
+func TestBulkDeleteRollbackEmitsNoExternalEffects(t *testing.T) {
+	ctx := newUserScopeGuardTestContext(t)
+	first := makeTestGroup(t, ctx, "first")
+	recorder := &recordingGroupDeleteEffects{}
+	ctx.groupDeleteEffectSink = recorder
+
+	err := ctx.BulkDeleteGroups(&query_models.BulkQuery{ID: []uint{first.ID, first.ID + 99999}})
+	if err == nil {
+		t.Fatal("bulk delete with a missing later group unexpectedly succeeded")
+	}
+	assertGroupPresent(t, ctx, first.ID)
+	if recorder.logs != 0 || recorder.hooks != 0 || recorder.invalidations != 0 {
+		t.Fatalf("rolled-back bulk delete emitted log=%d hook=%d invalidation=%d", recorder.logs, recorder.hooks, recorder.invalidations)
 	}
 }
 

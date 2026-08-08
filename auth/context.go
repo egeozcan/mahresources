@@ -7,6 +7,17 @@ type contextKey struct{ name string }
 
 var principalKey = contextKey{"principal"}
 var csrfTokenKey = contextKey{"csrfToken"}
+var authenticationMechanismKey = contextKey{"authenticationMechanism"}
+
+// AuthenticationMechanism records which credential middleware actually used.
+// Handlers must consume this fact instead of reparsing Authorization headers,
+// whose casing/whitespace may not match the middleware's accepted syntax.
+type AuthenticationMechanism string
+
+const (
+	AuthenticationMechanismBearer AuthenticationMechanism = "bearer"
+	AuthenticationMechanismCookie AuthenticationMechanism = "cookie"
+)
 
 // WithPrincipal returns a child context carrying the authenticated principal.
 func WithPrincipal(ctx context.Context, p *Principal) context.Context {
@@ -38,6 +49,21 @@ func CSRFTokenFromContext(ctx context.Context) string {
 	}
 	t, _ := ctx.Value(csrfTokenKey).(string)
 	return t
+}
+
+// WithAuthenticationMechanism stores the credential mechanism selected by
+// authentication middleware.
+func WithAuthenticationMechanism(ctx context.Context, mechanism AuthenticationMechanism) context.Context {
+	return context.WithValue(ctx, authenticationMechanismKey, mechanism)
+}
+
+// AuthenticationMechanismFromContext returns the mechanism middleware used.
+func AuthenticationMechanismFromContext(ctx context.Context) AuthenticationMechanism {
+	if ctx == nil {
+		return ""
+	}
+	mechanism, _ := ctx.Value(authenticationMechanismKey).(AuthenticationMechanism)
+	return mechanism
 }
 
 // DescribeContext returns a plain map describing the principal on ctx, or nil

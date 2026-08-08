@@ -16,15 +16,17 @@
   </div>
   {% endif %}
 
-  {# Every field is prefilled, and that is a correctness requirement rather than #}
-  {# a convenience: UpdateUser is full-replace for username, display name, role, #}
-  {# scope group and disabled. An omitted role decodes to "" and is a 400; an    #}
-  {# unchecked Disabled box re-enables a disabled account. Password is the one   #}
-  {# exception — blank means unchanged.                                          #}
+  {# Every field is prefilled so this full edit form submits the intended account #}
+  {# state. UpdateUser itself is presence-aware for partial API/form clients. The #}
+  {# hidden disabledPresent marker below makes an unchecked box explicitly false; #}
+  {# password remains the one field where blank means unchanged.                  #}
   {# `queryValues.X.0|default:editUser.X` so a rejected save comes back with     #}
   {# what the admin typed, not with what is still in the database.               #}
   <form method="post" action="/v1/user" class="space-y-4" data-testid="user-edit-form">
     <input type="hidden" name="id" value="{{ editUser.ID }}">
+    {# Marks the checkbox as present even when it is unchecked. Partial form API #}
+    {# clients that omit this marker preserve the stored disabled state.          #}
+    <input type="hidden" name="disabledPresent" value="true">
 
     <div>
       <label for="ue-username" class="block text-sm font-mono mb-1">Username</label>

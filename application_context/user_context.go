@@ -2,13 +2,16 @@ package application_context
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"mahresources/auth"
+	"mahresources/constants"
 	"mahresources/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // User-management and authentication errors.
@@ -85,9 +88,6 @@ func (ctx *MahresourcesContext) CreateUser(input *UserInput) (*models.User, erro
 	if !input.Role.IsValid() {
 		return nil, ErrInvalidRole
 	}
-	if err := ctx.validateScopeGroup(input.Role, input.ScopeGroupId); err != nil {
-		return nil, err
-	}
 	if input.Password == "" {
 		return nil, ErrPasswordRequired
 	}
@@ -107,10 +107,18 @@ func (ctx *MahresourcesContext) CreateUser(input *UserInput) (*models.User, erro
 		ScopeGroupId: normalizeScopeGroup(input.Role, input.ScopeGroupId),
 		Disabled:     input.Disabled,
 	}
-	if err := ctx.db.Create(user).Error; err != nil {
-		if isUniqueConstraintError(err) {
-			return nil, ErrUsernameTaken
+	if err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.validateAndLockScopeGroup(tx, input.Role, user.ScopeGroupId); err != nil {
+			return err
 		}
+		if err := tx.Create(user).Error; err != nil {
+			if isUniqueConstraintError(err) {
+				return ErrUsernameTaken
+			}
+			return err
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	// Best-effort re-warm: a new admin may become (or shift) the root actor.
@@ -280,6 +288,8 @@ func (ctx *MahresourcesContext) AuthenticateUser(username, password string) (*mo
 // EnsureAdminUser creates an admin account with the given credentials, or, if
 // the username already exists, resets its password and ensures it is an enabled
 // admin. Idempotent; used for headless bootstrap from a flag/env.
+var errIdentityReclassified = errors.New("identity changed while awaiting mutation lock")
+
 func (ctx *MahresourcesContext) EnsureAdminUser(username, password string) (*models.User, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
@@ -291,47 +301,84 @@ func (ctx *MahresourcesContext) EnsureAdminUser(username, password string) (*mod
 	if err := auth.ValidatePassword(password); err != nil {
 		return nil, err
 	}
-
-	existing, err := ctx.GetUserByUsername(username)
-	if err != nil && !errors.Is(err, ErrUserNotFound) {
+	hash, err := auth.HashPassword(password)
+	if err != nil {
 		return nil, err
 	}
-	if existing != nil {
-		hash, hErr := auth.HashPassword(password)
-		if hErr != nil {
-			return nil, hErr
+
+	for attempt := 0; attempt < 5; attempt++ {
+		existing, getErr := ctx.GetUserByUsername(username)
+		if getErr != nil && !errors.Is(getErr, ErrUserNotFound) {
+			return nil, getErr
 		}
-		var promoted models.User
-		if txErr := ctx.db.Transaction(func(tx *gorm.DB) error {
-			res := tx.Model(&models.User{}).Where("id = ?", existing.ID).Updates(map[string]any{
-				"password_hash": hash, "password_auto_generated": false,
-				"role": models.RoleAdmin, "disabled": false, "scope_group_id": nil,
-			})
+		if existing == nil {
+			created, createErr := ctx.CreateUser(&UserInput{Username: username, Password: password, Role: models.RoleAdmin})
+			if errors.Is(createErr, ErrUsernameTaken) {
+				continue
+			}
+			return created, createErr
+		}
+		if ctx.identityReuseBarrier != nil {
+			ctx.identityReuseBarrier("ensure-admin", existing)
+		}
+		promoted, promoteErr := ctx.promoteExpectedAdmin(existing, username, hash)
+		if errors.Is(promoteErr, errIdentityReclassified) {
+			continue
+		}
+		if promoteErr != nil {
+			return nil, promoteErr
+		}
+		ctx.refreshRootAdmin()
+		return promoted, nil
+	}
+	return nil, fmt.Errorf("could not stabilize bootstrap identity for %q", username)
+}
+
+func (ctx *MahresourcesContext) promoteExpectedAdmin(expected *models.User, username, hash string) (*models.User, error) {
+	var promoted models.User
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		query := tx.Where("id = ? AND username = ? AND role = ?", expected.ID, username, expected.Role)
+		if ctx.Config.DbType == constants.DbTypeSqlite {
+			res := tx.Exec("UPDATE users SET id = id WHERE id = ? AND username = ? AND role = ?", expected.ID, username, expected.Role)
 			if res.Error != nil {
 				return res.Error
 			}
 			if res.RowsAffected == 0 {
-				return ErrUserNotFound
+				return errIdentityReclassified
 			}
-			if err := deleteUserSessions(tx, existing.ID, nil); err != nil {
-				return err
+		} else if err := query.Clauses(clause.Locking{Strength: "UPDATE"}).First(&promoted).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errIdentityReclassified
 			}
-			if err := deleteUserAPITokens(tx, existing.ID); err != nil {
-				return err
-			}
-			return tx.First(&promoted, existing.ID).Error
-		}); txErr != nil {
-			return nil, txErr
+			return err
 		}
-		ctx.refreshRootAdmin()
-		return &promoted, nil
-	}
-
-	return ctx.CreateUser(&UserInput{
-		Username: username,
-		Password: password,
-		Role:     models.RoleAdmin,
+		res := tx.Model(&models.User{}).
+			Where("id = ? AND username = ? AND role = ?", expected.ID, username, expected.Role).
+			Updates(map[string]any{
+				"password_hash": hash, "password_auto_generated": false,
+				"role": models.RoleAdmin, "disabled": false, "scope_group_id": nil,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return errIdentityReclassified
+		}
+		if err := deleteUserSessions(tx, expected.ID, nil); err != nil {
+			return err
+		}
+		if err := deleteUserAPITokens(tx, expected.ID); err != nil {
+			return err
+		}
+		if err := tx.First(&promoted, expected.ID).Error; err != nil {
+			return err
+		}
+		if promoted.Username != username || promoted.Role != models.RoleAdmin || promoted.Disabled {
+			return errIdentityReclassified
+		}
+		return nil
 	})
+	return &promoted, err
 }
 
 // TouchUserLogin records the time of a successful login.

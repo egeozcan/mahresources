@@ -461,59 +461,94 @@ func (ctx *MahresourcesContext) GetPopularGroupTags(query *query_models.GroupQue
 	return res, db.Scan(&res).Error
 }
 
-func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
-	_, hookErr := ctx.RunBeforePluginHooks("before_group_delete", map[string]any{"id": float64(groupId)})
-	if hookErr != nil {
-		return hookErr
+type groupDeleteEffect struct {
+	ID   uint
+	Name string
+}
+
+type groupDeleteEffectSink interface {
+	LogDeleted(*MahresourcesContext, groupDeleteEffect)
+	RunAfterHook(*MahresourcesContext, groupDeleteEffect)
+	InvalidateCache(*MahresourcesContext, groupDeleteEffect)
+}
+
+type defaultGroupDeleteEffectSink struct{}
+
+func (defaultGroupDeleteEffectSink) LogDeleted(ctx *MahresourcesContext, event groupDeleteEffect) {
+	ctx.Logger().Info(models.LogActionDelete, "group", &event.ID, event.Name, "Deleted group", nil)
+}
+func (defaultGroupDeleteEffectSink) RunAfterHook(ctx *MahresourcesContext, event groupDeleteEffect) {
+	ctx.RunAfterPluginHooks("after_group_delete", map[string]any{"id": float64(event.ID), "name": event.Name})
+}
+func (defaultGroupDeleteEffectSink) InvalidateCache(ctx *MahresourcesContext, _ groupDeleteEffect) {
+	ctx.InvalidateSearchCacheByType(EntityTypeGroup)
+}
+
+func (ctx *MahresourcesContext) emitGroupDeleteEffects(events []groupDeleteEffect) {
+	sink := ctx.groupDeleteEffectSink
+	if sink == nil {
+		sink = defaultGroupDeleteEffectSink{}
+	}
+	for _, event := range events {
+		sink.LogDeleted(ctx, event)
+		sink.RunAfterHook(ctx, event)
+		sink.InvalidateCache(ctx, event)
+	}
+}
+
+func (ctx *MahresourcesContext) prepareGroupDelete(groupID uint) error {
+	_, err := ctx.RunBeforePluginHooks("before_group_delete", map[string]any{"id": float64(groupID)})
+	return err
+}
+
+// deleteGroupInTransaction performs only database work and returns the effect
+// payload to emit after the owning transaction commits.
+func (ctx *MahresourcesContext) deleteGroupInTransaction(groupID uint) (groupDeleteEffect, error) {
+	group, err := ctx.lockScopeGroup(ctx.db, groupID, "delete")
+	if err != nil {
+		return groupDeleteEffect{}, err
+	}
+	ctx.EnsureForeignKeysActive(ctx.db)
+	if err := rejectGroupDeletionIfUserScope(ctx.db, groupID); err != nil {
+		return groupDeleteEffect{}, err
 	}
 
-	// Load group name before deletion for audit log
-	var group models.Group
-	if err := ctx.db.First(&group, groupId).Error; err != nil {
+	if err := ctx.db.Model(&models.Group{}).Where("owner_id = ?", groupID).Update("owner_id", nil).Error; err != nil {
+		return groupDeleteEffect{}, err
+	}
+	if err := ctx.db.Model(&models.Note{}).Where("owner_id = ?", groupID).Update("owner_id", nil).Error; err != nil {
+		return groupDeleteEffect{}, err
+	}
+	if err := ctx.db.Model(&models.Resource{}).Where("owner_id = ?", groupID).Update("owner_id", nil).Error; err != nil {
+		return groupDeleteEffect{}, err
+	}
+	if err := ctx.db.Exec("DELETE FROM group_related_groups WHERE related_group_id = ?", groupID).Error; err != nil {
+		return groupDeleteEffect{}, err
+	}
+	if err := ctx.db.
+		Select("RelatedResources", "RelatedNotes", "RelatedGroups", "Relationships", "BackRelations", "Tags").
+		Delete(group).Error; err != nil {
+		return groupDeleteEffect{}, err
+	}
+	if err := ScrubGroupFromBlocks(ctx.db, groupID); err != nil {
+		return groupDeleteEffect{}, err
+	}
+	return groupDeleteEffect{ID: groupID, Name: group.Name}, nil
+}
+
+func (ctx *MahresourcesContext) DeleteGroup(groupID uint) error {
+	if err := ctx.prepareGroupDelete(groupID); err != nil {
 		return err
 	}
-	groupName := group.Name
-
-	err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		ctx.EnsureForeignKeysActive(tx)
-
-		if err := rejectGroupDeletionIfUserScope(tx, groupId); err != nil {
-			return err
-		}
-
-		// Explicitly clear owned entities' owner_id (SET NULL) since SQLite
-		// PRAGMA foreign_keys is a no-op inside transactions, so FK constraints don't fire.
-		// This covers groups, notes, and resources that have this group as owner.
-		if err := tx.Model(&models.Group{}).Where("owner_id = ?", groupId).Update("owner_id", nil).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&models.Note{}).Where("owner_id = ?", groupId).Update("owner_id", nil).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&models.Resource{}).Where("owner_id = ?", groupId).Update("owner_id", nil).Error; err != nil {
-			return err
-		}
-
-		// Explicitly clean reverse side of group_related_groups join table
-		// since SQLite FK cascades don't fire in transactions and GORM's
-		// Select("RelatedGroups").Delete() only handles the owning side (group_id).
-		if err := tx.Exec("DELETE FROM group_related_groups WHERE related_group_id = ?", groupId).Error; err != nil {
-			return err
-		}
-
-		if err := tx.
-			Select("RelatedResources", "RelatedNotes", "RelatedGroups", "Relationships", "BackRelations", "Tags").
-			Delete(&group).Error; err != nil {
-			return err
-		}
-
-		// BH-020: scrub dangling references from note_blocks
-		return ScrubGroupFromBlocks(tx, groupId)
+	var event groupDeleteEffect
+	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
+		var err error
+		event, err = txCtx.deleteGroupInTransaction(groupID)
+		return err
 	})
-	if err == nil {
-		ctx.Logger().Info(models.LogActionDelete, "group", &groupId, groupName, "Deleted group", nil)
-		ctx.RunAfterPluginHooks("after_group_delete", map[string]any{"id": float64(groupId), "name": groupName})
-		ctx.InvalidateSearchCacheByType(EntityTypeGroup)
+	if err != nil {
+		return err
 	}
-	return err
+	ctx.emitGroupDeleteEffects([]groupDeleteEffect{event})
+	return nil
 }
