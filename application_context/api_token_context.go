@@ -5,9 +5,11 @@ import (
 	"time"
 
 	"mahresources/auth"
+	"mahresources/constants"
 	"mahresources/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // API token errors.
@@ -25,19 +27,78 @@ const apiTokenTouchInterval = time.Minute
 // (shown once) plus the stored record. A nil expiresAt means the token never
 // expires.
 func (ctx *MahresourcesContext) CreateApiToken(userID uint, name string, expiresAt *time.Time) (string, *models.ApiToken, error) {
-	// Per-user token cap (0 = unlimited). Bounds the self-service token table so
-	// a single account cannot exhaust it. Counts all of the user's rows; revoked
-	// tokens are hard-deleted, so the count reflects live tokens.
-	if limit := ctx.Config.MaxUserTokens; limit > 0 {
-		var count int64
-		if err := ctx.db.Model(&models.ApiToken{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+	// Unlimited mode keeps the direct create path, but still validates ownership
+	// explicitly so SQLite and Postgres return the same typed error.
+	if ctx.Config.MaxUserTokens <= 0 {
+		if err := apiTokenOwnerExists(ctx.db, userID); err != nil {
 			return "", nil, err
 		}
-		if count >= int64(limit) {
-			return "", nil, ErrApiTokenLimitReached
-		}
+		return createApiToken(ctx.db, userID, name, expiresAt)
 	}
 
+	// Serialize capped creation per owner. PostgreSQL locks the owning row. On
+	// SQLite the no-op UPDATE is intentionally the transaction's first statement:
+	// it acquires the write lock before the count, preventing a read-before-write
+	// window while leaving the user record unchanged.
+	var raw string
+	var token *models.ApiToken
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := lockApiTokenOwner(ctx, tx, userID); err != nil {
+			return err
+		}
+
+		var count int64
+		if err := tx.Model(&models.ApiToken{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count >= int64(ctx.Config.MaxUserTokens) {
+			return ErrApiTokenLimitReached
+		}
+
+		var err error
+		raw, token, err = createApiToken(tx, userID, name, expiresAt)
+		return err
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	return raw, token, nil
+}
+
+func apiTokenOwnerExists(db *gorm.DB, userID uint) error {
+	var owner models.User
+	if err := db.Select("id").First(&owner, userID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrUserNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+func lockApiTokenOwner(ctx *MahresourcesContext, tx *gorm.DB, userID uint) error {
+	if ctx.Config.DbType == constants.DbTypePosgres {
+		var owner models.User
+		if err := tx.Select("id").Clauses(clause.Locking{Strength: "UPDATE"}).First(&owner, userID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrUserNotFound
+			}
+			return err
+		}
+		return nil
+	}
+
+	result := tx.Exec("UPDATE users SET id = id WHERE id = ?", userID)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+func createApiToken(db *gorm.DB, userID uint, name string, expiresAt *time.Time) (string, *models.ApiToken, error) {
 	raw, err := auth.GenerateToken()
 	if err != nil {
 		return "", nil, err
@@ -49,7 +110,7 @@ func (ctx *MahresourcesContext) CreateApiToken(userID uint, name string, expires
 		Prefix:    auth.TokenPrefix(raw),
 		ExpiresAt: expiresAt,
 	}
-	if err := ctx.db.Create(token).Error; err != nil {
+	if err := db.Create(token).Error; err != nil {
 		return "", nil, err
 	}
 	return raw, token, nil

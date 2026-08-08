@@ -1,11 +1,19 @@
 package application_context
 
 import (
+	"database/sql"
 	"errors"
+	"fmt"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"mahresources/constants"
 	"mahresources/models"
+
+	"github.com/spf13/afero"
+	"gorm.io/gorm"
 )
 
 func TestCreateAndValidateApiToken(t *testing.T) {
@@ -128,5 +136,131 @@ func TestCreateApiTokenUnlimitedByDefault(t *testing.T) {
 		if _, _, err := ctx.CreateApiToken(u.ID, "k", nil); err != nil {
 			t.Fatalf("token %d should succeed with no cap: %v", i, err)
 		}
+	}
+}
+
+func TestCreateApiTokenRejectsMissingOwner(t *testing.T) {
+	for _, limit := range []int{0, 2} {
+		t.Run(fmt.Sprintf("limit-%d", limit), func(t *testing.T) {
+			ctx := newAuthTestContext(t)
+			ctx.Config.MaxUserTokens = limit
+			if raw, token, err := ctx.CreateApiToken(999999, "orphan", nil); !errors.Is(err, ErrUserNotFound) {
+				t.Fatalf("CreateApiToken missing owner: raw=%q token=%v err=%v, want ErrUserNotFound", raw, token, err)
+			}
+		})
+	}
+}
+
+// newConcurrentApiTokenTestContexts opens separate production-configured SQLite
+// pools against one on-disk database. Using the production connection factory
+// matters here: every connection gets WAL mode and the busy timeout used by a
+// real deployment, so a raw "database is locked" error is a regression rather
+// than an artifact of the test driver.
+func newConcurrentApiTokenTestContexts(t *testing.T, count int) []*MahresourcesContext {
+	t.Helper()
+	dsn := filepath.Join(t.TempDir(), "api-token-cap.db")
+	contexts := make([]*MahresourcesContext, 0, count)
+	for i := 0; i < count; i++ {
+		db, _, err := models.CreateDatabaseConnection(constants.DbTypeSqlite, dsn, "", 0)
+		if err != nil {
+			t.Fatalf("open shared SQLite database %d: %v", i, err)
+		}
+		sqlDB, err := db.DB()
+		if err != nil {
+			t.Fatalf("get shared SQLite pool %d: %v", i, err)
+		}
+		sqlDB.SetMaxOpenConns(1)
+		t.Cleanup(func() { _ = sqlDB.Close() })
+		if i == 0 {
+			if err := db.AutoMigrate(&models.User{}, &models.ApiToken{}); err != nil {
+				t.Fatalf("migrate shared SQLite database: %v", err)
+			}
+		}
+		contexts = append(contexts, NewMahresourcesContext(
+			afero.NewMemMapFs(), db, nil,
+			&MahresourcesConfig{DbType: constants.DbTypeSqlite, MaxUserTokens: 2},
+		))
+	}
+	return contexts
+}
+
+func TestApiTokenConcurrentCapSQLite(t *testing.T) {
+	const creators = 12
+	contexts := newConcurrentApiTokenTestContexts(t, creators)
+	u, err := contexts[0].CreateUser(&UserInput{
+		Username: "concurrently-capped", Password: "password1", Role: models.RoleEditor,
+	})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	if _, _, err := contexts[0].CreateApiToken(u.ID, "existing", nil); err != nil {
+		t.Fatalf("create existing token: %v", err)
+	}
+
+	// Coordinate the original read-before-write implementation so this test is a
+	// deterministic regression rather than a scheduler lottery. A correct capped
+	// creation performs its count inside the locking transaction and deliberately
+	// bypasses this test-only barrier.
+	var nonTransactionalCounts atomic.Int32
+	allNonTransactionalCountsDone := make(chan struct{})
+	for i, creatorCtx := range contexts {
+		callbackName := fmt.Sprintf("test:api_token_cap_count_barrier:%d", i)
+		if err := creatorCtx.db.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+			if tx.Statement.Table != "api_tokens" || tx.Error != nil {
+				return
+			}
+			if _, inTransaction := tx.Statement.ConnPool.(*sql.Tx); inTransaction {
+				return
+			}
+			if nonTransactionalCounts.Add(1) == creators {
+				close(allNonTransactionalCountsDone)
+			}
+			<-allNonTransactionalCountsDone
+		}); err != nil {
+			t.Fatalf("register count barrier %d: %v", i, err)
+		}
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, creators)
+	for i := 0; i < creators; i++ {
+		go func(i int) {
+			<-start
+			raw, token, err := contexts[i].CreateApiToken(u.ID, fmt.Sprintf("creator-%d", i), nil)
+			if err == nil && (raw == "" || token == nil || token.TokenHash == raw) {
+				err = fmt.Errorf("successful creation violated one-time raw-token semantics")
+			}
+			results <- err
+		}(i)
+	}
+	close(start)
+
+	successes, capped := 0, 0
+	for i := 0; i < creators; i++ {
+		switch err := <-results; {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrApiTokenLimitReached):
+			capped++
+		default:
+			t.Fatalf("creator returned unexpected error: %v", err)
+		}
+	}
+	if successes != 1 || capped != creators-1 {
+		t.Fatalf("want one success and %d cap errors, got successes=%d capped=%d", creators-1, successes, capped)
+	}
+	for i, creatorCtx := range contexts {
+		callbackName := fmt.Sprintf("test:api_token_cap_count_barrier:%d", i)
+		if err := creatorCtx.db.Callback().Query().Remove(callbackName); err != nil {
+			t.Fatalf("remove count barrier %d: %v", i, err)
+		}
+	}
+
+	var persisted int64
+	if err := contexts[0].db.Model(&models.ApiToken{}).Where("user_id = ?", u.ID).Count(&persisted).Error; err != nil {
+		t.Fatalf("count persisted tokens: %v", err)
+	}
+	if persisted != 2 {
+		t.Fatalf("persisted token count = %d, want 2", persisted)
 	}
 }
