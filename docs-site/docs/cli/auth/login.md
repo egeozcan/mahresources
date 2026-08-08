@@ -19,13 +19,13 @@ mr auth login
 **Log in to the default server**
 
 ```bash
-mr auth login --username alice --password s3cret
+mr auth login --username alice --password password1
 ```
 
 **Log in to a specific server and name the token**
 
 ```bash
-mr --server https://mr.example.com auth login --username alice --password s3cret --name laptop
+mr --server https://mr.example.com auth login --username alice --password password1 --name laptop
 ```
 
 

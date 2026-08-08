@@ -30,7 +30,7 @@ mr user update 4 --role editor
 **Disable an account and reset its password**
 
 ```bash
-mr user update 4 --disabled --password newpass
+mr user update 4 --disabled --password password2
 ```
 
 

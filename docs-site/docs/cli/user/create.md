@@ -19,13 +19,13 @@ mr user create
 **Create an editor**
 
 ```bash
-mr user create --username alice --password s3cret --role editor
+mr user create --username alice --password password1 --role editor
 ```
 
 **Create a guest confined to group 7**
 
 ```bash
-mr user create --username bob --password s3cret --role guest --scope-group 7
+mr user create --username bob --password password1 --role guest --scope-group 7
 ```
 
 

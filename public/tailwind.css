@@ -4674,6 +4674,11 @@
       opacity: 50%;
     }
   }
+  .disabled\:opacity-60 {
+    &:disabled {
+      opacity: 60%;
+    }
+  }
   .data-views\:table {
     &[data-views] {
       display: table;

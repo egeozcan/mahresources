@@ -38,10 +38,10 @@ func newAuthLoginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		Long:  "Authenticate with a username and password, mint a personal API token, and store it in the credentials file. Subsequent mr commands read that token automatically; override it any time with the MR_TOKEN environment variable.",
 		Example: strings.Join([]string{
 			"  # Log in to the default server",
-			"  mr auth login --username alice --password s3cret",
+			"  mr auth login --username alice --password password1",
 			"",
 			"  # Log in to a specific server and name the token",
-			"  mr --server https://mr.example.com auth login --username alice --password s3cret --name laptop",
+			"  mr --server https://mr.example.com auth login --username alice --password password1 --name laptop",
 		}, "\n"),
 		Annotations: authExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {

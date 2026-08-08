@@ -131,16 +131,76 @@ func registerAuthRoutes(r *openapi.Registry) {
 	})
 }
 
-// userRequestType documents the JSON body for user create/update.
-var userRequestType = reflect.TypeOf(struct {
-	ID           uint   `json:"id"`
+// Operation-specific user/account schemas keep create requirements, partial
+// update semantics, and one-time credential responses distinct in OpenAPI.
+type CreateUserRequest struct {
 	Username     string `json:"username"`
 	DisplayName  string `json:"displayName"`
 	Password     string `json:"password"`
 	Role         string `json:"role"`
 	ScopeGroupId *uint  `json:"scopeGroupId"`
 	Disabled     bool   `json:"disabled"`
-}{})
+}
+
+type UpdateUserRequest struct {
+	ID           uint    `json:"id"`
+	Username     *string `json:"username"`
+	DisplayName  *string `json:"displayName"`
+	Password     *string `json:"password"`
+	Role         *string `json:"role"`
+	ScopeGroupId *uint   `json:"scopeGroupId"`
+	Disabled     *bool   `json:"disabled"`
+}
+
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
+type CreateTokenRequest struct {
+	Name      string `json:"name"`
+	ExpiresIn string `json:"expiresIn"`
+}
+
+type OneTimeTokenResponse struct {
+	Token  string `json:"token"`
+	ID     uint   `json:"id"`
+	Name   string `json:"name"`
+	Prefix string `json:"prefix"`
+}
+
+type UserManagementResponse struct {
+	ID           uint   `json:"id"`
+	Username     string `json:"username"`
+	DisplayName  string `json:"displayName"`
+	Role         string `json:"role"`
+	ScopeGroupId *uint  `json:"scopeGroupId"`
+	Disabled     bool   `json:"disabled"`
+}
+
+var (
+	createUserRequestType     = reflect.TypeOf(CreateUserRequest{})
+	updateUserRequestType     = reflect.TypeOf(UpdateUserRequest{})
+	changePasswordRequestType = reflect.TypeOf(ChangePasswordRequest{})
+	createTokenRequestType    = reflect.TypeOf(CreateTokenRequest{})
+	oneTimeTokenResponseType  = reflect.TypeOf(OneTimeTokenResponse{})
+	userManagementType        = reflect.TypeOf(UserManagementResponse{})
+)
+
+func userManagementErrors(statuses ...int) map[int]string {
+	descriptions := map[int]string{
+		http.StatusBadRequest:   "Invalid input",
+		http.StatusUnauthorized: "Authentication required or credentials invalid",
+		http.StatusForbidden:    "Insufficient permissions",
+		http.StatusNotFound:     "User or token not found",
+		http.StatusConflict:     "Username, administrator invariant, scope dependency, or token limit conflict",
+	}
+	result := make(map[int]string, len(statuses))
+	for _, status := range statuses {
+		result[status] = descriptions[status]
+	}
+	return result
+}
 
 // userSettingRequestType is the PUT body for a per-user setting: an opaque JSON value.
 var userSettingRequestType = reflect.TypeOf(struct {
@@ -152,56 +212,79 @@ func registerUserAccountRoutes(r *openapi.Registry) {
 		Method: http.MethodGet, Path: "/v1/users", OperationID: "listUsers",
 		Summary: "List user accounts (admin)", Tags: []string{"users"},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       userManagementErrors(http.StatusUnauthorized, http.StatusForbidden),
 	})
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodPost, Path: "/v1/users", OperationID: "createUser",
-		Summary: "Create a user account (admin)", Tags: []string{"users"},
-		RequestType:          userRequestType,
+		Summary:              "Create a user account (admin)",
+		Description:          "Creates an account. username, password, and role are required. Passwords are accepted but never returned.",
+		Tags:                 []string{"users"},
+		RequestType:          createUserRequestType,
+		ResponseType:         userManagementType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       userManagementErrors(http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusConflict),
 	})
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/user", OperationID: "getUser",
 		Summary: "Get a user account (admin)", Tags: []string{"users"},
 		IDQueryParam: "id", IDRequired: true,
+		ResponseType:         userManagementType,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       userManagementErrors(http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound),
 	})
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodPost, Path: "/v1/user", OperationID: "updateUser",
-		Summary: "Update a user account (admin)", Tags: []string{"users"},
-		RequestType:          userRequestType,
+		Summary:              "Partially update a user account (admin)",
+		Description:          "Only supplied fields are changed. Omitted fields are preserved. Send scopeGroupId as null to explicitly clear an optional group scope; an omitted scopeGroupId leaves it unchanged. Send password as null or omit it to preserve the credential.",
+		Tags:                 []string{"users"},
+		RequestType:          updateUserRequestType,
+		ResponseType:         userManagementType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       userManagementErrors(http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict),
 	})
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodPost, Path: "/v1/user/delete", OperationID: "deleteUser",
 		Summary: "Delete a user account (admin)", Tags: []string{"users"},
 		IDQueryParam: "id", IDRequired: true,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       userManagementErrors(http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict),
 	})
 
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodPost, Path: "/v1/account/password", OperationID: "changeOwnPassword",
-		Summary: "Change the authenticated user's password", Tags: []string{"account"},
+		Summary:              "Change the authenticated user's password",
+		Description:          "Requires the current password. On success, other browser sessions are invalidated while the current browser session remains active. Existing API tokens remain valid.",
+		Tags:                 []string{"account"},
+		RequestType:          changePasswordRequestType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       userManagementErrors(http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden),
 	})
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/account/tokens", OperationID: "listOwnTokens",
 		Summary: "List the authenticated user's API tokens", Tags: []string{"account"},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       userManagementErrors(http.StatusUnauthorized, http.StatusForbidden),
 	})
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodPost, Path: "/v1/account/tokens", OperationID: "createOwnToken",
-		Summary: "Mint a new API token (returned once)", Tags: []string{"account"},
+		Summary:              "Mint a new API token (returned once)",
+		Description:          "Returns the raw bearer token exactly once. Store it before dismissing the response; later token listings contain metadata only.",
+		Tags:                 []string{"account"},
+		RequestType:          createTokenRequestType,
+		ResponseType:         oneTimeTokenResponseType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       userManagementErrors(http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusConflict),
 	})
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodPost, Path: "/v1/account/tokens/delete", OperationID: "revokeOwnToken",
 		Summary: "Revoke one of the authenticated user's API tokens", Tags: []string{"account"},
 		IDQueryParam: "id", IDRequired: true,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+		ErrorResponses:       userManagementErrors(http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound),
 	})
 
 	r.Register(openapi.RouteInfo{

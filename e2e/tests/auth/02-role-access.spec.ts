@@ -61,6 +61,59 @@ test.describe('auth: per-role access boundaries', () => {
  * would notice if that wrapper failed to claim this form and every save came back
  * 403.
  */
+test.describe('auth: admin user form hardening', () => {
+  test('create requires an explicit role selection', async ({ page, authSeed }) => {
+    await loginAs(page, authSeed.admin);
+    await page.goto('/admin/users');
+
+    const role = page.locator('#u-role');
+    await expect(role).toHaveAttribute('required', '');
+    await expect(role).toHaveValue('');
+    await expect(role.locator('option[value=""]')).toBeDisabled();
+    await expect(role.locator('option[value=""]')).toHaveAttribute('selected', '');
+
+    await page.locator('#u-username').fill(`no_role_${Date.now()}`);
+    await page.locator('#u-password').fill('password1');
+    await page.getByRole('button', { name: 'Create user' }).click();
+
+    await expect(page).toHaveURL(/\/admin\/users$/);
+    expect(await role.evaluate((element: HTMLSelectElement) => element.validity.valueMissing)).toBe(true);
+  });
+
+  test('rejected saves replay both checked and unchecked Disabled intent', async ({ page, authSeed }) => {
+    await loginAs(page, authSeed.admin);
+    const csrf = (await (await page.request.get('/v1/auth/me')).json()).csrfToken as string;
+
+    const createTarget = async (name: string, disabled: boolean) => {
+      const response = await page.request.post('/v1/users', {
+        headers: { 'X-CSRF-Token': csrf },
+        data: { username: name, password: 'password1', role: 'editor', disabled },
+      });
+      expect(response.ok(), `creating ${name}: ${response.status()}`).toBe(true);
+      return (await response.json()).ID as number;
+    };
+
+    const enabledID = await createTarget(`replay_enabled_${Date.now()}`, false);
+    await page.goto(`/admin/users/edit?id=${enabledID}`);
+    await page.locator('#ue-username').fill(authSeed.admin.username); // duplicate → rejected
+    await page.locator('#ue-disabled').check();
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(page.locator('[data-testid="form-error-banner"]')).toBeVisible();
+    await expect(page.locator('#ue-disabled')).toBeChecked();
+    await expect(page.locator('#ue-disabled')).toHaveAttribute('data-disabled-replayed', 'checked');
+
+    const disabledID = await createTarget(`replay_disabled_${Date.now()}`, true);
+    await page.goto(`/admin/users/edit?id=${disabledID}`);
+    await expect(page.locator('#ue-disabled')).toBeChecked();
+    await page.locator('#ue-username').fill(authSeed.admin.username); // duplicate → rejected
+    await page.locator('#ue-disabled').uncheck();
+    await page.getByRole('button', { name: 'Save' }).click();
+    await expect(page.locator('[data-testid="form-error-banner"]')).toBeVisible();
+    await expect(page.locator('#ue-disabled')).not.toBeChecked();
+    await expect(page.locator('#ue-disabled')).toHaveAttribute('data-disabled-replayed', 'unchecked');
+  });
+});
+
 test.describe('auth: admin user editing', () => {
   test('an admin can change a role and reset a password without deleting the account', async ({ page, request, authSeed }) => {
     await loginAs(page, authSeed.admin);

@@ -51,7 +51,7 @@
                     x-data="confirmAction()" x-bind="events"
                     data-confirm-message="Delete user {{ u.Username }}? This also destroys their tokens and sessions, and clears them as the creator of everything they made.">
                 <input type="hidden" name="id" value="{{ u.ID }}">
-                <button type="submit" class="text-red-700 hover:underline">Delete</button>
+                <button type="submit" aria-label="Delete user {{ u.Username }}" class="text-red-700 hover:underline">Delete</button>
               </form>
             </td>
           </tr>
@@ -82,11 +82,12 @@
         <input id="u-password" name="password" type="password" required autocomplete="new-password"
                minlength="{{ minPasswordLength }}" aria-describedby="u-password-hint"
                class="w-full border border-stone-300 rounded px-3 py-2">
-        <p id="u-password-hint" class="mt-1 text-xs text-stone-500">Must be at least {{ minPasswordLength }} characters. Never carried back in the URL, so retype it after a rejection.</p>
+        <p id="u-password-hint" class="mt-1 text-xs text-stone-500">Must be at least {{ minPasswordLength }} characters ({{ minPasswordLength }} Unicode code points) and at most {{ maxPasswordBytes }} UTF-8 bytes. Never carried back in the URL, so retype it after a rejection.</p>
       </div>
       <div>
         <label for="u-role" class="block text-sm font-mono mb-1">Role</label>
-        <select id="u-role" name="role" class="w-full border border-stone-300 rounded px-3 py-2">
+        <select id="u-role" name="role" required class="w-full border border-stone-300 rounded px-3 py-2">
+          <option value="" disabled{% if not queryValues.role.0 %} selected{% endif %}>Select a role</option>
           {% for role in roles %}<option value="{{ role }}"{% if queryValues.role.0 == role %} selected{% endif %}>{{ role }}</option>{% endfor %}
         </select>
       </div>
@@ -96,7 +97,7 @@
                class="w-full border border-stone-300 rounded px-3 py-2">
       </div>
       <div class="flex items-center gap-2">
-        <input id="u-disabled" name="disabled" type="checkbox" value="true">
+        <input id="u-disabled" name="disabled" type="checkbox" value="true"{% if formSubmitted and queryValues.disabled.0 == "true" %} checked{% endif %}>
         <label for="u-disabled" class="text-sm font-mono">Disabled</label>
       </div>
       <button type="submit" class="bg-amber-700 hover:bg-amber-800 text-white font-mono py-2 px-4 rounded">Create user</button>

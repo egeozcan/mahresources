@@ -1,6 +1,7 @@
 package template_context_providers
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -29,6 +30,8 @@ func AdminUsersContextProvider(ctx AccountPageContext) func(request *http.Reques
 		// the only way to learn it was to be rejected. Published from the policy
 		// rather than written into the template, so the two cannot drift.
 		c["minPasswordLength"] = auth.MinPasswordLength
+		c["maxPasswordBytes"] = 72
+		c["formSubmitted"] = request.URL.Query().Has("error")
 		return c
 	}
 }
@@ -51,6 +54,8 @@ func AdminUserEditContextProvider(ctx AccountPageContext) func(request *http.Req
 		c["pageTitle"] = "Edit user"
 		c["roles"] = models.ValidRoles
 		c["minPasswordLength"] = auth.MinPasswordLength
+		c["maxPasswordBytes"] = 72
+		c["formSubmitted"] = request.URL.Query().Has("error")
 		// formCancelURL only answers for two-segment /X/new and /X/edit paths, so
 		// this three-segment one has to say where Cancel goes itself. Finding 129
 		// is about edit forms with no way out, and it applies here too.
@@ -95,10 +100,17 @@ func AccountContextProvider(ctx AccountPageContext) func(request *http.Request) 
 		c := StaticTemplateCtx(request)
 		c["pageTitle"] = "Account"
 		p := auth.PrincipalFromContext(request.Context())
+		c["minPasswordLength"] = auth.MinPasswordLength
+		c["maxPasswordBytes"] = 72
 		if p != nil && !p.SuperUser && p.UserID != 0 {
 			c["account"] = p
 			if tokens, err := ctx.ListApiTokens(p.UserID); err == nil {
 				c["tokens"] = tokens
+				// encoding/json escapes '<', so a token label containing </script>
+				// cannot terminate the inert JSON data element in account.tpl.
+				if encoded, marshalErr := json.Marshal(tokens); marshalErr == nil {
+					c["tokensJSON"] = string(encoded)
+				}
 			}
 		}
 		return c

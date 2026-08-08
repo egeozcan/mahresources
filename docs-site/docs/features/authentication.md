@@ -130,15 +130,21 @@ The shared JSON request path is **unbounded by default**, which predates authent
 
 ## Password policy
 
-Passwords must be at least **8 characters** (and at most bcrypt's 72-byte input limit). The minimum is enforced when an account is created, when a password is changed, and for the `-create-admin-password` bootstrap. Existing accounts are not re-validated on login, so raising your own bar later does not lock anyone out until their next password change.
+Passwords must contain at least **8 Unicode code points** and occupy at most **72 UTF-8 bytes** (bcrypt's input limit). These are different units: non-ASCII characters can use more than one byte. The policy is enforced when an account is created, when a password is changed, and for the `-create-admin-password` bootstrap. Existing accounts are not re-validated on login, so changing the policy later does not lock anyone out until their next password change.
 
 ## Managing users and your own account
 
-- **Administrators** manage all accounts from the user administration page at `/admin/users` -- create users, and delete them. Each row links to `/admin/users/edit?id=N`, where an existing account's username, display name, role, scope group and disabled state can be changed, and its password reset. Leave the password field blank to keep the current one; every other field is saved exactly as the form submits it. The same operations are available from the [`mr user`](../cli/user/index.md) CLI commands.
-- Saving a disabled account revokes its sessions and API tokens immediately.
+- **Administrators** manage all accounts from `/admin/users`. Each row links to `/admin/users/edit?id=N`, where an existing account's username, display name, role, scope group and disabled state can be changed, and its password reset. The same operations are available from the [`mr user`](../cli/user/index.md) CLI commands.
+- The user-update API is partial: omitted properties are preserved. Send `scopeGroupId: null` to explicitly clear an optional user scope; omitting `scopeGroupId` leaves it unchanged. Omitting `password`, sending it as `null`, or leaving the HTML password field blank keeps the current password.
+- Saving a disabled account revokes all of that account's browser sessions and API tokens. An administrator password reset also revokes all of the target account's sessions and tokens. Changing your own password signs out other browser sessions while keeping the browser session that submitted the change active; existing API tokens remain valid.
 - The last enabled administrator cannot be demoted or disabled: the save is refused with `409 Conflict`, and the edit page comes back with the message and the values you typed. Renaming that account or setting a new password is allowed.
+- A group that is still used as an account scope cannot be deleted. The delete is refused with `409 Conflict`; move or clear each affected account scope first. This prevents a scoped account from becoming unrestricted because its scope disappeared.
 - Both `/admin/users` and `/admin/users/edit` are admin-only. Editors, users and guests receive `403`.
 - **Every signed-in user** has a self-service account page at `/account` where they can change their own password and manage their own API tokens.
+
+### One-time API token handling
+
+A newly created API token is shown exactly once. Copy it before dismissing the success message: Mahresources stores only a hash and cannot display the raw token again. While a raw token is waiting to be copied, the account page blocks another token creation so a second credential cannot overwrite the first. Token lists show only metadata and a non-secret prefix. If a raw token is lost, revoke that token row and create a replacement.
 
 ## Configuration flags reference
 

@@ -106,6 +106,7 @@ import { schemaMetaFields } from './components/schemaMetaFields.js';
 import { schemaSearchFields } from './components/schemaSearchFields.js';
 import { sectionConfigForm } from './components/sectionConfigForm.js';
 import { templateBundle } from './components/templateBundle.js';
+import { accountSecurity } from './components/accountSecurity.js';
 
 // Import utility modules
 import { renderMentions } from './utils/renderMentions.js';
@@ -228,6 +229,7 @@ Alpine.data('schemaMetaFields', schemaMetaFields);
 Alpine.data('schemaSearchFields', schemaSearchFields);
 Alpine.data('sectionConfigForm', sectionConfigForm);
 Alpine.data('templateBundle', templateBundle);
+Alpine.data('accountSecurity', accountSecurity);
 
 // Expose Alpine globally for debugging and morph usage
 window.Alpine = Alpine;

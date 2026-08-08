@@ -14,13 +14,19 @@ type TestEntity struct {
 }
 
 type TestQuery struct {
-	Name   string `json:"name"`
-	Limit  int    `json:"limit"`
+	Name  string `json:"name"`
+	Limit int    `json:"limit"`
 }
 
 type TestCreator struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+}
+
+func TestStatusCodeToStringPreservesConflict(t *testing.T) {
+	if got := statusCodeToString(http.StatusConflict); got != "409" {
+		t.Fatalf("HTTP 409 must serialize as 409, got %q", got)
+	}
 }
 
 func TestNewRegistry(t *testing.T) {

@@ -117,6 +117,80 @@ func TestAccountSelfService(t *testing.T) {
 	}
 }
 
+func TestAdminUserCreateRoleRequiresExplicitSelection(t *testing.T) {
+	tc := SetupTestEnv(t)
+	body := tc.requestWithAccept(http.MethodGet, "/admin/users", browserAccept, "").Body.String()
+
+	if !strings.Contains(body, `<select id="u-role" name="role" required`) {
+		t.Fatalf("create role select must be required")
+	}
+	if !strings.Contains(body, `<option value="" disabled selected>Select a role</option>`) {
+		t.Fatalf("create role select must start with a disabled selected placeholder")
+	}
+	for _, role := range models.ValidRoles {
+		if strings.Contains(body, fmt.Sprintf(`value="%s" selected`, role)) {
+			t.Errorf("role %q must not be selected on first load", role)
+		}
+	}
+}
+
+func TestAdminUserDisabledReplayUsesSubmittedIntent(t *testing.T) {
+	tc := setupAuthEnv(t)
+	login := doReq(tc, http.MethodPost, "/v1/auth/login",
+		map[string]string{"Content-Type": "application/json"}, nil,
+		strings.NewReader(`{"username":"admin","password":"adminpw1"}`))
+	cookie := sessionCookie(t, login)
+	headers := map[string]string{
+		"Accept": "text/html", "Content-Type": "application/x-www-form-urlencoded",
+		"X-CSRF-Token": csrfFor(t, tc, cookie),
+	}
+
+	admin, err := tc.AppCtx.GetUserByUsername("admin")
+	if err != nil {
+		t.Fatalf("load admin: %v", err)
+	}
+
+	// Stored enabled, submitted checked. Demoting the last admin forces replay.
+	enableToDisabled := url.Values{
+		"id": {fmt.Sprint(admin.ID)}, "username": {admin.Username},
+		"role": {string(models.RoleEditor)}, "disabled": {"true"},
+	}
+	res := doReq(tc, http.MethodPost, "/v1/user", headers, []*http.Cookie{cookie}, strings.NewReader(enableToDisabled.Encode()))
+	page := doReq(tc, http.MethodGet, res.Header().Get("Location"), map[string]string{"Accept": "text/html"}, []*http.Cookie{cookie}, nil)
+	if !strings.Contains(page.Body.String(), `id="ue-disabled" name="disabled" type="checkbox" value="true"`) ||
+		!strings.Contains(page.Body.String(), `data-disabled-replayed="checked"`) {
+		t.Fatalf("enabled→checked rejected save did not replay checked intent")
+	}
+
+	// Stored disabled, submitted unchecked. A duplicate username forces replay.
+	target, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "disabled-replay", Password: "password1", Role: models.RoleEditor, Disabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create disabled target: %v", err)
+	}
+	disabledToEnabled := url.Values{
+		"id": {fmt.Sprint(target.ID)}, "username": {admin.Username},
+		"role": {string(models.RoleEditor)},
+	}
+	res = doReq(tc, http.MethodPost, "/v1/user", headers, []*http.Cookie{cookie}, strings.NewReader(disabledToEnabled.Encode()))
+	page = doReq(tc, http.MethodGet, res.Header().Get("Location"), map[string]string{"Accept": "text/html"}, []*http.Cookie{cookie}, nil)
+	if !strings.Contains(page.Body.String(), `data-disabled-replayed="unchecked"`) {
+		t.Fatalf("disabled→unchecked rejected save did not replay unchecked intent")
+	}
+}
+
+func TestAdminUserPasswordPolicyIsExactAndSecretFree(t *testing.T) {
+	tc := SetupTestEnv(t)
+	body := tc.requestWithAccept(http.MethodGet, "/admin/users", browserAccept, "").Body.String()
+	if !strings.Contains(body, "8 Unicode code points") || !strings.Contains(body, "72 UTF-8 bytes") {
+		t.Fatalf("password help must state both exact policy units")
+	}
+	if strings.Contains(body, "adminpw1") || strings.Contains(body, "passwordHash") {
+		t.Fatalf("password policy help leaked credential material")
+	}
+}
+
 func TestAdminAndAccountPagesRender(t *testing.T) {
 	tc := setupAuthEnv(t)
 	login := doReq(tc, http.MethodPost, "/v1/auth/login",

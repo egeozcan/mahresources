@@ -143,10 +143,10 @@ func newUserCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 		Long:  "Create a new user account with a username, password, and role (admin, editor, user, or guest). Guests require a scope group; users may optionally have one; admins and editors must not.",
 		Example: strings.Join([]string{
 			"  # Create an editor",
-			"  mr user create --username alice --password s3cret --role editor",
+			"  mr user create --username alice --password password1 --role editor",
 			"",
 			"  # Create a guest confined to group 7",
-			"  mr user create --username bob --password s3cret --role guest --scope-group 7",
+			"  mr user create --username bob --password password1 --role guest --scope-group 7",
 		}, "\n"),
 		Annotations: userExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -200,7 +200,7 @@ func newUserUpdateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  mr user update 4 --role editor",
 			"",
 			"  # Disable an account and reset its password",
-			"  mr user update 4 --disabled --password newpass",
+			"  mr user update 4 --disabled --password password2",
 		}, "\n"),
 		Annotations: userExitCodes,
 		Args:        cobra.ExactArgs(1),

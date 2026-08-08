@@ -139,6 +139,13 @@ components:
                 UpdatedBefore:
                     type: string
             type: object
+        ChangePasswordRequest:
+            properties:
+                currentPassword:
+                    type: string
+                newPassword:
+                    type: string
+            type: object
         ColumnMetaPartial:
             type: object
         Counts:
@@ -159,6 +166,29 @@ components:
                     type: integer
                 versions:
                     type: integer
+            type: object
+        CreateTokenRequest:
+            properties:
+                expiresIn:
+                    type: string
+                name:
+                    type: string
+            type: object
+        CreateUserRequest:
+            properties:
+                disabled:
+                    type: boolean
+                displayName:
+                    type: string
+                password:
+                    type: string
+                role:
+                    type: string
+                scopeGroupId:
+                    nullable: true
+                    type: integer
+                username:
+                    type: string
             type: object
         CropResourceQuery:
             properties:
@@ -987,6 +1017,17 @@ components:
                 Description:
                     type: string
                 Name:
+                    type: string
+            type: object
+        OneTimeTokenResponse:
+            properties:
+                id:
+                    type: integer
+                name:
+                    type: string
+                prefix:
+                    type: string
+                token:
                     type: string
             type: object
         PresetPartial:
@@ -1883,6 +1924,45 @@ components:
                 Start:
                     type: string
             type: object
+        UpdateUserRequest:
+            properties:
+                disabled:
+                    nullable: true
+                    type: boolean
+                displayName:
+                    nullable: true
+                    type: string
+                id:
+                    type: integer
+                password:
+                    nullable: true
+                    type: string
+                role:
+                    nullable: true
+                    type: string
+                scopeGroupId:
+                    nullable: true
+                    type: integer
+                username:
+                    nullable: true
+                    type: string
+            type: object
+        UserManagementResponse:
+            properties:
+                disabled:
+                    type: boolean
+                displayName:
+                    type: string
+                id:
+                    type: integer
+                role:
+                    type: string
+                scopeGroupId:
+                    nullable: true
+                    type: integer
+                username:
+                    type: string
+            type: object
         VersionCleanupQuery:
             properties:
                 dryRun:
@@ -1910,12 +1990,28 @@ openapi: 3.0.0
 paths:
     /v1/account/password:
         post:
+            description: Requires the current password. On success, other browser sessions are invalidated while the current browser session remains active. Existing API tokens remain valid.
             operationId: changeOwnPassword
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/ChangePasswordRequest'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ChangePasswordRequest'
+                required: true
             responses:
                 "200":
                     content:
                         application/json: {}
                     description: Successful response
+                "400":
+                    description: Invalid input
+                "401":
+                    description: Authentication required or credentials invalid
+                "403":
+                    description: Insufficient permissions
             summary: Change the authenticated user's password
             tags:
                 - account
@@ -1986,16 +2082,40 @@ paths:
                     content:
                         application/json: {}
                     description: Successful response
+                "401":
+                    description: Authentication required or credentials invalid
+                "403":
+                    description: Insufficient permissions
             summary: List the authenticated user's API tokens
             tags:
                 - account
         post:
+            description: Returns the raw bearer token exactly once. Store it before dismissing the response; later token listings contain metadata only.
             operationId: createOwnToken
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateTokenRequest'
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/CreateTokenRequest'
+                required: true
             responses:
                 "200":
                     content:
-                        application/json: {}
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/OneTimeTokenResponse'
                     description: Successful response
+                "400":
+                    description: Invalid input
+                "401":
+                    description: Authentication required or credentials invalid
+                "403":
+                    description: Insufficient permissions
+                "409":
+                    description: Username, administrator invariant, scope dependency, or token limit conflict
             summary: Mint a new API token (returned once)
             tags:
                 - account
@@ -2013,6 +2133,14 @@ paths:
                     content:
                         application/json: {}
                     description: Successful response
+                "400":
+                    description: Invalid input
+                "401":
+                    description: Authentication required or credentials invalid
+                "403":
+                    description: Insufficient permissions
+                "404":
+                    description: User or token not found
             summary: Revoke one of the authenticated user's API tokens
             tags:
                 - account
@@ -7481,60 +7609,49 @@ paths:
             responses:
                 "200":
                     content:
-                        application/json: {}
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UserManagementResponse'
                     description: Successful response
+                "401":
+                    description: Authentication required or credentials invalid
+                "403":
+                    description: Insufficient permissions
+                "404":
+                    description: User or token not found
             summary: Get a user account (admin)
             tags:
                 - users
         post:
+            description: Only supplied fields are changed. Omitted fields are preserved. Send scopeGroupId as null to explicitly clear an optional group scope; an omitted scopeGroupId leaves it unchanged. Send password as null or omit it to preserve the credential.
             operationId: updateUser
             requestBody:
                 content:
                     application/json:
                         schema:
-                            properties:
-                                disabled:
-                                    type: boolean
-                                displayName:
-                                    type: string
-                                id:
-                                    type: integer
-                                password:
-                                    type: string
-                                role:
-                                    type: string
-                                scopeGroupId:
-                                    nullable: true
-                                    type: integer
-                                username:
-                                    type: string
-                            type: object
+                            $ref: '#/components/schemas/UpdateUserRequest'
                     application/x-www-form-urlencoded:
                         schema:
-                            properties:
-                                disabled:
-                                    type: boolean
-                                displayName:
-                                    type: string
-                                id:
-                                    type: integer
-                                password:
-                                    type: string
-                                role:
-                                    type: string
-                                scopeGroupId:
-                                    nullable: true
-                                    type: integer
-                                username:
-                                    type: string
-                            type: object
+                            $ref: '#/components/schemas/UpdateUserRequest'
                 required: true
             responses:
                 "200":
                     content:
-                        application/json: {}
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UserManagementResponse'
                     description: Successful response
-            summary: Update a user account (admin)
+                "400":
+                    description: Invalid input
+                "401":
+                    description: Authentication required or credentials invalid
+                "403":
+                    description: Insufficient permissions
+                "404":
+                    description: User or token not found
+                "409":
+                    description: Username, administrator invariant, scope dependency, or token limit conflict
+            summary: Partially update a user account (admin)
             tags:
                 - users
     /v1/user/delete:
@@ -7551,6 +7668,16 @@ paths:
                     content:
                         application/json: {}
                     description: Successful response
+                "400":
+                    description: Invalid input
+                "401":
+                    description: Authentication required or credentials invalid
+                "403":
+                    description: Insufficient permissions
+                "404":
+                    description: User or token not found
+                "409":
+                    description: Username, administrator invariant, scope dependency, or token limit conflict
             summary: Delete a user account (admin)
             tags:
                 - users
@@ -7562,57 +7689,40 @@ paths:
                     content:
                         application/json: {}
                     description: Successful response
+                "401":
+                    description: Authentication required or credentials invalid
+                "403":
+                    description: Insufficient permissions
             summary: List user accounts (admin)
             tags:
                 - users
         post:
+            description: Creates an account. username, password, and role are required. Passwords are accepted but never returned.
             operationId: createUser
             requestBody:
                 content:
                     application/json:
                         schema:
-                            properties:
-                                disabled:
-                                    type: boolean
-                                displayName:
-                                    type: string
-                                id:
-                                    type: integer
-                                password:
-                                    type: string
-                                role:
-                                    type: string
-                                scopeGroupId:
-                                    nullable: true
-                                    type: integer
-                                username:
-                                    type: string
-                            type: object
+                            $ref: '#/components/schemas/CreateUserRequest'
                     application/x-www-form-urlencoded:
                         schema:
-                            properties:
-                                disabled:
-                                    type: boolean
-                                displayName:
-                                    type: string
-                                id:
-                                    type: integer
-                                password:
-                                    type: string
-                                role:
-                                    type: string
-                                scopeGroupId:
-                                    nullable: true
-                                    type: integer
-                                username:
-                                    type: string
-                            type: object
+                            $ref: '#/components/schemas/CreateUserRequest'
                 required: true
             responses:
                 "200":
                     content:
-                        application/json: {}
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/UserManagementResponse'
                     description: Successful response
+                "400":
+                    description: Invalid input
+                "401":
+                    description: Authentication required or credentials invalid
+                "403":
+                    description: Insufficient permissions
+                "409":
+                    description: Username, administrator invariant, scope dependency, or token limit conflict
             summary: Create a user account (admin)
             tags:
                 - users

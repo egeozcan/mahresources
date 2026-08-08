@@ -347,6 +347,8 @@ func statusCodeToString(code int) string {
 		return "403"
 	case 404:
 		return "404"
+	case 409:
+		return "409"
 	case 500:
 		return "500"
 	default:

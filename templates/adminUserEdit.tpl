@@ -45,7 +45,7 @@
       <input id="ue-password" name="password" type="password" autocomplete="new-password"
              minlength="{{ minPasswordLength }}" aria-describedby="ue-password-hint"
              class="w-full border border-stone-300 rounded px-3 py-2">
-      <p id="ue-password-hint" class="mt-1 text-xs text-stone-500">Leave blank to keep the current password. A new one must be at least {{ minPasswordLength }} characters.</p>
+      <p id="ue-password-hint" class="mt-1 text-xs text-stone-500">Leave blank to keep the current password. A new one must be at least {{ minPasswordLength }} Unicode code points and at most {{ maxPasswordBytes }} UTF-8 bytes.</p>
     </div>
 
     <div>
@@ -67,7 +67,9 @@
       {# silently re-enable a disabled account. #}
       <input id="ue-disabled" name="disabled" type="checkbox" value="true"
              aria-describedby="ue-disabled-hint"
-             {% if editUser.Disabled %}checked{% endif %}>
+             {% if formSubmitted %}
+               {% if queryValues.disabled.0 == "true" %}checked data-disabled-replayed="checked"{% else %}data-disabled-replayed="unchecked"{% endif %}
+             {% elif editUser.Disabled %}checked{% endif %}>
       <label for="ue-disabled" class="text-sm font-mono">Disabled</label>
     </div>
     <p id="ue-disabled-hint" class="text-xs text-stone-500">Saving a disabled account signs it out everywhere: its sessions and API tokens are revoked immediately.</p>
