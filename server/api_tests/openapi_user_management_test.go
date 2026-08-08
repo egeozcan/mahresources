@@ -1,11 +1,14 @@
 package api_tests
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
 
+	"mahresources/auth"
 	"mahresources/server"
 	"mahresources/server/openapi"
 )
@@ -21,7 +24,7 @@ func TestOpenAPIUserManagementSchemasAreOperationSpecific(t *testing.T) {
 		"ChangePasswordRequest":  {"currentPassword", "newPassword"},
 		"CreateTokenRequest":     {"name", "expiresIn"},
 		"OneTimeTokenResponse":   {"token", "id", "name", "prefix"},
-		"UserManagementResponse": {"id", "username", "displayName", "role", "scopeGroupId", "disabled"},
+		"UserManagementResponse": {"ID", "username", "displayName", "role", "scopeGroupId", "disabled"},
 	}
 	for name, properties := range wantSchemas {
 		schemaRef := spec.Components.Schemas[name]
@@ -38,11 +41,68 @@ func TestOpenAPIUserManagementSchemasAreOperationSpecific(t *testing.T) {
 
 	update := spec.Components.Schemas["UpdateUserRequest"]
 	if update != nil && update.Value != nil {
-		for _, field := range []string{"username", "displayName", "password", "role", "scopeGroupId", "disabled"} {
+		if len(update.Value.Required) != 0 {
+			t.Errorf("partial update fields must remain optional, required=%v", update.Value.Required)
+		}
+		for _, field := range []string{"username", "displayName", "password", "role", "disabled"} {
 			property := update.Value.Properties[field]
-			if property == nil || property.Value == nil || !property.Value.Nullable {
-				t.Errorf("partial update field %s must be optional and nullable", field)
+			if property == nil || property.Value == nil || property.Value.Nullable {
+				t.Errorf("partial update field %s must be optional but nonnullable", field)
 			}
+		}
+		scope := update.Value.Properties["scopeGroupId"]
+		if scope == nil || scope.Value == nil || !scope.Value.Nullable {
+			t.Error("scopeGroupId must be the only nullable partial update field")
+		}
+	}
+
+	assertRequiredProperties(t, spec, "CreateUserRequest", "username", "password", "role")
+	assertRequiredProperties(t, spec, "ChangePasswordRequest", "currentPassword", "newPassword")
+	assertRequiredProperties(t, spec, "OneTimeTokenResponse", "token", "id", "name", "prefix")
+
+	response := spec.Components.Schemas["UserManagementResponse"]
+	if response != nil && response.Value != nil && response.Value.Properties["id"] != nil {
+		t.Error("user response schema must document the live uppercase ID key, not lowercase id")
+	}
+}
+
+func assertRequiredProperties(t *testing.T, spec *openapi3.T, schemaName string, want ...string) {
+	t.Helper()
+	schema := spec.Components.Schemas[schemaName]
+	if schema == nil || schema.Value == nil {
+		t.Errorf("missing component schema %s", schemaName)
+		return
+	}
+	required := make(map[string]bool, len(schema.Value.Required))
+	for _, name := range schema.Value.Required {
+		required[name] = true
+	}
+	for _, name := range want {
+		if !required[name] {
+			t.Errorf("%s must require %s; required=%v", schemaName, name, schema.Value.Required)
+		}
+	}
+}
+
+func TestOpenAPIUserManagementPasswordPolicyUsesAuthConstants(t *testing.T) {
+	registry := openapi.NewRegistry()
+	server.RegisterAPIRoutesWithOpenAPI(registry)
+	spec := registry.GenerateSpec()
+	policy := fmt.Sprintf("at least %d Unicode code points and at most %d UTF-8 bytes", auth.MinPasswordLength, auth.MaxPasswordBytes)
+
+	for _, route := range []struct {
+		path, method string
+	}{
+		{"/v1/users", http.MethodPost},
+		{"/v1/account/password", http.MethodPost},
+	} {
+		op := operation(spec.Paths.Find(route.path), route.method)
+		if op == nil {
+			t.Errorf("missing %s %s", route.method, route.path)
+			continue
+		}
+		if !strings.Contains(op.Description, policy) {
+			t.Errorf("%s %s must document password policy %q; description=%q", route.method, route.path, policy, op.Description)
 		}
 	}
 }

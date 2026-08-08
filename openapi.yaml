@@ -145,6 +145,9 @@ components:
                     type: string
                 newPassword:
                     type: string
+            required:
+                - currentPassword
+                - newPassword
             type: object
         ColumnMetaPartial:
             type: object
@@ -189,6 +192,10 @@ components:
                     type: integer
                 username:
                     type: string
+            required:
+                - username
+                - password
+                - role
             type: object
         CropResourceQuery:
             properties:
@@ -1029,6 +1036,11 @@ components:
                     type: string
                 token:
                     type: string
+            required:
+                - token
+                - id
+                - name
+                - prefix
             type: object
         PresetPartial:
             properties:
@@ -1927,34 +1939,29 @@ components:
         UpdateUserRequest:
             properties:
                 disabled:
-                    nullable: true
                     type: boolean
                 displayName:
-                    nullable: true
                     type: string
                 id:
                     type: integer
                 password:
-                    nullable: true
                     type: string
                 role:
-                    nullable: true
                     type: string
                 scopeGroupId:
                     nullable: true
                     type: integer
                 username:
-                    nullable: true
                     type: string
             type: object
         UserManagementResponse:
             properties:
+                ID:
+                    type: integer
                 disabled:
                     type: boolean
                 displayName:
                     type: string
-                id:
-                    type: integer
                 role:
                     type: string
                 scopeGroupId:
@@ -1990,7 +1997,7 @@ openapi: 3.0.0
 paths:
     /v1/account/password:
         post:
-            description: Requires the current password. On success, other browser sessions are invalidated while the current browser session remains active. Existing API tokens remain valid.
+            description: Requires the current password. The new password requires at least 8 Unicode code points and at most 72 UTF-8 bytes. On success, other browser sessions are invalidated while the current browser session remains active. Existing API tokens remain valid.
             operationId: changeOwnPassword
             requestBody:
                 content:
@@ -7623,7 +7630,7 @@ paths:
             tags:
                 - users
         post:
-            description: Only supplied fields are changed. Omitted fields are preserved. Send scopeGroupId as null to explicitly clear an optional group scope; an omitted scopeGroupId leaves it unchanged. Send password as null or omit it to preserve the credential.
+            description: Only supplied fields are changed. Omitted fields are preserved. Send scopeGroupId as null to explicitly clear an optional group scope; an omitted scopeGroupId leaves it unchanged. Null is rejected for every other field; omit password to preserve the credential.
             operationId: updateUser
             requestBody:
                 content:
@@ -7697,7 +7704,7 @@ paths:
             tags:
                 - users
         post:
-            description: Creates an account. username, password, and role are required. Passwords are accepted but never returned.
+            description: Creates an account. username, password, and role are required. Passwords require at least 8 Unicode code points and at most 72 UTF-8 bytes. Passwords are accepted but never returned.
             operationId: createUser
             requestBody:
                 content:

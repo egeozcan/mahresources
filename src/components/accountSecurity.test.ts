@@ -80,6 +80,34 @@ describe('accountSecurity token creation state', () => {
 });
 
 describe('accountSecurity refresh and revoke state', () => {
+  test('refresh busy state does not block or relabel unrelated operations', async () => {
+    let resolveRefresh!: (response: Response) => void;
+    const refreshPending = new Promise<Response>((done) => { resolveRefresh = done; });
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/v1/account/tokens') {
+        const request = fetchMock.mock.calls.length === 1;
+        if (request) return refreshPending;
+      }
+      return Promise.resolve(jsonResponse({ token: 'mr_new', id: 8, name: 'new', prefix: 'mr_ne' }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const state = accountSecurity([]);
+
+    const refresh = state.refreshTokens();
+    expect(state.tokenRefreshBusy).toBe(true);
+    expect(state.tokenCreateBusy).toBe(false);
+    expect(state.passwordBusy).toBe(false);
+
+    await state.createToken();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(state.pendingRawToken).toBe('mr_new');
+    expect(state.tokenRefreshBusy).toBe(true);
+
+    resolveRefresh(jsonResponse([]));
+    await refresh;
+    expect(state.tokenRefreshBusy).toBe(false);
+  });
+
   test('revoke removes only the successful token row', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ ok: true })));
     const state = accountSecurity([

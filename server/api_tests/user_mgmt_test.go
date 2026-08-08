@@ -1,6 +1,7 @@
 package api_tests
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -44,6 +45,38 @@ func TestUserAdminAPI(t *testing.T) {
 		strings.NewReader(`{"username":"g","password":"pw","role":"guest"}`))
 	if badGuest.Code != http.StatusBadRequest {
 		t.Fatalf("guest without scope group should be 400, got %d", badGuest.Code)
+	}
+}
+
+func TestUserAdminAPIResponseUsesLiveUserJSONShape(t *testing.T) {
+	tc := setupAuthEnv(t)
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	response := doReq(tc, http.MethodPost, "/v1/users", map[string]string{
+		"Accept": "application/json", "Authorization": admin, "Content-Type": "application/json",
+	}, nil, strings.NewReader(`{"username":"response-shape","password":"password1","role":"editor"}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("create user status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if body["ID"] == nil {
+		t.Fatalf("live user response must contain uppercase ID: %s", response.Body.String())
+	}
+	if body["id"] != nil {
+		t.Fatalf("live user response unexpectedly contains lowercase id: %s", response.Body.String())
+	}
+	for _, field := range []string{"username", "displayName", "role", "disabled"} {
+		if body[field] == nil {
+			t.Errorf("live user response missing %s: %s", field, response.Body.String())
+		}
+	}
+	for _, secret := range []string{"password", "passwordHash"} {
+		if body[secret] != nil {
+			t.Errorf("live user response leaks %s: %s", secret, response.Body.String())
+		}
 	}
 }
 

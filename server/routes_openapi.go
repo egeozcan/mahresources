@@ -2,10 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"reflect"
 
 	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/contracts"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -134,6 +136,16 @@ func registerAuthRoutes(r *openapi.Registry) {
 // Operation-specific user/account schemas keep create requirements, partial
 // update semantics, and one-time credential responses distinct in OpenAPI.
 type CreateUserRequest struct {
+	Username     string `json:"username" openapi:"required"`
+	DisplayName  string `json:"displayName"`
+	Password     string `json:"password" openapi:"required"`
+	Role         string `json:"role" openapi:"required"`
+	ScopeGroupId *uint  `json:"scopeGroupId"`
+	Disabled     bool   `json:"disabled"`
+}
+
+type UpdateUserRequest struct {
+	ID           uint   `json:"id"`
 	Username     string `json:"username"`
 	DisplayName  string `json:"displayName"`
 	Password     string `json:"password"`
@@ -142,19 +154,9 @@ type CreateUserRequest struct {
 	Disabled     bool   `json:"disabled"`
 }
 
-type UpdateUserRequest struct {
-	ID           uint    `json:"id"`
-	Username     *string `json:"username"`
-	DisplayName  *string `json:"displayName"`
-	Password     *string `json:"password"`
-	Role         *string `json:"role"`
-	ScopeGroupId *uint   `json:"scopeGroupId"`
-	Disabled     *bool   `json:"disabled"`
-}
-
 type ChangePasswordRequest struct {
-	CurrentPassword string `json:"currentPassword"`
-	NewPassword     string `json:"newPassword"`
+	CurrentPassword string `json:"currentPassword" openapi:"required"`
+	NewPassword     string `json:"newPassword" openapi:"required"`
 }
 
 type CreateTokenRequest struct {
@@ -163,14 +165,14 @@ type CreateTokenRequest struct {
 }
 
 type OneTimeTokenResponse struct {
-	Token  string `json:"token"`
-	ID     uint   `json:"id"`
-	Name   string `json:"name"`
-	Prefix string `json:"prefix"`
+	Token  string `json:"token" openapi:"required"`
+	ID     uint   `json:"id" openapi:"required"`
+	Name   string `json:"name" openapi:"required"`
+	Prefix string `json:"prefix" openapi:"required"`
 }
 
 type UserManagementResponse struct {
-	ID           uint   `json:"id"`
+	ID           uint   `json:"ID"`
 	Username     string `json:"username"`
 	DisplayName  string `json:"displayName"`
 	Role         string `json:"role"`
@@ -216,8 +218,9 @@ func registerUserAccountRoutes(r *openapi.Registry) {
 	})
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodPost, Path: "/v1/users", OperationID: "createUser",
-		Summary:              "Create a user account (admin)",
-		Description:          "Creates an account. username, password, and role are required. Passwords are accepted but never returned.",
+		Summary: "Create a user account (admin)",
+		Description: fmt.Sprintf("Creates an account. username, password, and role are required. Passwords require at least %d Unicode code points and at most %d UTF-8 bytes. Passwords are accepted but never returned.",
+			auth.MinPasswordLength, auth.MaxPasswordBytes),
 		Tags:                 []string{"users"},
 		RequestType:          createUserRequestType,
 		ResponseType:         userManagementType,
@@ -236,7 +239,7 @@ func registerUserAccountRoutes(r *openapi.Registry) {
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodPost, Path: "/v1/user", OperationID: "updateUser",
 		Summary:              "Partially update a user account (admin)",
-		Description:          "Only supplied fields are changed. Omitted fields are preserved. Send scopeGroupId as null to explicitly clear an optional group scope; an omitted scopeGroupId leaves it unchanged. Send password as null or omit it to preserve the credential.",
+		Description:          "Only supplied fields are changed. Omitted fields are preserved. Send scopeGroupId as null to explicitly clear an optional group scope; an omitted scopeGroupId leaves it unchanged. Null is rejected for every other field; omit password to preserve the credential.",
 		Tags:                 []string{"users"},
 		RequestType:          updateUserRequestType,
 		ResponseType:         userManagementType,
@@ -254,8 +257,9 @@ func registerUserAccountRoutes(r *openapi.Registry) {
 
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodPost, Path: "/v1/account/password", OperationID: "changeOwnPassword",
-		Summary:              "Change the authenticated user's password",
-		Description:          "Requires the current password. On success, other browser sessions are invalidated while the current browser session remains active. Existing API tokens remain valid.",
+		Summary: "Change the authenticated user's password",
+		Description: fmt.Sprintf("Requires the current password. The new password requires at least %d Unicode code points and at most %d UTF-8 bytes. On success, other browser sessions are invalidated while the current browser session remains active. Existing API tokens remain valid.",
+			auth.MinPasswordLength, auth.MaxPasswordBytes),
 		Tags:                 []string{"account"},
 		RequestType:          changePasswordRequestType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},

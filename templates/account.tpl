@@ -38,8 +38,8 @@
       <p id="account-password-policy" class="text-xs text-stone-500">Use at least {{ minPasswordLength }} Unicode code points and at most {{ maxPasswordBytes }} UTF-8 bytes.</p>
       <p id="account-password-mismatch" x-show="passwordError" x-cloak role="alert" class="text-sm text-red-800" x-text="passwordError"></p>
       <p x-show="passwordSuccess" x-cloak role="status" aria-live="polite" class="text-sm text-green-800" x-text="passwordSuccess"></p>
-      <button type="submit" :disabled="busy" class="bg-amber-700 hover:bg-amber-800 disabled:opacity-60 text-white font-mono py-2 px-4 rounded">
-        <span x-text="busy ? 'Updating…' : 'Update password'">Update password</span>
+      <button type="submit" :disabled="passwordBusy" class="bg-amber-700 hover:bg-amber-800 disabled:opacity-60 text-white font-mono py-2 px-4 rounded">
+        <span x-text="passwordBusy ? 'Updating…' : 'Update password'">Update password</span>
       </button>
     </form>
   </section>
@@ -47,7 +47,9 @@
   <section>
     <div class="flex items-center justify-between gap-3 mb-3">
       <h2 class="text-lg font-mono font-semibold">API tokens</h2>
-      <button type="button" @click="refreshTokens" :disabled="busy" class="text-sm text-amber-700 hover:underline disabled:opacity-60">Refresh tokens</button>
+      <button type="button" @click="refreshTokens" :disabled="tokenRefreshBusy" class="text-sm text-amber-700 hover:underline disabled:opacity-60">
+        <span x-text="tokenRefreshBusy ? 'Refreshing…' : 'Refresh tokens'">Refresh tokens</span>
+      </button>
     </div>
     <p class="text-stone-600 text-sm mb-3">
       Use API tokens with the <code>mr</code> CLI or other clients via the <code>Authorization: Bearer</code> header.
@@ -70,12 +72,12 @@
       <div class="flex-1">
         <label for="tok-name" class="block text-sm font-mono mb-1">New token label</label>
         <input id="tok-name" type="text" x-model="name" placeholder="e.g. laptop"
-               :disabled="busy || !!pendingRawToken"
+               :disabled="tokenCreateBusy || !!pendingRawToken"
                class="w-full border border-stone-300 rounded px-3 py-2 disabled:opacity-60">
       </div>
-      <button type="button" @click="createToken" :disabled="busy || !!pendingRawToken"
+      <button type="button" @click="createToken" :disabled="tokenCreateBusy || !!pendingRawToken"
               class="bg-amber-700 hover:bg-amber-800 disabled:opacity-60 text-white font-mono py-2 px-4 rounded">
-        <span x-text="busy ? 'Creating…' : 'Create'">Create</span>
+        <span x-text="tokenCreateBusy ? 'Creating…' : 'Create'">Create</span>
       </button>
     </div>
 

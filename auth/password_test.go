@@ -36,6 +36,15 @@ func TestHashPasswordTooLong(t *testing.T) {
 	}
 }
 
+func TestMaxPasswordBytesMatchesValidationBoundary(t *testing.T) {
+	if err := ValidatePassword(strings.Repeat("a", MaxPasswordBytes)); err != nil {
+		t.Fatalf("ValidatePassword(MaxPasswordBytes) = %v, want nil", err)
+	}
+	if err := ValidatePassword(strings.Repeat("a", MaxPasswordBytes+1)); err != ErrPasswordTooLong {
+		t.Fatalf("ValidatePassword(MaxPasswordBytes+1) = %v, want ErrPasswordTooLong", err)
+	}
+}
+
 func TestValidatePassword(t *testing.T) {
 	// Below the minimum is rejected.
 	for _, s := range []string{"", "a", "1234567"} {

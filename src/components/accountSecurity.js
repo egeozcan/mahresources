@@ -50,7 +50,13 @@ function tokensFromPage() {
  */
 export function accountSecurity(initialTokens = null) {
   return {
-    busy: false,
+    tokenCreateBusy: false,
+    tokenRefreshBusy: false,
+    passwordBusy: false,
+    revokingTokenId: null,
+    get busy() {
+      return this.tokenCreateBusy || this.tokenRefreshBusy || this.passwordBusy || this.revokingTokenId !== null;
+    },
     error: '',
     pendingRawToken: '',
     tokens: (initialTokens ?? tokensFromPage()).map(normalizeToken),
@@ -76,8 +82,8 @@ export function accountSecurity(initialTokens = null) {
     },
 
     async createToken() {
-      if (this.busy || this.pendingRawToken) return;
-      this.busy = true;
+      if (this.tokenCreateBusy || this.pendingRawToken) return;
+      this.tokenCreateBusy = true;
       this.error = '';
       try {
         const response = await fetch('/v1/account/tokens', {
@@ -101,7 +107,7 @@ export function accountSecurity(initialTokens = null) {
       } catch (err) {
         this.error = err instanceof Error ? err.message : 'Could not create token.';
       } finally {
-        this.busy = false;
+        this.tokenCreateBusy = false;
       }
     },
 
@@ -110,8 +116,8 @@ export function accountSecurity(initialTokens = null) {
     },
 
     async refreshTokens() {
-      if (this.busy) return;
-      this.busy = true;
+      if (this.tokenRefreshBusy) return;
+      this.tokenRefreshBusy = true;
       this.error = '';
       try {
         const response = await fetch('/v1/account/tokens', { headers: { Accept: 'application/json' } });
@@ -124,13 +130,13 @@ export function accountSecurity(initialTokens = null) {
       } catch (err) {
         this.error = err instanceof Error ? err.message : 'Could not refresh tokens.';
       } finally {
-        this.busy = false;
+        this.tokenRefreshBusy = false;
       }
     },
 
     async revokeToken(token) {
-      if (this.busy || !token?.id) return;
-      this.busy = true;
+      if (this.revokingTokenId !== null || !token?.id) return;
+      this.revokingTokenId = token.id;
       this.error = '';
       try {
         const response = await fetch(`/v1/account/tokens/delete?id=${encodeURIComponent(token.id)}`, {
@@ -146,12 +152,12 @@ export function accountSecurity(initialTokens = null) {
       } catch (err) {
         this.error = err instanceof Error ? err.message : 'Could not revoke token.';
       } finally {
-        this.busy = false;
+        this.revokingTokenId = null;
       }
     },
 
     async changePassword() {
-      if (this.busy) return;
+      if (this.passwordBusy) return;
       this.passwordError = '';
       this.passwordSuccess = '';
       if (this.newPassword !== this.confirmPassword) {
@@ -159,7 +165,7 @@ export function accountSecurity(initialTokens = null) {
         return;
       }
 
-      this.busy = true;
+      this.passwordBusy = true;
       try {
         const response = await fetch('/v1/account/password', {
           method: 'POST',
@@ -181,7 +187,7 @@ export function accountSecurity(initialTokens = null) {
       } catch (err) {
         this.passwordError = err instanceof Error ? err.message : 'Could not update password.';
       } finally {
-        this.busy = false;
+        this.passwordBusy = false;
       }
     },
   };

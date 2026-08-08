@@ -15,14 +15,19 @@ import (
 // reasonable balance for an app meant for small private deployments.
 const bcryptCost = bcrypt.DefaultCost
 
-// MinPasswordLength is the minimum length (in Unicode code points) for a newly-set password.
-// Existing accounts are not re-validated on login — only password changes,
-// account creation, and bootstrap enforce this.
-const MinPasswordLength = 8
+const (
+	// MinPasswordLength is the minimum length (in Unicode code points) for a newly-set password.
+	// Existing accounts are not re-validated on login — only password changes,
+	// account creation, and bootstrap enforce this.
+	MinPasswordLength = 8
 
-// ErrPasswordTooLong is returned when a password exceeds bcrypt's 72-byte input
-// limit. Surfaced as a validation error rather than a silent truncation.
-var ErrPasswordTooLong = errors.New("password must be at most 72 bytes")
+	// MaxPasswordBytes is bcrypt's maximum password input length in UTF-8 bytes.
+	// Longer input is rejected instead of being silently truncated.
+	MaxPasswordBytes = 72
+)
+
+// ErrPasswordTooLong is returned when a password exceeds MaxPasswordBytes.
+var ErrPasswordTooLong = fmt.Errorf("password must be at most %d bytes", MaxPasswordBytes)
 
 // ErrPasswordTooShort is returned when a password is shorter than
 // MinPasswordLength.
@@ -35,7 +40,7 @@ func ValidatePassword(plaintext string) error {
 	if utf8.RuneCountInString(plaintext) < MinPasswordLength {
 		return ErrPasswordTooShort
 	}
-	if len(plaintext) > 72 {
+	if len(plaintext) > MaxPasswordBytes {
 		return ErrPasswordTooLong
 	}
 	return nil

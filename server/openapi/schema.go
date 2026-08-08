@@ -282,6 +282,9 @@ func (g *SchemaGenerator) collectStructFields(t reflect.Type, schema *openapi3.S
 
 		name := getFieldName(field)
 		fieldSchema := g.generateFieldSchema(field.Type)
+		if hasOpenAPIOption(field, "required") {
+			schema.Required = append(schema.Required, name)
+		}
 
 		// Check for readOnly in gorm tags or timestamp fields
 		// Use field.Name (struct field name) not JSON name for timestamp detection
@@ -297,6 +300,15 @@ func (g *SchemaGenerator) collectStructFields(t reflect.Type, schema *openapi3.S
 
 		schema.Properties[name] = fieldSchema
 	}
+}
+
+func hasOpenAPIOption(field reflect.StructField, want string) bool {
+	for _, option := range strings.Split(field.Tag.Get("openapi"), ",") {
+		if strings.TrimSpace(option) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *SchemaGenerator) generatePartialSchema(t reflect.Type, partialName string) {

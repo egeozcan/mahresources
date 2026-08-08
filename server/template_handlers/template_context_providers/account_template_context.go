@@ -30,7 +30,7 @@ func AdminUsersContextProvider(ctx AccountPageContext) func(request *http.Reques
 		// the only way to learn it was to be rejected. Published from the policy
 		// rather than written into the template, so the two cannot drift.
 		c["minPasswordLength"] = auth.MinPasswordLength
-		c["maxPasswordBytes"] = 72
+		c["maxPasswordBytes"] = auth.MaxPasswordBytes
 		c["formSubmitted"] = request.URL.Query().Has("error")
 		return c
 	}
@@ -54,7 +54,7 @@ func AdminUserEditContextProvider(ctx AccountPageContext) func(request *http.Req
 		c["pageTitle"] = "Edit user"
 		c["roles"] = models.ValidRoles
 		c["minPasswordLength"] = auth.MinPasswordLength
-		c["maxPasswordBytes"] = 72
+		c["maxPasswordBytes"] = auth.MaxPasswordBytes
 		c["formSubmitted"] = request.URL.Query().Has("error")
 		// formCancelURL only answers for two-segment /X/new and /X/edit paths, so
 		// this three-segment one has to say where Cancel goes itself. Finding 129
@@ -101,7 +101,7 @@ func AccountContextProvider(ctx AccountPageContext) func(request *http.Request) 
 		c["pageTitle"] = "Account"
 		p := auth.PrincipalFromContext(request.Context())
 		c["minPasswordLength"] = auth.MinPasswordLength
-		c["maxPasswordBytes"] = 72
+		c["maxPasswordBytes"] = auth.MaxPasswordBytes
 		if p != nil && !p.SuperUser && p.UserID != 0 {
 			c["account"] = p
 			if tokens, err := ctx.ListApiTokens(p.UserID); err == nil {
