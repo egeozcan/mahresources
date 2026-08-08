@@ -39,11 +39,21 @@ test.describe('auth management accessibility', () => {
     for (const path of [`/admin/users/edit?id=${userID}`, '/account']) {
       const response = await page.goto(path);
       expect(response?.status(), `${path} should render at mobile viewport`).toBe(200);
+      const primaryAction = path === '/account'
+        ? page.getByRole('button', { name: 'Update password' })
+        : page.getByRole('button', { name: 'Save', exact: true });
       if (path === '/account') {
         await expect(page.getByRole('button', { name: 'Refresh tokens' })).toBeEnabled();
       } else {
         await expect(page.locator('#ue-username')).toBeVisible();
       }
+      await expect(primaryAction).toBeVisible();
+      const actionBox = await primaryAction.boundingBox();
+      expect(actionBox, `${path} primary action should have a layout box`).not.toBeNull();
+      expect(actionBox!.x, `${path} primary action should start inside the viewport`).toBeGreaterThanOrEqual(0);
+      expect(actionBox!.x + actionBox!.width, `${path} primary action should fit the viewport`).toBeLessThanOrEqual(391);
+      const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(horizontalOverflow, `${path} should not have page-level horizontal overflow`).toBeLessThanOrEqual(1);
       await expectNoViolations(page);
     }
   });

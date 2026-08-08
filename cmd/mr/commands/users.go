@@ -256,7 +256,7 @@ func newUserUpdateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd.Flags().StringVar(&password, "password", "", "New password (omit to keep the current one)")
 	cmd.Flags().StringVar(&role, "role", "", "New role: admin, editor, user, or guest")
 	cmd.Flags().StringVar(&displayName, "display-name", "", "New display name")
-	cmd.Flags().UintVar(&scopeGroup, "scope-group", 0, "New scope group id")
+	cmd.Flags().UintVar(&scopeGroup, "scope-group", 0, "New scope group id (use 0 to clear)")
 	cmd.Flags().BoolVar(&disabled, "disabled", false, "Disable the account (revokes its sessions and tokens)")
 	cmd.Flags().BoolVar(&enable, "enable", false, "Re-enable a disabled account")
 	return cmd

@@ -2,12 +2,15 @@ package application_context
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"mahresources/auth"
+	"mahresources/constants"
 	"mahresources/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Session errors.
@@ -20,8 +23,61 @@ var (
 const sessionTouchInterval = time.Minute
 
 // CreateSession mints a new login session for a user and returns the raw token
-// (to be placed in the cookie) plus the stored session record.
+// (to be placed in the cookie) plus the stored session record. Login handlers
+// must use AuthenticateAndCreateSession so password verification and insertion
+// serialize with password reset and account deletion.
 func (ctx *MahresourcesContext) CreateSession(userID uint, ttl time.Duration, userAgent, ip string) (string, *models.Session, error) {
+	raw, session, err := newSession(userID, ttl, userAgent, ip)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := ctx.db.Create(session).Error; err != nil {
+		return "", nil, err
+	}
+	return raw, session, nil
+}
+
+// AuthenticateAndCreateSession verifies credentials and inserts the resulting
+// browser session under the same user-management transaction lock. A password
+// reset that commits after this transaction therefore deletes the new session;
+// one that commits first causes the old password check to fail.
+func (ctx *MahresourcesContext) AuthenticateAndCreateSession(username, password string, ttl time.Duration, userAgent, ip string) (*models.User, string, *models.Session, error) {
+	raw, session, err := newSession(0, ttl, userAgent, ip)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	var user models.User
+	err = ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.lockUserManagementMutation(tx); err != nil {
+			return err
+		}
+		query := tx
+		if ctx.Config.DbType == constants.DbTypePosgres {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := query.Where("username = ?", strings.TrimSpace(username)).First(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				auth.CheckPassword(dummyHash, password)
+				return ErrInvalidCredentials
+			}
+			return err
+		}
+		if !auth.CheckPassword(user.PasswordHash, password) {
+			return ErrInvalidCredentials
+		}
+		if user.Disabled {
+			return ErrUserDisabled
+		}
+		session.UserId = user.ID
+		return tx.Create(session).Error
+	})
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return &user, raw, session, nil
+}
+
+func newSession(userID uint, ttl time.Duration, userAgent, ip string) (string, *models.Session, error) {
 	raw, err := auth.GenerateToken()
 	if err != nil {
 		return "", nil, err
@@ -31,7 +87,7 @@ func (ctx *MahresourcesContext) CreateSession(userID uint, ttl time.Duration, us
 		return "", nil, err
 	}
 	now := time.Now()
-	session := &models.Session{
+	return raw, &models.Session{
 		UserId:     userID,
 		TokenHash:  auth.HashToken(raw),
 		CsrfToken:  csrf,
@@ -39,11 +95,7 @@ func (ctx *MahresourcesContext) CreateSession(userID uint, ttl time.Duration, us
 		LastSeenAt: now,
 		UserAgent:  userAgent,
 		IP:         ip,
-	}
-	if err := ctx.db.Create(session).Error; err != nil {
-		return "", nil, err
-	}
-	return raw, session, nil
+	}, nil
 }
 
 // ValidateSession resolves a raw cookie token to its user. It rejects expired

@@ -15,11 +15,13 @@ import (
 // startSession authenticates a username/password pair, mints a session, and
 // writes the session cookie. Shared by the web form and the JSON API login.
 func startSession(appCtx *application_context.MahresourcesContext, w http.ResponseWriter, r *http.Request, username, password string) (*models.User, error) {
-	user, err := appCtx.AuthenticateUser(username, password)
-	if err != nil {
-		return nil, err
-	}
-	raw, _, err := appCtx.CreateSession(user.ID, appCtx.SessionTTL(), r.UserAgent(), clientIP(r, appCtx.TrustProxyHeaders()))
+	user, raw, _, err := appCtx.AuthenticateAndCreateSession(
+		username,
+		password,
+		appCtx.SessionTTL(),
+		r.UserAgent(),
+		clientIP(r, appCtx.TrustProxyHeaders()),
+	)
 	if err != nil {
 		return nil, err
 	}

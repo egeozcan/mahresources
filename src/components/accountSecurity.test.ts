@@ -111,6 +111,49 @@ describe('accountSecurity refresh and revoke state', () => {
     ]);
   });
 
+  test('a stale refresh failure cannot overwrite a newer successful mutation', async () => {
+    let resolveRefresh!: (response: Response) => void;
+    const refreshPending = new Promise<Response>((done) => { resolveRefresh = done; });
+    const fetchMock = vi.fn((_url: string, options?: RequestInit) => (
+      options?.method === 'POST'
+        ? Promise.resolve(jsonResponse({ token: 'mr_new', id: 8, name: 'new', prefix: 'mr_ne' }))
+        : refreshPending
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const state = accountSecurity([]);
+
+    const refresh = state.refreshTokens();
+    await state.createToken();
+    resolveRefresh(jsonResponse({ error: 'stale refresh failed' }, 500));
+    await refresh;
+
+    expect(state.error).toBe('');
+    expect(state.tokens).toEqual([
+      expect.objectContaining({ id: 8, name: 'new' }),
+    ]);
+  });
+
+  test('a rejected mutation does not discard a valid in-flight refresh', async () => {
+    let resolveRefresh!: (response: Response) => void;
+    const refreshPending = new Promise<Response>((done) => { resolveRefresh = done; });
+    const fetchMock = vi.fn((_url: string, options?: RequestInit) => (
+      options?.method === 'POST'
+        ? Promise.resolve(jsonResponse({ error: 'create rejected' }, 409))
+        : refreshPending
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const state = accountSecurity([]);
+
+    const refresh = state.refreshTokens();
+    await state.createToken();
+    resolveRefresh(jsonResponse([{ ID: 3, name: 'desktop', prefix: 'mr_des' }]));
+    await refresh;
+
+    expect(state.tokens).toEqual([
+      expect.objectContaining({ id: 3, name: 'desktop' }),
+    ]);
+  });
+
   test('revoke removes only the successful token row', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ ok: true })));
     const state = accountSecurity([

@@ -27,19 +27,11 @@ const apiTokenTouchInterval = time.Minute
 // (shown once) plus the stored record. A nil expiresAt means the token never
 // expires.
 func (ctx *MahresourcesContext) CreateApiToken(userID uint, name string, expiresAt *time.Time) (string, *models.ApiToken, error) {
-	// Unlimited mode keeps the direct create path, but still validates ownership
-	// explicitly so SQLite and Postgres return the same typed error.
-	if ctx.Config.MaxUserTokens <= 0 {
-		if err := apiTokenOwnerExists(ctx.db, userID); err != nil {
-			return "", nil, err
-		}
-		return createApiToken(ctx.db, userID, name, expiresAt)
-	}
-
-	// Serialize capped creation per owner. PostgreSQL locks the owning row. On
-	// SQLite the no-op UPDATE is intentionally the transaction's first statement:
-	// it acquires the write lock before the count, preventing a read-before-write
-	// window while leaving the user record unchanged.
+	// Serialize every credential creation with user mutation. PostgreSQL locks
+	// the owning row. On SQLite the no-op UPDATE is intentionally the
+	// transaction's first statement, acquiring the write lock before owner
+	// validation or insertion. Unlimited creation must use the same path so a
+	// racing password reset or deletion cannot be followed by a surviving token.
 	var raw string
 	var token *models.ApiToken
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
@@ -50,12 +42,14 @@ func (ctx *MahresourcesContext) CreateApiToken(userID uint, name string, expires
 			return err
 		}
 
-		var count int64
-		if err := tx.Model(&models.ApiToken{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
-			return err
-		}
-		if count >= int64(ctx.Config.MaxUserTokens) {
-			return ErrApiTokenLimitReached
+		if ctx.Config.MaxUserTokens > 0 {
+			var count int64
+			if err := tx.Model(&models.ApiToken{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+				return err
+			}
+			if count >= int64(ctx.Config.MaxUserTokens) {
+				return ErrApiTokenLimitReached
+			}
 		}
 
 		var err error
@@ -66,17 +60,6 @@ func (ctx *MahresourcesContext) CreateApiToken(userID uint, name string, expires
 		return "", nil, err
 	}
 	return raw, token, nil
-}
-
-func apiTokenOwnerExists(db *gorm.DB, userID uint) error {
-	var owner models.User
-	if err := db.Select("id").First(&owner, userID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrUserNotFound
-		}
-		return err
-	}
-	return nil
 }
 
 func lockApiTokenOwner(ctx *MahresourcesContext, tx *gorm.DB, userID uint) error {

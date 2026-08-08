@@ -4,11 +4,25 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"mahresources/cmd/mr/client"
 	"mahresources/cmd/mr/output"
 )
+
+func TestUserUpdateDocumentsScopeClearing(t *testing.T) {
+	cmd := newUserUpdateCmd(client.New("http://example.invalid"), &output.Options{})
+	var help strings.Builder
+	cmd.SetOut(&help)
+	cmd.SetArgs([]string{"--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("render help: %v", err)
+	}
+	if !strings.Contains(help.String(), "use 0 to clear") {
+		t.Fatalf("scope clear contract missing from help:\n%s", help.String())
+	}
+}
 
 func TestUserUpdateSendsOnlyExplicitFields(t *testing.T) {
 	var gotMethod, gotPath string

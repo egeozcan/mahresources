@@ -85,7 +85,6 @@ export function accountSecurity(initialTokens = null) {
 
     async createToken() {
       if (this.tokenCreateBusy || this.pendingRawToken) return;
-      this._tokenMutationGeneration += 1;
       this.tokenCreateBusy = true;
       this.error = '';
       try {
@@ -128,15 +127,21 @@ export function accountSecurity(initialTokens = null) {
       try {
         const response = await fetch('/v1/account/tokens', { headers: { Accept: 'application/json' } });
         const data = await readResponse(response);
+        const isCurrent = () => refreshGeneration === this._tokenRefreshGeneration
+          && mutationGeneration === this._tokenMutationGeneration;
         if (!response.ok) {
-          this.error = responseMessage(data, `Could not refresh tokens (${response.status}).`);
+          if (isCurrent()) {
+            this.error = responseMessage(data, `Could not refresh tokens (${response.status}).`);
+          }
           return;
         }
-        if (refreshGeneration === this._tokenRefreshGeneration && mutationGeneration === this._tokenMutationGeneration) {
+        if (isCurrent()) {
           this.tokens = Array.isArray(data) ? data.map(normalizeToken) : [];
         }
       } catch (err) {
-        this.error = err instanceof Error ? err.message : 'Could not refresh tokens.';
+        if (refreshGeneration === this._tokenRefreshGeneration && mutationGeneration === this._tokenMutationGeneration) {
+          this.error = err instanceof Error ? err.message : 'Could not refresh tokens.';
+        }
       } finally {
         this.tokenRefreshBusy = false;
       }
@@ -144,7 +149,6 @@ export function accountSecurity(initialTokens = null) {
 
     async revokeToken(token) {
       if (this.revokingTokenId !== null || !token?.id) return;
-      this._tokenMutationGeneration += 1;
       this.revokingTokenId = token.id;
       this.error = '';
       try {

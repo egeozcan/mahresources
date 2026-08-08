@@ -130,11 +130,13 @@ func TestPostgresScopeUpdateAndCreatorAdminDeleteShareMutationLock(t *testing.T)
 }
 
 func TestPostgresUserDeleteSerializesPasswordResetAndTokenCreation(t *testing.T) {
-	for _, credential := range []string{"password-reset", "token-create"} {
+	for _, credential := range []string{"password-reset", "token-create-capped", "token-create-unlimited"} {
 		t.Run(credential, func(t *testing.T) {
 			tc := SetupPostgresTestEnv(t)
-			if credential == "token-create" {
+			if credential == "token-create-capped" {
 				tc.AppCtx.Config.MaxUserTokens = 2
+			} else if credential == "token-create-unlimited" {
+				tc.AppCtx.Config.MaxUserTokens = 0
 			}
 			user, err := tc.AppCtx.CreateUser(&application_context.UserInput{
 				Username: "pg-delete-credential-" + credential, Password: "password1", Role: models.RoleEditor,
@@ -165,6 +167,37 @@ func TestPostgresUserDeleteSerializesPasswordResetAndTokenCreation(t *testing.T)
 				t.Fatalf("credential mutation err=%v, want ErrUserNotFound after delete", err)
 			}
 		})
+	}
+}
+
+func TestPostgresLoginSerializesPasswordReset(t *testing.T) {
+	tc := SetupPostgresTestEnv(t)
+	user, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "pg-login-reset", Password: "password1", Role: models.RoleUser,
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	barrier := installPostgresMutationBarrier(t, tc.DB, "login-vs-reset")
+	resetDone := make(chan error, 1)
+	loginDone := make(chan error, 1)
+	go func() { resetDone <- tc.AppCtx.SetUserPassword(user.ID, "password2") }()
+	waitBarrier(t, barrier.acquired, "password reset did not acquire the shared advisory lock")
+	go func() {
+		_, _, _, loginErr := tc.AppCtx.AuthenticateAndCreateSession(
+			user.Username, "password1", time.Hour, "agent", "127.0.0.1",
+		)
+		loginDone <- loginErr
+	}()
+	waitBarrier(t, barrier.second, "login did not attempt the shared advisory lock")
+	assertStillBlocked(t, resetDone, loginDone)
+	barrier.releaseOwner()
+	if err := <-resetDone; err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if err := <-loginDone; !errors.Is(err, application_context.ErrInvalidCredentials) {
+		t.Fatalf("old-password login after reset err=%v, want ErrInvalidCredentials", err)
 	}
 }
 

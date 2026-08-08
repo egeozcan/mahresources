@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -140,6 +141,68 @@ func TestCreateApiTokenUnlimitedByDefault(t *testing.T) {
 	}
 }
 
+func TestUnlimitedApiTokenCreationSerializesPasswordReset(t *testing.T) {
+	contexts := newConcurrentApiTokenTestContexts(t, 2)
+	for _, testCtx := range contexts {
+		testCtx.Config.MaxUserTokens = 0
+	}
+	user, err := contexts[0].CreateUser(&UserInput{Username: "unlimited-race", Password: "password1", Role: models.RoleEditor})
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+
+	insertReady := make(chan struct{})
+	releaseInsert := make(chan struct{})
+	var insertOnce sync.Once
+	if err := contexts[0].db.Callback().Create().Before("gorm:create").Register("test:pause_unlimited_token_insert", func(tx *gorm.DB) {
+		if tx.Statement.Table == "api_tokens" {
+			insertOnce.Do(func() {
+				close(insertReady)
+				<-releaseInsert
+			})
+		}
+	}); err != nil {
+		t.Fatalf("register token insert barrier: %v", err)
+	}
+
+	resetAttempted := make(chan struct{})
+	var resetOnce sync.Once
+	if err := contexts[1].db.Callback().Raw().Before("gorm:raw").Register("test:observe_unlimited_reset_lock", func(tx *gorm.DB) {
+		if strings.Contains(tx.Statement.SQL.String(), "UPDATE users SET id = id") {
+			resetOnce.Do(func() { close(resetAttempted) })
+		}
+	}); err != nil {
+		t.Fatalf("register reset barrier: %v", err)
+	}
+
+	type tokenResult struct {
+		raw string
+		err error
+	}
+	tokenDone := make(chan tokenResult, 1)
+	go func() {
+		raw, _, err := contexts[0].CreateApiToken(user.ID, "racing token", nil)
+		tokenDone <- tokenResult{raw: raw, err: err}
+	}()
+	<-insertReady
+
+	resetDone := make(chan error, 1)
+	go func() { resetDone <- contexts[1].SetUserPassword(user.ID, "password2") }()
+	<-resetAttempted
+	close(releaseInsert)
+
+	created := <-tokenDone
+	if created.err != nil {
+		t.Fatalf("create token: %v", created.err)
+	}
+	if err := <-resetDone; err != nil {
+		t.Fatalf("reset password: %v", err)
+	}
+	if _, _, err := contexts[0].ValidateApiToken(created.raw); !errors.Is(err, ErrApiTokenInvalid) {
+		t.Fatalf("token created by an operation racing reset remained valid: %v", err)
+	}
+}
+
 func TestCreateApiTokenRejectsMissingOwner(t *testing.T) {
 	for _, limit := range []int{0, 2} {
 		t.Run(fmt.Sprintf("limit-%d", limit), func(t *testing.T) {
@@ -173,7 +236,7 @@ func newConcurrentApiTokenTestContexts(t *testing.T, count int) []*MahresourcesC
 		sqlDB.SetMaxOpenConns(1)
 		t.Cleanup(func() { _ = sqlDB.Close() })
 		if i == 0 {
-			if err := db.AutoMigrate(&models.User{}, &models.ApiToken{}); err != nil {
+			if err := db.AutoMigrate(&models.User{}, &models.Session{}, &models.ApiToken{}); err != nil {
 				t.Fatalf("migrate shared SQLite database: %v", err)
 			}
 		}

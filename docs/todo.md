@@ -27,6 +27,17 @@ Verification:
 - Temporary focused regression probes reproduced the scope escalation, credential preservation after admin/bootstrap resets, login-throttle bypasses, and Disabled-state replay defect; probes were removed after execution.
 - Postgres and authenticated browser/a11y suites were not run during this read-only audit.
 
+## Hardening implementation outcome — 2026-08-08
+
+- [x] Integrated five boundary-aligned implementation lanes plus all scoped review fixes.
+- [x] Rejected scope-group deletion with 409 and made group merge transfer scope atomically.
+- [x] Made user updates presence-aware, credential revocation transactional, bootstrap/root/last-admin invariants concurrency-safe, login limiting bounded, and token caps atomic.
+- [x] Closed final review findings across shared PostgreSQL/SQLite mutation locking, CLI partial updates, OpenAPI truthfulness, artifact freshness, explicit-clear replay, and browser/a11y coverage.
+- [x] Closed adversarial re-review gaps: login/session creation now serializes with reset/delete; unlimited token creation uses the same mutation lock; stale refresh failures cannot overwrite newer token state; failed mutations no longer discard valid refreshes; CLI scope clearing and mobile layout assertions are explicit.
+- [x] Full verification passed: Go, focused race, Docker-backed PostgreSQL, 933 frontend unit tests, build/OpenAPI/docs freshness, and 1,959 browser/CLI tests (6 intentional skips).
+
+Residual risks: multipart CSRF query-token redesign and cross-process root-cache invalidation remain explicitly deferred. A broad unrelated race run exposed a pre-existing `download_queue.DownloadJob` serialization race outside this work; changed-area race suites are green.
+
 ---
 
 # UI bug hunt 2026-07-29 — verification and remediation

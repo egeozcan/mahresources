@@ -42,7 +42,7 @@ mr user update 4 --disabled --password password2
 | `--password` | string | `` | New password (omit to keep the current one) |
 | `--role` | string | `` | New role: admin, editor, user, or guest |
 | `--display-name` | string | `` | New display name |
-| `--scope-group` | uint | `0` | New scope group id |
+| `--scope-group` | uint | `0` | New scope group id (use 0 to clear) |
 | `--disabled` | bool | `false` | Disable the account (revokes its sessions and tokens) |
 | `--enable` | bool | `false` | Re-enable a disabled account |
 ### Inherited global flags
