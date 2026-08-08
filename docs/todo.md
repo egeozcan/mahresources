@@ -1,3 +1,34 @@
+# User-management codebase review — 2026-08-08
+
+- [x] Map user-management requirements, routes, persistence, templates, and tests.
+- [x] Audit authorization, credential handling, scoping, and last-admin invariants.
+- [x] Audit create/edit/delete flows, error behavior, UI, and accessibility.
+- [x] Evaluate test coverage and verify high-confidence findings with focused tests or probes.
+- [x] Record findings and residual risks in the review section below.
+
+## Review
+
+The current implementation has strong baseline controls (bcrypt with the 72-byte guard, hashed high-entropy session/API tokens, CSRF protection, admin-only user routes, fail-closed unresolved scopes, and sequential/concurrent last-admin tests), but the audit found several actionable defects:
+
+1. **Critical:** deleting an optionally scoped user's scope group can `SET NULL` the scope and turn the account into an unrestricted user on production SQLite.
+2. **High:** bootstrap promotion/re-enablement preserves old sessions and API tokens, which can elevate an old credential to administrator access.
+3. **High:** `UpdateUser` performs a stale full-row `Save`, allowing concurrent metadata edits to restore an old password hash or bypass the last-admin classification.
+4. **High:** the create-user form defaults to `admin` because the canonical role list is admin-first and the select has no required placeholder.
+5. **Medium:** administrator password resets leave existing browser sessions valid; disable cleanup is post-commit, non-atomic, and ignores errors.
+6. **Medium:** login throttling admits an unlimited concurrent burst before recording failures, and a successful login clears the shared IP key.
+7. **Medium:** rejected create/edit forms do not preserve the Disabled checkbox, including failed attempts to disable an account.
+8. **Medium:** self-service token creation has no busy/error/live-status state, so duplicate requests can mint an active token whose one-time raw value is overwritten.
+9. **Medium:** the update endpoint is a full replacement whose omission semantics are not expressed by its POST/OpenAPI contract; omitting `disabled` re-enables an account.
+10. **Lower-priority gaps:** root bootstrap and token-cap checks are non-atomic; account password UX does not state the policy; token/user destructive controls need row-specific accessible names; auth-page browser/a11y coverage is sparse.
+
+Verification:
+
+- `go test --tags 'json1 fts5' ./auth ./application_context ./server ./server/api_tests -count=1` — passed.
+- Temporary focused regression probes reproduced the scope escalation, credential preservation after admin/bootstrap resets, login-throttle bypasses, and Disabled-state replay defect; probes were removed after execution.
+- Postgres and authenticated browser/a11y suites were not run during this read-only audit.
+
+---
+
 # UI bug hunt 2026-07-29 — verification and remediation
 
 Source: `docs/ui-bug-hunt-2026-07-29.md` (160 findings — 24 high / 77 medium / 59 low; 52 bug,
