@@ -125,95 +125,132 @@ func (ctx *MahresourcesContext) UpdateUser(id uint, update *UserUpdate) (*models
 		return result, nil
 	}
 
-	if ctx.userUpdateBarrier != nil {
-		ctx.userUpdateBarrier()
-	}
+	// A pre-read is required to know which scope group (if any) must be the
+	// transaction's first lock. The row is deliberately re-read under lock below;
+	// it is only a lock-order hint and never the authority for last-admin checks.
+	// If its role/scope changes before the user lock, retry from a fresh hint.
+	for attempt := 0; attempt < 5; attempt++ {
+		observed, err := ctx.GetUser(id)
+		if err != nil {
+			return nil, err
+		}
+		_, observedScope := effectiveUserScope(observed, update)
 
-	var result models.User
-	err := ctx.db.Transaction(func(tx *gorm.DB) error {
-		// SQLite has no row-level FOR UPDATE. Make a no-op write the first
-		// statement so concurrent identity writers serialize before either reads
-		// the role/disabled state used for last-admin classification.
-		if ctx.Config.DbType == constants.DbTypeSqlite {
-			res := tx.Exec("UPDATE users SET id = id WHERE id = ?", id)
-			if res.Error != nil {
-				return res.Error
-			}
-			if res.RowsAffected == 0 {
-				return ErrUserNotFound
-			}
-		}
-		if err := lockEnabledAdmins(ctx, tx); err != nil {
-			return err
-		}
-
-		var current models.User
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrUserNotFound
-			}
-			return err
-		}
-
-		effectiveRole := current.Role
-		if update.Role.Set {
-			effectiveRole = update.Role.Value
-		}
-		effectiveScope := current.ScopeGroupId
-		if update.ScopeGroupID.Set {
-			effectiveScope = update.ScopeGroupID.Value
-		}
-		effectiveScope = normalizeScopeGroup(effectiveRole, effectiveScope)
-		if update.Role.Set || update.ScopeGroupID.Set {
-			if err := ctx.validateAndLockScopeGroup(tx, effectiveRole, effectiveScope); err != nil {
-				return err
-			}
-			updates["scope_group_id"] = effectiveScope
-		}
-
-		effectiveDisabled := current.Disabled
-		if update.Disabled.Set {
-			effectiveDisabled = update.Disabled.Value
-		}
-		dangerous := current.Role == models.RoleAdmin && !current.Disabled &&
-			(effectiveRole != models.RoleAdmin || effectiveDisabled)
-
-		if len(updates) > 0 {
-			query := tx.Model(&models.User{}).Where("id = ?", id)
-			if dangerous {
-				query = query.Where(
-					"EXISTS (SELECT 1 FROM users u2 WHERE u2.role = ? AND u2.disabled = ? AND u2.id <> ?)",
-					models.RoleAdmin, false, id,
-				)
-			}
-			res := query.Updates(updates)
-			if res.Error != nil {
-				if isUniqueConstraintError(res.Error) {
-					return ErrUsernameTaken
+		var result models.User
+		err = ctx.db.Transaction(func(tx *gorm.DB) error {
+			// Scope-bearing identity changes lock/revalidate the target group before
+			// any user row. MergeGroups uses the same groups-before-users order.
+			if observedScope != nil {
+				if _, lockErr := ctx.lockScopeGroup(tx, *observedScope, "assign"); lockErr != nil {
+					if errors.Is(lockErr, gorm.ErrRecordNotFound) {
+						return ErrScopeGroupMissing
+					}
+					return lockErr
 				}
-				return res.Error
 			}
-			if dangerous && res.RowsAffected == 0 {
-				return ErrLastAdmin
-			}
-		}
 
-		// An administrator-set password reset and a disabled account must not
-		// retain credentials minted under the prior identity state.
-		if passwordChanged || (update.Disabled.Set && update.Disabled.Value) {
-			if err := deleteUserSessions(tx, id, nil); err != nil {
+			// SQLite has no row-level FOR UPDATE. This no-op user write follows
+			// the optional group no-op write, preserving the same lock order while
+			// serializing identity writers before authoritative classification.
+			if ctx.Config.DbType == constants.DbTypeSqlite {
+				res := tx.Exec("UPDATE users SET id = id WHERE id = ?", id)
+				if res.Error != nil {
+					return res.Error
+				}
+				if res.RowsAffected == 0 {
+					return ErrUserNotFound
+				}
+			}
+			if err := lockEnabledAdmins(ctx, tx); err != nil {
 				return err
 			}
-			if err := deleteUserAPITokens(tx, id); err != nil {
+
+			var current models.User
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, id).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrUserNotFound
+				}
 				return err
 			}
-		}
 
-		return tx.First(&result, id).Error
-	})
-	if err != nil {
-		return nil, err
+			effectiveRole, effectiveScope := effectiveUserScope(&current, update)
+			if !sameScopeGroup(observedScope, effectiveScope) {
+				return errIdentityReclassified
+			}
+			if effectiveScope == nil && effectiveRole.RequiresScopeGroup() {
+				return ErrScopeGroupRequired
+			}
+			if update.Role.Set || update.ScopeGroupID.Set {
+				updates["scope_group_id"] = effectiveScope
+			}
+
+			effectiveDisabled := current.Disabled
+			if update.Disabled.Set {
+				effectiveDisabled = update.Disabled.Value
+			}
+			dangerous := current.Role == models.RoleAdmin && !current.Disabled &&
+				(effectiveRole != models.RoleAdmin || effectiveDisabled)
+
+			if len(updates) > 0 {
+				query := tx.Model(&models.User{}).Where("id = ?", id)
+				if dangerous {
+					query = query.Where(
+						"EXISTS (SELECT 1 FROM users u2 WHERE u2.role = ? AND u2.disabled = ? AND u2.id <> ?)",
+						models.RoleAdmin, false, id,
+					)
+				}
+				res := query.Updates(updates)
+				if res.Error != nil {
+					if isUniqueConstraintError(res.Error) {
+						return ErrUsernameTaken
+					}
+					return res.Error
+				}
+				if dangerous && res.RowsAffected == 0 {
+					return ErrLastAdmin
+				}
+			}
+
+			// An administrator-set password reset and a disabled account must not
+			// retain credentials minted under the prior identity state.
+			if passwordChanged || (update.Disabled.Set && update.Disabled.Value) {
+				if err := deleteUserSessions(tx, id, nil); err != nil {
+					return err
+				}
+				if err := deleteUserAPITokens(tx, id); err != nil {
+					return err
+				}
+			}
+
+			return tx.First(&result, id).Error
+		})
+		if errors.Is(err, errIdentityReclassified) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		ctx.refreshRootAdmin()
+		return &result, nil
 	}
-	ctx.refreshRootAdmin()
-	return &result, nil
+	return nil, errIdentityReclassified
+}
+
+func effectiveUserScope(current *models.User, update *UserUpdate) (models.Role, *uint) {
+	role := current.Role
+	if update.Role.Set {
+		role = update.Role.Value
+	}
+	scope := current.ScopeGroupId
+	if update.ScopeGroupID.Set {
+		scope = update.ScopeGroupID.Value
+	}
+	return role, normalizeScopeGroup(role, scope)
+}
+
+func sameScopeGroup(left, right *uint) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }

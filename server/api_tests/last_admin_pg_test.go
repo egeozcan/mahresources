@@ -56,7 +56,10 @@ func TestLastAdmin_PostgresMixedTransitionsUseExplicitBarrier(t *testing.T) {
 			var attempts atomic.Int32
 			attemptCallback := "test:observe_enabled_admin_lock_" + test.name
 			if err := tc.DB.Callback().Query().Before("gorm:query").Register(attemptCallback, func(db *gorm.DB) {
-				if db.Statement.Table == "users" && attempts.Add(1) == 2 {
+				if db.Statement.Table != "users" {
+					return
+				}
+				if _, locking := db.Statement.Clauses["FOR"]; locking && attempts.Add(1) == 2 {
 					close(secondAttempt)
 				}
 			}); err != nil {
@@ -64,7 +67,10 @@ func TestLastAdmin_PostgresMixedTransitionsUseExplicitBarrier(t *testing.T) {
 			}
 			callbackName := "test:pause_enabled_admin_lock_" + test.name
 			if err := tc.DB.Callback().Query().After("gorm:query").Register(callbackName, func(db *gorm.DB) {
-				if db.Statement.Table == "users" && used.CompareAndSwap(false, true) {
+				if db.Statement.Table != "users" {
+					return
+				}
+				if _, locking := db.Statement.Clauses["FOR"]; locking && used.CompareAndSwap(false, true) {
 					close(locked)
 					<-release
 				}

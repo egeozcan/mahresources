@@ -96,6 +96,86 @@ func TestMergeGroupsTransfersUserScopeToWinner(t *testing.T) {
 	}
 }
 
+func TestMergeAndScopeUpdateLockGroupsBeforeUsers(t *testing.T) {
+	for _, updateWins := range []bool{false, true} {
+		name := "merge-wins"
+		winningOperation := "merge"
+		if updateWins {
+			name = "update-wins"
+			winningOperation = "assign"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := newSharedFileContext(t)
+			winner := makeTestGroup(t, ctx, "winner-"+name)
+			loser := makeTestGroup(t, ctx, "loser-"+name)
+			user := createScopedTestUser(t, ctx, "merge-update-"+name, loser.ID)
+
+			locked := make(chan struct{})
+			release := make(chan struct{})
+			var once sync.Once
+			ctx.scopeLockBarrier = func(operation string, groupID uint) {
+				if operation == winningOperation && groupID == winner.ID {
+					once.Do(func() {
+						close(locked)
+						<-release
+					})
+				}
+			}
+
+			mergeDone := make(chan error, 1)
+			updateDone := make(chan error, 1)
+			startMerge := func() { go func() { mergeDone <- ctx.MergeGroups(winner.ID, []uint{loser.ID}) }() }
+			startUpdate := func() {
+				go func() {
+					_, err := ctx.UpdateUser(user.ID, &UserUpdate{
+						ScopeGroupID: UserField[*uint]{Set: true, Value: &winner.ID},
+					})
+					updateDone <- err
+				}()
+			}
+			if updateWins {
+				startUpdate()
+			} else {
+				startMerge()
+			}
+			select {
+			case <-locked:
+			case <-time.After(2 * time.Second):
+				t.Fatal("first operation never acquired the winner group lock")
+			}
+			if updateWins {
+				startMerge()
+			} else {
+				startUpdate()
+			}
+			select {
+			case err := <-mergeDone:
+				close(release)
+				<-updateDone
+				t.Fatalf("merge completed before winner lock release: %v", err)
+			case err := <-updateDone:
+				close(release)
+				<-mergeDone
+				t.Fatalf("scope update completed before winner lock release: %v", err)
+			case <-time.After(50 * time.Millisecond):
+			}
+			close(release)
+
+			if mergeErr, updateErr := <-mergeDone, <-updateDone; mergeErr != nil || updateErr != nil {
+				t.Fatalf("merge=%v update=%v, want both successful", mergeErr, updateErr)
+			}
+			assertUserScope(t, ctx, user.ID, winner.ID)
+			var loserCount int64
+			if err := ctx.db.Model(&models.Group{}).Where("id = ?", loser.ID).Count(&loserCount).Error; err != nil {
+				t.Fatalf("count loser: %v", err)
+			}
+			if loserCount != 0 {
+				t.Fatalf("loser group count=%d, want 0", loserCount)
+			}
+		})
+	}
+}
+
 func TestScopeAssignmentAndDeleteSerializeWithoutDanglingReference(t *testing.T) {
 	for _, useUpdate := range []bool{false, true} {
 		method := "create"

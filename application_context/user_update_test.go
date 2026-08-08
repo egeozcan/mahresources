@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"mahresources/models"
 
@@ -54,49 +55,129 @@ func TestPartialUserUpdateCannotRestoreConcurrentPassword(t *testing.T) {
 }
 
 func TestStaleNonAdminUpdateCannotRemoveLastAdmin(t *testing.T) {
-	ctx := newSharedFileContext(t)
-	oldAdmin := makeAdmin(t, ctx, "old-admin")
-	editor, err := ctx.CreateUser(&UserInput{Username: "editor", Password: "password1", Role: models.RoleEditor})
-	if err != nil {
-		t.Fatalf("create editor: %v", err)
-	}
+	t.Run("old-full-row-write-reproduces-regression", func(t *testing.T) {
+		ctx := newSharedFileContext(t)
+		oldAdmin := makeAdmin(t, ctx, "old-admin")
+		editor, err := ctx.CreateUser(&UserInput{Username: "editor", Password: "password1", Role: models.RoleEditor})
+		if err != nil {
+			t.Fatalf("create editor: %v", err)
+		}
 
-	paused := make(chan struct{})
+		loaded, release := pauseUserQueryAfterRead(t, ctx, editor.ID, "test:pause_old_full_row_read")
+		staleDone := make(chan error, 1)
+		go func() {
+			staleDone <- staleFullRowUserUpdate(ctx, editor.ID, "stale write", models.RoleEditor)
+		}()
+		<-loaded
+
+		promoteAndReplaceLastAdmin(t, ctx, oldAdmin.ID, editor.ID)
+		close(release)
+		if err := <-staleDone; err != nil {
+			t.Fatalf("old full-row update: %v", err)
+		}
+		if n, err := ctx.CountEnabledAdmins(); err != nil || n != 0 {
+			t.Fatalf("old full-row behavior enabled admins=%d err=%v, want reproduced zero-admin regression", n, err)
+		}
+	})
+
+	t.Run("current-column-update-reclassifies-after-stale-read", func(t *testing.T) {
+		ctx := newSharedFileContext(t)
+		oldAdmin := makeAdmin(t, ctx, "old-admin")
+		editor, err := ctx.CreateUser(&UserInput{Username: "editor", Password: "password1", Role: models.RoleEditor})
+		if err != nil {
+			t.Fatalf("create editor: %v", err)
+		}
+
+		loaded, release := pauseUserQueryAfterRead(t, ctx, editor.ID, "test:pause_current_user_read")
+		staleDone := make(chan error, 1)
+		go func() {
+			_, staleErr := ctx.UpdateUser(editor.ID, &UserUpdate{
+				DisplayName: UserField[string]{Set: true, Value: "stale write"},
+				Role:        UserField[models.Role]{Set: true, Value: models.RoleEditor},
+			})
+			staleDone <- staleErr
+		}()
+		<-loaded // the updater has actually read the editor-valued row
+
+		promoteDone := make(chan error, 1)
+		go func() {
+			_, promoteErr := ctx.UpdateUser(editor.ID, &UserUpdate{
+				Role: UserField[models.Role]{Set: true, Value: models.RoleAdmin},
+			})
+			promoteDone <- promoteErr
+		}()
+		select {
+		case err := <-promoteDone:
+			if err != nil {
+				close(release)
+				<-staleDone
+				t.Fatalf("promote editor: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			// A pause inside the mutation transaction is not a genuine stale-read
+			// regression: it already holds the writer/user lock and prevents the
+			// intervening promotion this test is meant to exercise.
+			close(release)
+			<-staleDone
+			<-promoteDone
+			t.Fatal("promotion blocked by stale updater; pause occurred after locking, not after an unlocked read")
+		}
+		if _, err := ctx.UpdateUser(oldAdmin.ID, &UserUpdate{
+			Role: UserField[models.Role]{Set: true, Value: models.RoleEditor},
+		}); err != nil {
+			close(release)
+			<-staleDone
+			t.Fatalf("demote old admin: %v", err)
+		}
+		close(release)
+
+		if err := <-staleDone; !errors.Is(err, ErrLastAdmin) {
+			t.Fatalf("stale demotion: want ErrLastAdmin, got %v", err)
+		}
+		if n, err := ctx.CountEnabledAdmins(); err != nil || n != 1 {
+			t.Fatalf("enabled admins=%d err=%v, want one", n, err)
+		}
+	})
+}
+
+func pauseUserQueryAfterRead(t *testing.T, ctx *MahresourcesContext, userID uint, callbackName string) (<-chan struct{}, chan<- struct{}) {
+	t.Helper()
+	loaded := make(chan struct{})
 	release := make(chan struct{})
-	var barrierUsed atomic.Bool
-	ctx.userUpdateBarrier = func() {
-		if barrierUsed.CompareAndSwap(false, true) {
-			close(paused)
+	var used atomic.Bool
+	if err := ctx.db.Callback().Query().After("gorm:query").Register(callbackName, func(db *gorm.DB) {
+		user, ok := db.Statement.Dest.(*models.User)
+		if db.Statement.Table == "users" && ok && user.ID == userID && used.CompareAndSwap(false, true) {
+			close(loaded)
 			<-release
 		}
+	}); err != nil {
+		t.Fatalf("register post-read callback: %v", err)
 	}
-	staleDone := make(chan error, 1)
-	go func() {
-		_, staleErr := ctx.UpdateUser(editor.ID, &UserUpdate{
-			DisplayName: UserField[string]{Set: true, Value: "stale write"},
-			Role:        UserField[models.Role]{Set: true, Value: models.RoleEditor},
-		})
-		staleDone <- staleErr
-	}()
-	<-paused // stale editor-valued update is now genuinely in flight
+	return loaded, release
+}
 
-	if _, err := ctx.UpdateUser(editor.ID, &UserUpdate{
+func staleFullRowUserUpdate(ctx *MahresourcesContext, id uint, displayName string, role models.Role) error {
+	var stale models.User
+	if err := ctx.db.First(&stale, id).Error; err != nil {
+		return err
+	}
+	stale.DisplayName = displayName
+	stale.Role = role
+	return ctx.db.Save(&stale).Error
+}
+
+func promoteAndReplaceLastAdmin(t *testing.T, ctx *MahresourcesContext, oldAdminID, replacementID uint) {
+	t.Helper()
+	if _, err := ctx.UpdateUser(replacementID, &UserUpdate{
 		Role: UserField[models.Role]{Set: true, Value: models.RoleAdmin},
 	}); err != nil {
 		t.Fatalf("promote editor: %v", err)
 	}
-	if _, err := ctx.UpdateUser(oldAdmin.ID, &UserUpdate{
+	if _, err := ctx.UpdateUser(oldAdminID, &UserUpdate{
 		Role: UserField[models.Role]{Set: true, Value: models.RoleEditor},
 	}); err != nil {
 		t.Fatalf("demote old admin: %v", err)
-	}
-	close(release)
-
-	if err := <-staleDone; !errors.Is(err, ErrLastAdmin) {
-		t.Fatalf("stale demotion: want ErrLastAdmin, got %v", err)
-	}
-	if n, err := ctx.CountEnabledAdmins(); err != nil || n != 1 {
-		t.Fatalf("enabled admins=%d err=%v, want one", n, err)
 	}
 }
 

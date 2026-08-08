@@ -39,21 +39,31 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 
 	var deleteEffects []groupDeleteEffect
 	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
-		// Load losers WITHOUT associations — we only need their basic fields for backup
-		var losers []*models.Group
-		if loadErr := altCtx.db.Find(&losers, &loserIds).Error; loadErr != nil {
-			return loadErr
+		// Group rows are always the first mutation locks. Lock the complete merge
+		// set in ID order so concurrent merges agree with each other, and so scope
+		// updates (which also lock their target group before users) cannot form the
+		// former group-row/user-row deadlock cycle.
+		lockIDs := append([]uint{winnerId}, loserIds...)
+		sort.Slice(lockIDs, func(i, j int) bool { return lockIDs[i] < lockIDs[j] })
+		lockedGroups := make(map[uint]*models.Group, len(lockIDs))
+		for _, id := range lockIDs {
+			if _, duplicate := lockedGroups[id]; duplicate {
+				return fmt.Errorf("one or more loser groups not found")
+			}
+			group, lockErr := altCtx.lockScopeGroup(altCtx.db, id, "merge")
+			if lockErr != nil {
+				if id != winnerId && errors.Is(lockErr, gorm.ErrRecordNotFound) {
+					return fmt.Errorf("one or more loser groups not found")
+				}
+				return lockErr
+			}
+			lockedGroups[id] = group
 		}
 
-		// Verify all loser IDs were found
-		if len(losers) != len(loserIds) {
-			return fmt.Errorf("one or more loser groups not found")
-		}
-
-		// Load winner WITHOUT associations
-		var winner models.Group
-		if err := altCtx.db.First(&winner, winnerId).Error; err != nil {
-			return err
+		winner := *lockedGroups[winnerId]
+		losers := make([]*models.Group, 0, len(loserIds))
+		for _, id := range loserIds {
+			losers = append(losers, lockedGroups[id])
 		}
 
 		// Raw SQL below bypasses the GORM scope callbacks, so for a group-limited

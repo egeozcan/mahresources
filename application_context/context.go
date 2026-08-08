@@ -351,7 +351,6 @@ type MahresourcesContext struct {
 	// Narrow internal seams used to coordinate scope-integrity concurrency tests
 	// and to record post-commit group-delete effects. Derived contexts share them.
 	scopeLockBarrier      func(operation string, groupID uint)
-	userUpdateBarrier     func()
 	identityReuseBarrier  func(operation string, expected *models.User)
 	groupDeleteEffectSink groupDeleteEffectSink
 	// DefaultResourceCategoryID is the resolved ID of the default resource category.
