@@ -235,6 +235,9 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 		}
 
 		for _, loser := range losers {
+			if err := transferUserScopeReferences(altCtx.db, loser.ID, winner.ID); err != nil {
+				return err
+			}
 			if err := altCtx.DeleteGroup(loser.ID); err != nil {
 				return err
 			}

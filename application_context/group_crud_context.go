@@ -477,6 +477,10 @@ func (ctx *MahresourcesContext) DeleteGroup(groupId uint) error {
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		ctx.EnsureForeignKeysActive(tx)
 
+		if err := rejectGroupDeletionIfUserScope(tx, groupId); err != nil {
+			return err
+		}
+
 		// Explicitly clear owned entities' owner_id (SET NULL) since SQLite
 		// PRAGMA foreign_keys is a no-op inside transactions, so FK constraints don't fire.
 		// This covers groups, notes, and resources that have this group as owner.

@@ -2,8 +2,10 @@ package api_handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"mahresources/application_context"
 	"mahresources/constants"
 	"mahresources/contracts"
 	"mahresources/models"
@@ -197,6 +199,13 @@ func GetAddGroupHandler(ctx contracts.GroupCRUDReader) func(writer http.Response
 	}
 }
 
+func groupErrorStatusCode(err error) int {
+	if errors.Is(err, application_context.ErrGroupIsUserScope) {
+		return http.StatusConflict
+	}
+	return errorStatusCode(err)
+}
+
 func GetRemoveGroupHandler(ctx contracts.GroupDeleter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		// Enable request-aware logging if the context supports it
@@ -211,7 +220,7 @@ func GetRemoveGroupHandler(ctx contracts.GroupDeleter) func(writer http.Response
 
 		err := effectiveCtx.DeleteGroup(id)
 		if err != nil {
-			http_utils.HandleError(err, writer, request, errorStatusCode(err))
+			http_utils.HandleError(err, writer, request, groupErrorStatusCode(err))
 			return
 		}
 
@@ -291,7 +300,7 @@ func GetBulkDeleteGroupsHandler(ctx contracts.GroupDeleter) func(writer http.Res
 		err = effectiveCtx.BulkDeleteGroups(&editor)
 
 		if err != nil {
-			http_utils.HandleError(err, writer, request, errorStatusCode(err))
+			http_utils.HandleError(err, writer, request, groupErrorStatusCode(err))
 			return
 		}
 

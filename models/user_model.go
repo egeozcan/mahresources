@@ -26,7 +26,7 @@ type User struct {
 	// ScopeGroupId confines a user/guest to a Group and its subtree. Required for
 	// guests, optional for users, and forced nil for admins/editors.
 	ScopeGroupId *uint  `gorm:"index" json:"scopeGroupId,omitempty"`
-	ScopeGroup   *Group `gorm:"foreignKey:ScopeGroupId;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"-"`
+	ScopeGroup   *Group `gorm:"foreignKey:ScopeGroupId;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;" json:"-"`
 
 	// Disabled blocks login and invalidates active sessions/tokens without
 	// deleting the account.
