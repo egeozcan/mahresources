@@ -269,7 +269,7 @@ func TestRootAdmin_ColdCacheAfterShift(t *testing.T) {
 	second := makeAdmin(t, ctx, "second")
 
 	// Demote the original root to editor (root shifts to `second`).
-	if _, err := ctx.UpdateUser(first.ID, &UserInput{Username: "first", Password: "", Role: models.RoleEditor}); err != nil {
+	if _, err := ctx.UpdateUser(first.ID, FullUserUpdate(&UserInput{Username: "first", Password: "", Role: models.RoleEditor})); err != nil {
 		t.Fatalf("demote first: %v", err)
 	}
 

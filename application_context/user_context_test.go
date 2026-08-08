@@ -142,7 +142,7 @@ func TestPasswordMinLength(t *testing.T) {
 	}
 
 	// UpdateUser enforces it when a password is supplied.
-	if _, err := ctx.UpdateUser(u.ID, &UserInput{Username: "okpw", Password: "no", Role: models.RoleUser}); !errors.Is(err, ErrPasswordTooShort) {
+	if _, err := ctx.UpdateUser(u.ID, FullUserUpdate(&UserInput{Username: "okpw", Password: "no", Role: models.RoleUser})); !errors.Is(err, ErrPasswordTooShort) {
 		t.Errorf("UpdateUser short password: got %v", err)
 	}
 
@@ -206,7 +206,7 @@ func TestUpdateUserAndPassword(t *testing.T) {
 	origHash := u.PasswordHash
 
 	// Update without password keeps the hash but changes other fields.
-	updated, err := ctx.UpdateUser(u.ID, &UserInput{Username: "carol", DisplayName: "Carol C", Role: models.RoleEditor})
+	updated, err := ctx.UpdateUser(u.ID, FullUserUpdate(&UserInput{Username: "carol", DisplayName: "Carol C", Role: models.RoleEditor}))
 	if err != nil {
 		t.Fatalf("UpdateUser: %v", err)
 	}

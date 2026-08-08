@@ -6,6 +6,7 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -14,7 +15,7 @@ import (
 // reasonable balance for an app meant for small private deployments.
 const bcryptCost = bcrypt.DefaultCost
 
-// MinPasswordLength is the minimum length (in bytes) for a newly-set password.
+// MinPasswordLength is the minimum length (in Unicode code points) for a newly-set password.
 // Existing accounts are not re-validated on login — only password changes,
 // account creation, and bootstrap enforce this.
 const MinPasswordLength = 8
@@ -31,7 +32,7 @@ var ErrPasswordTooShort = fmt.Errorf("password must be at least %d characters", 
 // Callers handle the empty-password case themselves (returning their own
 // "password required" error) before delegating here.
 func ValidatePassword(plaintext string) error {
-	if len(plaintext) < MinPasswordLength {
+	if utf8.RuneCountInString(plaintext) < MinPasswordLength {
 		return ErrPasswordTooShort
 	}
 	if len(plaintext) > 72 {

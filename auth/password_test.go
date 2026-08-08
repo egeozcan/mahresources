@@ -49,7 +49,17 @@ func TestValidatePassword(t *testing.T) {
 			t.Errorf("ValidatePassword(%q) = %v, want nil", s, err)
 		}
 	}
-	// Beyond bcrypt's 72-byte input limit is rejected up front.
+	// The minimum counts Unicode code points, not UTF-8 bytes.
+	if err := ValidatePassword("界界界界界界界"); err != ErrPasswordTooShort {
+		t.Errorf("ValidatePassword(7 Unicode code points) = %v, want ErrPasswordTooShort", err)
+	}
+	if err := ValidatePassword("界界界界界界界界"); err != nil {
+		t.Errorf("ValidatePassword(8 Unicode code points) = %v, want nil", err)
+	}
+	// Bcrypt's maximum still counts encoded bytes.
+	if err := ValidatePassword(strings.Repeat("界", 25)); err != ErrPasswordTooLong {
+		t.Errorf("ValidatePassword(75 UTF-8 bytes) = %v, want ErrPasswordTooLong", err)
+	}
 	if err := ValidatePassword(strings.Repeat("a", 73)); err != ErrPasswordTooLong {
 		t.Errorf("ValidatePassword(73 bytes) = %v, want ErrPasswordTooLong", err)
 	}

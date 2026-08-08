@@ -147,21 +147,19 @@ type UserAdminContext interface {
 	GetUsers(offset, limit int) ([]models.User, error)
 	GetUser(id uint) (*models.User, error)
 	CreateUser(input *application_context.UserInput) (*models.User, error)
-	UpdateUser(id uint, input *application_context.UserInput) (*models.User, error)
+	UpdateUser(id uint, update *application_context.UserUpdate) (*models.User, error)
 	DeleteUser(id uint) error
-	RevokeUserSessions(userID uint) error
-	RevokeUserApiTokens(userID uint) error
 }
 
 // AccountContext serves the self-service account endpoints: password change and
 // personal API tokens.
 type AccountContext interface {
 	AuthenticateUser(username, password string) (*models.User, error)
-	SetUserPassword(id uint, newPassword string) error
+	ChangeOwnPassword(userID uint, newPassword string, keepSessionTokenHash *string) error
+	SessionCookieName() string
 	CreateApiToken(userID uint, name string, expiresAt *time.Time) (string, *models.ApiToken, error)
 	ListApiTokens(userID uint) ([]models.ApiToken, error)
 	RevokeApiToken(id, userID uint) error
-	RevokeUserSessions(userID uint) error
 }
 
 // AdminStatsContext serves the admin dashboard's statistics and maintenance

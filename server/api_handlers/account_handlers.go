@@ -3,9 +3,11 @@ package api_handlers
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/server/http_utils"
 )
 
@@ -35,12 +37,17 @@ func ChangeOwnPasswordHandler(ctx AccountContext) func(http.ResponseWriter, *htt
 			http_utils.HandleError(application_context.ErrInvalidCredentials, w, r, http.StatusUnauthorized)
 			return
 		}
-		if err := ctx.SetUserPassword(p.UserID, body.NewPassword); err != nil {
+		var keepSessionTokenHash *string
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.Header.Get("Authorization"))), "bearer ") {
+			if cookie, err := r.Cookie(ctx.SessionCookieName()); err == nil {
+				hash := auth.HashToken(cookie.Value)
+				keepSessionTokenHash = &hash
+			}
+		}
+		if err := ctx.ChangeOwnPassword(p.UserID, body.NewPassword, keepSessionTokenHash); err != nil {
 			http_utils.HandleError(err, w, r, userErrorStatus(err))
 			return
 		}
-		// Invalidate every session so other devices must re-authenticate.
-		_ = ctx.RevokeUserSessions(p.UserID)
 		if http_utils.RedirectIfHTMLAccepted(w, r, "/account") {
 			return
 		}

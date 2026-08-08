@@ -61,7 +61,7 @@ func TestLastAdmin_DeleteSoleAdminBlocked(t *testing.T) {
 func TestLastAdmin_DemoteSoleAdminBlocked(t *testing.T) {
 	ctx := newStampTestContext(t, true)
 	admin := makeAdmin(t, ctx, "solo")
-	_, err := ctx.UpdateUser(admin.ID, &UserInput{Username: "solo", Role: models.RoleEditor})
+	_, err := ctx.UpdateUser(admin.ID, FullUserUpdate(&UserInput{Username: "solo", Role: models.RoleEditor}))
 	if !errors.Is(err, ErrLastAdmin) {
 		t.Fatalf("demoting sole admin: want ErrLastAdmin, got %v", err)
 	}
@@ -74,7 +74,7 @@ func TestLastAdmin_DemoteSoleAdminBlocked(t *testing.T) {
 func TestLastAdmin_DisableSoleAdminBlocked(t *testing.T) {
 	ctx := newStampTestContext(t, true)
 	admin := makeAdmin(t, ctx, "solo")
-	_, err := ctx.UpdateUser(admin.ID, &UserInput{Username: "solo", Role: models.RoleAdmin, Disabled: true})
+	_, err := ctx.UpdateUser(admin.ID, FullUserUpdate(&UserInput{Username: "solo", Role: models.RoleAdmin, Disabled: true}))
 	if !errors.Is(err, ErrLastAdmin) {
 		t.Fatalf("disabling sole admin: want ErrLastAdmin, got %v", err)
 	}
@@ -97,7 +97,7 @@ func TestLastAdmin_WithTwoAdminsEachOperationSucceeds(t *testing.T) {
 		ctx := newStampTestContext(t, true)
 		a1 := makeAdmin(t, ctx, "a1")
 		makeAdmin(t, ctx, "a2")
-		if _, err := ctx.UpdateUser(a1.ID, &UserInput{Username: "a1", Role: models.RoleEditor}); err != nil {
+		if _, err := ctx.UpdateUser(a1.ID, FullUserUpdate(&UserInput{Username: "a1", Role: models.RoleEditor})); err != nil {
 			t.Fatalf("demote one of two admins should succeed, got %v", err)
 		}
 	})
@@ -105,7 +105,7 @@ func TestLastAdmin_WithTwoAdminsEachOperationSucceeds(t *testing.T) {
 		ctx := newStampTestContext(t, true)
 		a1 := makeAdmin(t, ctx, "a1")
 		makeAdmin(t, ctx, "a2")
-		if _, err := ctx.UpdateUser(a1.ID, &UserInput{Username: "a1", Role: models.RoleAdmin, Disabled: true}); err != nil {
+		if _, err := ctx.UpdateUser(a1.ID, FullUserUpdate(&UserInput{Username: "a1", Role: models.RoleAdmin, Disabled: true})); err != nil {
 			t.Fatalf("disable one of two admins should succeed, got %v", err)
 		}
 	})

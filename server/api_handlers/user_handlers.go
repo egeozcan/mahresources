@@ -37,6 +37,86 @@ func (r userRequest) toInput() *application_context.UserInput {
 	}
 }
 
+func (r userRequest) toUpdate(present map[string]bool) *application_context.UserUpdate {
+	return &application_context.UserUpdate{
+		Username:     application_context.UserField[string]{Set: present["username"], Value: r.Username},
+		DisplayName:  application_context.UserField[string]{Set: present["displayName"], Value: r.DisplayName},
+		Password:     application_context.UserField[string]{Set: present["password"], Value: r.Password},
+		Role:         application_context.UserField[models.Role]{Set: present["role"], Value: models.Role(r.Role)},
+		ScopeGroupID: application_context.UserField[*uint]{Set: present["scopeGroupId"], Value: r.scopeGroupId()},
+		Disabled:     application_context.UserField[bool]{Set: present["disabled"], Value: r.Disabled},
+	}
+}
+
+// bindUserUpdate records property presence as well as decoded values. JSON null
+// and an empty form scope value therefore mean an explicit scope clear, while a
+// property omitted by a partial client remains untouched.
+func bindUserUpdate(req *userRequest, r *http.Request) (map[string]bool, error) {
+	contentType := r.Header.Get("Content-Type")
+	present := make(map[string]bool)
+	if strings.HasPrefix(contentType, constants.JSON) {
+		var raw map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			return nil, err
+		}
+		for name, value := range raw {
+			switch name {
+			case "id":
+				if err := json.Unmarshal(value, &req.ID); err != nil {
+					return nil, err
+				}
+			case "username":
+				present[name] = true
+				if err := json.Unmarshal(value, &req.Username); err != nil {
+					return nil, err
+				}
+			case "displayName":
+				present[name] = true
+				if err := json.Unmarshal(value, &req.DisplayName); err != nil {
+					return nil, err
+				}
+			case "password":
+				present[name] = true
+				if err := json.Unmarshal(value, &req.Password); err != nil {
+					return nil, err
+				}
+			case "role":
+				present[name] = true
+				if err := json.Unmarshal(value, &req.Role); err != nil {
+					return nil, err
+				}
+			case "scopeGroupId":
+				present[name] = true
+				if string(value) != "null" {
+					if err := json.Unmarshal(value, &req.ScopeGroupId); err != nil {
+						return nil, err
+					}
+				}
+			case "disabled":
+				present[name] = true
+				if err := json.Unmarshal(value, &req.Disabled); err != nil {
+					return nil, err
+				}
+			}
+		}
+		return present, nil
+	}
+	if err := tryFillStructValuesFromRequest(req, r); err != nil {
+		return nil, err
+	}
+	for _, name := range []string{"username", "displayName", "password", "role", "scopeGroupId", "disabled"} {
+		_, present[name] = r.PostForm[name]
+	}
+	// The existing full edit form represents an unchecked checkbox by omitting
+	// disabled. Username+role identify that full-body form, so preserve its
+	// historical ability to re-enable an account without making genuinely
+	// partial form requests clear the field.
+	if present["username"] && present["role"] {
+		present["disabled"] = true
+	}
+	return present, nil
+}
+
 // scopeGroupId distinguishes "no scope group given" from "group 0".
 //
 // The admin form's Scope group ID input submits an empty string when it is left
@@ -133,15 +213,16 @@ func CreateUserHandler(ctx UserAdminContext) func(http.ResponseWriter, *http.Req
 func UpdateUserHandler(ctx UserAdminContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req userRequest
-		if err := tryFillStructValuesFromRequest(&req, r); err != nil {
-			http_utils.HandleError(err, w, r, http.StatusBadRequest)
+		present, bindErr := bindUserUpdate(&req, r)
+		if bindErr != nil {
+			http_utils.HandleError(bindErr, w, r, http.StatusBadRequest)
 			return
 		}
 		if req.ID == 0 {
 			http_utils.HandleError(errors.New("id is required"), w, r, http.StatusBadRequest)
 			return
 		}
-		user, err := ctx.UpdateUser(req.ID, req.toInput())
+		user, err := ctx.UpdateUser(req.ID, req.toUpdate(present))
 		if err != nil {
 			// The same treatment finding 34 gave CreateUserHandler, for the same
 			// reason: this used to be HandleError, which renders a full-page error
@@ -165,11 +246,6 @@ func UpdateUserHandler(ctx UserAdminContext) func(http.ResponseWriter, *http.Req
 				"/admin/users/edit?id="+strconv.FormatUint(uint64(req.ID), 10),
 				err, echoed, userErrorStatus(err))
 			return
-		}
-		// A disabled account's sessions/tokens are invalidated immediately.
-		if user.Disabled {
-			_ = ctx.RevokeUserSessions(user.ID)
-			_ = ctx.RevokeUserApiTokens(user.ID)
 		}
 		if http_utils.RedirectIfHTMLAccepted(w, r, "/admin/users") {
 			return

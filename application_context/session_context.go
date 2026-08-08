@@ -105,7 +105,7 @@ func (ctx *MahresourcesContext) RevokeSession(rawToken string) error {
 // RevokeUserSessions deletes every session for a user (e.g. on password change
 // or account disable).
 func (ctx *MahresourcesContext) RevokeUserSessions(userID uint) error {
-	return ctx.db.Where("user_id = ?", userID).Delete(&models.Session{}).Error
+	return deleteUserSessions(ctx.db, userID, nil)
 }
 
 // GetSessionsForUser lists a user's active (non-expired) sessions, newest first.
