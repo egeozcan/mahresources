@@ -1,5 +1,47 @@
 components:
     schemas:
+        AccountOKResponse:
+            properties:
+                ok:
+                    type: boolean
+            required:
+                - ok
+            type: object
+        ApiTokenMetadataResponsePartial:
+            properties:
+                CreatedAt:
+                    format: date-time
+                    type: string
+                ID:
+                    type: integer
+                UpdatedAt:
+                    format: date-time
+                    type: string
+                disabled:
+                    type: boolean
+                expiresAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                lastUsedAt:
+                    format: date-time
+                    nullable: true
+                    type: string
+                name:
+                    type: string
+                prefix:
+                    type: string
+                userId:
+                    type: integer
+            required:
+                - ID
+                - CreatedAt
+                - UpdatedAt
+                - userId
+                - name
+                - prefix
+                - disabled
+            type: object
         BulkEditMetaQuery:
             properties:
                 ID:
@@ -1953,6 +1995,8 @@ components:
                     type: integer
                 username:
                     type: string
+            required:
+                - id
             type: object
         UserManagementResponse:
             properties:
@@ -1969,6 +2013,34 @@ components:
                     type: integer
                 username:
                     type: string
+            required:
+                - ID
+                - username
+                - displayName
+                - role
+                - disabled
+            type: object
+        UserManagementResponsePartial:
+            properties:
+                ID:
+                    type: integer
+                disabled:
+                    type: boolean
+                displayName:
+                    type: string
+                role:
+                    type: string
+                scopeGroupId:
+                    nullable: true
+                    type: integer
+                username:
+                    type: string
+            required:
+                - ID
+                - username
+                - displayName
+                - role
+                - disabled
             type: object
         VersionCleanupQuery:
             properties:
@@ -2011,7 +2083,9 @@ paths:
             responses:
                 "200":
                     content:
-                        application/json: {}
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AccountOKResponse'
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -2087,8 +2161,14 @@ paths:
             responses:
                 "200":
                     content:
-                        application/json: {}
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/ApiTokenMetadataResponsePartial'
+                                type: array
                     description: Successful response
+                "400":
+                    description: Invalid input
                 "401":
                     description: Authentication required or credentials invalid
                 "403":
@@ -2138,7 +2218,9 @@ paths:
             responses:
                 "200":
                     content:
-                        application/json: {}
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AccountOKResponse'
                     description: Successful response
                 "400":
                     description: Invalid input
@@ -7630,7 +7712,7 @@ paths:
             tags:
                 - users
         post:
-            description: Only supplied fields are changed. Omitted fields are preserved. Send scopeGroupId as null to explicitly clear an optional group scope; an omitted scopeGroupId leaves it unchanged. Null is rejected for every other field; omit password to preserve the credential.
+            description: Only supplied fields are changed; id is required. Omitted fields are preserved. To clear an optional group scope, send JSON null, or send scopeGroupId empty or zero in form/query input. JSON password:null is rejected; an omitted or blank password preserves the credential. Null is rejected for every other non-scope field.
             operationId: updateUser
             requestBody:
                 content:
@@ -7694,7 +7776,11 @@ paths:
             responses:
                 "200":
                     content:
-                        application/json: {}
+                        application/json:
+                            schema:
+                                items:
+                                    $ref: '#/components/schemas/UserManagementResponsePartial'
+                                type: array
                     description: Successful response
                 "401":
                     description: Authentication required or credentials invalid

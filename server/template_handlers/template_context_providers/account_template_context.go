@@ -56,6 +56,10 @@ func AdminUserEditContextProvider(ctx AccountPageContext) func(request *http.Req
 		c["minPasswordLength"] = auth.MinPasswordLength
 		c["maxPasswordBytes"] = auth.MaxPasswordBytes
 		c["formSubmitted"] = request.URL.Query().Has("error")
+		c["displayNameSubmitted"] = request.URL.Query().Has("displayName")
+		c["submittedDisplayName"] = request.URL.Query().Get("displayName")
+		c["scopeGroupIdSubmitted"] = request.URL.Query().Has("scopeGroupId")
+		c["submittedScopeGroupId"] = request.URL.Query().Get("scopeGroupId")
 		// formCancelURL only answers for two-segment /X/new and /X/edit paths, so
 		// this three-segment one has to say where Cancel goes itself. Finding 129
 		// is about edit forms with no way out, and it applies here too.

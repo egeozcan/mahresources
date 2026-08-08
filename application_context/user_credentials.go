@@ -1,10 +1,14 @@
 package application_context
 
 import (
+	"errors"
+
 	"mahresources/auth"
+	"mahresources/constants"
 	"mahresources/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // SetUserPassword performs an administrator-style password reset. Every
@@ -16,6 +20,12 @@ func (ctx *MahresourcesContext) SetUserPassword(id uint, newPassword string) err
 		return err
 	}
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.lockUserManagementMutation(tx); err != nil {
+			return err
+		}
+		if _, err := lockCredentialUser(ctx, tx, id); err != nil {
+			return err
+		}
 		if err := replaceUserPassword(tx, id, hash, false); err != nil {
 			return err
 		}
@@ -30,17 +40,42 @@ func (ctx *MahresourcesContext) SetUserPassword(id uint, newPassword string) err
 // browser session making the request. A nil keepSessionTokenHash (including a
 // bearer-authenticated request) revokes all browser sessions. API tokens remain
 // valid for self-service password changes.
-func (ctx *MahresourcesContext) ChangeOwnPassword(userID uint, newPassword string, keepSessionTokenHash *string) error {
+func (ctx *MahresourcesContext) ChangeOwnPassword(userID uint, currentPassword, newPassword string, keepSessionTokenHash *string) error {
 	hash, err := validatedPasswordHash(newPassword)
 	if err != nil {
 		return err
 	}
 	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.lockUserManagementMutation(tx); err != nil {
+			return err
+		}
+		current, err := lockCredentialUser(ctx, tx, userID)
+		if err != nil {
+			return err
+		}
+		if !auth.CheckPassword(current.PasswordHash, currentPassword) {
+			return ErrInvalidCredentials
+		}
 		if err := replaceUserPassword(tx, userID, hash, false); err != nil {
 			return err
 		}
 		return deleteUserSessions(tx, userID, keepSessionTokenHash)
 	})
+}
+
+func lockCredentialUser(ctx *MahresourcesContext, tx *gorm.DB, userID uint) (*models.User, error) {
+	var user models.User
+	query := tx
+	if ctx.Config.DbType == constants.DbTypePosgres {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := query.First(&user, userID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+	return &user, nil
 }
 
 func validatedPasswordHash(password string) (string, error) {

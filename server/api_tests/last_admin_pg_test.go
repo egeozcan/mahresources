@@ -5,14 +5,10 @@ package api_tests
 import (
 	"errors"
 	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"mahresources/application_context"
 	"mahresources/models"
-
-	"gorm.io/gorm"
 )
 
 // TestLastAdmin_PostgresConcurrency proves the last-admin guard holds under
@@ -49,49 +45,14 @@ func TestLastAdmin_PostgresMixedTransitionsUseExplicitBarrier(t *testing.T) {
 			tc := SetupPostgresTestEnv(t)
 			a := makePGAdmin(t, tc, "barrier-a")
 			b := makePGAdmin(t, tc, "barrier-b")
-			locked := make(chan struct{})
-			secondAttempt := make(chan struct{})
-			release := make(chan struct{})
-			var used atomic.Bool
-			var attempts atomic.Int32
-			attemptCallback := "test:observe_enabled_admin_lock_" + test.name
-			if err := tc.DB.Callback().Query().Before("gorm:query").Register(attemptCallback, func(db *gorm.DB) {
-				if db.Statement.Table != "users" {
-					return
-				}
-				if _, locking := db.Statement.Clauses["FOR"]; locking && attempts.Add(1) == 2 {
-					close(secondAttempt)
-				}
-			}); err != nil {
-				t.Fatalf("register attempt barrier: %v", err)
-			}
-			callbackName := "test:pause_enabled_admin_lock_" + test.name
-			if err := tc.DB.Callback().Query().After("gorm:query").Register(callbackName, func(db *gorm.DB) {
-				if db.Statement.Table != "users" {
-					return
-				}
-				if _, locking := db.Statement.Clauses["FOR"]; locking && used.CompareAndSwap(false, true) {
-					close(locked)
-					<-release
-				}
-			}); err != nil {
-				t.Fatalf("register barrier: %v", err)
-			}
+			barrier := installPostgresMutationBarrier(t, tc.DB, "last-admin-"+test.name)
 			done := make(chan error, 2)
 			go func() { done <- test.op1(tc.AppCtx, a) }()
-			<-locked // op1 holds the enabled-admin FOR UPDATE locks
+			waitBarrier(t, barrier.acquired, "first transition did not acquire shared mutation lock")
 			go func() { done <- test.op2(tc.AppCtx, b) }()
-			select {
-			case <-secondAttempt:
-			case <-time.After(2 * time.Second):
-				t.Fatal("second transition never reached the locked admin query")
-			}
-			select {
-			case err := <-done:
-				t.Fatalf("a transition completed while the barrier lock was held: %v", err)
-			case <-time.After(50 * time.Millisecond):
-			}
-			close(release)
+			waitBarrier(t, barrier.second, "second transition did not attempt shared mutation lock")
+			assertStillBlocked(t, done)
+			barrier.releaseOwner()
 			first, second := <-done, <-done
 			successes, conflicts := 0, 0
 			for _, err := range []error{first, second} {

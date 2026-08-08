@@ -94,6 +94,9 @@ func (ctx *MahresourcesContext) UpdateUser(id uint, update *UserUpdate) (*models
 			return ctx.GetUser(id)
 		}
 		err := ctx.db.Transaction(func(tx *gorm.DB) error {
+			if err := ctx.lockUserManagementMutation(tx); err != nil {
+				return err
+			}
 			res := tx.Model(&models.User{}).Where("id = ?", id).Updates(updates)
 			if res.Error != nil {
 				if isUniqueConstraintError(res.Error) {
@@ -138,6 +141,9 @@ func (ctx *MahresourcesContext) UpdateUser(id uint, update *UserUpdate) (*models
 
 		var result models.User
 		err = ctx.db.Transaction(func(tx *gorm.DB) error {
+			if err := ctx.lockUserManagementMutation(tx); err != nil {
+				return err
+			}
 			// Scope-bearing identity changes lock/revalidate the target group before
 			// any user row. MergeGroups uses the same groups-before-users order.
 			if observedScope != nil {

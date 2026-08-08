@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"database/sql"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -24,6 +25,9 @@ func TestPartialUserUpdateCannotRestoreConcurrentPassword(t *testing.T) {
 	var once sync.Once
 	if err := ctx.db.Callback().Query().After("gorm:query").Register("test:pause_partial_user_load", func(db *gorm.DB) {
 		if db.Statement.Table == "users" {
+			if _, inTransaction := db.Statement.ConnPool.(*sql.Tx); inTransaction {
+				return
+			}
 			once.Do(func() {
 				close(loaded)
 				<-release

@@ -277,6 +277,24 @@ func TestScopeAssignmentAndDeleteSerializeWithoutDanglingReference(t *testing.T)
 	}
 }
 
+func TestBulkDeleteGroupsSortsAndDeduplicatesLockIDs(t *testing.T) {
+	ctx := newSharedFileContext(t)
+	first := makeTestGroup(t, ctx, "bulk-order-first")
+	second := makeTestGroup(t, ctx, "bulk-order-second")
+	var locked []uint
+	ctx.scopeLockBarrier = func(operation string, groupID uint) {
+		if operation == "delete" {
+			locked = append(locked, groupID)
+		}
+	}
+	if err := ctx.BulkDeleteGroups(&query_models.BulkQuery{ID: []uint{second.ID, first.ID, second.ID}}); err != nil {
+		t.Fatalf("BulkDeleteGroups: %v", err)
+	}
+	if len(locked) != 2 || locked[0] != first.ID || locked[1] != second.ID {
+		t.Fatalf("lock order=%v, want sorted unique [%d %d]", locked, first.ID, second.ID)
+	}
+}
+
 type recordingGroupDeleteEffects struct {
 	logs, hooks, invalidations int
 }

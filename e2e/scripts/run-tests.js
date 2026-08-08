@@ -11,20 +11,17 @@
 
 const { spawn, execSync } = require('child_process');
 const path = require('path');
-const fs = require('fs');
-
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const SERVER_BINARY = path.join(PROJECT_ROOT, 'mahresources');
 const CLI_BINARY = path.join(PROJECT_ROOT, 'mr');
 
 /**
- * Build server and CLI binaries if they don't exist
+ * Always rebuild source-derived artifacts. Existence alone cannot prove that
+ * the server binary or frontend bundle matches the source under test.
  */
 function ensureBinariesBuilt() {
-  if (!fs.existsSync(SERVER_BINARY)) {
-    console.log('Building server binary...');
-    execSync('npm run build', { cwd: PROJECT_ROOT, stdio: 'inherit' });
-  }
+  console.log('Building server and frontend...');
+  execSync('npm run build', { cwd: PROJECT_ROOT, stdio: 'inherit' });
   // Always rebuild CLI binary to avoid stale binary issues
   console.log('Building CLI binary...');
   execSync('go build --tags "json1 fts5" -o mr ./cmd/mr/', { cwd: PROJECT_ROOT, stdio: 'inherit' });

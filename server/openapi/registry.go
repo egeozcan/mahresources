@@ -50,6 +50,14 @@ func (r *Registry) Register(info RouteInfo) {
 	}
 }
 
+// SetPartialFields configures the fields emitted when a type is used as an
+// array item. Array items use partial schemas to avoid recursively expanding
+// model associations; response DTOs can use this to describe their complete
+// stable wire shape.
+func (r *Registry) SetPartialFields(typeName string, fields ...string) {
+	r.generator.PartialFields[typeName] = append([]string(nil), fields...)
+}
+
 // GenerateSpec generates the complete OpenAPI 3.0 specification.
 func (r *Registry) GenerateSpec() *openapi3.T {
 	spec := &openapi3.T{

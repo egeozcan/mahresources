@@ -39,7 +39,10 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 
 	var deleteEffects []groupDeleteEffect
 	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
-		// Group rows are always the first mutation locks. Lock the complete merge
+		if err := altCtx.lockUserManagementMutation(altCtx.db); err != nil {
+			return err
+		}
+		// Group rows follow the shared security-boundary mutation lock. Lock the complete merge
 		// set in ID order so concurrent merges agree with each other, and so scope
 		// updates (which also lock their target group before users) cannot form the
 		// former group-row/user-row deadlock cycle.
@@ -399,9 +402,14 @@ func (ctx *MahresourcesContext) BulkAddMetaToGroups(query *query_models.BulkEdit
 }
 
 func (ctx *MahresourcesContext) BulkDeleteGroups(query *query_models.BulkQuery) error {
+	groupIDs := deduplicateUints(query.ID)
+	sort.Slice(groupIDs, func(i, j int) bool { return groupIDs[i] < groupIDs[j] })
 	var deleteEffects []groupDeleteEffect
 	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
-		for _, id := range query.ID {
+		if err := altCtx.lockUserManagementMutation(altCtx.db); err != nil {
+			return err
+		}
+		for _, id := range groupIDs {
 			if err := altCtx.prepareGroupDelete(id); err != nil {
 				return err
 			}

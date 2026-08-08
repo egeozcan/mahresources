@@ -28,7 +28,22 @@ test.describe('auth management accessibility', () => {
       const response = await page.goto(path);
       expect(response?.status(), `${path} should render`).toBe(200);
       await page.waitForLoadState('load');
-      await page.locator('body[x-data-ready="true"], body').first().waitFor({ state: 'visible' });
+      if (path === '/account') {
+        await expect(page.getByRole('button', { name: 'Refresh tokens' })).toBeEnabled();
+        await expect(page.locator('#tok-name')).toBeEnabled();
+      }
+      await expectNoViolations(page);
+    }
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const path of [`/admin/users/edit?id=${userID}`, '/account']) {
+      const response = await page.goto(path);
+      expect(response?.status(), `${path} should render at mobile viewport`).toBe(200);
+      if (path === '/account') {
+        await expect(page.getByRole('button', { name: 'Refresh tokens' })).toBeEnabled();
+      } else {
+        await expect(page.locator('#ue-username')).toBeVisible();
+      }
       await expectNoViolations(page);
     }
   });

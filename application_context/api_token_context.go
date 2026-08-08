@@ -43,6 +43,9 @@ func (ctx *MahresourcesContext) CreateApiToken(userID uint, name string, expires
 	var raw string
 	var token *models.ApiToken
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.lockUserManagementMutation(tx); err != nil {
+			return err
+		}
 		if err := lockApiTokenOwner(ctx, tx, userID); err != nil {
 			return err
 		}

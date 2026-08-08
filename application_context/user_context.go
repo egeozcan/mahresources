@@ -108,6 +108,9 @@ func (ctx *MahresourcesContext) CreateUser(input *UserInput) (*models.User, erro
 		Disabled:     input.Disabled,
 	}
 	if err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.lockUserManagementMutation(tx); err != nil {
+			return err
+		}
 		if err := ctx.validateAndLockScopeGroup(tx, input.Role, user.ScopeGroupId); err != nil {
 			return err
 		}
@@ -213,6 +216,9 @@ func (ctx *MahresourcesContext) RootAdmin() (*models.User, error) {
 // DELETE is the first write, so writers serialize on it.
 func (ctx *MahresourcesContext) DeleteUser(id uint) error {
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if lockErr := ctx.lockUserManagementMutation(tx); lockErr != nil {
+			return lockErr
+		}
 		if lockErr := lockEnabledAdmins(ctx, tx); lockErr != nil {
 			return lockErr
 		}
@@ -337,6 +343,9 @@ func (ctx *MahresourcesContext) EnsureAdminUser(username, password string) (*mod
 func (ctx *MahresourcesContext) promoteExpectedAdmin(expected *models.User, username, hash string) (*models.User, error) {
 	var promoted models.User
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := ctx.lockUserManagementMutation(tx); err != nil {
+			return err
+		}
 		query := tx.Where("id = ? AND username = ? AND role = ?", expected.ID, username, expected.Role)
 		if ctx.Config.DbType == constants.DbTypeSqlite {
 			res := tx.Exec("UPDATE users SET id = id WHERE id = ? AND username = ? AND role = ?", expected.ID, username, expected.Role)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"time"
 
 	"mahresources/application_context"
 	"mahresources/auth"
@@ -145,7 +146,7 @@ type CreateUserRequest struct {
 }
 
 type UpdateUserRequest struct {
-	ID           uint   `json:"id"`
+	ID           uint   `json:"id" openapi:"required"`
 	Username     string `json:"username"`
 	DisplayName  string `json:"displayName"`
 	Password     string `json:"password"`
@@ -172,12 +173,28 @@ type OneTimeTokenResponse struct {
 }
 
 type UserManagementResponse struct {
-	ID           uint   `json:"ID"`
-	Username     string `json:"username"`
-	DisplayName  string `json:"displayName"`
-	Role         string `json:"role"`
+	ID           uint   `json:"ID" openapi:"required"`
+	Username     string `json:"username" openapi:"required"`
+	DisplayName  string `json:"displayName" openapi:"required"`
+	Role         string `json:"role" openapi:"required"`
 	ScopeGroupId *uint  `json:"scopeGroupId"`
-	Disabled     bool   `json:"disabled"`
+	Disabled     bool   `json:"disabled" openapi:"required"`
+}
+
+type ApiTokenMetadataResponse struct {
+	ID         uint       `json:"ID" openapi:"required"`
+	CreatedAt  time.Time  `json:"CreatedAt" openapi:"required"`
+	UpdatedAt  time.Time  `json:"UpdatedAt" openapi:"required"`
+	UserID     uint       `json:"userId" openapi:"required"`
+	Name       string     `json:"name" openapi:"required"`
+	Prefix     string     `json:"prefix" openapi:"required"`
+	ExpiresAt  *time.Time `json:"expiresAt"`
+	LastUsedAt *time.Time `json:"lastUsedAt"`
+	Disabled   bool       `json:"disabled" openapi:"required"`
+}
+
+type AccountOKResponse struct {
+	OK bool `json:"ok" openapi:"required"`
 }
 
 var (
@@ -187,6 +204,8 @@ var (
 	createTokenRequestType    = reflect.TypeOf(CreateTokenRequest{})
 	oneTimeTokenResponseType  = reflect.TypeOf(OneTimeTokenResponse{})
 	userManagementType        = reflect.TypeOf(UserManagementResponse{})
+	apiTokenMetadataType      = reflect.TypeOf(ApiTokenMetadataResponse{})
+	accountOKResponseType     = reflect.TypeOf(AccountOKResponse{})
 )
 
 func userManagementErrors(statuses ...int) map[int]string {
@@ -210,9 +229,16 @@ var userSettingRequestType = reflect.TypeOf(struct {
 }{})
 
 func registerUserAccountRoutes(r *openapi.Registry) {
+	// Array schemas normally use deliberately small partials to avoid expanding
+	// model associations. These response DTOs have no associations, so their list
+	// partials must include the complete stable JSON shape.
+	r.SetPartialFields("UserManagementResponse", "ID", "Username", "DisplayName", "Role", "ScopeGroupId", "Disabled")
+	r.SetPartialFields("ApiTokenMetadataResponse", "ID", "CreatedAt", "UpdatedAt", "UserID", "Name", "Prefix", "ExpiresAt", "LastUsedAt", "Disabled")
+
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/users", OperationID: "listUsers",
 		Summary: "List user accounts (admin)", Tags: []string{"users"},
+		ResponseType:         reflect.SliceOf(userManagementType),
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 		ErrorResponses:       userManagementErrors(http.StatusUnauthorized, http.StatusForbidden),
 	})
@@ -239,7 +265,7 @@ func registerUserAccountRoutes(r *openapi.Registry) {
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodPost, Path: "/v1/user", OperationID: "updateUser",
 		Summary:              "Partially update a user account (admin)",
-		Description:          "Only supplied fields are changed. Omitted fields are preserved. Send scopeGroupId as null to explicitly clear an optional group scope; an omitted scopeGroupId leaves it unchanged. Null is rejected for every other field; omit password to preserve the credential.",
+		Description:          "Only supplied fields are changed; id is required. Omitted fields are preserved. To clear an optional group scope, send JSON null, or send scopeGroupId empty or zero in form/query input. JSON password:null is rejected; an omitted or blank password preserves the credential. Null is rejected for every other non-scope field.",
 		Tags:                 []string{"users"},
 		RequestType:          updateUserRequestType,
 		ResponseType:         userManagementType,
@@ -262,6 +288,7 @@ func registerUserAccountRoutes(r *openapi.Registry) {
 			auth.MinPasswordLength, auth.MaxPasswordBytes),
 		Tags:                 []string{"account"},
 		RequestType:          changePasswordRequestType,
+		ResponseType:         accountOKResponseType,
 		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 		ErrorResponses:       userManagementErrors(http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden),
@@ -269,8 +296,9 @@ func registerUserAccountRoutes(r *openapi.Registry) {
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodGet, Path: "/v1/account/tokens", OperationID: "listOwnTokens",
 		Summary: "List the authenticated user's API tokens", Tags: []string{"account"},
+		ResponseType:         reflect.SliceOf(apiTokenMetadataType),
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
-		ErrorResponses:       userManagementErrors(http.StatusUnauthorized, http.StatusForbidden),
+		ErrorResponses:       userManagementErrors(http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden),
 	})
 	r.Register(openapi.RouteInfo{
 		Method: http.MethodPost, Path: "/v1/account/tokens", OperationID: "createOwnToken",
@@ -287,6 +315,7 @@ func registerUserAccountRoutes(r *openapi.Registry) {
 		Method: http.MethodPost, Path: "/v1/account/tokens/delete", OperationID: "revokeOwnToken",
 		Summary: "Revoke one of the authenticated user's API tokens", Tags: []string{"account"},
 		IDQueryParam: "id", IDRequired: true,
+		ResponseType:         accountOKResponseType,
 		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 		ErrorResponses:       userManagementErrors(http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound),
 	})

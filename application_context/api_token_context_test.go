@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -221,6 +222,34 @@ func TestApiTokenConcurrentCapSQLite(t *testing.T) {
 		}
 	}
 
+	// Prove the fixed path itself holds the owner write lock before counting.
+	// Competitors must reach the transaction's early serialization write while
+	// that owner lock is held; deleting lockApiTokenOwner makes this barrier fail.
+	ownerHeld := make(chan struct{})
+	competitorAttempt := make(chan struct{})
+	releaseOwner := make(chan struct{})
+	var ownerObserved atomic.Bool
+	var mutationAttempts atomic.Int32
+	for i, creatorCtx := range contexts {
+		callbackName := fmt.Sprintf("test:api_token_owner_lock_barrier:%d", i)
+		if err := creatorCtx.db.Callback().Raw().Before("gorm:raw").Register(callbackName+":attempt", func(tx *gorm.DB) {
+			if strings.Contains(tx.Statement.SQL.String(), "UPDATE users SET id = id") && mutationAttempts.Add(1) == 2 {
+				close(competitorAttempt)
+			}
+		}); err != nil {
+			t.Fatalf("register mutation attempt barrier %d: %v", i, err)
+		}
+		if err := creatorCtx.db.Callback().Raw().After("gorm:raw").Register(callbackName+":held", func(tx *gorm.DB) {
+			sqlText := tx.Statement.SQL.String()
+			if tx.Error == nil && strings.Contains(sqlText, "UPDATE users SET id = id WHERE id = ?") && ownerObserved.CompareAndSwap(false, true) {
+				close(ownerHeld)
+				<-releaseOwner
+			}
+		}); err != nil {
+			t.Fatalf("register owner-held barrier %d: %v", i, err)
+		}
+	}
+
 	start := make(chan struct{})
 	results := make(chan error, creators)
 	for i := 0; i < creators; i++ {
@@ -234,6 +263,24 @@ func TestApiTokenConcurrentCapSQLite(t *testing.T) {
 		}(i)
 	}
 	close(start)
+	select {
+	case <-ownerHeld:
+	case <-time.After(3 * time.Second):
+		t.Fatal("transactional creator never held the SQLite owner lock")
+	}
+	select {
+	case <-competitorAttempt:
+	case <-time.After(3 * time.Second):
+		close(releaseOwner)
+		t.Fatal("competitors never attempted capped creation while the owner lock was held")
+	}
+	select {
+	case err := <-results:
+		close(releaseOwner)
+		t.Fatalf("creator completed before owner-lock release: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseOwner)
 
 	successes, capped := 0, 0
 	for i := 0; i < creators; i++ {
@@ -254,6 +301,9 @@ func TestApiTokenConcurrentCapSQLite(t *testing.T) {
 		if err := creatorCtx.db.Callback().Query().Remove(callbackName); err != nil {
 			t.Fatalf("remove count barrier %d: %v", i, err)
 		}
+		ownerCallback := fmt.Sprintf("test:api_token_owner_lock_barrier:%d", i)
+		_ = creatorCtx.db.Callback().Raw().Remove(ownerCallback + ":attempt")
+		_ = creatorCtx.db.Callback().Raw().Remove(ownerCallback + ":held")
 	}
 
 	var persisted int64

@@ -20,13 +20,14 @@ async function createOwnEditor(page: Page, authSeed: AuthSeed, label: string): P
   return creds;
 }
 
-async function createToken(page: Page, name: string): Promise<void> {
+async function createToken(page: Page, name: string): Promise<string> {
   const csrf = (await (await page.request.get('/v1/auth/me')).json()).csrfToken as string;
   const response = await page.request.post('/v1/account/tokens', {
     headers: { 'X-CSRF-Token': csrf },
     data: { name },
   });
   expect(response.ok(), `creating token ${name}: ${response.status()}`).toBe(true);
+  return ((await response.json()).token as string);
 }
 
 test.describe('auth: account management', () => {
@@ -84,6 +85,32 @@ test.describe('auth: account management', () => {
     await expect(alert).toBeHidden();
     await expect(status).toBeVisible();
     await expect(page.locator('tbody')).toContainText('recovery token');
+  });
+
+  test('successful self-password change preserves this session, revokes a peer session, and preserves API tokens', async ({ page, browser, authSeed }) => {
+    const creds = await createOwnEditor(page, authSeed, 'password_success');
+    const rawToken = await createToken(page, 'password-change-positive-control');
+    const baseURL = new URL(page.url()).origin;
+    const peerContext = await browser.newContext({ baseURL });
+    const peerPage = await peerContext.newPage();
+    await loginAs(peerPage, creds);
+
+    await page.goto('/account');
+    await page.locator('#cur-pw').fill(creds.password);
+    await page.locator('#new-pw').fill('newpassword1');
+    await page.locator('#confirm-pw').fill('newpassword1');
+    const endpointRequest = page.waitForRequest((request) => request.method() === 'POST' && request.url().endsWith('/v1/account/password'));
+    await page.getByRole('button', { name: 'Update password' }).click();
+    await endpointRequest;
+
+    await expect(page.getByText('Password updated. Other browser sessions were signed out; this session remains active.')).toBeVisible();
+    expect((await page.request.get('/v1/auth/me')).status(), 'current browser session').toBe(200);
+    expect((await peerPage.request.get('/v1/auth/me')).status(), 'peer browser session').toBe(401);
+    const tokenResponse = await page.request.get('/v1/auth/me', {
+      headers: { Authorization: `Bearer ${rawToken}` },
+    });
+    expect(tokenResponse.status(), 'existing API token').toBe(200);
+    await peerContext.close();
   });
 
   test('password confirmation reports a mismatch without submitting', async ({ page, authSeed }) => {

@@ -4,15 +4,10 @@ package api_tests
 
 import (
 	"errors"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"mahresources/application_context"
 	"mahresources/models"
-
-	"gorm.io/gorm"
 )
 
 func TestScopedGroupDeletePostgresPreservesScopeConfinement(t *testing.T) {
@@ -42,45 +37,7 @@ func TestPostgresMergeAndScopeUpdateLockWinnerBeforeUser(t *testing.T) {
 				t.Fatalf("create scoped user: %v", err)
 			}
 
-			locked := make(chan uint, 1)
-			secondAttempt := make(chan struct{})
-			release := make(chan struct{})
-			var releaseOnce sync.Once
-			releaseLock := func() { releaseOnce.Do(func() { close(release) }) }
-			defer releaseLock()
-			var acquired atomic.Bool
-			var attempts atomic.Int32
-			attemptCallback := "test:observe_merge_scope_group_lock_" + name
-			if err := tc.DB.Callback().Query().Before("gorm:query").Register(attemptCallback, func(db *gorm.DB) {
-				if db.Statement.Table != "groups" {
-					return
-				}
-				if _, ok := db.Statement.Clauses["FOR"]; !ok {
-					return
-				}
-				if attempts.Add(1) == 2 {
-					close(secondAttempt)
-				}
-			}); err != nil {
-				t.Fatalf("register lock-attempt callback: %v", err)
-			}
-			acquiredCallback := "test:pause_first_merge_scope_group_lock_" + name
-			if err := tc.DB.Callback().Query().After("gorm:query").Register(acquiredCallback, func(db *gorm.DB) {
-				if db.Statement.Table != "groups" {
-					return
-				}
-				if _, ok := db.Statement.Clauses["FOR"]; !ok || !acquired.CompareAndSwap(false, true) {
-					return
-				}
-				groupID := uint(0)
-				if group, ok := db.Statement.Dest.(*models.Group); ok {
-					groupID = group.ID
-				}
-				locked <- groupID
-				<-release
-			}); err != nil {
-				t.Fatalf("register acquired-lock callback: %v", err)
-			}
+			barrier := installPostgresMutationBarrier(t, tc.DB, "merge-scope-"+name)
 
 			mergeDone := make(chan error, 1)
 			updateDone := make(chan error, 1)
@@ -99,46 +56,15 @@ func TestPostgresMergeAndScopeUpdateLockWinnerBeforeUser(t *testing.T) {
 				startMerge()
 			}
 
-			var firstLockID uint
-			select {
-			case firstLockID = <-locked:
-			case <-time.After(3 * time.Second):
-				t.Fatal("first operation never acquired a group FOR UPDATE lock")
-			}
-			if firstLockID != winner.ID {
-				releaseLock()
-				if updateWins {
-					<-updateDone
-				} else {
-					<-mergeDone
-				}
-				t.Fatalf("first lock group=%d, want winner %d before any user mutation", firstLockID, winner.ID)
-			}
+			waitBarrier(t, barrier.acquired, "first operation never acquired the shared mutation lock")
 			if updateWins {
 				startMerge()
 			} else {
 				startUpdate()
 			}
-			select {
-			case <-secondAttempt:
-			case <-time.After(3 * time.Second):
-				releaseLock()
-				<-mergeDone
-				<-updateDone
-				t.Fatal("opposing operation reached a user lock before attempting the winner group lock")
-			}
-			select {
-			case err := <-mergeDone:
-				releaseLock()
-				<-updateDone
-				t.Fatalf("merge completed while winner lock was held: %v", err)
-			case err := <-updateDone:
-				releaseLock()
-				<-mergeDone
-				t.Fatalf("scope update completed while winner lock was held: %v", err)
-			case <-time.After(75 * time.Millisecond):
-			}
-			releaseLock()
+			waitBarrier(t, barrier.second, "opposing operation never attempted the shared mutation lock")
+			assertStillBlocked(t, mergeDone, updateDone)
+			barrier.releaseOwner()
 
 			mergeErr, updateErr := <-mergeDone, <-updateDone
 			if mergeErr != nil || updateErr != nil {
@@ -177,28 +103,7 @@ func TestPostgresScopeAssignmentAndDeleteShareRowLock(t *testing.T) {
 			if err := tc.DB.Create(group).Error; err != nil {
 				t.Fatalf("create group: %v", err)
 			}
-			locked := make(chan struct{})
-			secondAttempt := make(chan struct{})
-			release := make(chan struct{})
-			var used atomic.Bool
-			var attempts atomic.Int32
-			attemptCallback := "test:observe_scope_group_lock_" + name
-			if err := tc.DB.Callback().Query().Before("gorm:query").Register(attemptCallback, func(db *gorm.DB) {
-				if db.Statement.Table == "groups" && attempts.Add(1) == 2 {
-					close(secondAttempt)
-				}
-			}); err != nil {
-				t.Fatalf("register attempt barrier: %v", err)
-			}
-			callbackName := "test:pause_scope_group_lock_" + name
-			if err := tc.DB.Callback().Query().After("gorm:query").Register(callbackName, func(db *gorm.DB) {
-				if db.Statement.Table == "groups" && used.CompareAndSwap(false, true) {
-					close(locked)
-					<-release
-				}
-			}); err != nil {
-				t.Fatalf("register barrier: %v", err)
-			}
+			barrier := installPostgresMutationBarrier(t, tc.DB, "assign-delete-"+name)
 			deleteDone := make(chan error, 1)
 			assignDone := make(chan error, 1)
 			startDelete := func() { go func() { deleteDone <- tc.AppCtx.DeleteGroup(group.ID) }() }
@@ -215,25 +120,15 @@ func TestPostgresScopeAssignmentAndDeleteShareRowLock(t *testing.T) {
 			} else {
 				startDelete()
 			}
-			<-locked
+			waitBarrier(t, barrier.acquired, "first operation never acquired shared mutation lock")
 			if assignmentWins {
 				startDelete()
 			} else {
 				startAssign()
 			}
-			select {
-			case <-secondAttempt:
-			case <-time.After(2 * time.Second):
-				t.Fatal("second operation never reached the locked group query")
-			}
-			select {
-			case err := <-deleteDone:
-				t.Fatalf("operation completed before row-lock release: %v", err)
-			case err := <-assignDone:
-				t.Fatalf("operation completed before row-lock release: %v", err)
-			case <-time.After(50 * time.Millisecond):
-			}
-			close(release)
+			waitBarrier(t, barrier.second, "second operation never attempted shared mutation lock")
+			assertStillBlocked(t, deleteDone, assignDone)
+			barrier.releaseOwner()
 			deleteErr, assignErr := <-deleteDone, <-assignDone
 			if assignmentWins {
 				if assignErr != nil || !errors.Is(deleteErr, application_context.ErrGroupIsUserScope) {

@@ -112,6 +112,33 @@ test.describe('auth: admin user form hardening', () => {
     await expect(page.locator('#ue-disabled')).not.toBeChecked();
     await expect(page.locator('#ue-disabled')).toHaveAttribute('data-disabled-replayed', 'unchecked');
   });
+
+  test('rejected edit preserves an explicit empty display name and cleared scope', async ({ page, authSeed }) => {
+    await loginAs(page, authSeed.admin);
+    const csrf = (await (await page.request.get('/v1/auth/me')).json()).csrfToken as string;
+    const response = await page.request.post('/v1/users', {
+      headers: { 'X-CSRF-Token': csrf },
+      data: {
+        username: `empty_replay_${Date.now()}`,
+        displayName: 'Stored display name',
+        password: 'password1',
+        role: 'user',
+        scopeGroupId: authSeed.scopeGroupId,
+      },
+    });
+    expect(response.ok(), `creating replay user: ${response.status()}`).toBe(true);
+    const id = (await response.json()).ID as number;
+
+    await page.goto(`/admin/users/edit?id=${id}`);
+    await page.locator('#ue-username').fill(authSeed.admin.username); // duplicate → rejected
+    await page.locator('#ue-display').fill('');
+    await page.locator('#ue-scope').fill('');
+    await page.getByRole('button', { name: 'Save' }).click();
+
+    await expect(page.locator('[data-testid="form-error-banner"]')).toBeVisible();
+    await expect(page.locator('#ue-display')).toHaveValue('');
+    await expect(page.locator('#ue-scope')).toHaveValue('');
+  });
 });
 
 test.describe('auth: admin user editing', () => {

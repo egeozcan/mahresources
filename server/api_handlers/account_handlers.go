@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"mahresources/application_context"
 	"mahresources/auth"
 	"mahresources/server/http_utils"
 )
@@ -32,10 +31,6 @@ func ChangeOwnPasswordHandler(ctx AccountContext) func(http.ResponseWriter, *htt
 			http_utils.HandleError(err, w, r, http.StatusBadRequest)
 			return
 		}
-		if _, err := ctx.AuthenticateUser(p.Username, body.CurrentPassword); err != nil {
-			http_utils.HandleError(application_context.ErrInvalidCredentials, w, r, http.StatusUnauthorized)
-			return
-		}
 		var keepSessionTokenHash *string
 		if auth.AuthenticationMechanismFromContext(r.Context()) == auth.AuthenticationMechanismCookie {
 			if cookie, err := r.Cookie(ctx.SessionCookieName()); err == nil {
@@ -43,7 +38,7 @@ func ChangeOwnPasswordHandler(ctx AccountContext) func(http.ResponseWriter, *htt
 				keepSessionTokenHash = &hash
 			}
 		}
-		if err := ctx.ChangeOwnPassword(p.UserID, body.NewPassword, keepSessionTokenHash); err != nil {
+		if err := ctx.ChangeOwnPassword(p.UserID, body.CurrentPassword, body.NewPassword, keepSessionTokenHash); err != nil {
 			http_utils.HandleError(err, w, r, userErrorStatus(err))
 			return
 		}

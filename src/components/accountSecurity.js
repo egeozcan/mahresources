@@ -67,6 +67,8 @@ export function accountSecurity(initialTokens = null) {
     passwordError: '',
     passwordSuccess: '',
     _pageHideHandler: null,
+    _tokenMutationGeneration: 0,
+    _tokenRefreshGeneration: 0,
 
     init() {
       if (typeof window === 'undefined') return;
@@ -83,6 +85,7 @@ export function accountSecurity(initialTokens = null) {
 
     async createToken() {
       if (this.tokenCreateBusy || this.pendingRawToken) return;
+      this._tokenMutationGeneration += 1;
       this.tokenCreateBusy = true;
       this.error = '';
       try {
@@ -101,6 +104,7 @@ export function accountSecurity(initialTokens = null) {
           return;
         }
 
+        this._tokenMutationGeneration += 1;
         this.pendingRawToken = data.token;
         this.tokens = [normalizeToken(data), ...this.tokens.filter((token) => token.id !== data.id)];
         this.name = '';
@@ -117,6 +121,8 @@ export function accountSecurity(initialTokens = null) {
 
     async refreshTokens() {
       if (this.tokenRefreshBusy) return;
+      const refreshGeneration = ++this._tokenRefreshGeneration;
+      const mutationGeneration = this._tokenMutationGeneration;
       this.tokenRefreshBusy = true;
       this.error = '';
       try {
@@ -126,7 +132,9 @@ export function accountSecurity(initialTokens = null) {
           this.error = responseMessage(data, `Could not refresh tokens (${response.status}).`);
           return;
         }
-        this.tokens = Array.isArray(data) ? data.map(normalizeToken) : [];
+        if (refreshGeneration === this._tokenRefreshGeneration && mutationGeneration === this._tokenMutationGeneration) {
+          this.tokens = Array.isArray(data) ? data.map(normalizeToken) : [];
+        }
       } catch (err) {
         this.error = err instanceof Error ? err.message : 'Could not refresh tokens.';
       } finally {
@@ -136,6 +144,7 @@ export function accountSecurity(initialTokens = null) {
 
     async revokeToken(token) {
       if (this.revokingTokenId !== null || !token?.id) return;
+      this._tokenMutationGeneration += 1;
       this.revokingTokenId = token.id;
       this.error = '';
       try {
@@ -148,6 +157,7 @@ export function accountSecurity(initialTokens = null) {
           this.error = responseMessage(data, `Could not revoke token (${response.status}).`);
           return;
         }
+        this._tokenMutationGeneration += 1;
         this.tokens = this.tokens.filter((row) => row.id !== token.id);
       } catch (err) {
         this.error = err instanceof Error ? err.message : 'Could not revoke token.';

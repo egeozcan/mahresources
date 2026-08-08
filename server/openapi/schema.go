@@ -338,9 +338,12 @@ func (g *SchemaGenerator) generatePartialSchema(t reflect.Type, partialName stri
 		structFieldName := field.Name
 		jsonName := getFieldName(field)
 
-		// Only include configured fields in partial schemas
+		// Only include configured fields in partial schemas.
 		if !includeSet[structFieldName] {
 			continue
+		}
+		if hasOpenAPIOption(field, "required") {
+			schema.Required = append(schema.Required, jsonName)
 		}
 
 		// For struct fields, try to use their partial schema if it exists or will exist

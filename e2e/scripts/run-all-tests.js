@@ -11,18 +11,14 @@
 
 const { spawn, execSync } = require('child_process');
 const path = require('path');
-const fs = require('fs');
-
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const SERVER_BINARY = path.join(PROJECT_ROOT, 'mahresources');
 const CLI_BINARY = path.join(PROJECT_ROOT, 'mr');
 const E2E_DIR = path.join(PROJECT_ROOT, 'e2e');
 
 function ensureBuilt() {
-  if (!fs.existsSync(SERVER_BINARY)) {
-    console.log('Building server binary...');
-    execSync('npm run build', { cwd: PROJECT_ROOT, stdio: 'inherit' });
-  }
+  console.log('Building server and frontend...');
+  execSync('npm run build', { cwd: PROJECT_ROOT, stdio: 'inherit' });
   // Always rebuild CLI binary to avoid stale binary issues
   console.log('Building CLI binary...');
   execSync('go build --tags "json1 fts5" -o mr ./cmd/mr/', { cwd: PROJECT_ROOT, stdio: 'inherit' });

@@ -38,7 +38,7 @@
     <div>
       <label for="ue-display" class="block text-sm font-mono mb-1">Display name</label>
       <input id="ue-display" name="displayName" type="text"
-             value="{{ queryValues.displayName.0|default:editUser.DisplayName }}"
+             value="{% if displayNameSubmitted %}{{ submittedDisplayName }}{% else %}{{ editUser.DisplayName }}{% endif %}"
              class="w-full border border-stone-300 rounded px-3 py-2">
     </div>
 
@@ -60,7 +60,7 @@
     <div>
       <label for="ue-scope" class="block text-sm font-mono mb-1">Scope group ID <span class="text-stone-500">(required for guest; optional for user)</span></label>
       <input id="ue-scope" name="scopeGroupId" type="number" min="1"
-             value="{{ queryValues.scopeGroupId.0|default:editUser.ScopeGroupId }}"
+             value="{% if scopeGroupIdSubmitted %}{{ submittedScopeGroupId }}{% else %}{{ editUser.ScopeGroupId }}{% endif %}"
              class="w-full border border-stone-300 rounded px-3 py-2">
     </div>
 

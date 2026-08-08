@@ -72,6 +72,26 @@ func TestAdminPasswordResetRevokesAllCredentials(t *testing.T) {
 	assertNoUserCredentials(t, ctx, user.ID)
 }
 
+func TestChangeOwnPasswordRejectsOldPasswordAfterAdminReset(t *testing.T) {
+	ctx := newStampTestContext(t, true)
+	user, err := ctx.CreateUser(&UserInput{Username: "self-reset-race", Password: "old-password", Role: models.RoleEditor})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := ctx.SetUserPassword(user.ID, "admin-password"); err != nil {
+		t.Fatalf("admin reset: %v", err)
+	}
+	if err := ctx.ChangeOwnPassword(user.ID, "old-password", "self-password", nil); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("stale self change err=%v, want ErrInvalidCredentials", err)
+	}
+	if _, err := ctx.AuthenticateUser(user.Username, "admin-password"); err != nil {
+		t.Fatalf("completed admin reset must remain authoritative: %v", err)
+	}
+	if _, err := ctx.AuthenticateUser(user.Username, "self-password"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("stale self password overwrote admin reset: %v", err)
+	}
+}
+
 func TestChangeOwnPasswordPreservesCurrentSessionOnly(t *testing.T) {
 	ctx := newAuthTestContext(t)
 	user, err := ctx.CreateUser(&UserInput{Username: "self", Password: "password1", Role: models.RoleUser})
@@ -92,7 +112,7 @@ func TestChangeOwnPasswordPreservesCurrentSessionOnly(t *testing.T) {
 	}
 
 	keep := current.TokenHash
-	if err := ctx.ChangeOwnPassword(user.ID, "new-password", &keep); err != nil {
+	if err := ctx.ChangeOwnPassword(user.ID, "password1", "new-password", &keep); err != nil {
 		t.Fatalf("ChangeOwnPassword: %v", err)
 	}
 	if _, _, err := ctx.ValidateSession(currentRaw); err != nil {

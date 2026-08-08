@@ -194,7 +194,7 @@ func newUserUpdateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update <id>",
 		Short: "Update a user account",
-		Long:  "Update an existing user account. Only the flags you pass are changed; the rest are preserved by reading the current account first. Use --disabled to lock an account (revoking its sessions and tokens) and --enable to unlock it. Demoting or disabling the last enabled administrator is refused with HTTP 409 Conflict, so an instance can never be left without an admin.",
+		Long:  "Update an existing user account. Only the flags you pass are sent and changed; omitted fields are preserved by the server. Use --disabled to lock an account (revoking its sessions and tokens) and --enable to unlock it. Demoting or disabling the last enabled administrator is refused with HTTP 409 Conflict, so an instance can never be left without an admin.",
 		Example: strings.Join([]string{
 			"  # Promote user 4 to editor",
 			"  mr user update 4 --role editor",
@@ -212,20 +212,9 @@ func newUserUpdateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			if disabled && enable {
 				return fmt.Errorf("--disabled and --enable are mutually exclusive")
 			}
-			// The update API is a full replace, so read the current account and
-			// override only the explicitly-set flags (client-side partial update).
-			var cur userView
-			if err := c.Get("/v1/user", url.Values{"id": {strconv.FormatUint(id, 10)}}, &cur); err != nil {
-				return err
-			}
-			body := map[string]any{
-				"id":           id,
-				"username":     cur.Username,
-				"displayName":  cur.DisplayName,
-				"role":         cur.Role,
-				"scopeGroupId": cur.ScopeGroupId,
-				"disabled":     cur.Disabled,
-			}
+			// The server update contract is presence-aware. Sending only explicit
+			// flags avoids restoring unrelated state from a stale GET snapshot.
+			body := map[string]any{"id": id}
 			if cmd.Flags().Changed("username") {
 				body["username"] = username
 			}

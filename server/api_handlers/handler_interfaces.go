@@ -154,8 +154,7 @@ type UserAdminContext interface {
 // AccountContext serves the self-service account endpoints: password change and
 // personal API tokens.
 type AccountContext interface {
-	AuthenticateUser(username, password string) (*models.User, error)
-	ChangeOwnPassword(userID uint, newPassword string, keepSessionTokenHash *string) error
+	ChangeOwnPassword(userID uint, currentPassword, newPassword string, keepSessionTokenHash *string) error
 	SessionCookieName() string
 	CreateApiToken(userID uint, name string, expiresAt *time.Time) (string, *models.ApiToken, error)
 	ListApiTokens(userID uint) ([]models.ApiToken, error)

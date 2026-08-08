@@ -213,6 +213,42 @@ func TestAdminUserDisabledReplayUsesSubmittedIntent(t *testing.T) {
 	}
 }
 
+func TestAdminUserRejectedEditPreservesExplicitEmptyFields(t *testing.T) {
+	tc := setupAuthEnv(t)
+	login := doReq(tc, http.MethodPost, "/v1/auth/login",
+		map[string]string{"Content-Type": "application/json"}, nil,
+		strings.NewReader(`{"username":"admin","password":"adminpw1"}`))
+	cookie := sessionCookie(t, login)
+	target, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "empty-replay", DisplayName: "Stored Name", Password: "password1", Role: models.RoleUser,
+	})
+	if err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+	form := url.Values{
+		"id": {fmt.Sprint(target.ID)}, "username": {"admin"}, "displayName": {""},
+		"role": {string(models.RoleUser)}, "scopeGroupId": {""}, "disabledPresent": {"true"},
+	}
+	res := doReq(tc, http.MethodPost, "/v1/user", map[string]string{
+		"Accept": "text/html", "Content-Type": "application/x-www-form-urlencoded",
+		"X-CSRF-Token": csrfFor(t, tc, cookie),
+	}, []*http.Cookie{cookie}, strings.NewReader(form.Encode()))
+	if res.Code != http.StatusFound {
+		t.Fatalf("rejected edit status=%d body=%s", res.Code, res.Body.String())
+	}
+	page := doReq(tc, http.MethodGet, res.Header().Get("Location"), map[string]string{"Accept": "text/html"}, []*http.Cookie{cookie}, nil)
+	body := page.Body.String()
+	for field, marker := range map[string]string{
+		"displayName":  `id="ue-display" name="displayName" type="text"`,
+		"scopeGroupId": `id="ue-scope" name="scopeGroupId" type="number" min="1"`,
+	} {
+		start := strings.Index(body, marker)
+		if start < 0 || !strings.Contains(body[start:min(start+250, len(body))], `value=""`) {
+			t.Fatalf("explicit empty %s was replaced by stored value", field)
+		}
+	}
+}
+
 func TestAdminUserPasswordPolicyIsExactAndSecretFree(t *testing.T) {
 	tc := SetupTestEnv(t)
 	body := tc.requestWithAccept(http.MethodGet, "/admin/users", browserAccept, "").Body.String()

@@ -106,6 +106,9 @@ describe('accountSecurity refresh and revoke state', () => {
     resolveRefresh(jsonResponse([]));
     await refresh;
     expect(state.tokenRefreshBusy).toBe(false);
+    expect(state.tokens).toEqual([
+      expect.objectContaining({ id: 8, name: 'new', prefix: 'mr_ne' }),
+    ]);
   });
 
   test('revoke removes only the successful token row', async () => {

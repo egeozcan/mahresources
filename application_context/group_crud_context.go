@@ -542,6 +542,9 @@ func (ctx *MahresourcesContext) DeleteGroup(groupID uint) error {
 	}
 	var event groupDeleteEffect
 	err := ctx.WithTransaction(func(txCtx *MahresourcesContext) error {
+		if err := txCtx.lockUserManagementMutation(txCtx.db); err != nil {
+			return err
+		}
 		var err error
 		event, err = txCtx.deleteGroupInTransaction(groupID)
 		return err
