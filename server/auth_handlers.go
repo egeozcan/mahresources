@@ -35,16 +35,17 @@ func LoginSubmitHandler(appCtx *application_context.MahresourcesContext, limiter
 		next := safeLocalPath(r.FormValue("next"), "/dashboard")
 		username := r.FormValue("username")
 		keys := loginKeys(clientIP(r, appCtx.TrustProxyHeaders()), username)
-		if !limiter.allowedAll(keys) {
+		attempt, ok := limiter.reserve(keys)
+		if !ok {
 			http.Redirect(w, r, "/login?error=rate&next="+url.QueryEscape(next), http.StatusFound)
 			return
 		}
 		if _, err := startSession(appCtx, w, r, username, r.FormValue("password")); err != nil {
-			limiter.recordFailureAll(keys)
+			attempt.complete(false)
 			http.Redirect(w, r, "/login?error=1&next="+url.QueryEscape(next), http.StatusFound)
 			return
 		}
-		limiter.resetAll(keys)
+		attempt.complete(true)
 		http.Redirect(w, r, next, http.StatusFound)
 	}
 }
@@ -66,17 +67,18 @@ func APILoginHandler(appCtx *application_context.MahresourcesContext, limiter *l
 	return func(w http.ResponseWriter, r *http.Request) {
 		username, password := readCredentials(r)
 		keys := loginKeys(clientIP(r, appCtx.TrustProxyHeaders()), username)
-		if !limiter.allowedAll(keys) {
+		attempt, ok := limiter.reserve(keys)
+		if !ok {
 			writeAuthJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many login attempts; try again later"})
 			return
 		}
 		user, err := startSession(appCtx, w, r, username, password)
 		if err != nil {
-			limiter.recordFailureAll(keys)
+			attempt.complete(false)
 			writeAuthJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 			return
 		}
-		limiter.resetAll(keys)
+		attempt.complete(true)
 		writeAuthJSON(w, http.StatusOK, user)
 	}
 }

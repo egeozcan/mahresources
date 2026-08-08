@@ -49,8 +49,9 @@ func TestLoginRateLimit_BlocksAfterLimit(t *testing.T) {
 	}
 }
 
-// A successful login before the limit resets the counter.
-func TestLoginRateLimit_SuccessResets(t *testing.T) {
+// A successful login clears that username's failures but preserves failures for
+// the source IP, so switching accounts cannot reset an attacker's IP counter.
+func TestLoginRateLimit_SuccessPreservesIPFailures(t *testing.T) {
 	tc := setupRateLimitedAuthEnv(t, 3)
 
 	if code := apiLogin(tc, "admin", "wrong"); code != http.StatusUnauthorized {
@@ -62,11 +63,33 @@ func TestLoginRateLimit_SuccessResets(t *testing.T) {
 	if code := apiLogin(tc, "admin", "adminpw1"); code != http.StatusOK {
 		t.Fatalf("correct login (under limit) should be 200, got %d", code)
 	}
-	// Counter reset: three more failures are allowed before throttling.
+	if code := apiLogin(tc, "admin", "wrong"); code != http.StatusUnauthorized {
+		t.Fatalf("third IP failure should be 401, got %d", code)
+	}
+	if code := apiLogin(tc, "admin", "wrong"); code != http.StatusTooManyRequests {
+		t.Fatalf("success must not reset IP failures; got %d, want 429", code)
+	}
+}
+
+func TestLoginRateLimit_SuccessfulOtherAccountDoesNotResetIP(t *testing.T) {
+	tc := setupRateLimitedAuthEnv(t, 4)
+	if _, err := tc.AppCtx.EnsureAdminUser("attacker", "attackerpw1"); err != nil {
+		t.Fatalf("create attacker-owned account: %v", err)
+	}
+
 	for i := 0; i < 3; i++ {
-		if code := apiLogin(tc, "admin", "wrong"); code != http.StatusUnauthorized {
-			t.Fatalf("post-reset failure %d should be 401 (not throttled), got %d", i+1, code)
+		if code := apiLogin(tc, "victim", "wrong"); code != http.StatusUnauthorized {
+			t.Fatalf("victim failure %d should be 401, got %d", i+1, code)
 		}
+	}
+	if code := apiLogin(tc, "attacker", "attackerpw1"); code != http.StatusOK {
+		t.Fatalf("attacker's valid login should be 200, got %d", code)
+	}
+	if code := apiLogin(tc, "another-victim", "wrong"); code != http.StatusUnauthorized {
+		t.Fatalf("fourth IP failure should be 401, got %d", code)
+	}
+	if code := apiLogin(tc, "different-victim", "wrong"); code != http.StatusTooManyRequests {
+		t.Fatalf("IP failures must survive another account's success; got %d, want 429", code)
 	}
 }
 
