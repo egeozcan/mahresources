@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/sha256"
 	"strings"
 	"sync"
 	"time"
@@ -10,7 +11,21 @@ import (
 // username using a sliding window. It is in-memory and per-process (sufficient
 // for the single-binary deployment model); counters reset on restart. A nil
 // limiter or a non-positive limit disables throttling entirely.
-const loginRateLimiterMaxKeys = 50000
+const (
+	loginRateLimiterMaxKeys       = 50000
+	loginRateLimiterSweepInterval = time.Second
+)
+
+const (
+	loginKeyOther byte = iota
+	loginKeyIP
+	loginKeyUsername
+)
+
+// loginRateLimitKey retains only a key kind and a fixed-size digest. In
+// particular, attacker-controlled X-Forwarded-For values and usernames cannot
+// make the bounded key map retain unbounded string memory.
+type loginRateLimitKey [1 + sha256.Size]byte
 
 type loginAttemptRecord struct {
 	at            time.Time
@@ -18,55 +33,63 @@ type loginAttemptRecord struct {
 }
 
 type loginRateLimiter struct {
-	limit   int
-	window  time.Duration
-	maxKeys int
-	now     func() time.Time
+	limit         int
+	window        time.Duration
+	maxKeys       int
+	now           func() time.Time
+	sweepInterval time.Duration
 
 	mu                sync.Mutex
-	fails             map[string][]loginAttemptRecord
+	fails             map[loginRateLimitKey][]loginAttemptRecord
 	nextReservationID uint64
+	nextSweepAt       time.Time
+	onSweepVisit      func() // test hook: called once for each key visited by a capacity sweep
 }
 
 type loginReservation struct {
 	limiter *loginRateLimiter
 	id      uint64
-	keys    []string
+	keys    []loginRateLimitKey
 	once    sync.Once
 }
 
 func newLoginRateLimiter(limit int, window time.Duration) *loginRateLimiter {
 	return &loginRateLimiter{
-		limit:   limit,
-		window:  window,
-		maxKeys: loginRateLimiterMaxKeys,
-		now:     time.Now,
-		fails:   make(map[string][]loginAttemptRecord),
+		limit:         limit,
+		window:        window,
+		maxKeys:       loginRateLimiterMaxKeys,
+		now:           time.Now,
+		sweepInterval: loginRateLimiterSweepInterval,
+		fails:         make(map[loginRateLimitKey][]loginAttemptRecord),
 	}
 }
 
 // reserve atomically checks and occupies capacity for every key. Holding the
 // reservation while authentication runs prevents concurrent requests from all
 // passing a separate check before any of them records its failure.
-func (l *loginRateLimiter) reserve(keys []string) (*loginReservation, bool) {
+func (l *loginRateLimiter) reserve(rawKeys []string) (*loginReservation, bool) {
 	if l == nil || l.limit <= 0 {
 		return &loginReservation{}, true
 	}
 
-	keys = uniqueLoginKeys(keys)
+	keys := fixedLoginKeys(rawKeys)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	now := l.now()
 	for _, key := range keys {
-		if l.countLocked(key) >= l.limit {
+		if l.countLockedAt(key, now) >= l.limit {
 			return nil, false
 		}
 	}
 
 	newKeys := l.newKeyCountLocked(keys)
 	if len(l.fails)+newKeys > l.maxKeys {
-		l.sweepLocked()
-		newKeys = l.newKeyCountLocked(keys)
+		if l.nextSweepAt.IsZero() || !now.Before(l.nextSweepAt) {
+			l.sweepLocked(now)
+			l.nextSweepAt = now.Add(l.sweepInterval)
+			newKeys = l.newKeyCountLocked(keys)
+		}
 		if len(l.fails)+newKeys > l.maxKeys {
 			// Existing, live security state is never discarded to admit an
 			// untracked key. Fail closed until stale failures can be swept.
@@ -79,7 +102,6 @@ func (l *loginRateLimiter) reserve(keys []string) (*loginReservation, bool) {
 		l.nextReservationID++
 	}
 	id := l.nextReservationID
-	now := l.now()
 	for _, key := range keys {
 		l.fails[key] = append(l.fails[key], loginAttemptRecord{
 			at:            now,
@@ -104,7 +126,7 @@ func (r *loginReservation) complete(success bool) {
 	})
 }
 
-func (l *loginRateLimiter) complete(id uint64, keys []string, success bool) {
+func (l *loginRateLimiter) complete(id uint64, keys []loginRateLimitKey, success bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -120,7 +142,7 @@ func (l *loginRateLimiter) complete(id uint64, keys []string, success bool) {
 				record.at = now
 				record.reservationID = 0
 			}
-			if success && strings.HasPrefix(key, "user:") && record.reservationID == 0 {
+			if success && key[0] == loginKeyUsername && record.reservationID == 0 {
 				continue
 			}
 			kept = append(kept, record)
@@ -133,13 +155,27 @@ func (l *loginRateLimiter) complete(id uint64, keys []string, success bool) {
 	}
 }
 
-func uniqueLoginKeys(keys []string) []string {
-	unique := make([]string, 0, len(keys))
-	seen := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
-		if key == "" {
+func fixedLoginKeys(rawKeys []string) []loginRateLimitKey {
+	unique := make([]loginRateLimitKey, 0, len(rawKeys))
+	seen := make(map[loginRateLimitKey]struct{}, len(rawKeys))
+	for _, rawKey := range rawKeys {
+		if rawKey == "" {
 			continue
 		}
+		kind := loginKeyOther
+		material := rawKey
+		switch {
+		case strings.HasPrefix(rawKey, "ip:"):
+			kind = loginKeyIP
+			material = strings.TrimPrefix(rawKey, "ip:")
+		case strings.HasPrefix(rawKey, "user:"):
+			kind = loginKeyUsername
+			material = strings.TrimPrefix(rawKey, "user:")
+		}
+		digest := sha256.Sum256([]byte(material))
+		var key loginRateLimitKey
+		key[0] = kind
+		copy(key[1:], digest[:])
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -149,7 +185,7 @@ func uniqueLoginKeys(keys []string) []string {
 	return unique
 }
 
-func (l *loginRateLimiter) newKeyCountLocked(keys []string) int {
+func (l *loginRateLimiter) newKeyCountLocked(keys []loginRateLimitKey) int {
 	count := 0
 	for _, key := range keys {
 		if _, exists := l.fails[key]; !exists {
@@ -160,18 +196,22 @@ func (l *loginRateLimiter) newKeyCountLocked(keys []string) int {
 }
 
 // sweepLocked prunes stale completed failures while retaining every pending
-// reservation. Caller must hold l.mu.
-func (l *loginRateLimiter) sweepLocked() {
+// reservation. Caller must hold l.mu. Capacity-triggered sweeps are cadence
+// limited so a flood of rejected new keys cannot repeatedly scan the full map.
+func (l *loginRateLimiter) sweepLocked(now time.Time) {
 	for key := range l.fails {
-		l.countLocked(key)
+		if l.onSweepVisit != nil {
+			l.onSweepVisit()
+		}
+		l.countLockedAt(key, now)
 	}
 }
 
-// countLocked prunes completed failures outside the window and returns the live
-// attempt count. Pending reservations never expire before completion. Caller
-// must hold l.mu.
-func (l *loginRateLimiter) countLocked(key string) int {
-	cutoff := l.now().Add(-l.window)
+// countLockedAt prunes completed failures outside the window and returns the
+// live attempt count. Pending reservations never expire before completion.
+// Caller must hold l.mu.
+func (l *loginRateLimiter) countLockedAt(key loginRateLimitKey, now time.Time) int {
+	cutoff := now.Add(-l.window)
 	records := l.fails[key]
 	kept := records[:0]
 	for _, record := range records {

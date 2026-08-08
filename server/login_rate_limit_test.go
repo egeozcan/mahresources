@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -152,6 +153,88 @@ func TestLoginRateLimiter_BoundsKeysRetainsPendingReservations(t *testing.T) {
 		t.Fatal("fresh key should be admitted after the active reservation completes")
 	}
 	fresh.complete(true)
+}
+
+func TestLoginRateLimiter_PanicCompletesReservationAsFailure(t *testing.T) {
+	l := newLoginRateLimiter(1, time.Hour)
+	l.maxKeys = 1
+	base := time.Unix(1_700_000_000, 0)
+	now := base
+	l.now = func() time.Time { return now }
+
+	panicValue := &struct{ message string }{"authentication panic"}
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		runLoginAttempt(l, []string{"ip:panic"}, func() bool {
+			panic(panicValue)
+		})
+	}()
+	if recovered != panicValue {
+		t.Fatalf("panic did not propagate unchanged: got %#v, want %#v", recovered, panicValue)
+	}
+
+	if _, ok := l.reserve([]string{"ip:panic"}); ok {
+		t.Fatal("a panicked authentication must convert its reservation to a failure")
+	}
+	now = base.Add(2 * time.Hour)
+	fresh, ok := l.reserve([]string{"ip:fresh"})
+	if !ok {
+		t.Fatal("the converted failure should expire and release bounded key capacity")
+	}
+	fresh.complete(true)
+}
+
+func TestLoginRateLimiter_VeryLongUsernameUsesFixedSizeKeys(t *testing.T) {
+	l := newLoginRateLimiter(2, time.Hour)
+	username := strings.Repeat("Ab", 128*1024)
+
+	first, ok := l.reserve(loginKeys("1.1.1.1", "  "+username+"  "))
+	if !ok {
+		t.Fatal("first long-username attempt should be admitted")
+	}
+	first.complete(false)
+	second, ok := l.reserve(loginKeys("2.2.2.2", strings.ToLower(username)))
+	if !ok {
+		t.Fatal("normalized long-username attempt should share the account key")
+	}
+	second.complete(false)
+	if _, ok := l.reserve(loginKeys("3.3.3.3", username)); ok {
+		t.Fatal("ordinary per-account throttling must apply to a very long username")
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for key := range l.fails {
+		if got := len(key); got != 33 {
+			t.Fatalf("retained login key is %d bytes, want fixed 33-byte kind+SHA-256 key", got)
+		}
+	}
+}
+
+func TestLoginRateLimiter_CapacityRejectionsDoNotSweepEveryTime(t *testing.T) {
+	l := newLoginRateLimiter(100, time.Hour)
+	l.maxKeys = 4
+	base := time.Unix(1_700_000_000, 0)
+	l.now = func() time.Time { return base }
+	var sweepVisits int
+	l.onSweepVisit = func() { sweepVisits++ }
+
+	for i := 0; i < l.maxKeys; i++ {
+		attempt, ok := l.reserve([]string{fmt.Sprintf("ip:full-%d", i)})
+		if !ok {
+			t.Fatalf("key %d should fill available capacity", i)
+		}
+		attempt.complete(false)
+	}
+	for i := 0; i < 20; i++ {
+		if _, ok := l.reserve([]string{fmt.Sprintf("ip:rejected-%d", i)}); ok {
+			t.Fatalf("new key %d should fail closed at capacity", i)
+		}
+	}
+	if sweepVisits != l.maxKeys {
+		t.Fatalf("capacity rejections visited %d keys, want one bounded sweep of %d keys", sweepVisits, l.maxKeys)
+	}
 }
 
 // clientIP ignores X-Forwarded-For unless trustProxy is set.

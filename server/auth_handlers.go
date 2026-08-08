@@ -28,24 +28,49 @@ func startSession(appCtx *application_context.MahresourcesContext, w http.Respon
 	return user, nil
 }
 
+// runLoginAttempt reserves all limiter keys and installs the completion guard
+// before authentication begins. A panic therefore propagates while converting
+// the pending reservation to a failure; normal paths complete exactly once.
+func runLoginAttempt(limiter *loginRateLimiter, keys []string, authenticate func() bool) (reserved, success bool) {
+	attempt, ok := limiter.reserve(keys)
+	if !ok {
+		return false, false
+	}
+	completed := false
+	defer func() {
+		if !completed {
+			attempt.complete(false)
+		}
+	}()
+
+	success = authenticate()
+	attempt.complete(success)
+	completed = true
+	return true, success
+}
+
 // LoginSubmitHandler handles the browser login form POST.
 func LoginSubmitHandler(appCtx *application_context.MahresourcesContext, limiter *loginRateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		next := safeLocalPath(r.FormValue("next"), "/dashboard")
 		username := r.FormValue("username")
-		keys := loginKeys(clientIP(r, appCtx.TrustProxyHeaders()), username)
-		attempt, ok := limiter.reserve(keys)
-		if !ok {
+		reserved, success := runLoginAttempt(
+			limiter,
+			loginKeys(clientIP(r, appCtx.TrustProxyHeaders()), username),
+			func() bool {
+				_, err := startSession(appCtx, w, r, username, r.FormValue("password"))
+				return err == nil
+			},
+		)
+		if !reserved {
 			http.Redirect(w, r, "/login?error=rate&next="+url.QueryEscape(next), http.StatusFound)
 			return
 		}
-		if _, err := startSession(appCtx, w, r, username, r.FormValue("password")); err != nil {
-			attempt.complete(false)
+		if !success {
 			http.Redirect(w, r, "/login?error=1&next="+url.QueryEscape(next), http.StatusFound)
 			return
 		}
-		attempt.complete(true)
 		http.Redirect(w, r, next, http.StatusFound)
 	}
 }
@@ -66,19 +91,24 @@ func LogoutHandler(appCtx *application_context.MahresourcesContext) http.Handler
 func APILoginHandler(appCtx *application_context.MahresourcesContext, limiter *loginRateLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		username, password := readCredentials(r)
-		keys := loginKeys(clientIP(r, appCtx.TrustProxyHeaders()), username)
-		attempt, ok := limiter.reserve(keys)
-		if !ok {
+		var user *models.User
+		reserved, success := runLoginAttempt(
+			limiter,
+			loginKeys(clientIP(r, appCtx.TrustProxyHeaders()), username),
+			func() bool {
+				var err error
+				user, err = startSession(appCtx, w, r, username, password)
+				return err == nil
+			},
+		)
+		if !reserved {
 			writeAuthJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many login attempts; try again later"})
 			return
 		}
-		user, err := startSession(appCtx, w, r, username, password)
-		if err != nil {
-			attempt.complete(false)
+		if !success {
 			writeAuthJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 			return
 		}
-		attempt.complete(true)
 		writeAuthJSON(w, http.StatusOK, user)
 	}
 }
