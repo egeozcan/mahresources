@@ -1602,6 +1602,9 @@ That single addition took detection from 11/40 to 20/20. Helpers live in
 
 Two corollaries, both learned the same day:
 
+- **`assertCompletes` consumes the channel.** It receives the result and fails on a non-nil error,
+  so a follow-up `if err := <-resetDone; err != nil` is a bare receive on a drained channel: it
+  parks until the package timeout. Cost me a 600s run in the very file that documents the rule.
 - **Never wait on a barrier with a bare `<-ch`.** When a barrier stops matching — a reformatted SQL
   statement, a new early return that skips the instrumented call — a bare receive parks until `go
   test` aborts the *package* with a timeout panic, destroying every other test's result. A bounded
@@ -1659,3 +1662,27 @@ safe one — `loginBroken` is `iota` — and the value nobody set cannot read as
 The trap that made this reachable: the fix mapped contention on the transaction's errors, but the
 credential read runs *before* the transaction opens, so its errors bypassed the mapping entirely.
 When error handling is attached to a block, check what runs outside it.
+
+## Input the database rejects lands in the "not the user's fault" bucket
+
+That split — "the credential was judged" (401, charged to the rate limiter) versus "we never got
+there" (500, not charged) — fixed a real problem and opened a small hole. `username` reached the
+lookup unscreened, and PostgreSQL rejects a NUL byte or invalid UTF-8 in a text parameter with
+`SQLSTATE 22021`: a raw driver error, so an *impossible* username classified as infrastructure.
+A username carrying one therefore returned 500, was deliberately **not** charged to either limiter
+key, and wrote one `log_entries` row. Unauthenticated, unthrottled by construction, one row per
+request.
+
+**When you classify errors by fault, screen impossible input before it reaches the layer whose
+errors you are classifying.** `storableUsername` (`application_context/user_context.go`) rejects what
+no stored username can contain — the insert would fail for the same reason — runs the dummy-hash
+compare for timing, and returns `ErrInvalidCredentials`, which is what an unknown username already
+gets.
+
+The general shape: any "is this the caller's fault?" split has a third category — input so malformed
+that the *dependency* refuses it. It presents as a system fault and is really a bad request. Ask what
+your dependency will not even accept, and screen for exactly that.
+
+Note the fix's own limit, deliberate rather than overlooked: `CreateUser` still passes such a
+username to the insert and surfaces a driver error. That path is admin-only, and it neither logs nor
+touches throttling.

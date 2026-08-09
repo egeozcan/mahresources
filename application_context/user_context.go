@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"mahresources/auth"
 	"mahresources/constants"
@@ -269,10 +270,30 @@ func (ctx *MahresourcesContext) DeleteUser(id uint) error {
 	return nil
 }
 
+// storableUsername reports whether a username could ever name a real account.
+// Postgres rejects a NUL byte or invalid UTF-8 in a text parameter (SQLSTATE
+// 22021), so no stored username can contain them — the insert fails for the same
+// reason the lookup would.
+//
+// Screening them here keeps an impossible credential a credential failure. Passed
+// through to the query, the driver error is not a verdict on the password, so the
+// login classifies it as an infrastructure fault: HTTP 500, deliberately not
+// charged to the rate limiter, and one application-log row per request. That is
+// correct for a real outage and wrong for a malformed username, which an
+// unauthenticated client can send indefinitely.
+func storableUsername(username string) bool {
+	return utf8.ValidString(username) && !strings.ContainsRune(username, 0)
+}
+
 // AuthenticateUser verifies a username/password pair and returns the user on
 // success. It performs a constant-cost compare even for unknown usernames to
 // avoid leaking account existence through timing.
 func (ctx *MahresourcesContext) AuthenticateUser(username, password string) (*models.User, error) {
+	if !storableUsername(username) {
+		// Equalize timing, then answer as for any other unknown username.
+		auth.CheckPassword(dummyHash, password)
+		return nil, ErrInvalidCredentials
+	}
 	user, err := ctx.GetUserByUsername(username)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {

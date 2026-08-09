@@ -125,6 +125,57 @@ func TestAuthenticateAndCreateSessionVerifiesCredentialOutsideTheMutationLock(t 
 	}
 }
 
+// The test above pins *when* the credential is read; this one pins *what the
+// locked re-check compares*, which is what keeps bcrypt out of the lock.
+//
+// Swapping `user.PasswordHash != verified.PasswordHash` for
+// `!auth.CheckPassword(user.PasswordHash, password)` reads as the more defensive
+// choice — re-verify the password rather than trust a string comparison — and it
+// silently puts ~45ms of hashing back inside the process-wide lock, which is the
+// entire defect this design exists to avoid. Ordering tests cannot see it: the
+// first compare still happens outside.
+//
+// A reset to the *same plaintext* separates the two. bcrypt salts every write, so
+// the stored hash changes while the password does not: comparing hashes refuses
+// the superseded login, re-verifying the password mints it.
+func TestAuthenticateAndCreateSessionComparesTheHashItVerifiedNotThePassword(t *testing.T) {
+	contexts := newConcurrentApiTokenTestContexts(t, 2)
+	user, err := contexts[0].CreateUser(&UserInput{Username: "login-rehash", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	credentialsRead, releaseLogin := pauseAfterCredentialRead(t, contexts[0], "test:pause_login_before_same_password_reset")
+
+	loginDone := make(chan loginResult, 1)
+	go func() {
+		_, raw, _, loginErr := contexts[0].AuthenticateAndCreateSession("login-rehash", "password1", time.Hour, "agent", "127.0.0.1")
+		loginDone <- loginResult{raw: raw, err: loginErr}
+	}()
+	waitBarrier(t, credentialsRead, "login never read the stored credential")
+
+	resetDone := make(chan error, 1)
+	go func() { resetDone <- contexts[1].SetUserPassword(user.ID, "password1") }()
+	// assertCompletes consumes the result and fails on a non-nil error, so the
+	// reset is known to have committed a freshly salted hash by the time the
+	// login resumes. Never add a second bare receive here — it parks forever.
+	assertCompletes(t, resetDone, "password reset to the same plaintext")
+	releaseLogin()
+
+	login := <-loginDone
+	if !errors.Is(login.err, ErrInvalidCredentials) {
+		t.Fatalf("login whose verified hash was replaced err=%v, want ErrInvalidCredentials "+
+			"(the locked re-check must compare hashes, not re-run bcrypt under the lock)", login.err)
+	}
+	var sessions int64
+	if err := contexts[0].db.Model(&models.Session{}).Where("user_id = ?", user.ID).Count(&sessions).Error; err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if sessions != 0 {
+		t.Fatalf("refused login left %d session rows behind", sessions)
+	}
+}
+
 // The other half of the invariant: a reset that arrives while the login holds
 // the lock cannot commit until the session row exists, and then revokes it.
 func TestAuthenticateAndCreateSessionSerializesPasswordReset(t *testing.T) {

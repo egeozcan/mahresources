@@ -66,6 +66,16 @@ Three of five findings actioned; two rejected with reasons.
 
 Accepted and not actioned: `assertStillBlocked` infers blocking from a 150ms dwell, so a goroutine descheduled that long could produce a false pass. A deterministic alternative needs a database-side lock-acquisition signal, which is disproportionate machinery for that margin.
 
+### Third-round review of the classification fix (4cd91194), by `pi` — 2026-08-09
+
+Two of three findings actioned; the third declined with its reasoning.
+
+- [x] **A malformed username escaped the security accounting.** The new verdict/outage split classified by fault, but `username` reached the lookup unscreened, and Postgres rejects a NUL byte or invalid UTF-8 in a text parameter with `SQLSTATE 22021` — confirmed empirically for both. That raw driver error is not a verdict, so an *impossible* username returned 500, was deliberately not charged to either limiter key, and wrote one `log_entries` row: unauthenticated, unthrottled by construction, one row per request. `storableUsername` now screens it in `AuthenticateUser`, runs the dummy-hash compare for timing, and returns `ErrInvalidCredentials` — what an unknown username already gets. It cannot name a real account either way, since the insert fails for the same reason. `CreateUser` still surfaces the driver error for such a username; that path is admin-only and neither logs nor throttles, so it is left alone.
+- [x] **The bcrypt-under-the-lock guard was genuinely incomplete** — this is the finding whose earlier form was rejected, and the second version is right. Replacing `user.PasswordHash != verified.PasswordHash` with `!auth.CheckPassword(user.PasswordHash, password)` is a plausible edit (re-verifying reads as more defensive than a string compare), it puts ~45ms of hashing back inside the process-wide lock, and no ordering test can see it because the first compare still happens outside. `TestAuthenticateAndCreateSessionComparesTheHashItVerifiedNotThePassword` separates the two deterministically: a reset to the *same plaintext* changes the stored hash (bcrypt salts every write) but not the password, so hash equality refuses the superseded login while a re-verify mints it. Confirmed to fail against that mutation.
+- Declined — **`logLoginFailure` writes synchronously through the possibly-failing database.** Real, and kept. Reaching `loginBroken` means a database call already failed, so the log write's failure mode mirrors what just happened: if that call failed fast, so does this one. The alternative, a goroutine per failed login, removes the request's back-pressure and lets goroutines accumulate faster than requests would against a *hung* database — worse than the doubled latency it avoids. `Logger.log` already falls back to stdout when its insert fails, so a broken database still surfaces the entry. After the first fix above, this path only fires on a genuine infrastructure failure, which is exactly when the operator needs it.
+
+Also confirmed by this round: no infrastructure path still reaches 401, the reserve/complete/abandon lifecycle holds, `/logs` remains admin-only so raw driver text is not a leak, and the disable/re-enable rejection above was correct.
+
 ---
 
 # UI bug hunt 2026-07-29 — verification and remediation
