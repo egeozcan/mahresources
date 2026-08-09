@@ -270,27 +270,30 @@ func (ctx *MahresourcesContext) DeleteUser(id uint) error {
 	return nil
 }
 
-// storableUsername reports whether a username could ever name a real account.
-// Postgres rejects a NUL byte or invalid UTF-8 in a text parameter (SQLSTATE
-// 22021), so no stored username can contain them — the insert fails for the same
-// reason the lookup would.
-//
-// Screening them here keeps an impossible credential a credential failure. Passed
-// through to the query, the driver error is not a verdict on the password, so the
-// login classifies it as an infrastructure fault: HTTP 500, deliberately not
-// charged to the rate limiter, and one application-log row per request. That is
-// correct for a real outage and wrong for a malformed username, which an
-// unauthenticated client can send indefinitely.
-func storableUsername(username string) bool {
-	return utf8.ValidString(username) && !strings.ContainsRune(username, 0)
+// rejectedByPostgresAsText reports whether a string contains bytes PostgreSQL
+// refuses in a text parameter — a NUL, or invalid UTF-8 — which it answers with
+// SQLSTATE 22021.
+func rejectedByPostgresAsText(value string) bool {
+	return !utf8.ValidString(value) || strings.ContainsRune(value, 0)
 }
 
 // AuthenticateUser verifies a username/password pair and returns the user on
 // success. It performs a constant-cost compare even for unknown usernames to
 // avoid leaking account existence through timing.
 func (ctx *MahresourcesContext) AuthenticateUser(username, password string) (*models.User, error) {
-	if !storableUsername(username) {
-		// Equalize timing, then answer as for any other unknown username.
+	// On PostgreSQL a username it refuses as text can name no account — the insert
+	// fails for the same reason the lookup would — so answer it the way any other
+	// unknown username is answered, after equalizing timing. Passed through, the
+	// driver error is not a verdict on the credential, and the login classifies it
+	// as an infrastructure fault: HTTP 500, deliberately not charged to the rate
+	// limiter, and one application-log row per request, repeatable indefinitely by
+	// an unauthenticated client.
+	//
+	// Gated on the backend deliberately, not applied everywhere. SQLite stores and
+	// matches these bytes, so an account there can legitimately hold such a name
+	// and must keep authenticating; screening it unconditionally locked those
+	// accounts out.
+	if ctx.Config.DbType == constants.DbTypePosgres && rejectedByPostgresAsText(username) {
 		auth.CheckPassword(dummyHash, password)
 		return nil, ErrInvalidCredentials
 	}
