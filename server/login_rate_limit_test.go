@@ -165,10 +165,12 @@ func TestLoginRateLimiter_UnavailableAttemptIsNeitherFailureNorSuccess(t *testin
 	l := newLoginRateLimiter(2, time.Hour)
 	keys := []string{"ip:1.2.3.4", "user:victim"}
 
-	if _, err := runLoginAttempt(l, keys, func() error { return errors.New("wrong password") }); err == nil {
+	if _, _, err := runLoginAttempt(l, keys, func() error {
+		return application_context.ErrInvalidCredentials
+	}); err == nil {
 		t.Fatal("a credential failure should surface as an error")
 	}
-	if _, err := runLoginAttempt(l, keys, func() error {
+	if _, _, err := runLoginAttempt(l, keys, func() error {
 		return application_context.ErrLoginUnavailable
 	}); !errors.Is(err, application_context.ErrLoginUnavailable) {
 		t.Fatalf("unavailable attempt err=%v, want ErrLoginUnavailable", err)
@@ -187,12 +189,44 @@ func TestLoginRateLimiter_UnavailableAttemptIsNeitherFailureNorSuccess(t *testin
 
 	// And it must not have erased the failure that came before it.
 	fresh := newLoginRateLimiter(1, time.Hour)
-	if _, err := runLoginAttempt(fresh, keys, func() error { return errors.New("wrong password") }); err == nil {
+	if _, _, err := runLoginAttempt(fresh, keys, func() error {
+		return application_context.ErrInvalidCredentials
+	}); err == nil {
 		t.Fatal("a credential failure should surface as an error")
 	}
 	runLoginAttempt(fresh, keys, func() error { return application_context.ErrLoginUnavailable })
 	if _, ok := fresh.reserve(keys); ok {
 		t.Fatal("a database stall must not clear an attacker's accumulated failures")
+	}
+}
+
+// Contention is only the reachable half. Every other way authentication can fail
+// without reaching a verdict — a dropped connection, an exhausted pool, a failed
+// random read — is equally not a wrong password, and the classifier must default
+// that way for failure modes that do not exist yet.
+func TestLoginRateLimiter_OnlyCredentialVerdictsAreCharged(t *testing.T) {
+	keys := []string{"ip:1.2.3.4", "user:victim"}
+
+	for _, verdict := range []error{application_context.ErrInvalidCredentials, application_context.ErrUserDisabled} {
+		l := newLoginRateLimiter(1, time.Hour)
+		if _, _, err := runLoginAttempt(l, keys, func() error { return verdict }); !errors.Is(err, verdict) {
+			t.Fatalf("verdict err=%v, want %v", err, verdict)
+		}
+		if _, ok := l.reserve(keys); ok {
+			t.Fatalf("%v is a decision about the credential and must be charged", verdict)
+		}
+	}
+
+	l := newLoginRateLimiter(1, time.Hour)
+	outcome, _, err := runLoginAttempt(l, keys, func() error { return errors.New("connection reset by peer") })
+	if err == nil {
+		t.Fatal("an infrastructure failure should still surface as an error")
+	}
+	if outcome != loginBroken {
+		t.Fatalf("unrecognized failure outcome=%v, want loginBroken", outcome)
+	}
+	if _, ok := l.reserve(keys); !ok {
+		t.Fatal("an infrastructure failure must not consume the account's login attempts")
 	}
 }
 

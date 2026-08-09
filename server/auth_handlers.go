@@ -31,17 +31,57 @@ func startSession(appCtx *application_context.MahresourcesContext, w http.Respon
 	return user, nil
 }
 
+// loginOutcome separates what the login decided about the credential from what
+// merely happened to it. Only a decision may be charged to the rate limiter or
+// reported as a bad password.
+type loginOutcome int
+
+const (
+	// loginBroken: the credential was never judged — a dropped connection, an
+	// exhausted pool, a failed random read. Retrying may not help, and an
+	// operator needs to see it. First so it is the zero value: an outcome nobody
+	// set must not read as "authenticated".
+	loginBroken loginOutcome = iota
+	// loginRejected: the credential was judged and refused.
+	loginRejected
+	// loginUnavailable: the credential was never judged because the database
+	// was too busy. Transient and worth retrying immediately.
+	loginUnavailable
+	// loginAuthenticated: the credential was judged and accepted.
+	loginAuthenticated
+)
+
+// classifyLoginOutcome maps an authentication error to its outcome. Unrecognized
+// errors are deliberately loginBroken rather than loginRejected: a new failure
+// mode added anywhere under AuthenticateAndCreateSession should surface as a
+// server fault, not silently start telling users their password is wrong.
+func classifyLoginOutcome(err error) loginOutcome {
+	switch {
+	case err == nil:
+		return loginAuthenticated
+	case errors.Is(err, application_context.ErrInvalidCredentials),
+		errors.Is(err, application_context.ErrUserDisabled):
+		return loginRejected
+	case errors.Is(err, application_context.ErrLoginUnavailable):
+		return loginUnavailable
+	default:
+		return loginBroken
+	}
+}
+
 // runLoginAttempt reserves all limiter keys and installs the completion guard
 // before authentication begins. A panic therefore propagates while converting
 // the pending reservation to a failure; normal paths complete exactly once.
 //
-// A login that never got to judge the credential (ErrLoginUnavailable) is
-// abandoned rather than completed, so a transient database stall is not charged
-// to the account or the IP.
-func runLoginAttempt(limiter *loginRateLimiter, keys []string, authenticate func() error) (reserved bool, err error) {
+// Only a verdict on the credential is completed. An attempt that never got to
+// judge it is abandoned instead, so an outage neither locks out an account whose
+// password was never mistyped nor resets an attacker's accumulated failures.
+func runLoginAttempt(limiter *loginRateLimiter, keys []string, authenticate func() error) (outcome loginOutcome, reserved bool, err error) {
 	attempt, ok := limiter.reserve(keys)
 	if !ok {
-		return false, nil
+		// Throttled before authentication ran; callers branch on reserved first
+		// and never read this outcome.
+		return loginBroken, false, nil
 	}
 	completed := false
 	defer func() {
@@ -51,13 +91,27 @@ func runLoginAttempt(limiter *loginRateLimiter, keys []string, authenticate func
 	}()
 
 	err = authenticate()
-	if errors.Is(err, application_context.ErrLoginUnavailable) {
+	outcome = classifyLoginOutcome(err)
+	switch outcome {
+	case loginAuthenticated:
+		attempt.complete(true)
+	case loginRejected:
+		attempt.complete(false)
+	default:
 		attempt.abandon()
-	} else {
-		attempt.complete(err == nil)
 	}
 	completed = true
-	return true, err
+	return outcome, true, err
+}
+
+// logLoginFailure records an unclassified login failure so a broken database or
+// a failing dependency is visible at /logs rather than only as a 500.
+func logLoginFailure(appCtx *application_context.MahresourcesContext, r *http.Request, err error) {
+	message := "login could not be completed"
+	if err != nil {
+		message += ": " + err.Error()
+	}
+	appCtx.LogFromRequest(r).Error(models.LogActionSystem, "auth", nil, "login", message, nil)
 }
 
 // LoginSubmitHandler handles the browser login form POST.
@@ -66,7 +120,7 @@ func LoginSubmitHandler(appCtx *application_context.MahresourcesContext, limiter
 		_ = r.ParseForm()
 		next := safeLocalPath(r.FormValue("next"), "/dashboard")
 		username := r.FormValue("username")
-		reserved, err := runLoginAttempt(
+		outcome, reserved, err := runLoginAttempt(
 			limiter,
 			loginKeys(clientIP(r, appCtx.TrustProxyHeaders()), username),
 			func() error {
@@ -78,15 +132,17 @@ func LoginSubmitHandler(appCtx *application_context.MahresourcesContext, limiter
 			http.Redirect(w, r, "/login?error=rate&next="+url.QueryEscape(next), http.StatusFound)
 			return
 		}
-		if errors.Is(err, application_context.ErrLoginUnavailable) {
-			http.Redirect(w, r, "/login?error=busy&next="+url.QueryEscape(next), http.StatusFound)
-			return
-		}
-		if err != nil {
+		switch outcome {
+		case loginAuthenticated:
+			http.Redirect(w, r, next, http.StatusFound)
+		case loginRejected:
 			http.Redirect(w, r, "/login?error=1&next="+url.QueryEscape(next), http.StatusFound)
-			return
+		case loginUnavailable:
+			http.Redirect(w, r, "/login?error=busy&next="+url.QueryEscape(next), http.StatusFound)
+		default:
+			logLoginFailure(appCtx, r, err)
+			http.Redirect(w, r, "/login?error=unavailable&next="+url.QueryEscape(next), http.StatusFound)
 		}
-		http.Redirect(w, r, next, http.StatusFound)
 	}
 }
 
@@ -107,7 +163,7 @@ func APILoginHandler(appCtx *application_context.MahresourcesContext, limiter *l
 	return func(w http.ResponseWriter, r *http.Request) {
 		username, password := readCredentials(r)
 		var user *models.User
-		reserved, err := runLoginAttempt(
+		outcome, reserved, err := runLoginAttempt(
 			limiter,
 			loginKeys(clientIP(r, appCtx.TrustProxyHeaders()), username),
 			func() error {
@@ -120,16 +176,18 @@ func APILoginHandler(appCtx *application_context.MahresourcesContext, limiter *l
 			writeAuthJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many login attempts; try again later"})
 			return
 		}
-		if errors.Is(err, application_context.ErrLoginUnavailable) {
+		switch outcome {
+		case loginAuthenticated:
+			writeAuthJSON(w, http.StatusOK, user)
+		case loginRejected:
+			writeAuthJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
+		case loginUnavailable:
 			w.Header().Set("Retry-After", "1")
 			writeAuthJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "login temporarily unavailable; try again"})
-			return
+		default:
+			logLoginFailure(appCtx, r, err)
+			writeAuthJSON(w, http.StatusInternalServerError, map[string]string{"error": "login could not be completed"})
 		}
-		if err != nil {
-			writeAuthJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
-			return
-		}
-		writeAuthJSON(w, http.StatusOK, user)
 	}
 }
 

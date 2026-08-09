@@ -28,9 +28,11 @@ var (
 const sessionTouchInterval = time.Minute
 
 // loginLockWait bounds how long minting a session waits for the user-management
-// lock. Long enough to ride out ordinary user-management mutations, short enough
-// that a bulk group operation degrades logins to a fast retryable error rather
-// than an unbounded hang.
+// lock on PostgreSQL, where the advisory lock would otherwise wait forever.
+// Long enough to ride out ordinary user-management mutations, short enough that
+// a bulk group operation degrades logins to a fast retryable error rather than
+// an unbounded hang. SQLite ignores it: its writer lock is already bounded by
+// the connection's busy_timeout, which is longer but never infinite.
 const loginLockWait = 2 * time.Second
 
 // CreateSession mints a new login session for an already-identified user and
@@ -67,6 +69,13 @@ func (ctx *MahresourcesContext) CreateSession(userID uint, ttl time.Duration, us
 func (ctx *MahresourcesContext) AuthenticateAndCreateSession(username, password string, ttl time.Duration, userAgent, ip string) (*models.User, string, *models.Session, error) {
 	verified, err := ctx.AuthenticateUser(username, password)
 	if err != nil {
+		// This read runs before the transaction opens, so a busy database
+		// surfaces here as a raw driver error and would miss the mapping applied
+		// to the transaction's errors below. It is the same outage and deserves
+		// the same answer.
+		if isLockContentionError(err) {
+			return nil, "", nil, ErrLoginUnavailable
+		}
 		return nil, "", nil, err
 	}
 

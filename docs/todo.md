@@ -54,6 +54,18 @@ Every fix was verified by mutation: each new or changed test was run against the
 
 Tradeoff accepted: a 503 tells a caller its password was right but the database was busy. Reaching it requires inducing contention, which after this change means an admin-scale group operation, so the oracle is not usefully exploitable. Taking the lock on failed passwords too would remove it, at the cost of putting a write-lock acquisition back on the unauthenticated path.
 
+### Second-round review of the fixes (5b1fd587), by `pi` — 2026-08-09
+
+Three of five findings actioned; two rejected with reasons.
+
+- [x] **Only contention was excused; every other failure was still blamed on the password.** The 503 mapping covered the transaction's errors, but `AuthenticateUser` runs *before* the transaction opens and `session_context.go` returned its error unmapped — so a contended or broken credential read came back as 401 "invalid username or password" and spent one of the account's rate-limit attempts, in exactly the contention scenario this work exists to handle. `classifyLoginOutcome` now splits verdict (`ErrInvalidCredentials`/`ErrUserDisabled` → 401, charged) from contention (503, abandoned) from everything else (500 + application-log entry, abandoned), and defaults *unrecognized* errors to the last so a future failure mode cannot silently start telling users their password is wrong. The credential read is mapped for contention too.
+- [x] **Nothing proved the Postgres lock wait was actually bounded.** `TestLoginReportsLockContentionAsUnavailable` injects the error string at the session insert, so deleting `SET LOCAL lock_timeout` left it green while a real login queued behind the merge forever. `TestPostgresLoginDoesNotQueueBehindAHeldMutationLock` holds the advisory lock for real: it passes in 2.4s, and against the removed `SET LOCAL` it fails at the 10s ceiling.
+- [x] **`loginLockWait`'s doc comment read as a universal bound.** It only applies to Postgres; SQLite is bounded by `busy_timeout` instead, which is longer but never infinite. Corrected there and in CLAUDE.md.
+- Rejected — **"disable/re-enable ABA mints a session from superseded proof."** Login verifies hash `H`, an admin disables (revoking sessions) then re-enables, login inserts. The account is enabled with that exact password at insert time, so the outcome is identical to the user retrying a millisecond after the re-enable, which anyone holding the password can do anyway; the disable still revoked every session that existed when it ran. The suggested variants do not hold either: a same-plaintext reset yields a different hash (bcrypt salts), a rename does not invalidate a password since sessions bind to the user ID, and delete-then-recreate on a reused SQLite rowid gives a different hash, so the compare refuses. A generation nonce would convert a benign race into a retry that then succeeds.
+- Rejected — **"the outside-the-lock test doesn't detect bcrypt under the lock."** The cited mutation adds a *second*, redundant compare inside the transaction while the first still runs outside; the test's assertion is that a concurrent reset **completes** while the login is paused at the credential read, which the realistic regression (hoisting `AuthenticateUser` into the transaction) fails, as mutation-verified. Not hardening for an implausible edit.
+
+Accepted and not actioned: `assertStillBlocked` infers blocking from a 150ms dwell, so a goroutine descheduled that long could produce a false pass. A deterministic alternative needs a database-side lock-acquisition signal, which is disproportionate machinery for that margin.
+
 ---
 
 # UI bug hunt 2026-07-29 — verification and remediation

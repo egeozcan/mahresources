@@ -1621,3 +1621,41 @@ one whose generation guard could be deleted entirely with the suite still green.
 
 Do this in a worktree under the job tmp dir, never by editing the repo. If the mutation must touch a
 file in place (a JS module a test imports by path), back it up first and `git diff` after restoring.
+
+## Injecting the error proves the reporting, not the mechanism that produces it
+
+`TestLoginReportsLockContentionAsUnavailable` registers a GORM callback that makes the session
+insert fail with `database is locked`, then asserts the handler answers 503 with `Retry-After`.
+That is a fine test of the reporting path, and it is worth having. What it cannot see is whether
+the code that is supposed to *generate* that error still exists: delete
+`lockUserManagementMutationBounded`'s `SET LOCAL lock_timeout` and the injected error still fires,
+the test still passes, and a real Postgres login now queues behind a group merge with no deadline
+at all — the exact failure the bounded wait was written to prevent.
+
+**When a fix adds a mechanism, one test has to exercise the mechanism for real.**
+`TestPostgresLoginDoesNotQueueBehindAHeldMutationLock` holds the advisory lock with an actual paused
+mutation and asserts the login gives up: 2.4s with the timeout, and a failure at the 10s ceiling
+without it. Pick the ceiling well above the configured bound and well below "waits for the holder",
+so the assertion discriminates rather than just being slow.
+
+The same shape recurs: a stubbed clock proves the expiry branch but not that anything sets the
+deadline; a mocked 429 proves the retry but not that the limiter emits one. Injected-error tests
+pair with mechanism tests — they do not replace them.
+
+## An outage is not a wrong password
+
+Login classified everything that was not a recognized sentinel as a credential failure: 401
+`invalid username or password`, and one of the account's rate-limit attempts spent. A dropped
+connection, an exhausted pool or a busy database therefore told the user to doubt a password that
+still worked, and enough of them locked out an account nobody had attacked.
+
+**Split "the system decided" from "the system never got there", and make the default the second
+one.** `classifyLoginOutcome` returns `loginRejected` only for `ErrInvalidCredentials` and
+`ErrUserDisabled`; contention is 503, and *unrecognized* errors are `loginBroken` (500 + an
+application-log entry), so a failure mode added later surfaces as a server fault instead of quietly
+becoming a new way to tell users their password is wrong. Order the enum so the zero value is the
+safe one — `loginBroken` is `iota` — and the value nobody set cannot read as "authenticated".
+
+The trap that made this reachable: the fix mapped contention on the transaction's errors, but the
+credential read runs *before* the transaction opens, so its errors bypassed the mapping entirely.
+When error handling is attached to a block, check what runs outside it.
