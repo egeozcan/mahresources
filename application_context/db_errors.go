@@ -30,6 +30,22 @@ func isForeignKeyError(err error) bool {
 		strings.Contains(msg, "violates foreign key constraint")
 }
 
+// isLockContentionError checks whether the given error means the statement gave
+// up waiting for a lock rather than failing on its own merits. SQLite surfaces
+// its exhausted busy_timeout as "database is locked"; PostgreSQL reports an
+// expired lock_timeout as SQLSTATE 55P03. Matching on the message follows the
+// same convention as the constraint helpers above and keeps pgx an indirect
+// dependency.
+func isLockContentionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database table is locked") ||
+		strings.Contains(msg, "55P03")
+}
+
 // friendlyUniqueError wraps a unique-constraint error with a user-readable message.
 func friendlyUniqueError(entityName string, err error) error {
 	if isUniqueConstraintError(err) {

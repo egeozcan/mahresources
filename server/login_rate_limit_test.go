@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"mahresources/application_context"
 )
 
 // Per-account throttling: the same username brute-forced from rotating IPs is
@@ -155,6 +158,44 @@ func TestLoginRateLimiter_BoundsKeysRetainsPendingReservations(t *testing.T) {
 	fresh.complete(true)
 }
 
+// Database contention is not a wrong password. Charging it to the limiter would
+// let a stall lock out an account nobody attacked; clearing prior failures would
+// let an attacker wipe their own record by inducing one.
+func TestLoginRateLimiter_UnavailableAttemptIsNeitherFailureNorSuccess(t *testing.T) {
+	l := newLoginRateLimiter(2, time.Hour)
+	keys := []string{"ip:1.2.3.4", "user:victim"}
+
+	if _, err := runLoginAttempt(l, keys, func() error { return errors.New("wrong password") }); err == nil {
+		t.Fatal("a credential failure should surface as an error")
+	}
+	if _, err := runLoginAttempt(l, keys, func() error {
+		return application_context.ErrLoginUnavailable
+	}); !errors.Is(err, application_context.ErrLoginUnavailable) {
+		t.Fatalf("unavailable attempt err=%v, want ErrLoginUnavailable", err)
+	}
+
+	// One real failure was recorded, so with a limit of two there is still room.
+	// Had the stall counted, this reservation would be refused.
+	attempt, ok := l.reserve(keys)
+	if !ok {
+		t.Fatal("a database stall must not consume the account's login attempts")
+	}
+	attempt.complete(false)
+	if _, ok := l.reserve(keys); ok {
+		t.Fatal("two recorded failures should exhaust the limit")
+	}
+
+	// And it must not have erased the failure that came before it.
+	fresh := newLoginRateLimiter(1, time.Hour)
+	if _, err := runLoginAttempt(fresh, keys, func() error { return errors.New("wrong password") }); err == nil {
+		t.Fatal("a credential failure should surface as an error")
+	}
+	runLoginAttempt(fresh, keys, func() error { return application_context.ErrLoginUnavailable })
+	if _, ok := fresh.reserve(keys); ok {
+		t.Fatal("a database stall must not clear an attacker's accumulated failures")
+	}
+}
+
 func TestLoginRateLimiter_PanicCompletesReservationAsFailure(t *testing.T) {
 	l := newLoginRateLimiter(1, time.Hour)
 	l.maxKeys = 1
@@ -166,7 +207,7 @@ func TestLoginRateLimiter_PanicCompletesReservationAsFailure(t *testing.T) {
 	var recovered any
 	func() {
 		defer func() { recovered = recover() }()
-		runLoginAttempt(l, []string{"ip:panic"}, func() bool {
+		runLoginAttempt(l, []string{"ip:panic"}, func() error {
 			panic(panicValue)
 		})
 	}()

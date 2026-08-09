@@ -1572,3 +1572,52 @@ absorb overflow. **Inside a scroll container, name a control with `aria-label`, 
 visually-hidden element** — the label does the same work for a reader and occupies no box at all. When
 the visible text is a substring of the label ("Edit" inside "Edit root"), WCAG 2.5.3 Label in Name is
 satisfied too.
+
+## A race test that only observes an operation *attempting* a lock proves nothing
+
+`TestUnlimitedApiTokenCreationSerializesPasswordReset` paused a token insert inside the locked
+transaction, started a racing password reset, waited for a `Before("gorm:raw")` callback to say the
+reset had *reached* the serialization statement, and then released the insert. Every step looks like
+careful choreography, and against the exact regression it guards it passed 11 times out of 40.
+
+The bug is that `Before("gorm:raw")` fires before the statement runs, so "the reset attempted the
+lock" is not "the reset is blocked on the lock". Releasing at that moment leaves a genuine race, and
+when the insert happened to win, the reset's own `deleteUserAPITokens` cleaned the token up — so the
+final assertion held for a reason that had nothing to do with serialization. A guard that passes
+because the operations happened to complete in the intended order is a guard that has already stopped
+guarding; it just has not said so.
+
+**Assert the block, not the attempt.** With the lock held elsewhere, the racing operation must be
+*unable* to finish:
+
+```go
+waitBarrier(t, resetAttempted, "password reset never attempted the mutation lock")
+assertStillBlocked(t, resetDone, "password reset was not serialized behind the insert")
+releaseInsert()
+```
+
+That single addition took detection from 11/40 to 20/20. Helpers live in
+`application_context/race_barrier_test.go` (`waitBarrier`, `assertStillBlocked`, `assertCompletes`,
+`releaseBarrier`); `server/api_tests/user_management_mutation_pg_test.go` had the pattern first.
+
+Two corollaries, both learned the same day:
+
+- **Never wait on a barrier with a bare `<-ch`.** When a barrier stops matching — a reformatted SQL
+  statement, a new early return that skips the instrumented call — a bare receive parks until `go
+  test` aborts the *package* with a timeout panic, destroying every other test's result. A bounded
+  wait fails one test in 5s and names the barrier. Close release channels from `t.Cleanup` too, so a
+  `t.Fatal` on the test goroutine cannot leave a paused callback goroutine parked.
+- **Key barriers on an exported constant, not a copied SQL literal.** `sqliteUserManagementLockStatement`
+  in `user_management_lock.go` is the statement *and* what the tests match on, so reformatting it
+  cannot silently disarm a barrier.
+
+## Verify a test by breaking the code it covers
+
+Every fix in the dd7f6ef2 review round was checked by mutation: revert the fix (or make the minimal
+plausible refactor that reintroduces the defect) in a scratch `git worktree`, run the new test, and
+confirm it fails — with a message that names the actual defect. It caught two tests that would have
+shipped as decoration: one asserting a help string the same commit had added two lines above it, and
+one whose generation guard could be deleted entirely with the suite still green.
+
+Do this in a worktree under the job tmp dir, never by editing the repo. If the mutation must touch a
+file in place (a JS module a test imports by path), back it up first and `git diff` after restoring.

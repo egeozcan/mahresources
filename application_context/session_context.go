@@ -2,7 +2,6 @@ package application_context
 
 import (
 	"errors"
-	"strings"
 	"time"
 
 	"mahresources/auth"
@@ -16,16 +15,30 @@ import (
 // Session errors.
 var (
 	ErrSessionInvalid = errors.New("session invalid or expired")
+	// ErrLoginUnavailable means the credential was never judged: the login could
+	// not claim the user-management lock in time. It is deliberately distinct
+	// from ErrInvalidCredentials so a database stall is reported as a transient
+	// outage instead of being blamed on the password and charged to the login
+	// rate limiter.
+	ErrLoginUnavailable = errors.New("login temporarily unavailable")
 )
 
 // sessionTouchInterval throttles LastSeenAt writes so validating a session on
 // every request does not produce a database write each time.
 const sessionTouchInterval = time.Minute
 
-// CreateSession mints a new login session for a user and returns the raw token
-// (to be placed in the cookie) plus the stored session record. Login handlers
-// must use AuthenticateAndCreateSession so password verification and insertion
-// serialize with password reset and account deletion.
+// loginLockWait bounds how long minting a session waits for the user-management
+// lock. Long enough to ride out ordinary user-management mutations, short enough
+// that a bulk group operation degrades logins to a fast retryable error rather
+// than an unbounded hang.
+const loginLockWait = 2 * time.Second
+
+// CreateSession mints a new login session for an already-identified user and
+// returns the raw token (to be placed in the cookie) plus the stored session
+// record. It performs no credential check and takes no lock, so login handlers
+// must use AuthenticateAndCreateSession instead: composing this with
+// AuthenticateUser leaves a window in which a concurrent password reset, disable
+// or delete commits between the two and the session outlives it.
 func (ctx *MahresourcesContext) CreateSession(userID uint, ttl time.Duration, userAgent, ip string) (string, *models.Session, error) {
 	raw, session, err := newSession(userID, ttl, userAgent, ip)
 	if err != nil {
@@ -38,40 +51,60 @@ func (ctx *MahresourcesContext) CreateSession(userID uint, ttl time.Duration, us
 }
 
 // AuthenticateAndCreateSession verifies credentials and inserts the resulting
-// browser session under the same user-management transaction lock. A password
-// reset that commits after this transaction therefore deletes the new session;
-// one that commits first causes the old password check to fail.
+// browser session, re-checking the credential under the user-management lock so
+// the two cannot interleave. A password reset, disable or delete that commits
+// first replaces or removes the hash that was verified, so the insert is
+// refused; one that commits afterwards deletes the new session.
+//
+// The bcrypt compare deliberately runs before the transaction opens. Holding the
+// process-wide mutation lock (on SQLite, the database writer lock) across tens of
+// milliseconds of hashing lets unauthenticated login traffic serialize every
+// writer in the process. SetUserPassword hoists its own hashing out of its
+// transaction for the same reason. What the lock has to cover is not the compare
+// itself but the window between the compare and the insert, and comparing the
+// stored hash to the one that was verified closes exactly that window at the cost
+// of two index lookups.
 func (ctx *MahresourcesContext) AuthenticateAndCreateSession(username, password string, ttl time.Duration, userAgent, ip string) (*models.User, string, *models.Session, error) {
-	raw, session, err := newSession(0, ttl, userAgent, ip)
+	verified, err := ctx.AuthenticateUser(username, password)
 	if err != nil {
 		return nil, "", nil, err
 	}
+
+	raw, session, err := newSession(verified.ID, ttl, userAgent, ip)
+	if err != nil {
+		return nil, "", nil, err
+	}
+
 	var user models.User
 	err = ctx.db.Transaction(func(tx *gorm.DB) error {
-		if err := ctx.lockUserManagementMutation(tx); err != nil {
+		if err := ctx.lockUserManagementMutationBounded(tx, loginLockWait); err != nil {
 			return err
 		}
 		query := tx
 		if ctx.Config.DbType == constants.DbTypePosgres {
 			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
 		}
-		if err := query.Where("username = ?", strings.TrimSpace(username)).First(&user).Error; err != nil {
+		if err := query.First(&user, verified.ID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				auth.CheckPassword(dummyHash, password)
+				// The account was deleted between the compare and the lock.
 				return ErrInvalidCredentials
 			}
 			return err
 		}
-		if !auth.CheckPassword(user.PasswordHash, password) {
+		// Not a secret comparison: both operands are server-side values, so a
+		// constant-time compare would buy nothing.
+		if user.PasswordHash != verified.PasswordHash {
 			return ErrInvalidCredentials
 		}
 		if user.Disabled {
 			return ErrUserDisabled
 		}
-		session.UserId = user.ID
 		return tx.Create(session).Error
 	})
 	if err != nil {
+		if isLockContentionError(err) {
+			return nil, "", nil, ErrLoginUnavailable
+		}
 		return nil, "", nil, err
 	}
 	return &user, raw, session, nil

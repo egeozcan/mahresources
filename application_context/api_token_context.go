@@ -74,7 +74,7 @@ func lockApiTokenOwner(ctx *MahresourcesContext, tx *gorm.DB, userID uint) error
 		return nil
 	}
 
-	result := tx.Exec("UPDATE users SET id = id WHERE id = ?", userID)
+	result := tx.Exec(sqliteUserRowLockStatement, userID)
 	if result.Error != nil {
 		return result.Error
 	}

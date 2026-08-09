@@ -38,6 +38,22 @@ Verification:
 
 Residual risks: multipart CSRF query-token redesign and cross-process root-cache invalidation remain explicitly deferred. A broad unrelated race run exposed a pre-existing `download_queue.DownloadJob` serialization race outside this work; changed-area race suites are green.
 
+## Review of dd7f6ef2 — 2026-08-09
+
+Seven findings from a multi-lens adversarial review of the commit above, all fixed.
+
+- [x] **Login held the mutation lock across bcrypt.** `AuthenticateAndCreateSession` took the process-wide lock as its transaction's first statement and then ran a ~45ms compare inside it, including the dummy-hash path for unknown usernames. Measured on the committed binary: four anonymous `POST /v1/auth/login` clients drove unrelated `POST /v1/group` from 30/30 at 2ms to 28/30 with `database is locked` and a 3.8s tail; twelve clients gave p90 5.2s and a 16.7s max. The same flood on `dd7f6ef2^` was 30/30 at 2ms. Now the compare runs unlocked and the locked transaction re-reads the row and compares the stored hash to the one that was verified, so the serialization property is unchanged while the lock is held for two index lookups and an insert.
+- [x] **Postgres logins queued unboundedly behind group merge/bulk delete.** Those hold the same advisory lock for one long transaction and `pg_advisory_xact_lock` never times out. Login now sets a transaction-local `lock_timeout` and reports contention as `ErrLoginUnavailable` → HTTP 503 with `Retry-After` (`/login?error=busy` for the form), rather than hanging or being blamed on the password. The attempt is abandoned rather than completed in the rate limiter, so a stall neither spends a user's attempts nor clears an attacker's.
+- [x] **The unlimited-token guard was a coin flip.** `TestUnlimitedApiTokenCreationSerializesPasswordReset` released its paused insert as soon as the reset *attempted* the lock, which says nothing about who won it; against the reverted fast path it passed 11/40. It now asserts the reset is still blocked while the insert holds the lock: 20/20 detection.
+- [x] **Unbounded barrier receives.** The new race tests used bare channel receives, so a barrier that stopped firing ran to the package timeout and panicked every other test with it. All waits go through `waitBarrier`/`assertStillBlocked`/`assertCompletes` in `application_context/race_barrier_test.go`, release channels close from `t.Cleanup`, and the instrumented SQL is a named constant instead of a hand-copied literal. A dead barrier now fails one test in 5s naming itself.
+- [x] **Nothing pinned the login handler to the serialized path.** Recomposing `startSession` from `AuthenticateUser` + `CreateSession` compiled and left the whole suite green. `TestLoginRejectsCredentialSupersededMidRequest` drives the real HTTP route and fails against that composition.
+- [x] **The CLI scope-clear test was tautological**, asserting the help string added two lines above it. Replaced with the wire-contract assertion, plus server-side coverage that `scopeGroupId:0` clears an optional scope and is refused for a role that must stay confined.
+- [x] **The new `refreshTokens` catch-path guard had no test.** Added one; it fails only when the guard is removed.
+
+Every fix was verified by mutation: each new or changed test was run against the defect it covers and confirmed to fail.
+
+Tradeoff accepted: a 503 tells a caller its password was right but the database was busy. Reaching it requires inducing contention, which after this change means an admin-scale group operation, so the oracle is not usefully exploitable. Taking the lock on failed passwords too would remove it, at the cost of putting a write-lock acquisition back on the unauthenticated path.
+
 ---
 
 # UI bug hunt 2026-07-29 — verification and remediation

@@ -159,7 +159,7 @@ func (ctx *MahresourcesContext) UpdateUser(id uint, update *UserUpdate) (*models
 			// the optional group no-op write, preserving the same lock order while
 			// serializing identity writers before authoritative classification.
 			if ctx.Config.DbType == constants.DbTypeSqlite {
-				res := tx.Exec("UPDATE users SET id = id WHERE id = ?", id)
+				res := tx.Exec(sqliteUserRowLockStatement, id)
 				if res.Error != nil {
 					return res.Error
 				}

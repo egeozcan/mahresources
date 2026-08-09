@@ -126,6 +126,44 @@ func (r *loginReservation) complete(success bool) {
 	})
 }
 
+// abandon resolves a reservation as "never judged". The pending record is
+// dropped without becoming an in-window failure and without clearing prior
+// failures. Used when authentication could not be completed for an
+// infrastructure reason, so database contention neither locks out an account
+// whose password was never mistyped nor resets an attacker's accumulated
+// attempts.
+func (r *loginReservation) abandon() {
+	if r == nil {
+		return
+	}
+	r.once.Do(func() {
+		if r.limiter != nil {
+			r.limiter.abandon(r.id, r.keys)
+		}
+	})
+}
+
+func (l *loginRateLimiter) abandon(id uint64, keys []loginRateLimitKey) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	for _, key := range keys {
+		records := l.fails[key]
+		kept := records[:0]
+		for _, record := range records {
+			if record.reservationID == id {
+				continue
+			}
+			kept = append(kept, record)
+		}
+		if len(kept) == 0 {
+			delete(l.fails, key)
+		} else {
+			l.fails[key] = kept
+		}
+	}
+}
+
 func (l *loginRateLimiter) complete(id uint64, keys []loginRateLimitKey, success bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

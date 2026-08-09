@@ -4,23 +4,39 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"mahresources/cmd/mr/client"
 	"mahresources/cmd/mr/output"
 )
 
-func TestUserUpdateDocumentsScopeClearing(t *testing.T) {
-	cmd := newUserUpdateCmd(client.New("http://example.invalid"), &output.Options{})
-	var help strings.Builder
-	cmd.SetOut(&help)
-	cmd.SetArgs([]string{"--help"})
+// The help text promises that --scope-group 0 clears the scope. Assert the wire
+// contract that makes it true, not the help string: an "omit zero values"
+// cleanup of the presence check would silently turn the documented clear into a
+// no-op while leaving the help text, and any test of it, untouched. Help-text
+// freshness is already covered by `mr docs lint` in CI.
+func TestUserUpdateScopeGroupZeroRequestsAClear(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ID":4,"username":"kept","role":"editor","scopeGroupId":null,"disabled":false}`))
+	}))
+	defer server.Close()
+
+	cmd := newUserUpdateCmd(client.New(server.URL), &output.Options{Quiet: true})
+	cmd.SetArgs([]string{"4", "--scope-group", "0"})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("render help: %v", err)
+		t.Fatalf("execute user update: %v", err)
 	}
-	if !strings.Contains(help.String(), "use 0 to clear") {
-		t.Fatalf("scope clear contract missing from help:\n%s", help.String())
+	scope, present := gotBody["scopeGroupId"]
+	if !present {
+		t.Fatalf("--scope-group 0 must send scopeGroupId so the server clears it, got body %v", gotBody)
+	}
+	if scope != float64(0) {
+		t.Fatalf("scopeGroupId=%v, want 0 (the server maps zero to a cleared scope)", scope)
 	}
 }
 

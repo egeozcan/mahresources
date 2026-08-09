@@ -195,3 +195,69 @@ func uintString(id uint) string {
 	b, _ := json.Marshal(id)
 	return string(b)
 }
+
+// The CLI documents `--scope-group 0` as "use 0 to clear", which relies on the
+// handler mapping a decoded zero to a nil scope. Nothing else covered the clear
+// path, so the documented contract could be broken without a failing test.
+func TestUserUpdateScopeGroupZeroClearsTheScope(t *testing.T) {
+	tc := setupAuthEnv(t)
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	scope := &models.Group{Name: "scope-clear-group"}
+	if err := tc.DB.Create(scope).Error; err != nil {
+		t.Fatalf("create scope group: %v", err)
+	}
+	user, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "scope-clear", Password: "password1", Role: models.RoleUser, ScopeGroupId: &scope.ID,
+	})
+	if err != nil {
+		t.Fatalf("create scoped user: %v", err)
+	}
+	if user.ScopeGroupId == nil {
+		t.Fatal("fixture user should start scoped")
+	}
+
+	response := doReq(tc, http.MethodPost, "/v1/user", map[string]string{
+		"Accept": "application/json", "Content-Type": "application/json", "Authorization": admin,
+	}, nil, strings.NewReader(`{"id":`+uintString(user.ID)+`,"scopeGroupId":0}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("scope clear status=%d body=%s", response.Code, response.Body.String())
+	}
+	reloaded, err := tc.AppCtx.GetUser(user.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.ScopeGroupId != nil {
+		t.Fatalf("scopeGroupId=%v, want nil after an explicit zero", *reloaded.ScopeGroupId)
+	}
+}
+
+// A role that must stay confined cannot be un-scoped by the same request shape;
+// it has to fail loudly instead of silently widening the account's reach.
+func TestUserUpdateScopeGroupZeroRejectedForConfinedRole(t *testing.T) {
+	tc := setupAuthEnv(t)
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	scope := &models.Group{Name: "guest-scope-group"}
+	if err := tc.DB.Create(scope).Error; err != nil {
+		t.Fatalf("create scope group: %v", err)
+	}
+	guest, err := tc.AppCtx.CreateUser(&application_context.UserInput{
+		Username: "scope-clear-guest", Password: "password1", Role: models.RoleGuest, ScopeGroupId: &scope.ID,
+	})
+	if err != nil {
+		t.Fatalf("create guest: %v", err)
+	}
+
+	response := doReq(tc, http.MethodPost, "/v1/user", map[string]string{
+		"Accept": "application/json", "Content-Type": "application/json", "Authorization": admin,
+	}, nil, strings.NewReader(`{"id":`+uintString(guest.ID)+`,"scopeGroupId":0}`))
+	if response.Code == http.StatusOK {
+		t.Fatalf("clearing a guest's scope should be refused, got 200 body=%s", response.Body.String())
+	}
+	reloaded, err := tc.AppCtx.GetUser(guest.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.ScopeGroupId == nil || *reloaded.ScopeGroupId != scope.ID {
+		t.Fatalf("refused clear must leave the guest confined, got %v", reloaded.ScopeGroupId)
+	}
+}

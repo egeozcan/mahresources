@@ -152,28 +152,22 @@ func TestUnlimitedApiTokenCreationSerializesPasswordReset(t *testing.T) {
 	}
 
 	insertReady := make(chan struct{})
-	releaseInsert := make(chan struct{})
+	releaseInsertChannel := make(chan struct{})
+	releaseInsert := releaseBarrier(t, releaseInsertChannel)
 	var insertOnce sync.Once
 	if err := contexts[0].db.Callback().Create().Before("gorm:create").Register("test:pause_unlimited_token_insert", func(tx *gorm.DB) {
 		if tx.Statement.Table == "api_tokens" {
 			insertOnce.Do(func() {
 				close(insertReady)
-				<-releaseInsert
+				<-releaseInsertChannel
 			})
 		}
 	}); err != nil {
 		t.Fatalf("register token insert barrier: %v", err)
 	}
+	t.Cleanup(func() { _ = contexts[0].db.Callback().Create().Remove("test:pause_unlimited_token_insert") })
 
-	resetAttempted := make(chan struct{})
-	var resetOnce sync.Once
-	if err := contexts[1].db.Callback().Raw().Before("gorm:raw").Register("test:observe_unlimited_reset_lock", func(tx *gorm.DB) {
-		if strings.Contains(tx.Statement.SQL.String(), "UPDATE users SET id = id") {
-			resetOnce.Do(func() { close(resetAttempted) })
-		}
-	}); err != nil {
-		t.Fatalf("register reset barrier: %v", err)
-	}
+	resetAttempted := observeMutationLockAttempt(t, contexts[1], "test:observe_unlimited_reset_lock")
 
 	type tokenResult struct {
 		raw string
@@ -184,12 +178,16 @@ func TestUnlimitedApiTokenCreationSerializesPasswordReset(t *testing.T) {
 		raw, _, err := contexts[0].CreateApiToken(user.ID, "racing token", nil)
 		tokenDone <- tokenResult{raw: raw, err: err}
 	}()
-	<-insertReady
+	waitBarrier(t, insertReady, "token creation never reached its insert inside the mutation lock")
 
 	resetDone := make(chan error, 1)
 	go func() { resetDone <- contexts[1].SetUserPassword(user.ID, "password2") }()
-	<-resetAttempted
-	close(releaseInsert)
+	waitBarrier(t, resetAttempted, "password reset never attempted the mutation lock")
+	// Reaching the lock statement says nothing about who won it. Without this the
+	// test also passes when the token insert simply happens to land first, which
+	// is how it went green against an unserialized fast path in a third of runs.
+	assertStillBlocked(t, resetDone, "password reset was not serialized behind the token insert holding the mutation lock")
+	releaseInsert()
 
 	created := <-tokenDone
 	if created.err != nil {
@@ -295,6 +293,9 @@ func TestApiTokenConcurrentCapSQLite(t *testing.T) {
 	var mutationAttempts atomic.Int32
 	for i, creatorCtx := range contexts {
 		callbackName := fmt.Sprintf("test:api_token_owner_lock_barrier:%d", i)
+		// Deliberately a prefix match: it counts both serialization writes (the
+		// transaction-opening one and the per-owner one), which is what makes the
+		// second attempt observable.
 		if err := creatorCtx.db.Callback().Raw().Before("gorm:raw").Register(callbackName+":attempt", func(tx *gorm.DB) {
 			if strings.Contains(tx.Statement.SQL.String(), "UPDATE users SET id = id") && mutationAttempts.Add(1) == 2 {
 				close(competitorAttempt)
@@ -304,7 +305,7 @@ func TestApiTokenConcurrentCapSQLite(t *testing.T) {
 		}
 		if err := creatorCtx.db.Callback().Raw().After("gorm:raw").Register(callbackName+":held", func(tx *gorm.DB) {
 			sqlText := tx.Statement.SQL.String()
-			if tx.Error == nil && strings.Contains(sqlText, "UPDATE users SET id = id WHERE id = ?") && ownerObserved.CompareAndSwap(false, true) {
+			if tx.Error == nil && strings.Contains(sqlText, sqliteUserRowLockStatement) && ownerObserved.CompareAndSwap(false, true) {
 				close(ownerHeld)
 				<-releaseOwner
 			}

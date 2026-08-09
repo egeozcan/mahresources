@@ -40,55 +40,130 @@ func TestCreateAndValidateSession(t *testing.T) {
 	}
 }
 
+type loginResult struct {
+	raw string
+	err error
+}
+
+// pauseAfterCredentialRead stops a login between reading the stored credential
+// and minting the session — the window in which a concurrent reset must be
+// noticed.
+func pauseAfterCredentialRead(t *testing.T, ctx *MahresourcesContext, name string) (reached chan struct{}, release func()) {
+	t.Helper()
+	reached = make(chan struct{})
+	releaseChannel := make(chan struct{})
+	release = releaseBarrier(t, releaseChannel)
+	var once sync.Once
+	if err := ctx.db.Callback().Query().After("gorm:query").Register(name, func(tx *gorm.DB) {
+		if tx.Statement.Table == "users" && strings.Contains(tx.Statement.SQL.String(), "username") {
+			once.Do(func() {
+				close(reached)
+				<-releaseChannel
+			})
+		}
+	}); err != nil {
+		t.Fatalf("register credential-read barrier: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.db.Callback().Query().Remove(name) })
+	return reached, release
+}
+
+// observeMutationLockAttempt signals when an operation reaches the SQLite
+// user-management serialization write.
+func observeMutationLockAttempt(t *testing.T, ctx *MahresourcesContext, name string) chan struct{} {
+	t.Helper()
+	attempted := make(chan struct{})
+	var once sync.Once
+	if err := ctx.db.Callback().Raw().Before("gorm:raw").Register(name, func(tx *gorm.DB) {
+		if strings.Contains(tx.Statement.SQL.String(), sqliteUserManagementLockStatement) {
+			once.Do(func() { close(attempted) })
+		}
+	}); err != nil {
+		t.Fatalf("register mutation-lock barrier: %v", err)
+	}
+	t.Cleanup(func() { _ = ctx.db.Callback().Raw().Remove(name) })
+	return attempted
+}
+
+// A login verifies the password before it takes the user-management lock, so
+// hashing — tens of milliseconds of bcrypt on an unauthenticated request — must
+// not block user management. Holding that lock across the compare is what let a
+// handful of anonymous login attempts stall every writer in the process.
+func TestAuthenticateAndCreateSessionVerifiesCredentialOutsideTheMutationLock(t *testing.T) {
+	contexts := newConcurrentApiTokenTestContexts(t, 2)
+	user, err := contexts[0].CreateUser(&UserInput{Username: "login-verify", Password: "password1", Role: models.RoleUser})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	credentialsRead, releaseLogin := pauseAfterCredentialRead(t, contexts[0], "test:pause_login_after_credentials")
+
+	loginDone := make(chan loginResult, 1)
+	go func() {
+		_, raw, _, loginErr := contexts[0].AuthenticateAndCreateSession("login-verify", "password1", time.Hour, "agent", "127.0.0.1")
+		loginDone <- loginResult{raw: raw, err: loginErr}
+	}()
+	waitBarrier(t, credentialsRead, "login never read the stored credential")
+
+	resetDone := make(chan error, 1)
+	go func() { resetDone <- contexts[1].SetUserPassword(user.ID, "password2") }()
+	assertCompletes(t, resetDone, "password reset was blocked while a login verified its password")
+	releaseLogin()
+
+	// The reset won, so the hash the login verified is stale and the session must
+	// be refused rather than minted against a superseded password.
+	login := <-loginDone
+	if !errors.Is(login.err, ErrInvalidCredentials) {
+		t.Fatalf("login against a superseded password err=%v, want ErrInvalidCredentials", login.err)
+	}
+	var sessions int64
+	if err := contexts[0].db.Model(&models.Session{}).Where("user_id = ?", user.ID).Count(&sessions).Error; err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if sessions != 0 {
+		t.Fatalf("refused login left %d session rows behind", sessions)
+	}
+}
+
+// The other half of the invariant: a reset that arrives while the login holds
+// the lock cannot commit until the session row exists, and then revokes it.
 func TestAuthenticateAndCreateSessionSerializesPasswordReset(t *testing.T) {
 	contexts := newConcurrentApiTokenTestContexts(t, 2)
-	for _, testCtx := range contexts {
-		testCtx.Config.MaxUserTokens = 0
-	}
 	user, err := contexts[0].CreateUser(&UserInput{Username: "login-race", Password: "password1", Role: models.RoleUser})
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 
-	credentialsRead := make(chan struct{})
-	releaseLogin := make(chan struct{})
-	var credentialsOnce sync.Once
-	if err := contexts[0].db.Callback().Query().After("gorm:query").Register("test:pause_login_after_credentials", func(tx *gorm.DB) {
-		if tx.Statement.Table == "users" && strings.Contains(tx.Statement.SQL.String(), "username") {
-			credentialsOnce.Do(func() {
-				close(credentialsRead)
-				<-releaseLogin
+	sessionInsert := make(chan struct{})
+	releaseInsertChannel := make(chan struct{})
+	releaseInsert := releaseBarrier(t, releaseInsertChannel)
+	var insertOnce sync.Once
+	if err := contexts[0].db.Callback().Create().Before("gorm:create").Register("test:pause_login_session_insert", func(tx *gorm.DB) {
+		if tx.Statement.Table == "sessions" {
+			insertOnce.Do(func() {
+				close(sessionInsert)
+				<-releaseInsertChannel
 			})
 		}
 	}); err != nil {
-		t.Fatalf("register login barrier: %v", err)
+		t.Fatalf("register session insert barrier: %v", err)
 	}
+	t.Cleanup(func() { _ = contexts[0].db.Callback().Create().Remove("test:pause_login_session_insert") })
 
-	resetAttempted := make(chan struct{})
-	var resetOnce sync.Once
-	if err := contexts[1].db.Callback().Raw().Before("gorm:raw").Register("test:observe_reset_mutation_lock", func(tx *gorm.DB) {
-		if strings.Contains(tx.Statement.SQL.String(), "UPDATE users SET id = id") {
-			resetOnce.Do(func() { close(resetAttempted) })
-		}
-	}); err != nil {
-		t.Fatalf("register reset barrier: %v", err)
-	}
+	resetAttempted := observeMutationLockAttempt(t, contexts[1], "test:observe_reset_mutation_lock")
 
-	type loginResult struct {
-		raw string
-		err error
-	}
 	loginDone := make(chan loginResult, 1)
 	go func() {
-		_, raw, _, err := contexts[0].AuthenticateAndCreateSession("login-race", "password1", time.Hour, "agent", "127.0.0.1")
-		loginDone <- loginResult{raw: raw, err: err}
+		_, raw, _, loginErr := contexts[0].AuthenticateAndCreateSession("login-race", "password1", time.Hour, "agent", "127.0.0.1")
+		loginDone <- loginResult{raw: raw, err: loginErr}
 	}()
-	<-credentialsRead
+	waitBarrier(t, sessionInsert, "login never reached the session insert inside the mutation lock")
 
 	resetDone := make(chan error, 1)
 	go func() { resetDone <- contexts[1].SetUserPassword(user.ID, "password2") }()
-	<-resetAttempted
-	close(releaseLogin)
+	waitBarrier(t, resetAttempted, "password reset never attempted the mutation lock")
+	assertStillBlocked(t, resetDone, "password reset was not serialized behind the login holding the mutation lock")
+	releaseInsert()
 
 	login := <-loginDone
 	if login.err != nil {

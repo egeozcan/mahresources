@@ -19,6 +19,11 @@ func LoginContextProvider(_ any) func(request *http.Request) pongo2.Context {
 			// no error
 		case "rate":
 			ctx["loginError"] = "Too many login attempts. Please wait and try again."
+		case "busy":
+			// The credential was never judged: the server could not claim the
+			// user-management lock in time. Saying "invalid password" here would
+			// blame the user for a transient database stall.
+			ctx["loginError"] = "The server is busy. Please try signing in again."
 		default:
 			ctx["loginError"] = "Invalid username or password."
 		}

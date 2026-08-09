@@ -133,6 +133,32 @@ describe('accountSecurity refresh and revoke state', () => {
     ]);
   });
 
+  // The sibling guard on the !response.ok path has a test; the catch path is the
+  // same defect with a network failure instead of a status code, and a red
+  // "Failed to fetch" banner directly above a token the user just successfully
+  // minted is exactly as wrong.
+  test('a stale refresh that rejects cannot report an error over a newer mutation', async () => {
+    let rejectRefresh!: (reason: Error) => void;
+    const refreshPending = new Promise<Response>((_, fail) => { rejectRefresh = fail; });
+    const fetchMock = vi.fn((_url: string, options?: RequestInit) => (
+      options?.method === 'POST'
+        ? Promise.resolve(jsonResponse({ token: 'mr_new', id: 12, name: 'new', prefix: 'mr_ne' }))
+        : refreshPending
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const state = accountSecurity([]);
+
+    const refresh = state.refreshTokens();
+    await state.createToken();
+    rejectRefresh(new TypeError('Failed to fetch'));
+    await refresh;
+
+    expect(state.error).toBe('');
+    expect(state.tokens).toEqual([
+      expect.objectContaining({ id: 12, name: 'new' }),
+    ]);
+  });
+
   test('a rejected mutation does not discard a valid in-flight refresh', async () => {
     let resolveRefresh!: (response: Response) => void;
     const refreshPending = new Promise<Response>((done) => { resolveRefresh = done; });

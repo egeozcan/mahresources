@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
@@ -33,10 +34,14 @@ func startSession(appCtx *application_context.MahresourcesContext, w http.Respon
 // runLoginAttempt reserves all limiter keys and installs the completion guard
 // before authentication begins. A panic therefore propagates while converting
 // the pending reservation to a failure; normal paths complete exactly once.
-func runLoginAttempt(limiter *loginRateLimiter, keys []string, authenticate func() bool) (reserved, success bool) {
+//
+// A login that never got to judge the credential (ErrLoginUnavailable) is
+// abandoned rather than completed, so a transient database stall is not charged
+// to the account or the IP.
+func runLoginAttempt(limiter *loginRateLimiter, keys []string, authenticate func() error) (reserved bool, err error) {
 	attempt, ok := limiter.reserve(keys)
 	if !ok {
-		return false, false
+		return false, nil
 	}
 	completed := false
 	defer func() {
@@ -45,10 +50,14 @@ func runLoginAttempt(limiter *loginRateLimiter, keys []string, authenticate func
 		}
 	}()
 
-	success = authenticate()
-	attempt.complete(success)
+	err = authenticate()
+	if errors.Is(err, application_context.ErrLoginUnavailable) {
+		attempt.abandon()
+	} else {
+		attempt.complete(err == nil)
+	}
 	completed = true
-	return true, success
+	return true, err
 }
 
 // LoginSubmitHandler handles the browser login form POST.
@@ -57,19 +66,23 @@ func LoginSubmitHandler(appCtx *application_context.MahresourcesContext, limiter
 		_ = r.ParseForm()
 		next := safeLocalPath(r.FormValue("next"), "/dashboard")
 		username := r.FormValue("username")
-		reserved, success := runLoginAttempt(
+		reserved, err := runLoginAttempt(
 			limiter,
 			loginKeys(clientIP(r, appCtx.TrustProxyHeaders()), username),
-			func() bool {
-				_, err := startSession(appCtx, w, r, username, r.FormValue("password"))
-				return err == nil
+			func() error {
+				_, authErr := startSession(appCtx, w, r, username, r.FormValue("password"))
+				return authErr
 			},
 		)
 		if !reserved {
 			http.Redirect(w, r, "/login?error=rate&next="+url.QueryEscape(next), http.StatusFound)
 			return
 		}
-		if !success {
+		if errors.Is(err, application_context.ErrLoginUnavailable) {
+			http.Redirect(w, r, "/login?error=busy&next="+url.QueryEscape(next), http.StatusFound)
+			return
+		}
+		if err != nil {
 			http.Redirect(w, r, "/login?error=1&next="+url.QueryEscape(next), http.StatusFound)
 			return
 		}
@@ -94,20 +107,25 @@ func APILoginHandler(appCtx *application_context.MahresourcesContext, limiter *l
 	return func(w http.ResponseWriter, r *http.Request) {
 		username, password := readCredentials(r)
 		var user *models.User
-		reserved, success := runLoginAttempt(
+		reserved, err := runLoginAttempt(
 			limiter,
 			loginKeys(clientIP(r, appCtx.TrustProxyHeaders()), username),
-			func() bool {
-				var err error
-				user, err = startSession(appCtx, w, r, username, password)
-				return err == nil
+			func() error {
+				var authErr error
+				user, authErr = startSession(appCtx, w, r, username, password)
+				return authErr
 			},
 		)
 		if !reserved {
 			writeAuthJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many login attempts; try again later"})
 			return
 		}
-		if !success {
+		if errors.Is(err, application_context.ErrLoginUnavailable) {
+			w.Header().Set("Retry-After", "1")
+			writeAuthJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "login temporarily unavailable; try again"})
+			return
+		}
+		if err != nil {
 			writeAuthJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid username or password"})
 			return
 		}
