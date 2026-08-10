@@ -104,6 +104,16 @@ func getEnvOrDefault(envVar string, defaultVal string) string {
 }
 
 func main() {
+	// A non-zero exit is set and returned rather than os.Exit'd from inside, so the
+	// deferred shutdowns below — the download manager's in particular, which is
+	// what writes the record of the downloads a restart interrupts — still run.
+	exitCode := 0
+	defer func() {
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+	}()
+
 	// Load .env first so environment variables are available as defaults
 	// you may have no .env, it's okay
 	_ = godotenv.Load(".env")
@@ -131,6 +141,9 @@ func main() {
 	maxDBConnections := flag.Int("max-db-connections", parseIntEnv("MAX_DB_CONNECTIONS", 0), "Limit database connection pool size, useful for SQLite under test load (env: MAX_DB_CONNECTIONS)")
 	maxJobConcurrency := flag.Int("max-job-concurrency", parseIntEnv("MAX_JOB_CONCURRENCY", 6), "Concurrency budget for the shared background job manager (env: MAX_JOB_CONCURRENCY)")
 	exportRetention := flag.Duration("export-retention", parseDurationEnv("EXPORT_RETENTION", 24*time.Hour), "How long completed group-export tars stay on disk before cleanup (env: EXPORT_RETENTION)")
+	downloadFailedRetention := flag.Duration("download-failed-retention", parseDurationEnv("DOWNLOAD_FAILED_RETENTION", 7*24*time.Hour), "How long a failed or cancelled download stays in the download history (env: DOWNLOAD_FAILED_RETENTION)")
+	downloadHistoryRetention := flag.Duration("download-history-retention", parseDurationEnv("DOWNLOAD_HISTORY_RETENTION", 24*time.Hour), "How long a completed download stays in the download history (env: DOWNLOAD_HISTORY_RETENTION)")
+	downloadCockpitLimit := flag.Int("download-cockpit-limit", parseIntEnv("DOWNLOAD_COCKPIT_LIMIT", 10), "How many finished downloads the jobs panel renders; active work and non-download jobs are never capped (env: DOWNLOAD_COCKPIT_LIMIT)")
 	maxImportSize := flag.Int64("max-import-size", parseInt64Env("MAX_IMPORT_SIZE", 10737418240), "Maximum import tar upload size in bytes (env: MAX_IMPORT_SIZE)")
 	maxUploadSize := flag.Int64("max-upload-size", parseInt64Env("MAX_UPLOAD_SIZE", 2<<30), "Maximum per-upload body size in bytes for resource and version uploads (default: 2 GB, env: MAX_UPLOAD_SIZE)")
 	maxJSONBody := flag.Int64("max-json-body", parseInt64Env("MAX_JSON_BODY", 0), "Maximum application/json request body size in bytes; 0 disables the limit (default: 0/unlimited, env: MAX_JSON_BODY)")
@@ -280,6 +293,9 @@ func main() {
 		SkipFTS:                      *skipFTS,
 		MaxJobConcurrency:            *maxJobConcurrency,
 		ExportRetention:              *exportRetention,
+		DownloadFailedRetention:      *downloadFailedRetention,
+		DownloadHistoryRetention:     *downloadHistoryRetention,
+		DownloadCockpitLimit:         *downloadCockpitLimit,
 		MaxImportSize:                *maxImportSize,
 		MaxUploadSize:                *maxUploadSize,
 		MaxJSONBodySize:              *maxJSONBody,
@@ -391,6 +407,7 @@ func main() {
 		&models.RuntimeSetting{},
 		&models.SavedMRQLQuery{},
 		&models.TemplatePartial{},
+		&models.DownloadHistoryEntry{}, // no FK association; created_by_user_id is a scalar
 		// Tables with FK to independent tables
 		&models.Group{},             // FK to Category (self-referencing Owner is handled by GORM)
 		&models.GroupRelationType{}, // FK to Category
@@ -649,7 +666,14 @@ func main() {
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+		// Not log.Fatalf: that calls os.Exit, which runs no deferred function — so a
+		// handler overrunning the drain deadline would take the download manager's
+		// own shutdown with it, and every in-flight download would end without the
+		// cancellation record the history table exists to keep. The deferred
+		// Shutdown runs here because this returns rather than exits.
+		log.Printf("ERROR: server forced to shutdown: %v", err)
+		exitCode = 1
+		return
 	}
 
 	log.Println("Server exited cleanly")

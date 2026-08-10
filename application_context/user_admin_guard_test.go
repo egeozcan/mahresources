@@ -35,6 +35,7 @@ func newSharedFileContext(t *testing.T) *MahresourcesContext {
 		&models.Series{}, &models.Query{}, &models.SavedMRQLQuery{}, &models.TemplatePartial{},
 		&models.NoteBlock{}, &models.GroupRelation{}, &models.GroupRelationType{},
 		&models.ResourceVersion{}, &models.User{}, &models.UserSetting{}, &models.Session{}, &models.ApiToken{},
+		&models.DownloadHistoryEntry{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

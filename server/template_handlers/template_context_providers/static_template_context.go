@@ -124,6 +124,10 @@ var baseTemplateContext = pongo2.Context{
 			Url:  "/admin/settings",
 		},
 		{
+			Name: "Downloads",
+			Url:  "/downloads",
+		},
+		{
 			Name: "Logs",
 			Url:  "/logs",
 		},
@@ -185,6 +189,8 @@ var navSectionByFirstSegment = map[string]string{
 
 	"log":  "/logs",
 	"logs": "/logs",
+
+	"downloads": "/downloads",
 }
 
 // adminNavSections are the /admin/* nav entries, matched by prefix rather than by

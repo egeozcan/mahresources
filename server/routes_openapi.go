@@ -97,6 +97,13 @@ func RegisterAPIRoutesWithOpenAPI(registry *openapi.Registry) {
 }
 
 // authLoginRequestType documents the JSON body accepted by POST /v1/auth/login.
+// The body both /v1/downloads mutations take: a list of history row ids. Declared
+// here rather than reused from api_handlers because that type is unexported —
+// the shape is the contract, and it is one field.
+var downloadIDListRequestType = reflect.TypeOf(struct {
+	IDs []uint `json:"ids"`
+}{})
+
 var authLoginRequestType = reflect.TypeOf(struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -2402,6 +2409,54 @@ func registerDownloadRoutes(r *openapi.Registry) {
 		Summary:     "Server-Sent Events stream for download updates",
 		Description: "Returns a Server-Sent Events stream with real-time updates about download job status changes.",
 		Tags:        []string{"downloads"},
+	})
+
+	// Download history — the durable record of finished downloads, which outlives
+	// the in-memory queue.
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
+		Path:                 "/v1/downloads",
+		OperationID:          "listDownloadHistory",
+		Summary:              "List finished downloads",
+		Description:          "Returns the persisted history of downloads that reached a terminal state, filtered by status, URL or name, and date. Admins see every user's downloads; every other principal sees only their own.",
+		Tags:                 []string{"downloads"},
+		// Spelled out rather than derived from DownloadHistoryQuery: that struct
+		// also carries the two owner fields, which are the visibility decision and
+		// are overwritten from the principal after decoding. Deriving the params
+		// would document them as inputs a caller can set, which they are not.
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "status", Type: "string", Description: "Filter by terminal status (completed, failed, cancelled). Repeat for several."},
+			{Name: "url", Type: "string", Description: "Substring match over the URL and the download name."},
+			{Name: "createdAfter", Type: "string", Description: "Only downloads submitted on or after this date (YYYY-MM-DD or RFC 3339)."},
+			{Name: "createdBefore", Type: "string", Description: "Only downloads submitted at or before this instant. A bare YYYY-MM-DD is midnight at the start of that day, so it excludes the day itself; pass the next day, or an RFC 3339 instant, to include it."},
+			{Name: "sortBy", Type: "string", Description: "Sort column, e.g. `created_at desc`. Repeat for several."},
+		},
+		Paginated:            true,
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/downloads/retry",
+		OperationID:          "retryDownloadHistory",
+		Summary:              "Retry stored downloads",
+		Description:          "Runs one or more failed or cancelled downloads again from their stored submission, whether or not the original job is still in the queue. Refused for a completed download, for one whose retry is still queued or running, and for a URL the queue is already fetching. Reports an outcome per id.",
+		Tags:                 []string{"downloads"},
+		RequestType:          downloadIDListRequestType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodPost,
+		Path:                 "/v1/downloads/delete",
+		OperationID:          "deleteDownloadHistory",
+		Summary:              "Delete stored downloads",
+		Description:          "Removes one or more download history rows, and the matching queue entries. A download that is still running or paused is refused, as is one whose retry is still running; cancel it first. Reports an outcome per id.",
+		Tags:                 []string{"downloads"},
+		RequestType:          downloadIDListRequestType,
+		RequestContentTypes:  []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
 	})
 
 	// Jobs routes (canonical paths — aliases for download routes above, plus action routes)

@@ -114,6 +114,7 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 		&models.UserSetting{},
 		&models.Session{},
 		&models.ApiToken{},
+		&models.DownloadHistoryEntry{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)

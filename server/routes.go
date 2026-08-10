@@ -132,6 +132,11 @@ var templates = map[string]templateInformation{
 	"/categories/timeline": {adaptTemplate(template_context_providers.CategoryTimelineContextProvider), "listCategoriesTimeline.tpl", http.MethodGet},
 	"/queries/timeline":    {adaptTemplate(template_context_providers.QueryTimelineContextProvider), "listQueriesTimeline.tpl", http.MethodGet},
 
+	// Not /admin/downloads: every role owns downloads, and each principal sees only
+	// its own. An /admin path would also have to be listed in isSystemPath, whose
+	// exact-match table is the footgun documented there.
+	"/downloads": {adaptTemplate(template_context_providers.DownloadListContextProvider), "listDownloads.tpl", http.MethodGet},
+
 	"/logs": {adaptTemplate(template_context_providers.LogListContextProvider), "listLogs.tpl", http.MethodGet},
 	"/log":  {adaptTemplate(template_context_providers.LogContextProvider), "displayLog.tpl", http.MethodGet},
 
@@ -182,6 +187,11 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		retention := appContext.Settings().ExportRetention()
 		ctx["exportRetention"] = template_context_providers.ShortDuration(retention)
 		ctx["exportRetentionMs"] = retention.Milliseconds()
+		// How many rows the jobs panel renders. Read through the context accessor
+		// rather than Settings() directly, so a config that never set it (tests,
+		// programmatic embeds) falls back to the default instead of publishing 0 —
+		// which the panel would honour by rendering nothing.
+		ctx["downloadCockpitLimit"] = appContext.DownloadCockpitLimit()
 		docsLinksEnabled := !appContext.Settings().DocsLinksDisabled() && appContext.Settings().DocsSiteBaseURL() != ""
 		ctx["docsLinksEnabled"] = docsLinksEnabled
 		ctx["docsURL"] = func(slug string) string {
@@ -706,12 +716,15 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// Download Queue (background remote downloads)
 	// Submit runs on a request-scoped context so a group-limited principal can
 	// only target groups inside its subtree (the worker itself runs unscoped).
+	// Retry and resume run scoped for the same reason: both hand the original
+	// payload back to that unscoped worker, so both re-check it against the
+	// principal pressing the button rather than trusting what was allowed once.
 	router.Methods(http.MethodPost).Path("/v1/download/submit").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadSubmitHandler))
 	router.Methods(http.MethodGet).Path("/v1/download/queue").HandlerFunc(api_handlers.GetDownloadQueueHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/download/cancel").HandlerFunc(api_handlers.GetDownloadCancelHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/download/pause").HandlerFunc(api_handlers.GetDownloadPauseHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/download/resume").HandlerFunc(api_handlers.GetDownloadResumeHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/download/retry").HandlerFunc(api_handlers.GetDownloadRetryHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/download/resume").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadResumeHandler))
+	router.Methods(http.MethodPost).Path("/v1/download/retry").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadRetryHandler))
 	router.Methods(http.MethodGet).Path("/v1/download/events").HandlerFunc(api_handlers.GetDownloadEventsHandler(appContext))
 
 	// Jobs routes (new canonical paths — download routes above kept as aliases)
@@ -719,12 +732,22 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/v1/jobs/queue").HandlerFunc(api_handlers.GetDownloadQueueHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/jobs/cancel").HandlerFunc(api_handlers.GetDownloadCancelHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/jobs/pause").HandlerFunc(api_handlers.GetDownloadPauseHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/jobs/resume").HandlerFunc(api_handlers.GetDownloadResumeHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/jobs/retry").HandlerFunc(api_handlers.GetDownloadRetryHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/jobs/resume").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadResumeHandler))
+	router.Methods(http.MethodPost).Path("/v1/jobs/retry").HandlerFunc(scopedAPI(appContext, api_handlers.GetDownloadRetryHandler))
 	router.Methods(http.MethodGet).Path("/v1/jobs/events").HandlerFunc(api_handlers.GetDownloadEventsHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/jobs/get").HandlerFunc(api_handlers.GetDownloadJobHandler(appContext))
 	// Finding 40: the jobs panel had no way to dismiss a finished job.
 	router.Methods(http.MethodPost).Path("/v1/jobs/clearCompleted").HandlerFunc(api_handlers.GetJobsClearCompletedHandler(appContext))
+
+	// Download history — the durable record behind /downloads. Retry runs on a
+	// request-scoped context for the same reason submit does: it enqueues a
+	// download, and the stored payload has to clear the retrying principal's own
+	// scope check before it can run again.
+	router.Methods(http.MethodGet).Path("/v1/downloads").HandlerFunc(api_handlers.GetDownloadHistoryListHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/downloads/retry").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		api_handlers.GetDownloadHistoryRetryHandler(scopedCtx(appContext, r))(w, r)
+	})
+	router.Methods(http.MethodPost).Path("/v1/downloads/delete").HandlerFunc(api_handlers.GetDownloadHistoryDeleteHandler(appContext))
 
 	// Group exports
 	router.Methods(http.MethodPost).Path("/v1/groups/export/estimate").HandlerFunc(scopedAPI(appContext, api_handlers.GetExportEstimateHandler))

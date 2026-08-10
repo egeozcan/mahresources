@@ -518,7 +518,7 @@ func TestClaims_CancelTheContextTheyObserved(t *testing.T) {
 		job := addTestJob(createTestManager(), "j", JobStatusDownloading)
 		observed := job.GetContext()
 
-		if _, ok := job.claimCancel(time.Now()); !ok {
+		if _, _, ok := job.claimCancel(time.Now()); !ok {
 			t.Fatalf("claiming a cancel on a downloading job failed")
 		}
 

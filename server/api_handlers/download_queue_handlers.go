@@ -26,6 +26,7 @@ type DownloadQueueReader interface {
 type DownloadSubmitter interface {
 	DownloadManager() *download_queue.DownloadManager
 	GroupVisible(id uint) bool
+	NoteVisible(id uint) bool
 }
 
 // principalOwnerID returns a pointer to the principal's user ID, or nil for the
@@ -50,6 +51,48 @@ func jobVisibleToPrincipal(p *auth.Principal, owner *uint) bool {
 	return owner != nil && *owner == p.UserID
 }
 
+// validateDownloadScope refuses a download whose targets fall outside a
+// group-limited principal's subtree.
+//
+// The download worker creates resources on the unscoped system context, so a
+// group-limited principal could otherwise plant data outside its subtree by
+// naming an out-of-scope owner/group (or creating a new top-level group via
+// GroupName). Fail-closed, and checked before enqueuing. GroupVisible is always
+// true for unscoped/admin/auth-off callers, so this is a no-op for them.
+//
+// Shared with the retry path in download_history_handlers.go, and that is the
+// reason it is a function: a stored payload is a record of what was once asked
+// for, not a standing permission, so resubmitting one has to clear the same bar
+// as submitting it fresh — against the principal doing the retrying.
+func validateDownloadScope(ctx DownloadSubmitter, p *auth.Principal, creator *query_models.ResourceFromRemoteCreator) error {
+	if !actionScopeRestricted(p) {
+		return nil
+	}
+	if creator.GroupName != "" {
+		return fmt.Errorf("group-limited accounts cannot create a group via download; target an existing group in your scope")
+	}
+	if creator.OwnerId == 0 || !ctx.GroupVisible(creator.OwnerId) {
+		return fmt.Errorf("download target group is outside your permitted scope")
+	}
+	for _, g := range creator.Groups {
+		if !ctx.GroupVisible(g) {
+			return fmt.Errorf("download target group is outside your permitted scope")
+		}
+	}
+	// Notes are subtree-scoped too (scopeColumn maps them on owner_id), and the
+	// worker associates them without ever consulting the submitter's scope: the
+	// foreground upload path validates its association ids through the *scoped*
+	// db, so an out-of-subtree note is refused there, while the same ids on a
+	// background download were checked only for existence. Tags and categories are
+	// deliberately absent — they are global entities, scoped to nobody.
+	for _, n := range creator.Notes {
+		if !ctx.NoteVisible(n) {
+			return fmt.Errorf("download target note is outside your permitted scope")
+		}
+	}
+	return nil
+}
+
 // GetDownloadSubmitHandler handles POST /v1/download/submit
 // Submits URL(s) for background download
 func GetDownloadSubmitHandler(ctx DownloadSubmitter) func(writer http.ResponseWriter, request *http.Request) {
@@ -66,27 +109,9 @@ func GetDownloadSubmitHandler(ctx DownloadSubmitter) func(writer http.ResponseWr
 			return
 		}
 
-		// The download worker creates resources on the unscoped system context, so
-		// a group-limited principal could otherwise plant data outside its subtree
-		// by naming an out-of-scope owner/group (or creating a new top-level group
-		// via GroupName). Validate the target here, before enqueuing, and refuse
-		// out-of-scope targets fail-closed. GroupVisible is always true for
-		// unscoped/admin/auth-off callers, so this is a no-op for them.
-		if actionScopeRestricted(auth.PrincipalFromContext(request.Context())) {
-			if creator.GroupName != "" {
-				http_utils.HandleError(fmt.Errorf("group-limited accounts cannot create a group via download; target an existing group in your scope"), writer, request, http.StatusForbidden)
-				return
-			}
-			if creator.OwnerId == 0 || !ctx.GroupVisible(creator.OwnerId) {
-				http_utils.HandleError(fmt.Errorf("download target group is outside your permitted scope"), writer, request, http.StatusForbidden)
-				return
-			}
-			for _, g := range creator.Groups {
-				if !ctx.GroupVisible(g) {
-					http_utils.HandleError(fmt.Errorf("download target group is outside your permitted scope"), writer, request, http.StatusForbidden)
-					return
-				}
-			}
+		if err := validateDownloadScope(ctx, auth.PrincipalFromContext(request.Context()), &creator); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusForbidden)
+			return
 		}
 
 		// Tag each job with its creator (nil for the auth-off super-user) so the
@@ -215,6 +240,31 @@ func GetDownloadCancelHandler(ctx DownloadQueueReader) func(writer http.Response
 	}
 }
 
+// restartScopeDenied re-checks a job's stored payload against the principal
+// restarting it, and returns the refusal to answer with (nil when allowed).
+//
+// Retry and Resume both hand the original creator back to the *unscoped* worker,
+// which is the same replay the /downloads retry path re-validates: ownership is
+// not scope, and a user whose confinement changed after submitting — or whose
+// scope group moved in the tree — must not be able to press a button and have the
+// old targets honoured. A job with no stored creator (every generic job: exports,
+// imports, plugin actions) has no download targets to check.
+func restartScopeDenied(ctx DownloadSubmitter, request *http.Request, jobID string) error {
+	dm := ctx.DownloadManager()
+	if dm == nil {
+		return nil
+	}
+	job, ok := dm.GetJob(jobID)
+	if !ok {
+		return nil
+	}
+	creator := job.CreatorCopy()
+	if creator == nil {
+		return nil
+	}
+	return validateDownloadScope(ctx, auth.PrincipalFromContext(request.Context()), creator)
+}
+
 // GetDownloadPauseHandler handles POST /v1/download/pause
 // Pauses a download job by ID
 func GetDownloadPauseHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
@@ -246,7 +296,7 @@ func GetDownloadPauseHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 
 // GetDownloadResumeHandler handles POST /v1/download/resume
 // Resumes a paused download job by ID
-func GetDownloadResumeHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetDownloadResumeHandler(ctx DownloadSubmitter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		jobID := request.FormValue("id")
 		if jobID == "" {
@@ -260,6 +310,11 @@ func GetDownloadResumeHandler(ctx DownloadQueueReader) func(writer http.Response
 
 		if jobMutationDenied(ctx, request, jobID) {
 			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
+			return
+		}
+
+		if err := restartScopeDenied(ctx, request, jobID); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusForbidden)
 			return
 		}
 
@@ -275,7 +330,7 @@ func GetDownloadResumeHandler(ctx DownloadQueueReader) func(writer http.Response
 
 // GetDownloadRetryHandler handles POST /v1/download/retry
 // Retries a failed or cancelled download job by ID
-func GetDownloadRetryHandler(ctx DownloadQueueReader) func(writer http.ResponseWriter, request *http.Request) {
+func GetDownloadRetryHandler(ctx DownloadSubmitter) func(writer http.ResponseWriter, request *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		jobID := request.FormValue("id")
 		if jobID == "" {
@@ -290,6 +345,24 @@ func GetDownloadRetryHandler(ctx DownloadQueueReader) func(writer http.ResponseW
 		if jobMutationDenied(ctx, request, jobID) {
 			http_utils.HandleError(fmt.Errorf("job not found"), writer, request, http.StatusNotFound)
 			return
+		}
+
+		if err := restartScopeDenied(ctx, request, jobID); err != nil {
+			http_utils.HandleError(err, writer, request, http.StatusForbidden)
+			return
+		}
+
+		// The same anti-fork rule the /downloads page applies: a second job already
+		// fetching this URL means running this one too would transfer it twice.
+		if dm := ctx.DownloadManager(); dm != nil {
+			if job, exists := dm.GetJob(jobID); exists {
+				if live, running := activeDownloadForURL(dm, job.GetURL()); running {
+					http_utils.HandleError(
+						fmt.Errorf("this URL is already downloading as %s; wait for it to finish", live),
+						writer, request, http.StatusConflict)
+					return
+				}
+			}
 		}
 
 		if err := ctx.DownloadManager().Retry(jobID); err != nil {

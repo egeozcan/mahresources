@@ -110,6 +110,14 @@ type MahresourcesConfig struct {
 	MaxJobConcurrency int
 	// ExportRetention is how long completed group-export tars stay on disk
 	ExportRetention time.Duration
+	// DownloadFailedRetention is how long a failed or cancelled download stays in
+	// the persisted download history (default: one week).
+	DownloadFailedRetention time.Duration
+	// DownloadHistoryRetention is how long a completed download stays in the
+	// persisted download history.
+	DownloadHistoryRetention time.Duration
+	// DownloadCockpitLimit is how many of the newest jobs the jobs panel renders.
+	DownloadCockpitLimit int
 	// MaxImportSize is the upper bound on import tar upload size in bytes
 	MaxImportSize int64
 	// MaxUploadSize is the upper bound on resource + version upload body size
@@ -248,6 +256,14 @@ type MahresourcesInputConfig struct {
 	MaxJobConcurrency int
 	// ExportRetention is how long completed group-export tars stay on disk
 	ExportRetention time.Duration
+	// DownloadFailedRetention is how long a failed or cancelled download stays in
+	// the persisted download history (default: one week).
+	DownloadFailedRetention time.Duration
+	// DownloadHistoryRetention is how long a completed download stays in the
+	// persisted download history.
+	DownloadHistoryRetention time.Duration
+	// DownloadCockpitLimit is how many of the newest jobs the jobs panel renders.
+	DownloadCockpitLimit int
 	// MaxImportSize is the upper bound on import tar upload size in bytes
 	MaxImportSize int64
 	// MaxUploadSize is the upper bound on resource + version upload body size
@@ -570,6 +586,20 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			log.Printf("warning: periodic SweepOrphanedExports failed: %v", err)
 		} else if n > 0 {
 			log.Printf("periodic sweep: removed %d expired export tars", n)
+		}
+	})
+
+	// Terminal downloads are persisted so a failure outlives the in-memory queue's
+	// eviction cap, its one-hour sweep, and the process itself. The recorder is the
+	// context; the sweep runs on the same cleanup ticker as the export sweep and
+	// reads its retention windows from the live settings on every call.
+	ctx.downloadManager.SetHistoryRecorder(ctx)
+	ctx.downloadManager.SetHistoryLogger(historyLogger{})
+	ctx.downloadManager.SetHistorySweepFn(func() {
+		if n, err := ctx.SweepDownloadHistory(); err != nil {
+			log.Printf("warning: download history sweep failed: %v", err)
+		} else if n > 0 {
+			log.Printf("periodic sweep: removed %d expired download history rows", n)
 		}
 	})
 
@@ -1161,6 +1191,9 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		SkipFTS:                      cfg.SkipFTS,
 		MaxJobConcurrency:            cfg.MaxJobConcurrency,
 		ExportRetention:              cfg.ExportRetention,
+		DownloadFailedRetention:      cfg.DownloadFailedRetention,
+		DownloadHistoryRetention:     cfg.DownloadHistoryRetention,
+		DownloadCockpitLimit:         cfg.DownloadCockpitLimit,
 		MaxImportSize:                cfg.MaxImportSize,
 		MaxUploadSize:                cfg.MaxUploadSize,
 		MaxJSONBodySize:              cfg.MaxJSONBodySize,

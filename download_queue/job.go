@@ -60,6 +60,9 @@ type DownloadJob struct {
 	// cancellation the caller was told about cannot be overwritten by a later
 	// control. Cleared by claimRetry, which is the user asking for the job again.
 	cancelRequested bool
+	// discarded records that the user deleted this job's history row, so a terminal
+	// write still in flight does not re-insert it. See markDiscarded.
+	discarded bool
 	// runID identifies the current attempt. Resume and Retry bump it, so the previous
 	// attempt — which is still unwinding while the new one starts — can tell that it
 	// no longer speaks for this job. Without it a paused-then-resumed job took the old
@@ -110,13 +113,17 @@ type DownloadJob struct {
 //   - active: the status is left to the worker, which stamps it when it unwinds.
 //
 // Once claimed, claimPause and claimResume refuse.
-func (j *DownloadJob) claimCancel(completedAt time.Time) (JobStatus, bool) {
+// The snapshot is taken here, under the same lock as the write, for the same
+// reason finish returns one: the paused branch is a terminal write that the
+// history recorder has to describe, and re-reading the job afterwards would
+// describe whatever a Retry had done to it in between.
+func (j *DownloadJob) claimCancel(completedAt time.Time) (JobStatus, *DownloadJob, bool) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
 	prev := j.Status
 	if !j.canCancelLocked() {
-		return prev, false
+		return prev, nil, false
 	}
 	j.cancelRequested = true
 	if prev == JobStatusPaused {
@@ -127,7 +134,7 @@ func (j *DownloadJob) claimCancel(completedAt time.Time) (JobStatus, bool) {
 		j.CompletedAt = &completedAt
 	}
 	j.cancelLocked()
-	return prev, true
+	return prev, j.snapshotLocked(), true
 }
 
 // cancelLocked cancels the context the claim just observed.
@@ -342,11 +349,24 @@ func (j *DownloadJob) claimRetry(ctx context.Context, cancel context.CancelFunc)
 //     separate question (see processJob) — writing over a terminal state that is
 //     already on screen is not.
 func (j *DownloadJob) finish(runID uint64, status JobStatus, errMsg string, resourceID uint, completedAt time.Time) bool {
+	_, ok := j.finishSnapshot(runID, status, errMsg, resourceID, completedAt)
+	return ok
+}
+
+// finishSnapshot is finish, plus the point-in-time capture of what it wrote.
+//
+// The capture belongs under the same lock as the write. The durable history row
+// is built from it, and the alternative — stamping the terminal state, notifying
+// subscribers, then re-reading the job — hands a client the whole round trip in
+// which to press Retry: the re-read would then describe a job that is `pending`
+// again, and the row would record a download that never finished and that no
+// retention window can expire.
+func (j *DownloadJob) finishSnapshot(runID uint64, status JobStatus, errMsg string, resourceID uint, completedAt time.Time) (*DownloadJob, bool) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
 	if !j.ownedByRunLocked(runID) {
-		return false
+		return nil, false
 	}
 
 	// A cancel accepted while this attempt was running outranks its success. The
@@ -379,7 +399,7 @@ func (j *DownloadJob) finish(runID uint64, status JobStatus, errMsg string, reso
 	if resourceID != 0 {
 		j.ResourceID = &resourceID
 	}
-	return true
+	return j.snapshotLocked(), true
 }
 
 // UpdateProgress safely updates the job's progress fields. Used by generic jobs
@@ -616,6 +636,50 @@ func (j *DownloadJob) GetResultPath() string {
 // panel until the next reconnect. Removing the setter keeps that from being written
 // again.
 
+// markDiscarded records that the user has thrown this job's record away, so a
+// terminal write still on its way to the store does not put it back.
+//
+// The flag lives on the job rather than in a set on the manager because the
+// pending recorder is holding this very struct: no bookkeeping, nothing to
+// expire. It narrows the window rather than closing it — a recorder that has
+// already passed the check can still be descheduled past the row deletion — but
+// that is a gap between two instructions rather than the length of a DB write.
+func (j *DownloadJob) markDiscarded() {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.discarded = true
+}
+
+func (j *DownloadJob) isDiscarded() bool {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.discarded
+}
+
+// CreatorCopy is creatorCopy, exported for the queue's own control endpoints:
+// restarting a job replays this payload on the unscoped worker, so the handler
+// has to be able to re-check it against the principal pressing the button.
+func (j *DownloadJob) CreatorCopy() *query_models.ResourceFromRemoteCreator {
+	return j.creatorCopy()
+}
+
+// creatorCopy returns a value copy of the submitted creator, or nil for a job
+// that has none (every generic job, and the bare jobs tests build directly).
+//
+// A copy because the caller marshals it, and `creator` is a pointer the job keeps
+// for the lifetime of every retry — encoding the live one on a recording
+// goroutine would read fields a resubmission could be writing. Nothing mutates it
+// today; the copy is what keeps that from becoming a race the day something does.
+func (j *DownloadJob) creatorCopy() *query_models.ResourceFromRemoteCreator {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	if j.creator == nil {
+		return nil
+	}
+	c := *j.creator
+	return &c
+}
+
 // GetOwnerUserID returns the user that created the job, or nil if unset.
 func (j *DownloadJob) GetOwnerUserID() *uint {
 	j.mu.RLock()
@@ -634,6 +698,13 @@ func (j *DownloadJob) GetOwnerUserID() *uint {
 func (j *DownloadJob) Snapshot() *DownloadJob {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
+	return j.snapshotLocked()
+}
+
+// snapshotLocked is Snapshot's body, for callers that already hold j.mu — the
+// transitions that stamp a terminal state and must describe exactly what they
+// wrote.
+func (j *DownloadJob) snapshotLocked() *DownloadJob {
 	snap := &DownloadJob{
 		ID:              j.ID,
 		URL:             j.URL,

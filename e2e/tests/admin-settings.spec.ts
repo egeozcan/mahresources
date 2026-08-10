@@ -1,7 +1,7 @@
 import { test, expect } from '../fixtures/base.fixture';
 
 test.describe('/admin/settings', () => {
-  test('renders 15 settings grouped across 7 sections', async ({ page }) => {
+  test('renders 18 settings grouped across 7 sections', async ({ page }) => {
     await page.goto('/admin/settings');
     // Level 2, not 1: /admin/settings rendered two <h1>s — partials/title.tpl's
     // "Settings" plus this "Runtime Settings" — and heading navigation reported two
@@ -12,7 +12,7 @@ test.describe('/admin/settings', () => {
     const groupCount = await page.locator('section[aria-labelledby^="grp-"]').count();
     expect(groupCount).toBe(7);
     const rowCount = await page.locator('[data-testid^="setting-row-"]').count();
-    expect(rowCount).toBe(15);
+    expect(rowCount).toBe(18);
   });
 
   test('max_upload_size save + reset roundtrip', async ({ page, request }) => {

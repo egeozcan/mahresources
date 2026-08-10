@@ -507,6 +507,26 @@ func (s *RuntimeSettings) RemoteOverallTimeout() time.Duration {
 	return v.(time.Duration)
 }
 
+// DownloadFailedRetention is how long a failed or cancelled download stays in
+// the download history.
+func (s *RuntimeSettings) DownloadFailedRetention() time.Duration {
+	v, _ := s.getRaw(KeyDownloadFailedRetention)
+	return v.(time.Duration)
+}
+
+// DownloadHistoryRetention is how long a completed download stays in the
+// download history.
+func (s *RuntimeSettings) DownloadHistoryRetention() time.Duration {
+	v, _ := s.getRaw(KeyDownloadHistoryRetention)
+	return v.(time.Duration)
+}
+
+// DownloadCockpitLimit is how many of the newest jobs the jobs panel renders.
+func (s *RuntimeSettings) DownloadCockpitLimit() int {
+	v, _ := s.getRaw(KeyDownloadCockpitLimit)
+	return v.(int)
+}
+
 // DownloadSettings adapter methods — satisfy download_queue.DownloadSettings
 // without leaking the download_queue package into the service layer.
 func (s *RuntimeSettings) ConnectTimeout() time.Duration { return s.RemoteConnectTimeout() }

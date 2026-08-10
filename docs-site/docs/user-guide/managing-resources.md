@@ -48,8 +48,8 @@ The URL field accepts multiple URLs (one per line) for batch imports.
 For large files or slow connections, enable **Download in background**:
 
 - The download starts immediately but you can navigate away
-- Progress is tracked in the **Download Cockpit** (a floating button in the bottom-right corner of the screen)
-- Failed downloads can be retried from the cockpit
+- Progress is tracked in the **jobs panel**, opened from the download icon in the header
+- Failed downloads can be retried from the panel, or later from the [Downloads page](#downloads-page) -- a failed download is kept for a week by default, so it survives the panel and a server restart
 
 ### Paste Upload
 
@@ -334,8 +334,8 @@ Uploading a custom thumbnail does not create a new version -- it only changes th
 
 The Download Cockpit manages background URL downloads and plugin action jobs:
 
-- Access it via the floating button in the bottom-right corner, or press **Cmd/Ctrl+Shift+D**
-- View active, pending, and completed downloads
+- Access it via the download icon in the page header, or press **Cmd/Ctrl+Shift+D**
+- View active, pending, and completed downloads. The limit (`-download-cockpit-limit`, 10 by default) applies only to *finished downloads*, which the [Downloads page](#downloads-page) also lists: anything still working, and every export, import or plugin action, stays on the panel regardless, because their controls exist nowhere else. A footer says how many rows are hidden and links to the full list
 - Pause pending or downloading jobs, and resume paused ones
 - Retry failed or cancelled downloads
 - Cancel pending or downloading jobs
@@ -344,3 +344,27 @@ Each download shows:
 - Source URL
 - Progress percentage
 - Download speed
+
+## Downloads page
+
+`/downloads` is the durable record of background downloads. The jobs panel holds only what is still in memory -- a queue capped at 100 jobs, swept an hour after a job finishes, and emptied by a restart -- so this page is where a download from yesterday still exists.
+
+It lists finished downloads plus any that are still running, and lets you:
+
+- Filter by status (failed, cancelled, completed), by a word in the URL or name, and by date
+- Retry a failed or cancelled download, whether or not its job is still in the queue. Completed downloads are not retryable: the file is already stored, and fetching it again would transfer it for nothing. A retry is also refused while any job in the queue is already downloading the same URL
+- Delete rows individually or in bulk. A download that is still running or paused is refused -- cancel it first
+- Select rows with the checkboxes to retry or delete several at once
+
+Each row shows the status, the download name and URL, the error a failed attempt reported, how many attempts have been made, and a link to the resource a completed download created. A row that has already been retried names the job that retry produced, since a resubmitted download is a new job with its own row.
+
+A retry is refused while the attempt it already started is queued or running, and while that attempt's own row still exists after it succeeded -- retrying then would fetch a second copy of a file you already have. Once the successful attempt's row has aged out of its retention window the old failure can be retried again, and a repeated download is caught by content hash rather than refused. Selecting several rows that record the same URL retries it once, and a row whose retry is running shows that attempt's progress instead of offering Retry and Delete. Restarting the server records whatever was downloading or paused as cancelled, so it is still listed and retryable afterwards. Deleting a row is refused while its retry is still running, for the same reason a running download cannot be deleted.
+
+With authentication enabled, you see only the downloads you submitted; administrators see everyone's.
+
+How long rows are kept is configurable at runtime on `/admin/settings`:
+
+| Setting | Default | Covers |
+|---|---|---|
+| Failed download retention | 168h (one week) | failed and cancelled downloads |
+| Completed download retention | 24h | completed downloads (the resource is unaffected) |

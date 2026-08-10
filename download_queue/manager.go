@@ -19,6 +19,10 @@ import (
 const (
 	MaxConcurrentDownloads     = 3
 	MaxQueueSize               = 100
+	// ShutdownDrainTimeout bounds how long Shutdown waits for in-flight download
+	// workers to stamp and record their (cancelled) terminal state.
+	ShutdownDrainTimeout = 5 * time.Second
+
 	JobRetentionDuration       = 1 * time.Hour
 	PausedJobRetentionDuration = 24 * time.Hour
 	MaxResourceNameLength      = 1000
@@ -92,6 +96,9 @@ type DownloadManager struct {
 	resourceCtx   ResourceCreator
 	settings      DownloadSettings
 	semaphore     chan struct{}
+	// workers counts the download goroutines in flight, so Shutdown can wait for
+	// their terminal history writes rather than exiting under them.
+	workers sync.WaitGroup
 	subscribers   map[chan JobEvent]struct{}
 	subscribersMu sync.RWMutex
 	// notifyMu orders snapshot-and-publish against itself, so the sequence
@@ -105,6 +112,12 @@ type DownloadManager struct {
 	concurrency   int
 	jobRetention  time.Duration
 	exportSweepFn func() // called by cleanupOldJobs to sweep expired export tars from disk
+	// history is the durable store for terminal downloads (see history.go). Optional:
+	// nil means the manager keeps its pre-history behaviour, which is what the CLI's
+	// and the tests' bare managers rely on.
+	history        HistoryRecorder
+	historyLog     HistoryLogger
+	historySweepFn func() // called by cleanupOldJobs to delete expired history rows
 }
 
 // NewDownloadManagerWithConfig constructs a DownloadManager with the given
@@ -178,12 +191,21 @@ func (m *DownloadManager) SetExportSweepFn(fn func()) {
 	m.exportSweepFn = fn
 }
 
-// generateShortID creates a short random ID for display
+// generateShortID creates a short random ID for display.
+//
+// Eight bytes, not four. A job id used to live only in memory, where a handful of
+// concurrent jobs made 32 bits plenty — but it is now the unique key of the
+// durable history row, and history keeps a week of them. Collisions there are not
+// cosmetic: the upsert would merge two unrelated downloads into one row, and
+// because the row keeps the first submitter as its owner, the second user would
+// lose their download while the first inherited its URL, its error and its
+// retryable payload. Sixty-four bits puts that beyond reach for any table this
+// application will hold.
 func generateShortID() string {
-	b := make([]byte, 4)
+	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
-		// Fallback to timestamp-based ID if crypto/rand fails
-		return fmt.Sprintf("%08x", time.Now().UnixNano()&0xFFFFFFFF)
+		// Fallback to timestamp-based ID if crypto/rand fails.
+		return fmt.Sprintf("%016x", uint64(time.Now().UnixNano()))
 	}
 	return hex.EncodeToString(b)
 }
@@ -310,7 +332,7 @@ func (dm *DownloadManager) Submit(creator *query_models.ResourceFromRemoteCreato
 
 	// The go statement happens-before the goroutine's execution, so ownerUserID (set
 	// above) is visible to the worker.
-	go dm.processJob(job)
+	dm.startDownloadWorker(job)
 
 	return job, nil
 }
@@ -350,7 +372,22 @@ func (dm *DownloadManager) SubmitMultiple(creator *query_models.ResourceFromRemo
 }
 
 // processJob handles the download in a background goroutine
+// startDownloadWorker runs a download and registers it with the drain.
+//
+// The counter is incremented here, before the goroutine exists, so Shutdown
+// cannot miss a worker that has been decided on but not yet scheduled. Wrapping
+// rather than counting inside processJob keeps the tests that drive processJob
+// directly working — and keeps the pairing visible in one place.
+func (dm *DownloadManager) startDownloadWorker(job *DownloadJob) {
+	dm.workers.Add(1)
+	go func() {
+		defer dm.workers.Done()
+		dm.processJob(job)
+	}()
+}
+
 func (dm *DownloadManager) processJob(job *DownloadJob) {
+
 	// The attempt this goroutine owns, and the context its result must be judged
 	// against. Both are read once: Resume installs a fresh context, so a worker that
 	// asked the job for "the" context after unwinding could classify its own failure
@@ -365,8 +402,13 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	case <-ctx.Done():
 		// finish is a no-op on a paused job: Pause cancels the context too, and a
 		// paused job waits for Resume rather than being retired here.
-		if job.finish(runID, JobStatusCancelled, "Cancelled before starting", 0, time.Now()) {
+		if snap, stamped := job.finishSnapshot(runID, JobStatusCancelled, "Cancelled before starting", 0, time.Now()); stamped {
 			dm.notifyJob("updated", job)
+			// Recorded like any other terminal state. A download cancelled while it
+			// was still queued is exactly the kind the user wants to find later and
+			// press Retry on — leaving it out made the queue's own eviction the only
+			// record of it, which is what history exists to outlive.
+			dm.recordTerminal(job, snap)
 		}
 		return
 	}
@@ -401,11 +443,19 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	// and then writing the terminal one is the same check-then-act the controls had:
 	// a Pause landing between the two was silently overwritten, and a Pause landing
 	// just before the read stranded the job (see DownloadJob.finish).
-	if !job.finish(runID, status, errMsg, resourceID, time.Now()) {
+	snap, stamped := job.finishSnapshot(runID, status, errMsg, resourceID, time.Now())
+	if !stamped {
 		return
 	}
 
 	dm.notifyJob("updated", job)
+
+	// Persisted after the state is stamped and outside every lock, but *from* the
+	// capture the stamp took under it — a Retry landing between the two would
+	// otherwise be what the row described. The other two terminal writes (the
+	// cancelled-while-queued branch above, and Cancel's paused branch) record the
+	// same way.
+	dm.recordTerminal(job, snap)
 }
 
 // createHTTPClient creates an HTTP client with context support.
@@ -592,7 +642,7 @@ func (dm *DownloadManager) Cancel(jobID string) error {
 	// the terminal write the paused case needs are all decided under the job's own
 	// lock. Deciding from a second status read is what let a concurrent Pause land in
 	// between and overwrite an accepted cancellation — see DownloadJob.claimCancel.
-	prev, ok := job.claimCancel(time.Now())
+	prev, snap, ok := job.claimCancel(time.Now())
 	if !ok {
 		return &StateConflictError{JobID: jobID, Action: "cancelled", Status: prev}
 	}
@@ -607,6 +657,9 @@ func (dm *DownloadManager) Cancel(jobID string) error {
 	// nothing. An active job's worker notifies when it unwinds.
 	if prev == JobStatusPaused {
 		dm.notifyJob("updated", job)
+		// claimCancel stamped the terminal state itself, so this is the write the
+		// worker would otherwise have recorded — there is no worker left to do it.
+		dm.recordTerminal(job, snap)
 	}
 	return nil
 }
@@ -709,7 +762,7 @@ func (dm *DownloadManager) startWorker(job *DownloadJob) {
 	if job.runFn != nil {
 		go dm.processGenericJob(job)
 	} else {
-		go dm.processJob(job)
+		dm.startDownloadWorker(job)
 	}
 }
 
@@ -862,12 +915,19 @@ func (dm *DownloadManager) cleanupOldJobs() {
 
 	dm.jobOrder = newOrder
 	sweepFn := dm.exportSweepFn
+	historySweep := dm.historySweepFn
 
 	dm.mu.Unlock()
 
 	// Sweep expired export tars from disk outside the lock (involves I/O).
 	if sweepFn != nil {
 		sweepFn()
+	}
+
+	// Likewise for expired download-history rows, which is a database write and
+	// reads its retention windows from the live settings on every call.
+	if historySweep != nil {
+		historySweep()
 	}
 }
 
@@ -876,14 +936,46 @@ func (dm *DownloadManager) Shutdown() {
 	close(dm.done)
 	dm.cleanupTicker.Stop()
 
-	// Cancel all active jobs
+	// Cancel all active jobs, and collect the paused ones.
+	//
+	// A paused download has no worker left — Pause ended it — so nothing would ever
+	// stamp a terminal state for it, and it would leave with the process: the queue
+	// is memory, and the row that should have outlived it was never written. It is
+	// abandoned here exactly as Cancel abandons one, which is also what a restart
+	// does to it in fact.
+	var paused []*DownloadJob
 	dm.mu.Lock()
 	for _, job := range dm.jobs {
 		if job.IsActive() {
 			job.Cancel()
+			continue
+		}
+		if job.GetStatus() == JobStatusPaused {
+			paused = append(paused, job)
 		}
 	}
 	dm.mu.Unlock()
+
+	for _, job := range paused {
+		if prev, snap, ok := job.claimCancel(time.Now()); ok && prev == JobStatusPaused {
+			dm.notifyJob("updated", job)
+			dm.recordTerminal(job, snap)
+		}
+	}
+
+	// Then wait for the workers to stamp and record what the cancellation did to
+	// them. Bounded, because a worker blocked in a read that ignores its context
+	// must not hold a deployment open: the drain is a best effort at not losing the
+	// record of a download an operator's restart interrupted.
+	drained := make(chan struct{})
+	go func() {
+		dm.workers.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+	case <-time.After(ShutdownDrainTimeout):
+	}
 }
 
 // ClearFinished removes every terminal job (completed, failed or cancelled) the
@@ -935,6 +1027,66 @@ func (dm *DownloadManager) ClearFinished(visible func(owner *uint) bool) []strin
 	// place that removes jobs — it notifies under the lock, which this deliberately
 	// does not copy.
 	for _, job := range removed {
+		dm.notifyJob("removed", job)
+	}
+
+	return ids
+}
+
+// RemoveFinished removes the named terminal jobs the caller may see, and reports
+// which ids went.
+//
+// ClearFinished is all-or-nothing, and the /downloads page needs the other shape:
+// deleting one history row has to take the matching queue entry with it, or the
+// SSE stream's `init` replay puts the row back on the next reconnect — the page
+// would say a download was deleted and the cockpit would keep showing it.
+//
+// Active and paused jobs are left alone and simply not reported as removed, so a
+// caller can tell the difference: a paused job holds a half-transferred download,
+// and the answer to "delete this" is "cancel it first", not a silent discard.
+//
+// visible is the caller's RBAC predicate, as in ClearFinished.
+func (dm *DownloadManager) RemoveFinished(jobIDs []string, visible func(owner *uint) bool) []string {
+	if len(jobIDs) == 0 {
+		return nil
+	}
+	wanted := make(map[string]struct{}, len(jobIDs))
+	for _, id := range jobIDs {
+		wanted[id] = struct{}{}
+	}
+
+	var removed []*DownloadJob
+	ids := make([]string, 0, len(jobIDs))
+
+	dm.mu.Lock()
+	newOrder := make([]string, 0, len(dm.jobOrder))
+	for _, id := range dm.jobOrder {
+		job := dm.jobs[id]
+		if job == nil {
+			continue
+		}
+		if _, want := wanted[id]; want {
+			status := job.GetStatus()
+			terminal := status == JobStatusCompleted || status == JobStatusFailed || status == JobStatusCancelled
+			if terminal && (visible == nil || visible(job.GetOwnerUserID())) {
+				delete(dm.jobs, id)
+				removed = append(removed, job)
+				ids = append(ids, id)
+				continue
+			}
+		}
+		newOrder = append(newOrder, id)
+	}
+	dm.jobOrder = newOrder
+	dm.mu.Unlock()
+
+	// Outside the lock, for the reason ClearFinished gives.
+	for _, job := range removed {
+		// Marked before the notification, so the flag is set as early as the job is
+		// out of the registry: this is the history delete, and a terminal write for
+		// this job that is still on its way to the store must not put back the row
+		// the user just deleted.
+		job.markDiscarded()
 		dm.notifyJob("removed", job)
 	}
 

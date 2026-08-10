@@ -35,6 +35,7 @@ On larger screens, the navigation displays as a two-tier horizontal menu:
 - **Import** - Group import jobs
 - **Shares** - Public note shares
 - **Settings** - Runtime system settings
+- **Downloads** - Stored history of background downloads, with retry and delete
 - **Logs** - System activity log viewer
 - **Users** - User account administration (admin only, or when auth is disabled)
 

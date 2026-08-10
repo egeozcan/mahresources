@@ -137,7 +137,7 @@
                     </template>
 
                     <ul class="divide-y divide-stone-100">
-                        <template x-for="job in displayJobs" :key="job.id">
+                        <template x-for="job in visibleJobs" :key="job.id">
                             {# data-job-id so a row can be addressed by the job it is: the queue is #}
                             {# process-wide and every test and reader shares it, so "the row that   #}
                             {# says events" is whichever row happens to say that. Review            #}
@@ -341,6 +341,22 @@
                             </li>
                         </template>
                     </ul>
+                </div>
+
+                {# The panel shows the newest N rows; everything else — including every  #}
+                {# download that has already been swept out of the in-memory queue — lives #}
+                {# on /downloads, which can filter, retry and delete in bulk. The link is  #}
+                {# always rendered, not only when rows are hidden: it is the only way to   #}
+                {# reach a download from last week, and a control that appears only on a   #}
+                {# busy queue is one nobody finds.                                         #}
+                <div class="px-4 py-2 border-t border-stone-200 text-xs text-stone-600 flex items-center justify-between gap-2">
+                    <span data-testid="cockpit-shown-count"
+                          x-text="hiddenJobCount > 0 ? ('Showing ' + visibleJobs.length + ' of ' + displayJobs.length) : ''"></span>
+                    <a href="/downloads"
+                       data-testid="cockpit-all-downloads"
+                       class="text-amber-700 underline decoration-amber-300 hover:decoration-amber-700 rounded focus:outline-none focus:ring-2 focus:ring-amber-600">
+                        All downloads
+                    </a>
                 </div>
 
                 <!-- Footer with keyboard hint -->

@@ -47,6 +47,7 @@ func newStampTestContext(t *testing.T, authEnabled bool) *MahresourcesContext {
 		&models.GroupRelation{},
 		&models.Session{},
 		&models.ApiToken{},
+		&models.DownloadHistoryEntry{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

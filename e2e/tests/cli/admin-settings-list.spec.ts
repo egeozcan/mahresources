@@ -8,11 +8,11 @@ test.describe('mr admin settings list', () => {
     expect(result.stdout).toContain('share_public_url');
   });
 
-  test('--json emits parseable JSON with 15 entries', async ({ cli }) => {
+  test('--json emits parseable JSON with 18 entries', async ({ cli }) => {
     const result = cli.runOrFail('admin', 'settings', 'list', '--json');
     const parsed = JSON.parse(result.stdout);
     expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed).toHaveLength(15);
+    expect(parsed).toHaveLength(18);
     const keys = parsed.map((v: any) => v.key);
     expect(keys).toContain('max_upload_size');
     expect(keys).toContain('hash_similarity_threshold');
@@ -20,5 +20,8 @@ test.describe('mr admin settings list', () => {
     expect(keys).toContain('mrql_query_timeout');
     expect(keys).toContain('mrql_page_query_budget');
     expect(keys).toContain('share_public_url');
+    expect(keys).toContain('download_failed_retention');
+    expect(keys).toContain('download_history_retention');
+    expect(keys).toContain('download_cockpit_limit');
   });
 });

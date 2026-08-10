@@ -28,6 +28,11 @@ func stampedModels() []any {
 		&models.GroupRelationType{},
 		&models.ResourceVersion{},
 		&models.TemplatePartial{},
+		// Not content, but it carries the same column and for the same reason: a
+		// deleted user must not leave a dangling id behind on their download
+		// history. The rows survive with a NULL creator, which the visibility
+		// predicate then hides from every non-admin.
+		&models.DownloadHistoryEntry{},
 	}
 }
 

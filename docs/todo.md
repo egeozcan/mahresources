@@ -1,3 +1,61 @@
+# Download history — persisted downloads, capped jobs panel, /downloads page (2026-08-09)
+
+- [x] `DownloadHistoryEntry` model + AutoMigrate (main, api_tests, and the four test DBs that migrate `User`).
+- [x] `download_queue.HistoryRecorder` sink; recorded from `processJob`'s `finish` and `Cancel`'s paused branch, downloads only.
+- [x] Owner attribution: bind the submitter as acting user, copy the `*uint` (GORM writes through it).
+- [x] Three runtime settings + boot flags/env: `download_failed_retention` (168h), `download_history_retention` (24h), `download_cockpit_limit` (10).
+- [x] Batched retention sweep on the manager's cleanup ticker, reading both windows per call.
+- [x] `GET /v1/downloads`, `POST /v1/downloads/retry`, `POST /v1/downloads/delete` — per-user visibility, scope re-validation on retry, queue entry removed on delete (`RemoveFinished`).
+- [x] Jobs panel capped to the newest N with a "Showing N of M" line and an "All downloads" link.
+- [x] `/downloads` page: filters (status/term/date), per-row and bulk retry + delete, live jobs merged over stored rows.
+- [x] Tests: `download_queue/history_test.go`, `application_context/download_history_context_test.go`, `server/api_tests/download_history_test.go`, `src/components/downloadsManager.test.ts`, `e2e/tests/downloads-history.spec.ts`, `/downloads` added to the a11y page sweep.
+- [x] Docs: CLAUDE.md flag table + "Download history" architecture section; OpenAPI spec regenerated.
+
+## Review
+
+Three defects were found and fixed while building this, each with a test that fails without the fix:
+
+1. **The stamp callback reassigned every history row to root.** `stampCreatedByCallback` overwrites `CreatedByUserId` from the db context, falling back to the default actor; the recorder runs on a worker goroutine that carries no principal. Under auth-off that made every row root's. Fixed by binding the submitter (`WithPrincipal`) before the write.
+2. **GORM wrote through the caller's pointer.** `field.Set` on a non-nil `*uint` mutates the pointee, and the record's owner pointer is the manager's job's own `ownerUserID` — so recording could silently reassign a live job's owner in memory. The entry now takes a fresh pointer. The first version of the test could not see either defect: it compared the stored value against `submitter.ID`, which the bug had moved to match.
+3. **Select-all selected nothing.** `$el` inside an Alpine method is the calling element, so `rowIds()` queried the header checkbox's subtree. The root is captured in `init()` now; the unit test models the two elements separately so it fails if the root is read from `$el` again.
+
+A fourth was avoided on review: `DownloadCockpitLimit` read straight from settings would publish 0 for any context built from a zero-value config (every api_test), and the panel would render an empty list. All three new settings go through context accessors that treat a non-positive value as "not configured".
+
+Four count assertions had to move from 15 to 18 with the new settings (`runtime_setting_spec_test.go`, `api_tests/admin_settings_test.go` x2, `e2e/tests/admin-settings.spec.ts`, `e2e/tests/cli/admin-settings-list.spec.ts`). Adding a runtime setting is not a local change; that coupling is worth knowing about before the next one.
+
+
+## Review rounds (pi, `openai-codex/gpt-5.6-sol:high`)
+
+Four rounds against a pinned worktree snapshot, fixing between each. Every fix below has a test that fails without it.
+
+**Round 1 (8 findings).** A download cancelled while it was still queued was never recorded — the semaphore branch is a third place a terminal state is stamped. The record was re-read from the live job *after* subscribers were notified, so a retry landing in that window stored a non-terminal, never-expiring row; `finish`/`claimCancel` now return the snapshot they wrote, under their own lock. The sweep selected ids and then deleted by id alone, so a row retried in between was still removed. Job ids were 32-bit, too narrow for the unique key of a table that keeps a week of rows: a collision merges two users' downloads into one row that keeps the first submitter as owner. `validateDownloadScope` ignored `Notes`, which are subtree-scoped and associated by the *unscoped* worker. The queue's own `/retry` and `/resume` replayed a stored payload without re-checking the acting principal's scope. And the page shipped with `hideSidebar: true`, which is `display: none` on the entire filter form — the e2e spec had been driving hand-written query strings, so it passed.
+
+**Round 2 (6).** A retry of a row whose job was present but not retryable fell through to `Submit` and ran a second concurrent download of the same URL. `last_retry_job_id` was recorded and never read, so the same fork was reachable through the resubmission path. Delete decided from a status read taken before `RemoveFinished`, then deleted the row even when the queue had refused to release the job. Terminal writes were not ordered, so a slow write from a failed attempt could overwrite the retry that had since succeeded. Live rows were dropped whenever any filter was set, so searching for a download by name hid the copy of it that was running.
+
+**Round 3 (5).** Two simultaneous retries of one evicted row both submitted; the retry slot is now claimed by compare-and-set before the submit, and released if the submit fails. Delete could still race a claim taken after it read the rows. The cockpit cap applied to every job kind while `/downloads` lists only downloads, so a long-running export behind ten newer downloads vanished with its cancel and result controls.
+
+**Round 4 (5).** The claim marker was itself claimable by a request that read it mid-submit. The CAS ignored the status the caller decided from, so a request that read `failed` could resubmit a row that had since completed. `!CanRetry()` treated a *completed* resubmission as "still running", which was both untrue and self-unblocking the moment the queue evicted it — the linked attempt is now read as claiming / running / succeeded, with the succeeded case read from the store so it outlives eviction. The row now says "retried as &lt;job&gt;" instead of looking untouched.
+
+**Round 5 (5).** Two rows can record the same URL — a failure, and the failure of the retry it spawned — so a bulk retry of both ran one transfer twice; the batch now runs each URL once. A stored failure that a live job had moved past was relabelled with the live status *after* the SQL filter had matched it, so a page filtered to failures printed a row saying "downloading". Mutation testing found three fixes with no test that failed without them (the pre-submit claim, both sweep guards, the stamped snapshot); the first two now have one.
+
+**Round 6 (5).** Two ways the anti-fork rules could still be walked around — a bookkeeping update failing after a successful submit, leaving a claim marker that ages into "abandoned"; and two rows recording one URL, each retryable on its own — are closed by the general form of the rule: a retry is refused whenever any queued or running job is already fetching that URL. `Shutdown` cancelled active downloads and returned without waiting, so a SIGTERM during a deployment lost the record of the cancellation it had just caused; it now drains the download workers, bounded at 5s. A live-only row was named after its URL, so the name filter could not find it. The `{ids:[]}` body of both mutations was undocumented in OpenAPI. Four claims were false and are corrected: the cockpit cap is not a total row cap, a no-auth row's owner is root rather than NULL, the "already succeeded" refusal lasts only as long as the successful attempt's own row, and a repeat transfer is deduplicated by content hash rather than prevented.
+
+**Round 7 (5).** The URL guard was placed *after* the in-place branch, so two rows naming two in-memory jobs for one URL still ran both; it is checked first now, and the queue's own `/retry` endpoint applies it too. `Shutdown` cancelled only *active* jobs, so a **paused** download — which has no worker left to stamp anything — left no record at all; it is now abandoned and recorded like any cancellation. `log.Fatalf` on an overrunning HTTP drain called `os.Exit`, which runs no deferred function and so skipped the download manager's shutdown entirely; `main` sets an exit code and returns instead. Minor: a row whose retry was running still offered Retry and Delete, both of which answered 409, and a wholly refused batch threw away its per-id outcomes.
+
+**Round 8 — no majors.** Five minors remained, all graded honestly by the reviewer as narrow interleavings or precision issues: the UI dropped the per-id reasons on a wholly refused batch (fixed, with a test), and five claims were still overstated — the restart guarantee (bounded by a 5s drain), "one download per URL, full stop" (a check against the live queue, not a lock), "three places" that stamp a terminal state (now four), the `createdBefore` date bound (a bare date is midnight at the start of the day), and the component comment about outcome reporting. All corrected.
+
+One of round 8's minors is **accepted, not fixed**: if `MarkDownloadHistoryRetried` fails after a successful submit, the claim token stays on the row; once it ages past the one-minute TTL and the attempt it belongs to has finished, the row is retryable again and a repeat transfer is possible (caught by content-hash deduplication rather than prevented). Closing it means making the submit and its bookkeeping one atomic step across two subsystems.
+
+Accepted residuals, all documented in the code: `DownloadJob.discarded` narrows but does not close the window in which a terminal write already past its check re-inserts a row deleted in that same instant (closing it needs a persistent tombstone); `Shutdown`'s drain is bounded at 5s, so a worker still blocked after that loses its row; and the URL guard is a check against the live queue rather than a lock, so two retries of *different* rows naming one URL arriving in the same instant can both pass it.
+
+**Found, not fixed — pre-existing and outside this feature.** SQLite stores timestamps as local-offset text, so a date bound rendered in UTC is compared lexicographically. Between local midnight and UTC midnight this makes `mr groups timeline`, `mr queries timeline` and `mr resources timeline` fail their doctests — reproduced on a clean worktree at the merge base, so not a regression here — and gives `database_scopes.ApplyDateRange` the same skew for RFC 3339 `createdAfter`/`createdBefore` values on every list page. The `YYYY-MM-DD` values the sidebar date inputs submit are unaffected. Fixing it means normalising both sides of every date comparison.
+
+Verified after the review rounds, on the final tree: Go suite green (all packages), vitest 947/947, browser+CLI E2E **1963 passed / 6 skipped / 2 failed** — both failures the pre-existing timeline doctest described above, reproduced identically on a clean worktree at the merge base — Postgres E2E **1966 passed / 5 skipped / 0 failed**, Postgres API suite green (the new `ON CONFLICT ... DO UPDATE ... WHERE` and the retry compare-and-set run on both dialects), axe clean on `/downloads`. Persistence across a restart confirmed by hand on a file-backed SQLite instance: kill, restart, the queue is empty and the failed row is still listed and retryable.
+
+Deliberately out of scope: `mr` CLI commands for the history (the ask was a UI one, and CLI surface drags in the `docs lint` / `check-examples` gates).
+
+---
+
 # User-management codebase review — 2026-08-08
 
 - [x] Map user-management requirements, routes, persistence, templates, and tests.

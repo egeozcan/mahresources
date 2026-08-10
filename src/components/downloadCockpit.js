@@ -23,6 +23,11 @@ export function downloadCockpit() {
         _dismissedIds: new Set(),
         // BH-036: retention window (ms). Read from the meta tag emitted by base.tpl.
         exportRetentionMs: 0,
+        // How many rows the panel renders, from the same meta-tag channel. The
+        // panel used to render every job it knew about, which on a busy queue is an
+        // unbounded list in a fixed-height dialog; the rest are on /downloads, which
+        // can filter and page through them.
+        rowLimit: 10,
 
         statusIcons: {
             pending: '\u23F3',      // Hourglass
@@ -64,6 +69,14 @@ export function downloadCockpit() {
             const metaEl = document.querySelector('meta[name="x-export-retention-ms"]');
             if (metaEl) {
                 this.exportRetentionMs = parseInt(metaEl.getAttribute('content'), 10) || 0;
+            }
+
+            const limitEl = document.querySelector('meta[name="x-download-cockpit-limit"]');
+            if (limitEl) {
+                // `|| this.rowLimit` and not `|| 0`: a missing, empty or unparseable
+                // value must fall back to the default, since a limit of 0 renders an
+                // empty panel while jobs are running.
+                this.rowLimit = parseInt(limitEl.getAttribute('content'), 10) || this.rowLimit;
             }
 
             // Listen for jobs-panel-open event (e.g., from pluginActionModal)
@@ -677,6 +690,48 @@ export function downloadCockpit() {
                 if (at !== bt) return bt - at;
                 return String(b.id).localeCompare(String(a.id));
             });
+        },
+
+        /**
+         * What the panel actually renders.
+         *
+         * The cap applies to *finished downloads* and to nothing else, because they
+         * are the only rows with somewhere else to be: /downloads lists them, and
+         * the panel footer links to it. Anything still working stays on screen with
+         * its controls — a running download the cap pushed off the list would be
+         * uncancellable — and so does every job the history page cannot show
+         * (exports, imports, plugin actions), whose result link and cancel button
+         * exist nowhere else. An export that ran for an hour behind ten newer
+         * downloads used to vanish outright.
+         *
+         * Only `visibleJobs` is capped, deliberately. `displayJobs` stays the source
+         * for the active count, for "any finished jobs?" and for what "Clear
+         * completed" targets — clearing has to reach every finished job, not the ones
+         * that happen to fit, and the trigger badge has to count actives whether or
+         * not they are on screen.
+         */
+        get visibleJobs() {
+            const jobs = this.displayJobs;
+            if (!(this.rowLimit > 0)) return jobs;
+            let budget = this.rowLimit;
+            // Newest first, so the budget is spent on the newest finished downloads
+            // and it is old ones that drop off.
+            return jobs.filter(job => {
+                // `source === 'download'` positively, not "everything that is not an
+                // export": a job kind added later would otherwise be capped away
+                // before anyone noticed it had nowhere else to appear.
+                const cappable = !job._isAction && job.source === 'download' && this.isFinished(job);
+                if (!cappable) return true;
+                if (budget > 0) {
+                    budget--;
+                    return true;
+                }
+                return false;
+            });
+        },
+
+        get hiddenJobCount() {
+            return Math.max(0, this.displayJobs.length - this.visibleJobs.length);
         },
 
         get hasFinishedJobs() {

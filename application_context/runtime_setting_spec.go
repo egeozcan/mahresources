@@ -155,21 +155,24 @@ const (
 
 // Stable machine keys — also the primary keys in runtime_settings.
 const (
-	KeyMaxUploadSize           = "max_upload_size"
-	KeyMaxImportSize           = "max_import_size"
-	KeyMRQLDefaultLimit        = "mrql_default_limit"
-	KeyMRQLPageQueryBudget     = "mrql_page_query_budget"
-	KeyMRQLQueryTimeout        = "mrql_query_timeout"
-	KeyExportRetention         = "export_retention"
-	KeyRemoteConnectTimeout    = "remote_connect_timeout"
-	KeyRemoteIdleTimeout       = "remote_idle_timeout"
-	KeyRemoteOverallTimeout    = "remote_overall_timeout"
-	KeySharePublicURL          = "share_public_url"
-	KeyDocsSiteBaseURL         = "docs_site_base_url"
-	KeyDocsLinksDisabled       = "docs_links_disabled"
-	KeyHashSimilarityThreshold = "hash_similarity_threshold"
-	KeyHashAHashThreshold      = "hash_ahash_threshold"
-	KeyHashBackfillPaused      = "hash_backfill_paused"
+	KeyMaxUploadSize            = "max_upload_size"
+	KeyMaxImportSize            = "max_import_size"
+	KeyMRQLDefaultLimit         = "mrql_default_limit"
+	KeyMRQLPageQueryBudget      = "mrql_page_query_budget"
+	KeyMRQLQueryTimeout         = "mrql_query_timeout"
+	KeyExportRetention          = "export_retention"
+	KeyRemoteConnectTimeout     = "remote_connect_timeout"
+	KeyRemoteIdleTimeout        = "remote_idle_timeout"
+	KeyRemoteOverallTimeout     = "remote_overall_timeout"
+	KeyDownloadFailedRetention  = "download_failed_retention"
+	KeyDownloadHistoryRetention = "download_history_retention"
+	KeyDownloadCockpitLimit     = "download_cockpit_limit"
+	KeySharePublicURL           = "share_public_url"
+	KeyDocsSiteBaseURL          = "docs_site_base_url"
+	KeyDocsLinksDisabled        = "docs_links_disabled"
+	KeyHashSimilarityThreshold  = "hash_similarity_threshold"
+	KeyHashAHashThreshold       = "hash_ahash_threshold"
+	KeyHashBackfillPaused       = "hash_backfill_paused"
 )
 
 // buildSpecs returns the registry of runtime-editable settings.
@@ -229,6 +232,24 @@ func buildSpecs() map[string]SettingSpec {
 			Description: "Maximum total time for a remote resource download.",
 			Group:       GroupRemoteDownloads, Type: SettingTypeDuration,
 			MinNumeric: int64(10 * time.Second), MaxNumeric: int64(24 * time.Hour),
+		},
+		KeyDownloadFailedRetention: {
+			Key: KeyDownloadFailedRetention, Label: "Failed download retention",
+			Description: "How long a failed or cancelled download stays in the download history before it is swept. Cancelled is grouped with failed because both can be retried.",
+			Group:       GroupRemoteDownloads, Type: SettingTypeDuration,
+			MinNumeric: int64(time.Hour), MaxNumeric: int64(365 * 24 * time.Hour),
+		},
+		KeyDownloadHistoryRetention: {
+			Key: KeyDownloadHistoryRetention, Label: "Completed download retention",
+			Description: "How long a successfully completed download stays in the download history. The resource it created is unaffected.",
+			Group:       GroupRemoteDownloads, Type: SettingTypeDuration,
+			MinNumeric: int64(time.Hour), MaxNumeric: int64(365 * 24 * time.Hour),
+		},
+		KeyDownloadCockpitLimit: {
+			Key: KeyDownloadCockpitLimit, Label: "Jobs panel row limit",
+			Description: "How many *finished downloads* the jobs panel renders, newest first. Older ones stay reachable on the downloads page, which is why only they are capped: anything still working, and every export, import or plugin action, is always shown, because their controls exist nowhere else.",
+			Group:       GroupRemoteDownloads, Type: SettingTypeInt,
+			MinNumeric: 1, MaxNumeric: 200,
 		},
 		KeySharePublicURL: {
 			Key: KeySharePublicURL, Label: "Share public URL",
@@ -315,20 +336,23 @@ func BuildDefaultsFromConfig(cfg *MahresourcesConfig) map[string]any {
 		docsLinksDisabled = 1
 	}
 	return map[string]any{
-		KeyMaxUploadSize:           cfg.MaxUploadSize,
-		KeyMaxImportSize:           cfg.MaxImportSize,
-		KeyMRQLDefaultLimit:        cfg.MRQLDefaultLimit,
-		KeyMRQLPageQueryBudget:     cfg.MRQLPageQueryBudget,
-		KeyMRQLQueryTimeout:        cfg.MRQLQueryTimeoutBoot,
-		KeyExportRetention:         cfg.ExportRetention,
-		KeyRemoteConnectTimeout:    cfg.RemoteResourceConnectTimeout,
-		KeyRemoteIdleTimeout:       cfg.RemoteResourceIdleTimeout,
-		KeyRemoteOverallTimeout:    cfg.RemoteResourceOverallTimeout,
-		KeySharePublicURL:          cfg.SharePublicURL,
-		KeyDocsSiteBaseURL:         docsBaseURL,
-		KeyDocsLinksDisabled:       docsLinksDisabled,
-		KeyHashSimilarityThreshold: cfg.HashSimilarityThreshold,
-		KeyHashAHashThreshold:      cfg.HashAHashThreshold,
+		KeyMaxUploadSize:            cfg.MaxUploadSize,
+		KeyMaxImportSize:            cfg.MaxImportSize,
+		KeyMRQLDefaultLimit:         cfg.MRQLDefaultLimit,
+		KeyMRQLPageQueryBudget:      cfg.MRQLPageQueryBudget,
+		KeyMRQLQueryTimeout:         cfg.MRQLQueryTimeoutBoot,
+		KeyExportRetention:          cfg.ExportRetention,
+		KeyRemoteConnectTimeout:     cfg.RemoteResourceConnectTimeout,
+		KeyRemoteIdleTimeout:        cfg.RemoteResourceIdleTimeout,
+		KeyRemoteOverallTimeout:     cfg.RemoteResourceOverallTimeout,
+		KeyDownloadFailedRetention:  cfg.DownloadFailedRetention,
+		KeyDownloadHistoryRetention: cfg.DownloadHistoryRetention,
+		KeyDownloadCockpitLimit:     cfg.DownloadCockpitLimit,
+		KeySharePublicURL:           cfg.SharePublicURL,
+		KeyDocsSiteBaseURL:          docsBaseURL,
+		KeyDocsLinksDisabled:        docsLinksDisabled,
+		KeyHashSimilarityThreshold:  cfg.HashSimilarityThreshold,
+		KeyHashAHashThreshold:       cfg.HashAHashThreshold,
 		// Runtime-only operational toggle; defaults to running (not paused).
 		KeyHashBackfillPaused: 0,
 	}
