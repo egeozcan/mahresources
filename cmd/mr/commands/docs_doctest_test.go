@@ -86,7 +86,7 @@ func TestDoctestExpectExit(t *testing.T) {
 		Doctest:      true,
 		ExpectedExit: 2,
 	}
-	if err := runDoctest(ex, t.TempDir(), os.Environ()); err != nil {
+	if err := runDoctest(ex, t.TempDir(), t.TempDir(), os.Environ()); err != nil {
 		t.Fatalf("expected no error for exit 2 with expect-exit=2, got: %v", err)
 	}
 }
@@ -101,14 +101,14 @@ func TestDoctestTolerateMatchesStderr(t *testing.T) {
 		ExpectedExit: 0,
 		Tolerate:     "not found",
 	}
-	if err := runDoctest(ex, t.TempDir(), os.Environ()); err != nil {
+	if err := runDoctest(ex, t.TempDir(), t.TempDir(), os.Environ()); err != nil {
 		t.Fatalf("tolerate matching stderr: expected no error, got: %v", err)
 	}
 
 	// Same command but tolerate regex does NOT match → expect error.
 	exBad := ex
 	exBad.Tolerate = "wrong"
-	if err := runDoctest(exBad, t.TempDir(), os.Environ()); err == nil {
+	if err := runDoctest(exBad, t.TempDir(), t.TempDir(), os.Environ()); err == nil {
 		t.Fatal("tolerate non-matching: expected error, got nil")
 	}
 }
@@ -122,7 +122,7 @@ func TestDoctestTimeoutKills(t *testing.T) {
 		Doctest:    true,
 		TimeoutSec: 1,
 	}
-	err := runDoctest(ex, t.TempDir(), os.Environ())
+	err := runDoctest(ex, t.TempDir(), t.TempDir(), os.Environ())
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -149,7 +149,7 @@ func TestDoctestStdinPipe(t *testing.T) {
 		Doctest: true,
 		Stdin:   "stdin.txt",
 	}
-	if err := runDoctest(ex, dir, os.Environ()); err != nil {
+	if err := runDoctest(ex, dir, dir, os.Environ()); err != nil {
 		t.Fatalf("stdin pipe test: expected no error, got: %v", err)
 	}
 }

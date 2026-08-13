@@ -1,12 +1,15 @@
----
-sidebar_position: 21
-title: MRQL Reference
-description: Quick-lookup DSL cheatsheet for MRQL queries
----
+<!--
+GENERATED FILE. DO NOT EDIT.
+
+Language sections come from docs-site/docs/features/mrql-reference.md.
+The CLI section is built from the live Cobra command tree.
+
+Regenerate with:  npm run skills-gen
+-->
 
 # MRQL Reference
 
-A compact syntax reference for the Mahresources Query Language (MRQL). For the full conceptual overview with background and examples of when to use MRQL, see [MRQL Query Language](./mrql.md).
+A compact syntax reference for the Mahresources Query Language (MRQL). For the full conceptual overview with background and examples of when to use MRQL, see [MRQL Query Language](https://egeozcan.github.io/mahresources/features/mrql).
 
 ## Query Shape
 
@@ -374,6 +377,115 @@ mr resources list --mrql 'tags = "vacation" AND created > -30d'
 
 ## See Also
 
-- [MRQL Query Language](./mrql.md) — conceptual overview with worked examples
-- [Saved Queries (SQL)](./saved-queries.md) — the raw-SQL query runner, separate from MRQL saved queries
-- CLI: [`mr mrql`](../cli/mrql/index.md), [`mr mrql run`](../cli/mrql/run.md), [`mr mrql explain`](../cli/mrql/explain.md), [`mr mrql export`](../cli/mrql/export.md), [`mr mrql list`](../cli/mrql/list.md)
+- [MRQL Query Language](https://egeozcan.github.io/mahresources/features/mrql) — conceptual overview with worked examples
+- [Saved Queries (SQL)](https://egeozcan.github.io/mahresources/features/saved-queries) — the raw-SQL query runner, separate from MRQL saved queries
+- CLI: [`mr mrql`](https://egeozcan.github.io/mahresources/cli/mrql), [`mr mrql run`](https://egeozcan.github.io/mahresources/cli/mrql/run), [`mr mrql explain`](https://egeozcan.github.io/mahresources/cli/mrql/explain), [`mr mrql export`](https://egeozcan.github.io/mahresources/cli/mrql/export), [`mr mrql list`](https://egeozcan.github.io/mahresources/cli/mrql/list)
+
+## CLI Reference
+
+Generated from the `mr` command tree, so it tracks the binary rather than this page.
+
+### Global flags
+
+Accepted by every command below.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--json` | bool |  | Output raw JSON |
+| `--no-header` | bool |  | Omit table headers |
+| `--page` | int | `1` | Page number for list commands (default page size: 50) |
+| `--quiet` | bool |  | Only output IDs |
+| `--server` | string | `http://localhost:8181` | mahresources server URL (env: MAHRESOURCES_URL) |
+
+### `mr mrql [query]`
+
+Execute and manage MRQL queries.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--buckets` | int | `0` | Groups per page for bucketed GROUP BY queries |
+| `--file` | string |  | Read query from file |
+| `--limit` | int | `0` | Items per bucket for GROUP BY, or total items for regular queries |
+| `--offset` | int | `0` | Bucket offset for cursor-based GROUP BY pagination |
+| `--param` | stringArray |  | Bind a query parameter placeholder, repeatable: --param name=value |
+| `--render` | bool |  | Request server-side template rendering via CustomMRQLResult |
+
+### `mr mrql save <name> <query>`
+
+Save a MRQL query.
+
+Output: Created saved MRQL query object with id (uint), name (string), query (string), description (string), createdAt, updatedAt.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--description` | string |  | Description for the saved query |
+
+### `mr mrql list`
+
+List saved MRQL queries.
+
+Output: Array of saved MRQL query objects with id, name, query, description, createdAt, updatedAt.
+
+No command-specific flags.
+
+### `mr mrql run <name-or-id>`
+
+Run a saved MRQL query by name or ID.
+
+Output: MRQL result object with entityType (string) and resources/notes/groups arrays, or a grouped result with mode + rows/groups for GROUP BY queries.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--buckets` | int | `0` | Groups per page for bucketed GROUP BY queries |
+| `--limit` | int | `0` | Items per bucket for GROUP BY, or total items for regular queries |
+| `--offset` | int | `0` | Bucket offset for cursor-based GROUP BY pagination |
+| `--param` | stringArray |  | Bind a query parameter placeholder, repeatable: --param name=value |
+| `--render` | bool |  | Request server-side template rendering via CustomMRQLResult |
+
+### `mr mrql explain [query]`
+
+Show the SQL an MRQL query would run, without executing it.
+
+Output: Human-readable label headers plus interpolated SQL, or with --json the raw explain response {entityType, statements[], warnings, default_limit_applied, applied_limit}.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--file` | string |  | Read query from file |
+| `--param` | stringArray |  | Bind a query parameter placeholder, repeatable: --param name=value |
+| `--saved` | string |  | Explain a saved query by name or ID instead of an inline query |
+
+### `mr mrql export [query]`
+
+Export MRQL query results as CSV or JSON.
+
+Output: Raw CSV or JSON stream written to stdout (or --output file); not a table.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--buckets` | int | `0` | Groups per page for bucketed GROUP BY queries |
+| `--file` | string |  | Read query from file |
+| `--format` | string | `csv` | Export format: csv or json |
+| `--limit` | int | `0` | Items per bucket for GROUP BY, or total items for regular queries |
+| `--offset` | int | `0` | Bucket offset for cursor-based GROUP BY pagination |
+| `--output` | string |  | Write to a file instead of stdout |
+| `--param` | stringArray |  | Bind a query parameter placeholder, repeatable: --param name=value |
+| `--saved` | string |  | Export a saved query by name or ID instead of an inline query |
+
+### `mr mrql delete <id>`
+
+Delete a saved MRQL query by ID.
+
+Output: Object with id (uint) of the deleted saved MRQL query.
+
+No command-specific flags.
+
+### `mr search <query>`
+
+Search across all entities.
+
+Output: Search response {query (string), total (int), results (array of {id, type, name, score, description, url, extra})}.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--limit` | int | `20` | Maximum number of results |
+| `--types` | string |  | Comma-separated entity types to search (e.g. resources,notes) |

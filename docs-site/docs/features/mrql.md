@@ -114,32 +114,37 @@ Omit the `type` selector entirely to search all entity types at once (cross-enti
 | Field | Type | Description |
 |-------|------|-------------|
 | `groups` / `group` | relation | Associated groups (match by name) |
-| `owner` | relation | Owner group (match by name, supports traversal) |
-| `category` | string | Resource category ID |
+| `owner` | relation | Owner group (match by ID or by name, supports traversal) |
+| `category` | number | Resource category ID. A name here matches nothing rather than erroring |
 | `contentType` | string | MIME type (e.g. `image/png`) |
 | `fileSize` | number | File size in bytes (supports `kb`, `mb`, `gb` units) |
 | `width` | number | Image/video width in pixels |
 | `height` | number | Image/video height in pixels |
 | `originalName` | string | Original filename at upload |
+| `originalLocation` | string | Original path or source location at upload |
 | `hash` | string | Content hash |
 | `notes` | relation | Linked notes (match by name) |
+| `similarImages` | relation | Resources sharing an exact DHash. Query as `similarImages IS [NOT] EMPTY` |
 
 **Note-only fields:**
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `groups` / `group` | relation | Associated groups (match by name) |
-| `owner` | relation | Owner group (match by name, supports traversal) |
-| `noteType` | string | Note type ID |
+| `owner` | relation | Owner group (match by ID or by name, supports traversal) |
+| `noteType` | number | Note type ID. A name here matches nothing rather than erroring |
+| `startDate` | datetime | Event start date |
+| `endDate` | datetime | Event end date |
+| `shared` | boolean | Whether the note has a share token. Only `= true` / `!= false` and their inverses |
 | `resources` | relation | Linked resources (match by name) |
 
 **Group-only fields:**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `category` | string | Group category ID |
+| `category` | number | Group category ID. A name here matches nothing rather than erroring |
 | `url` | string | Associated URL |
-| `parent` | relation | Parent group (match by name) |
+| `parent` | relation | Parent group (match by ID or by name) |
 | `children` | relation | Child groups (match by name) |
 | `resources` | relation | Related resources (match by name) |
 | `notes` | relation | Related notes (match by name) |

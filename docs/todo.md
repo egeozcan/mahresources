@@ -4401,3 +4401,106 @@ Live re-verification on a freshly seeded ephemeral instance, on the shipped bina
 All seven guards confirmed present on live pages (`/tag`, `/resource`, `/admin/settings`,
 `/admin/users`, `/resource/new`, `/templatePartial/new`), and `value="__meta__"` present on
 tags/groups/notes/resources and absent on categories.
+
+
+---
+
+# Installable MRQL agent skill (2026-08-12)
+
+`skills/mahresources-mrql/` is an [open agent skill](https://github.com/vercel-labs/skills)
+teaching an agent to drive MRQL through `mr`. Installed with
+`npx skills add https://github.com/egeozcan/mahresources/tree/master/skills/mahresources-mrql`
+(the local-path form works before the directory is pushed).
+
+The skill is not a fourth copy of the MRQL docs. It is generated and gated:
+
+- [x] `cmd/skills-gen` renders `references/language.md` from
+      `docs-site/docs/features/mrql-reference.md` plus the live Cobra tree
+      (`npm run skills-gen`); the file carries a do-not-edit header.
+- [x] `cli-docs-fresh` regenerates and diffs `skills/`, like `docs-site/docs/cli/`.
+- [x] `mrql/reference_docs_test.go` fails when a field in `mrql/fields.go` or a constant
+      in `mrql/limits.go` is missing from the reference page, or when the page names a
+      field that does not exist.
+- [x] `application_context/mrql_reference_docs_test.go` does the same for the execution
+      caps (`MaxMRQL{Interactive,Export}{Limit,Offset}`).
+- [x] `mr docs check-examples --files` runs every fenced bash block in the hand-authored
+      `SKILL.md` and `references/recipes.md` against an ephemeral server; wired into the
+      `cli-doctest` Playwright project. Blocks run by default here (inverted from the
+      help-text convention) and opt out with `# mr-doctest: skip, <reason>`.
+      The runner uses a temp cwd so `mrql export -o out.csv` cannot dirty the tree.
+
+Backported into `docs-site/docs/features/mrql-reference.md` while wiring the drift test,
+all verified against a live server: the queryable fields it omitted (`originalLocation`,
+`similarImages`, note `startDate`/`endDate`/`shared`), the ID-not-name nature of
+`category`/`noteType`/`owner`, metadata operators, case sensitivity and escaping, and the
+cross-entity constraints.
+
+Facts the executable examples uncovered, now documented in `SKILL.md`:
+
+- MRQL result entities serialize **PascalCase** (`.ID`, `.Name`, `.CreatedAt`) because the
+  GORM models carry no JSON tags, while saved-query objects are lowercase.
+- `resources` / `notes` / `groups` / `rows` are `omitempty`, so a zero-result query omits
+  the key entirely and `jq '.resources[]'` fails with "Cannot iterate over null".
+- `SCOPE` by an unknown name or ID is HTTP 404, not an empty result.
+- Saving over an existing saved-query name is HTTP 400, not a replace.
+
+| gate | result |
+|---|---|
+| `go build ./...`, `go vet` | clean |
+| `go test --tags 'json1 fts5' ./...` | pass (37 packages) |
+| `./mr docs lint` | OK (16 pre-existing warnings) |
+| `./mr docs dump --format markdown` | only the new `--files` flag differs, committed |
+| `npm run skills-gen` twice | idempotent |
+| `cd e2e && npm run test:with-server:cli-doctest` | 2 passed (39 skill examples) |
+| `cd e2e && npm run test:with-server:cli` | 339 passed |
+| `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/...` | pass |
+
+Browser E2E not run: no template, JS or CSS surface changed.
+
+## pi review (openai-codex/gpt-5.6-sol:high), findings applied
+
+Five factual errors in the hand-authored files, each verified against the code (and, for
+the first, against a live server) before fixing:
+
+- `owner`/`parent` accept a group **name** as well as an ID (`mrql/translator.go:1108-1122`
+  falls back to a traversal). `category`/`noteType` are numeric only, and a name there
+  matches nothing instead of erroring. The wrong version had been backported into
+  `docs-site/docs/features/mrql-reference.md`, so the generator was propagating it.
+- The response example printed `"notes": [], "groups": []` under a paragraph explaining
+  that those keys are `omitempty` and therefore absent.
+- "Export, don't paginate" was false: `MaxMRQLExportLimit` is also 10,000 and export
+  applies the same default LIMIT (`application_context/mrql_execution_policy.go:10-14`).
+- `--render` does not exist on `mrql export`, only on `mrql` and `mrql run`.
+- The SCOPE-404 claim needed `SCOPE 0` and the `-auth` forced-scope override
+  (`mrql_context.go:438-446`, where a group-limited principal's scope replaces the query's).
+
+Generator and extractor hardening from the same review: atomic write; stderr surfaced from
+a failed `docs dump`; type-aware blanking of flag defaults (a string flag defaulting to
+`"false"` kept its value); newlines stripped from descriptions so they cannot break the
+table row; CRLF-tolerant frontmatter. The block scanner now follows CommonMark (tilde and
+longer fences, closing fence at least as long as the opening one, block dedented so a
+heredoc terminator inside a list item still terminates), the file:line label is no longer
+repeated per directive, a listed file with no runnable block is an error rather than a
+silent pass, and the summary distinguishes run / opted out / skipped-for-environment.
+
+Dismissed with reason: Windows path separators (generation runs on macOS and Linux only);
+duplicate flag names (pflag forbids them); commas in a doctest label being read as
+metadata (that is the pre-existing shared directive syntax, not new behaviour).
+
+## The conceptual page, and the guard it never had
+
+`docs-site/docs/features/mrql.md` documents the same fields as a table with a Type column,
+and nothing checked it. It had drifted:
+
+- `category` (resource and group) and `noteType` were typed **string** while holding
+  numeric IDs. That is the type error that matters: a reader who believes `category` is a
+  string writes `category = "Photos"`, which is accepted and silently matches nothing.
+- `originalLocation`, `similarImages`, `startDate`, `endDate` and `shared` had no rows.
+- `owner` and `parent` were described as name-matched only; both also take an ID.
+
+`mrql/conceptual_docs_test.go` now checks that page against `fields.go` for presence,
+absence, section placement **and declared type**, with a documented exception for derived
+fields (`shared` is a nullable share-token column but only accepts booleans, so its
+documented type is `boolean`). Mutation-tested: re-typing `category` as string, deleting a
+row, inventing a field, misfiling a field into another entity's table, and typing a
+datetime as string are all caught.

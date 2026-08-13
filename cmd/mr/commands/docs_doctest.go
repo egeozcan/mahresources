@@ -40,7 +40,7 @@ func checkExamples(root *cobra.Command, serverURL, environment string) error {
 				fmt.Printf("SKIP  %s: %s (skip-on=%s)\n", c.CommandPath(), ex.Label, ex.SkipOn)
 				continue
 			}
-			if err := runDoctest(ex, cwd, env); err != nil {
+			if err := runDoctest(ex, cwd, cwd, env); err != nil {
 				failures = append(failures, fmt.Sprintf("%s: %s: %v", c.CommandPath(), ex.Label, err))
 				fmt.Printf("FAIL  %s: %s\n", c.CommandPath(), ex.Label)
 			} else {
@@ -57,7 +57,10 @@ func checkExamples(root *cobra.Command, serverURL, environment string) error {
 	return nil
 }
 
-func runDoctest(ex dumpExample, cwd string, env []string) error {
+// runDoctest runs one example. cwd is where the block executes; fixtureRoot is
+// where `stdin=<name>` resolves from, which is not always the same directory —
+// markdown examples run in a scratch dir but still read cmd/mr/testdata.
+func runDoctest(ex dumpExample, cwd, fixtureRoot string, env []string) error {
 	timeout := 30 * time.Second
 	if ex.TimeoutSec > 0 {
 		timeout = time.Duration(ex.TimeoutSec) * time.Second
@@ -73,7 +76,7 @@ func runDoctest(ex dumpExample, cwd string, env []string) error {
 	cmd.Stderr = &stderr
 
 	if ex.Stdin != "" {
-		data, err := os.ReadFile(filepath.Join(cwd, "testdata", ex.Stdin))
+		data, err := os.ReadFile(filepath.Join(fixtureRoot, "testdata", ex.Stdin))
 		if err != nil {
 			return fmt.Errorf("reading stdin fixture: %w", err)
 		}

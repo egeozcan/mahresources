@@ -58,6 +58,18 @@ jobs:
             exit 1
           fi
 
+      - name: Regenerate the agent skill's MRQL reference
+        run: go run ./cmd/skills-gen
+
+      - name: Fail if the regenerated skill reference differs from committed
+        run: |
+          if ! git diff --quiet -- skills/; then
+            echo "::error::skills/ is out of sync with docs-site/docs/features/mrql-reference.md or the CLI tree."
+            echo "Run 'npm run build-cli && npm run skills-gen' locally and commit the result."
+            git diff --stat -- skills/
+            exit 1
+          fi
+
   cli-doctest:
     runs-on: ubuntu-latest
     steps:

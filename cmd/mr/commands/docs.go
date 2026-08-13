@@ -65,6 +65,7 @@ func newDocsLintCmd() *cobra.Command {
 func newDocsCheckExamplesCmd() *cobra.Command {
 	help := helptext.Load(docsHelpFS, "docs_help/docs_check_examples.md")
 	var server, environment string
+	var files []string
 	cmd := &cobra.Command{
 		Use:         "check-examples",
 		Short:       "Run `# mr-doctest:` example blocks against a live server",
@@ -72,6 +73,9 @@ func newDocsCheckExamplesCmd() *cobra.Command {
 		Example:     help.Example,
 		Annotations: help.Annotations,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(files) > 0 {
+				return checkMarkdownExamples(files, server, environment)
+			}
 			return checkExamples(cmd.Root(), server, environment)
 		},
 	}
@@ -79,6 +83,8 @@ func newDocsCheckExamplesCmd() *cobra.Command {
 		"Server URL (defaults to MAHRESOURCES_URL env var, then http://localhost:8181).")
 	cmd.Flags().StringVar(&environment, "environment", "",
 		"Target environment label used by `skip-on=<env>` metadata. Example: `ephemeral` when targeting a seed-less in-memory server.")
+	cmd.Flags().StringArrayVar(&files, "files", nil,
+		"Run the fenced bash blocks in these markdown files, globs, or directories instead of the command tree's own examples. Repeatable.")
 	return cmd
 }
 

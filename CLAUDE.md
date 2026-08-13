@@ -378,6 +378,14 @@ npm run report         # View HTML test report
 
 When you add or change a command or flag in `cmd/mr/commands/`, update the corresponding `<group>_help/*.md` file. CI runs `./mr docs lint` (the `cli-docs-fresh` job) and `./mr docs check-examples` (the `cli-doctest` job) on every PR. Reference pattern: `cmd/mr/commands/resources_help/resource_get.md`.
 
+## Agent skill (`skills/`)
+
+`skills/mahresources-mrql/` is an installable [open agent skill](https://github.com/vercel-labs/skills) that teaches an agent to drive MRQL through the `mr` CLI. It is not a fourth place to write MRQL documentation:
+
+- `references/language.md` is **generated** (`npm run skills-gen`, `cmd/skills-gen`) from `docs-site/docs/features/mrql-reference.md` plus the live Cobra tree. Never edit it; edit the docs-site page. The `cli-docs-fresh` job regenerates and diffs `skills/`.
+- That page is checked against the code: `mrql/reference_docs_test.go` (fields, parser guardrails) and `application_context/mrql_reference_docs_test.go` (execution limits) fail when a field is added to `mrql/fields.go` or a constant changes without the page following.
+- `SKILL.md` and `references/recipes.md` are hand-authored, and every fenced `bash` block in them runs against an ephemeral server in the `cli-doctest` job via `mr docs check-examples --files`. A block that cannot run standalone opts out with `# mr-doctest: skip, <reason>` as its first line.
+
 ## Workflow Orchestration
 
 ### 1. Plan Node Default
