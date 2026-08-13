@@ -807,8 +807,64 @@ html {
     cursor: pointer;
 }
 
-.card-badge--action:hover {
+.card-badge--action:hover:not([aria-disabled="true"]) {
     background: var(--nav-hover);
+}
+
+/* Outcome badges. Used by the /downloads cards for a download's terminal status,
+   in the same palette the log level pills and the jobs panel already use, so a
+   failed download reads the same wherever it is shown. */
+.card-badge--success {
+    background: #d1fae5;
+    color: #065f46;
+    border: 1px solid #a7f3d0;
+}
+
+.card-badge--success:hover {
+    background: #a7f3d0;
+}
+
+.card-badge--danger {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+}
+
+.card-badge--danger:hover {
+    background: #fecaca;
+}
+
+.card-badge--muted {
+    background: #e7e5e4;
+    color: #44403c;
+    border: 1px solid #d6d3d1;
+}
+
+.card-badge--muted:hover {
+    background: #d6d3d1;
+}
+
+/* Work still in progress, rather than an outcome. */
+.card-badge--live {
+    background: #e0f2fe;
+    color: #075985;
+    border: 1px solid #bae6fd;
+}
+
+.card-badge--live:hover {
+    background: #bae6fd;
+}
+
+/* The destructive twin of --action: a card-level button, not a label. */
+.card-badge--danger-action {
+    background: #b91c1c;
+    color: white;
+    border: none;
+    cursor: pointer;
+}
+
+.card-badge--danger-action:hover:not([aria-disabled="true"]) {
+    background: #991b1b;
 }
 
 /* Plugin action sidebar section */
@@ -1527,6 +1583,11 @@ html {
 
 .card-actions {
     display: flex;
+    /* Wraps, and centres what it wraps: the /downloads cards put badge-shaped
+       buttons and a plain "in progress" note in this row, and at a narrow width
+       they have to fall to a second line rather than overflow the card. */
+    flex-wrap: wrap;
+    align-items: center;
     gap: 0.5rem;
     margin-top: 0.75rem;
     padding-top: 0.75rem;

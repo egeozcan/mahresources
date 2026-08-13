@@ -160,11 +160,23 @@ export function registerBulkSelectionStore(Alpine) {
       this.elements[option.itemNo] = option;
       this.options[option.itemId] = option;
 
+      // Registration is not a user action, so it must not move the shift-range
+      // anchor. `select` and `deselect` both stamp `lastSelected` *before* they
+      // check whether anything actually changed, so syncing each card's initial
+      // state through them left the anchor on the last card on the page — and
+      // `selectUntil` then read it as "the reader's last click". A reader whose
+      // first interaction was shift-clicking the top card therefore selected the
+      // entire page instead of that one card, which on /downloads is one keystroke
+      // away from a bulk delete.
+      const anchor = this.lastSelected;
+
       if (option.el.checked) {
         this.select(option.itemId);
       } else {
         this.deselect(option.itemId);
       }
+
+      this.lastSelected = anchor;
     },
 
     registerForm(form) {

@@ -1,3 +1,81 @@
+# /downloads adopts the shared list-page shape (2026-08-13)
+
+The page was built as a bespoke `<table>` with its own header checkbox, its own
+selection Set and its own bulk bar. Every other list page in the app is cards plus
+the shared `bulkSelection` store plus a sticky `bulk-editors` toolbar, so /downloads
+looked and behaved like a different application.
+
+- [x] Cards: `templates/partials/download.tpl` — `.card` / `card-header` / `card-meta` /
+      `card-badges`, `card--selectable` + `selectableItem()` for the checkbox, in an
+      `.items-container` single column (the /queries and /relations choice; a download's
+      URL and error do not survive the 280px `.list-container` grid cell).
+- [x] Selection is the shared `bulkSelection` store, so Select All, Deselect All and
+      shift-range selection work here as they do on /notes. The old component's comment
+      claiming the shared store "carries entity semantics" was wrong — the store holds ids,
+      and the bulk *editors* that give them meaning are a per-page include. Corrected in
+      place rather than deleted.
+- [x] Toolbar: `templates/partials/bulkEditorDownload.tpl`, same shell as
+      `bulkEditorTag/Note/Resource`, with the two one-click actions as plain buttons in a
+      `px-4` block (the `bulkEditorGroup` "Export selected" precedent). No forms and no
+      `bulkSelectionForms`: that component turns every `<form>` beneath it into a disclosure
+      editor, which is right for "Add Tag" and wrong for a one-click Retry.
+- [x] `downloadsManager` component → `downloads` **store**. The toolbar renders in the
+      template's `prebody` block and the cards in `body`, and no `x-data` subtree spans a
+      Pongo2 block boundary. The JSON API and its per-id refusal reporting are unchanged.
+- [x] Delete now confirms, via the shared `confirmDialog`, naming the count and saying the
+      downloaded files survive. It was the one destructive action in the app that asked
+      nothing.
+- [x] Removed the duplicate pagination include — `layouts/base.tpl` already renders one in
+      the footer, so the page had two `nav[aria-label="Pagination"]`.
+- [x] Shared CSS rather than page-local Tailwind: `card-badge--success/--danger/--muted/
+      --live` for the status pill, `--danger-action` for the destructive card button, a
+      `button.card-badge:disabled` affordance, and `flex-wrap`/`align-items` on the existing
+      (previously unused) `.card-actions`.
+
+## Review
+
+Gates: Go unit (SQLite and Postgres), vitest, e2e browser + CLI (SQLite and Postgres), the
+auth project, and a new populated-page axe audit
+(`e2e/tests/accessibility/downloads-list-a11y.spec.ts`) — the existing sweep only ever
+audited /downloads *empty*, so the cards, badges, bulk toolbar and confirm had never been
+checked. All green.
+
+### Review pass (pi, gpt-5.6-sol:high)
+
+Three findings, all confirmed against the code and fixed:
+
+1. **The shift-range anchor was set by page *registration*, not by the reader** —
+   `bulkSelection.registerOption` synced each card's initial state through `select`/
+   `deselect`, and both stamp `lastSelected` before checking whether anything changed, so
+   the anchor ended up on the last card on the page. A reader whose first interaction was
+   shift-clicking the top card selected **every** card. Pre-existing and shared: it was
+   true on /notes, /tags, /groups, /resources and /queries too, and this change is what
+   put it one keystroke from a bulk delete. Fixed in the store (the anchor is saved and
+   restored around registration) with `src/components/bulkSelection.test.ts`, which is red
+   without the fix.
+2. **Accepting a delete confirm dropped focus on `<body>`** — `confirmDialog._settle`
+   restores focus on a macrotask, by design; `busy` flipped before that ran and
+   `:disabled` blurred the very button the restore was aiming at. All four action buttons
+   use `aria-disabled` now, so they stay focusable; the store's own `busy` guard is what
+   refuses a second click. Regression test: "a refused delete reports the reason and gives
+   focus back to the button", which routes a 409 so the page does not reload out from
+   under the assertion. Red without the fix (`Received: inactive`).
+3. **The bulk buttons' accessible names were just "Retry" / "Delete"** — the "Retry
+   Selected" / "Delete Selected" headings beside them are sibling `<span>`s and label
+   nothing, so a reader listing buttons could not tell a bulk action from a card's own.
+   The bulk pair now names the selection and each card's pair names its download.
+
+pi's read of the deliberate divergence (plain buttons instead of forms, no
+`bulkSelectionForms`) was that it is sound: there are no editor forms to register, and
+every toolbar and card subtree establishes its own Alpine scope.
+
+**Deliberately not done: exposing sort in the sidebar.** `DownloadHistoryQuery.SortBy` and
+`ApplySortColumns` already support it, so wiring `sortValues` + `multiSortInput` looks like
+a two-line change — it is not. `buildDownloadRows` re-sorts the merged rows by `CreatedAt`
+desc in Go after folding the live queue over the stored page, so any user-chosen order is
+discarded before the template sees it. Exposing sort means teaching that merge the chosen
+order first.
+
 # Download history — persisted downloads, capped jobs panel, /downloads page (2026-08-09)
 
 - [x] `DownloadHistoryEntry` model + AutoMigrate (main, api_tests, and the four test DBs that migrate `User`).

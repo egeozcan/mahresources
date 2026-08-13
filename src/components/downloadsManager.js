@@ -1,113 +1,101 @@
 import { createLiveRegion } from '../utils/ariaLiveRegion.js';
 
 /**
- * The /downloads page: row selection, and the retry/delete calls behind the
- * per-row and bulk buttons.
+ * The /downloads page's actions: retry and delete, per card and in bulk.
  *
- * Selection is local rather than the global `bulkSelection` store. That store is
- * shared by the entity list pages and carries entity semantics (its ids feed the
- * bulk tag/meta/delete editors), so a downloads row landing in it would offer
- * "Add tags" for something that is not an entity.
+ * A store rather than an `x-data` component, because the two surfaces that call
+ * it cannot be inside one component: the bulk toolbar renders in the template's
+ * `prebody` block and the cards in `body`, and a Pongo2 block boundary is not
+ * something an `x-data` subtree can span.
  *
- * Every action reloads the page afterwards. The table is server-rendered and a
+ * Selection is not held here at all. It is the shared `bulkSelection` store, the
+ * same one every entity list page uses, so Select All / Deselect All / shift-range
+ * selection behave on this page exactly as they do on /notes. This used to be a
+ * local Set, justified on the grounds that the shared store "carries entity
+ * semantics" and a downloads row landing in it would offer "Add tags". It does
+ * not: the store holds ids and nothing else, and the bulk *editors* that give
+ * those ids meaning are a per-page include.
+ *
+ * Every action reloads the page afterwards. The list is server-rendered and a
  * retry changes a row's status, its attempt count and its position, so patching
  * the DOM by hand would be a second rendering of the same rules — and the one
  * that drifts. A reload is also what makes a deleted row's disappearance and the
  * count in the header agree.
  */
-export function downloadsManager() {
+export function downloadsStore(Alpine) {
     return {
-        selected: new Set(),
         busy: false,
         error: '',
+        notice: '',
         _liveRegion: null,
 
-        notice: '',
-        _root: null,
-
         init() {
-            this._liveRegion = createLiveRegion();
-            // Captured here, where $el is the component root. Inside a method $el is
-            // whichever element called it — for toggleAll that is the header
-            // checkbox, whose subtree holds no rows, so the select-all silently
-            // selected nothing.
-            this._root = this.$el;
-
             // The outcome of the action that caused the reload. Without this the
             // result of pressing Retry is a page that looks the same apart from one
-            // status pill, and for a screen-reader user it is nothing at all — the
+            // status badge, and for a screen-reader user it is nothing at all — the
             // announcement was torn down with the document that made it.
             try {
                 const flash = sessionStorage.getItem('downloads-flash');
                 if (flash) {
                     sessionStorage.removeItem('downloads-flash');
                     this.notice = flash;
-                    this.$nextTick(() => this.announce(flash));
+                    this.announce(flash);
                 }
             } catch {
                 // sessionStorage throws in sandboxed contexts; there is simply no flash.
             }
         },
 
-        destroy() {
-            this._liveRegion?.destroy();
-        },
-
         announce(message) {
-            this._liveRegion?.announce(message);
-        },
-
-        isSelected(id) {
-            return this.selected.has(id);
-        },
-
-        toggle(id, checked) {
-            if (checked) {
-                this.selected.add(id);
-            } else {
-                this.selected.delete(id);
+            // Created on first use rather than in init(): the store is registered on
+            // every page in the app, and only this one ever announces anything.
+            if (!this._liveRegion) {
+                this._liveRegion = createLiveRegion();
             }
-            // Set mutations are not reactive on their own; reassigning is what tells
-            // Alpine the derived counts changed.
-            this.selected = new Set(this.selected);
+            this._liveRegion.announce(message);
         },
 
-        toggleAll(checked) {
-            const ids = this.rowIds();
-            this.selected = checked ? new Set(ids) : new Set();
-        },
-
-        /** The ids of the rows currently rendered, in DOM order. */
-        rowIds() {
-            const root = this._root ?? this.$el;
-            return Array.from(root.querySelectorAll('[data-testid="downloads-row-checkbox"]'))
-                .map(cb => Number(cb.value))
-                .filter(id => Number.isFinite(id) && id > 0);
+        /** The shared selection, as an array of history-row ids. */
+        get selectedIds() {
+            return [...(Alpine.store('bulkSelection')?.selectedIds ?? [])];
         },
 
         get selectedCount() {
-            return this.selected.size;
+            return this.selectedIds.length;
         },
 
-        get allSelected() {
-            const ids = this.rowIds();
-            return ids.length > 0 && ids.every(id => this.selected.has(id));
-        },
-
-        retryOne(id) {
-            return this.send('/v1/downloads/retry', [id], 'retried');
-        },
-
-        deleteOne(id) {
-            return this.send('/v1/downloads/delete', [id], 'deleted');
+        retry(ids) {
+            return this.send('/v1/downloads/retry', ids, 'retried');
         },
 
         retrySelected() {
-            return this.send('/v1/downloads/retry', [...this.selected], 'retried');
+            return this.retry(this.selectedIds);
         },
 
-        deleteSelected() {
-            return this.send('/v1/downloads/delete', [...this.selected], 'deleted');
+        /**
+         * Delete, once the reader has confirmed it.
+         *
+         * Deleting was the one destructive action in the app that asked nothing —
+         * every other list confirms a bulk delete and names the count. The message
+         * says what survives, because the obvious fear ("does this delete the file
+         * I downloaded?") is the one the row itself cannot answer.
+         */
+        async remove(ids) {
+            if (this.busy || ids.length === 0) return;
+
+            const n = ids.length;
+            const confirmed = await Alpine.store('confirmDialog').ask(
+                `Delete ${n} download record${n === 1 ? '' : 's'}? ` +
+                `${n === 1 ? 'The file it downloaded is' : 'The files they downloaded are'} not affected.`,
+                { title: 'Delete downloads', confirmLabel: 'Delete' },
+            );
+            if (!confirmed) return;
+
+            return this.send('/v1/downloads/delete', ids, 'deleted');
+        },
+
+        removeSelected() {
+            return this.remove(this.selectedIds);
         },
 
         /**
@@ -117,7 +105,7 @@ export function downloadsManager() {
          * refused — a completed download cannot be retried, a running one cannot be
          * deleted, and the queue can fill up part-way through. Reporting only the
          * count would leave the user to work out which rows were skipped by reading
-         * the reloaded table. A batch refused *entirely* answers 409 and carries the
+         * the reloaded list. A batch refused *entirely* answers 409 and carries the
          * same outcomes, so its distinct reasons are reported too rather than the
          * summary sentence alone.
          */
@@ -155,7 +143,7 @@ export function downloadsManager() {
                 let message = `${done} download${done === 1 ? '' : 's'} ${verb}.`;
                 if (refused.length > 0) {
                     // The first reason rather than all of them: they are nearly always
-                    // the same reason repeated, and the reloaded table shows the rest.
+                    // the same reason repeated, and the reloaded list shows the rest.
                     message += ` ${refused.length} skipped — ${refused[0].reason || 'not eligible'}.`;
                 }
                 this.announce(message);
@@ -177,4 +165,8 @@ export function downloadsManager() {
             }
         },
     };
+}
+
+export function registerDownloadsStore(Alpine) {
+    Alpine.store('downloads', downloadsStore(Alpine));
 }

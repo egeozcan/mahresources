@@ -1,32 +1,40 @@
 import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
-import { downloadsManager } from './downloadsManager.js';
+import { downloadsStore } from './downloadsManager.js';
 import { downloadCockpit } from './downloadCockpit.js';
 
 /**
- * The /downloads page component, and the jobs panel's row cap.
+ * The /downloads store, and the jobs panel's row cap.
  *
- * Both are pure enough to pin here: selection is a set, the cap is a slice, and
- * the action calls are one fetch whose response shape decides what the user is
- * told. The Playwright spec covers that the template is wired to them.
+ * Both are pure enough to pin here: the action calls are one fetch whose response
+ * shape decides what the user is told, and the cap is a slice. Selection is no
+ * longer the store's business — it reads the shared `bulkSelection` store, which
+ * every entity list already exercises — so what is left to test is that it reads
+ * it, that Delete asks first, and that the outcome reporting survived the move.
+ * The Playwright spec covers that the template is wired to it.
  */
 
-function rowCheckboxes(ids: number[]) {
-    return ids.map(id => ({ value: String(id) }));
-}
+let confirmAnswer: boolean;
+let confirmCalls: { message: string; options: any }[];
+let selectedIds: Set<number>;
 
-function mountManager(ids: number[] = [1, 2, 3]) {
-    // `any` because these components are plain JS objects that Alpine augments at
-    // runtime with $el/$refs/$nextTick; the test plays Alpine's part.
-    const component: any = downloadsManager();
-    // The component root, as init() captures it.
-    component._root = { querySelectorAll: () => rowCheckboxes(ids) };
-    // $el as a *method* sees it: the element that called the method — for the
-    // select-all checkbox, an element with no rows beneath it. Reading rows from
-    // $el instead of the captured root is what made select-all select nothing.
-    component.$el = { querySelectorAll: () => [] };
-    component.$nextTick = (fn: () => void) => fn();
-    component._liveRegion = { announce: vi.fn(), destroy: vi.fn() };
-    return component;
+function mountStore() {
+    confirmAnswer = true;
+    confirmCalls = [];
+    selectedIds = new Set();
+
+    const stores: Record<string, any> = {
+        bulkSelection: { get selectedIds() { return selectedIds; } },
+        confirmDialog: {
+            ask: (message: string, options: any) => {
+                confirmCalls.push({ message, options });
+                return Promise.resolve(confirmAnswer);
+            },
+        },
+    };
+    // `any` because the store is a plain JS object Alpine augments at runtime.
+    const store: any = downloadsStore({ store: (name: string) => stores[name] } as any);
+    store._liveRegion = { announce: vi.fn(), destroy: vi.fn() };
+    return store;
 }
 
 let reloadCalls: number;
@@ -48,44 +56,69 @@ afterEach(() => {
 });
 
 describe('selection', () => {
-    test('toggling rows tracks the selection and the select-all state', () => {
-        const c = mountManager([1, 2, 3]);
+    test('the selection is the shared bulkSelection store, not a private copy', () => {
+        const c = mountStore();
         expect(c.selectedCount).toBe(0);
-        expect(c.allSelected).toBe(false);
 
-        c.toggle(1, true);
-        c.toggle(2, true);
+        selectedIds.add(1);
+        selectedIds.add(2);
+        expect(c.selectedIds).toEqual([1, 2]);
         expect(c.selectedCount).toBe(2);
-        expect(c.isSelected(1)).toBe(true);
-        expect(c.allSelected).toBe(false);
-
-        c.toggle(3, true);
-        expect(c.allSelected).toBe(true);
-
-        c.toggle(2, false);
-        expect(c.selectedCount).toBe(2);
-        expect(c.allSelected).toBe(false);
     });
 
-    test('select-all with no rows is not "all selected"', () => {
-        // Otherwise the header checkbox renders checked on an empty table, which
-        // states that nothing is everything.
-        const c = mountManager([]);
-        expect(c.allSelected).toBe(false);
+    test('bulk actions send exactly what is selected', async () => {
+        const c = mountStore();
+        selectedIds.add(4);
+        selectedIds.add(5);
+        const fetchMock = vi.fn(async (_path: string, _init: any) => ({ ok: true, json: async () => ({ retried: 2 }) }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        await c.retrySelected();
+
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ ids: [4, 5] });
+    });
+});
+
+describe('delete confirmation', () => {
+    test('deleting asks first, and names the count and what survives', async () => {
+        const c = mountStore();
+        const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ deleted: 2 }) }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        await c.remove([1, 2]);
+
+        expect(confirmCalls).toHaveLength(1);
+        expect(confirmCalls[0].message).toContain('Delete 2 download records');
+        // The obvious fear about deleting a download row is that it deletes the file.
+        expect(confirmCalls[0].message).toContain('not affected');
+        expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    test('toggleAll selects exactly the rendered rows', () => {
-        const c = mountManager([4, 5]);
-        c.toggleAll(true);
-        expect([...c.selected].sort()).toEqual([4, 5]);
-        c.toggleAll(false);
-        expect(c.selectedCount).toBe(0);
+    test('a dismissed confirm deletes nothing', async () => {
+        const c = mountStore();
+        confirmAnswer = false;
+        const fetchMock = vi.fn();
+        vi.stubGlobal('fetch', fetchMock);
+
+        await c.remove([1]);
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(reloadCalls).toBe(0);
+    });
+
+    test('retry is not gated behind a confirm', async () => {
+        const c = mountStore();
+        vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ retried: 1 }) })));
+
+        await c.retry([1]);
+
+        expect(confirmCalls).toHaveLength(0);
     });
 });
 
 describe('actions', () => {
     test('a partly refused batch reports both halves', async () => {
-        const c = mountManager();
+        const c = mountStore();
         vi.stubGlobal('fetch', vi.fn(async () => ({
             ok: true,
             json: async () => ({
@@ -107,7 +140,7 @@ describe('actions', () => {
     });
 
     test('a wholly refused batch reports each distinct reason, not just the summary', async () => {
-        const c = mountManager();
+        const c = mountStore();
         vi.stubGlobal('fetch', vi.fn(async () => ({
             ok: false,
             json: async () => ({
@@ -131,7 +164,7 @@ describe('actions', () => {
     });
 
     test('a refusal surfaces the server reason and does not reload', async () => {
-        const c = mountManager();
+        const c = mountStore();
         vi.stubGlobal('fetch', vi.fn(async () => ({
             ok: false,
             json: async () => ({ error: 'this download is still running; cancel it first' }),
@@ -144,7 +177,7 @@ describe('actions', () => {
     });
 
     test('a network failure is reported rather than swallowed', async () => {
-        const c = mountManager();
+        const c = mountStore();
         vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
         vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -156,13 +189,17 @@ describe('actions', () => {
     });
 
     test('an empty selection sends nothing', async () => {
-        const c = mountManager();
+        const c = mountStore();
         const fetchMock = vi.fn();
         vi.stubGlobal('fetch', fetchMock);
 
         await c.send('/v1/downloads/delete', [], 'deleted');
+        await c.removeSelected();
 
         expect(fetchMock).not.toHaveBeenCalled();
+        // And nothing is confirmed either: an empty Delete must not raise a dialog
+        // that would then delete nothing.
+        expect(confirmCalls).toHaveLength(0);
     });
 });
 

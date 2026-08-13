@@ -76,7 +76,7 @@ import { registerConfirmDialogStore } from './components/confirmDialog.js';
 import { setupHoverCard } from './components/hoverCard.js';
 import { multiSort } from './components/multiSort.js';
 import { downloadCockpit } from './components/downloadCockpit.js';
-import { downloadsManager } from './components/downloadsManager.js';
+import { registerDownloadsStore } from './components/downloadsManager.js';
 import { compareView } from './components/compareView.js';
 import { groupCompareView } from './components/groupCompareView.js';
 import { imageCompare } from './components/imageCompare.js';
@@ -144,7 +144,6 @@ window.getJSONOrObjValue = getJSONOrObjValue;
 window.selectorFormParameters = selectorFormParameters;
 // BH-015: expose the factory so E2E tests can unit-check formatProgress clamping.
 window.downloadCockpit = downloadCockpit;
-window.downloadsManager = downloadsManager;
 
 // Global, lazily-created ARIA live regions for one-off status announcements
 // (inline-edit saves, inline description saves, etc.). Exposed on window so
@@ -174,6 +173,9 @@ registerLightboxStore(Alpine);
 registerEntityPickerStore(Alpine);
 registerPasteUploadStore(Alpine);
 registerConfirmDialogStore(Alpine);
+// After confirmDialog and bulkSelection: the /downloads actions read the shared
+// selection and raise the shared confirm.
+registerDownloadsStore(Alpine);
 
 // Register Alpine data components
 Alpine.data('singleEntitySelector', singleEntitySelector);
@@ -193,7 +195,6 @@ Alpine.data('globalSearch', globalSearch);
 Alpine.data('mobileNav', mobileNav);
 Alpine.data('multiSort', multiSort);
 Alpine.data('downloadCockpit', downloadCockpit);
-Alpine.data('downloadsManager', downloadsManager);
 Alpine.data('compareView', compareView);
 Alpine.data('groupCompareView', groupCompareView);
 Alpine.data('imageCompare', imageCompare);
