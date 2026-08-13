@@ -7,9 +7,13 @@ import path from 'path';
  *
  * Before this fix, onResourceChange() nulled `resourceDetails` and evicted the
  * incoming resource's cache entry on every next/prev, so quick-slot match colors
- * flashed neutral and every image cost a /resource.json round-trip. The fix keeps
- * the prior details visible (under aria-busy) and prefetches upcoming items' tag
- * details the way bitmaps are already prefetched.
+ * flashed neutral and every image cost a BLOCKING /resource.json round-trip. The fix keeps the
+ * details state alive across navigation and prefetches upcoming items' tag details the way
+ * bitmaps are already prefetched, so a neighbour paints from cache with no wait.
+ *
+ * Note what is NOT kept: the previous image's details are never *displayed* during the load
+ * window (displayDetails() fences that off), and the cached copy is revalidated against the
+ * server behind the instant paint. The saving is the wait, not the request.
  */
 test.describe('Lightbox tag-detail prefetch + no-blank', () => {
   let categoryId: number;
@@ -101,7 +105,7 @@ test.describe('Lightbox tag-detail prefetch + no-blank', () => {
     expect(observed.afterNull).toBe(false);
   });
 
-  test('B: upcoming details are prefetched and a prefetched neighbour is a cache hit', async ({ page }) => {
+  test('B: a prefetched neighbour paints from cache instantly and is revalidated behind it', async ({ page }) => {
     const counts: Record<string, number> = {};
     await page.route('**/resource.json**', async (route) => {
       const id = new URL(route.request().url()).searchParams.get('id') || '?';
@@ -129,11 +133,24 @@ test.describe('Lightbox tag-detail prefetch + no-blank', () => {
     const prefetchedCount = counts[id2] || 0;
     expect(prefetchedCount).toBeGreaterThanOrEqual(1);
 
-    // Navigate into the prefetched neighbour: it must be served from cache with
-    // no additional /resource.json request.
-    await page.evaluate(() => (window as any).Alpine.store('lightbox').next());
-    await page.waitForTimeout(300);
-    expect(counts[id2]).toBe(prefetchedCount);
+    // Navigate into the prefetched neighbour: the prefetched copy paints synchronously — no
+    // blocking spinner, no waiting on the network — and the refresh that checks it against the
+    // server runs behind it. That revalidation is the point: a cache entry warmed minutes ago
+    // may since have been retagged from anywhere else in the app.
+    const painted = await page.evaluate((id) => {
+      const s = (window as any).Alpine.store('lightbox');
+      s.next();
+      return {
+        id: s.displayDetails()?.ID ?? null,
+        blocking: s.detailsLoading,
+        revalidating: s.detailsRevalidating,
+      };
+    }, id2);
+    expect(painted.id).toBe(Number(id2));
+    expect(painted.blocking).toBe(false);
+    expect(painted.revalidating).toBe(true);
+
+    await expect.poll(() => counts[id2] || 0, { timeout: 4000 }).toBe(prefetchedCount + 1);
   });
 
   test('C: panel exposes aria-busy during detail revalidation', async ({ page }) => {

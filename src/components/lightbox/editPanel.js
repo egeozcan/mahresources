@@ -12,6 +12,15 @@ export const editPanelState = {
   editPanelOpen: false,
   resourceDetails: null,
   detailsLoading: false,
+  // Id of the resource whose details could not be loaded. With the display fence in place a
+  // failed fetch leaves nothing paintable, and without this the panel would sit on its loading
+  // placeholder forever — indistinguishable from a slow network, and offering no way out.
+  detailsErrorId: null,
+  // True while a refresh runs BEHIND details that already describe the resource on screen.
+  // Kept apart from detailsLoading, which means "nothing trustworthy is painted yet" and drives
+  // the panel's blocking spinner: a stale-while-revalidate refresh happens on every navigation,
+  // and flashing that overlay over content the user is reading each time would be noise.
+  detailsRevalidating: false,
   detailsCache: new Map(),
   // Ids whose tag details are being prefetched in the background, so fast paging
   // does not stampede duplicate /resource.json requests for the same resource.
@@ -259,9 +268,18 @@ export const editPanelMethods = {
     const cached = this._detailsWrites.has(resourceId) ? null : this.detailsCache.get(resourceId);
     if (cached) {
       this.resourceDetails = cached;
-      // Fast path: use the cache for an instant paint. When forceRefresh is set (a panel
-      // was (re)opened) we still fall through to revalidate against the server so an
-      // out-of-band change made elsewhere is not shown stale forever (BH: L5).
+      // Fast path: use the cache for an instant paint. When forceRefresh is set — every
+      // navigation, and every panel (re)open — we still fall through to revalidate against the
+      // server, so a change made anywhere else (another tab, another session, a background job)
+      // corrects itself within one round-trip instead of being shown stale for the whole
+      // session (BH: L5).
+      //
+      // Note there is deliberately no _syncItemFromDetails here: only a server response is
+      // authoritative enough to re-point an item. The item can be FRESHER than this cache entry
+      // — refreshPageContent's updateItemsFromDOM patches items from a newly rendered page
+      // while the entry keeps whatever hash it was stored with — so syncing from the cache
+      // could roll the media back a version, remount it, and remount it again when the
+      // revalidation below lands.
       if (!forceRefresh) return;
     }
 
@@ -272,7 +290,11 @@ export const editPanelMethods = {
 
     const reqId = ++this._detailsReq;
     const generation = this._detailsGeneration(resourceId);
-    this.detailsLoading = true;
+    // Something trustworthy for this resource is already on screen, so this is a revalidation.
+    if (cached) this.detailsRevalidating = true;
+    else this.detailsLoading = true;
+    // This attempt supersedes any earlier verdict on the same resource.
+    if (this.detailsErrorId === resourceId) this.detailsErrorId = null;
 
     if (this.detailsAborter) {
       this.detailsAborter();
@@ -293,22 +315,29 @@ export const editPanelMethods = {
       // The id check alone is not enough: a write to this same resource can land while the
       // GET is in flight, and this response predates it. Committing it would reinstate the
       // pre-write name/tags and read as the user's edit reverting itself a moment later.
-      if (this.getCurrentItem()?.id === resourceId &&
-          this._mayCommitDetails(resourceId, generation)) {
-        this.resourceDetails = fetchedDetails;
+      if (this._mayCommitDetails(resourceId, generation)) {
+        if (this.getCurrentItem()?.id === resourceId) {
+          this.resourceDetails = fetchedDetails;
+        }
         this.detailsCache.set(resourceId, fetchedDetails);
+        // The item entry is metadata too — and the one the <img> src is built from.
+        this._syncItemFromDetails(fetchedDetails);
       }
       this.detailsAborter = null;
     } catch (err) {
       if (err.name !== 'AbortError') {
         console.error('Failed to fetch resource details:', err);
+        // Only a failure that leaves the panel with nothing to show is worth flagging: when a
+        // revalidation fails behind a painted copy, that copy is still this resource's.
+        if (!this._currentDetails(resourceId)) this.detailsErrorId = resourceId;
         this.announce('Failed to load resource details');
       }
     } finally {
-      // Only the most recent request may clear the loading flag — an earlier aborted
+      // Only the most recent request may clear the loading flags — an earlier aborted
       // request must not turn the spinner off while this newer one is still pending (BH: M2).
       if (reqId === this._detailsReq) {
         this.detailsLoading = false;
+        this.detailsRevalidating = false;
       }
     }
   },
@@ -322,6 +351,85 @@ export const editPanelMethods = {
   // to a server + cache-invalidation path instead of an optimistic in-place update.
   _currentDetails(resourceId) {
     return this.resourceDetails?.ID === resourceId ? this.resourceDetails : null;
+  },
+
+  // The details the UI may PAINT, and the single gate every display site goes through.
+  //
+  // `resourceDetails` deliberately keeps holding the PREVIOUS image while the incoming one
+  // loads (see onResourceChange) — carry-forward and the add/remove decision poll both read
+  // that snapshot — but rendering it means showing one resource's name, size, dimensions, hash
+  // and tags underneath a different resource's picture. Reads go through here so the panel
+  // shows its loading state instead, and the quick slots read neutral, until the details on
+  // hand actually describe what is on screen.
+  displayDetails() {
+    return this._currentDetails(this.getCurrentItem()?.id);
+  },
+
+  // True while the panel is waiting on details it may paint — either a first load or a
+  // revalidation behind already-painted content. Drives aria-busy so assistive tech is told
+  // the panel's values are being checked, without the visual overlay that detailsLoading owns.
+  detailsBusy() {
+    return this.detailsLoading || this.detailsRevalidating;
+  },
+
+  // The current resource has nothing paintable and nothing in flight to change that: the fetch
+  // failed (or the resource is gone). The panel says so and offers a retry instead of showing a
+  // placeholder that will never resolve — or, as it did before the fence, another image's data.
+  detailsFailed() {
+    const currentId = this.getCurrentItem()?.id;
+    return currentId != null && this.detailsErrorId === currentId &&
+      !this.displayDetails() && !this.detailsBusy();
+  },
+
+  retryDetails() {
+    this.detailsErrorId = null;
+    this.fetchResourceDetails(undefined, true);
+    this.fetchSuggestedTags(undefined, true);
+  },
+
+  // Keep the viewer's own item entry in step with the authoritative details for that resource.
+  // The item carries the name in the toolbar, the dimensions readout, and — through `hash` —
+  // the cache-busting `viewUrl` the <img>/<video> src is built from. A version created anywhere
+  // else (a crop in another tab, an uploaded replacement, a plugin action) changes Hash, so
+  // without this the panel would report the new metadata over the OLD bitmap for as long as the
+  // session lasts. No-ops unless something actually changed, so ordinary navigation never
+  // remounts media. `forceMedia` is for an in-place edit that must re-show the spinner even
+  // when the fields happen to compare equal.
+  _syncItemFromDetails(details, { forceMedia = false } = {}) {
+    const id = details?.ID;
+    if (id == null) return false;
+    const idx = this.items.findIndex(i => i.id === id);
+    if (idx === -1) return false;
+
+    const item = this.items[idx];
+    const hash = details.Hash || '';
+    const next = {
+      ...item,
+      hash,
+      viewUrl: `/v1/resource/view?id=${id}${hash ? `&v=${hash}` : ''}`,
+      // Crop/rotate re-encode the image, so the content type can change (e.g. rotate always
+      // re-encodes to JPEG); keep the item in sync.
+      contentType: details.ContentType || item.contentType,
+      name: typeof details.Name === 'string' ? details.Name : item.name,
+      width: details.Width || 0,
+      height: details.Height || 0,
+    };
+
+    const mediaChanged = next.viewUrl !== item.viewUrl || next.contentType !== item.contentType;
+    const changed = mediaChanged || next.name !== item.name ||
+      next.width !== item.width || next.height !== item.height;
+    if (!changed && !forceMedia) return false;
+
+    this.items[idx] = next;
+
+    if ((mediaChanged || forceMedia) && idx === this.currentIndex) {
+      // A different bitmap is coming: zoom and pan are clamped against the one that was on
+      // screen, so drop them and show the spinner until the new one loads.
+      this.resetZoom();
+      this.loading = true;
+      this.scheduleMediaCheck();
+    }
+    return true;
   },
 
   async onResourceChange() {
@@ -344,15 +452,16 @@ export const editPanelMethods = {
     this._snapshotCarryForward();
 
     // Do NOT blank resourceDetails or evict the incoming resource's cache here.
-    // Blanking made every quick-slot color flash neutral on each next/prev
-    // (slotMatchState returns 'none' while resourceDetails is null), and evicting
-    // the entry we are about to need forced a network round-trip per image.
-    // fetchResourceDetails paints instantly on a cache hit (the hit path is fully
-    // synchronous) and, on a miss, holds the prior details visible under aria-busy
-    // until the fetch resolves. Optimistic tag writes keep the cache correct, and
-    // openEditPanel still force-revalidates on explicit (re)open. The post-await id
-    // guard in fetchResourceDetails (BH: H5) prevents cross-resource cache poisoning.
-    await this.fetchResourceDetails();
+    // Blanking would throw away the previous image's snapshot that _snapshotCarryForward
+    // and the decision poll still need, and evicting the entry we are about to need forces
+    // a blocking round-trip per image. Instead this is stale-while-revalidate: the cache
+    // paints instantly (its hit path is fully synchronous) and the forced refresh below
+    // checks it against the server, so a change made outside this viewer corrects itself
+    // within one round-trip rather than persisting for the session. What must never be
+    // painted — the PREVIOUS image's details during a cache miss — is fenced off at the
+    // read sites by displayDetails(), not by nulling the state. The post-await id guard in
+    // fetchResourceDetails (BH: H5) prevents cross-resource cache poisoning.
+    await this.fetchResourceDetails(undefined, true);
 
     if (focusSelector) {
       requestAnimationFrame(() => {
@@ -585,7 +694,8 @@ export const editPanelMethods = {
     }
   },
 
+  // Display-side read: never the previous image's tags (see displayDetails).
   getCurrentTags() {
-    return this.resourceDetails?.Tags || [];
+    return this.displayDetails()?.Tags || [];
   },
 };

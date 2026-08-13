@@ -66,6 +66,21 @@ export function registerLightboxStore(Alpine) {
       };
       window.addEventListener('resize', this._handleViewportResize);
       window.addEventListener('orientationchange', this._handleViewportResize);
+
+      // Details go stale while the viewer sits still: the user edits the same resource on its
+      // page in another tab, a collaborator retags it, a background job re-versions it. Nothing
+      // in the viewer would ever ask again, because nothing navigated. Revalidating whenever
+      // the tab comes back to the front means what is on screen was checked against the server
+      // no earlier than the moment the user returned to it. Cheap: only while a panel that
+      // shows this data is actually open.
+      this._handleDetailsRevalidate = () => {
+        if (document.hidden || !this.isOpen) return;
+        if (!this.editPanelOpen && !this.quickTagPanelOpen) return;
+        this.fetchResourceDetails(undefined, true);
+        this.fetchSuggestedTags(undefined, true);
+      };
+      document.addEventListener('visibilitychange', this._handleDetailsRevalidate);
+      window.addEventListener('focus', this._handleDetailsRevalidate);
     },
 
     destroy() {
@@ -79,6 +94,10 @@ export function registerLightboxStore(Alpine) {
       if (this._handleViewportResize) {
         window.removeEventListener('resize', this._handleViewportResize);
         window.removeEventListener('orientationchange', this._handleViewportResize);
+      }
+      if (this._handleDetailsRevalidate) {
+        document.removeEventListener('visibilitychange', this._handleDetailsRevalidate);
+        window.removeEventListener('focus', this._handleDetailsRevalidate);
       }
       if (this._resizeDebounce) {
         clearTimeout(this._resizeDebounce);

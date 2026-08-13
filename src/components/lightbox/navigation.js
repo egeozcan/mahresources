@@ -351,10 +351,11 @@ export const navigationMethods = {
     this.scheduleMediaCheck();
     this._preloadUpcoming();
 
-    // Restore quick tag panel from localStorage if it was previously open
+    // Restore quick tag panel from localStorage if it was previously open. Forced: whatever
+    // is cached predates this session, and the resource may have been edited since.
     if (this.quickTagPanelOpen) {
-      this.fetchResourceDetails();
-      this.fetchSuggestedTags();
+      this.fetchResourceDetails(undefined, true);
+      this.fetchSuggestedTags(undefined, true);
     }
   },
 
@@ -422,6 +423,10 @@ export const navigationMethods = {
             this.detailsCache.delete(this.detailsCache.keys().next().value);
           }
           this.detailsCache.set(item.id, details);
+          // An upcoming item may have been re-versioned or renamed since the DOM was rendered;
+          // patch it now so arriving there shows the current bitmap and name, not last page
+          // load's. Never the on-screen item, so this cannot disturb what is being viewed.
+          this._syncItemFromDetails(details);
         })
         .catch(() => { /* background prefetch: a real navigation will refetch on demand */ })
         .finally(() => this._detailsInFlight.delete(item.id));
@@ -507,6 +512,15 @@ export const navigationMethods = {
     // leak across sessions; they only grow within a single uninterrupted paging session — BH: L7.)
     this._preloadedUrls.clear();
     this._preloadedImages = [];
+
+    // Detail and suggestion snapshots describe a moment in time, and the next session can be
+    // an hour and a dozen edits later — made on the resource page, in another tab, by a bulk
+    // action or by a background job. Revalidation would correct them a round-trip after they
+    // were painted; dropping them means the next session never paints them at all.
+    // The write-generation maps are deliberately left alone: a write may still be in flight,
+    // and clearing its generation is what would let its stale in-flight GET commit.
+    this.detailsCache.clear();
+    this._suggestedCache.clear();
 
     // A bare .focus() is silently a no-op on a detached node, and the thumbnail
     // that opened the viewer is often gone by now — an in-place crop or rotate

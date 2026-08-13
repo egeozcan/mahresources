@@ -611,9 +611,12 @@ describe('selector rendering adapter and registry integration', () => {
         expect(entityPickerMarkup).not.toContain('@entity-picker-closed.window="selectedResults = []"');
         // The lightbox tag editor routes its external synchronization through the tag-editor
         // profile, which resets on navigation and reconciles same-resource changes per key.
+        // Read through displayDetails(), never the raw resourceDetails: during a navigation
+        // load window the latter still holds the previous image's tags.
         expect(lightboxMarkup).toContain(
-            'x-effect="syncEntityTags($store.lightbox.resourceDetails?.ID, $store.lightbox.resourceDetails?.Tags)"',
+            'x-effect="syncEntityTags($store.lightbox.displayDetails()?.ID, $store.lightbox.displayDetails()?.Tags)"',
         );
+        expect(lightboxMarkup).not.toContain('$store.lightbox.resourceDetails');
         expect(lightboxMarkup).not.toContain('selectedResults = ');
     });
 

@@ -154,36 +154,22 @@ export const cropPanelMethods = {
       return; // resource navigated away and dropped from the list
     }
 
-    const hash = r.Hash || '';
-    const versionParam = hash ? `&v=${hash}` : '';
-    this.items[idx] = {
-      ...this.items[idx],
-      hash,
-      viewUrl: `/v1/resource/view?id=${r.ID}${versionParam}`,
-      // Crop/rotate re-encode the image, so the content type can change (e.g.
-      // rotate always re-encodes to JPEG); keep the item in sync.
-      contentType: r.ContentType || this.items[idx].contentType,
-      width: r.Width || 0,
-      height: r.Height || 0,
-    };
+    // Re-point the item at the new version. forceMedia: the edit produced a new file even in
+    // the rare case where every field compares equal, so the zoom reset and the spinner must
+    // happen regardless — the shared helper takes care of both when this is the current item.
+    this._syncItemFromDetails(r, { forceMedia: true });
 
     // Keep cached/open panel details consistent with the new version, unless another write
     // to this resource landed while the refetch was out — its result is newer than ours.
     const committed = this._settleDetailsCache(targetId, writeGeneration, r);
 
-    // Only touch the viewer if the edited resource is still the one on screen.
-    if (this.currentIndex === idx) {
-      // Only paint the snapshot the cache accepted. If another write landed while this
-      // refetch was out, `r` predates it and showing it would visibly revert that edit;
-      // _endDetailsWrite's convergence refetch supplies the authoritative version instead.
-      if (committed && (this.editPanelOpen || this.quickTagPanelOpen)) {
-        this.resourceDetails = r;
-      }
-      // The image is a different size now — drop any stale zoom/pan and show the
-      // spinner until the new bitmap loads.
-      this.resetZoom();
-      this.loading = true;
-      this.scheduleMediaCheck();
+    // Only paint the snapshot the cache accepted, and only while the edited resource is still
+    // on screen. If another write landed while this refetch was out, `r` predates it and
+    // showing it would visibly revert that edit; _endDetailsWrite's convergence refetch
+    // supplies the authoritative version instead.
+    if (this.currentIndex === idx && committed &&
+        (this.editPanelOpen || this.quickTagPanelOpen)) {
+      this.resourceDetails = r;
     }
 
     // The underlying gallery thumbnail is now stale; refresh it when the

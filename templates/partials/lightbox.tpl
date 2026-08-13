@@ -401,7 +401,7 @@
         x-transition:leave-start="opacity-100 translate-x-0"
         x-transition:leave-end="opacity-0 -translate-x-full"
         data-quick-tag-panel
-        :aria-busy="$store.lightbox.detailsLoading ? 'true' : 'false'"
+        :aria-busy="$store.lightbox.detailsBusy() ? 'true' : 'false'"
         class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:left-0 md:bottom-0 bg-stone-900 md:bg-stone-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
         :class="$store.lightbox.editPanelOpen ? 'md:w-[320px]' : 'md:w-[400px]'"
         @click.stop
@@ -460,14 +460,14 @@
         <!-- Panel content -->
         <div class="p-4 space-y-4">
             <!-- Tag editor (autocompleter) -->
-            <template x-if="$store.lightbox.resourceDetails">
+            <template x-if="$store.lightbox.displayDetails()">
                 <div
                     x-data="tagEditorSelector({
                         usage: 'resource',
-                        selected: [...($store.lightbox.resourceDetails?.Tags || [])],
+                        selected: [...($store.lightbox.displayDetails()?.Tags || [])],
                         association: $store.lightbox.tagAssociationAdapter()
                     })"
-                    x-effect="syncEntityTags($store.lightbox.resourceDetails?.ID, $store.lightbox.resourceDetails?.Tags)"
+                    x-effect="syncEntityTags($store.lightbox.displayDetails()?.ID, $store.lightbox.displayDetails()?.Tags)"
                     class="relative"
                 >
                 <label class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Tags</label>
@@ -582,11 +582,20 @@
                 </div>
                 </div>
             </template>
-            <!-- Tags loading state -->
-            <template x-if="!$store.lightbox.resourceDetails">
+            <!-- Tags placeholder: nothing may be painted for the image on screen yet. Says which
+                 of the two it is, so a failed load does not read as an endless wait. -->
+            <template x-if="!$store.lightbox.displayDetails()">
                 <div class="relative">
                     <label class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Tags</label>
-                    <div class="text-stone-500 text-sm italic">Loading tags...</div>
+                    <div x-show="!$store.lightbox.detailsFailed()" class="text-stone-500 text-sm italic">Loading tags...</div>
+                    <div x-show="$store.lightbox.detailsFailed()" x-cloak class="text-sm">
+                        <p class="text-amber-300">Could not load this image's tags.</p>
+                        <button
+                            type="button"
+                            @click="$store.lightbox.retryDetails()"
+                            class="mt-1.5 px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                        >Retry</button>
+                    </div>
                 </div>
             </template>
 
@@ -860,7 +869,7 @@
         x-transition:leave-start="opacity-100 translate-x-0"
         x-transition:leave-end="opacity-0 translate-x-full"
         data-edit-panel
-        :aria-busy="$store.lightbox.detailsLoading ? 'true' : 'false'"
+        :aria-busy="$store.lightbox.detailsBusy() ? 'true' : 'false'"
         class="fixed md:absolute inset-0 md:inset-auto md:top-0 md:right-0 md:bottom-0 bg-stone-900 md:bg-stone-900/95 md:backdrop-blur-sm text-white overflow-y-auto z-30"
         :class="$store.lightbox.quickTagPanelOpen ? 'md:w-[320px]' : 'md:w-[400px]'"
         @click.stop
@@ -882,7 +891,7 @@
         <!-- Panel content -->
         <div class="p-4">
             <!-- Loading state -->
-            <template x-if="$store.lightbox.detailsLoading && !$store.lightbox.resourceDetails">
+            <template x-if="$store.lightbox.detailsLoading && !$store.lightbox.displayDetails()">
                 <div class="flex items-center justify-center py-12">
                     <svg class="w-8 h-8 animate-spin text-white/50" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -891,8 +900,21 @@
                 </div>
             </template>
 
+            <!-- Failed state: with nothing paintable for this image, the panel says so rather
+                 than rendering an empty shell (and never another image's values). -->
+            <template x-if="$store.lightbox.detailsFailed()">
+                <div class="py-8 text-center space-y-3">
+                    <p class="text-amber-300 text-sm">Could not load this image's details.</p>
+                    <button
+                        type="button"
+                        @click="$store.lightbox.retryDetails()"
+                        class="px-3 py-1.5 rounded bg-stone-800 hover:bg-stone-700 text-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-stone-400"
+                    >Retry</button>
+                </div>
+            </template>
+
             <!-- Info content -->
-            <template x-if="$store.lightbox.resourceDetails">
+            <template x-if="$store.lightbox.displayDetails()">
                 <div class="space-y-5 relative">
                     <!-- Loading overlay when fetching new resource details -->
                     <div
@@ -917,7 +939,7 @@
                         <input
                             type="text"
                             id="lightbox-edit-name"
-                            :value="$store.lightbox.resourceDetails?.Name || ''"
+                            :value="$store.lightbox.displayDetails()?.Name || ''"
                             @blur="$store.lightbox.updateName($event.target.value)"
                             @keydown.enter="$event.target.blur()"
                             @keydown.escape.stop="$event.target.blur()"
@@ -931,7 +953,7 @@
                         <label for="lightbox-edit-description" class="block text-sm font-medium font-mono text-stone-300 mb-1.5">Description</label>
                         <textarea
                             id="lightbox-edit-description"
-                            :value="$store.lightbox.resourceDetails?.Description || ''"
+                            :value="$store.lightbox.displayDetails()?.Description || ''"
                             @blur="$store.lightbox.updateDescription($event.target.value)"
                             @keydown.escape.stop="$event.target.blur()"
                             rows="4"
@@ -944,49 +966,49 @@
                     <section aria-labelledby="lightbox-info-details-heading" class="border-t border-stone-700 pt-4">
                         <h3 id="lightbox-info-details-heading" class="text-sm font-medium font-mono text-stone-300 mb-2">Details</h3>
                         <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
-                            <dt x-show="$store.lightbox.resourceDetails?.FileSize" class="text-stone-400">Size</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.FileSize" class="text-stone-100 tabular-nums" x-text="$store.lightbox.formatBytes($store.lightbox.resourceDetails?.FileSize)"></dd>
+                            <dt x-show="$store.lightbox.displayDetails()?.FileSize" class="text-stone-400">Size</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.FileSize" class="text-stone-100 tabular-nums" x-text="$store.lightbox.formatBytes($store.lightbox.displayDetails()?.FileSize)"></dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.Width && $store.lightbox.resourceDetails?.Height" class="text-stone-400">Dimensions</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.Width && $store.lightbox.resourceDetails?.Height" class="text-stone-100 tabular-nums">
-                                <span x-text="$store.lightbox.resourceDetails?.Width"></span>
+                            <dt x-show="$store.lightbox.displayDetails()?.Width && $store.lightbox.displayDetails()?.Height" class="text-stone-400">Dimensions</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.Width && $store.lightbox.displayDetails()?.Height" class="text-stone-100 tabular-nums">
+                                <span x-text="$store.lightbox.displayDetails()?.Width"></span>
                                 &times;
-                                <span x-text="$store.lightbox.resourceDetails?.Height"></span>
+                                <span x-text="$store.lightbox.displayDetails()?.Height"></span>
                             </dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.ContentType" class="text-stone-400">Type</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.ContentType" class="text-stone-100 font-mono wrap-anywhere" x-text="$store.lightbox.resourceDetails?.ContentType"></dd>
+                            <dt x-show="$store.lightbox.displayDetails()?.ContentType" class="text-stone-400">Type</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.ContentType" class="text-stone-100 font-mono wrap-anywhere" x-text="$store.lightbox.displayDetails()?.ContentType"></dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.CreatedAt" class="text-stone-400">Created</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.CreatedAt" class="text-stone-100" x-text="$store.lightbox.formatDateTime($store.lightbox.resourceDetails?.CreatedAt)"></dd>
+                            <dt x-show="$store.lightbox.displayDetails()?.CreatedAt" class="text-stone-400">Created</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.CreatedAt" class="text-stone-100" x-text="$store.lightbox.formatDateTime($store.lightbox.displayDetails()?.CreatedAt)"></dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.UpdatedAt" class="text-stone-400">Updated</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.UpdatedAt" class="text-stone-100" x-text="$store.lightbox.formatDateTime($store.lightbox.resourceDetails?.UpdatedAt)"></dd>
+                            <dt x-show="$store.lightbox.displayDetails()?.UpdatedAt" class="text-stone-400">Updated</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.UpdatedAt" class="text-stone-100" x-text="$store.lightbox.formatDateTime($store.lightbox.displayDetails()?.UpdatedAt)"></dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.Owner" class="text-stone-400">Owner</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.Owner">
+                            <dt x-show="$store.lightbox.displayDetails()?.Owner" class="text-stone-400">Owner</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.Owner">
                                 <a
-                                    :href="'/group?id=' + ($store.lightbox.resourceDetails?.Owner?.ID || '')"
+                                    :href="'/group?id=' + ($store.lightbox.displayDetails()?.Owner?.ID || '')"
                                     class="text-amber-400 hover:text-amber-300"
-                                    x-text="$store.lightbox.resourceDetails?.Owner?.Name"
+                                    x-text="$store.lightbox.displayDetails()?.Owner?.Name"
                                 ></a>
                             </dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.resourceCategory" class="text-stone-400">Category</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.resourceCategory">
+                            <dt x-show="$store.lightbox.displayDetails()?.resourceCategory" class="text-stone-400">Category</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.resourceCategory">
                                 <a
-                                    :href="'/resourceCategory?id=' + ($store.lightbox.resourceDetails?.resourceCategory?.ID || '')"
+                                    :href="'/resourceCategory?id=' + ($store.lightbox.displayDetails()?.resourceCategory?.ID || '')"
                                     class="text-amber-400 hover:text-amber-300"
-                                    x-text="$store.lightbox.resourceDetails?.resourceCategory?.Name"
+                                    x-text="$store.lightbox.displayDetails()?.resourceCategory?.Name"
                                 ></a>
                             </dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.series" class="text-stone-400">Series</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.series">
+                            <dt x-show="$store.lightbox.displayDetails()?.series" class="text-stone-400">Series</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.series">
                                 <a
-                                    :href="'/series?id=' + ($store.lightbox.resourceDetails?.series?.ID || '')"
+                                    :href="'/series?id=' + ($store.lightbox.displayDetails()?.series?.ID || '')"
                                     class="text-amber-400 hover:text-amber-300"
-                                    x-text="$store.lightbox.resourceDetails?.series?.Name"
+                                    x-text="$store.lightbox.displayDetails()?.series?.Name"
                                 ></a>
                             </dd>
                         </dl>
@@ -994,28 +1016,28 @@
                         <!-- Relationship counts (see full resource page for details) -->
                         <div
                             class="mt-3 flex flex-wrap gap-2 text-xs"
-                            x-show="($store.lightbox.resourceDetails?.Tags?.length || 0) + ($store.lightbox.resourceDetails?.Groups?.length || 0) + ($store.lightbox.resourceDetails?.Notes?.length || 0) > 0"
+                            x-show="($store.lightbox.displayDetails()?.Tags?.length || 0) + ($store.lightbox.displayDetails()?.Groups?.length || 0) + ($store.lightbox.displayDetails()?.Notes?.length || 0) > 0"
                         >
                             <span
-                                x-show="$store.lightbox.resourceDetails?.Tags?.length"
+                                x-show="$store.lightbox.displayDetails()?.Tags?.length"
                                 class="inline-flex items-center gap-1 bg-stone-800 border border-stone-700 rounded px-2 py-0.5"
                             >
                                 <span class="text-stone-400">Tags</span>
-                                <span class="text-stone-100 tabular-nums" x-text="$store.lightbox.resourceDetails?.Tags?.length || 0"></span>
+                                <span class="text-stone-100 tabular-nums" x-text="$store.lightbox.displayDetails()?.Tags?.length || 0"></span>
                             </span>
                             <span
-                                x-show="$store.lightbox.resourceDetails?.Groups?.length"
+                                x-show="$store.lightbox.displayDetails()?.Groups?.length"
                                 class="inline-flex items-center gap-1 bg-stone-800 border border-stone-700 rounded px-2 py-0.5"
                             >
                                 <span class="text-stone-400">Groups</span>
-                                <span class="text-stone-100 tabular-nums" x-text="$store.lightbox.resourceDetails?.Groups?.length || 0"></span>
+                                <span class="text-stone-100 tabular-nums" x-text="$store.lightbox.displayDetails()?.Groups?.length || 0"></span>
                             </span>
                             <span
-                                x-show="$store.lightbox.resourceDetails?.Notes?.length"
+                                x-show="$store.lightbox.displayDetails()?.Notes?.length"
                                 class="inline-flex items-center gap-1 bg-stone-800 border border-stone-700 rounded px-2 py-0.5"
                             >
                                 <span class="text-stone-400">Notes</span>
-                                <span class="text-stone-100 tabular-nums" x-text="$store.lightbox.resourceDetails?.Notes?.length || 0"></span>
+                                <span class="text-stone-100 tabular-nums" x-text="$store.lightbox.displayDetails()?.Notes?.length || 0"></span>
                             </span>
                         </div>
 
@@ -1023,10 +1045,10 @@
                         information management application designed to run on private/internal networks
                         with no authentication layer. All users are trusted, and CustomSidebar is an
                         intentional extension point for admin-authored HTML templates.{% endcomment %}
-                        <template x-if="$store.lightbox.resourceDetails?.resourceCategory?.CustomSidebar">
+                        <template x-if="$store.lightbox.displayDetails()?.resourceCategory?.CustomSidebar">
                             <div
-                                x-data="{ entity: $store.lightbox.resourceDetails }"
-                                x-html="$store.lightbox.resourceDetails.resourceCategory.CustomSidebar"
+                                x-data="{ entity: $store.lightbox.displayDetails() }"
+                                x-html="$store.lightbox.displayDetails()?.resourceCategory?.CustomSidebar"
                                 class="mt-3 text-sm text-stone-300 font-sans"
                             ></div>
                         </template>
@@ -1041,32 +1063,32 @@
                             <span>Technical</span>
                         </summary>
                         <dl class="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs font-mono">
-                            <dt x-show="$store.lightbox.resourceDetails?.ID" class="text-stone-400">ID</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.ID" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.ID"></dd>
+                            <dt x-show="$store.lightbox.displayDetails()?.ID" class="text-stone-400">ID</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.ID" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.displayDetails()?.ID"></dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.guid" class="text-stone-400">GUID</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.guid" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.guid"></dd>
+                            <dt x-show="$store.lightbox.displayDetails()?.guid" class="text-stone-400">GUID</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.guid" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.displayDetails()?.guid"></dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.Hash" class="text-stone-400" x-text="$store.lightbox.resourceDetails?.HashType || 'Hash'"></dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.Hash" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.Hash"></dd>
+                            <dt x-show="$store.lightbox.displayDetails()?.Hash" class="text-stone-400" x-text="$store.lightbox.displayDetails()?.HashType || 'Hash'"></dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.Hash" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.displayDetails()?.Hash"></dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.OriginalName" class="text-stone-400">Original</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.OriginalName" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.OriginalName"></dd>
+                            <dt x-show="$store.lightbox.displayDetails()?.OriginalName" class="text-stone-400">Original</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.OriginalName" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.displayDetails()?.OriginalName"></dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.OriginalLocation" class="text-stone-400">Imported from</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.OriginalLocation" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.OriginalLocation"></dd>
+                            <dt x-show="$store.lightbox.displayDetails()?.OriginalLocation" class="text-stone-400">Imported from</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.OriginalLocation" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.displayDetails()?.OriginalLocation"></dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.Location" class="text-stone-400">Location</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.Location" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.Location"></dd>
+                            <dt x-show="$store.lightbox.displayDetails()?.Location" class="text-stone-400">Location</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.Location" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.displayDetails()?.Location"></dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.StorageLocation" class="text-stone-400">Storage</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.StorageLocation" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.StorageLocation"></dd>
+                            <dt x-show="$store.lightbox.displayDetails()?.StorageLocation" class="text-stone-400">Storage</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.StorageLocation" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.displayDetails()?.StorageLocation"></dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.imageHash?.DHash" class="text-stone-400">dHash</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.imageHash?.DHash" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.imageHash?.DHash"></dd>
+                            <dt x-show="$store.lightbox.displayDetails()?.imageHash?.DHash" class="text-stone-400">dHash</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.imageHash?.DHash" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.displayDetails()?.imageHash?.DHash"></dd>
 
-                            <dt x-show="$store.lightbox.resourceDetails?.imageHash?.AHash" class="text-stone-400">aHash</dt>
-                            <dd x-show="$store.lightbox.resourceDetails?.imageHash?.AHash" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.resourceDetails?.imageHash?.AHash"></dd>
+                            <dt x-show="$store.lightbox.displayDetails()?.imageHash?.AHash" class="text-stone-400">aHash</dt>
+                            <dd x-show="$store.lightbox.displayDetails()?.imageHash?.AHash" class="text-stone-100 wrap-anywhere" x-text="$store.lightbox.displayDetails()?.imageHash?.AHash"></dd>
                         </dl>
                     </details>
 

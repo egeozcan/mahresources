@@ -422,15 +422,19 @@ export const quickTagPanelMethods = {
 
   // ==================== Tag Toggle ====================
 
+  // Reads the details ONLY when they describe the image on screen. During a cache-miss
+  // navigation window `resourceDetails` still holds the previous image, and answering from it
+  // paints that image's slot colors — and answers the add/remove question — about a resource
+  // the user is not looking at. Neutral is the honest answer until the details land.
   isTagOnResource(tagId) {
-    return (this.resourceDetails?.Tags || []).some(t => t.ID === tagId);
+    return (this.displayDetails()?.Tags || []).some(t => t.ID === tagId);
   },
 
   slotMatchState(index) {
     const slots = this.getActiveTabSlots();
     const slot = slots[index];
     if (!slot) return 'none';
-    if (!this.resourceDetails) return 'none';
+    if (!this.displayDetails()) return 'none';
 
     // Normalize: RECENT entries are single {id, name, ts}, QUICK entries are arrays
     const tags = Array.isArray(slot) ? slot : [slot];
@@ -646,6 +650,8 @@ export const quickTagPanelMethods = {
   // the top of onResourceChange (before the refetch) while resourceDetails still holds the
   // just-left image. Only overwrites when the left image actually had tags, so repeat keeps
   // working across an interleaved untagged image.
+  // Reads the RAW resourceDetails on purpose — currentIndex has already advanced, so
+  // displayDetails() would be null here and there would be nothing to carry forward.
   _snapshotCarryForward() {
     if (this.resourceDetails?.Tags?.length) {
       this._carryForwardTags = this.resourceDetails.Tags.map(t => ({ ID: t.ID, Name: t.Name }));
@@ -749,11 +755,16 @@ export const quickTagPanelMethods = {
       this.expandedSlotIndex = null;
       this._cancelLongPress();
     }
+    // Deliberately NOT forced: onResourceChange has just awaited its own forced fetch, so the
+    // cache entry this paints from is the one that fetch just revalidated. Forcing here would
+    // fire a second request that the shared detailsAborter would let abort the first.
     this.fetchResourceDetails();
     // Clear immediately so the row never shows the previous image's chips while
     // the new ones load, then refetch for the resource we navigated to (Tier 3).
+    // Forced: suggestions are derived from the tag sets of similar resources, so a cached row
+    // can suggest a tag the resource already has, or miss one it should.
     this.suggestedTags = [];
-    this.fetchSuggestedTags();
+    this.fetchSuggestedTags(undefined, true);
   },
 
   async focusTagEditor() {
