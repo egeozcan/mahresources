@@ -1,3 +1,139 @@
+# fal.ai plugin: add the models fal shipped since the last batch (2026-08-14)
+
+The plugin's model list was last extended on 2026-06-22 (`311ae7ae`). Its catalog
+snapshot is older than that: the newest endpoint it knows is `fal-ai/nano-banana-2`
+(published 2026-02-26). Every candidate below was taken from fal's own model API
+(`fal.ai/api/models?sort=newest`, which carries `publishedAt`), and every payload
+was written against the endpoint's live OpenAPI input schema
+(`fal.ai/api/openapi/queue/openapi.json?endpoint_id=…`) — no param by analogy.
+
+## Added
+
+- [x] **Generate (text-to-image)** — page had 4 models, all Google. Add:
+      Nano Banana Pro (`fal-ai/nano-banana-pro`), GPT Image 2 (`openai/gpt-image-2`),
+      Seedream 5.0 Pro (`bytedance/seedream/v5/pro/text-to-image`, 2026-07-08),
+      Grok Imagine Image 2.0 (`xai/grok-imagine-image/v2.0/text-to-image`, 2026-08-11).
+- [x] **AI Edit** — same four models' edit endpoints. All take `image_urls` + `prompt`,
+      so they join the existing multi-image path and the `extra_images` picker.
+- [x] **Upscale** — Crystal Upscaler (`clarityai/crystal-upscaler`), Clarity AI's
+      successor to the `clarity` default, portrait/face-focused. Plus a *Seamless
+      Tiling* toggle on the existing SeedVR model, which switches to
+      `fal-ai/seedvr/upscale/image/seamless` (2026-03-23).
+
+Deliberately **not** added: `bytedance/seedream/v5/pro/layerize` (returns 2–17 layer
+files; the plugin's result path takes a single image URL), `fal-ai/phota/enhance`
+(overlaps Crystal, and its one distinguishing param `profile_ids` refers to identities
+the plugin has no way to enrol), and the video models (Flux 3, Seedance 2.5, MiniMax
+H3, Kling V3) — this plugin is image-only.
+
+Nothing was removed and no default changed.
+
+## The schemas diverge, so the payloads must
+
+The Generate page sends one shared form (prompt / resolution / aspect ratio / safety
+tolerance) to every model, and the four new ones do not accept that shape:
+
+| model | aspect ratio | resolution | safety |
+|---|---|---|---|
+| `nanobanana2` | 14-value enum | `0.5K…4K` | `safety_tolerance` `"1".."6"` |
+| `nanobananapro` | 11-value enum | `1K/2K/4K` — **no 0.5K** | `safety_tolerance` |
+| `imagen4`, `imagen4_ultra` | **only** `1:1 16:9 9:16 4:3 3:4` | `1K/2K` | `safety_tolerance` |
+| `imagen4_fast` | same 5 | *(absent)* | `safety_tolerance` |
+| `gptimage2` | *(absent — `image_size` enum)* | *(absent)* | *(absent — `quality`)* |
+| `seedream5` | *(absent — `image_size` enum)* | *(absent)* | `enable_safety_checker` bool |
+| `grok2` | 14-value enum, own shape | `1k/2k` **lowercase** | *(absent — `quality`)* |
+
+- [x] Replace the handler's `if model == …` payload chain with a `GENERATE_MODELS`
+      table: one entry per model owning its endpoint, its label, and a `build` that
+      maps the shared controls onto its own schema. A field the schema does not
+      declare is never sent.
+- [x] Fixes a live bug on the way: the form offers `3:2` and `2:3`, which are not in
+      Imagen 4's `aspect_ratio` enum — picking either sends fal an invalid enum today.
+      The Imagen 4 builder now maps them to the closest supported ratio.
+
+## Touch list
+
+- [x] `plugins/fal-ai/plugin.lua`: `FAL_ENDPOINTS`, `build_request` branches,
+      action `params` (+ `show_when`), `extra_images` model list, `GENERATE_MODELS`,
+      `generate_form()` options, `mah.doc` attrs/examples, `plugin.version` → 1.1.0
+- [x] `docs-site/docs/features/built-in-plugins.md`: the three per-action model
+      bullets and the Generate Image paragraph name every model explicitly
+- [x] `e2e/test-plugins/fal-ai/plugin.lua`: **left alone.** It is a frozen fixture —
+      the last model batch (`311ae7ae`) did not sync it either, and the CLI plugin
+      specs assert on plugin loading, not on this model list.
+
+## Verification
+
+- [x] Lua parses; plugin loads in an ephemeral server with no error in `/logs`
+- [x] Registered actions/params render (plugin action metadata over the API)
+- [x] Go unit tests + CLI E2E
+- [x] **No live fal.ai calls** — they cost money and the key is the user's. Payload
+      correctness rests on the fetched schemas, not on a round trip.
+
+## Review
+
+Shipped as planned: 4 models added to AI Edit and to Generate, 1 upscaler plus a
+SeedVR variant toggle, `GENERATE_MODELS` replacing the payload chain. `plugin.lua`
+is v1.1.0.
+
+**Verified against the live schemas, not by eye.** Two scripted sweeps over
+`fal.ai/api/openapi/queue/openapi.json`: every one of the plugin's 34 endpoint ids
+resolves (so nothing it already shipped has been withdrawn either), every payload
+key it sends is declared by that endpoint's input schema, and every option value it
+can send is a member of that field's enum.
+
+The enum sweep found a real defect in this change before it shipped: the seamless
+SeedVR endpoint's `output_format` enum is `jpeg|png|webp`, but the plain endpoint
+takes `jpg` — and `jpg` is this action's default. Ticking **Seamless Tiling** would
+have 422'd on a default form. The seedvr branch now rewrites `jpg` to `jpeg` when
+the seamless endpoint is selected.
+
+**Two deliberate changes to models that were already here**, both from the shared
+Generate form sending values Imagen 4 does not accept:
+
+- Aspect ratio `3:2` / `2:3` were sent verbatim to Imagen 4, whose enum has neither.
+  That is a 422 today; they now snap to `4:3` / `3:4`.
+- Resolution `4K` fell into an `else` that sent `1K`. It now sends `2K`, the model's
+  maximum — nearest rather than floor.
+
+**Tests.** `plugin_system/bundled_plugins_test.go` is new: nothing loaded the
+shipped `plugins/` directory, and `NewPluginManager` skips a plugin whose Lua fails
+to parse with only a log line, so a syntax error here shipped silently. It asserts
+every bundled plugin discovers and enables, that every model in a `model` selector
+has at least one `show_when`-gated param, and that the Generate form lists all eight
+models with `nanobanana2` still first. Confirmed non-vacuous by adding a bogus model
+option and watching it fail.
+
+Go unit 37/37 packages, Postgres-tagged `./mrql` + `./server/api_tests`, and E2E
+browser + CLI (1973 passed; one flaky `ws10-global-*` chip-width regression test,
+unrelated, green on retry).
+
+No round trip to fal.ai was made — a live call spends the user's key and their money.
+
+### pi review (gpt-5.6-sol:high), and what came of it
+
+- **Grok's 3-image ceiling was documented rather than handled.** The `extra_images`
+  picker's `max` is one number shared by every model, so it cannot hold Grok to its
+  own limit. Selecting 4–9 images left fal.ai to reject the request opaquely. The
+  grok2 branch now fails with a message naming the count.
+- **The Generate page bypasses action-param validation**, and the builders hand
+  several submitted values straight to fal.ai — so a hand-crafted POST (not anything
+  the form can produce) could start a job that can only fail, e.g. `aspect_ratio=auto`
+  to a Grok text-to-image endpoint whose enum has no `auto`. All three shared controls
+  are now clamped to the form's own option lists before a builder sees them.
+- **A `mah.doc` line listing which models drop `resolution` omitted `imagen4_fast`**,
+  which the docs-site table got right. Fixed.
+- **Fair limitation, not fixed:** no test executes the `build()` functions or
+  `build_request`'s routing. Both are plugin-file locals, unreachable from Go without
+  promoting them to globals, and reaching them through the action handler requires a
+  DB and a live fal.ai. What the payloads actually emit is covered instead by the
+  schema sweeps above, which check against fal's real contract rather than against my
+  expectation of it. The residual gap is a wiring slip (a builder pointed at the wrong
+  endpoint), which the endpoint-resolution sweep does not catch.
+- **One pi finding was wrong:** it read `TestFalAIPluginRegistersModels` as permitting
+  extra model options. The test compares option-list length, which is exactly how the
+  deliberate "bogus model" check failed earlier.
+
 # /downloads adopts the shared list-page shape (2026-08-13)
 
 The page was built as a bespoke `<table>` with its own header checkbox, its own

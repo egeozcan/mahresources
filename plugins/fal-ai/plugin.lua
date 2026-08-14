@@ -3,7 +3,7 @@
 
 plugin = {
     name = "fal-ai",
-    version = "1.0.0",
+    version = "1.1.0",
     description = "AI-powered image processing using fal.ai - colorize, upscale, restore, AI edit, and vectorize.",
     settings = {
         { name = "api_key", type = "password", label = "FAL.AI API Key" },
@@ -14,9 +14,11 @@ plugin = {
 local FAL_ENDPOINTS = {
     colorize = "fal-ai/ddcolor",
     clarity = "fal-ai/clarity-upscaler",
+    crystal = "clarityai/crystal-upscaler",
     esrgan = "fal-ai/esrgan",
     creative = "fal-ai/creative-upscaler",
     seedvr = "fal-ai/seedvr/upscale/image",
+    seedvr_seamless = "fal-ai/seedvr/upscale/image/seamless",
     bria_creative = "bria/upscale/creative",
     topaz = "fal-ai/topaz/upscale/image",
     restore = "fal-ai/image-apps-v2/photo-restoration",
@@ -31,8 +33,16 @@ local FAL_ENDPOINTS = {
     flux2pro = "fal-ai/flux-2-pro/edit",
     flux1dev = "fal-ai/flux/dev/image-to-image",
     nanobanana2 = "fal-ai/nano-banana-2/edit",
+    nanobananapro = "fal-ai/nano-banana-pro/edit",
+    gptimage2 = "openai/gpt-image-2/edit",
+    seedream5 = "bytedance/seedream/v5/pro/edit",
+    grok2 = "xai/grok-imagine-image/v2.0/edit",
     vectorize = "fal-ai/recraft/vectorize",
     nanobanana2_generate = "fal-ai/nano-banana-2",
+    nanobananapro_generate = "fal-ai/nano-banana-pro",
+    gptimage2_generate = "openai/gpt-image-2",
+    seedream5_generate = "bytedance/seedream/v5/pro/text-to-image",
+    grok2_generate = "xai/grok-imagine-image/v2.0/text-to-image",
     imagen4 = "fal-ai/imagen4/preview",
     imagen4_fast = "fal-ai/imagen4/preview/fast",
     imagen4_ultra = "fal-ai/imagen4/preview/ultra",
@@ -138,6 +148,17 @@ local function apply_bool(payload, key, val)
     if val ~= nil then payload[key] = (val == "true" or val == true) end
 end
 
+-- The image_urls list every multi-image edit model takes. The extra_images picker
+-- defaults to the trigger resource, so it normally already contains the source;
+-- when it was cleared, fall back to the source alone.
+local function edit_image_urls(data_uri, extra_data_uris)
+    local urls = extra_data_uris or {}
+    if #urls == 0 then
+        return {data_uri}
+    end
+    return urls
+end
+
 -- Build API request payload based on action and options.
 -- resource_id is used by actions that need to look up source-image properties
 -- (e.g. restore auto-detects the aspect_ratio from the source's dimensions).
@@ -170,15 +191,36 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
             mah.log("info", "[fal.ai] build_request: using Creative Upscaler, scale=" .. tostring(payload.scale))
             return FAL_ENDPOINTS.creative, payload
 
+        elseif model == "crystal" then
+            -- Crystal Upscaler: Clarity AI's successor to clarity-upscaler, tuned
+            -- for facial detail and portrait photography. Preserves aspect ratio
+            -- (uniform scale_factor). `creativity` 0 is a faithful upscale; higher
+            -- values let the model invent detail.
+            local payload = {image_url = data_uri}
+            apply_num(payload, "creativity", params.crystal_creativity)
+            apply_num(payload, "scale_factor", params.crystal_scale_factor)
+            apply_str(payload, "output_format", params.crystal_output_format)
+            mah.log("info", "[fal.ai] build_request: using Crystal Upscaler, scale=" .. tostring(payload.scale_factor) .. ", creativity=" .. tostring(payload.creativity))
+            return FAL_ENDPOINTS.crystal, payload
+
         elseif model == "seedvr" then
+            -- The `seamless` sibling endpoint tiles without visible seams and takes
+            -- the same input schema with one exception: its output_format enum
+            -- spells JPEG "jpeg", where the plain endpoint — and this action's
+            -- default — says "jpg". Sending "jpg" there is a 422.
+            local seamless = (params.seedvr_seamless == "true" or params.seedvr_seamless == true)
+            local endpoint = seamless and FAL_ENDPOINTS.seedvr_seamless or FAL_ENDPOINTS.seedvr
             local payload = {image_url = data_uri}
             apply_str(payload, "upscale_mode", params.seedvr_upscale_mode)
             apply_num(payload, "upscale_factor", params.seedvr_upscale_factor)
             apply_str(payload, "target_resolution", params.seedvr_target_resolution)
             apply_num(payload, "noise_scale", params.seedvr_noise_scale)
             apply_str(payload, "output_format", params.seedvr_output_format)
-            mah.log("info", "[fal.ai] build_request: using SeedVR Upscaler, mode=" .. tostring(payload.upscale_mode))
-            return FAL_ENDPOINTS.seedvr, payload
+            if seamless and payload.output_format == "jpg" then
+                payload.output_format = "jpeg"
+            end
+            mah.log("info", "[fal.ai] build_request: using SeedVR Upscaler, mode=" .. tostring(payload.upscale_mode) .. ", seamless=" .. tostring(seamless))
+            return endpoint, payload
 
         elseif model == "bria_creative" then
             local payload = {image_url = data_uri}
@@ -318,10 +360,7 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
 
         elseif model == "nanobanana2" then
             -- NanoBanana2ImageToImageInput.safety_tolerance is a string enum '1'..'6', not a number.
-            local image_urls = extra_data_uris or {}
-            if #image_urls == 0 then
-                image_urls = {data_uri}
-            end
+            local image_urls = edit_image_urls(data_uri, extra_data_uris)
             local payload = {
                 image_urls = image_urls,
                 prompt = prompt,
@@ -333,15 +372,82 @@ local function build_request(action_id, data_uri, params, resource_id, extra_dat
             mah.log("info", "[fal.ai] build_request: nanobanana2 edit mode, image_count=" .. #image_urls .. ", aspect=" .. tostring(payload.aspect_ratio) .. ", res=" .. tostring(payload.resolution) .. ", safety=" .. tostring(payload.safety_tolerance))
             return FAL_ENDPOINTS.nanobanana2, payload
 
+        elseif model == "nanobananapro" then
+            -- NanoBananaProEditInput: same family as nanobanana2, but its
+            -- aspect_ratio enum drops the extreme 4:1/1:4/8:1/1:8 panoramas and
+            -- its resolution enum has no 0.5K.
+            local image_urls = edit_image_urls(data_uri, extra_data_uris)
+            local payload = {
+                image_urls = image_urls,
+                prompt = prompt,
+            }
+            apply_str(payload, "aspect_ratio", params.nanobananapro_aspect_ratio)
+            apply_str(payload, "resolution", params.nanobananapro_resolution)
+            apply_str(payload, "output_format", params.nanobananapro_output_format)
+            apply_str(payload, "safety_tolerance", params.nanobananapro_safety_tolerance)
+            mah.log("info", "[fal.ai] build_request: nanobananapro edit mode, image_count=" .. #image_urls .. ", aspect=" .. tostring(payload.aspect_ratio) .. ", res=" .. tostring(payload.resolution) .. ", safety=" .. tostring(payload.safety_tolerance))
+            return FAL_ENDPOINTS.nanobananapro, payload
+
+        elseif model == "gptimage2" then
+            -- GptImage2EditInput sizes the output with an image_size enum (no
+            -- aspect_ratio / resolution) and has no safety_tolerance; `quality`
+            -- is the cost/detail dial. Accepts up to 16 reference images.
+            local image_urls = edit_image_urls(data_uri, extra_data_uris)
+            local payload = {
+                image_urls = image_urls,
+                prompt = prompt,
+            }
+            apply_str(payload, "image_size", params.gptimage2_image_size)
+            apply_str(payload, "quality", params.gptimage2_quality)
+            apply_str(payload, "output_format", params.gptimage2_output_format)
+            mah.log("info", "[fal.ai] build_request: gptimage2 edit mode, image_count=" .. #image_urls .. ", size=" .. tostring(payload.image_size) .. ", quality=" .. tostring(payload.quality))
+            return FAL_ENDPOINTS.gptimage2, payload
+
+        elseif model == "seedream5" then
+            -- SeedreamV5ProEditInput: image_size enum (its auto_1K / auto_2K keep
+            -- the source's ratio and only set the target area), output_format is
+            -- jpeg|png only, and the safety switch is a boolean, not a tolerance.
+            -- Uses the last 10 images if more are sent.
+            local image_urls = edit_image_urls(data_uri, extra_data_uris)
+            local payload = {
+                image_urls = image_urls,
+                prompt = prompt,
+            }
+            apply_str(payload, "image_size", params.seedream5_image_size)
+            apply_str(payload, "output_format", params.seedream5_output_format)
+            apply_bool(payload, "enable_safety_checker", params.seedream5_enable_safety_checker)
+            mah.log("info", "[fal.ai] build_request: seedream5 edit mode, image_count=" .. #image_urls .. ", size=" .. tostring(payload.image_size) .. ", safety_checker=" .. tostring(payload.enable_safety_checker))
+            return FAL_ENDPOINTS.seedream5, payload
+
+        elseif model == "grok2" then
+            -- GrokImagineImageV20EditInput: its own aspect_ratio enum (2:1, 20:9,
+            -- 19.5:9 … 1:2 — no 21:9 / 5:4 / 4:5), lowercase '1k'/'2k' resolution,
+            -- and a low|medium quality dial in place of a safety tolerance.
+            local image_urls = edit_image_urls(data_uri, extra_data_uris)
+            -- The picker's max is a single number shared by every model, so it
+            -- cannot hold this model to its own ceiling of 3. Say so plainly
+            -- rather than letting fal.ai reject the request opaquely.
+            if #image_urls > 3 then
+                error("Grok Imagine 2.0 accepts at most 3 input images, but "
+                    .. #image_urls .. " were sent. Remove some from Additional Images.")
+            end
+            local payload = {
+                image_urls = image_urls,
+                prompt = prompt,
+            }
+            apply_str(payload, "aspect_ratio", params.grok2_aspect_ratio)
+            apply_str(payload, "resolution", params.grok2_resolution)
+            apply_str(payload, "quality", params.grok2_quality)
+            apply_str(payload, "output_format", params.grok2_output_format)
+            mah.log("info", "[fal.ai] build_request: grok2 edit mode, image_count=" .. #image_urls .. ", aspect=" .. tostring(payload.aspect_ratio) .. ", res=" .. tostring(payload.resolution) .. ", quality=" .. tostring(payload.quality))
+            return FAL_ENDPOINTS.grok2, payload
+
         else
             -- flux2 turbo / flux2pro: image_urls + prompt. Schemas diverge:
             --   Flux2TurboEditImageInput  has guidance_scale (number) but NO safety_tolerance.
             --   Flux2ProImageEditInput    has safety_tolerance (string enum '1'..'5') but NO guidance_scale.
             local endpoint = FAL_ENDPOINTS[model] or FAL_ENDPOINTS.flux2
-            local image_urls = extra_data_uris or {}
-            if #image_urls == 0 then
-                image_urls = {data_uri}
-            end
+            local image_urls = edit_image_urls(data_uri, extra_data_uris)
             local payload = {
                 image_urls = image_urls,
                 prompt = prompt,
@@ -598,7 +704,7 @@ local function process_image(resource_id, action_id, params, api_key, job_id)
         end
     end
 
-    -- Build the full image-URI list for multi-image actions (edit: flux2, flux2pro, nanobanana2).
+    -- Build the full image-URI list for multi-image actions (every edit model except flux1dev).
     -- extra_images uses default="trigger" so the frontend prefills the source resource; the handler
     -- iterates that list directly (no re-prepending). When show_when hides the param (e.g. flux1dev
     -- or non-edit actions), params.extra_images is nil and we fall back to source-only.
@@ -747,6 +853,197 @@ local OUTPUT_MODE_PARAM = {
     default = "version", options = {"version", "clone"},
 }
 
+-- The Generate form's aspect-ratio control mapped onto the `image_size` enum used
+-- by the text-to-image models that have no aspect_ratio field at all. 3:2 and 2:3
+-- have no exact member, so they take the closest landscape / portrait size.
+local GENERATE_IMAGE_SIZE = {
+    ["1:1"]  = "square_hd",
+    ["16:9"] = "landscape_16_9",
+    ["4:3"]  = "landscape_4_3",
+    ["3:2"]  = "landscape_4_3",
+    ["9:16"] = "portrait_16_9",
+    ["3:4"]  = "portrait_4_3",
+    ["2:3"]  = "portrait_4_3",
+}
+
+-- Imagen 4's aspect_ratio enum is only {1:1, 16:9, 9:16, 4:3, 3:4}, but the shared
+-- form offers 3:2 and 2:3 as well — sending either is a 422 from fal.ai. Snap them
+-- to the closest member instead.
+local IMAGEN4_ASPECT = {
+    ["3:2"] = "4:3",
+    ["2:3"] = "3:4",
+}
+
+local RESOLUTION_RANK = {["0.5K"] = 1, ["1K"] = 2, ["2K"] = 3, ["4K"] = 4}
+
+-- Snap the form's resolution to the nearest member of the enum a given model
+-- accepts, so asking a 2K-max model for 4K yields 2K rather than its floor.
+local function nearest_resolution(resolution, allowed)
+    local want = RESOLUTION_RANK[resolution] or RESOLUTION_RANK["1K"]
+    local best, best_diff = allowed[1], math.huge
+    for _, r in ipairs(allowed) do
+        local d = math.abs(RESOLUTION_RANK[r] - want)
+        if d < best_diff then
+            best, best_diff = r, d
+        end
+    end
+    return best
+end
+
+-- Text-to-image models offered by the Generate page. The page renders one shared
+-- form (prompt / resolution / aspect ratio / safety tolerance), but the schemas
+-- behind it diverge: some models have no aspect_ratio and size their output with
+-- an image_size enum, some have no resolution or a differently-cased one, and the
+-- safety switch is a string tolerance on one model and a boolean on another. Each
+-- entry therefore owns its endpoint and maps the shared controls onto its own
+-- schema — a field the schema does not declare is never sent.
+--
+-- Order matters: the first entry is the form's default selection.
+local GENERATE_MODELS = {
+    {
+        id = "nanobanana2", label = "Nano Banana 2",
+        endpoint = FAL_ENDPOINTS.nanobanana2_generate,
+        build = function(o)
+            return {
+                prompt = o.prompt,
+                aspect_ratio = o.aspect_ratio,
+                resolution = o.resolution,
+                safety_tolerance = o.safety_tolerance,
+                output_format = "jpeg",
+            }
+        end,
+    },
+    {
+        id = "nanobananapro", label = "Nano Banana Pro",
+        endpoint = FAL_ENDPOINTS.nanobananapro_generate,
+        build = function(o)
+            -- Same family as Nano Banana 2, but its resolution enum has no 0.5K.
+            return {
+                prompt = o.prompt,
+                aspect_ratio = o.aspect_ratio,
+                resolution = nearest_resolution(o.resolution, {"1K", "2K", "4K"}),
+                safety_tolerance = o.safety_tolerance,
+                output_format = "jpeg",
+            }
+        end,
+    },
+    {
+        id = "gptimage2", label = "GPT Image 2",
+        endpoint = FAL_ENDPOINTS.gptimage2_generate,
+        build = function(o)
+            -- No aspect_ratio, resolution or safety_tolerance in this schema;
+            -- `quality` (default high) is the detail/cost dial.
+            return {
+                prompt = o.prompt,
+                image_size = GENERATE_IMAGE_SIZE[o.aspect_ratio] or "auto",
+                output_format = "jpeg",
+            }
+        end,
+    },
+    {
+        id = "seedream5", label = "Seedream 5.0 Pro",
+        endpoint = FAL_ENDPOINTS.seedream5_generate,
+        build = function(o)
+            -- Safety here is a boolean, not a tolerance: treat only the form's two
+            -- strictest settings as "leave the checker on".
+            return {
+                prompt = o.prompt,
+                image_size = GENERATE_IMAGE_SIZE[o.aspect_ratio] or "auto_2K",
+                enable_safety_checker = (tonumber(o.safety_tolerance) or 6) <= 2,
+                output_format = "jpeg",
+            }
+        end,
+    },
+    {
+        id = "grok2", label = "Grok Imagine Image 2.0",
+        endpoint = FAL_ENDPOINTS.grok2_generate,
+        build = function(o)
+            -- Lowercase resolution enum capped at 2k, and no safety_tolerance.
+            return {
+                prompt = o.prompt,
+                aspect_ratio = o.aspect_ratio,
+                resolution = nearest_resolution(o.resolution, {"1K", "2K"}):lower(),
+                output_format = "jpeg",
+            }
+        end,
+    },
+    {
+        id = "imagen4", label = "Imagen 4",
+        endpoint = FAL_ENDPOINTS.imagen4,
+        build = function(o)
+            return {
+                prompt = o.prompt,
+                aspect_ratio = IMAGEN4_ASPECT[o.aspect_ratio] or o.aspect_ratio,
+                resolution = nearest_resolution(o.resolution, {"1K", "2K"}),
+                safety_tolerance = o.safety_tolerance,
+                output_format = "jpeg",
+            }
+        end,
+    },
+    {
+        id = "imagen4_fast", label = "Imagen 4 Fast",
+        endpoint = FAL_ENDPOINTS.imagen4_fast,
+        build = function(o)
+            -- The fast variant has no resolution field.
+            return {
+                prompt = o.prompt,
+                aspect_ratio = IMAGEN4_ASPECT[o.aspect_ratio] or o.aspect_ratio,
+                safety_tolerance = o.safety_tolerance,
+                output_format = "jpeg",
+            }
+        end,
+    },
+    {
+        id = "imagen4_ultra", label = "Imagen 4 Ultra",
+        endpoint = FAL_ENDPOINTS.imagen4_ultra,
+        build = function(o)
+            return {
+                prompt = o.prompt,
+                aspect_ratio = IMAGEN4_ASPECT[o.aspect_ratio] or o.aspect_ratio,
+                resolution = nearest_resolution(o.resolution, {"1K", "2K"}),
+                safety_tolerance = o.safety_tolerance,
+                output_format = "jpeg",
+            }
+        end,
+    },
+}
+
+-- The values the Generate form can actually offer. Unlike action params, a page
+-- POST is not validated by the plugin host, so a hand-crafted request could put
+-- anything here — and the builders below hand several of these straight to fal.ai.
+-- Anything unrecognised falls back to the form's own default rather than starting
+-- a job that can only fail.
+local GENERATE_ASPECT_RATIOS = {
+    ["1:1"] = true, ["16:9"] = true, ["9:16"] = true, ["4:3"] = true,
+    ["3:4"] = true, ["3:2"] = true, ["2:3"] = true,
+}
+local GENERATE_RESOLUTIONS = {["0.5K"] = true, ["1K"] = true, ["2K"] = true, ["4K"] = true}
+local GENERATE_SAFETY = {
+    ["1"] = true, ["2"] = true, ["3"] = true,
+    ["4"] = true, ["5"] = true, ["6"] = true,
+}
+
+local function one_of(value, allowed, fallback)
+    if value ~= nil and allowed[value] then return value end
+    return fallback
+end
+
+-- Resolve a submitted model id, falling back to the form's default.
+local function generate_model_by_id(id)
+    for _, m in ipairs(GENERATE_MODELS) do
+        if m.id == id then return m end
+    end
+    return GENERATE_MODELS[1]
+end
+
+local function generate_model_options()
+    local html = ""
+    for _, m in ipairs(GENERATE_MODELS) do
+        html = html .. '<option value="' .. m.id .. '">' .. html_escape(m.label) .. '</option>'
+    end
+    return html
+end
+
 local function generate_form()
     return '<form method="POST" class="space-y-4 max-w-lg">'
         .. '<div><label class="block font-medium mb-1" for="prompt">Prompt</label>'
@@ -754,10 +1051,7 @@ local function generate_form()
         .. 'placeholder="Describe the image you want to generate..."></textarea></div>'
         .. '<div><label class="block font-medium mb-1" for="model">Model</label>'
         .. '<select id="model" name="model" class="w-full border rounded p-2">'
-        .. '<option value="nanobanana2">Nano Banana 2</option>'
-        .. '<option value="imagen4">Imagen 4</option>'
-        .. '<option value="imagen4_fast">Imagen 4 Fast</option>'
-        .. '<option value="imagen4_ultra">Imagen 4 Ultra</option>'
+        .. generate_model_options()
         .. '</select></div>'
         .. '<div><label class="block font-medium mb-1" for="resolution">Resolution</label>'
         .. '<select id="resolution" name="resolution" class="w-full border rounded p-2">'
@@ -776,8 +1070,10 @@ local function generate_form()
         .. '<option value="3:2">3:2</option>'
         .. '<option value="2:3">2:3</option>'
         .. '</select></div>'
-        -- safety_tolerance is a string enum on every model wired to this page
-        -- (Imagen4* and NanoBanana2 generate). Options "1"–"6" cover the union.
+        -- Options "1"–"6" cover the union of the string safety_tolerance enums
+        -- (Imagen 4*, Nano Banana 2 / Pro). Models without that field either ignore
+        -- this control (GPT Image 2, Grok Imagine 2.0) or derive their boolean
+        -- safety switch from it (Seedream 5.0 Pro) — see GENERATE_MODELS.
         .. '<div><label class="block font-medium mb-1" for="safety_tolerance">Safety Tolerance</label>'
         .. '<select id="safety_tolerance" name="safety_tolerance" class="w-full border rounded p-2">'
         .. '<option value="1">1 (strictest)</option>'
@@ -820,7 +1116,8 @@ function init()
         filters = { content_types = IMAGE_CONTENT_TYPES },
         params = {
             {name = "model", type = "select", label = "Model", default = "clarity",
-                options = {"clarity", "esrgan", "creative", "seedvr", "bria_creative", "topaz", "drct", "aura_sr"}},
+                options = {"clarity", "crystal", "esrgan", "creative", "seedvr",
+                           "bria_creative", "topaz", "drct", "aura_sr"}},
 
             -- Clarity
             {name = "clarity_prompt", type = "text", label = "Prompt",
@@ -844,6 +1141,17 @@ function init()
             {name = "clarity_num_inference_steps", type = "number", label = "Inference Steps",
                 default = 18, min = 1, max = 60, step = 1,
                 show_when = {model = "clarity"}},
+
+            -- Crystal (Clarity AI's successor to clarity-upscaler, portrait-focused)
+            {name = "crystal_scale_factor", type = "number", label = "Scale Factor",
+                default = 2, min = 1, max = 4, step = 0.25,
+                show_when = {model = "crystal"}},
+            {name = "crystal_creativity", type = "number", label = "Creativity (0 = faithful)",
+                default = 0, min = 0, max = 10, step = 0.5,
+                show_when = {model = "crystal"}},
+            {name = "crystal_output_format", type = "select", label = "Output Format",
+                default = "png", options = {"png", "jpg"},
+                show_when = {model = "crystal"}},
 
             -- ESRGAN
             {name = "esrgan_model", type = "select", label = "ESRGAN Model",
@@ -893,6 +1201,10 @@ function init()
                 show_when = {model = "seedvr"}},
             {name = "seedvr_output_format", type = "select", label = "Output Format",
                 default = "jpg", options = {"jpg", "png", "webp"},
+                show_when = {model = "seedvr"}},
+            {name = "seedvr_seamless", type = "boolean", label = "Seamless Tiling (slower)",
+                default = false,
+                description = "Runs the seamless SeedVR endpoint, which tiles without visible seams. Use for textures and patterns.",
                 show_when = {model = "seedvr"}},
 
             -- Bria Creative
@@ -1039,7 +1351,8 @@ function init()
         params = {
             {name = "prompt", type = "text", label = "Edit Prompt", required = true},
             {name = "model", type = "select", label = "Model", default = "flux2",
-                options = {"flux2", "flux2pro", "nanobanana2", "flux1dev"}},
+                options = {"flux2", "flux2pro", "nanobanana2", "nanobananapro",
+                           "gptimage2", "seedream5", "grok2", "flux1dev"}},
 
             -- Flux 2 Turbo
             {name = "flux2_image_size", type = "select", label = "Image Size",
@@ -1083,6 +1396,68 @@ function init()
                 default = "6", options = {"1", "2", "3", "4", "5", "6"},
                 show_when = {model = "nanobanana2"}},
 
+            -- Nano Banana Pro. Narrower aspect_ratio enum than Nano Banana 2 (no
+            -- 4:1/1:4/8:1/1:8) and no 0.5K resolution.
+            {name = "nanobananapro_aspect_ratio", type = "select", label = "Aspect Ratio",
+                default = "auto",
+                options = {"auto", "21:9", "16:9", "3:2", "4:3", "5:4", "1:1",
+                           "4:5", "3:4", "2:3", "9:16"},
+                show_when = {model = "nanobananapro"}},
+            {name = "nanobananapro_resolution", type = "select", label = "Resolution",
+                default = "1K", options = {"1K", "2K", "4K"},
+                show_when = {model = "nanobananapro"}},
+            {name = "nanobananapro_output_format", type = "select", label = "Output Format",
+                default = "png", options = {"jpeg", "png", "webp"},
+                show_when = {model = "nanobananapro"}},
+            {name = "nanobananapro_safety_tolerance", type = "select", label = "Safety Tolerance",
+                default = "6", options = {"1", "2", "3", "4", "5", "6"},
+                show_when = {model = "nanobananapro"}},
+
+            -- GPT Image 2. Sized by an image_size enum rather than aspect ratio +
+            -- resolution; `quality` drives both detail and cost (billed per token).
+            {name = "gptimage2_image_size", type = "select", label = "Image Size",
+                default = "auto",
+                options = {"auto", "square_hd", "square", "portrait_4_3", "portrait_16_9",
+                           "landscape_4_3", "landscape_16_9"},
+                show_when = {model = "gptimage2"}},
+            {name = "gptimage2_quality", type = "select", label = "Quality",
+                default = "high", options = {"auto", "low", "medium", "high"},
+                show_when = {model = "gptimage2"}},
+            {name = "gptimage2_output_format", type = "select", label = "Output Format",
+                default = "png", options = {"jpeg", "png", "webp"},
+                show_when = {model = "gptimage2"}},
+
+            -- Seedream 5.0 Pro. auto_1K / auto_2K keep the source's aspect ratio and
+            -- only set the target area; the fixed enums reshape to that ratio.
+            {name = "seedream5_image_size", type = "select", label = "Image Size",
+                default = "auto_2K",
+                options = {"auto_2K", "auto_1K", "square_hd", "square", "portrait_4_3",
+                           "portrait_16_9", "landscape_4_3", "landscape_16_9"},
+                show_when = {model = "seedream5"}},
+            {name = "seedream5_output_format", type = "select", label = "Output Format",
+                default = "png", options = {"jpeg", "png"},
+                show_when = {model = "seedream5"}},
+            {name = "seedream5_enable_safety_checker", type = "boolean", label = "Safety Checker",
+                default = false,
+                show_when = {model = "seedream5"}},
+
+            -- Grok Imagine Image 2.0. Its own aspect_ratio enum, lowercase
+            -- resolutions, and a low|medium quality dial.
+            {name = "grok2_aspect_ratio", type = "select", label = "Aspect Ratio",
+                default = "auto",
+                options = {"auto", "2:1", "20:9", "19.5:9", "16:9", "4:3", "3:2", "1:1",
+                           "2:3", "3:4", "9:16", "9:19.5", "9:20", "1:2"},
+                show_when = {model = "grok2"}},
+            {name = "grok2_resolution", type = "select", label = "Resolution",
+                default = "1k", options = {"1k", "2k"},
+                show_when = {model = "grok2"}},
+            {name = "grok2_quality", type = "select", label = "Quality",
+                default = "medium", options = {"low", "medium"},
+                show_when = {model = "grok2"}},
+            {name = "grok2_output_format", type = "select", label = "Output Format",
+                default = "png", options = {"jpeg", "png", "webp"},
+                show_when = {model = "grok2"}},
+
             -- Flux 1 Dev (image-to-image)
             {name = "strength", type = "number", label = "Strength", default = 0.75,
                 min = 0.1, max = 1.0, step = 0.05,
@@ -1102,8 +1477,9 @@ function init()
                 label = "Additional Images", multi = true,
                 min = 0, max = 9,
                 default = "trigger",
-                description = "Reference images sent alongside the source. Only Flux 2, Flux 2 Pro, and Nano Banana 2 use these.",
-                show_when = { model = {"flux2", "flux2pro", "nanobanana2"} },
+                description = "Reference images sent alongside the source. Flux 1 Dev is the only model that ignores these. Grok Imagine 2.0 takes at most 3 and the action fails with a message if more are sent; Seedream 5.0 Pro uses the last 10 of what it receives.",
+                show_when = { model = {"flux2", "flux2pro", "nanobanana2", "nanobananapro",
+                                       "gptimage2", "seedream5", "grok2"} },
                 filters = { content_types = IMAGE_CONTENT_TYPES },
             },
 
@@ -1190,14 +1566,13 @@ function init()
         local prompt = params.prompt
 
         if prompt and prompt ~= "" then
+            -- Every value below is clamped to what the form can offer before it
+            -- reaches a builder; see GENERATE_ASPECT_RATIOS and friends.
             local model = params.model or "nanobanana2"
-            local aspect_ratio = params.aspect_ratio or "1:1"
-            local resolution = params.resolution or "1K"
+            local aspect_ratio = one_of(params.aspect_ratio, GENERATE_ASPECT_RATIOS, "1:1")
+            local resolution = one_of(params.resolution, GENERATE_RESOLUTIONS, "1K")
             -- safety_tolerance arrives as a form string ("1".."6"); fal.ai expects a string enum here.
-            local safety_tolerance = params.safety_tolerance
-            if safety_tolerance == nil or safety_tolerance == "" then
-                safety_tolerance = "6"
-            end
+            local safety_tolerance = one_of(params.safety_tolerance, GENERATE_SAFETY, "6")
 
             mah.log("info", "[fal.ai] generate page: starting async job, model=" .. model .. ", prompt=" .. prompt:sub(1, 100) .. ", safety=" .. safety_tolerance)
 
@@ -1205,27 +1580,19 @@ function init()
             local job_id = mah.start_job("Generate: " .. prompt:sub(1, 40), function(jid)
                 mah.job_progress(jid, 10, "Preparing request...")
 
-                local endpoint = FAL_ENDPOINTS[model] or FAL_ENDPOINTS.nanobanana2_generate
-                if model == "nanobanana2" then
-                    endpoint = FAL_ENDPOINTS.nanobanana2_generate
-                end
-
-                local payload = {
+                local spec = generate_model_by_id(model)
+                local endpoint = spec.endpoint
+                local payload = spec.build({
                     prompt = prompt,
                     aspect_ratio = aspect_ratio,
-                    output_format = "jpeg",
+                    resolution = resolution,
                     safety_tolerance = safety_tolerance,
-                }
+                })
 
-                if model == "nanobanana2" then
-                    payload.resolution = resolution
-                elseif model ~= "imagen4_fast" then
-                    if resolution == "1K" or resolution == "2K" then
-                        payload.resolution = resolution
-                    else
-                        payload.resolution = "1K"
-                    end
-                end
+                mah.log("info", "[fal.ai] generate job: endpoint=" .. endpoint
+                    .. ", aspect_ratio=" .. tostring(payload.aspect_ratio)
+                    .. ", image_size=" .. tostring(payload.image_size)
+                    .. ", resolution=" .. tostring(payload.resolution))
 
                 mah.job_progress(jid, 20, "Submitting to fal.ai...")
 
@@ -1315,11 +1682,12 @@ function init()
         description = "Increase image resolution using AI upscaling models.",
         category = "Action",
         attrs = {
-            { name = "model", type = "select", default = "clarity", description = "Upscaling backend: clarity, esrgan, creative, seedvr, bria_creative, topaz, drct, aura_sr" },
+            { name = "model", type = "select", default = "clarity", description = "Upscaling backend: clarity, crystal, esrgan, creative, seedvr, bria_creative, topaz, drct, aura_sr" },
             { name = "clarity_*", type = "various", description = "Clarity controls: prompt, negative_prompt, upscale_factor, creativity, resemblance, guidance_scale, num_inference_steps (shown when model=clarity)" },
+            { name = "crystal_*", type = "various", description = "Crystal controls: scale_factor, creativity (0 = faithful upscale, up to 10), output_format (shown when model=crystal)" },
             { name = "esrgan_*", type = "various", description = "ESRGAN controls: esrgan_model variant, scale, face mode, output_format (shown when model=esrgan)" },
             { name = "creative_*", type = "various", description = "Creative Upscaler controls: prompt, scale, creativity, detail, shape_preservation (shown when model=creative)" },
-            { name = "seedvr_*", type = "various", description = "SeedVR controls: upscale_mode (factor|target), upscale_factor or target_resolution, noise_scale, output_format (shown when model=seedvr)" },
+            { name = "seedvr_*", type = "various", description = "SeedVR controls: upscale_mode (factor|target), upscale_factor or target_resolution, noise_scale, output_format, seamless (switches to the seamless-tiling endpoint) (shown when model=seedvr)" },
             { name = "bria_preserve_alpha", type = "boolean", default = "true", description = "Preserve alpha channel (shown when model=bria_creative)" },
             { name = "topaz_*", type = "various", description = "Topaz controls: topaz_model preset, upscale_factor, subject_detection, face_enhancement, output_format (shown when model=topaz)" },
             { name = "drct_upscale_factor", type = "number", default = "4", description = "DRCT upscale factor 1-4 (shown when model=drct)" },
@@ -1327,9 +1695,10 @@ function init()
         },
         examples = {
             { title = "Clarity Upscaler (default)", code = "Uses prompt-guided upscaling with quality-focused defaults.", notes = "Model: fal-ai/clarity-upscaler" },
+            { title = "Crystal Upscaler", code = "Clarity AI's newer upscaler, tuned for facial detail and portrait photography. Leave creativity at 0 for a faithful upscale.", notes = "Model: clarityai/crystal-upscaler" },
             { title = "ESRGAN", code = "4x upscaling with RealESRGAN_x4plus model.", notes = "Model: fal-ai/esrgan" },
             { title = "Creative Upscaler", code = "AI-enhanced upscaling with creative interpretation.", notes = "Model: fal-ai/creative-upscaler" },
-            { title = "SeedVR", code = "High-quality upscaling with SeedVR model.", notes = "Model: fal-ai/seedvr/upscale/image" },
+            { title = "SeedVR", code = "High-quality upscaling with SeedVR model. Enable Seamless Tiling for textures and repeating patterns.", notes = "Models: fal-ai/seedvr/upscale/image, fal-ai/seedvr/upscale/image/seamless" },
             { title = "Bria Creative", code = "Creative upscaling by Bria AI.", notes = "Model: bria/upscale/creative" },
             { title = "Topaz", code = "Detail-preserving upscaling by Topaz Labs.", notes = "Model: fal-ai/topaz/upscale/image" },
             { title = "DRCT", code = "Degradation-aware super-resolution; handles JPEG-compressed sources better than pure-SR models.", notes = "Model: fal-ai/drct-super-resolution" },
@@ -1375,22 +1744,29 @@ function init()
         category = "Action",
         attrs = {
             { name = "prompt", type = "text", required = true, description = "Text description of the desired edit" },
-            { name = "model", type = "select", default = "flux2", description = "AI model: flux2, flux2pro, nanobanana2, flux1dev" },
+            { name = "model", type = "select", default = "flux2", description = "AI model: flux2, flux2pro, nanobanana2, nanobananapro, gptimage2, seedream5, grok2, flux1dev" },
             { name = "flux2_image_size / flux2_output_format / flux2_guidance_scale", type = "various", description = "Flux 2 Turbo controls (shown when model=flux2). Schema has guidance_scale; safety_tolerance is not supported." },
             { name = "flux2pro_image_size / flux2pro_output_format / flux2pro_safety_tolerance", type = "various", description = "Flux 2 Pro controls (shown when model=flux2pro). safety_tolerance is a string '1'..'5'; guidance_scale is not supported." },
             { name = "nanobanana2_aspect_ratio / nanobanana2_resolution / nanobanana2_output_format / nanobanana2_safety_tolerance", type = "various", description = "Nano Banana 2 controls (shown when model=nanobanana2). safety_tolerance is a string '1'..'6'." },
+            { name = "nanobananapro_aspect_ratio / nanobananapro_resolution / nanobananapro_output_format / nanobananapro_safety_tolerance", type = "various", description = "Nano Banana Pro controls (shown when model=nanobananapro). Narrower aspect_ratio enum than Nano Banana 2 (no 4:1, 1:4, 8:1, 1:8) and no 0.5K resolution." },
+            { name = "gptimage2_image_size / gptimage2_quality / gptimage2_output_format", type = "various", description = "GPT Image 2 controls (shown when model=gptimage2). Sized by image_size, not aspect ratio + resolution; quality (auto|low|medium|high) drives detail and cost. No safety_tolerance in the schema." },
+            { name = "seedream5_image_size / seedream5_output_format / seedream5_enable_safety_checker", type = "various", description = "Seedream 5.0 Pro controls (shown when model=seedream5). image_size auto_1K / auto_2K keep the source's aspect ratio; safety is a boolean, not a tolerance." },
+            { name = "grok2_aspect_ratio / grok2_resolution / grok2_quality / grok2_output_format", type = "various", description = "Grok Imagine Image 2.0 controls (shown when model=grok2). Own aspect_ratio enum, lowercase '1k'/'2k' resolution, quality low|medium. No safety_tolerance in the schema." },
             { name = "strength", type = "number", default = "0.75", description = "Edit strength 0.1-1.0 (shown when model=flux1dev)" },
             { name = "flux1dev_num_inference_steps / flux1dev_guidance_scale / flux1dev_acceleration", type = "various", description = "Flux 1 Dev controls (shown when model=flux1dev). safety_tolerance is not in the schema for this endpoint." },
-            { name = "extra_images", type = "entity_ref", description = "Additional resource IDs sent alongside the source. Only Flux 2, Flux 2 Pro, and Nano Banana 2 use these. Defaults to the trigger resource (the source image) — picker lets the user add more or remove the source." },
+            { name = "extra_images", type = "entity_ref", description = "Additional resource IDs sent alongside the source. Every model except Flux 1 Dev uses these. Defaults to the trigger resource (the source image) — picker lets the user add more or remove the source." },
         },
         examples = {
             { title = "Change background", code = 'Prompt: "change the background to a sunset beach"' },
             { title = "Style transfer", code = 'Prompt: "make it look like a watercolor painting"' },
+            { title = "Region-precise edit", code = 'Use Seedream 5.0 Pro to change one element while the rest of the frame stays intact.', notes = "Model: bytedance/seedream/v5/pro/edit" },
+            { title = "Typography and fine detail", code = 'Use GPT Image 2 when the edit involves rendered text or fine-grained detail.', notes = "Model: openai/gpt-image-2/edit" },
         },
         notes = {
             "Result is added as a new version of the original resource.",
             "Available from detail view only.",
-            "Flux 2, Flux 2 Pro, and Nano Banana 2 accept multiple input images via the 'Additional Images' picker. The trigger image is included by default.",
+            "All models except Flux 1 Dev accept multiple input images via the 'Additional Images' picker. The trigger image is included by default.",
+            "The picker's nine-image maximum is shared by every model, so per-model ceilings are handled at request time: Grok Imagine 2.0 accepts 3 and the action fails with a message naming the count if more are sent, Seedream 5.0 Pro uses the last 10 of what it is sent, and GPT Image 2 accepts 16 (above the picker's own limit).",
             "Flux 1 Dev accepts only a single input image and supports a strength parameter.",
         },
     })
@@ -1432,17 +1808,20 @@ function init()
         category = "Page",
         attrs = {
             { name = "prompt", type = "text", required = true, description = "Text description of the image to generate" },
-            { name = "model", type = "select", default = "nanobanana2", description = "Model: nanobanana2, imagen4, imagen4_fast, imagen4_ultra" },
-            { name = "resolution", type = "select", default = "1K", description = "Output resolution: 0.5K, 1K, 2K, 4K" },
-            { name = "aspect_ratio", type = "select", default = "1:1", description = "Aspect ratio: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3" },
+            { name = "model", type = "select", default = "nanobanana2", description = "Model: nanobanana2, nanobananapro, gptimage2, seedream5, grok2, imagen4, imagen4_fast, imagen4_ultra" },
+            { name = "resolution", type = "select", default = "1K", description = "Output resolution: 0.5K, 1K, 2K, 4K. Snapped to the nearest value the chosen model accepts (Nano Banana Pro has no 0.5K; Imagen 4 and Imagen 4 Ultra and Grok stop at 2K; Imagen 4 Fast, GPT Image 2 and Seedream have no resolution field)." },
+            { name = "aspect_ratio", type = "select", default = "1:1", description = "Aspect ratio: 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3. GPT Image 2 and Seedream 5.0 Pro have no aspect_ratio field, so this maps to their image_size enum; Imagen 4 has no 3:2 or 2:3, so those snap to 4:3 and 3:4." },
+            { name = "safety_tolerance", type = "select", default = "6", description = "'1' (strictest) to '6'. Ignored by GPT Image 2 and Grok Imagine 2.0, which have no such field; Seedream 5.0 Pro turns its boolean safety checker on only for '1' and '2'." },
         },
         examples = {
             { title = "Basic generation", code = 'Prompt: "a serene mountain landscape at golden hour"' },
+            { title = "Text in the image", code = 'Use GPT Image 2 or Seedream 5.0 Pro when the image has to contain readable text.' },
         },
         notes = {
             "Accessible via the Generate Image menu item.",
             "Uses asynchronous job processing; track progress with Ctrl+Shift+D.",
             "Generated images are saved as new resources.",
+            "The form is a shared union of controls; each model receives only the fields its own schema declares, with the values mapped as described above.",
         },
     })
 

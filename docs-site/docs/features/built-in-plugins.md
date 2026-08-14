@@ -117,9 +117,9 @@ Supported input formats: PNG, JPEG, WebP, GIF, TIFF, BMP. The UI filter that dec
 
 Several actions expose a `model` selector that switches the underlying fal.ai endpoint. Each model has its own parameters, which appear only when that model is selected (see [Conditional parameters](#conditional-parameters) below).
 
-- **`upscale` models:** `clarity` (default), `esrgan`, `creative`, `seedvr`, `bria_creative`, `topaz`, `drct`, `aura_sr`. `drct` and `aura_sr` are degradation-aware and handle JPEG-compressed sources better than pure super-resolution models.
+- **`upscale` models:** `clarity` (default), `crystal`, `esrgan`, `creative`, `seedvr`, `bria_creative`, `topaz`, `drct`, `aura_sr`. `drct` and `aura_sr` are degradation-aware and handle JPEG-compressed sources better than pure super-resolution models. `crystal` is Clarity AI's newer upscaler, tuned for facial detail and portrait photography; its `creativity` parameter is `0` by default, which is a faithful upscale. `seedvr` has a **Seamless Tiling** toggle that switches to the seamless endpoint, for textures and repeating patterns.
 - **`restore` models:** `photo_restoration` (default -- the only one that removes scratches and fixes color fading in one pass), `codeformer` (face-focused), `swin2sr` (non-portrait scenes), `nafnet_denoise` (compression/ISO artifacts), `nafnet_deblur` (motion blur). The `photo_restoration` model always reshapes output to a fixed aspect-ratio enum; its `aspect_ratio` parameter defaults to `auto`, which picks the enum closest to the source's actual dimensions.
-- **`edit` (AI Edit) models:** `flux2` (default), `flux2pro`, `nanobanana2`, `flux1dev`.
+- **`edit` (AI Edit) models:** `flux2` (default), `flux2pro`, `nanobanana2`, `nanobananapro`, `gptimage2`, `seedream5`, `grok2`, `flux1dev`. Their schemas differ in more than naming, and the exposed parameters follow each one: `gptimage2` and `seedream5` size their output with an `image_size` enum instead of an aspect ratio, `seedream5` takes a boolean safety checker rather than a numeric tolerance, and `gptimage2` and `grok2` have no safety parameter at all (both expose a `quality` dial instead).
 
 ### Conditional parameters
 
@@ -136,11 +136,19 @@ Every action except `vectorize` includes a **Save Result As** toggle:
 
 ### Multiple input images
 
-The `edit` (AI Edit) action accepts more than one input image through an `extra_images` entity-reference parameter (a resource picker, up to nine images). It defaults to the triggering resource, and the user can add or remove images. Only the `flux2`, `flux2pro`, and `nanobanana2` models consume the extra images; `flux1dev` takes a single image.
+The `edit` (AI Edit) action accepts more than one input image through an `extra_images` entity-reference parameter (a resource picker, up to nine images). It defaults to the triggering resource, and the user can add or remove images. Every model except `flux1dev` consumes the extra images; `flux1dev` takes a single image. The picker's nine-image maximum is one number shared by every model, so per-model limits are applied when the request is built: `grok2` accepts three and the action fails with a message naming the count if it is given more, `seedream5` uses the last ten of whatever it is sent, and `gptimage2` accepts sixteen (more than the picker allows).
 
 ### Generate Image page
 
-The plugin also adds a **Generate Image** page (`/plugins/fal-ai/generate`, linked from the plugin menu) for text-to-image generation. It runs as an asynchronous job and supports the `nanobanana2` (default), `imagen4`, `imagen4_fast`, and `imagen4_ultra` models, with resolution and aspect-ratio controls. Generated images are saved as new resources.
+The plugin also adds a **Generate Image** page (`/plugins/fal-ai/generate`, linked from the plugin menu) for text-to-image generation. It runs as an asynchronous job and supports the `nanobanana2` (default), `nanobananapro`, `gptimage2`, `seedream5`, `grok2`, `imagen4`, `imagen4_fast`, and `imagen4_ultra` models. Generated images are saved as new resources.
+
+The page renders a single form -- prompt, model, resolution, aspect ratio, safety tolerance -- for every model, but the endpoints behind it do not share one input schema, so each model receives only the fields its own schema declares:
+
+| Setting | How each model receives it |
+|---------|----------------------------|
+| Resolution | Snapped to the nearest value the model accepts. `nanobananapro` has no `0.5K`; `imagen4`, `imagen4_ultra` and `grok2` stop at `2K` (`grok2` spells them lowercase); `imagen4_fast`, `gptimage2` and `seedream5` have no resolution field at all. |
+| Aspect ratio | Passed through where the model has an `aspect_ratio` field. `gptimage2` and `seedream5` do not, so it maps to their `image_size` enum (`3:2` and `2:3` take the closest landscape/portrait size). `imagen4*` supports only `1:1`, `16:9`, `9:16`, `4:3` and `3:4`, so `3:2` and `2:3` snap to `4:3` and `3:4`. |
+| Safety tolerance | Sent as `safety_tolerance` to `nanobanana2`, `nanobananapro` and `imagen4*`. `seedream5` has a boolean safety checker instead, enabled only for the two strictest settings. `gptimage2` and `grok2` have no safety parameter and ignore it. |
 
 ## Enabling a Plugin
 
