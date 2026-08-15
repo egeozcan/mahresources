@@ -48,6 +48,50 @@ func (m *mockQuerier) GetCategoryData(id uint) (map[string]any, error) {
 	return nil, fmt.Errorf("not found")
 }
 
+func (m *mockQuerier) GetNoteTypeData(id uint) (map[string]any, error) {
+	if id == 1 {
+		return map[string]any{"id": float64(1), "name": "Meeting"}, nil
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) GetResourceCategoryData(id uint) (map[string]any, error) {
+	if id == 1 {
+		return map[string]any{"id": float64(1), "name": "Photos"}, nil
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) ListTags(filter map[string]any) ([]map[string]any, error) {
+	all := []map[string]any{
+		{"id": float64(1), "name": "tag-a"},
+		{"id": float64(2), "name": "tag-b"},
+	}
+	name, _ := filter["name"].(string)
+	if name == "" {
+		return all, nil
+	}
+	var matched []map[string]any
+	for _, t := range all {
+		if t["name"] == name {
+			matched = append(matched, t)
+		}
+	}
+	return matched, nil
+}
+
+func (m *mockQuerier) ListCategories(filter map[string]any) ([]map[string]any, error) {
+	return []map[string]any{{"id": float64(1), "name": "Cat A"}}, nil
+}
+
+func (m *mockQuerier) ListNoteTypes(filter map[string]any) ([]map[string]any, error) {
+	return []map[string]any{{"id": float64(1), "name": "Meeting"}}, nil
+}
+
+func (m *mockQuerier) ListResourceCategories(filter map[string]any) ([]map[string]any, error) {
+	return []map[string]any{{"id": float64(1), "name": "Photos"}}, nil
+}
+
 func (m *mockQuerier) QueryNotes(filter map[string]any) ([]map[string]any, error) {
 	return []map[string]any{
 		{"id": float64(1), "name": "Note 1"},

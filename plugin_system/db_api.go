@@ -10,6 +10,11 @@ import (
 // EntityQuerier provides database access to entities for plugins.
 // All methods return map[string]any to avoid importing models into the plugin_system package.
 // Numeric values must be float64 for Lua compatibility.
+//
+// The single-entity getters distinguish "not found" from "the read failed":
+// not found is (nil, nil), a failure is (nil, err). Lua sees the same split —
+// see registerDbModule — so a plugin can back off on an outage instead of
+// concluding the corpus is empty.
 type EntityQuerier interface {
 	// Single entity by ID — returns nil map if not found
 	GetNoteData(id uint) (map[string]any, error)
@@ -17,6 +22,15 @@ type EntityQuerier interface {
 	GetGroupData(id uint) (map[string]any, error)
 	GetTagData(id uint) (map[string]any, error)
 	GetCategoryData(id uint) (map[string]any, error)
+	GetNoteTypeData(id uint) (map[string]any, error)
+	GetResourceCategoryData(id uint) (map[string]any, error)
+	// Taxonomy listing. Taxonomies are small and have no owner, so these take
+	// the same {name=..., limit=..., offset=...} filter shape as the entity
+	// queries but no scoping fields.
+	ListTags(filter map[string]any) ([]map[string]any, error)
+	ListCategories(filter map[string]any) ([]map[string]any, error)
+	ListNoteTypes(filter map[string]any) ([]map[string]any, error)
+	ListResourceCategories(filter map[string]any) ([]map[string]any, error)
 	// List queries with simple filters
 	QueryNotes(filter map[string]any) ([]map[string]any, error)
 	QueryResources(filter map[string]any) ([]map[string]any, error)
@@ -77,6 +91,8 @@ type EntityWriter interface {
 	RemoveGroupsFromEntity(entityType string, id uint, groupIds []uint) error
 	AddResourcesToNote(noteId uint, resourceIds []uint) error
 	RemoveResourcesFromNote(noteId uint, resourceIds []uint) error
+	UpdateResource(id uint, opts map[string]any) (map[string]any, error)
+	PatchResource(id uint, opts map[string]any) (map[string]any, error)
 	DeleteResource(id uint) error
 }
 
@@ -206,210 +222,127 @@ func (pm *PluginManager) getMRQLExecutor() MRQLExecutor {
 func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 	dbMod := L.NewTable()
 
-	// mah.db.get_note(id) -> table or nil
-	dbMod.RawSetString("get_note", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
-		if db == nil {
-			L.Push(lua.LNil)
-			return 1
-		}
-		id := uint(L.CheckNumber(1))
-		data, err := db.GetNoteData(id)
-		if err != nil || data == nil {
-			L.Push(lua.LNil)
-			return 1
-		}
-		L.Push(goToLuaTable(L, data))
-		return 1
-	}))
+	// --- Reads ---
+	//
+	// Every read returns (value, error). A failure is (nil, error_string); a
+	// getter that simply found nothing is (nil, nil). Before this, both arrived
+	// as a bare nil — and a failed count arrived as 0 — so a plugin branching on
+	// "no rows" took the empty-data branch during an outage, which is
+	// destructive for anything that then archives, deletes or re-uploads.
+	//
+	// The single-value call shape (`local n = mah.db.count_notes{...}`) is
+	// unaffected: Lua discards the extra return value.
 
-	// mah.db.get_resource(id) -> table or nil
-	dbMod.RawSetString("get_resource", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
-		if db == nil {
-			L.Push(lua.LNil)
+	// registerGetter: mah.db.X(id) -> table | nil | (nil, error)
+	registerGetter := func(name string, fn func(EntityQuerier, uint) (map[string]any, error)) {
+		dbMod.RawSetString(name, L.NewFunction(func(L *lua.LState) int {
+			db := pm.getDbProvider()
+			if db == nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString("database not available"))
+				return 2
+			}
+			id := uint(L.CheckNumber(1))
+			data, err := fn(db, id)
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			if data == nil {
+				// Found nothing, and nothing went wrong.
+				L.Push(lua.LNil)
+				return 1
+			}
+			L.Push(goToLuaTable(L, data))
 			return 1
-		}
-		id := uint(L.CheckNumber(1))
-		data, err := db.GetResourceData(id)
-		if err != nil || data == nil {
-			L.Push(lua.LNil)
-			return 1
-		}
-		L.Push(goToLuaTable(L, data))
-		return 1
-	}))
+		}))
+	}
 
-	// mah.db.get_group(id) -> table or nil
-	dbMod.RawSetString("get_group", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
-		if db == nil {
-			L.Push(lua.LNil)
+	// registerLister: mah.db.X(filter) -> array of tables or (nil, error)
+	registerLister := func(name string, fn func(EntityQuerier, map[string]any) ([]map[string]any, error)) {
+		dbMod.RawSetString(name, L.NewFunction(func(L *lua.LState) int {
+			db := pm.getDbProvider()
+			if db == nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString("database not available"))
+				return 2
+			}
+			filter := luaTableToGoMap(L.OptTable(1, L.NewTable()))
+			results, err := fn(db, filter)
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			tbl := L.NewTable()
+			for i, item := range results {
+				tbl.RawSetInt(i+1, goToLuaTable(L, item))
+			}
+			L.Push(tbl)
 			return 1
-		}
-		id := uint(L.CheckNumber(1))
-		data, err := db.GetGroupData(id)
-		if err != nil || data == nil {
-			L.Push(lua.LNil)
-			return 1
-		}
-		L.Push(goToLuaTable(L, data))
-		return 1
-	}))
+		}))
+	}
 
-	// mah.db.get_tag(id) -> table or nil
-	dbMod.RawSetString("get_tag", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
-		if db == nil {
-			L.Push(lua.LNil)
+	// registerCounter: mah.db.X(filter) -> number or (nil, error)
+	registerCounter := func(name string, fn func(EntityQuerier, map[string]any) (int64, error)) {
+		dbMod.RawSetString(name, L.NewFunction(func(L *lua.LState) int {
+			db := pm.getDbProvider()
+			if db == nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString("database not available"))
+				return 2
+			}
+			filter := luaTableToGoMap(L.OptTable(1, L.NewTable()))
+			count, err := fn(db, filter)
+			if err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			L.Push(lua.LNumber(count))
 			return 1
-		}
-		id := uint(L.CheckNumber(1))
-		data, err := db.GetTagData(id)
-		if err != nil || data == nil {
-			L.Push(lua.LNil)
-			return 1
-		}
-		L.Push(goToLuaTable(L, data))
-		return 1
-	}))
+		}))
+	}
 
-	// mah.db.get_category(id) -> table or nil
-	dbMod.RawSetString("get_category", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
-		if db == nil {
-			L.Push(lua.LNil)
-			return 1
-		}
-		id := uint(L.CheckNumber(1))
-		data, err := db.GetCategoryData(id)
-		if err != nil || data == nil {
-			L.Push(lua.LNil)
-			return 1
-		}
-		L.Push(goToLuaTable(L, data))
-		return 1
-	}))
+	// mah.db.get_*(id) -> table | nil | (nil, error)
+	registerGetter("get_note", func(db EntityQuerier, id uint) (map[string]any, error) { return db.GetNoteData(id) })
+	registerGetter("get_resource", func(db EntityQuerier, id uint) (map[string]any, error) { return db.GetResourceData(id) })
+	registerGetter("get_group", func(db EntityQuerier, id uint) (map[string]any, error) { return db.GetGroupData(id) })
+	registerGetter("get_tag", func(db EntityQuerier, id uint) (map[string]any, error) { return db.GetTagData(id) })
+	registerGetter("get_category", func(db EntityQuerier, id uint) (map[string]any, error) { return db.GetCategoryData(id) })
+	registerGetter("get_note_type", func(db EntityQuerier, id uint) (map[string]any, error) { return db.GetNoteTypeData(id) })
+	registerGetter("get_resource_category", func(db EntityQuerier, id uint) (map[string]any, error) {
+		return db.GetResourceCategoryData(id)
+	})
 
 	// mah.db.query_notes({name = "meeting%", limit = 10}) -> array of tables
-	dbMod.RawSetString("query_notes", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
-		if db == nil {
-			L.Push(lua.LNil)
-			return 1
-		}
-		filterTable := L.OptTable(1, L.NewTable())
-		filter := luaTableToGoMap(filterTable)
-		results, err := db.QueryNotes(filter)
-		if err != nil {
-			L.Push(lua.LNil)
-			return 1
-		}
-		tbl := L.NewTable()
-		for i, item := range results {
-			tbl.RawSetInt(i+1, goToLuaTable(L, item))
-		}
-		L.Push(tbl)
-		return 1
-	}))
-
+	registerLister("query_notes", func(db EntityQuerier, f map[string]any) ([]map[string]any, error) { return db.QueryNotes(f) })
 	// mah.db.query_resources({name = "photo%", content_type = "image/%", limit = 10}) -> array of tables
-	dbMod.RawSetString("query_resources", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
-		if db == nil {
-			L.Push(lua.LNil)
-			return 1
-		}
-		filterTable := L.OptTable(1, L.NewTable())
-		filter := luaTableToGoMap(filterTable)
-		results, err := db.QueryResources(filter)
-		if err != nil {
-			L.Push(lua.LNil)
-			return 1
-		}
-		tbl := L.NewTable()
-		for i, item := range results {
-			tbl.RawSetInt(i+1, goToLuaTable(L, item))
-		}
-		L.Push(tbl)
-		return 1
-	}))
-
+	registerLister("query_resources", func(db EntityQuerier, f map[string]any) ([]map[string]any, error) {
+		return db.QueryResources(f)
+	})
 	// mah.db.query_groups({name = "team%", limit = 10}) -> array of tables
-	dbMod.RawSetString("query_groups", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
-		if db == nil {
-			L.Push(lua.LNil)
-			return 1
-		}
-		filterTable := L.OptTable(1, L.NewTable())
-		filter := luaTableToGoMap(filterTable)
-		results, err := db.QueryGroups(filter)
-		if err != nil {
-			L.Push(lua.LNil)
-			return 1
-		}
-		tbl := L.NewTable()
-		for i, item := range results {
-			tbl.RawSetInt(i+1, goToLuaTable(L, item))
-		}
-		L.Push(tbl)
-		return 1
-	}))
+	registerLister("query_groups", func(db EntityQuerier, f map[string]any) ([]map[string]any, error) { return db.QueryGroups(f) })
 
-	// mah.db.count_notes({owner_id = 5}) -> number
-	dbMod.RawSetString("count_notes", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
-		if db == nil {
-			L.Push(lua.LNumber(0))
-			return 1
-		}
-		filterTable := L.OptTable(1, L.NewTable())
-		filter := luaTableToGoMap(filterTable)
-		count, err := db.CountNotes(filter)
-		if err != nil {
-			L.Push(lua.LNumber(0))
-			return 1
-		}
-		L.Push(lua.LNumber(count))
-		return 1
-	}))
+	// Taxonomy listing. Without these, the commonest plugin pattern of all —
+	// find a tag by name, create it only if it is genuinely absent — was not
+	// expressible without hardcoded IDs or a detour through MRQL.
+	registerLister("list_tags", func(db EntityQuerier, f map[string]any) ([]map[string]any, error) { return db.ListTags(f) })
+	registerLister("list_categories", func(db EntityQuerier, f map[string]any) ([]map[string]any, error) {
+		return db.ListCategories(f)
+	})
+	registerLister("list_note_types", func(db EntityQuerier, f map[string]any) ([]map[string]any, error) {
+		return db.ListNoteTypes(f)
+	})
+	registerLister("list_resource_categories", func(db EntityQuerier, f map[string]any) ([]map[string]any, error) {
+		return db.ListResourceCategories(f)
+	})
 
-	// mah.db.count_resources({owner_id = 5, content_type = "image/%"}) -> number
-	dbMod.RawSetString("count_resources", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
-		if db == nil {
-			L.Push(lua.LNumber(0))
-			return 1
-		}
-		filterTable := L.OptTable(1, L.NewTable())
-		filter := luaTableToGoMap(filterTable)
-		count, err := db.CountResources(filter)
-		if err != nil {
-			L.Push(lua.LNumber(0))
-			return 1
-		}
-		L.Push(lua.LNumber(count))
-		return 1
-	}))
-
-	// mah.db.count_groups({owner_id = 5}) -> number
-	dbMod.RawSetString("count_groups", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
-		if db == nil {
-			L.Push(lua.LNumber(0))
-			return 1
-		}
-		filterTable := L.OptTable(1, L.NewTable())
-		filter := luaTableToGoMap(filterTable)
-		count, err := db.CountGroups(filter)
-		if err != nil {
-			L.Push(lua.LNumber(0))
-			return 1
-		}
-		L.Push(lua.LNumber(count))
-		return 1
-	}))
+	// mah.db.count_*(filter) -> number or (nil, error)
+	registerCounter("count_notes", func(db EntityQuerier, f map[string]any) (int64, error) { return db.CountNotes(f) })
+	registerCounter("count_resources", func(db EntityQuerier, f map[string]any) (int64, error) { return db.CountResources(f) })
+	registerCounter("count_groups", func(db EntityQuerier, f map[string]any) (int64, error) { return db.CountGroups(f) })
 
 	// mah.db.get_resource_data(id) -> base64_string, mime_type or nil
 	dbMod.RawSetString("get_resource_data", L.NewFunction(func(L *lua.LState) int {
@@ -617,7 +550,17 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 	registerOptsWriter("patch_relation_type", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.PatchRelationType(o) })
 	registerDelete("delete_relation_type", func(w EntityWriter, id uint) error { return w.DeleteRelationType(id) })
 
-	// Resource (delete only)
+	// Resource. Creation lives above (from URL or from base64 data), because it
+	// has to put bytes on a filesystem; edit and delete are ordinary writes.
+	// patch ships with update deliberately: update replaces every field,
+	// associations included, so patching is the only safe way to change one
+	// thing about a resource.
+	registerIdOptsWriter("update_resource", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) {
+		return w.UpdateResource(id, o)
+	})
+	registerIdOptsWriter("patch_resource", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) {
+		return w.PatchResource(id, o)
+	})
 	registerDelete("delete_resource", func(w EntityWriter, id uint) error { return w.DeleteResource(id) })
 
 	// --- Relationship management ---

@@ -23,17 +23,45 @@ Each VM has a mutex. All calls (hooks, actions, page handlers, HTTP callbacks) a
 
 Full CRUD access to all entity types, plus relationship management and resource file operations.
 
+### Reads and Errors
+
+Every read returns two values: the result, and an error string. A read that
+failed returns `nil, error_string`; a getter that simply found nothing returns
+`nil` with no error. That distinction matters: without it a plugin cannot tell
+an empty library from a database outage, and any branch that archives, deletes
+or re-uploads on "no rows" acts on a false premise.
+
+```lua
+local count, err = mah.db.count_resources({ owner_id = 5 })
+if err then
+    mah.log("warning", "could not count resources: " .. err)
+    return                       -- back off; do NOT treat this as zero
+end
+if count == 0 then
+    -- genuinely empty
+end
+```
+
+Assigning a single value is still valid, so existing plugins are unaffected:
+
+```lua
+local note = mah.db.get_note(1)  -- the error return is simply discarded
+```
+
 ### Single Entity Getters
 
 | Function | Returns |
 |----------|---------|
-| `mah.db.get_note(id)` | Note table or `nil` |
-| `mah.db.get_resource(id)` | Resource table or `nil` |
-| `mah.db.get_group(id)` | Group table or `nil` |
-| `mah.db.get_tag(id)` | Tag table or `nil` |
-| `mah.db.get_category(id)` | Category table or `nil` |
+| `mah.db.get_note(id)` | Note table, or `nil` |
+| `mah.db.get_resource(id)` | Resource table, or `nil` |
+| `mah.db.get_group(id)` | Group table, or `nil` |
+| `mah.db.get_tag(id)` | Tag table, or `nil` |
+| `mah.db.get_category(id)` | Category table, or `nil` |
+| `mah.db.get_note_type(id)` | Note Type table, or `nil` |
+| `mah.db.get_resource_category(id)` | Resource Category table, or `nil` |
 
-All IDs are numbers (float64 in Lua). Returns `nil` on error or not found.
+All IDs are numbers (float64 in Lua). A missing entity is `nil` with no error;
+a failed read is `nil, error_string`.
 
 #### Note Fields
 
@@ -84,7 +112,42 @@ All IDs are numbers (float64 in Lua). Returns `nil` on error or not found.
 
 #### Category Fields
 
-`id` (number), `name` (string), `description` (string)
+`id` (number), `name` (string), `description` (string), `custom_header`,
+`custom_sidebar`, `custom_summary`, `custom_avatar`, `custom_list_header`,
+`custom_mrql_result`, `custom_css`, `meta_schema` (all strings)
+
+#### Note Type Fields
+
+The Category fields above, plus `section_config` (string, JSON-encoded).
+
+#### Resource Category Fields
+
+The Category fields above, plus `auto_detect_rules` (string).
+
+### Taxonomy Listing
+
+| Function | Filter Fields | Returns |
+|----------|--------------|---------|
+| `mah.db.list_tags(filter)` | `name`, `description`, `sort_by`, `limit`, `offset` | Array of Tag tables |
+| `mah.db.list_categories(filter)` | `name`, `description`, `sort_by`, `limit`, `offset` | Array of Category tables |
+| `mah.db.list_note_types(filter)` | `name`, `description`, `limit`, `offset` | Array of Note Type tables |
+| `mah.db.list_resource_categories(filter)` | `name`, `description`, `limit`, `offset` | Array of Resource Category tables |
+
+Taxonomies have no owner, so these take no scoping fields. **Limits**: default
+20, maximum 100. **Offset**: default 0, maximum 10,000.
+
+Find-or-create a tag by name -- the reason these exist:
+
+```lua
+local function tag_id_for(name)
+    local matches, err = mah.db.list_tags({ name = name })
+    if err then return nil, err end
+    if #matches > 0 then return matches[1].id end
+    local created, createErr = mah.db.create_tag({ name = name })
+    if createErr then return nil, createErr end
+    return created.id
+end
+```
 
 ### Query Functions
 
@@ -115,7 +178,7 @@ end
 
 ### Count Functions
 
-Return the total number of matching entities as a number. Accept the same filter fields as the corresponding query functions (excluding `limit` and `offset`).
+Return the total number of matching entities as a number, or `nil, error_string` if the count failed. Accept the same filter fields as the corresponding query functions (excluding `limit` and `offset`). A failed count is never reported as `0` -- see [Reads and Errors](#reads-and-errors).
 
 | Function | Description |
 |----------|-------------|
@@ -188,6 +251,31 @@ local resource, err = mah.db.create_resource_from_data(base64_string, options)
 ```
 
 Same options and return format as `create_resource_from_url`. Default filename is `"plugin_upload"` if no `name` is provided.
+
+### Resource Editing
+
+```lua
+local resource, err = mah.db.update_resource(id, opts)
+local resource, err = mah.db.patch_resource(id, opts)
+```
+
+`update_resource` replaces **every** field, associations included: omitting
+`tags` clears the resource's tags. `patch_resource` changes only the keys you
+supply and reads the rest back from the stored resource, which is what you want
+for anything that edits one field.
+
+Accepted keys: `name`, `description`, `meta` (JSON string), `owner_id`,
+`groups`, `tags`, `notes` (arrays of numeric IDs), `category`,
+`content_category`, `resource_category_id`, `original_filename`,
+`original_location`, `width`, `height`, `series_id`. `update_resource` also
+accepts `series_slug`.
+
+```lua
+-- Fill in an empty description without touching anything else.
+local updated, err = mah.db.patch_resource(id, { description = caption })
+```
+
+Both return the updated resource table, or `nil, error_string`.
 
 ### Resource Deletion
 

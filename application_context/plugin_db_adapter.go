@@ -3,6 +3,7 @@ package application_context
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"mahresources/constants"
@@ -13,6 +14,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // pluginDBAdapter implements plugin_system.EntityQuerier using MahresourcesContext.
@@ -20,10 +23,21 @@ type pluginDBAdapter struct {
 	ctx *MahresourcesContext
 }
 
+// skipNotFound collapses a missing row to a nil error, so the getters can
+// honour the EntityQuerier contract: (nil, nil) means "no such entity",
+// (nil, err) means the read itself failed. A plugin that cannot tell those
+// apart takes its empty-data branch during an outage.
+func skipNotFound(err error) error {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	return err
+}
+
 func (a *pluginDBAdapter) GetNoteData(id uint) (map[string]any, error) {
 	note, err := a.ctx.GetNote(id)
 	if err != nil {
-		return nil, err
+		return nil, skipNotFound(err)
 	}
 	result := map[string]any{
 		"id":          float64(note.ID),
@@ -50,7 +64,7 @@ func (a *pluginDBAdapter) GetNoteData(id uint) (map[string]any, error) {
 func (a *pluginDBAdapter) GetResourceData(id uint) (map[string]any, error) {
 	resource, err := a.ctx.GetResource(id)
 	if err != nil {
-		return nil, err
+		return nil, skipNotFound(err)
 	}
 	result := map[string]any{
 		"id":                float64(resource.ID),
@@ -94,7 +108,7 @@ func (a *pluginDBAdapter) GetResourceData(id uint) (map[string]any, error) {
 func (a *pluginDBAdapter) GetGroupData(id uint) (map[string]any, error) {
 	group, err := a.ctx.GetGroup(id)
 	if err != nil {
-		return nil, err
+		return nil, skipNotFound(err)
 	}
 	result := map[string]any{
 		"id":          float64(group.ID),
@@ -121,7 +135,7 @@ func (a *pluginDBAdapter) GetGroupData(id uint) (map[string]any, error) {
 func (a *pluginDBAdapter) GetTagData(id uint) (map[string]any, error) {
 	tag, err := a.ctx.GetTag(id)
 	if err != nil {
-		return nil, err
+		return nil, skipNotFound(err)
 	}
 	return map[string]any{
 		"id":   float64(tag.ID),
@@ -132,13 +146,107 @@ func (a *pluginDBAdapter) GetTagData(id uint) (map[string]any, error) {
 func (a *pluginDBAdapter) GetCategoryData(id uint) (map[string]any, error) {
 	cat, err := a.ctx.GetCategory(id)
 	if err != nil {
-		return nil, err
+		return nil, skipNotFound(err)
 	}
 	return map[string]any{
 		"id":          float64(cat.ID),
 		"name":        cat.Name,
 		"description": cat.Description,
 	}, nil
+}
+
+func (a *pluginDBAdapter) GetNoteTypeData(id uint) (map[string]any, error) {
+	nt, err := a.ctx.GetNoteType(id)
+	if err != nil {
+		return nil, skipNotFound(err)
+	}
+	return noteTypeToMap(nt), nil
+}
+
+func (a *pluginDBAdapter) GetResourceCategoryData(id uint) (map[string]any, error) {
+	rc, err := a.ctx.GetResourceCategory(id)
+	if err != nil {
+		return nil, skipNotFound(err)
+	}
+	return resourceCategoryToMap(rc), nil
+}
+
+// --- Taxonomy listing ---
+//
+// Taxonomies have no owner and no scoping fields, so these take only
+// {name=..., description=..., limit=..., offset=...}. They exist so a plugin
+// can resolve a tag by name before creating it — the alternative was a
+// hardcoded ID or a detour through MRQL.
+
+func (a *pluginDBAdapter) ListTags(filter map[string]any) ([]map[string]any, error) {
+	query := &query_models.TagQuery{
+		Name:        getStringOpt(filter, "name"),
+		Description: getStringOpt(filter, "description"),
+	}
+	if sortBy := getStringSliceOpt(filter, "sort_by"); len(sortBy) > 0 {
+		query.SortBy = sortBy
+	}
+	tags, err := a.ctx.GetTags(queryOffset(filter), queryLimit(filter), query)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]map[string]any, len(tags))
+	for i := range tags {
+		results[i] = tagToMap(&tags[i])
+	}
+	return results, nil
+}
+
+func (a *pluginDBAdapter) ListCategories(filter map[string]any) ([]map[string]any, error) {
+	query := &query_models.CategoryQuery{
+		Name:        getStringOpt(filter, "name"),
+		Description: getStringOpt(filter, "description"),
+	}
+	if sortBy := getStringSliceOpt(filter, "sort_by"); len(sortBy) > 0 {
+		query.SortBy = sortBy
+	}
+	categories, err := a.ctx.GetCategories(queryOffset(filter), queryLimit(filter), query)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]map[string]any, len(categories))
+	for i := range categories {
+		results[i] = categoryToMap(&categories[i])
+	}
+	return results, nil
+}
+
+func (a *pluginDBAdapter) ListNoteTypes(filter map[string]any) ([]map[string]any, error) {
+	query := &query_models.NoteTypeQuery{
+		Name:        getStringOpt(filter, "name"),
+		Description: getStringOpt(filter, "description"),
+	}
+	// GetNoteTypes takes the query first, unlike its siblings.
+	noteTypes, err := a.ctx.GetNoteTypes(query, queryOffset(filter), queryLimit(filter))
+	if err != nil {
+		return nil, err
+	}
+	results := make([]map[string]any, len(noteTypes))
+	for i := range noteTypes {
+		results[i] = noteTypeToMap(&noteTypes[i])
+	}
+	return results, nil
+}
+
+func (a *pluginDBAdapter) ListResourceCategories(filter map[string]any) ([]map[string]any, error) {
+	query := &query_models.ResourceCategoryQuery{
+		Name:        getStringOpt(filter, "name"),
+		Description: getStringOpt(filter, "description"),
+	}
+	categories, err := a.ctx.GetResourceCategories(queryOffset(filter), queryLimit(filter), query)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]map[string]any, len(categories))
+	for i := range categories {
+		results[i] = resourceCategoryToMap(&categories[i])
+	}
+	return results, nil
 }
 
 // queryLimit extracts a capped limit from the filter map.
@@ -649,6 +757,14 @@ func extractResourceIDs(resources []*models.Resource) []uint {
 	ids := make([]uint, len(resources))
 	for i, r := range resources {
 		ids[i] = r.ID
+	}
+	return ids
+}
+
+func extractNoteIDs(notes []*models.Note) []uint {
+	ids := make([]uint, len(notes))
+	for i, n := range notes {
+		ids[i] = n.ID
 	}
 	return ids
 }
@@ -1352,6 +1468,77 @@ func (a *pluginDBAdapter) PatchRelationType(opts map[string]any) (map[string]any
 
 func (a *pluginDBAdapter) DeleteResource(id uint) error {
 	return a.ctx.DeleteResource(id)
+}
+
+// UpdateResource replaces every field, associations included — an omitted
+// `tags` clears the resource's tags. That is the same contract the other
+// Update* writers carry, and the reason PatchResource exists beside it.
+func (a *pluginDBAdapter) UpdateResource(id uint, opts map[string]any) (map[string]any, error) {
+	editor := &query_models.ResourceEditor{
+		ID: id,
+		ResourceQueryBase: query_models.ResourceQueryBase{
+			Name:               getStringOpt(opts, "name"),
+			Description:        getStringOpt(opts, "description"),
+			Meta:               getStringOpt(opts, "meta"),
+			OwnerId:            getUintOpt(opts, "owner_id"),
+			Groups:             getUintSliceOpt(opts, "groups"),
+			Tags:               getUintSliceOpt(opts, "tags"),
+			Notes:              getUintSliceOpt(opts, "notes"),
+			Category:           getStringOpt(opts, "category"),
+			ContentCategory:    getStringOpt(opts, "content_category"),
+			ResourceCategoryId: getUintOpt(opts, "resource_category_id"),
+			OriginalName:       getStringOpt(opts, "original_filename"),
+			OriginalLocation:   getStringOpt(opts, "original_location"),
+			Width:              getUintOpt(opts, "width"),
+			Height:             getUintOpt(opts, "height"),
+			SeriesId:           getUintOpt(opts, "series_id"),
+			SeriesSlug:         getStringOpt(opts, "series_slug"),
+		},
+	}
+	resource, err := a.ctx.EditResource(editor)
+	if err != nil {
+		return nil, err
+	}
+	return resourceToMap(resource), nil
+}
+
+// PatchResource changes only the keys present in opts. Everything else is read
+// back from the stored resource and re-sent, because EditResource is a
+// replace-all write.
+func (a *pluginDBAdapter) PatchResource(id uint, opts map[string]any) (map[string]any, error) {
+	current, err := a.ctx.GetResource(id)
+	if err != nil {
+		return nil, err
+	}
+	var seriesID uint
+	if current.SeriesID != nil {
+		seriesID = *current.SeriesID
+	}
+	editor := &query_models.ResourceEditor{
+		ID: id,
+		ResourceQueryBase: query_models.ResourceQueryBase{
+			Name:               patchString(opts, "name", current.Name),
+			Description:        patchString(opts, "description", current.Description),
+			Meta:               patchString(opts, "meta", string(current.Meta)),
+			OwnerId:            patchUint(opts, "owner_id", uintPtrVal(current.OwnerId)),
+			Groups:             patchUintSlice(opts, "groups", extractGroupIDs(current.Groups)),
+			Tags:               patchUintSlice(opts, "tags", extractTagIDs(current.Tags)),
+			Notes:              patchUintSlice(opts, "notes", extractNoteIDs(current.Notes)),
+			Category:           patchString(opts, "category", current.Category),
+			ContentCategory:    patchString(opts, "content_category", current.ContentCategory),
+			ResourceCategoryId: patchUint(opts, "resource_category_id", current.ResourceCategoryId),
+			OriginalName:       patchString(opts, "original_filename", current.OriginalName),
+			OriginalLocation:   patchString(opts, "original_location", current.OriginalLocation),
+			Width:              patchUint(opts, "width", current.Width),
+			Height:             patchUint(opts, "height", current.Height),
+			SeriesId:           patchUint(opts, "series_id", seriesID),
+		},
+	}
+	resource, err := a.ctx.EditResource(editor)
+	if err != nil {
+		return nil, err
+	}
+	return resourceToMap(resource), nil
 }
 
 // --- EntityWriter: Relationship management ---
