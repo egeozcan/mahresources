@@ -60,4 +60,23 @@ function init()
             ]], label, blockId)
         end
     })
+
+    -- A block type restricted to a category that no test note's owning group is
+    -- in. filters.category_ids was parsed, stored and shipped to the browser
+    -- while nothing read it, and the picker listed every type regardless — so a
+    -- filtered type was offered on every note and errored after the click.
+    mah.block_type({
+        type = "restricted",
+        label = "Restricted Block",
+        icon = "🔒",
+        description = "Only available inside one category",
+        filters = { category_ids = { 999999 } },
+        default_content = { label = "Restricted" },
+        render_view = function(ctx)
+            return '<div data-testid="restricted-view">restricted</div>'
+        end,
+        render_edit = function(ctx)
+            return '<div data-testid="restricted-edit">restricted</div>'
+        end
+    })
 end

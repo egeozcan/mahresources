@@ -296,6 +296,16 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 		// Required, so a mandatory field inside a branch is enforced exactly
 		// when its branch is the one the user is in.
 		for key, expected := range p.ShowWhen {
+			// A misspelled controller is worse than it looks now that required
+			// combines with show_when: the condition can never be satisfied, so
+			// the field is permanently hidden — and a hidden field skips its
+			// required check, silently turning a mandatory input optional.
+			if !seen[key] {
+				return nil, fmt.Errorf("param %q: show_when refers to %q, which is not a parameter of this action", p.Name, key)
+			}
+			if key == p.Name {
+				return nil, fmt.Errorf("param %q: show_when may not depend on itself", p.Name)
+			}
 			if !isComparableShowWhenValue(expected) {
 				return nil, fmt.Errorf("param %q: show_when[%q] must be a string, number, boolean, or an array of those", p.Name, key)
 			}

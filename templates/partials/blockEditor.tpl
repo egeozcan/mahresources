@@ -1006,7 +1006,10 @@
                     x-transition
                     class="absolute z-10 mt-2 w-full bg-white border border-stone-200 rounded-lg shadow-lg py-2 list-none"
                 >
-                    <template x-for="(bt, idx) in blockTypes" :key="bt.type">
+                    {# allowedBlockTypes, not blockTypes: the full list also drives rendering of #}
+                    {# blocks the note already has, and a type this note may not ADD can still #}
+                    {# be one it legitimately CONTAINS.                                        #}
+                    <template x-for="(bt, idx) in allowedBlockTypes" :key="bt.type">
                         <li
                             role="option"
                             :tabindex="idx === activePickerIndex ? 0 : -1"
@@ -1020,10 +1023,10 @@
                             {# the close watcher in blockEditor.js only restores focus to the #}
                             {# trigger when focus is still inside the component. #}
                             @keydown.tab="addBlockPickerOpen = false"
-                            @keydown.arrow-down.prevent="focusPickerItem(Math.min(activePickerIndex + 1, blockTypes.length - 1))"
+                            @keydown.arrow-down.prevent="focusPickerItem(Math.min(activePickerIndex + 1, allowedBlockTypes.length - 1))"
                             @keydown.arrow-up.prevent="focusPickerItem(Math.max(activePickerIndex - 1, 0))"
                             @keydown.home.prevent="focusPickerItem(0)"
-                            @keydown.end.prevent="focusPickerItem(blockTypes.length - 1)"
+                            @keydown.end.prevent="focusPickerItem(allowedBlockTypes.length - 1)"
                             class="w-full px-4 py-2 text-left hover:bg-stone-50 flex items-center gap-2 cursor-pointer"
                         >
                             <span x-text="bt.icon"></span>

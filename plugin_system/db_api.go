@@ -225,11 +225,18 @@ func (pm *PluginManager) getMRQLExecutor() MRQLExecutor {
 // resource 1 is not a rounding error, it is the wrong row.
 func checkEntityID(L *lua.LState, argIdx int) uint {
 	n := float64(L.CheckNumber(argIdx))
-	if n <= 0 || n != math.Trunc(n) || n > math.MaxUint32 {
+	// 2^53 is where float64 stops representing consecutive integers, so it is
+	// the largest id Lua can hold without the value already being approximate.
+	// Bounding lower would reject ids the database can legitimately issue.
+	if n <= 0 || n != math.Trunc(n) || n > maxLuaExactInteger {
 		L.ArgError(argIdx, fmt.Sprintf("entity id must be a positive whole number, got %v", n))
 	}
 	return uint(n)
 }
+
+// maxLuaExactInteger is 2^53: above it float64 skips integers, so a larger
+// "id" is already not the number the caller meant.
+const maxLuaExactInteger = 1 << 53
 
 // registerDbModule registers the mah.db sub-table in the Lua VM.
 // Functions check pm.dbProvider at call time (not at registration) so they
@@ -391,6 +398,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			opts = luaTableToGoMap(optTbl)
 		}
 		result, err := db.CreateResourceFromURL(url, opts)
+		InvalidateMRQLCache(L.Context())
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -414,6 +422,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			opts = luaTableToGoMap(optTbl)
 		}
 		result, err := db.CreateResourceFromData(base64Data, opts)
+		InvalidateMRQLCache(L.Context())
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -435,6 +444,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		url := L.CheckString(2)
 		comment := L.OptString(3, "")
 		result, err := db.AddResourceVersionFromURL(resourceID, url, comment)
+		InvalidateMRQLCache(L.Context())
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -465,6 +475,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			}
 			opts := luaTableToGoMap(L.CheckTable(1))
 			result, err := fn(w, opts)
+			InvalidateMRQLCache(L.Context())
 			if err != nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString(err.Error()))
@@ -487,6 +498,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			id := checkEntityID(L, 1)
 			opts := luaTableToGoMap(L.CheckTable(2))
 			result, err := fn(w, id, opts)
+			InvalidateMRQLCache(L.Context())
 			if err != nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString(err.Error()))
@@ -507,7 +519,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 				return 2
 			}
 			id := checkEntityID(L, 1)
-			if err := fn(w, id); err != nil {
+			err := fn(w, id)
+			InvalidateMRQLCache(L.Context())
+			if err != nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString(err.Error()))
 				return 2
@@ -537,19 +551,27 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// Category
 	registerOptsWriter("create_category", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.CreateCategory(o) })
-	registerIdOptsWriter("update_category", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.UpdateCategory(id, o) })
+	registerIdOptsWriter("update_category", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) {
+		return w.UpdateCategory(id, o)
+	})
 	registerIdOptsWriter("patch_category", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.PatchCategory(id, o) })
 	registerDelete("delete_category", func(w EntityWriter, id uint) error { return w.DeleteCategory(id) })
 
 	// ResourceCategory
 	registerOptsWriter("create_resource_category", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.CreateResourceCategory(o) })
-	registerIdOptsWriter("update_resource_category", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.UpdateResourceCategory(id, o) })
-	registerIdOptsWriter("patch_resource_category", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.PatchResourceCategory(id, o) })
+	registerIdOptsWriter("update_resource_category", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) {
+		return w.UpdateResourceCategory(id, o)
+	})
+	registerIdOptsWriter("patch_resource_category", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) {
+		return w.PatchResourceCategory(id, o)
+	})
 	registerDelete("delete_resource_category", func(w EntityWriter, id uint) error { return w.DeleteResourceCategory(id) })
 
 	// NoteType
 	registerOptsWriter("create_note_type", func(w EntityWriter, o map[string]any) (map[string]any, error) { return w.CreateNoteType(o) })
-	registerIdOptsWriter("update_note_type", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.UpdateNoteType(id, o) })
+	registerIdOptsWriter("update_note_type", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) {
+		return w.UpdateNoteType(id, o)
+	})
 	registerIdOptsWriter("patch_note_type", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) { return w.PatchNoteType(id, o) })
 	registerDelete("delete_note_type", func(w EntityWriter, id uint) error { return w.DeleteNoteType(id) })
 
@@ -595,7 +617,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		entityType := L.CheckString(1)
 		id := checkEntityID(L, 2)
 		ids := luaTableToUintSlice(L.CheckTable(3))
-		if err := w.AddTagsToEntity(entityType, id, ids); err != nil {
+		err := w.AddTagsToEntity(entityType, id, ids)
+		InvalidateMRQLCache(L.Context())
+		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
 			return 2
@@ -615,7 +639,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		entityType := L.CheckString(1)
 		id := checkEntityID(L, 2)
 		ids := luaTableToUintSlice(L.CheckTable(3))
-		if err := w.RemoveTagsFromEntity(entityType, id, ids); err != nil {
+		err := w.RemoveTagsFromEntity(entityType, id, ids)
+		InvalidateMRQLCache(L.Context())
+		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
 			return 2
@@ -635,7 +661,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		entityType := L.CheckString(1)
 		id := checkEntityID(L, 2)
 		ids := luaTableToUintSlice(L.CheckTable(3))
-		if err := w.AddGroupsToEntity(entityType, id, ids); err != nil {
+		err := w.AddGroupsToEntity(entityType, id, ids)
+		InvalidateMRQLCache(L.Context())
+		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
 			return 2
@@ -655,7 +683,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		entityType := L.CheckString(1)
 		id := checkEntityID(L, 2)
 		ids := luaTableToUintSlice(L.CheckTable(3))
-		if err := w.RemoveGroupsFromEntity(entityType, id, ids); err != nil {
+		err := w.RemoveGroupsFromEntity(entityType, id, ids)
+		InvalidateMRQLCache(L.Context())
+		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
 			return 2
@@ -674,7 +704,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		}
 		noteId := checkEntityID(L, 1)
 		ids := luaTableToUintSlice(L.CheckTable(2))
-		if err := w.AddResourcesToNote(noteId, ids); err != nil {
+		err := w.AddResourcesToNote(noteId, ids)
+		InvalidateMRQLCache(L.Context())
+		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
 			return 2
@@ -693,7 +725,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		}
 		noteId := checkEntityID(L, 1)
 		ids := luaTableToUintSlice(L.CheckTable(2))
-		if err := w.RemoveResourcesFromNote(noteId, ids); err != nil {
+		err := w.RemoveResourcesFromNote(noteId, ids)
+		InvalidateMRQLCache(L.Context())
+		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
 			return 2

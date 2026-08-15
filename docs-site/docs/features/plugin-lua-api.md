@@ -141,18 +141,27 @@ The Category fields above, plus `auto_detect_rules` (string).
 Taxonomies have no owner, so these take no scoping fields. **Limits**: default
 20, maximum 100. **Offset**: default 0, maximum 10,000.
 
-Find-or-create a tag by name -- the reason these exist:
+`name` is a **substring** match, like the corresponding entity queries -- asking
+for `"photo"` also returns `"photography"`. Compare exactly yourself when you
+need one specific name:
 
 ```lua
 local function tag_id_for(name)
     local matches, err = mah.db.list_tags({ name = name })
     if err then return nil, err end
-    if #matches > 0 then return matches[1].id end
+    for _, tag in ipairs(matches) do
+        -- list_tags matches substrings, so confirm the exact name before
+        -- reusing a tag: "photo" would otherwise adopt "photography".
+        if tag.name == name then return tag.id end
+    end
     local created, createErr = mah.db.create_tag({ name = name })
     if createErr then return nil, createErr end
     return created.id
 end
 ```
+
+A name longer than the page limit's worth of substring matches can fall off the
+end, so pass a `limit` when you expect many near-matches.
 
 ### Query Functions
 

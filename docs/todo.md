@@ -41,40 +41,55 @@ Effort M and stayed out. This is the remaining ten, items 03-12.
 
 ## Review
 
-Three pi rounds (`gpt-5.6-sol:high`), each on the commit before it.
+Four pi rounds (`gpt-5.6-sol:high`), each against the commit before it. Every
+round found real defects, including in code the previous round had already
+looked at — which is the argument for running the loop rather than one pass.
 
-Round 1 (batch A) found the `patch_*` snapshot race and that width/height cannot
-be cleared. Round 2 (batch B) found that `mah.http.get_sync` hung its context off
-`Background`, so a disconnect left it holding the VM lock for up to 120s; that
-one MRQL cache per bulk action served entity N+1 the answer from before entity
-N's write; and that the docs pages discarded the request context. Round 3 (batch
-C) found that destructive validation was non-idempotent across the two passes
-every action gets, that a `show_when` chain could lose user input, that an
-uncomparable submitted value panicked `==`, and that a refusal carrying a
-redirect navigated away before showing why. A fourth round found one Medium
-(meta cannot be cleared). All fixed or, where the behaviour is shared with the
-HTTP edit path, documented and pinned by a test.
+- **Round 1** (mah.db): the `patch_*` snapshot race; width/height not clearable.
+- **Round 2** (host seams): `mah.http.get_sync` hung its context off
+  `Background`, so a disconnect left it holding the VM lock for up to 120s; one
+  MRQL cache per bulk action served entity N+1 the answer from before entity N's
+  write; the docs pages discarded the request context.
+- **Round 3** (actions + blocks): destructive validation was non-idempotent
+  across the two passes every action gets; a `show_when` chain could lose user
+  input; an uncomparable submitted value panicked `==`; a refusal carrying a
+  redirect navigated away before showing why. A follow-up pass added: entity ids
+  truncated rather than rejected (`delete_resource(1.9)` deleted resource 1); a
+  mistyped `tags` value cleared every tag; booleans unvalidated, so `[]` read as
+  "yes" to a handler gating a delete; `get_category` returning less than the
+  docs promised.
+- **Round 4**: the id bound rejected valid 64-bit ids; embedded ids
+  (`owner_id = 2.9`) still truncated; a misspelled `show_when` controller
+  silently turned a required field optional; the MRQL cache was not invalidated
+  by a plugin's own writes; **filtering the block-type list also filtered what
+  the editor could render**, so an existing block of a now-disallowed type
+  vanished and reported its plugin as disabled; `list_tags` is a substring
+  match, so the documented find-or-create recipe could adopt `photography` for
+  `photo`.
 
-The `show_when` chain fix is the one worth remembering: rejecting chains
-outright would have broken fal-ai, which gates a sub-mode selector on a model
-and its fields on both. The rule that works is narrower — a dependent may name a
-gated controller only if it repeats that controller's conditions, which makes
-"dependent visible" imply "controller visible" and therefore submitted.
+Two fixes are worth remembering.
 
-## Accepted limitations, documented not fixed
+**The `show_when` chain rule.** Rejecting chains outright broke bundled fal-ai,
+which gates a sub-mode selector on a model and its fields on both. The rule that
+works is narrower: a dependent may name a gated controller only if it repeats
+that controller's conditions, which makes "dependent visible" imply "controller
+visible" and therefore submitted. Without it the browser (which keeps hidden
+values in form state but strips them from the request) and the server reach
+opposite conclusions, and the user's input is silently dropped.
 
-- Every `patch_*` writer is last-write-wins on a snapshot read outside the
-  write's transaction. Family-wide, predates this work.
-- `meta`, `width` and `height` cannot be cleared through `EditResource`; pass
-  `"{}"` to empty meta. Shared with the HTTP edit path.
-- Plugin `mah.db` writes still run unscoped with no per-execution principal —
-  that is item 01, Effort M, and the prerequisite for scope-aware plugin data
-  access.
+**The block-type listing returns a flag, not a filtered list.** The same
+response tells the editor how to render the blocks a note already has, so a
+filter on what can be *added* must not become a filter on what can be *seen*.
 
 ## Gates
 
-Go unit (SQLite), browser + CLI E2E (1980 passed), Postgres Go, Postgres E2E
-(1981 passed). All green.
+Go unit (SQLite), browser + CLI E2E, Postgres Go, Postgres E2E — all green at
+HEAD. Two new specs pin the user-visible halves:
+`plugin-action-refusal.spec.ts` (a refusal renders as an alert, does not reload,
+and a bulk run names the entities that failed) and
+`plugin-block-filters.spec.ts` (a filtered type is flagged, refused by the
+create path, and absent from the picker while remaining listed, so blocks a note
+already has still render).
 
 # The Select All row animated itself open on load (2026-08-15)
 

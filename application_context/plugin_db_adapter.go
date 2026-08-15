@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -647,12 +648,22 @@ func getStringOpt(opts map[string]any, key string) string {
 }
 
 // getUintOpt extracts a uint value from an options map (expects float64 from Lua).
+//
+// A fractional value is not read as its floor: Lua has one number type, so an
+// id can arrive from a division, and truncating 2.9 to group 2 would move an
+// entity under a group the caller never named. Unreadable means absent, which
+// on a create or update is the same as omitting the key.
 func getUintOpt(opts map[string]any, key string) uint {
-	if v, ok := opts[key].(float64); ok && v > 0 {
-		return uint(v)
+	v, ok := opts[key].(float64)
+	if !ok || v <= 0 || v != math.Trunc(v) || v > maxLuaExactInteger {
+		return 0
 	}
-	return 0
+	return uint(v)
 }
+
+// maxLuaExactInteger is 2^53, above which float64 no longer represents
+// consecutive integers. Mirrors plugin_system.checkEntityID's bound.
+const maxLuaExactInteger = 1 << 53
 
 // getUintSliceOpt extracts a []uint from an options map.
 // Handles both []any (proper arrays) and map[string]any (Lua tables with
@@ -715,9 +726,25 @@ func patchString(opts map[string]any, key, current string) string {
 }
 
 // patchUint returns opts[key] if present, otherwise current.
+// patchUint returns the supplied id, or the entity's current one when the key
+// is absent — or when the supplied value cannot be read as an id. On a patch,
+// falling back to 0 for an unreadable value would not mean "leave it alone", it
+// would mean "clear the owner", so an unreadable value keeps what is stored.
 func patchUint(opts map[string]any, key string, current uint) uint {
-	if _, exists := opts[key]; exists {
-		return getUintOpt(opts, key)
+	raw, exists := opts[key]
+	if !exists {
+		return current
+	}
+	if _, ok := raw.(float64); !ok {
+		return current
+	}
+	if parsed := getUintOpt(opts, key); parsed > 0 {
+		return parsed
+	}
+	// An explicit 0 is a deliberate clear; a fractional or out-of-range number
+	// is not, and must not be read as one.
+	if v, _ := raw.(float64); v == 0 {
+		return 0
 	}
 	return current
 }

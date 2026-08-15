@@ -69,3 +69,27 @@ func (c *MRQLCache) Put(key string, result *MRQLResult) {
 	defer c.mu.Unlock()
 	c.store[key] = result
 }
+
+// Invalidate empties the cache.
+//
+// Called after any plugin write, because the cache lives for a whole request
+// and a plugin page, endpoint or action can query, write, and query again
+// inside one. Nothing here knows which queries a given write would have
+// changed, and answering a repeated question with the state from before the
+// caller's own write is worse than re-running it.
+func (c *MRQLCache) Invalidate() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	clear(c.store)
+}
+
+// InvalidateMRQLCache drops any cached MRQL results on the given context.
+// A no-op when no cache is attached (a hook, or an async job).
+func InvalidateMRQLCache(ctx context.Context) {
+	if ctx == nil {
+		return
+	}
+	if cache := MRQLCacheFromContext(ctx); cache != nil {
+		cache.Invalidate()
+	}
+}

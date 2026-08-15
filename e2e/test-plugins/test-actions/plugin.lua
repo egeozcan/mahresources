@@ -20,6 +20,56 @@ function init()
         end,
     })
 
+    -- A handler that refuses. ActionResult.success has always been produced and
+    -- transported; the modal used to ignore it and announce every refusal as
+    -- "Action completed successfully" before reloading the page.
+    mah.action({
+        id = "always-refuses",
+        label = "Always Refuses",
+        description = "Returns success=false so the modal has to report a failure",
+        entity = "resource",
+        placement = { "detail", "card", "bulk" },
+        handler = function(ctx)
+            return { success = false, message = "Refused resource " .. ctx.entity_id .. ": quota exhausted" }
+        end,
+    })
+
+    -- Refuses for even entity ids only, so a bulk run over two resources is
+    -- partly successful and the modal has to say which one failed.
+    mah.action({
+        id = "refuses-even",
+        label = "Refuses Even IDs",
+        description = "Succeeds for odd entity ids and fails for even ones",
+        entity = "resource",
+        placement = { "detail", "card", "bulk" },
+        handler = function(ctx)
+            if ctx.entity_id % 2 == 0 then
+                return { success = false, message = "Refused even resource " .. ctx.entity_id }
+            end
+            return { success = true, message = "Handled odd resource " .. ctx.entity_id }
+        end,
+    })
+
+    -- required combined with show_when: mandatory only in the branch that shows
+    -- it. Registration used to reject this pair outright.
+    mah.action({
+        id = "branch-required",
+        label = "Branch Required",
+        description = "A mandatory field that exists only in one branch",
+        entity = "resource",
+        placement = { "detail" },
+        params = {
+            { name = "mode", type = "select", label = "Mode", default = "simple", options = {"simple", "scheduled"} },
+            { name = "publish_at", type = "text", label = "Publish at", required = true,
+              show_when = { mode = "scheduled" } },
+        },
+        handler = function(ctx)
+            local at = ctx.params.publish_at
+            if at == nil then return { success = true, message = "published now" } end
+            return { success = true, message = "scheduled for " .. at }
+        end,
+    })
+
     mah.action({
         id = "group-action",
         label = "Group Action",

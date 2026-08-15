@@ -187,6 +187,10 @@ function init()
             { name = "extra_a", type = "text", label = "Extra A", show_when = { model = "a" } },
             { name = "extra_b", type = "number", label = "Extra B",
               show_when = { model = "b", advanced = true } },
+            -- Declared last, so the assertions below keep their indices.
+            -- show_when may only name real params: a typo there permanently
+            -- hides its field, and a hidden field skips its required check.
+            { name = "advanced", type = "boolean", label = "Advanced", default = false },
         },
         handler = handler,
     })
@@ -207,8 +211,8 @@ end
 		t.Fatalf("expected 1 action, got %d", len(actions))
 	}
 	a := actions[0]
-	if len(a.Params) != 3 {
-		t.Fatalf("expected 3 params, got %d", len(a.Params))
+	if len(a.Params) != 4 {
+		t.Fatalf("expected 4 params, got %d", len(a.Params))
 	}
 
 	if a.Params[0].ShowWhen != nil {

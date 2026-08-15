@@ -232,18 +232,27 @@ type BlockTypeInfo struct {
 	Plugin      bool                           `json:"plugin,omitempty"`
 	PluginName  string                         `json:"pluginName,omitempty"`
 	Filters     *plugin_system.BlockTypeFilter `json:"filters,omitempty"`
+	// Allowed is set only when the request named a note: whether that note may
+	// have a block of this type added. Nil means "not asked", not "no".
+	Allowed *bool `json:"allowed,omitempty"`
 }
 
 // GetBlockTypesHandler returns all registered block types with their defaults.
 // This allows the frontend to dynamically discover available block types
 // instead of hardcoding them.
 //
-// With ?noteId=N it returns only the types that note may actually use, applying
-// the same BlockTypeFilter predicate CreateBlock enforces. Filtering here rather
-// than in the picker keeps one implementation of the matching rules: the note's
+// With ?noteId=N every entry gains an `allowed` flag, from the same
+// BlockTypeFilter predicate CreateBlock enforces. Deciding it here rather than
+// in the picker keeps one implementation of the matching rules: the note's
 // owning-group category is not present in the browser at all, so the client
-// could not apply them even if we wanted it to. Without noteId the response is
-// unfiltered, which is what every other caller gets today.
+// could not apply them even if we wanted it to.
+//
+// A flag, not a filtered list. The same response tells the editor how to render
+// the blocks a note already has, so removing entries would make an existing
+// block of a now-disallowed type vanish from a note that legitimately contains
+// it — a filter on what can be added must not become a filter on what can be
+// seen. Without noteId the flag is absent and every entry is listed, which is
+// what every other caller gets today.
 func GetBlockTypesHandler(ctx contracts.BlockTypeFilterResolver) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var noteTypeID, ownerCategoryID *uint
@@ -269,8 +278,9 @@ func GetBlockTypesHandler(ctx contracts.BlockTypeFilterResolver) func(http.Respo
 			}
 
 			if pbt, ok := bt.(*plugin_system.PluginBlockType); ok {
-				if filterToNote && !pbt.Filters.Allows(noteTypeID, ownerCategoryID) {
-					continue
+				if filterToNote {
+					allowed := pbt.Filters.Allows(noteTypeID, ownerCategoryID)
+					info.Allowed = &allowed
 				}
 				info.Label = pbt.Label
 				info.Icon = pbt.Icon

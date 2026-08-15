@@ -225,11 +225,17 @@ export function blockEditor(noteId, initialBlocks = []) {
 
     async loadBlockTypes() {
       try {
-        // Scoped to this note, so the picker offers only what CreateBlock will
-        // accept. The matching rules live on the server: a note's owning-group
-        // category is not available in the browser, and duplicating the rules
-        // here is what let the picker and the write path disagree — a filtered
-        // type was offered on every note and errored after the click.
+        // Asked in the context of this note, so each entry comes back with an
+        // `allowed` flag. The matching rules live on the server: a note's
+        // owning-group category is not available in the browser, and
+        // duplicating the rules here is what let the picker and the write path
+        // disagree — a filtered type was offered on every note and errored
+        // after the click.
+        //
+        // The full list is kept: this same list tells the editor how to render
+        // the blocks the note already has, so dropping disallowed entries would
+        // make an existing block vanish from a note that legitimately contains
+        // it. Only the picker filters — see allowedBlockTypes.
         const url = this.noteId
           ? `/v1/note/block/types?noteId=${encodeURIComponent(this.noteId)}`
           : '/v1/note/block/types';
@@ -245,13 +251,30 @@ export function blockEditor(noteId, initialBlocks = []) {
             defaultContent: bt.defaultContent,
             plugin: bt.plugin || false,
             pluginName: bt.pluginName || null,
-            filters: bt.filters || null
+            filters: bt.filters || null,
+            // Absent means the server was not asked about a note, which is
+            // "no restriction", not "not allowed".
+            allowed: bt.allowed !== false
           }));
           this._blockTypesLoaded = true;
         }
       } catch (err) {
         console.warn('Failed to load block types from API, using defaults:', err);
       }
+    },
+
+    /**
+     * The block types the "+ Add Block" picker may offer for this note.
+     *
+     * Distinct from `blockTypes`, which stays complete because it also tells
+     * the editor how to render the blocks the note already has. A type this
+     * note may not *add* can still be one it legitimately *contains* — a block
+     * created before its note moved to another category, say — and dropping it
+     * from the list would make that block report its plugin as disabled and
+     * disappear.
+     */
+    get allowedBlockTypes() {
+      return this.blockTypes.filter(bt => bt.allowed !== false);
     },
 
     _formatLabel(type) {
