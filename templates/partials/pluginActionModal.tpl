@@ -33,7 +33,9 @@
                         <p x-text="resultMessage()"></p>
                         <template x-if="resultDetails.length > 0">
                             <ul class="plugin-action-modal-result-list">
-                                <template x-for="detail in resultDetails" :key="detail.id ?? detail.message">
+                                {# Keyed by position: two entities can fail the same way, and an   #}
+                                {# id is null when the result list is longer than the ids we sent. #}
+                                <template x-for="(detail, i) in resultDetails" :key="i">
                                     <li>
                                         <span x-show="detail.id !== null" x-text="'#' + detail.id + ': '"></span>
                                         <span x-text="detail.message"></span>
