@@ -427,6 +427,48 @@ func TestShowWhen_StripHiddenParams(t *testing.T) {
 	}
 }
 
+// Everything except false and nil is truthy in Lua, so an unvalidated value
+// posted for a confirmation flag reads as "yes" to a handler gating a delete on
+// it.
+func TestActionParams_BooleanIsTypeChecked(t *testing.T) {
+	action, err := registerShowWhenAction(t, `{
+            { name = "confirmed", type = "boolean", label = "Confirmed" },
+        }`)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	for _, bad := range []any{[]any{}, "true", float64(1), map[string]any{}} {
+		errs := ValidateActionParams(action, map[string]any{"confirmed": bad})
+		if len(errs) == 0 {
+			t.Errorf("%#v should be rejected for a boolean param", bad)
+		}
+	}
+	for _, good := range []any{true, false} {
+		if errs := ValidateActionParams(action, map[string]any{"confirmed": good}); len(errs) != 0 {
+			t.Errorf("%v should be accepted for a boolean param, got %v", good, errs)
+		}
+	}
+}
+
+// Text params are type-checked too, so a handler concatenating one cannot be
+// handed a table.
+func TestActionParams_TextIsTypeChecked(t *testing.T) {
+	action, err := registerShowWhenAction(t, `{
+            { name = "caption", type = "text", label = "Caption" },
+        }`)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	if errs := ValidateActionParams(action, map[string]any{"caption": []any{"a"}}); len(errs) == 0 {
+		t.Error("an array should be rejected for a text param")
+	}
+	if errs := ValidateActionParams(action, map[string]any{"caption": "fine"}); len(errs) != 0 {
+		t.Errorf("a string should be accepted, got %v", errs)
+	}
+}
+
 // Params with no show_when are unaffected.
 func TestShowWhen_UnconditionalParamsUnaffected(t *testing.T) {
 	action, err := registerShowWhenAction(t, `{

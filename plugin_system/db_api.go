@@ -3,6 +3,7 @@ package plugin_system
 import (
 	"context"
 	"fmt"
+	"math"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -216,6 +217,20 @@ func (pm *PluginManager) getMRQLExecutor() MRQLExecutor {
 	return v.(MRQLExecutor)
 }
 
+// checkEntityID reads an entity id argument, rejecting anything that is not a
+// positive whole number.
+//
+// Lua has one number type, so a computed id can arrive fractional — and a plain
+// uint() conversion truncates it silently. mah.db.delete_resource(1.9) deleting
+// resource 1 is not a rounding error, it is the wrong row.
+func checkEntityID(L *lua.LState, argIdx int) uint {
+	n := float64(L.CheckNumber(argIdx))
+	if n <= 0 || n != math.Trunc(n) || n > math.MaxUint32 {
+		L.ArgError(argIdx, fmt.Sprintf("entity id must be a positive whole number, got %v", n))
+	}
+	return uint(n)
+}
+
 // registerDbModule registers the mah.db sub-table in the Lua VM.
 // Functions check pm.dbProvider at call time (not at registration) so they
 // work even though the provider is set after plugin loading.
@@ -242,7 +257,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 				L.Push(lua.LString("database not available"))
 				return 2
 			}
-			id := uint(L.CheckNumber(1))
+			id := checkEntityID(L, 1)
 			data, err := fn(db, id)
 			if err != nil {
 				L.Push(lua.LNil)
@@ -351,7 +366,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			L.Push(lua.LNil)
 			return 1
 		}
-		id := uint(L.CheckNumber(1))
+		id := checkEntityID(L, 1)
 		base64Data, mimeType, err := db.GetResourceFileData(id)
 		if err != nil {
 			L.Push(lua.LNil)
@@ -416,7 +431,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			L.Push(lua.LString("database not available"))
 			return 2
 		}
-		resourceID := uint(L.CheckNumber(1))
+		resourceID := checkEntityID(L, 1)
 		url := L.CheckString(2)
 		comment := L.OptString(3, "")
 		result, err := db.AddResourceVersionFromURL(resourceID, url, comment)
@@ -469,7 +484,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 				L.Push(lua.LString("database writer not available"))
 				return 2
 			}
-			id := uint(L.CheckNumber(1))
+			id := checkEntityID(L, 1)
 			opts := luaTableToGoMap(L.CheckTable(2))
 			result, err := fn(w, id, opts)
 			if err != nil {
@@ -491,7 +506,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 				L.Push(lua.LString("database writer not available"))
 				return 2
 			}
-			id := uint(L.CheckNumber(1))
+			id := checkEntityID(L, 1)
 			if err := fn(w, id); err != nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString(err.Error()))
@@ -578,7 +593,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			return 2
 		}
 		entityType := L.CheckString(1)
-		id := uint(L.CheckNumber(2))
+		id := checkEntityID(L, 2)
 		ids := luaTableToUintSlice(L.CheckTable(3))
 		if err := w.AddTagsToEntity(entityType, id, ids); err != nil {
 			L.Push(lua.LNil)
@@ -598,7 +613,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			return 2
 		}
 		entityType := L.CheckString(1)
-		id := uint(L.CheckNumber(2))
+		id := checkEntityID(L, 2)
 		ids := luaTableToUintSlice(L.CheckTable(3))
 		if err := w.RemoveTagsFromEntity(entityType, id, ids); err != nil {
 			L.Push(lua.LNil)
@@ -618,7 +633,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			return 2
 		}
 		entityType := L.CheckString(1)
-		id := uint(L.CheckNumber(2))
+		id := checkEntityID(L, 2)
 		ids := luaTableToUintSlice(L.CheckTable(3))
 		if err := w.AddGroupsToEntity(entityType, id, ids); err != nil {
 			L.Push(lua.LNil)
@@ -638,7 +653,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			return 2
 		}
 		entityType := L.CheckString(1)
-		id := uint(L.CheckNumber(2))
+		id := checkEntityID(L, 2)
 		ids := luaTableToUintSlice(L.CheckTable(3))
 		if err := w.RemoveGroupsFromEntity(entityType, id, ids); err != nil {
 			L.Push(lua.LNil)
@@ -657,7 +672,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			L.Push(lua.LString("database writer not available"))
 			return 2
 		}
-		noteId := uint(L.CheckNumber(1))
+		noteId := checkEntityID(L, 1)
 		ids := luaTableToUintSlice(L.CheckTable(2))
 		if err := w.AddResourcesToNote(noteId, ids); err != nil {
 			L.Push(lua.LNil)
@@ -676,7 +691,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			L.Push(lua.LString("database writer not available"))
 			return 2
 		}
-		noteId := uint(L.CheckNumber(1))
+		noteId := checkEntityID(L, 1)
 		ids := luaTableToUintSlice(L.CheckTable(2))
 		if err := w.RemoveResourcesFromNote(noteId, ids); err != nil {
 			L.Push(lua.LNil)

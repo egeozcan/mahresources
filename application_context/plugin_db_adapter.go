@@ -148,11 +148,11 @@ func (a *pluginDBAdapter) GetCategoryData(id uint) (map[string]any, error) {
 	if err != nil {
 		return nil, skipNotFound(err)
 	}
-	return map[string]any{
-		"id":          float64(cat.ID),
-		"name":        cat.Name,
-		"description": cat.Description,
-	}, nil
+	// The full shape, matching list_categories and the other taxonomy getters.
+	// It used to return only id/name/description, so a plugin could enumerate
+	// categories and read their templates but not fetch one by id and do the
+	// same.
+	return categoryToMap(cat), nil
 }
 
 func (a *pluginDBAdapter) GetNoteTypeData(id uint) (map[string]any, error) {
@@ -723,11 +723,26 @@ func patchUint(opts map[string]any, key string, current uint) uint {
 }
 
 // patchUintSlice returns opts[key] if present, otherwise current.
+// patchUintSlice returns the supplied ID list, or the entity's current one when
+// the key is absent.
+//
+// A value of the wrong shape — a string where a list of ids belongs — keeps the
+// current list rather than clearing it. getUintSliceOpt cannot tell "you asked
+// for none" from "I could not read what you sent", and on a patch the two have
+// opposite consequences: `patch_resource(id, {tags = "photos"})` used to
+// succeed and strip every tag off the resource. An explicit empty list still
+// clears, because that is unambiguous.
 func patchUintSlice(opts map[string]any, key string, current []uint) []uint {
-	if _, exists := opts[key]; exists {
-		return getUintSliceOpt(opts, key)
+	raw, exists := opts[key]
+	if !exists {
+		return current
 	}
-	return current
+	switch raw.(type) {
+	case []any, map[string]any:
+		return getUintSliceOpt(opts, key)
+	default:
+		return current
+	}
 }
 
 func uintPtrVal(p *uint) uint {

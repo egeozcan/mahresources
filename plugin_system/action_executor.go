@@ -203,6 +203,25 @@ func ValidateActionParams(action ActionRegistration, params map[string]any) []Va
 		}
 
 		switch p.Type {
+		case "boolean":
+			// Everything except false and nil is truthy in Lua, so an
+			// unvalidated `[]` posted for a confirmation flag arrives as a
+			// table and reads as "yes" to a handler gating a delete on it.
+			if _, ok := val.(bool); !ok {
+				errs = append(errs, ValidationError{
+					Field:   p.Name,
+					Message: fmt.Sprintf("%s must be true or false", p.Label),
+				})
+			}
+
+		case "text", "textarea", "hidden":
+			if _, ok := val.(string); !ok {
+				errs = append(errs, ValidationError{
+					Field:   p.Name,
+					Message: fmt.Sprintf("%s must be a string", p.Label),
+				})
+			}
+
 		case "select":
 			strVal, ok := val.(string)
 			if !ok {

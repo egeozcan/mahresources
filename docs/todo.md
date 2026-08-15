@@ -1,3 +1,81 @@
+# Plugin system: the low-hanging-fruit roadmap (2026-08-15)
+
+The 2026-08-15 capability report on the Lua plugin system listed twelve small
+items. Item 02 (the VMLock race) shipped that morning in `2d5712d3`; item 01 is
+Effort M and stayed out. This is the remaining ten, items 03-12.
+
+## Done
+
+- [x] **06 — reads report failure.** Every getter, query and count pushed a bare
+      nil on failure, and a failed count pushed `0`, so a plugin branching on
+      "no rows" took the empty-data branch during an outage — destructive for
+      anything that then archives, deletes or re-uploads. Reads now return
+      `(value, error)`; a getter that merely found nothing still returns nil
+      with no error, and the adapter maps `gorm.ErrRecordNotFound` to that.
+- [x] **03 — taxonomy list/get.** `list_tags`, `list_categories`,
+      `list_note_types`, `list_resource_categories`, `get_note_type`,
+      `get_resource_category`. Find-or-create-a-tag is now expressible.
+- [x] **04 — `update_resource` / `patch_resource`.** Delete was the only
+      resource mutation a plugin had.
+- [x] **05 — `mah.util`.** Clock (UTC), base64, hex, sha256, hmac_sha256,
+      constant-time compare. A webhook receiver can verify a signature; a cache
+      can expire.
+- [x] **07 — request-scoped VM calls.** `HandlePage`, `HandleAPI`,
+      `RenderDisplay`, `RenderBlock` and the sync action path derived their
+      deadline from `context.Background()`: the per-request MRQL cache was
+      unreachable while the docs claimed caching, and an abandoned request ran
+      to its full timeout holding a lock exclusive across every surface of that
+      plugin.
+- [x] **10 — entity identity in the display render context.** A renderer could
+      not tell what it was rendering.
+- [x] **09 — display-type catalogue** at `GET /v1/plugin/displayTypes`.
+      Singular prefix deliberately: it enumerates registrations, runs no Lua.
+- [x] **08 — the action modal honours `success`.** Every refusal, `mah.abort`
+      included, was announced as "Action completed successfully" and the page
+      reloaded anyway.
+- [x] **11 — `show_when` evaluated server-side**, lifting the `required` ban and
+      closing the API-caller hole where hidden params could be submitted.
+- [x] **12 — block filters enforced and applied to the picker.**
+      `filters.category_ids` was parsed, stored and shipped to the browser while
+      nothing read it.
+
+## Review
+
+Three pi rounds (`gpt-5.6-sol:high`), each on the commit before it.
+
+Round 1 (batch A) found the `patch_*` snapshot race and that width/height cannot
+be cleared. Round 2 (batch B) found that `mah.http.get_sync` hung its context off
+`Background`, so a disconnect left it holding the VM lock for up to 120s; that
+one MRQL cache per bulk action served entity N+1 the answer from before entity
+N's write; and that the docs pages discarded the request context. Round 3 (batch
+C) found that destructive validation was non-idempotent across the two passes
+every action gets, that a `show_when` chain could lose user input, that an
+uncomparable submitted value panicked `==`, and that a refusal carrying a
+redirect navigated away before showing why. A fourth round found one Medium
+(meta cannot be cleared). All fixed or, where the behaviour is shared with the
+HTTP edit path, documented and pinned by a test.
+
+The `show_when` chain fix is the one worth remembering: rejecting chains
+outright would have broken fal-ai, which gates a sub-mode selector on a model
+and its fields on both. The rule that works is narrower — a dependent may name a
+gated controller only if it repeats that controller's conditions, which makes
+"dependent visible" imply "controller visible" and therefore submitted.
+
+## Accepted limitations, documented not fixed
+
+- Every `patch_*` writer is last-write-wins on a snapshot read outside the
+  write's transaction. Family-wide, predates this work.
+- `meta`, `width` and `height` cannot be cleared through `EditResource`; pass
+  `"{}"` to empty meta. Shared with the HTTP edit path.
+- Plugin `mah.db` writes still run unscoped with no per-execution principal —
+  that is item 01, Effort M, and the prerequisite for scope-aware plugin data
+  access.
+
+## Gates
+
+Go unit (SQLite), browser + CLI E2E (1980 passed), Postgres Go, Postgres E2E
+(1981 passed). All green.
+
 # The Select All row animated itself open on load (2026-08-15)
 
 `e2e/tests/regressions/ws10-global-chrome.spec.ts:85` — the pagination Next

@@ -275,6 +275,84 @@ func TestPluginDBAdapter_PatchResourcePreservesUnmentionedFields(t *testing.T) {
 	}
 }
 
+// A value of the wrong shape where an ID list belongs must not be read as "no
+// ids". getUintSliceOpt cannot tell "you asked for none" from "I could not read
+// what you sent", and on a patch those have opposite consequences: this used to
+// succeed and strip every tag off the resource.
+func TestPluginDBAdapter_PatchIgnoresMistypedAssociations(t *testing.T) {
+	ctx := createTestContext(t)
+	adapter := &pluginDBAdapter{ctx: ctx}
+
+	created, err := adapter.CreateResourceFromData(
+		"TWlzdHlwZWQgYXNzb2NpYXRpb25z",
+		map[string]any{"name": "tagged.txt"},
+	)
+	if err != nil {
+		t.Fatalf("CreateResourceFromData: %v", err)
+	}
+	id := uint(created["id"].(float64))
+
+	tag, err := adapter.CreateTag(map[string]any{"name": "mistyped-tag"})
+	if err != nil {
+		t.Fatalf("CreateTag: %v", err)
+	}
+	if err := adapter.AddTagsToEntity("resource", id, []uint{uint(tag["id"].(float64))}); err != nil {
+		t.Fatalf("AddTagsToEntity: %v", err)
+	}
+
+	if _, err := adapter.PatchResource(id, map[string]any{"tags": "not-an-id-array"}); err != nil {
+		t.Fatalf("PatchResource: %v", err)
+	}
+	after, err := adapter.GetResourceData(id)
+	if err != nil {
+		t.Fatalf("GetResourceData: %v", err)
+	}
+	if tags, _ := after["tags"].([]any); len(tags) != 1 {
+		t.Errorf("a mistyped tags value must not clear the tags, got %v", after["tags"])
+	}
+
+	// An explicit empty list is unambiguous and still clears.
+	if _, err := adapter.PatchResource(id, map[string]any{"tags": []any{}}); err != nil {
+		t.Fatalf("PatchResource(empty): %v", err)
+	}
+	after, err = adapter.GetResourceData(id)
+	if err != nil {
+		t.Fatalf("GetResourceData: %v", err)
+	}
+	if tags, _ := after["tags"].([]any); len(tags) != 0 {
+		t.Errorf("an explicit empty list should clear the tags, got %v", after["tags"])
+	}
+}
+
+// get_category returned only id/name/description, so a plugin could enumerate
+// categories and read their templates but not fetch one by id and do the same.
+func TestPluginDBAdapter_GetCategoryDataReturnsFullShape(t *testing.T) {
+	ctx := createTestContext(t)
+	adapter := &pluginDBAdapter{ctx: ctx}
+
+	created, err := adapter.CreateCategory(map[string]any{
+		"name":          "Full shape",
+		"description":   "has templates",
+		"custom_header": "<b>Configured</b>",
+	})
+	if err != nil {
+		t.Fatalf("CreateCategory: %v", err)
+	}
+
+	fetched, err := adapter.GetCategoryData(uint(created["id"].(float64)))
+	if err != nil {
+		t.Fatalf("GetCategoryData: %v", err)
+	}
+	if fetched["custom_header"] != "<b>Configured</b>" {
+		t.Errorf("custom_header = %v, want the configured template", fetched["custom_header"])
+	}
+	for _, key := range []string{"custom_sidebar", "custom_summary", "custom_avatar", "meta_schema"} {
+		if _, present := fetched[key]; !present {
+			t.Errorf("get_category should expose %q, matching list_categories", key)
+		}
+	}
+}
+
 func containsName(items []map[string]any, name string) bool {
 	for _, item := range items {
 		if item["name"] == name {

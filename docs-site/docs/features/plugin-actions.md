@@ -73,6 +73,20 @@ Parameters define the input fields shown to the user before the action runs.
 | `max` | number | No | Maximum value for `"number"` type |
 | `step` | number | No | Step increment for `"number"` type |
 
+Parameter names must be unique within an action -- params are addressed by name
+in the submitted values, the form, and `show_when`, so a duplicate has no
+coherent meaning and is rejected at plugin load.
+
+### Types are enforced
+
+A submitted value of the wrong type is rejected before the handler runs:
+`"text"`, `"textarea"` and `"hidden"` require a string, `"number"` a number,
+`"select"` one of its options, and `"boolean"` an actual `true` or `false`.
+
+The boolean check matters more than it looks: everything except `false` and
+`nil` is truthy in Lua, so an unvalidated `[]` posted for a confirmation flag
+would read as "yes" to a handler gating a delete on it.
+
 ## Entity Reference Parameters
 
 The `entity_ref` param type lets a plugin action accept references to one or more resources, notes, or groups as additional input. Use cases: an image-edit action that takes multiple source images, a "merge two notes" action, a "tag groups by another group's tags" action.

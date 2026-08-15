@@ -63,6 +63,11 @@ local note = mah.db.get_note(1)  -- the error return is simply discarded
 All IDs are numbers (float64 in Lua). A missing entity is `nil` with no error;
 a failed read is `nil, error_string`.
 
+Every function taking an entity ID rejects one that is not a positive whole
+number, rather than truncating it. Lua has a single number type, so a computed
+ID can arrive fractional -- and `delete_resource(1.9)` silently deleting
+resource 1 is the wrong row, not a rounding error.
+
 #### Note Fields
 
 | Field | Type | Description |
@@ -285,6 +290,11 @@ local updated, err = mah.db.patch_resource(id, { description = caption })
 ```
 
 Both return the updated resource table, or `nil, error_string`.
+
+On a `patch_*`, an association key whose value is not a list of IDs (a bare
+string, say) leaves the current associations alone rather than clearing them --
+"I could not read what you sent" is not "you asked for none". Pass an explicit
+empty list to clear.
 
 :::caution Patch is last-write-wins
 Every `patch_*` function reads the current entity, merges your keys over it, and
