@@ -62,28 +62,62 @@ func goToLuaValue(L *lua.LState, v any) lua.LValue {
 	}
 }
 
-// maxLuaConversionDepth bounds how deep a Lua table is followed when converting
-// it to Go.
+// Bounds on converting a Lua table to Go.
 //
 // Lua tables can be cyclic — `local t = {}; t.self = t` is legal, and a plugin
-// can return one from a hook or an async handler. Following it recursively
-// never terminates and overflows the Go stack, which is fatal to the process,
-// not to the plugin. Anything nested past this depth is dropped.
-const maxLuaConversionDepth = 32
+// can return one from a hook or an async handler — and they can also share
+// subtables, so a cycle is not the only way to make the walk explode. A depth
+// cap alone does not help: `t.a = t; t.b = t` doubles the work at every level,
+// so it still exhausts memory long before the cap bites.
+//
+// Two bounds, therefore. `seen` holds the tables on the current path, which
+// detects a cycle exactly and stops it at the first repeat rather than at some
+// arbitrary depth. `budget` caps total tables visited, which bounds the shared-
+// subtable blowup that no per-path check can see. The depth cap stays as a
+// backstop, generous enough that real nested metadata is unaffected.
+const (
+	maxLuaConversionDepth = 256
+	maxLuaConversionNodes = 100_000
+)
+
+// luaConversion carries the bounds down the walk.
+type luaConversion struct {
+	seen   map[*lua.LTable]bool
+	budget int
+}
+
+func newLuaConversion() *luaConversion {
+	return &luaConversion{seen: make(map[*lua.LTable]bool), budget: maxLuaConversionNodes}
+}
+
+// enter reports whether tbl may be walked, and marks it as on the current path.
+func (c *luaConversion) enter(tbl *lua.LTable, depth int) bool {
+	if depth >= maxLuaConversionDepth || c.budget <= 0 || c.seen[tbl] {
+		return false
+	}
+	c.budget--
+	c.seen[tbl] = true
+	return true
+}
+
+func (c *luaConversion) leave(tbl *lua.LTable) {
+	delete(c.seen, tbl)
+}
 
 // luaTableToGoMap converts a Lua table to a Go map.
 func luaTableToGoMap(tbl *lua.LTable) map[string]any {
-	return luaTableToGoMapDepth(tbl, 0)
+	return luaTableToGoMapDepth(tbl, 0, newLuaConversion())
 }
 
-func luaTableToGoMapDepth(tbl *lua.LTable, depth int) map[string]any {
+func luaTableToGoMapDepth(tbl *lua.LTable, depth int, c *luaConversion) map[string]any {
 	result := make(map[string]any)
-	if depth >= maxLuaConversionDepth {
+	if !c.enter(tbl, depth) {
 		return result
 	}
+	defer c.leave(tbl)
 	tbl.ForEach(func(key, value lua.LValue) {
 		if k, ok := key.(lua.LString); ok {
-			result[string(k)] = luaValueToGoDepth(value, depth+1)
+			result[string(k)] = luaValueToGoDepth(value, depth+1, c)
 		}
 	})
 	return result
@@ -92,13 +126,14 @@ func luaTableToGoMapDepth(tbl *lua.LTable, depth int) map[string]any {
 // luaTableToGo converts a Lua table to either []any (if array-like) or map[string]any.
 // A table is array-like if it has only consecutive integer keys starting from 1 with no gaps.
 func luaTableToGo(tbl *lua.LTable) any {
-	return luaTableToGoDepth(tbl, 0)
+	return luaTableToGoDepth(tbl, 0, newLuaConversion())
 }
 
-func luaTableToGoDepth(tbl *lua.LTable, depth int) any {
-	if depth >= maxLuaConversionDepth {
+func luaTableToGoDepth(tbl *lua.LTable, depth int, c *luaConversion) any {
+	if !c.enter(tbl, depth) {
 		return nil
 	}
+	defer c.leave(tbl)
 	maxN := tbl.MaxN()
 	if maxN > 0 {
 		totalKeys := 0
@@ -108,7 +143,7 @@ func luaTableToGoDepth(tbl *lua.LTable, depth int) any {
 		if totalKeys == maxN {
 			arr := make([]any, maxN)
 			for i := 1; i <= maxN; i++ {
-				arr[i-1] = luaValueToGoDepth(tbl.RawGetInt(i), depth+1)
+				arr[i-1] = luaValueToGoDepth(tbl.RawGetInt(i), depth+1, c)
 			}
 			return arr
 		}
@@ -119,9 +154,9 @@ func luaTableToGoDepth(tbl *lua.LTable, depth int) any {
 	tbl.ForEach(func(key, value lua.LValue) {
 		switch k := key.(type) {
 		case lua.LString:
-			result[string(k)] = luaValueToGoDepth(value, depth+1)
+			result[string(k)] = luaValueToGoDepth(value, depth+1, c)
 		case lua.LNumber:
-			result[lua.LVAsString(key)] = luaValueToGoDepth(value, depth+1)
+			result[lua.LVAsString(key)] = luaValueToGoDepth(value, depth+1, c)
 		}
 	})
 	return result
@@ -129,10 +164,10 @@ func luaTableToGoDepth(tbl *lua.LTable, depth int) any {
 
 // luaValueToGo converts a Lua value to its Go equivalent.
 func luaValueToGo(v lua.LValue) any {
-	return luaValueToGoDepth(v, 0)
+	return luaValueToGoDepth(v, 0, newLuaConversion())
 }
 
-func luaValueToGoDepth(v lua.LValue, depth int) any {
+func luaValueToGoDepth(v lua.LValue, depth int, c *luaConversion) any {
 	switch val := v.(type) {
 	case lua.LBool:
 		return bool(val)
@@ -141,7 +176,7 @@ func luaValueToGoDepth(v lua.LValue, depth int) any {
 	case lua.LString:
 		return string(val)
 	case *lua.LTable:
-		return luaTableToGoDepth(val, depth)
+		return luaTableToGoDepth(val, depth, c)
 	case *lua.LNilType:
 		return nil
 	default:

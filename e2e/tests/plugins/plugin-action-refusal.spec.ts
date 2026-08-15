@@ -107,8 +107,7 @@ test.describe('Plugin action refusals', () => {
   });
 
   test('the modal names the entities a bulk run failed on', async ({ page, apiClient }) => {
-    // Two resources under one group, so the card action can be run over a
-    // selection and one of the two ids is even.
+    // Two resources under one group, so the run is partly successful.
     const runId = Date.now() + Math.floor(Math.random() * 100000);
     const category = await apiClient.createCategory(`Bulk Refusal Category ${runId}`);
     const group = await apiClient.createGroup({
@@ -131,24 +130,26 @@ test.describe('Plugin action refusals', () => {
     await page.goto(`/resource?id=${a.ID}`);
     await page.waitForLoadState('load');
 
-    const evenId = a.ID % 2 === 0 ? a.ID : b.ID;
+    // The fixture refuses exactly the id it is told to, so the test picks the
+    // failure rather than depending on id parity, which other workers move.
+    const refusedId = b.ID;
     await page.evaluate(
-      ([ids]) => {
+      ([ids, refuse]) => {
         window.dispatchEvent(
           new CustomEvent('plugin-action-open', {
             detail: {
               plugin: 'test-actions',
-              action: 'refuses-even',
-              label: 'Refuses Even IDs',
+              action: 'refuses-one',
+              label: 'Refuses One',
               entityIds: ids,
               entityType: 'resource',
               async: false,
-              params: [],
+              params: [{ name: 'refuse_id', type: 'number', label: 'Refuse this id', default: refuse }],
             },
           })
         );
       },
-      [[a.ID, b.ID]]
+      [[a.ID, b.ID], refusedId] as [number[], number]
     );
 
     const modal = page.getByRole('dialog');
@@ -159,7 +160,7 @@ test.describe('Plugin action refusals', () => {
     await expect(alert).toBeVisible({ timeout: 5000 });
     await expect(alert).toContainText('1 of 2 failed');
     // Named, so the reader knows which one.
-    await expect(alert).toContainText(`#${evenId}`);
+    await expect(alert).toContainText(`#${refusedId}`);
     await expect(modal.locator('[role="status"]')).toHaveCount(0);
   });
 
@@ -167,11 +168,9 @@ test.describe('Plugin action refusals', () => {
     const response = await apiClient.request.post('/v1/jobs/action/run', {
       data: {
         plugin: 'test-actions',
-        action: 'refuses-even',
-        // One even and one odd id, so the run is partly successful whichever
-        // ids the fixtures happened to get.
+        action: 'refuses-one',
         entity_ids: [resourceId, resourceId + 1],
-        params: {},
+        params: { refuse_id: resourceId },
       },
     });
     expect(response.ok()).toBeTruthy();
@@ -183,7 +182,7 @@ test.describe('Plugin action refusals', () => {
     const succeeded = body.results.filter((r: any) => r.success === true);
     expect(failed).toHaveLength(1);
     expect(succeeded).toHaveLength(1);
-    expect(failed[0].message).toContain('Refused even resource');
+    expect(failed[0].message).toContain(`Refused resource ${resourceId}`);
   });
 
   test('required combines with show_when: mandatory only in its own branch', async ({ apiClient }) => {

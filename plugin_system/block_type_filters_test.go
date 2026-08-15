@@ -132,3 +132,31 @@ end
 		t.Error("a note in category 1 should not be allowed")
 	}
 }
+
+// A filter states where a block type may be used, so a fractional id quietly
+// naming category 2 offers it somewhere the author did not choose.
+func TestBlockTypeFilter_RejectsNonWholeFilterIDs(t *testing.T) {
+	for _, bad := range []string{`{2.9}`, `{"nope"}`, `{0}`, `{-1}`} {
+		dir := t.TempDir()
+		writePlugin(t, dir, "badfilter", `
+plugin = { name = "badfilter", version = "1.0", description = "bad filters" }
+function init()
+    mah.block_type({
+        type = "thing",
+        label = "Thing",
+        filters = { category_ids = `+bad+` },
+        render_view = function(ctx) return "v" end,
+        render_edit = function(ctx) return "e" end,
+    })
+end
+`)
+		mgr, err := NewPluginManager(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := mgr.EnablePlugin("badfilter"); err == nil {
+			t.Errorf("category_ids = %s should be rejected", bad)
+		}
+		mgr.Close()
+	}
+}

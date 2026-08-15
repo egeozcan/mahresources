@@ -34,19 +34,24 @@ function init()
         end,
     })
 
-    -- Refuses for even entity ids only, so a bulk run over two resources is
-    -- partly successful and the modal has to say which one failed.
+    -- Refuses exactly the entity named in refuse_id, so a bulk run over two
+    -- resources is partly successful and the test controls which one fails —
+    -- id parity is not stable when other workers are creating entities.
     mah.action({
-        id = "refuses-even",
-        label = "Refuses Even IDs",
-        description = "Succeeds for odd entity ids and fails for even ones",
+        id = "refuses-one",
+        label = "Refuses One",
+        description = "Fails for the entity named in refuse_id and succeeds for the rest",
         entity = "resource",
         placement = { "detail", "card", "bulk" },
+        params = {
+            { name = "refuse_id", type = "number", label = "Refuse this id", default = 0 },
+        },
         handler = function(ctx)
-            if ctx.entity_id % 2 == 0 then
-                return { success = false, message = "Refused even resource " .. ctx.entity_id }
+            local target = tonumber(ctx.params.refuse_id) or 0
+            if ctx.entity_id == target then
+                return { success = false, message = "Refused resource " .. ctx.entity_id }
             end
-            return { success = true, message = "Handled odd resource " .. ctx.entity_id }
+            return { success = true, message = "Handled resource " .. ctx.entity_id }
         end,
     })
 

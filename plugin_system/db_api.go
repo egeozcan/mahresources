@@ -247,10 +247,31 @@ const maxLuaExactInteger = 1 << 53
 // the caller did not mean.
 var idOptionKeys = []string{
 	"owner_id", "category_id", "note_type_id", "resource_category_id",
-	"series_id", "from_group_id", "to_group_id", "relation_type_id", "id",
+	"series_id", "from_group_id", "to_group_id", "relation_type_id",
+	"from_category", "to_category", "id",
 }
 
 var idListOptionKeys = []string{"tags", "groups", "notes", "resources"}
+
+// validEntityIDValue reports whether a Lua value can be read as an entity id.
+// allowZero covers a scalar key like owner_id, where 0 is a deliberate clear;
+// list members have no such meaning.
+func validEntityIDValue(v lua.LValue, allowZero bool) bool {
+	n, ok := v.(lua.LNumber)
+	if !ok {
+		// A string or a table where an id belongs is not "absent" — the adapter
+		// reads it as 0, which clears an owner or empties an association list.
+		return false
+	}
+	f := float64(n)
+	if f != math.Trunc(f) || f > maxLuaExactInteger {
+		return false
+	}
+	if allowZero {
+		return f >= 0
+	}
+	return f > 0
+}
 
 // checkEntityIDOpts validates every id-shaped entry of an options table.
 func checkEntityIDOpts(L *lua.LState, argIdx int, tbl *lua.LTable) {
@@ -259,12 +280,11 @@ func checkEntityIDOpts(L *lua.LState, argIdx int, tbl *lua.LTable) {
 	}
 	for _, key := range idOptionKeys {
 		v := tbl.RawGetString(key)
-		n, ok := v.(lua.LNumber)
-		if !ok {
+		if v == lua.LNil {
 			continue
 		}
-		if f := float64(n); f != math.Trunc(f) || f < 0 || f > maxLuaExactInteger {
-			L.ArgError(argIdx, fmt.Sprintf("%s must be a whole number, got %v", key, f))
+		if !validEntityIDValue(v, true) {
+			L.ArgError(argIdx, fmt.Sprintf("%s must be a whole number, got %v", key, v))
 		}
 	}
 	for _, key := range idListOptionKeys {
@@ -272,31 +292,19 @@ func checkEntityIDOpts(L *lua.LState, argIdx int, tbl *lua.LTable) {
 		if !ok {
 			continue
 		}
-		list.ForEach(func(_, value lua.LValue) {
-			n, ok := value.(lua.LNumber)
-			if !ok {
-				return
-			}
-			if f := float64(n); f != math.Trunc(f) || f <= 0 || f > maxLuaExactInteger {
-				L.ArgError(argIdx, fmt.Sprintf("%s must contain whole numbers, got %v", key, f))
-			}
-		})
+		checkEntityIDList(L, argIdx, list)
 	}
 }
 
-// checkEntityIDList validates a bare array of entity ids, as the relationship
-// writers take.
+// checkEntityIDList validates an array of entity ids, as the relationship
+// writers and the association keys take.
 func checkEntityIDList(L *lua.LState, argIdx int, tbl *lua.LTable) {
 	if tbl == nil {
 		return
 	}
 	tbl.ForEach(func(_, value lua.LValue) {
-		n, ok := value.(lua.LNumber)
-		if !ok {
-			return
-		}
-		if f := float64(n); f != math.Trunc(f) || f <= 0 || f > maxLuaExactInteger {
-			L.ArgError(argIdx, fmt.Sprintf("entity ids must be whole numbers, got %v", f))
+		if !validEntityIDValue(value, false) {
+			L.ArgError(argIdx, fmt.Sprintf("entity ids must be positive whole numbers, got %v", value))
 		}
 	})
 }
@@ -462,6 +470,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		url := L.CheckString(1)
 		opts := make(map[string]any)
 		if optTbl := L.OptTable(2, nil); optTbl != nil {
+			checkEntityIDOpts(L, 2, optTbl)
 			opts = luaTableToGoMap(optTbl)
 		}
 		result, err := db.CreateResourceFromURL(url, opts)
@@ -486,6 +495,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		base64Data := L.CheckString(1)
 		opts := make(map[string]any)
 		if optTbl := L.OptTable(2, nil); optTbl != nil {
+			checkEntityIDOpts(L, 2, optTbl)
 			opts = luaTableToGoMap(optTbl)
 		}
 		result, err := db.CreateResourceFromData(base64Data, opts)

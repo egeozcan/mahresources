@@ -150,3 +150,79 @@ func TestLuaConversion_SurvivesACyclicTable(t *testing.T) {
 		t.Fatal("converting a cyclic table did not terminate")
 	}
 }
+
+// A non-numeric value where an id belongs is not "absent": the adapter reads it
+// as 0, which clears an owner or empties an association list.
+func TestDbApi_RejectsNonNumericEmbeddedID(t *testing.T) {
+	cases := []struct{ name, call string }{
+		{"scalar id", `mah.db.update_resource(1, { name = "x", owner_id = "bad" })`},
+		{"list member", `mah.db.patch_resource(1, { tags = {"bad"} })`},
+		{"relationship list", `mah.db.add_tags("resource", 1, {"bad"})`},
+		{"create from data", `mah.db.create_resource_from_data("eA==", { owner_id = 2.9 })`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := renderWithQuerier(t, &mockWriterQuerier{}, `
+        local ok = pcall(function() return `+c.call+` end)
+        if ok then return "ACCEPTED" end
+        return "rejected"
+`)
+			if got != "rejected" {
+				t.Errorf("%s: got %q, want a rejection", c.call, got)
+			}
+		})
+	}
+}
+
+// A cycle is not the only way to make the walk explode: two self-references
+// double the work at every level, so a depth cap alone still exhausts memory.
+// Cycle detection stops it at the first repeat.
+func TestLuaConversion_SurvivesAMultiCycleTable(t *testing.T) {
+	done := make(chan map[string]any, 1)
+	go func() {
+		L := lua.NewState()
+		defer L.Close()
+		tbl := L.NewTable()
+		tbl.RawSetString("name", lua.LString("multi"))
+		tbl.RawSetString("a", tbl)
+		tbl.RawSetString("b", tbl)
+		done <- luaTableToGoMap(tbl)
+	}()
+
+	select {
+	case result := <-done:
+		if result["name"] != "multi" {
+			t.Errorf("the shallow fields should still convert, got %v", result)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("converting a multi-cycle table did not terminate")
+	}
+}
+
+// Deep but acyclic data must survive: a nested meta object is legitimate, and
+// dropping its leaf silently corrupts what the plugin sent.
+func TestLuaConversion_KeepsDeepAcyclicData(t *testing.T) {
+	L := lua.NewState()
+	defer L.Close()
+
+	leaf := L.NewTable()
+	leaf.RawSetString("leaf", lua.LString("ok"))
+	current := leaf
+	for i := 0; i < 40; i++ {
+		wrapper := L.NewTable()
+		wrapper.RawSetString("child", current)
+		current = wrapper
+	}
+
+	result := luaTableToGoMap(current)
+	for i := 0; i < 40; i++ {
+		next, ok := result["child"].(map[string]any)
+		if !ok {
+			t.Fatalf("level %d: expected a nested map, got %T", i, result["child"])
+		}
+		result = next
+	}
+	if result["leaf"] != "ok" {
+		t.Errorf("the leaf of 40 levels of acyclic nesting should survive, got %v", result)
+	}
+}

@@ -2,6 +2,7 @@ package plugin_system
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -195,14 +196,24 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 	// Optional: filters
 	if v := tbl.RawGetString("filters"); v != lua.LNil {
 		if filtersTbl, ok := v.(*lua.LTable); ok {
-			a.Filters = parseFiltersTable(filtersTbl)
+			filters, err := parseFiltersTable(filtersTbl)
+			if err != nil {
+				return nil, err
+			}
+			a.Filters = filters
 		}
 	}
 
 	// Optional: params (array of tables)
+	// ForEach cannot return an error, so a per-param failure is captured and
+	// raised once the walk is done.
+	var parseErr error
 	if v := tbl.RawGetString("params"); v != lua.LNil {
 		if paramsTbl, ok := v.(*lua.LTable); ok {
 			paramsTbl.ForEach(func(_, val lua.LValue) {
+				if parseErr != nil {
+					return
+				}
 				if pTbl, ok := val.(*lua.LTable); ok {
 					p := ActionParam{}
 
@@ -258,7 +269,11 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 					}
 					if f := pTbl.RawGetString("filters"); f != lua.LNil {
 						if fTbl, ok := f.(*lua.LTable); ok {
-							af := parseFiltersTable(fTbl)
+							af, ferr := parseFiltersTable(fTbl)
+							if ferr != nil {
+								parseErr = fmt.Errorf("param %q: %w", p.Name, ferr)
+								return
+							}
 							p.Filters = &af
 						}
 					}
@@ -267,6 +282,10 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 				}
 			})
 		}
+	}
+
+	if parseErr != nil {
+		return nil, parseErr
 	}
 
 	// Params are addressed by name everywhere downstream — the submitted map,
@@ -372,7 +391,32 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 
 // parseFiltersTable parses a Lua table into an ActionFilter struct.
 // Used for both action-level and per-param filter parsing.
-func parseFiltersTable(tbl *lua.LTable) ActionFilter {
+// collectFilterIDs appends every id in a Lua array to dst, returning an error
+// for one that is not a positive whole number. A filter is a security-adjacent
+// statement about where an action or block may be used, and uint(2.9) quietly
+// naming category 2 exposes it somewhere the author did not choose.
+func collectFilterIDs(dst []uint, tbl *lua.LTable, field string) ([]uint, error) {
+	var err error
+	tbl.ForEach(func(_, val lua.LValue) {
+		if err != nil {
+			return
+		}
+		n, ok := val.(lua.LNumber)
+		if !ok {
+			err = fmt.Errorf("%s must contain numbers, got %s", field, val.Type())
+			return
+		}
+		f := float64(n)
+		if f != math.Trunc(f) || f <= 0 || f > maxLuaExactInteger {
+			err = fmt.Errorf("%s must contain positive whole numbers, got %v", field, f)
+			return
+		}
+		dst = append(dst, uint(f))
+	})
+	return dst, err
+}
+
+func parseFiltersTable(tbl *lua.LTable) (ActionFilter, error) {
 	var f ActionFilter
 	// content_types
 	if ct := tbl.RawGetString("content_types"); ct != lua.LNil {
@@ -387,24 +431,24 @@ func parseFiltersTable(tbl *lua.LTable) ActionFilter {
 	// category_ids
 	if ci := tbl.RawGetString("category_ids"); ci != lua.LNil {
 		if ciTbl, ok := ci.(*lua.LTable); ok {
-			ciTbl.ForEach(func(_, val lua.LValue) {
-				if n, ok := val.(lua.LNumber); ok {
-					f.CategoryIDs = append(f.CategoryIDs, uint(n))
-				}
-			})
+			ids, err := collectFilterIDs(f.CategoryIDs, ciTbl, "filters.category_ids")
+			if err != nil {
+				return f, err
+			}
+			f.CategoryIDs = ids
 		}
 	}
 	// note_type_ids
 	if ni := tbl.RawGetString("note_type_ids"); ni != lua.LNil {
 		if niTbl, ok := ni.(*lua.LTable); ok {
-			niTbl.ForEach(func(_, val lua.LValue) {
-				if n, ok := val.(lua.LNumber); ok {
-					f.NoteTypeIDs = append(f.NoteTypeIDs, uint(n))
-				}
-			})
+			ids, err := collectFilterIDs(f.NoteTypeIDs, niTbl, "filters.note_type_ids")
+			if err != nil {
+				return f, err
+			}
+			f.NoteTypeIDs = ids
 		}
 	}
-	return f
+	return f, nil
 }
 
 // GetActions returns all actions matching the given entity type.

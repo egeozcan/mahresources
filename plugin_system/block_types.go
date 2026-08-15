@@ -309,26 +309,30 @@ func parseBlockTypeTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Pl
 	}
 
 	// Optional: filters
+	//
+	// Ids are validated rather than cast: a filter states where a block type may
+	// be used, and uint(2.9) quietly naming category 2 offers it somewhere the
+	// author did not choose.
 	if v := tbl.RawGetString("filters"); v != lua.LNil {
 		if filtersTbl, ok := v.(*lua.LTable); ok {
 			// note_type_ids
 			if ni := filtersTbl.RawGetString("note_type_ids"); ni != lua.LNil {
 				if niTbl, ok := ni.(*lua.LTable); ok {
-					niTbl.ForEach(func(_, val lua.LValue) {
-						if n, ok := val.(lua.LNumber); ok {
-							cfg.Filters.NoteTypeIDs = append(cfg.Filters.NoteTypeIDs, uint(n))
-						}
-					})
+					ids, err := collectFilterIDs(cfg.Filters.NoteTypeIDs, niTbl, "filters.note_type_ids")
+					if err != nil {
+						return nil, err
+					}
+					cfg.Filters.NoteTypeIDs = ids
 				}
 			}
 			// category_ids
 			if ci := filtersTbl.RawGetString("category_ids"); ci != lua.LNil {
 				if ciTbl, ok := ci.(*lua.LTable); ok {
-					ciTbl.ForEach(func(_, val lua.LValue) {
-						if n, ok := val.(lua.LNumber); ok {
-							cfg.Filters.CategoryIDs = append(cfg.Filters.CategoryIDs, uint(n))
-						}
-					})
+					ids, err := collectFilterIDs(cfg.Filters.CategoryIDs, ciTbl, "filters.category_ids")
+					if err != nil {
+						return nil, err
+					}
+					cfg.Filters.CategoryIDs = ids
 				}
 			}
 		}
