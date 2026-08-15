@@ -661,9 +661,10 @@ func getUintOpt(opts map[string]any, key string) uint {
 	return uint(v)
 }
 
-// maxLuaExactInteger is 2^53, above which float64 no longer represents
-// consecutive integers. Mirrors plugin_system.checkEntityID's bound.
-const maxLuaExactInteger = 1 << 53
+// maxLuaExactInteger is 2^53-1, the largest integer float64 represents
+// unambiguously. Mirrors plugin_system's bound of the same name — 2^53+1
+// arrives as 2^53, so 2^53 itself cannot be trusted to be the id that was sent.
+const maxLuaExactInteger = 1<<53 - 1
 
 // getUintSliceOpt extracts a []uint from an options map.
 // Handles both []any (proper arrays) and map[string]any (Lua tables with

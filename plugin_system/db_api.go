@@ -234,9 +234,14 @@ func checkEntityID(L *lua.LState, argIdx int) uint {
 	return uint(n)
 }
 
-// maxLuaExactInteger is 2^53: above it float64 skips integers, so a larger
-// "id" is already not the number the caller meant.
-const maxLuaExactInteger = 1 << 53
+// maxLuaExactInteger is 2^53-1, the largest integer float64 represents with no
+// other integer sharing its bits — JavaScript's MAX_SAFE_INTEGER, and the same
+// bound for Lua numbers.
+//
+// 2^53-1 rather than 2^53 because 2^53+1 is not representable and arrives as
+// 2^53: accepting 2^53 would let one specific unrepresentable id through as a
+// different row, which is the whole failure this bound exists to stop.
+const maxLuaExactInteger = 1<<53 - 1
 
 // idOptionKeys are the option-table keys that name a single entity, and
 // idListOptionKeys those that name several. They are validated at the Lua

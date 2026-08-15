@@ -322,3 +322,32 @@ func TestDbApi_RejectsNonArrayIDList(t *testing.T) {
 		}
 	}
 }
+
+// 2^53 itself cannot be trusted: 2^53+1 is not representable and arrives as
+// 2^53, so accepting it would let one specific unrepresentable id through as a
+// different row.
+func TestDbApi_RejectsIDsAtTheRepresentableBoundary(t *testing.T) {
+	w := &recordingWriter{}
+	got := renderWithQuerier(t, w, `
+        local ok = pcall(function() return mah.db.delete_resource(9007199254740992) end)
+        if ok then return "ACCEPTED" end
+        return "rejected"
+`)
+	if got != "rejected" {
+		t.Errorf("2^53 should be rejected, got %q", got)
+	}
+	if len(w.deleted) != 0 {
+		t.Errorf("nothing should have been deleted, got %v", w.deleted)
+	}
+
+	// One below the boundary is exact, and allowed.
+	w2 := &recordingWriter{}
+	got = renderWithQuerier(t, w2, `
+        local ok, err = mah.db.delete_resource(9007199254740991)
+        if not ok then return "err:" .. tostring(err) end
+        return "deleted"
+`)
+	if got != "deleted" {
+		t.Errorf("2^53-1 should be accepted, got %q", got)
+	}
+}
