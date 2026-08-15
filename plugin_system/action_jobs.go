@@ -266,14 +266,23 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 			return err
 		}
 
-		// Parse the return value while VM is still locked.
+		// Parse the return value while the VM is still locked — which is what
+		// this comment always claimed, while the unlock sat above the
+		// conversion. An async handler can return a table the plugin holds
+		// globally, and two jobs of the same plugin run one after another on the
+		// same VM: converting outside the lock let one walk that table while the
+		// next mutated it, which Go aborts the process for.
 		ret := L.Get(-1)
 		L.Pop(1)
+		var parsed map[string]any
+		retTbl, isTable := ret.(*lua.LTable)
+		if isTable {
+			parsed = luaTableToGoMap(retTbl)
+		}
 		mu.Unlock()
 
 		// If the handler returned a table, treat it as the result and mark completed.
-		if retTbl, ok := ret.(*lua.LTable); ok {
-			parsed := luaTableToGoMap(retTbl)
+		if isTable {
 			job.mu.Lock()
 			job.Status = "completed"
 			job.Progress = 100
