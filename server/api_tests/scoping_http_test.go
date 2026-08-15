@@ -450,3 +450,46 @@ func TestScopedUser_WriteOutsideSubtreeRejected(t *testing.T) {
 		t.Fatalf("out-of-subtree note should not have been created")
 	}
 }
+
+// A group-limited user must be able to attach in-subtree notes and resources to
+// each other. GORM saves the far side of such an association as a bare {ID: n}
+// stub, and the create-scope callback used to judge that stub by its (absent)
+// OwnerId, refusing every one of them — so a scoped user could create a note but
+// never link it to a resource, and the upload path was unusable.
+func TestScopedUser_MayLinkInSubtreeNotesAndResources(t *testing.T) {
+	tc := setupAuthEnv(t)
+	f := buildScopingFixture(t, tc)
+	h := map[string]string{"Accept": "application/json", "Authorization": f.bearer, "Content-Type": "application/json"}
+
+	owner, in, out := itoa(int(f.childID)), itoa(int(f.rInID)), itoa(int(f.rOutID))
+
+	// A note carrying an in-subtree resource is created and actually linked.
+	body := strings.NewReader(`{"name":"linked-note","ownerId":` + owner + `,"resources":[` + in + `]}`)
+	res := doReq(tc, http.MethodPost, "/v1/note", h, nil, body)
+	if res.Code < 200 || res.Code >= 300 {
+		t.Fatalf("note with an in-subtree resource should be created, got %d (%s)", res.Code, res.Body.String())
+	}
+	var note models.Note
+	if err := tc.DB.Where("name = ?", "linked-note").First(&note).Error; err != nil {
+		t.Fatalf("load created note: %v", err)
+	}
+	var linked []models.Resource
+	if err := tc.DB.Model(&note).Association("Resources").Find(&linked); err != nil {
+		t.Fatalf("read back resources: %v", err)
+	}
+	if len(linked) != 1 || linked[0].ID != f.rInID {
+		t.Fatalf("expected the in-subtree resource to be linked, got %+v", linked)
+	}
+
+	// An out-of-subtree resource is still refused, and nothing is linked.
+	badBody := strings.NewReader(`{"name":"leaky-note","ownerId":` + owner + `,"resources":[` + out + `]}`)
+	bad := doReq(tc, http.MethodPost, "/v1/note", h, nil, badBody)
+	if bad.Code >= 200 && bad.Code < 300 {
+		t.Fatalf("note referencing an out-of-subtree resource should fail, got %d", bad.Code)
+	}
+	var leaked int64
+	tc.DB.Table("resource_notes").Where("resource_id = ?", f.rOutID).Count(&leaked)
+	if leaked != 0 {
+		t.Fatalf("out-of-subtree resource must not be linked, found %d join rows", leaked)
+	}
+}

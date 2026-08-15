@@ -413,7 +413,8 @@ func scopeCreateCallback(db *gorm.DB) {
 		return
 	}
 	table := statementTable(db)
-	if _, ok := scopeColumn(table); !ok {
+	col, ok := scopeColumn(table)
+	if !ok {
 		return
 	}
 
@@ -422,24 +423,43 @@ func scopeCreateCallback(db *gorm.DB) {
 		allowed[id] = struct{}{}
 	}
 
-	check := func(owner *uint, isGroupSelf bool, selfID uint) bool {
-		// A group that already carries an id is not being placed, it is being
+	// The rules below are keyed on the table's scope *column*, not on a table
+	// name, because the column is what containment actually means here. A table
+	// added to scopeColumn then picks up the rule for its column instead of
+	// silently inheriting one written for a different column — which is exactly
+	// how the reference case below came to be answered for "id" and left broken
+	// for "owner_id".
+	check := func(owner *uint, selfID uint) bool {
+		// A row that already carries an id is not being placed, it is being
 		// referenced — GORM passes a bare {ID: n} stub when an association append
-		// saves the other side. Containment for a group is decided by its own id
-		// (scopeColumn maps "groups" to "id"), which is exactly what the stub
-		// carries, so judge it by that. Judging it by the stub's absent OwnerId
-		// instead refused every such append with ErrInvalidData, which took the
-		// whole upload path out for a group-limited principal.
+		// saves the other side. Judge such a row by where it actually lives, not
+		// by the stub's absent OwnerId; judging it by the stub refused every such
+		// append with ErrInvalidData, which took the whole upload path (groups and
+		// notes attached to a resource, resources attached to a note) out for a
+		// group-limited principal.
 		//
-		// Note the same shape is still refused for notes: their scope column is
-		// owner_id, which a {ID: n} stub does not carry, and resolving it would
-		// need a read from inside the callback.
-		if isGroupSelf && selfID != 0 {
-			_, ok := allowed[selfID]
-			return ok
+		// Identity wins over any OwnerId the caller did pass, because the insert
+		// GORM emits here is ON CONFLICT DO NOTHING: the stored row keeps its own
+		// owner, so a passed owner decides nothing about the row while the join
+		// row that follows would still link it. Judging {ID: outside, OwnerId:
+		// inside} by the passed owner would admit exactly that.
+		if selfID != 0 {
+			switch col {
+			case "id":
+				// The row's own id is its containment, and the stub carries it.
+				_, ok := allowed[selfID]
+				return ok
+			case "owner_id":
+				// Containment lives on the stored row, which the stub does not
+				// carry, so ask the database where the referenced row lives.
+				return rowInScope(db, table, selfID)
+			default:
+				return false // a scope column with no rule here denies
+			}
 		}
-		// For groups, a brand-new row has no id yet; its containment is decided
-		// by its parent (owner_id). For resources/notes, by owner_id.
+		// A brand-new row has no id yet, so every scopeable table places one by
+		// its owner_id: a new group under its parent, a new resource/note under
+		// its owner.
 		if owner == nil {
 			return false // scoped principals must place new rows inside the subtree
 		}
@@ -450,12 +470,12 @@ func scopeCreateCallback(db *gorm.DB) {
 	rv := reflect.Indirect(db.Statement.ReflectValue)
 	switch rv.Kind() {
 	case reflect.Struct:
-		if !checkOwnerField(rv, table, check) {
+		if !checkOwnerField(rv, check) {
 			_ = db.AddError(gorm.ErrInvalidData)
 		}
 	case reflect.Slice, reflect.Array:
 		for i := 0; i < rv.Len(); i++ {
-			if !checkOwnerField(reflect.Indirect(rv.Index(i)), table, check) {
+			if !checkOwnerField(reflect.Indirect(rv.Index(i)), check) {
 				_ = db.AddError(gorm.ErrInvalidData)
 				return
 			}
@@ -463,14 +483,54 @@ func scopeCreateCallback(db *gorm.DB) {
 	}
 }
 
+// rowInScope reports whether the row already stored under this id is inside the
+// principal's subtree. It is the containment answer for a referenced resource or
+// note, whose scope column (owner_id) lives on the stored row rather than on the
+// {ID: n} stub GORM hands the create callback.
+//
+// Session{NewDB: true} keeps the calling statement's ConnPool and Context while
+// starting a fresh statement, which is what makes the read safe from inside a
+// create callback: it runs on the caller's transaction (so it sees rows that
+// transaction has just created, and cannot deadlock against its own write lock),
+// and it carries the scope filter, so scopeReadCallback appends the owner-subtree
+// clause — the same allow-list, from the same snapshot, that every other read
+// enforces. A row whose owner_id is NULL is nobody's, and IN excludes it.
+//
+// Fail-closed: a miss is a refusal, and so is a read error. A missing row means
+// the create would place a *new* resource/note under a caller-chosen id with no
+// owner, which is outside every subtree; no live path does that (group import
+// lets the database assign ids and only ever uses {ID: n} as a Model handle).
+//
+// One indexed lookup per referenced row, deliberately not batched into a single
+// IN query over the whole append: the scope callback already appends the full
+// subtree allow-list to this read, so batching would add the append's length to a
+// parameter count that is already the size of the subtree, and a large append
+// over a large subtree is exactly where SQLite's SQLITE_MAX_VARIABLE_NUMBER and
+// Postgres's 65535-parameter ceiling bite. The lookups are local to the caller's
+// open transaction and bounded by the association list the caller submitted.
+func rowInScope(db *gorm.DB, table string, id uint) bool {
+	var count int64
+	err := db.Session(&gorm.Session{NewDB: true}).
+		Table(table).
+		Where("id = ?", id).
+		Limit(1).
+		Count(&count).Error
+	if err != nil {
+		return false
+	}
+	return count > 0
+}
+
 // checkOwnerField extracts the OwnerId field from a model value and runs check.
-func checkOwnerField(rv reflect.Value, table string, check func(owner *uint, isGroupSelf bool, selfID uint) bool) bool {
+// Only ever called for a table scopeColumn maps, so a value with no OwnerId
+// field is a scopeable table this function cannot judge, and it denies.
+func checkOwnerField(rv reflect.Value, check func(owner *uint, selfID uint) bool) bool {
 	if rv.Kind() != reflect.Struct {
 		return true
 	}
 	f := rv.FieldByName("OwnerId")
 	if !f.IsValid() {
-		return true // no owner concept; not scopeable here
+		return false
 	}
 	var owner *uint
 	if f.Kind() == reflect.Ptr {
@@ -486,7 +546,7 @@ func checkOwnerField(rv reflect.Value, table string, check func(owner *uint, isG
 	if idField := rv.FieldByName("ID"); idField.IsValid() && idField.CanUint() {
 		selfID = uint(idField.Uint())
 	}
-	return check(owner, table == "groups", selfID)
+	return check(owner, selfID)
 }
 
 // statementTable returns the table name for the current statement, preferring

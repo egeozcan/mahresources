@@ -15,6 +15,12 @@ const btnClasses = `bulk-action-btn inline-flex justify-center
 let currentIndex = 0;
 let _bulkLiveRegion = null;
 
+// A rendered selectable row. Rows opt in with `x-data="selectableItem({...})"`
+// and Alpine leaves the attribute in place, so this matches them whether they
+// are cards (<article> on /tags, /notes, /resources, /groups, /downloads) or the
+// detail table's rows (<tr> on /resources/details).
+export const SELECTABLE_ITEM_SELECTOR = '[x-data^="selectableItem"]';
+
 export function registerBulkSelectionStore(Alpine) {
   Alpine.store("bulkSelection", {
     selectedIds: new Set(),
@@ -33,6 +39,34 @@ export function registerBulkSelectionStore(Alpine) {
 
     announce(message) {
       _bulkLiveRegion?.announce(message);
+    },
+
+    /**
+     * Whether this page has any selectable row — the guard that keeps "Select
+     * All" off an empty list (WS6, finding 68).
+     *
+     * Deliberately not `elements.length > 0` on its own. Rows register from
+     * their own Alpine `init()`, and the Select All row precedes them in the
+     * DOM, so Alpine evaluates its `x-show` while the registry is still empty
+     * and fills it a moment later. Reading only the registry therefore answers
+     * "no rows" for the first frame and "rows" immediately after: `x-collapse`
+     * takes that as a change and *animates the row open on page load*. Measured
+     * on /tags at 1280x900: the row goes 13px -> 46px over ~190ms and everything
+     * below it — the whole list and the pagination row in the footer — is shoved
+     * down 37px about 200ms after the page settles.
+     *
+     * The rows are already in the DOM when that first evaluation runs, so count
+     * those and the first answer matches the settled one: no flip, no animation,
+     * no shift. Selecting and deselecting still animate, because those move the
+     * *second* term of the predicate.
+     *
+     * The registry is consulted first, so once it is populated this is a field
+     * read and stays reactive; the DOM query only ever decides the initial
+     * frame, and on a genuinely empty list both are empty and the row stays
+     * hidden.
+     */
+    hasSelectableItems() {
+      return this.elements.length > 0 || document.querySelector(SELECTABLE_ITEM_SELECTOR) !== null;
     },
 
     isSelected(id) {

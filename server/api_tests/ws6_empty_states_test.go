@@ -106,14 +106,25 @@ func TestListPages_EmptyStateOffersClearFilters(t *testing.T) {
 // selectAllButton.tpl's predicate is
 // `selectedIds.length + 1 !== elements.length`, which is 1 !== 0 — true — on an
 // empty list, so the control was offered with nothing behind it.
+//
+// The emptiness term used to read `$store.bulkSelection.elements.length > 0`
+// and now reads `hasSelectableItems()`, which answers from the registry and
+// falls back to counting rendered rows. The gate is the same gate; what changed
+// is that the registry is empty on the *first* evaluation for a populated list
+// too (rows register from their own init, after this row is evaluated), so
+// reading it directly made x-collapse animate the row open on load and shove
+// the page down 37px. See docs/todo.md, 2026-08-15.
 func TestListPages_SelectAllHiddenWhenNothingToSelect(t *testing.T) {
 	tc := SetupTestEnv(t)
 
 	_, body := tc.getHTML(t, "/resources?name=zzzznope")
 
 	// The button is rendered by the server and hidden by Alpine, so the
-	// assertion is on the x-show predicate, not on the button's absence.
-	if !strings.Contains(body, "$store.bulkSelection.elements.length > 0") {
+	// assertion is on the x-show predicate, not on the button's absence. That
+	// the predicate is *false* on an empty list — and true on a populated one —
+	// is asserted in the browser by
+	// e2e/tests/regressions/select-all-row-shifts-the-page-on-load.spec.ts.
+	if !strings.Contains(body, "$store.bulkSelection.hasSelectableItems()") {
 		t.Errorf("Select All should be gated on there being something to select; got:\n%s", truncate(body))
 	}
 }

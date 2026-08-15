@@ -1,3 +1,123 @@
+# The Select All row animated itself open on load (2026-08-15)
+
+`e2e/tests/regressions/ws10-global-chrome.spec.ts:85` — the pagination Next
+link hit test — failed on master, in CI as well as locally, on SQLite and on
+Postgres. Every one of its `elementFromPoint` samples came back `null`.
+
+Not the horizontal-overflow class that `phase3-sweeps` hits: the link sits at
+x 1194..1263 inside a 1280px viewport. It was vertical. After the test's
+`scrollTo(0, body.scrollHeight)` the page reported `scrollY` 1199 against a
+maximum of 1239 — the scroll landed 40px short, because the page grew *after*
+the scroll was issued. The sample row fell at y=913 in a 900px viewport, and
+`elementFromPoint` answers null below the fold.
+
+What grew: `selectAllButton.tpl` gates the Select All row on
+`$store.bulkSelection.elements.length > 0` and animates it with `x-collapse`.
+Rows register with the store from their own Alpine `init()`, and the row is
+rendered *above* the list, so Alpine evaluated that `x-show` while the registry
+was still empty. First answer "no rows", registry filled a moment later,
+`x-collapse` read the difference as a change and animated the row open — on
+load, with nothing having happened.
+
+Measured on /tags at 1280x900: the row goes 13px -> 46px over ~190ms
+(`transition-property: height`, settling ~219ms) and the document grows
+2102px -> 2139px. Everything below the row moves with it: the whole list, and
+the pagination row in the footer.
+
+## Done
+
+- [x] `hasSelectableItems()` on the bulk-selection store. It consults the
+      registry first and falls back to counting rendered rows
+      (`[x-data^="selectableItem"]`, which is how rows opt in and which Alpine
+      leaves in place) — so the first evaluation agrees with the settled one and
+      there is no flip to animate. Once the registry is populated the DOM query
+      is never reached.
+- [x] Finding 68 (Select All offered on an empty list) is preserved: on an
+      empty list both the registry and the DOM are empty, so the row stays
+      hidden. Covered by its own assertion.
+- [x] Selecting and deselecting still animate — those move the predicate's
+      *other* term, which was never the problem.
+- [x] `ws10-global-chrome.spec.ts` now passes 10/10 **unchanged**. The guard
+      asserts what it was written to assert; it was failing because of a defect
+      elsewhere, so the defect is what moved.
+- [x] A dedicated guard,
+      `e2e/tests/regressions/select-all-row-shifts-the-page-on-load.spec.ts`, so
+      this is caught by a test about the shift rather than by a hit test about
+      z-index. It watches the row's `style` attribute through a
+      MutationObserver installed before any document script runs, and fails on a
+      `transition-property: height` write during a load nobody interacted with.
+- [x] Unit coverage for the store method in `bulkSelection.test.ts`, including
+      that a populated registry is answered without touching the DOM.
+
+## Notes for whoever picks up CI
+
+Three test-design traps were hit writing that guard, all of which produced a
+**passing** test against the unfixed code:
+
+- Two `scrollHeight` readings on a page that fits the viewport. `.site` carries
+  `min-height: 100%`, so 37px of extra content changes no scroll height at all.
+  The guard now uses a short viewport so the page overflows.
+- Any `expect` between `goto` and the measurement. The animation is over in
+  ~190ms and one round trip can outlast it, so the measurement reports a settled
+  page.
+- `MutationObserver.observe(document.documentElement)` inside `addInitScript`.
+  That runs before the page is parsed, so `documentElement` is null, `observe`
+  throws, and the empty log reads exactly like a clean page. Observe `document`.
+
+The guard now carries two controls (the observer attached; the hook still
+matches) so an empty log cannot pass silently.
+
+**Not fixed, and separate:** /tags still reports an unrelated ~0.026 layout
+shift at ~130ms that this change does not touch, and master's CI has two other
+failing jobs — `cli-doctest` (`npm run build` fails there) and `test`.
+
+# Scoped creates may reference existing in-subtree notes and resources (2026-08-15)
+
+Attaching an *existing* group to a resource was fixed in 74a61411: GORM saves the
+far side of an association as a bare `{ID: n}` stub, and `scopeCreateCallback`
+judged that stub by its absent `OwnerId`, so it refused every append with
+`gorm.ErrInvalidData`. Groups got the right answer — a group's containment is its
+own id, which the stub carries — and the same shape stayed broken for the two
+entities whose containment is `owner_id`.
+
+The effect for a group-limited principal under `-auth`: attaching a note to a
+resource, or a resource to a note, failed with "unsupported data". That is the
+resource create/edit path, the note create/edit path, the upload path's note
+attachment, and mention sync.
+
+## Done
+
+- [x] `rowInScope` — the callback now asks the database where a referenced
+      resource/note actually lives. `Session{NewDB: true}` keeps the calling
+      statement's `ConnPool` and `Context`, so the read runs inside the caller's
+      transaction (it sees rows that transaction just created, and cannot
+      deadlock against its own write lock) and carries the scope filter, so
+      `scopeReadCallback` appends the owner-subtree clause: the same allow-list,
+      from the same snapshot, that every other read enforces.
+- [x] Identity wins over a passed `OwnerId` when the row carries an id. The
+      insert GORM emits is `ON CONFLICT DO NOTHING`, so the stored row keeps its
+      own owner — a passed owner decides nothing about the row while the join row
+      that follows would still link it. Judging `{ID: outside, OwnerId: inside}`
+      by the passed owner would have admitted exactly that.
+- [x] Fail-closed on a miss and on a read error. A missing row means a *new*,
+      ownerless resource/note placed under a caller-chosen id, which is outside
+      every subtree; no live path does that — group import lets the database
+      assign ids and only ever uses `{ID: n}` as a `Model()` handle.
+- [x] Tests, red before the fix at both layers: `scoping_test.go` covers the
+      callback (in-subtree allowed and read back, out-of-subtree refused,
+      nonexistent id refused, the crafted `{ID: outside, OwnerId: inside}`
+      refused, and the resource-from-the-note-side direction);
+      `scoping_http_test.go` covers the user-visible path over HTTP and asserts
+      no `resource_notes` join row leaks.
+- [x] The comment claiming notes stay refused is gone.
+- [x] The dispatch is keyed on the table's scope *column* rather than on a
+      hardcoded `table == "groups"`, so a table added to `scopeColumn` picks up
+      the rule for its column instead of silently inheriting one written for a
+      different column — the shape of this bug. A scope column with no rule
+      denies, and `checkOwnerField` now denies a scopeable value with no
+      `OwnerId` field rather than allowing it. Both are unreachable today; both
+      are the branch this bug proved gets skipped.
+
 # Crop: offer to save as a new resource (2026-08-14)
 
 Crop had exactly one outcome — it rewrote the resource in place as a new

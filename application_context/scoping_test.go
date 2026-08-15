@@ -279,3 +279,107 @@ func TestScoping_CreateMayReferenceExistingInSubtreeGroup(t *testing.T) {
 		t.Fatal("appending an out-of-subtree group must be refused")
 	}
 }
+
+// The same shape for the owner_id-scoped entities. A group's containment is its
+// own id, which the stub carries; a resource's or a note's is owner_id, which it
+// does not, so the callback has to read where the referenced row lives. Until it
+// did, attaching a note to a resource — or a resource to a note — was refused for
+// every group-limited principal.
+func TestScoping_CreateMayReferenceExistingInSubtreeNote(t *testing.T) {
+	ctx := newScopingTestContext(t)
+	root, _, _, _ := scopingFixture(t, ctx)
+	scoped := scopedToRoot(ctx, root.ID)
+
+	var res, resOut models.Resource
+	if err := scoped.db.Where("name = ?", "rIn").First(&res).Error; err != nil {
+		t.Fatalf("load in-subtree resource: %v", err)
+	}
+	if err := ctx.db.Where("name = ?", "rOut").First(&resOut).Error; err != nil {
+		t.Fatalf("load out-of-subtree resource: %v", err)
+	}
+	var noteIn, noteOut models.Note
+	if err := scoped.db.Where("name = ?", "nIn").First(&noteIn).Error; err != nil {
+		t.Fatalf("load in-subtree note: %v", err)
+	}
+	if err := ctx.db.Where("name = ?", "nOut").First(&noteOut).Error; err != nil {
+		t.Fatalf("load out-of-subtree note: %v", err)
+	}
+
+	if err := scoped.db.Model(&res).Association("Notes").
+		Append(&[]*models.Note{{ID: noteIn.ID}}); err != nil {
+		t.Fatalf("appending an in-subtree note must be allowed, got %v", err)
+	}
+	var notes []models.Note
+	if err := ctx.db.Model(&res).Association("Notes").Find(&notes); err != nil {
+		t.Fatalf("read back notes: %v", err)
+	}
+	if len(notes) != 1 || notes[0].ID != noteIn.ID {
+		t.Fatalf("expected the in-subtree note to be attached, got %+v", notes)
+	}
+
+	// A note that lives outside the subtree stays refused.
+	if err := scoped.db.Model(&res).Association("Notes").
+		Append(&[]*models.Note{{ID: noteOut.ID}}); err == nil {
+		t.Fatal("appending an out-of-subtree note must be refused")
+	}
+
+	// A note id that names no row at all is a placement of a brand-new,
+	// ownerless row under a caller-chosen id — outside every subtree.
+	if err := scoped.db.Model(&res).Association("Notes").
+		Append(&[]*models.Note{{ID: 9999}}); err == nil {
+		t.Fatal("referencing a nonexistent note must be refused")
+	}
+
+	// The identity of the referenced row decides, not any OwnerId the caller
+	// passes alongside it: the insert is ON CONFLICT DO NOTHING, so the stored
+	// row keeps its own owner while the join row would still link it.
+	if err := scoped.db.Model(&res).Association("Notes").
+		Append(&[]*models.Note{{ID: noteOut.ID, OwnerId: &root.ID}}); err == nil {
+		t.Fatal("an out-of-subtree note carrying an in-subtree OwnerId must be refused")
+	}
+
+	// The mirror direction: attaching resources to a note.
+	if err := scoped.db.Model(&noteIn).Association("Resources").
+		Append(&[]*models.Resource{{ID: res.ID}}); err != nil {
+		t.Fatalf("appending an in-subtree resource must be allowed, got %v", err)
+	}
+	if err := scoped.db.Model(&noteIn).Association("Resources").
+		Append(&[]*models.Resource{{ID: resOut.ID}}); err == nil {
+		t.Fatal("appending an out-of-subtree resource must be refused")
+	}
+}
+
+// The referenced-row read runs from inside a create callback, so it must stay on
+// the caller's transaction: a note created earlier in the same (still open)
+// transaction has to be visible to it. A read on a fresh connection would either
+// deadlock against the transaction's own write lock or simply not see the row,
+// and the append would be refused.
+func TestScoping_ReferenceCheckSeesSameTransactionRows(t *testing.T) {
+	ctx := newScopingTestContext(t)
+	root, child, _, _ := scopingFixture(t, ctx)
+	scoped := scopedToRoot(ctx, root.ID)
+
+	var res models.Resource
+	if err := scoped.db.Where("name = ?", "rIn").First(&res).Error; err != nil {
+		t.Fatalf("load in-subtree resource: %v", err)
+	}
+
+	err := scoped.db.Transaction(func(tx *gorm.DB) error {
+		fresh := models.Note{Name: "same-tx", OwnerId: &child.ID}
+		if err := tx.Create(&fresh).Error; err != nil {
+			return err
+		}
+		return tx.Model(&res).Association("Notes").Append(&[]*models.Note{{ID: fresh.ID}})
+	})
+	if err != nil {
+		t.Fatalf("attaching a note created in the same transaction must be allowed, got %v", err)
+	}
+
+	var notes []models.Note
+	if err := ctx.db.Model(&res).Association("Notes").Find(&notes); err != nil {
+		t.Fatalf("read back notes: %v", err)
+	}
+	if len(notes) != 1 || notes[0].Name != "same-tx" {
+		t.Fatalf("expected the same-transaction note to be attached, got %+v", notes)
+	}
+}

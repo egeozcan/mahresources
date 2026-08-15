@@ -69,3 +69,57 @@ describe('shift-range selection', () => {
         expect([...store.selectedIds]).toEqual([20]);
     });
 });
+
+/**
+ * The Select All row's emptiness guard.
+ *
+ * The row is rendered above the list, so Alpine evaluates its `x-show` before a
+ * single card has run its own `init()` and registered. Answering that first
+ * evaluation from the registry alone said "no rows", the registry filled a
+ * moment later, and `x-collapse` animated the row open on page load — shoving
+ * the list and the footer's pagination down 37px ~200ms after the page settled.
+ */
+describe('hasSelectableItems', () => {
+    /** Rows are in the DOM from the first frame; only their registration is late. */
+    function withRenderedRows(count: number) {
+        const doc = (globalThis as any).document;
+        doc.querySelector = (sel: string) =>
+            sel === '[x-data^="selectableItem"]' && count > 0 ? {} : null;
+    }
+
+    test('is true before any card has registered, when rows are rendered', () => {
+        const store = makeStore();
+        withRenderedRows(50);
+
+        expect(store.elements.length).toBe(0);
+        expect(store.hasSelectableItems()).toBe(true);
+    });
+
+    test('stays true once the cards register, so the row never flips', () => {
+        const store = makeStore();
+        withRenderedRows(2);
+
+        const before = store.hasSelectableItems();
+        [10, 20].forEach(c => store.registerOption(card(c)));
+
+        expect(before).toBe(true);
+        expect(store.hasSelectableItems()).toBe(true);
+    });
+
+    test('is false on an empty list, so Select All is not offered (finding 68)', () => {
+        const store = makeStore();
+        withRenderedRows(0);
+
+        expect(store.hasSelectableItems()).toBe(false);
+    });
+
+    test('answers from the registry once populated, without touching the DOM', () => {
+        const store = makeStore();
+        store.registerOption(card(10));
+        (globalThis as any).document.querySelector = () => {
+            throw new Error('should not query the DOM once the registry is populated');
+        };
+
+        expect(store.hasSelectableItems()).toBe(true);
+    });
+});

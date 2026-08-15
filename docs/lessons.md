@@ -1702,3 +1702,69 @@ document that means asking whether it is one thing or many: `grep -c '^# '` cost
 The general form: `Write` on an existing file is a delete plus a create. Deciding it is safe from
 the top 40 lines is deciding from a sample, and the sample said "this file is about the last task"
 when the file was "this file is about every task".
+
+## A per-table rule fixed for one table is not fixed
+
+`scopeCreateCallback` maps three tables to two containment columns: a group is
+contained by its own `id`, a resource and a note by their `owner_id`. The
+reference-vs-placement bug — GORM hands the create callback a bare `{ID: n}` stub
+when an association append saves the far side, and the callback judged it by the
+`OwnerId` the stub does not carry — was one bug in shared code, and it was fixed
+for groups only. The fix even wrote down that notes were still refused, which
+made the remaining half look like a decision instead of the outstanding bug it
+was. A user had to point at it.
+
+**When a callback dispatches on a table, an entity type, or a column mapping,
+the fix is done when every branch of that dispatch has an answer.** Enumerate the
+branches from the mapping itself (`scopeColumn` lists them), not from the path
+that happened to fail.
+
+The reason the second branch got skipped is worth naming: it was harder. Groups
+needed no read; notes and resources needed one from inside a create callback,
+which raised transaction-membership and re-entrancy questions. "Harder" became
+"out of scope" without ever being stated as a choice. If a branch is genuinely
+deferred, the comment should say what it costs to finish and why now is not the
+time — a comment that only records the limit reads as design.
+
+Two things made the read safe once it was actually attempted, both worth reusing:
+`Session{NewDB: true}` keeps the calling statement's `ConnPool` and `Context`, so
+a query issued from inside a callback stays on the caller's transaction and
+inherits the scope filter rather than re-deriving it. And when a row carries a
+primary key, its *stored* containment decides — the insert is `ON CONFLICT DO
+NOTHING`, so any owner the caller passed alongside the id changes nothing about
+the row while the join row that follows would still link it.
+
+## A test that passes against the broken code has told you nothing
+
+Fixing the Select All row's load-time animation needed a guard, and three
+successive drafts of that guard passed against the unfixed code. Each was
+plausible and each was measuring nothing:
+
+- Two `scrollHeight` readings on a page that fits the viewport. `.site` carries
+  `min-height: 100%`, so 37px of extra content changes no scroll height at all.
+- The same readings with an `expect` in front of them. The animation is over in
+  ~190ms; one Playwright round trip can outlast it, so the first reading is
+  already the settled one.
+- `MutationObserver.observe(document.documentElement)` from `addInitScript`.
+  That runs before the page is parsed, `documentElement` is null, `observe`
+  throws into a swallowed init script, and an empty mutation log is
+  indistinguishable from a page that never mutated.
+
+The third is the dangerous shape: **the failure mode of the instrument produced
+the same output as the absence of the defect.** Nothing in the run said the
+observer had not attached.
+
+**Run every new guard against the unfixed code before you believe it.** Not as
+ceremony — as the only evidence that it is connected to anything. Reverting the
+fix and rebuilding took under a minute each time and caught all three.
+
+Then, when a guard's silence is its pass condition, **give it a control**: this
+one asserts the observer attached and the hook still matches before it asserts
+the log is clean. A guard whose empty result can mean either "clean" or "broken
+instrument" is worth roughly nothing at the moment someone changes the hook.
+
+The corollary for thresholds: the first version budgeted total page CLS, and
+/tags carries an unrelated ~0.026 shift this fix does not address. A page-wide
+budget would have made it a catch-all failing for other people's reasons. Assert
+the specific mechanism — here, that `x-collapse` wrote a height *transition* on
+a page nobody had touched.
