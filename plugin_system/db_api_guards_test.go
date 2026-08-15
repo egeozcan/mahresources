@@ -306,3 +306,19 @@ func countValues(v any) int {
 		return 0
 	}
 }
+
+// A table keyed by anything but consecutive integers is not an id list: the Go
+// conversion drops what it cannot use, and the writer reads the result as "no
+// ids" and clears the association.
+func TestDbApi_RejectsNonArrayIDList(t *testing.T) {
+	for _, bad := range []string{`{[true] = 7}`, `{named = 7}`, `{[2] = 7}`} {
+		got := renderWithQuerier(t, &mockWriterQuerier{}, `
+        local ok = pcall(function() return mah.db.patch_resource(1, { tags = `+bad+` }) end)
+        if ok then return "ACCEPTED" end
+        return "rejected"
+`)
+		if got != "rejected" {
+			t.Errorf("tags = %s: got %q, want a rejection", bad, got)
+		}
+	}
+}

@@ -282,8 +282,10 @@ func ValidateActionParams(action ActionRegistration, params map[string]any) []Va
 					})
 					continue
 				}
-				// Reject non-integers (e.g. 1.5), zero, and negatives by round-tripping through uint.
-				if id <= 0 || id != float64(uint(id)) {
+				// Reject non-integers (e.g. 1.5), zero, negatives, and anything
+				// past the point where float64 stops representing consecutive
+				// integers — 9007199254740993 arrives as ...992, a different row.
+				if id <= 0 || id != float64(uint(id)) || id > maxLuaExactInteger {
 					errs = append(errs, ValidationError{
 						Field:   p.Name,
 						Message: fmt.Sprintf("%s: ID must be a positive integer", p.Label),

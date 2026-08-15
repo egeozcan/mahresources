@@ -314,7 +314,11 @@ func parseBlockTypeTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Pl
 	// be used, and uint(2.9) quietly naming category 2 offers it somewhere the
 	// author did not choose.
 	if v := tbl.RawGetString("filters"); v != lua.LNil {
-		if filtersTbl, ok := v.(*lua.LTable); ok {
+		filtersTbl, ok := v.(*lua.LTable)
+		if !ok {
+			return nil, fmt.Errorf("'filters' must be a table, got %s", v.Type())
+		}
+		{
 			// note_type_ids
 			if ni := filtersTbl.RawGetString("note_type_ids"); ni != lua.LNil {
 				niTbl, ok := ni.(*lua.LTable)

@@ -194,14 +194,20 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 	}
 
 	// Optional: filters
+	//
+	// A non-table here used to be skipped, which left the filters empty — and
+	// empty filters mean "everywhere", so `filters = false` registered the
+	// action globally instead of failing.
 	if v := tbl.RawGetString("filters"); v != lua.LNil {
-		if filtersTbl, ok := v.(*lua.LTable); ok {
-			filters, err := parseFiltersTable(filtersTbl)
-			if err != nil {
-				return nil, err
-			}
-			a.Filters = filters
+		filtersTbl, ok := v.(*lua.LTable)
+		if !ok {
+			return nil, fmt.Errorf("'filters' must be a table, got %s", v.Type())
 		}
+		filters, err := parseFiltersTable(filtersTbl)
+		if err != nil {
+			return nil, err
+		}
+		a.Filters = filters
 	}
 
 	// Optional: params (array of tables)
@@ -209,7 +215,11 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 	// raised once the walk is done.
 	var parseErr error
 	if v := tbl.RawGetString("params"); v != lua.LNil {
-		if paramsTbl, ok := v.(*lua.LTable); ok {
+		paramsTbl, ok := v.(*lua.LTable)
+		if !ok {
+			return nil, fmt.Errorf("'params' must be an array of tables, got %s", v.Type())
+		}
+		{
 			paramsTbl.ForEach(func(_, val lua.LValue) {
 				if parseErr != nil {
 					return
@@ -254,9 +264,12 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 						p.Step = &f
 					}
 					if sw := pTbl.RawGetString("show_when"); sw != lua.LNil {
-						if swTbl, ok := sw.(*lua.LTable); ok {
-							p.ShowWhen = luaTableToGoMap(swTbl)
+						swTbl, ok := sw.(*lua.LTable)
+						if !ok {
+							parseErr = fmt.Errorf("param %q: show_when must be a table, got %s", p.Name, sw.Type())
+							return
 						}
+						p.ShowWhen = luaTableToGoMap(swTbl)
 					}
 					if d := pTbl.RawGetString("description"); d != lua.LNil {
 						p.Description = d.String()
@@ -396,6 +409,9 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 // statement about where an action or block may be used, and uint(2.9) quietly
 // naming category 2 exposes it somewhere the author did not choose.
 func collectFilterIDs(dst []uint, tbl *lua.LTable, field string) ([]uint, error) {
+	if !isArrayLike(tbl) {
+		return dst, fmt.Errorf("%s must be an array, e.g. {1, 2}", field)
+	}
 	var err error
 	tbl.ForEach(func(_, val lua.LValue) {
 		if err != nil {
@@ -424,11 +440,24 @@ func parseFiltersTable(tbl *lua.LTable) (ActionFilter, error) {
 		if !ok {
 			return f, fmt.Errorf("filters.content_types must be an array of strings, got %s", ct.Type())
 		}
+		if !isArrayLike(ctTbl) {
+			return f, fmt.Errorf("filters.content_types must be an array, e.g. {\"image/png\"}")
+		}
+		var ctErr error
 		ctTbl.ForEach(func(_, val lua.LValue) {
-			if s, ok := val.(lua.LString); ok {
-				f.ContentTypes = append(f.ContentTypes, string(s))
+			if ctErr != nil {
+				return
 			}
+			str, ok := val.(lua.LString)
+			if !ok {
+				ctErr = fmt.Errorf("filters.content_types must contain strings, got %s", val.Type())
+				return
+			}
+			f.ContentTypes = append(f.ContentTypes, string(str))
 		})
+		if ctErr != nil {
+			return f, ctErr
+		}
 	}
 	// category_ids
 	if ci := tbl.RawGetString("category_ids"); ci != lua.LNil {

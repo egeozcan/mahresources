@@ -303,11 +303,29 @@ func checkEntityIDOpts(L *lua.LState, argIdx int, tbl *lua.LTable) {
 	}
 }
 
+// isArrayLike reports whether tbl is a proper Lua array: consecutive integer
+// keys from 1, and nothing else.
+//
+// It matters because the Go conversion silently drops keys it cannot use. A
+// table keyed by anything else — `{[true] = 7}`, `{named = 7}` — converts to an
+// empty or differently-shaped value, and a writer reads that as "no ids" and
+// clears the association. The shape has to be rejected where it is still
+// visible as a mistake.
+func isArrayLike(tbl *lua.LTable) bool {
+	maxN := tbl.MaxN()
+	total := 0
+	tbl.ForEach(func(_, _ lua.LValue) { total++ })
+	return total == maxN
+}
+
 // checkEntityIDList validates an array of entity ids, as the relationship
 // writers and the association keys take.
 func checkEntityIDList(L *lua.LState, argIdx int, tbl *lua.LTable) {
 	if tbl == nil {
 		return
+	}
+	if !isArrayLike(tbl) {
+		L.ArgError(argIdx, "entity ids must be given as an array, e.g. {1, 2, 3}")
 	}
 	tbl.ForEach(func(_, value lua.LValue) {
 		if !validEntityIDValue(value, false) {
@@ -845,6 +863,10 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		optsTbl := L.OptTable(2, L.NewTable())
 		// scope_entity_id names an entity like any other id, and truncating it
 		// scopes the query to a different group's subtree.
+		// Zero is allowed and means "no entity" — a shortcode rendering outside
+		// an entity context passes ctx.entity_id straight through, and it is 0
+		// there. What is rejected is a value that cannot be an id at all, which
+		// would otherwise truncate into a different group's subtree.
 		if v := optsTbl.RawGetString("scope_entity_id"); v != lua.LNil && !validEntityIDValue(v, true) {
 			L.ArgError(2, fmt.Sprintf("scope_entity_id must be a whole number, got %v", v))
 		}

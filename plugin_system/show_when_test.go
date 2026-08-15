@@ -501,3 +501,41 @@ func TestShowWhen_RejectsInfoParamAsController(t *testing.T) {
 		t.Errorf("the error should name the info type, got: %v", err)
 	}
 }
+
+// Registration fails closed on a malformed shape. Each of these used to be
+// skipped, and skipping means the opposite of what the author wrote: no
+// filters is "everywhere", no params is "no inputs", no show_when is "always
+// visible".
+func TestActionRegistration_FailsClosedOnMalformedShapes(t *testing.T) {
+	cases := []struct{ name, body string }{
+		{"filters not a table", `filters = false,`},
+		{"category_ids not a table", `filters = { category_ids = "bad" },`},
+		{"category_ids not an array", `filters = { category_ids = { named = 7 } },`},
+		{"content_types member not a string", `filters = { content_types = { false } },`},
+		{"params not a table", `params = "bad",`},
+		{"show_when not a table", `params = { { name = "a", type = "text", label = "A", show_when = "bad" } },`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writePlugin(t, dir, "malformed", `
+plugin = { name = "malformed", version = "1.0", description = "malformed" }
+function init()
+    mah.action({
+        id = "x", label = "X", entity = "resource",
+        `+c.body+`
+        handler = function(ctx) return { success = true } end,
+    })
+end
+`)
+			mgr, err := NewPluginManager(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer mgr.Close()
+			if err := mgr.EnablePlugin("malformed"); err == nil {
+				t.Errorf("%s should be rejected at load", c.name)
+			}
+		})
+	}
+}

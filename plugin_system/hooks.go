@@ -84,6 +84,7 @@ const (
 type luaConversion struct {
 	seen   map[*lua.LTable]bool
 	budget int
+	warned bool
 }
 
 func newLuaConversion() *luaConversion {
@@ -113,11 +114,21 @@ func (c *luaConversion) leave(tbl *lua.LTable) {
 // the Go value being built.
 func (c *luaConversion) spend() bool {
 	if c.budget <= 0 {
+		// Once, not per dropped value: a blown budget drops a great many.
+		if !c.warned {
+			c.warned = true
+			log.Printf("[plugin] warning: a Lua value exceeded the %d-value conversion budget and was truncated; "+
+				"this usually means a table shares a subtable across many branches", maxLuaConversionNodes)
+		}
 		return false
 	}
 	c.budget--
 	return true
 }
+
+// Truncated reports whether the budget ran out, so a caller that can surface it
+// does not have to infer truncation from a suspiciously round result.
+func (c *luaConversion) Truncated() bool { return c.warned }
 
 // luaTableToGoMap converts a Lua table to a Go map.
 func luaTableToGoMap(tbl *lua.LTable) map[string]any {
