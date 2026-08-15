@@ -41,33 +41,35 @@ Effort M and stayed out. This is the remaining ten, items 03-12.
 
 ## Review
 
-Four pi rounds (`gpt-5.6-sol:high`), each against the commit before it. Every
-round found real defects, including in code the previous round had already
-looked at — which is the argument for running the loop rather than one pass.
+**Eleven pi rounds** (`gpt-5.6-sol:high`), each against the commit before it,
+until two consecutive rounds produced nothing above the bar. Every round found
+real defects, including in code the previous round had already looked at — three
+of round 5's findings were in round 4's fix code, four of round 7's were in
+round 6's. That is the argument for running the loop rather than one pass.
 
-- **Round 1** (mah.db): the `patch_*` snapshot race; width/height not clearable.
-- **Round 2** (host seams): `mah.http.get_sync` hung its context off
-  `Background`, so a disconnect left it holding the VM lock for up to 120s; one
-  MRQL cache per bulk action served entity N+1 the answer from before entity N's
-  write; the docs pages discarded the request context.
-- **Round 3** (actions + blocks): destructive validation was non-idempotent
-  across the two passes every action gets; a `show_when` chain could lose user
-  input; an uncomparable submitted value panicked `==`; a refusal carrying a
-  redirect navigated away before showing why. A follow-up pass added: entity ids
-  truncated rather than rejected (`delete_resource(1.9)` deleted resource 1); a
-  mistyped `tags` value cleared every tag; booleans unvalidated, so `[]` read as
-  "yes" to a handler gating a delete; `get_category` returning less than the
-  docs promised.
-- **Round 4**: the id bound rejected valid 64-bit ids; embedded ids
-  (`owner_id = 2.9`) still truncated; a misspelled `show_when` controller
-  silently turned a required field optional; the MRQL cache was not invalidated
-  by a plugin's own writes; **filtering the block-type list also filtered what
-  the editor could render**, so an existing block of a now-disallowed type
-  vanished and reported its plugin as disabled; `list_tags` is a substring
-  match, so the documented find-or-create recipe could adopt `photography` for
-  `photo`.
+Rounds 1-3 covered the feature work itself: the `patch_*` snapshot race;
+`mah.http.get_sync` holding the VM lock for 120s after a client disconnect; one
+MRQL cache serving a bulk action stale reads across its own writes;
+non-idempotent destructive validation; a `show_when` chain that lost user input;
+`==` panicking on an uncomparable value; a refusal that redirected away before
+showing why.
 
-Two fixes are worth remembering.
+Rounds 4-9 were almost entirely about one pattern, which I kept reintroducing:
+**a guard that validates the expected shape and silently accepts another**,
+where "silently accepted" means the opposite of what the author wrote. An id
+that is not a whole number, truncated to a different row. A mistyped `tags`
+value read as "no tags" and clearing them all. `filters = false` registering an
+action everywhere rather than nowhere. `params = "bad"` becoming no parameters.
+A mistyped `name` blanking the stored one. Each fix closed one instance; the
+next round found another. The class is now closed by construction:
+`validEntityIDValue` and `isArrayLike` reject rather than reinterpret, and
+registration fails closed on every malformed shape.
+
+Rounds 10-11 produced only boundary arithmetic — `maxLuaExactInteger` had to be
+2^53-1 rather than 2^53, because 2^53+1 arrives as 2^53 — at an id magnitude no
+deployment reaches. That is where the loop converged.
+
+Three fixes are worth remembering.
 
 **The `show_when` chain rule.** Rejecting chains outright broke bundled fal-ai,
 which gates a sub-mode selector on a model and its fields on both. The rule that
@@ -80,6 +82,10 @@ opposite conclusions, and the user's input is silently dropped.
 **The block-type listing returns a flag, not a filtered list.** The same
 response tells the editor how to render the blocks a note already has, so a
 filter on what can be *added* must not become a filter on what can be *seen*.
+
+**`<schema-editor mode="display">` is the detail-page metadata panel**, not the
+schema editor's preview. Item 10 shipped with its principal caller sending an
+empty entity identity because I assumed otherwise from the file's location.
 
 ## Gates
 
