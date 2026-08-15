@@ -110,6 +110,10 @@ type CropResourceQuery struct {
 	Width   int
 	Height  int
 	Comment string
+	// AsNewResource saves the crop as a separate resource and leaves the source
+	// untouched. Omitted (false) keeps the historical behaviour: the crop becomes
+	// a new version of the source.
+	AsNewResource bool
 }
 
 type TrimVideoQuery struct {

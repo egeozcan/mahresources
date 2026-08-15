@@ -76,6 +76,98 @@ test.describe.serial('Resource crop', () => {
     await expect(page.locator('dd:has-text("40 × 30")')).toBeVisible();
   });
 
+  test('saves the crop as a new resource and leaves the source alone', async ({ apiClient, resourcePage, page, request }) => {
+    const resourceId = await createCropResource(apiClient, `Crop to new resource ${testRunId}`, 'sample-image-11.png');
+    await resourcePage.gotoDisplay(resourceId);
+
+    await page.locator(`#crop-open-${resourceId}`).click();
+    const dialog = page.locator(`#crop-modal-${resourceId}`);
+    await expect(dialog).toBeVisible();
+
+    await dialog.locator('[data-testid="crop-save-mode-resource"]').check();
+    await dialog.locator(`#crop-x-${resourceId}`).fill('4');
+    await dialog.locator(`#crop-y-${resourceId}`).fill('6');
+    await dialog.locator(`#crop-w-${resourceId}`).fill('24');
+    await dialog.locator(`#crop-h-${resourceId}`).fill('18');
+
+    const submit = dialog.locator('[data-testid="crop-submit-button"]');
+    await expect(submit).toHaveText(/Save as new resource/);
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/v1/resources/crop') && r.request().method() === 'POST'),
+      submit.click(),
+    ]);
+
+    // The dialog stays open with a link to the crop — the source page it is on
+    // has not changed, so there is nothing to reload and nowhere to redirect.
+    const banner = dialog.locator('[data-testid="crop-new-resource-banner"]');
+    await expect(banner).toBeVisible();
+    const link = dialog.locator('[data-testid="crop-new-resource-link"]');
+    await expect(link).toBeVisible();
+    const href = await link.getAttribute('href');
+    const newResourceId = Number(new URL(href!, page.url()).searchParams.get('id'));
+    expect(newResourceId).toBeGreaterThan(0);
+    expect(newResourceId).not.toBe(resourceId);
+
+    // The source keeps its bytes: no version was created for it.
+    expect(await fetchVersionCount(request, resourceId)).toBeLessThanOrEqual(1);
+
+    // The crop is a real resource carrying the cropped dimensions.
+    const created = await (await request.get(`${getWorkerBaseUrl()}/v1/resource?id=${newResourceId}`)).json();
+    expect(created.Width).toBe(24);
+    expect(created.Height).toBe(18);
+    expect(created.Name).toContain('(cropped)');
+
+    await dialog.locator('button:has-text("Cancel")').click();
+  });
+
+  test('a crop response that lands after the dialog was closed does not clobber the next one', async ({ apiClient, resourcePage, page }) => {
+    const resourceId = await createCropResource(apiClient, `Crop stale response ${testRunId}`, 'sample-image-14.png');
+    await resourcePage.gotoDisplay(resourceId);
+
+    // Hold the POST open long enough to close the dialog before it resolves.
+    // Closing resets the component without destroying it, so an unfenced
+    // response would land in the reopened dialog.
+    await page.route('**/v1/resources/crop', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await route.continue();
+    });
+
+    const dialog = page.locator(`#crop-modal-${resourceId}`);
+    await page.locator(`#crop-open-${resourceId}`).click();
+    await expect(dialog).toBeVisible();
+    await dialog.locator('[data-testid="crop-save-mode-resource"]').check();
+    await dialog.locator(`#crop-x-${resourceId}`).fill('0');
+    await dialog.locator(`#crop-y-${resourceId}`).fill('0');
+    await dialog.locator(`#crop-w-${resourceId}`).fill('16');
+    await dialog.locator(`#crop-h-${resourceId}`).fill('16');
+    await dialog.locator('[data-testid="crop-submit-button"]').click();
+
+    // Walk away while it is still in flight, then start a different crop.
+    await dialog.locator('button:has-text("Cancel")').click();
+    await expect(dialog).not.toBeVisible();
+
+    await page.locator(`#crop-open-${resourceId}`).click();
+    await expect(dialog).toBeVisible();
+    await dialog.locator(`#crop-x-${resourceId}`).fill('30');
+    await dialog.locator(`#crop-y-${resourceId}`).fill('30');
+    await dialog.locator(`#crop-w-${resourceId}`).fill('25');
+    await dialog.locator(`#crop-h-${resourceId}`).fill('25');
+
+    // Well past the held response's arrival.
+    await page.waitForTimeout(2500);
+
+    // The second interaction is untouched: its rectangle survives and no banner
+    // from the abandoned request appears.
+    await expect(dialog.locator(`#crop-w-${resourceId}`)).toHaveValue('25');
+    await expect(dialog.locator(`#crop-h-${resourceId}`)).toHaveValue('25');
+    await expect(dialog.locator('[data-testid="crop-new-resource-banner"]')).toBeHidden();
+    // The save mode reset to the default with the dialog, as it does on any close.
+    await expect(dialog.locator('[data-testid="crop-save-mode-version"]')).toBeChecked();
+
+    await dialog.locator('button:has-text("Cancel")').click();
+    await page.unroute('**/v1/resources/crop');
+  });
+
   test('cancel leaves the resource untouched', async ({ apiClient, resourcePage, page, request }) => {
     const resourceId = await createCropResource(apiClient, `Crop cancel ${testRunId}`, 'sample-image-37.png');
     await resourcePage.gotoDisplay(resourceId);

@@ -1132,7 +1132,8 @@
                     imageUrl: $store.lightbox.getCurrentItem()?.viewUrl,
                     initialWidth: $store.lightbox.getCurrentItem()?.width || 0,
                     initialHeight: $store.lightbox.getCurrentItem()?.height || 0,
-                    onSuccess: () => $store.lightbox.onCropSuccess()
+                    onSuccess: (croppedId) => $store.lightbox.onCropSuccess(croppedId),
+                    onNewResource: () => $store.lightbox.onCropSavedAsNewResource()
                 })"
             >
                 <header class="px-4 py-3 border-b border-stone-700 flex items-center justify-between sticky top-0 bg-stone-900 z-10">
@@ -1189,6 +1190,26 @@
                         </div>
 
                         <div class="w-full lg:w-64 space-y-3">
+                            <fieldset class="border border-stone-700 rounded-md px-3 py-2">
+                                <legend class="text-xs font-medium text-stone-300 px-1">Save as</legend>
+                                <div class="space-y-1 mt-1">
+                                    <label class="flex items-start gap-2 text-sm text-stone-200">
+                                        <input type="radio" value="version" x-model="saveMode"
+                                            name="lightbox-crop-save-mode"
+                                            data-testid="lightbox-crop-save-mode-version"
+                                            class="mt-1 bg-stone-800 border-stone-600 text-amber-600 focus:ring-amber-500">
+                                        <span>New version <span class="block text-xs text-stone-400">Replaces this resource's image.</span></span>
+                                    </label>
+                                    <label class="flex items-start gap-2 text-sm text-stone-200">
+                                        <input type="radio" value="resource" x-model="saveMode"
+                                            name="lightbox-crop-save-mode"
+                                            data-testid="lightbox-crop-save-mode-resource"
+                                            class="mt-1 bg-stone-800 border-stone-600 text-amber-600 focus:ring-amber-500">
+                                        <span>New resource <span class="block text-xs text-stone-400">Keeps this one as it is.</span></span>
+                                    </label>
+                                </div>
+                            </fieldset>
+
                             <div>
                                 <label for="lightbox-crop-aspect" class="block text-xs font-medium text-stone-300 mb-1">Aspect ratio</label>
                                 <select
@@ -1251,6 +1272,26 @@
                             </p>
 
                             <div role="alert" aria-live="assertive" class="text-sm text-red-400" x-show="errorMessage" x-text="errorMessage"></div>
+
+                            {# The announcement lives in its own always-mounted region, not on the banner below: #}
+                            {# a live region that is display:none until the moment its text is set is not         #}
+                            {# reliably announced. The store stays silent for this outcome so it is said once.    #}
+                            <span class="sr-only" role="status" x-text="successMessage"></span>
+
+                            {# New-resource mode leaves the overlay open, so the outcome has to be visible here. #}
+                            <div
+                                x-show="successMessage"
+                                data-testid="lightbox-crop-new-resource-banner"
+                                class="p-3 bg-green-900/30 border border-green-700 rounded text-green-100 text-sm"
+                            >
+                                <span x-text="successMessage"></span>
+                                <a
+                                    x-show="newResourceId"
+                                    :href="newResourceUrl()"
+                                    data-testid="lightbox-crop-new-resource-link"
+                                    class="block mt-1 underline font-medium"
+                                >Open the new resource</a>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1268,7 +1309,7 @@
                         data-testid="lightbox-crop-submit-button"
                         class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 disabled:bg-stone-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-stone-900 focus:ring-amber-600"
                     >
-                        <span x-show="!isSubmitting">Crop</span>
+                        <span x-show="!isSubmitting" x-text="submitLabel()">Crop</span>
                         <span x-show="isSubmitting">Cropping…</span>
                     </button>
                 </footer>

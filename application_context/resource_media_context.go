@@ -1521,35 +1521,45 @@ func (ctx *MahresourcesContext) RotateResource(httpContext context.Context, reso
 	return nil
 }
 
-// CropResource crops the resource's current image to the given rectangle
-// (in the current image's natural pixel coordinates) and stores the result
-// as a new ResourceVersion that becomes the current version. Source format
-// is preserved where an encoder is available (JPEG, PNG); GIF and WebP
-// sources are re-encoded as PNG because we have no encoder for them and
-// quantizing GIF output would hurt quality. Animation is dropped.
-func (ctx *MahresourcesContext) CropResource(
+// croppedImage is the output of the shared crop pipeline: the re-encoded
+// rectangle plus the source resource it was taken from. Both crop modes (new
+// version, new resource) produce one of these and then diverge on where it is
+// stored.
+type croppedImage struct {
+	source models.Resource
+	data   []byte
+	ext    string
+	// note explains a format change ("re-encoded as PNG"), appended to the
+	// version comment or the new resource's description.
+	note string
+}
+
+// cropResourceImage validates the rectangle, decodes the resource's current
+// image, crops it and re-encodes it. Source format is preserved where an
+// encoder is available (JPEG, PNG); GIF and WebP sources are re-encoded as PNG
+// because we have no encoder for them and quantizing GIF output would hurt
+// quality. Animation is dropped.
+//
+// The caller owns locks.VersionUploadLock: the version path holds it across the
+// write too, the new-resource path only needs it for this read.
+func (ctx *MahresourcesContext) cropResourceImage(
 	httpContext context.Context,
 	resourceId uint,
 	x, y, width, height int,
-	userComment string,
-) error {
+) (*croppedImage, error) {
 	if width <= 0 {
-		return errors.New("crop width must be positive")
+		return nil, errors.New("crop width must be positive")
 	}
 	if height <= 0 {
-		return errors.New("crop height must be positive")
+		return nil, errors.New("crop height must be positive")
 	}
 	if x < 0 || y < 0 {
-		return errors.New("crop origin must be non-negative")
+		return nil, errors.New("crop origin must be non-negative")
 	}
-
-	// Serialize per-resource version operations.
-	ctx.locks.VersionUploadLock.Acquire(resourceId)
-	defer ctx.locks.VersionUploadLock.Release(resourceId)
 
 	var resource models.Resource
 	if err := ctx.db.First(&resource, resourceId).Error; err != nil {
-		return err
+		return nil, err
 	}
 
 	// Gate on what the pipeline can decode, exactly as rotate and dimension
@@ -1560,25 +1570,25 @@ func (ctx *MahresourcesContext) CropResource(
 	// class on the other two pixel endpoints and left it open on this one; the
 	// Phase 3 sweep over all three found it.
 	if !resource.IsRasterImage() {
-		return errNotRasterImage("cropping", resource.ContentType)
+		return nil, errNotRasterImage("cropping", resource.ContentType)
 	}
 
 	fs, err := ctx.GetFsForStorageLocation(resource.StorageLocation)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	f, err := fs.Open(resource.GetCleanLocation())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	srcBytes, readErr := io.ReadAll(f)
 	f.Close()
 	if readErr != nil {
-		return fmt.Errorf("failed to read source image: %w", readErr)
+		return nil, fmt.Errorf("failed to read source image: %w", readErr)
 	}
 	if len(srcBytes) == 0 {
-		return errUndecodableImage("cropping", resource.ContentType,
+		return nil, errUndecodableImage("cropping", resource.ContentType,
 			fmt.Errorf("the stored file at %q is empty (recorded size %d)", resource.GetCleanLocation(), resource.FileSize))
 	}
 
@@ -1588,7 +1598,7 @@ func (ctx *MahresourcesContext) CropResource(
 		// (HEIC, AVIF, etc.) — same path used by the thumbnail pipeline.
 		fallbackImg, fbErr := ctx.decodeImageWithFallback(httpContext, bytes.NewReader(srcBytes))
 		if fbErr != nil {
-			return errUndecodableImage("cropping", resource.ContentType,
+			return nil, errUndecodableImage("cropping", resource.ContentType,
 				fmt.Errorf("source is %d bytes: %w", len(srcBytes), decodeErr))
 		}
 		img = fallbackImg
@@ -1598,7 +1608,7 @@ func (ctx *MahresourcesContext) CropResource(
 	bounds := img.Bounds()
 	imgW, imgH := bounds.Dx(), bounds.Dy()
 	if x+width > imgW || y+height > imgH {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"crop rectangle must be within image bounds (image is %dx%d, requested %d,%d %dx%d)",
 			imgW, imgH, x, y, width, height,
 		)
@@ -1611,12 +1621,39 @@ func (ctx *MahresourcesContext) CropResource(
 
 	encoded, encodeErr := encodeInSourceFormat(cropped, format)
 	if encodeErr != nil {
-		return fmt.Errorf("failed to encode cropped image: %w", encodeErr)
+		return nil, fmt.Errorf("failed to encode cropped image: %w", encodeErr)
 	}
-	outExt := encoded.Ext
-	formatNote := encoded.Note
 
-	croppedBytes := encoded.Data
+	return &croppedImage{
+		source: resource,
+		data:   encoded.Data,
+		ext:    encoded.Ext,
+		note:   encoded.Note,
+	}, nil
+}
+
+// CropResource crops the resource's current image to the given rectangle
+// (in the current image's natural pixel coordinates) and stores the result
+// as a new ResourceVersion that becomes the current version.
+func (ctx *MahresourcesContext) CropResource(
+	httpContext context.Context,
+	resourceId uint,
+	x, y, width, height int,
+	userComment string,
+) error {
+	// Serialize per-resource version operations.
+	ctx.locks.VersionUploadLock.Acquire(resourceId)
+	defer ctx.locks.VersionUploadLock.Release(resourceId)
+
+	crop, err := ctx.cropResourceImage(httpContext, resourceId, x, y, width, height)
+	if err != nil {
+		return err
+	}
+	resource := crop.source
+	outExt := crop.ext
+	formatNote := crop.note
+
+	croppedBytes := crop.data
 	hash := computeSHA1(croppedBytes)
 	contentType := detectContentType(croppedBytes)
 	outW, outH := getDimensionsFromContent(croppedBytes, contentType)
@@ -1722,6 +1759,119 @@ func (ctx *MahresourcesContext) CropResource(
 	ctx.OnResourceFileChanged(resourceId)
 
 	return nil
+}
+
+// CropResourceToNewResource crops the resource's current image to the given
+// rectangle and stores the result as a brand-new Resource, leaving the source
+// completely untouched — no version, no hash change, no thumbnail invalidation.
+// This is the "extract" case: lifting a face out of a group photo or a panel out
+// of a scan, where the original has to survive.
+//
+// The cropped bytes go through the ordinary AddResource upload path rather than
+// a hand-rolled insert, so the new resource gets the resource-create plugin
+// hooks, resource-category detection, its v1 ResourceVersion, creator
+// attribution and search-cache invalidation for free. A crop whose bytes already
+// exist is refused with a *ResourceExistsError naming the resource that holds
+// them — see the collision comment below for why this path checks that itself
+// rather than leaving it to AddResource.
+//
+// Owner, groups, tags and resource category carry over from the source. Owner and
+// groups are not merely a convenience: they keep a group-scoped principal's crop
+// inside the subtree it is allowed to see.
+func (ctx *MahresourcesContext) CropResourceToNewResource(
+	httpContext context.Context,
+	resourceId uint,
+	x, y, width, height int,
+	userComment string,
+) (*models.Resource, error) {
+	// The source's version lock is held only for the read: nothing below writes
+	// to the source, and AddResource takes its own locks. Holding it across the
+	// upload would block unrelated version work on the source for no reason.
+	crop, err := func() (*croppedImage, error) {
+		ctx.locks.VersionUploadLock.Acquire(resourceId)
+		defer ctx.locks.VersionUploadLock.Release(resourceId)
+		return ctx.cropResourceImage(httpContext, resourceId, x, y, width, height)
+	}()
+	if err != nil {
+		return nil, err
+	}
+	source := crop.source
+
+	var groups []models.Group
+	if err := ctx.db.Model(&source).Association("Groups").Find(&groups); err != nil {
+		return nil, err
+	}
+	var tags []models.Tag
+	if err := ctx.db.Model(&source).Association("Tags").Find(&tags); err != nil {
+		return nil, err
+	}
+	groupIDs := make([]uint, 0, len(groups))
+	for _, g := range groups {
+		groupIDs = append(groupIDs, g.ID)
+	}
+	tagIDs := make([]uint, 0, len(tags))
+	for _, t := range tags {
+		tagIDs = append(tagIDs, t.ID)
+	}
+
+	baseName := strings.TrimSuffix(source.Name, filepath.Ext(source.Name))
+	if strings.TrimSpace(baseName) == "" {
+		baseName = fmt.Sprintf("resource-%d", source.ID)
+	}
+	name := TrimEntityName(baseName + " (cropped)")
+	fileName := baseName + "-cropped" + crop.ext
+
+	description := fmt.Sprintf("Cropped from %s (#%d) at %d,%d %d×%d", source.Name, source.ID, x, y, width, height)
+	if crop.note != "" {
+		// crop.note already reads as a sentence fragment (", re-encoded as PNG").
+		description += crop.note
+	}
+	if comment := strings.TrimSpace(userComment); comment != "" {
+		description += "\n\n" + comment
+	}
+
+	// AddResource's collision handling is written for uploads: when the colliding
+	// resource has a *different* owner it files that resource into the caller's
+	// owner group and hands it back with no error. For a crop that is wrong twice
+	// over — the caller asked to create something, so it would be told "saved as
+	// a new resource" about a resource that predates the request, and an
+	// unrelated resource would quietly gain a group it was never meant to be in.
+	// Answer the collision here instead.
+	//
+	// This closes the ordinary case, not the race: two byte-identical crops of
+	// differently-owned sources in flight at once can both pass this check, and
+	// the one AddResource serializes second still takes that branch. Closing it
+	// would mean holding the same per-hash lock AddResource takes, which is not
+	// re-entrant. The check is also principal-scoped, so a scoped caller does not
+	// see — and will not be refused by — a match outside its subtree.
+	hash := computeSHA1(crop.data)
+	var existing models.Resource
+	switch err := ctx.db.Select("id").Where("hash = ?", hash).First(&existing).Error; {
+	case err == nil:
+		return nil, &ResourceExistsError{ResourceID: existing.ID, Reason: ReasonSameParent}
+	case !errors.Is(err, gorm.ErrRecordNotFound):
+		return nil, err
+	}
+
+	creator := &query_models.ResourceCreator{
+		ResourceQueryBase: query_models.ResourceQueryBase{
+			Name:               name,
+			Description:        description,
+			Groups:             groupIDs,
+			Tags:               tagIDs,
+			ResourceCategoryId: source.ResourceCategoryId,
+		},
+	}
+	if source.OwnerId != nil {
+		creator.OwnerId = *source.OwnerId
+	}
+	// Keep the crop on whatever filesystem the source lives on, so cropping an
+	// alt-fs resource doesn't silently relocate its output to the default one.
+	if source.StorageLocation != nil {
+		creator.PathName = *source.StorageLocation
+	}
+
+	return ctx.AddResource(io.NopCloser(bytes.NewReader(crop.data)), fileName, creator)
 }
 
 // TrimVideo trims a video resource to the given time range and stores the result

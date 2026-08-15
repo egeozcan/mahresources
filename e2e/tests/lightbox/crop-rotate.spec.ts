@@ -131,6 +131,111 @@ test.describe.serial('Lightbox crop & rotate', () => {
     expect(after.height).toBe(15);
   });
 
+  test('crop overlay can save to a new resource without disturbing the viewed one', async ({ apiClient, page }) => {
+    const resourceId = await seedImage(apiClient, 'Crop new', 'sample-image-12.png');
+    await openLightbox(page, resourceId);
+    const before = await currentItem(page);
+
+    await page.locator(LIGHTBOX).getByRole('button', { name: 'Crop image' }).click();
+    const overlay = page.locator('[data-crop-overlay]');
+    await expect(overlay).toBeVisible();
+    await page.waitForFunction(() => {
+      const img = document.querySelector('[data-crop-overlay] img') as HTMLImageElement | null;
+      return !!img && img.complete && img.naturalWidth > 0;
+    });
+
+    await page.locator('[data-testid="lightbox-crop-save-mode-resource"]').check();
+    await page.locator('#lightbox-crop-x').fill('10');
+    await page.locator('#lightbox-crop-y').fill('10');
+    await page.locator('#lightbox-crop-w').fill('30');
+    await page.locator('#lightbox-crop-h').fill('20');
+
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/v1/resources/crop') && r.request().method() === 'POST'),
+      page.locator('[data-testid="lightbox-crop-submit-button"]').click(),
+    ]);
+
+    // The overlay stays open with the outcome, so the next region can be lifted
+    // out straight away.
+    await expect(page.locator('[data-testid="lightbox-crop-new-resource-banner"]')).toBeVisible();
+    await expect(overlay).toBeVisible();
+
+    // The viewed resource is byte-for-byte what it was: same media URL, same
+    // dimensions. A refresh here would mean the version path leaked in.
+    const after = await currentItem(page);
+    expect(after.viewUrl).toBe(before.viewUrl);
+    expect(after.width).toBe(before.width);
+    expect(after.height).toBe(before.height);
+
+    await page.keyboard.press('Escape');
+    await expect(overlay).toBeHidden();
+    await expect(page.locator(LIGHTBOX)).toBeVisible();
+  });
+
+  test('a crop that lands after you navigated on updates the image it was for', async ({ apiClient, page }) => {
+    const croppedId = await seedImage(apiClient, 'Nav crop A', 'sample-image-15.png');
+    await seedImage(apiClient, 'Nav crop B', 'sample-image-16.png');
+    await openLightbox(page, croppedId);
+
+    const itemById = (id: number) =>
+      page.evaluate((rid) => {
+        const s = (window as any).Alpine.store('lightbox');
+        const it = s.items.find((i: any) => i.id === rid);
+        return it ? { width: it.width, height: it.height, viewUrl: it.viewUrl } : null;
+      }, id);
+
+    const before = await itemById(croppedId);
+
+    // Hold the POST open so the overlay can be closed and the viewer moved on
+    // before the response lands.
+    await page.route('**/v1/resources/crop', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await route.continue();
+    });
+
+    await page.locator(LIGHTBOX).getByRole('button', { name: 'Crop image' }).click();
+    await expect(page.locator('[data-crop-overlay]')).toBeVisible();
+    await page.waitForFunction(() => {
+      const img = document.querySelector('[data-crop-overlay] img') as HTMLImageElement | null;
+      return !!img && img.complete && img.naturalWidth > 0;
+    });
+    await page.locator('#lightbox-crop-x').fill('0');
+    await page.locator('#lightbox-crop-y').fill('0');
+    await page.locator('#lightbox-crop-w').fill('18');
+    await page.locator('#lightbox-crop-h').fill('12');
+    await page.locator('[data-testid="lightbox-crop-submit-button"]').click();
+
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-crop-overlay]')).toBeHidden();
+    const currentBefore = await page.evaluate(() => (window as any).Alpine.store('lightbox').currentIndex);
+    // Move to a neighbour in whichever direction exists — the cropped image may
+    // be first or last in the gallery depending on what else the suite seeded.
+    await page.evaluate(() => {
+      const s = (window as any).Alpine.store('lightbox');
+      if (s.currentIndex < s.items.length - 1) s.next(); else s.prev();
+    });
+    await expect
+      .poll(() => page.evaluate(() => (window as any).Alpine.store('lightbox').currentIndex))
+      .not.toBe(currentBefore);
+    const neighbourBefore = await page.evaluate(() => {
+      const it = (window as any).Alpine.store('lightbox').getCurrentItem();
+      return { id: it.id, viewUrl: it.viewUrl, width: it.width, height: it.height };
+    });
+
+    // The version belongs to the image that was cropped, so that is the item
+    // that must change — and only that one.
+    await expect.poll(async () => (await itemById(croppedId))?.width, { timeout: 10000 }).toBe(18);
+    expect((await itemById(croppedId))?.viewUrl).not.toBe(before!.viewUrl);
+
+    const neighbourAfter = await page.evaluate(() => {
+      const it = (window as any).Alpine.store('lightbox').getCurrentItem();
+      return { id: it.id, viewUrl: it.viewUrl, width: it.width, height: it.height };
+    });
+    expect(neighbourAfter).toEqual(neighbourBefore);
+
+    await page.unroute('**/v1/resources/crop');
+  });
+
   test('crop overlay isolates viewer keyboard shortcuts', async ({ apiClient, page }) => {
     await seedImage(apiClient, 'Iso A', 'sample-image-3.png');
     await seedImage(apiClient, 'Iso B', 'sample-image-4.png');

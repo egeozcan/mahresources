@@ -1006,6 +1006,29 @@ func GetCropResourceHandler(ctx contracts.ResourceMediaProcessor) func(writer ht
 			return
 		}
 
+		if editor.AsNewResource {
+			created, err := ctx.CropResourceToNewResource(request.Context(), editor.ID, editor.X, editor.Y, editor.Width, editor.Height, editor.Comment)
+
+			if err != nil {
+				// The crop's bytes already exist as a resource. That is a
+				// conflict the caller can act on — the message names the id —
+				// not the 500 the generic classifier would fall back to.
+				status := statusCodeForError(err, http.StatusInternalServerError)
+				var existsErr *application_context.ResourceExistsError
+				if errors.As(err, &existsErr) {
+					status = http.StatusConflict
+				}
+				http_utils.HandleError(err, writer, request, status)
+				return
+			}
+
+			if !http_utils.RedirectIfHTMLAccepted(writer, request, fmt.Sprintf("/resource?id=%v", created.ID)) {
+				writer.Header().Set("Content-Type", constants.JSON)
+				_ = json.NewEncoder(writer).Encode(map[string]any{"ok": true, "id": created.ID})
+			}
+			return
+		}
+
 		err := ctx.CropResource(request.Context(), editor.ID, editor.X, editor.Y, editor.Width, editor.Height, editor.Comment)
 
 		if err != nil {

@@ -423,10 +423,23 @@ func scopeCreateCallback(db *gorm.DB) {
 	}
 
 	check := func(owner *uint, isGroupSelf bool, selfID uint) bool {
+		// A group that already carries an id is not being placed, it is being
+		// referenced — GORM passes a bare {ID: n} stub when an association append
+		// saves the other side. Containment for a group is decided by its own id
+		// (scopeColumn maps "groups" to "id"), which is exactly what the stub
+		// carries, so judge it by that. Judging it by the stub's absent OwnerId
+		// instead refused every such append with ErrInvalidData, which took the
+		// whole upload path out for a group-limited principal.
+		//
+		// Note the same shape is still refused for notes: their scope column is
+		// owner_id, which a {ID: n} stub does not carry, and resolving it would
+		// need a read from inside the callback.
+		if isGroupSelf && selfID != 0 {
+			_, ok := allowed[selfID]
+			return ok
+		}
 		// For groups, a brand-new row has no id yet; its containment is decided
 		// by its parent (owner_id). For resources/notes, by owner_id.
-		_ = isGroupSelf
-		_ = selfID
 		if owner == nil {
 			return false // scoped principals must place new rows inside the subtree
 		}
@@ -466,7 +479,14 @@ func checkOwnerField(rv reflect.Value, table string, check func(owner *uint, isG
 			owner = &v
 		}
 	}
-	return check(owner, table == "groups", 0)
+	// The row's own id, when it has one. A create statement carrying a primary
+	// key is GORM saving the far side of an association — a reference to a row
+	// that already exists, not a new placement.
+	var selfID uint
+	if idField := rv.FieldByName("ID"); idField.IsValid() && idField.CanUint() {
+		selfID = uint(idField.Uint())
+	}
+	return check(owner, table == "groups", selfID)
 }
 
 // statementTable returns the table name for the current statement, preferring

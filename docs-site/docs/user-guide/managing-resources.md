@@ -206,11 +206,24 @@ Crop an image to a rectangular region. Cropping is available for raster image fi
 
 1. Navigate to the image resource
 2. In the sidebar, under **Image Operations**, click the **Crop** button to open the crop dialog
-3. Drag on the image to select the crop area, or type exact pixel values for **X**, **Y**, **Width**, and **Height**
-4. Optionally pick an **Aspect ratio** (Free, 1:1, 16:9, 4:3, or Original) and add a **Comment**
-5. Click **Crop** in the dialog to apply
+3. Under **Save as**, choose **New version** (the default) or **New resource**
+4. Drag on the image to select the crop area, or type exact pixel values for **X**, **Y**, **Width**, and **Height**
+5. Optionally pick an **Aspect ratio** (Free, 1:1, 16:9, 4:3, or Original) and add a **Comment**
+6. Click the button in the dialog footer to apply
 
-Cropping creates a new version with the cropped content and clears cached thumbnails. JPEG and PNG images keep their format; GIF, WebP, BMP, and TIFF are re-encoded as PNG, and GIF animation is dropped. HEIC and AVIF images are decoded through the ImageMagick fallback (which must be installed) and re-encoded as PNG.
+The crop is also available from the image viewer (lightbox) through its **Crop image** button, with the same **Save as** choice.
+
+#### Save as new version
+
+The default. The cropped image replaces the resource's current content as a new version and cached thumbnails are cleared. The **Comment** is stored on that version.
+
+#### Save as new resource
+
+The source resource is left completely untouched -- no new version, no dimension change, no thumbnail invalidation. The crop is saved as a separate resource that inherits the source's owner, groups, tags, and resource category, is named `<source name> (cropped)`, and records where it came from in its description along with the **Comment**. The crop dialog stays open with a link to the new resource, so several regions can be lifted out of one image in a row.
+
+Identical content is deduplicated: cropping the exact same rectangle twice reports the resource that already holds it instead of creating a duplicate. The check covers what you can see, so a group-limited user is not told about a match outside their own group subtree.
+
+Either way, JPEG and PNG images keep their format; GIF, WebP, BMP, and TIFF are re-encoded as PNG, and GIF animation is dropped. HEIC and AVIF images are decoded through the ImageMagick fallback (which must be installed) and re-encoded as PNG.
 
 SVG and ICO files cannot be cropped -- re-upload them as PNG or JPEG first.
 

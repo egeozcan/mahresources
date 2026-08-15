@@ -2297,6 +2297,9 @@
   .border-green-200 {
     border-color: var(--color-green-200);
   }
+  .border-green-300 {
+    border-color: var(--color-green-300);
+  }
   .border-green-600\/50 {
     border-color: color-mix(in srgb, oklch(62.7% 0.194 149.214) 50%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
@@ -2308,6 +2311,9 @@
     @supports (color: color-mix(in lab, red, red)) {
       border-color: color-mix(in oklab, var(--color-green-600) 60%, transparent);
     }
+  }
+  .border-green-700 {
+    border-color: var(--color-green-700);
   }
   .border-indigo-100 {
     border-color: var(--color-indigo-100);
@@ -3100,6 +3106,9 @@
   }
   .text-green-800 {
     color: var(--color-green-800);
+  }
+  .text-green-900 {
+    color: var(--color-green-900);
   }
   .text-green-900\/60 {
     color: color-mix(in srgb, oklch(39.3% 0.095 152.535) 60%, transparent);

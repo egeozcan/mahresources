@@ -8,6 +8,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"path"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/image/bmp"
 	"golang.org/x/image/tiff"
+	"mahresources/auth"
 	"mahresources/models"
 )
 
@@ -319,6 +321,236 @@ func TestCropResource_BMP_ConvertsToPNG(t *testing.T) {
 	require.NoError(t, ctx.db.Where("resource_id = ? AND version_number = ?", resourceID, 2).First(&v).Error)
 	assert.Equal(t, "image/png", v.ContentType, "BMP source is re-encoded as PNG since we have no BMP encoder")
 	assert.Contains(t, v.Comment, "re-encoded as PNG")
+}
+
+func TestCropResourceToNewResource_LeavesSourceUntouched(t *testing.T) {
+	ctx := setupCropTestCtx(t)
+	jpegBytes := makeJPEG(t, 100, 80, color.RGBA{R: 12, G: 200, B: 90, A: 255})
+	sourceID := seedImageResource(t, ctx, "image/jpeg", jpegBytes, 100, 80)
+
+	var before models.Resource
+	require.NoError(t, ctx.db.First(&before, sourceID).Error)
+
+	created, err := ctx.CropResourceToNewResource(context.Background(), sourceID, 10, 20, 40, 30, "")
+	require.NoError(t, err)
+	require.NotNil(t, created)
+	assert.NotEqual(t, sourceID, created.ID, "the crop must be a distinct resource")
+
+	// The whole point of the mode: the source keeps its bytes, dimensions and
+	// version history. A stray version row here means the version path leaked in.
+	var after models.Resource
+	require.NoError(t, ctx.db.First(&after, sourceID).Error)
+	assert.Equal(t, before.Hash, after.Hash)
+	assert.Equal(t, before.Location, after.Location)
+	assert.Equal(t, uint(100), after.Width)
+	assert.Equal(t, uint(80), after.Height)
+	assert.Equal(t, before.CurrentVersionID, after.CurrentVersionID)
+
+	var sourceVersions int64
+	require.NoError(t, ctx.db.Model(&models.ResourceVersion{}).Where("resource_id = ?", sourceID).Count(&sourceVersions).Error)
+	assert.Equal(t, int64(0), sourceVersions, "cropping to a new resource must not version the source")
+
+	assert.Equal(t, uint(40), created.Width)
+	assert.Equal(t, uint(30), created.Height)
+	assert.Equal(t, "image/jpeg", created.ContentType)
+	assert.Contains(t, created.Name, "(cropped)")
+	assert.Contains(t, created.Description, "#"+strconv.FormatUint(uint64(sourceID), 10),
+		"the new resource must record where it was cropped from")
+
+	// AddResource's own v1 bookkeeping applies to the crop like any other upload.
+	var newVersions []models.ResourceVersion
+	require.NoError(t, ctx.db.Where("resource_id = ?", created.ID).Order("version_number").Find(&newVersions).Error)
+	require.Len(t, newVersions, 1)
+	assert.Equal(t, 1, newVersions[0].VersionNumber)
+	assert.Equal(t, uint(40), newVersions[0].Width)
+	assert.Equal(t, uint(30), newVersions[0].Height)
+}
+
+func TestCropResourceToNewResource_InheritsOwnerGroupsAndTags(t *testing.T) {
+	ctx := setupCropTestCtx(t)
+	jpegBytes := makeJPEG(t, 60, 60, color.RGBA{R: 200, G: 30, B: 30, A: 255})
+	sourceID := seedImageResource(t, ctx, "image/jpeg", jpegBytes, 60, 60)
+
+	extraGroup := &models.Group{Name: "crop-extra-group"}
+	require.NoError(t, ctx.db.Create(extraGroup).Error)
+	tag := &models.Tag{Name: "crop-tag"}
+	require.NoError(t, ctx.db.Create(tag).Error)
+
+	var source models.Resource
+	require.NoError(t, ctx.db.First(&source, sourceID).Error)
+	require.NoError(t, ctx.db.Model(&source).Association("Groups").Append(&[]*models.Group{extraGroup}))
+	require.NoError(t, ctx.db.Model(&source).Association("Tags").Append(&[]*models.Tag{tag}))
+
+	created, err := ctx.CropResourceToNewResource(context.Background(), sourceID, 0, 0, 20, 20, "")
+	require.NoError(t, err)
+
+	var loaded models.Resource
+	require.NoError(t, ctx.db.Preload("Groups").Preload("Tags").First(&loaded, created.ID).Error)
+
+	require.NotNil(t, loaded.OwnerId)
+	require.NotNil(t, source.OwnerId)
+	assert.Equal(t, *source.OwnerId, *loaded.OwnerId, "owner must carry over so the crop stays in the same subtree")
+
+	groupIDs := make([]uint, 0, len(loaded.Groups))
+	for _, g := range loaded.Groups {
+		groupIDs = append(groupIDs, g.ID)
+	}
+	assert.Contains(t, groupIDs, extraGroup.ID)
+
+	require.Len(t, loaded.Tags, 1)
+	assert.Equal(t, tag.ID, loaded.Tags[0].ID)
+}
+
+func TestCropResourceToNewResource_UsesCommentInDescription(t *testing.T) {
+	ctx := setupCropTestCtx(t)
+	jpegBytes := makeJPEG(t, 50, 50, color.RGBA{R: 90, G: 90, B: 200, A: 255})
+	sourceID := seedImageResource(t, ctx, "image/jpeg", jpegBytes, 50, 50)
+
+	created, err := ctx.CropResourceToNewResource(context.Background(), sourceID, 0, 0, 10, 10, "  headshot crop  ")
+	require.NoError(t, err)
+	assert.Contains(t, created.Description, "headshot crop")
+}
+
+func TestCropResourceToNewResource_DuplicateContentIsRefused(t *testing.T) {
+	ctx := setupCropTestCtx(t)
+	jpegBytes := makeJPEG(t, 70, 70, color.RGBA{R: 5, G: 150, B: 250, A: 255})
+	sourceID := seedImageResource(t, ctx, "image/jpeg", jpegBytes, 70, 70)
+
+	first, err := ctx.CropResourceToNewResource(context.Background(), sourceID, 0, 0, 25, 25, "")
+	require.NoError(t, err)
+
+	// Identical rectangle, identical bytes: AddResource's hash dedupe owns this,
+	// and it names the resource the caller already has instead of twinning it.
+	_, err = ctx.CropResourceToNewResource(context.Background(), sourceID, 0, 0, 25, 25, "")
+	require.Error(t, err)
+	var existsErr *ResourceExistsError
+	require.ErrorAs(t, err, &existsErr)
+	assert.Equal(t, first.ID, existsErr.ResourceID)
+}
+
+func TestCropResourceToNewResource_ScopedPrincipalDropsOutOfSubtreeGroups(t *testing.T) {
+	ctx := setupCropTestCtx(t)
+	jpegBytes := makeJPEG(t, 60, 60, color.RGBA{R: 30, G: 170, B: 90, A: 255})
+	sourceID := seedImageResource(t, ctx, "image/jpeg", jpegBytes, 60, 60)
+
+	var source models.Resource
+	require.NoError(t, ctx.db.First(&source, sourceID).Error)
+	require.NotNil(t, source.OwnerId)
+	scopeGroupID := *source.OwnerId
+
+	// The source is inside the principal's subtree by owner, but also belongs to
+	// a group outside it — a resource can be in groups its owner has nothing to
+	// do with. Inheriting that group would write into a subtree the principal
+	// cannot see; refusing the crop outright would block legitimate work.
+	outside := &models.Group{Name: "crop-outside-subtree"}
+	require.NoError(t, ctx.db.Create(outside).Error)
+	// A second group inside the subtree, so "dropped every group" cannot pass
+	// this test: the in-scope one has to survive the filtering.
+	inside := &models.Group{Name: "crop-inside-subtree", OwnerId: &scopeGroupID}
+	require.NoError(t, ctx.db.Create(inside).Error)
+	require.NoError(t, ctx.db.Model(&source).Association("Groups").Append(&[]*models.Group{outside, inside}))
+
+	scoped := ctx.WithPrincipal(&auth.Principal{Role: models.RoleUser, ScopeGroupID: &scopeGroupID})
+
+	created, err := scoped.CropResourceToNewResource(context.Background(), sourceID, 0, 0, 20, 20, "")
+	require.NoError(t, err)
+
+	var loaded models.Resource
+	require.NoError(t, ctx.db.Preload("Groups").First(&loaded, created.ID).Error)
+	groupIDs := make([]uint, 0, len(loaded.Groups))
+	for _, g := range loaded.Groups {
+		groupIDs = append(groupIDs, g.ID)
+	}
+	assert.NotContains(t, groupIDs, outside.ID, "a group outside the principal's subtree must not be inherited")
+	assert.Contains(t, groupIDs, inside.ID, "a group inside the subtree must still be inherited")
+	require.NotNil(t, loaded.OwnerId)
+	assert.Equal(t, scopeGroupID, *loaded.OwnerId, "the crop stays inside the subtree it came from")
+}
+
+func TestCropResourceToNewResource_DoesNotRefileAnUnrelatedMatch(t *testing.T) {
+	ctx := setupCropTestCtx(t)
+
+	// Two different images that agree exactly on the region being cropped, so the
+	// crops come out byte-identical while the sources do not. PNG, not JPEG: the
+	// lossy encoder bleeds the colour boundary into the cropped quadrant, so two
+	// JPEG sources never produce identical crops. Each seeded source gets its own
+	// owner group.
+	red := color.RGBA{R: 220, G: 20, B: 20, A: 255}
+	blue := color.RGBA{R: 20, G: 20, B: 220, A: 255}
+	solid := makePNG(t, 60, 60, red)
+
+	mixed := image.NewRGBA(image.Rect(0, 0, 60, 60))
+	for x := 0; x < 60; x++ {
+		for y := 0; y < 60; y++ {
+			if x < 20 && y < 20 {
+				mixed.Set(x, y, red)
+			} else {
+				mixed.Set(x, y, blue)
+			}
+		}
+	}
+	var mixedBuf bytes.Buffer
+	require.NoError(t, png.Encode(&mixedBuf, mixed))
+
+	firstID := seedImageResource(t, ctx, "image/png", solid, 60, 60)
+	secondID := seedImageResource(t, ctx, "image/png", mixedBuf.Bytes(), 60, 60)
+
+	first, err := ctx.CropResourceToNewResource(context.Background(), firstID, 0, 0, 20, 20, "")
+	require.NoError(t, err)
+
+	var ownerBefore models.Resource
+	require.NoError(t, ctx.db.Preload("Groups").First(&ownerBefore, first.ID).Error)
+	groupsBefore := len(ownerBefore.Groups)
+
+	// AddResource's upload-oriented collision branch would file the existing
+	// resource into the second source's owner group and hand it back with no
+	// error — the caller would be told a crop was created when nothing was, and
+	// an unrelated resource would have quietly gained a group.
+	created, err := ctx.CropResourceToNewResource(context.Background(), secondID, 0, 0, 20, 20, "")
+	require.Error(t, err)
+	assert.Nil(t, created)
+	var existsErr *ResourceExistsError
+	require.ErrorAs(t, err, &existsErr)
+	assert.Equal(t, first.ID, existsErr.ResourceID)
+
+	var ownerAfter models.Resource
+	require.NoError(t, ctx.db.Preload("Groups").First(&ownerAfter, first.ID).Error)
+	assert.Len(t, ownerAfter.Groups, groupsBefore, "the refused crop must not re-file the resource it collided with")
+}
+
+func TestCropResourceToNewResource_RejectsInvalidInput(t *testing.T) {
+	ctx := setupCropTestCtx(t)
+	jpegBytes := makeJPEG(t, 100, 100, color.RGBA{A: 255})
+	sourceID := seedImageResource(t, ctx, "image/jpeg", jpegBytes, 100, 100)
+
+	cases := []struct {
+		name       string
+		x, y, w, h int
+		contains   string
+	}{
+		{"zero width", 0, 0, 0, 10, "width must be positive"},
+		{"negative origin", -1, 0, 10, 10, "origin must be non-negative"},
+		{"out of bounds", 50, 0, 60, 10, "must be within image bounds"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			created, err := ctx.CropResourceToNewResource(context.Background(), sourceID, tc.x, tc.y, tc.w, tc.h, "")
+			require.Error(t, err)
+			assert.Nil(t, created)
+			assert.Contains(t, err.Error(), tc.contains)
+		})
+	}
+
+	t.Run("non-raster source", func(t *testing.T) {
+		svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="red"/></svg>`)
+		svgID := seedImageResource(t, ctx, "image/svg+xml", svg, 40, 40)
+		created, err := ctx.CropResourceToNewResource(context.Background(), svgID, 0, 0, 10, 10, "")
+		require.Error(t, err)
+		assert.Nil(t, created)
+		assert.Contains(t, err.Error(), "not a raster image format")
+		assert.Contains(t, err.Error(), "image/svg+xml")
+	})
 }
 
 func TestCropResource_TIFF_ConvertsToPNG(t *testing.T) {

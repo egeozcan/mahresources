@@ -1,3 +1,141 @@
+# Crop: offer to save as a new resource (2026-08-14)
+
+Crop had exactly one outcome — it rewrote the resource in place as a new
+`ResourceVersion`. That is right when you are fixing framing, and wrong when you
+are *extracting*: pulling a face out of a group photo, a panel out of a scan, a
+logo out of a screenshot. The only way to get that before was to download the
+crop and re-upload it by hand.
+
+The crop dialog now carries a **Save as** choice — **New version** (unchanged,
+still the default) or **New resource**. Nothing about the existing API contract
+moved: a caller that omits the new field behaves exactly as it did.
+
+## Done
+
+- [x] `cropResourceImage` extracted from `CropResource` — rect validation, the
+      raster gate, decode (with the ImageMagick fallback), crop, re-encode. Both
+      modes share it; the caller owns `VersionUploadLock`, because the version
+      path needs it across read *and* write while the new-resource path needs it
+      only for the read.
+- [x] `CropResourceToNewResource` — leaves the source completely untouched and
+      hands the cropped bytes to the existing `AddResource` upload path, which is
+      what buys hash dedupe, the resource-create plugin hooks, resource-category
+      detection, the v1 `ResourceVersion`, `CreatedByUserId` attribution, mention
+      sync and search-cache invalidation without reimplementing any of it.
+- [x] Inheritance: owner, groups, tags, resource category, and the source's
+      storage location (so cropping an alt-fs resource does not relocate its
+      output). Name is `<source name> (cropped)`; provenance and the user's
+      comment go in the description. Notes, Meta and Series are not copied —
+      those describe the source's own place in the graph.
+- [x] `AsNewResource` on `CropResourceQuery`; the handler returns
+      `{"ok":true,"id":N}` (HTML: redirect to the new resource) and answers a
+      content collision with **409**.
+- [x] Frontend: `saveMode` on `imageCropper`, the radio group and success banner
+      in **both** copies of the crop UI (`cropModal.tpl` and the inline copy in
+      `lightbox.tpl`), and `onCropSavedAsNewResource` on the lightbox store,
+      which deliberately does *not* run `refreshCurrentItem` — nothing on screen
+      changed — and only marks the gallery behind it stale.
+- [x] In new-resource mode the cropper stays open with a link to the crop, so
+      several regions can be lifted out of one image in a row.
+- [x] Docs: `user-guide/managing-resources.md`, `features/versioning.md`,
+      `api/resources.md`, and the OpenAPI route (summary, `CropResourceResponse`,
+      and its 400/404/409/415/500 responses).
+
+## Review (pi, gpt-5.6-sol:high) — findings and what came of them
+
+Three of the five findings were real and are fixed; each got a test that fails
+without the fix.
+
+1. **`AddResource`'s dedupe is written for uploads, and one branch was wrong
+   here.** When the colliding resource has a *different* owner, `AddResource`
+   files it into the caller's owner group and returns it with **no error** — so a
+   crop could report "saved as a new resource" about a resource that predated the
+   request, having quietly given it a group it was never meant to be in. The crop
+   path now answers the collision itself before calling `AddResource`, so it only
+   ever returns a resource it actually created. (`TestCropResourceToNewResource_DoesNotRefileAnUnrelatedMatch`
+   — it needs PNG sources: two JPEG sources never crop to identical bytes,
+   because the lossy encoder bleeds the colour boundary into the cropped region.)
+   The remaining race — two identical crops in flight at once — falls through to
+   `AddResource`'s own dedupe, which is stated in the code.
+2. **A crop response landing after the dialog was closed clobbered the next
+   one.** Closing resets the component without destroying it, so the same
+   instance is reused on reopen: the abandoned request cleared a rectangle the
+   user had just entered and showed a banner for a crop they had walked away
+   from. Fenced with a generation counter bumped by `reset()`
+   (`resource-crop.spec.ts`, "a crop response that lands after the dialog was
+   closed…"; verified red by removing the fence).
+3. **The lightbox announced success twice** — the banner is a `role="status"`
+   live region and the store announced the same sentence again. The store handler
+   is now deliberately silent.
+4. **OpenAPI did not describe the new contract**: added `CropResourceResponse`
+   and the error responses. This needed one line in the generator
+   (`server/openapi/registry.go`), which mapped 415 to `default` — and a
+   `default` response saying "not a raster image" would tell a client that *every*
+   unlisted status means that. No other route declares 415, so the spec diff is
+   confined to the crop route.
+
+### Round 2 (on the post-fix state)
+
+5. **A crop landing after the lightbox overlay closed acted on the wrong image.**
+   `onCropSuccess` read the *current* item at resolution time, so closing the
+   overlay and navigating on meant the new version was applied to whichever image
+   was then on screen — refreshing it, announcing "Image cropped" about it, and
+   closing an overlay reopened on a different image. The cropper now passes the
+   id it was opened for, and the close is guarded. Note the response is **not**
+   discarded: the crop really did land server-side, so the right answer is to
+   route it to the right item, not to drop it. (`crop-rotate.spec.ts`, "a crop
+   that lands after you navigated on…"; verified red.) The generation fence still
+   covers the details-page case, where dropping *is* right — there the component
+   is reused and acting would clobber a crop the user has already started.
+6. **The success banner was not a dependable announcement.** A live region that
+   is `display:none` until the moment its text is set is not reliably read. Both
+   copies now carry a separate always-mounted `sr-only role="status"` region, and
+   the banner is plain markup.
+7. **The scoped-groups test could pass vacuously** — the source had only an
+   out-of-subtree group, so dropping *every* group passed it. It now also carries
+   an in-subtree group that has to survive.
+8. **Comment corrected**: it claimed this path "only ever returns a resource it
+   actually created" and then described the race that makes that false.
+
+### A pre-existing scope bug this feature walked into
+
+Tightening the scoped test turned up `unsupported data` from `AddResource`, and
+it reproduces with **no crop involved**: under `-auth`, a group-limited principal
+could not attach *any* group to a resource it created. `scopeCreateCallback`
+judged the value GORM passes for an association append — a bare `{ID: n}` stub
+with no `OwnerId` — as a new placement outside the subtree and refused it with
+`gorm.ErrInvalidData`. Containment for a group is decided by its own id (that is
+what `scopeColumn` maps `groups` to), which is exactly what the stub carries, so
+the callback now uses it; the `isGroupSelf`/`selfID` parameters were already
+threaded through for this and were being discarded. Out-of-subtree ids are still
+refused. Covered by `TestScoping_CreateMayReferenceExistingInSubtreeGroup`
+(verified red). The same shape is still refused for **notes**, whose scope column
+is `owner_id` and would need a read from inside the callback — left alone and
+noted in the code.
+
+Not taken: pi's claim that the visibility check/use race is a scope hole. It is
+the generic read-then-write TOCTOU that every path in this app has (rotate, trim,
+download included), it needs a concurrent admin re-parenting the source, and it
+grants a scoped user nothing they could not read a moment earlier. Closing it
+properly needs a locking discipline the codebase does not have anywhere, which is
+not this change's job.
+
+Separately checked, since pi raised scope: a source can belong to a group outside
+a scoped principal's subtree. Because the associations are read through the
+scoped handle, those groups are dropped from the copy rather than leaking into
+the new resource or failing the crop
+(`TestCropResourceToNewResource_ScopedPrincipalDropsOutOfSubtreeGroups`).
+
+## Gates
+
+- `go test --tags 'json1 fts5' ./...` — green
+- `cd e2e && npm run test:with-server:all` — 1978 passed (browser + CLI)
+- `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/... ./application_context/...`
+  — green (`application_context` added to the usual pair because this change
+  touches `scoping.go`)
+- `cd e2e && npm run test:with-server:postgres` — 1979 passed
+- `go run ./cmd/openapi-gen` + `validate.go` — regenerated and valid
+
 # fal.ai plugin: add the models fal shipped since the last batch (2026-08-14)
 
 The plugin's model list was last extended on 2026-06-22 (`311ae7ae`). Its catalog

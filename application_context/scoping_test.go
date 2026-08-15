@@ -242,3 +242,40 @@ func TestScoping_UpdateDeleteConfinedToSubtree(t *testing.T) {
 		t.Fatalf("out-of-subtree resource was modified: %q", rOut.Name)
 	}
 }
+
+// Attaching an *existing* group to a resource is a reference, not a placement:
+// the join row names a group that already lives somewhere. scopeCreateCallback
+// used to judge it by the OwnerId on the value GORM passes — and the value is a
+// bare {ID: n} stub with no OwnerId — so every such append was refused with
+// gorm.ErrInvalidData ("unsupported data"). That took out the whole upload path
+// for a group-limited principal, which attaches groups the same way.
+func TestScoping_CreateMayReferenceExistingInSubtreeGroup(t *testing.T) {
+	ctx := newScopingTestContext(t)
+	root, child, _, outside := scopingFixture(t, ctx)
+	scoped := scopedToRoot(ctx, root.ID)
+
+	var res models.Resource
+	if err := scoped.db.Where("name = ?", "rIn").First(&res).Error; err != nil {
+		t.Fatalf("load in-subtree resource: %v", err)
+	}
+
+	if err := scoped.db.Model(&res).Association("Groups").
+		Append(&[]*models.Group{{ID: child.ID}}); err != nil {
+		t.Fatalf("appending an in-subtree group must be allowed, got %v", err)
+	}
+
+	var groups []models.Group
+	if err := ctx.db.Model(&res).Association("Groups").Find(&groups); err != nil {
+		t.Fatalf("read back groups: %v", err)
+	}
+	if len(groups) != 1 || groups[0].ID != child.ID {
+		t.Fatalf("expected the in-subtree group to be attached, got %+v", groups)
+	}
+
+	// Referencing a group outside the subtree stays refused — containment for a
+	// group is decided by its own id, which is exactly what the stub carries.
+	if err := scoped.db.Model(&res).Association("Groups").
+		Append(&[]*models.Group{{ID: outside.ID}}); err == nil {
+		t.Fatal("appending an out-of-subtree group must be refused")
+	}
+}

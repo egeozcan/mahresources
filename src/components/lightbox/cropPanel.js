@@ -4,9 +4,11 @@
  * Exposes the two image-editing operations that otherwise only live on the
  * resource details page: a one-click "Rotate 90°" and a "Crop" overlay (which
  * reuses the shared `imageCropper` component). Both POST to the same
- * `/v1/resources/{rotate,crop}` endpoints used by the details page; each creates
- * a new resource version (Hash/Width/Height change, thumbnails cleared), so we
- * refresh the affected item in place rather than reloading the page.
+ * `/v1/resources/{rotate,crop}` endpoints used by the details page. Rotate, and
+ * crop in its default "new version" mode, create a new resource version
+ * (Hash/Width/Height change, thumbnails cleared), so we refresh the affected item
+ * in place rather than reloading the page. Crop in "new resource" mode touches
+ * nothing on screen — see `onCropSavedAsNewResource`.
  *
  * All methods use `this` bound to the Alpine store.
  */
@@ -64,11 +66,34 @@ export const cropPanelMethods = {
     this.announce('Crop image dialog closed');
   },
 
-  async onCropSuccess() {
-    const targetId = this.getCurrentItem()?.id;
-    this.closeCrop();
+  // `croppedId` is the resource the cropper was opened for. It matters because
+  // the overlay can be closed and the viewer navigated on while the POST is
+  // still out: the new version belongs to that resource, not to whatever is on
+  // screen when the response lands. Reading the current item here instead — as
+  // this used to — refreshed the wrong image and announced a crop that had not
+  // happened to it. refreshCurrentItem addresses items by id, so a target that
+  // is no longer on screen updates in the list without disturbing the view.
+  async onCropSuccess(croppedId) {
+    const targetId = croppedId || this.getCurrentItem()?.id;
+    // Only close the overlay that submitted. A response arriving after the user
+    // reopened crop on a different image must not close that one.
+    if (this.cropOpen && this.getCurrentItem()?.id === targetId) {
+      this.closeCrop();
+    }
     await this.refreshCurrentItem(targetId);
     this.announce('Image cropped');
+  },
+
+  // The crop was saved as a separate resource. The item on screen is byte-for-byte
+  // what it was, so refreshCurrentItem must not run — that path exists to re-point
+  // an item at a new version and would refetch for nothing. The overlay also stays
+  // open, so no focus or panel state moves here. The gallery behind the lightbox is
+  // what went stale: it has a resource it never listed.
+  //
+  // Deliberately silent: the cropper carries its own always-mounted role="status"
+  // region for this outcome, so announcing here too would read it twice.
+  onCropSavedAsNewResource() {
+    this.needsRefreshOnClose = true;
   },
 
   async rotateCurrent(degrees = 90) {

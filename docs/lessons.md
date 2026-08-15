@@ -1686,3 +1686,19 @@ your dependency will not even accept, and screen for exactly that.
 Note the fix's own limit, deliberate rather than overlooked: `CreateUser` still passes such a
 username to the insert and surfaces a driver error. That path is admin-only, and it neither logs nor
 touches throttling.
+
+## Read a file's shape before replacing it, not just its first screen
+
+`docs/todo.md` is an accumulating log — one `# ` section per task, newest first, six of them.
+Having read only the top screen (the previous task's entry), I wrote this task's entry with `Write`
+and destroyed 4816 lines of history. It was recoverable (`git show HEAD:docs/todo.md`), and the
+restored bytes diff clean against HEAD, but the only reason I noticed was scanning `git diff --stat`
+and seeing `docs/todo.md | 4816 +-----`.
+
+**Before overwriting a file you did not create, establish its shape, not just its opening.** For a
+document that means asking whether it is one thing or many: `grep -c '^# '` costs nothing. For
+`docs/todo.md` specifically: **prepend, never replace.**
+
+The general form: `Write` on an existing file is a delete plus a create. Deciding it is safe from
+the top 40 lines is deciding from a sample, and the sample said "this file is about the last task"
+when the file was "this file is about every task".

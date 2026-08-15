@@ -2,6 +2,7 @@ package api_tests
 
 import (
 	"bytes"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
@@ -79,6 +80,67 @@ func TestCropResource_HappyPath_CreatesVersion(t *testing.T) {
 	assert.Equal(t, uint(40), updated.Width)
 	assert.Equal(t, uint(30), updated.Height)
 	require.NotNil(t, updated.CurrentVersionID)
+}
+
+func TestCropResource_AsNewResource_LeavesSourceAloneAndReturnsNewID(t *testing.T) {
+	tc := SetupTestEnv(t)
+	resource := seedCropImageResource(t, tc, 120, 90)
+
+	resp := tc.MakeFormRequest(http.MethodPost, "/v1/resources/crop", url.Values{
+		"ID":            {strconv.Itoa(int(resource.ID))},
+		"X":             {"5"},
+		"Y":             {"5"},
+		"Width":         {"40"},
+		"Height":        {"30"},
+		"AsNewResource": {"true"},
+	})
+
+	require.Equal(t, http.StatusOK, resp.Code, "body=%q", resp.Body.String())
+
+	var body struct {
+		Ok bool `json:"ok"`
+		ID uint `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
+	assert.True(t, body.Ok)
+	require.NotZero(t, body.ID, "the response must name the resource the crop was saved as")
+	assert.NotEqual(t, resource.ID, body.ID)
+
+	var created models.Resource
+	require.NoError(t, tc.DB.First(&created, body.ID).Error)
+	assert.Equal(t, uint(40), created.Width)
+	assert.Equal(t, uint(30), created.Height)
+
+	var sourceVersions int64
+	require.NoError(t, tc.DB.Model(&models.ResourceVersion{}).Where("resource_id = ?", resource.ID).Count(&sourceVersions).Error)
+	assert.Equal(t, int64(0), sourceVersions, "the source must not be versioned")
+
+	var source models.Resource
+	require.NoError(t, tc.DB.First(&source, resource.ID).Error)
+	assert.Equal(t, resource.Hash, source.Hash)
+	assert.Equal(t, uint(120), source.Width)
+	assert.Equal(t, uint(90), source.Height)
+}
+
+func TestCropResource_AsNewResource_DuplicateReturns409(t *testing.T) {
+	tc := SetupTestEnv(t)
+	resource := seedCropImageResource(t, tc, 110, 110)
+
+	form := url.Values{
+		"ID":            {strconv.Itoa(int(resource.ID))},
+		"X":             {"0"},
+		"Y":             {"0"},
+		"Width":         {"20"},
+		"Height":        {"20"},
+		"AsNewResource": {"true"},
+	}
+
+	require.Equal(t, http.StatusOK, tc.MakeFormRequest(http.MethodPost, "/v1/resources/crop", form).Code)
+
+	resp := tc.MakeFormRequest(http.MethodPost, "/v1/resources/crop", form)
+	assert.Equal(t, http.StatusConflict, resp.Code,
+		"an identical crop already exists as a resource; got %d body=%q", resp.Code, resp.Body.String())
+	assert.Contains(t, resp.Body.String(), "already exists")
 }
 
 func TestCropResource_MissingID_Returns400(t *testing.T) {

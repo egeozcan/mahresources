@@ -29,10 +29,12 @@ Files are stored by hash, meaning identical files are only stored once regardles
 Uploading a new file is not the only way to add a version. The in-place editing operations on the resource detail page also produce a new version, so the result appears in the version history and the previous content is preserved:
 
 - **Rotate** an image
-- **Crop** an image
+- **Crop** an image (when its **Save as** choice is left on **New version**)
 - **Trim** a video to a time range
 
 Each of these stores the edited file as a new version, makes it the current version, and clears cached thumbnails. See [Managing Resources](../user-guide/managing-resources.md) for how to run them. (Uploading a custom thumbnail does not create a version -- it only replaces the stored preview.)
+
+A crop saved as a **New resource** instead produces no version at all: the source is untouched and the crop becomes its own resource, with its own version 1.
 
 ## Version History Panel
 

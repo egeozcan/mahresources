@@ -66,6 +66,26 @@
                     </div>
 
                     <div class="w-full lg:w-64 space-y-3">
+                        <fieldset class="border border-stone-200 rounded-md px-3 py-2">
+                            <legend class="text-xs font-medium text-stone-700 px-1">Save as</legend>
+                            <div class="space-y-1 mt-1">
+                                <label class="flex items-start gap-2 text-sm text-stone-700">
+                                    <input type="radio" value="version" x-model="saveMode"
+                                        name="crop-save-mode-{{ resource.ID }}"
+                                        data-testid="crop-save-mode-version"
+                                        class="mt-1 border-stone-300 text-amber-700 focus:ring-amber-600">
+                                    <span>New version <span class="block text-xs text-stone-500">Replaces this resource's image.</span></span>
+                                </label>
+                                <label class="flex items-start gap-2 text-sm text-stone-700">
+                                    <input type="radio" value="resource" x-model="saveMode"
+                                        name="crop-save-mode-{{ resource.ID }}"
+                                        data-testid="crop-save-mode-resource"
+                                        class="mt-1 border-stone-300 text-amber-700 focus:ring-amber-600">
+                                    <span>New resource <span class="block text-xs text-stone-500">Keeps this one as it is.</span></span>
+                                </label>
+                            </div>
+                        </fieldset>
+
                         <div>
                             <label for="crop-aspect-{{ resource.ID }}" class="block text-xs font-medium text-stone-700 mb-1">Aspect ratio</label>
                             <select
@@ -128,6 +148,27 @@
                         </p>
 
                         <div role="alert" aria-live="assertive" class="text-sm text-red-700" x-show="errorMessage" x-text="errorMessage"></div>
+
+                        {# The announcement lives in its own always-mounted region, not on the banner below: #}
+                        {# a live region that is display:none until the moment its text is set is not          #}
+                        {# reliably announced. This one is in the accessibility tree the whole time and only   #}
+                        {# its text changes.                                                                  #}
+                        <span class="sr-only" role="status" x-text="successMessage"></span>
+
+                        {# New-resource mode leaves the dialog open, so the outcome has to be visible here. #}
+                        <div
+                            x-show="successMessage"
+                            data-testid="crop-new-resource-banner"
+                            class="p-3 bg-green-50 border border-green-300 rounded text-green-900 text-sm"
+                        >
+                            <span x-text="successMessage"></span>
+                            <a
+                                x-show="newResourceId"
+                                :href="newResourceUrl()"
+                                data-testid="crop-new-resource-link"
+                                class="block mt-1 underline font-medium"
+                            >Open the new resource</a>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -145,7 +186,7 @@
                     data-testid="crop-submit-button"
                     class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium font-mono rounded-md text-white bg-amber-700 hover:bg-amber-800 disabled:bg-stone-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600"
                 >
-                    <span x-show="!isSubmitting">Crop</span>
+                    <span x-show="!isSubmitting" x-text="submitLabel()">Crop</span>
                     <span x-show="isSubmitting">Cropping…</span>
                 </button>
             </footer>

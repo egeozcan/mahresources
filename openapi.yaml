@@ -241,6 +241,8 @@ components:
             type: object
         CropResourceQuery:
             properties:
+                AsNewResource:
+                    type: boolean
                 Comment:
                     type: string
                 Height:
@@ -253,6 +255,15 @@ components:
                     type: integer
                 "Y":
                     type: integer
+            type: object
+        CropResourceResponse:
+            properties:
+                id:
+                    type: integer
+                ok:
+                    type: boolean
+            required:
+                - ok
             type: object
         EntityIdQuery:
             properties:
@@ -6779,8 +6790,22 @@ paths:
                 required: true
             responses:
                 "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CropResourceResponse'
                     description: Successful response
-            summary: Crop a resource image and save the result as a new version
+                "400":
+                    description: Invalid crop rectangle
+                "404":
+                    description: Resource not found
+                "409":
+                    description: A resource with identical content already exists (AsNewResource only)
+                "415":
+                    description: Resource is not a raster image the pipeline can decode
+                "500":
+                    description: Internal server error
+            summary: Crop a resource image, saving the result as a new version or as a new resource
             tags:
                 - resources
     /v1/resources/delete:

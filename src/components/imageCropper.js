@@ -3,15 +3,30 @@
 // Exposes drag-to-select on an <img> plus numeric X/Y/W/H inputs as the
 // canonical keyboard-accessible path. Sends a form POST to
 // /v1/resources/crop with rect coordinates in the image's natural pixels.
+//
+// Two outcomes, chosen by `saveMode`: 'version' rewrites the resource in place
+// as a new version (the default, and what crop has always done), 'resource'
+// saves the crop as a separate resource and leaves the source alone.
 
-export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHeight = 0, onSuccess = null }) {
+export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHeight = 0, onSuccess = null, onNewResource = null }) {
   return {
     resourceId,
     imageUrl,
-    // Optional success callback. When provided (e.g. the lightbox), it owns the
-    // post-crop refresh; otherwise we fall back to a full page reload (the
-    // server-rendered details-page modal relies on this).
+    // Optional success callback for the version path. When provided (e.g. the
+    // lightbox), it owns the post-crop refresh; otherwise we fall back to a full
+    // page reload (the server-rendered details-page modal relies on this).
     onSuccess,
+    // Optional notification for the new-resource path. The cropper stays open in
+    // that mode, so this is not a teardown hook — the host uses it to react
+    // (announce, mark the gallery behind it stale).
+    onNewResource,
+    // 'version' | 'resource'. Anything the server has always accepted keeps
+    // versioning, so this defaults to the historical behaviour.
+    saveMode: 'version',
+    // Set after a successful save in 'resource' mode: the cropper stays open so
+    // several regions can be lifted out of one source in a row.
+    newResourceId: 0,
+    successMessage: '',
     naturalW: initialWidth || 0,
     naturalH: initialHeight || 0,
     rect: { x: 0, y: 0, width: 0, height: 0 },
@@ -27,6 +42,8 @@ export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHe
     // banner rendered so users don't submit nonsense rects.
     decodeFailed: false,
     _drag: null, // { startX, startY } in natural pixels
+    // Bumped by reset(); a submit that resolves after a reset is discarded.
+    _generation: 0,
 
     onImageLoad() {
       const img = this.$refs.image;
@@ -66,6 +83,7 @@ export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHe
       const nat = this._eventToNatural(event);
       if (!nat) return;
       this.errorMessage = '';
+      this.successMessage = '';
       this._drag = { startX: nat.x, startY: nat.y };
       this.rect = { x: nat.x, y: nat.y, width: 0, height: 0 };
       if (event.target && event.target.setPointerCapture && event.pointerId !== undefined) {
@@ -186,6 +204,18 @@ export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHe
       return `left: ${left}px; top: ${top}px; width: ${width}px; height: ${height}px; outline: 2px dashed #fff; box-shadow: 0 0 0 2px rgba(0,0,0,0.6); background: rgba(255,255,255,0.1);`;
     },
 
+    savesAsNewResource() {
+      return this.saveMode === 'resource';
+    },
+
+    submitLabel() {
+      return this.savesAsNewResource() ? 'Save as new resource' : 'Crop';
+    },
+
+    newResourceUrl() {
+      return this.newResourceId ? `/resource?id=${this.newResourceId}` : '';
+    },
+
     async submit() {
       if (this.isSubmitting) return;
       // BH-008: never submit when the image can't be decoded client-side.
@@ -195,7 +225,18 @@ export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHe
         return;
       }
       this.errorMessage = '';
+      this.successMessage = '';
       this.isSubmitting = true;
+      // Captured before the await: the radio is live while the request is out,
+      // and the response must be handled as the mode it was actually sent in.
+      const asNewResource = this.savesAsNewResource();
+      // The dialog can be closed mid-request, and closing resets the component
+      // without tearing it down — the same instance is reused when it reopens.
+      // Without this fence the earlier request's response lands in the new
+      // interaction: it would clear a rect the user had just entered and show a
+      // banner for a crop they had walked away from. reset() bumps the counter,
+      // so a stale response finds it changed and does nothing.
+      const generation = this._generation;
       try {
         const body = new URLSearchParams();
         body.set('id', String(this.resourceId));
@@ -203,6 +244,7 @@ export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHe
         body.set('y', String(this.rect.y));
         body.set('width', String(this.rect.width));
         body.set('height', String(this.rect.height));
+        if (asNewResource) body.set('asNewResource', 'true');
         if (this.comment && this.comment.trim()) body.set('comment', this.comment.trim());
 
         const response = await fetch('/v1/resources/crop', {
@@ -220,20 +262,49 @@ export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHe
             const text = await response.text();
             if (text) message = text;
           } catch (_) { /* ignore */ }
+          if (generation !== this._generation) return;
           this.errorMessage = message;
           this.isSubmitting = false;
           return;
         }
 
+        if (asNewResource) {
+          // The source is untouched, so there is nothing to refresh and no
+          // reason to leave: stay open, report where the crop landed, and clear
+          // the selection so the next region can be picked straight away.
+          let newId = 0;
+          try {
+            const data = await response.json();
+            newId = Number(data && data.id) || 0;
+          } catch (_) { /* the id is a convenience, not a success condition */ }
+          if (generation !== this._generation) return;
+          this.newResourceId = newId;
+          this.successMessage = newId
+            ? `Saved as a new resource (#${newId}). The original is unchanged.`
+            : 'Saved as a new resource. The original is unchanged.';
+          this.rect = { x: 0, y: 0, width: 0, height: 0 };
+          this.comment = '';
+          this.isSubmitting = false;
+          if (typeof this.onNewResource === 'function') this.onNewResource(newId);
+          return;
+        }
+
+        if (generation !== this._generation) return;
+
         if (typeof this.onSuccess === 'function') {
           // The callback may tear this component down (the lightbox closes the
           // overlay), so don't await it — isSubmitting staying true is harmless.
-          this.onSuccess();
+          // It is told which resource was cropped: the lightbox may have been
+          // navigated on while the request was out, and the version now belongs
+          // to the resource this cropper was opened for, not to whatever is on
+          // screen when the response lands.
+          this.onSuccess(this.resourceId);
           return;
         }
 
         window.location.reload();
       } catch (err) {
+        if (generation !== this._generation) return;
         this.errorMessage = err && err.message ? err.message : 'Crop failed.';
         this.isSubmitting = false;
       }
@@ -251,8 +322,12 @@ export function imageCropper({ resourceId, imageUrl, initialWidth = 0, initialHe
       this.aspect = 'free';
       this.comment = '';
       this.errorMessage = '';
+      this.successMessage = '';
+      this.newResourceId = 0;
+      this.saveMode = 'version';
       this.isSubmitting = false;
       this._drag = null;
+      this._generation++;
       // Keep decodeFailed — it reflects whether the image can be decoded
       // at all, not per-interaction state; resetting would incorrectly
       // re-enable the disabled Crop button.

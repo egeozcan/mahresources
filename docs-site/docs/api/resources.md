@@ -536,7 +536,7 @@ POST /v1/resources/setDimensions
 
 ### Crop Image
 
-Crop an image resource to a rectangle and save the result as a new version.
+Crop an image resource to a rectangle, saving the result either as a new version of that resource or as a separate resource.
 
 ```
 POST /v1/resources/crop
@@ -551,7 +551,18 @@ POST /v1/resources/crop
 | `Y` | integer | Top edge of the crop rectangle in pixels |
 | `Width` | integer | Crop width in pixels |
 | `Height` | integer | Crop height in pixels |
-| `Comment` | string | Optional comment stored on the new version |
+| `Comment` | string | Optional comment. Stored on the new version, or in the new resource's description when `AsNewResource` is set |
+| `AsNewResource` | boolean | Save the crop as a separate resource and leave the source untouched. Defaults to `false`, which versions the source in place |
+
+#### Response
+
+Versioning the source in place returns `{"ok": true}`. With `AsNewResource=true` the response also carries the id of the resource the crop was saved as:
+
+```json
+{"ok": true, "id": 4211}
+```
+
+The new resource inherits the source's owner, groups, tags, and resource category. Content that already exists is deduplicated: an identical crop responds `409 Conflict` naming the resource that already holds those bytes. The check runs against what the caller can see, so for a group-limited user a match outside their subtree is neither reported nor reused.
 
 ### Trim Video
 

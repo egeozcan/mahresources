@@ -204,6 +204,15 @@ type AccountOKResponse struct {
 	OK bool `json:"ok" openapi:"required"`
 }
 
+// CropResourceResponse is the crop endpoint's JSON body. ID names the resource
+// the crop was saved as, and is present only when AsNewResource was set — the
+// in-place version path rewrites the resource that was already addressed and so
+// answers with ok alone.
+type CropResourceResponse struct {
+	OK bool `json:"ok" openapi:"required"`
+	ID uint `json:"id,omitempty"`
+}
+
 var (
 	createUserRequestType     = reflect.TypeOf(CreateUserRequest{})
 	updateUserRequestType     = reflect.TypeOf(UpdateUserRequest{})
@@ -213,6 +222,7 @@ var (
 	userManagementType        = reflect.TypeOf(UserManagementResponse{})
 	apiTokenMetadataType      = reflect.TypeOf(ApiTokenMetadataResponse{})
 	accountOKResponseType     = reflect.TypeOf(AccountOKResponse{})
+	cropResponseType          = reflect.TypeOf(CropResourceResponse{})
 )
 
 func userManagementErrors(statuses ...int) map[int]string {
@@ -1470,10 +1480,18 @@ func registerResourceRoutes(r *openapi.Registry) {
 		Method:              http.MethodPost,
 		Path:                "/v1/resources/crop",
 		OperationID:         "cropResource",
-		Summary:             "Crop a resource image and save the result as a new version",
+		Summary:             "Crop a resource image, saving the result as a new version or as a new resource",
 		Tags:                []string{"resources"},
 		RequestType:         cropQueryType,
 		RequestContentTypes: []openapi.ContentType{openapi.ContentTypeJSON, openapi.ContentTypeForm},
+		ResponseType:        cropResponseType,
+		ErrorResponses: map[int]string{
+			http.StatusBadRequest:           "Invalid crop rectangle",
+			http.StatusNotFound:             "Resource not found",
+			http.StatusConflict:             "A resource with identical content already exists (AsNewResource only)",
+			http.StatusUnsupportedMediaType: "Resource is not a raster image the pipeline can decode",
+			http.StatusInternalServerError:  "Internal server error",
+		},
 	})
 
 	r.Register(openapi.RouteInfo{
@@ -2414,12 +2432,12 @@ func registerDownloadRoutes(r *openapi.Registry) {
 	// Download history — the durable record of finished downloads, which outlives
 	// the in-memory queue.
 	r.Register(openapi.RouteInfo{
-		Method:               http.MethodGet,
-		Path:                 "/v1/downloads",
-		OperationID:          "listDownloadHistory",
-		Summary:              "List finished downloads",
-		Description:          "Returns the persisted history of downloads that reached a terminal state, filtered by status, URL or name, and date. Admins see every user's downloads; every other principal sees only their own.",
-		Tags:                 []string{"downloads"},
+		Method:      http.MethodGet,
+		Path:        "/v1/downloads",
+		OperationID: "listDownloadHistory",
+		Summary:     "List finished downloads",
+		Description: "Returns the persisted history of downloads that reached a terminal state, filtered by status, URL or name, and date. Admins see every user's downloads; every other principal sees only their own.",
+		Tags:        []string{"downloads"},
 		// Spelled out rather than derived from DownloadHistoryQuery: that struct
 		// also carries the two owner fields, which are the visibility decision and
 		// are overwritten from the principal after decoding. Deriving the params
