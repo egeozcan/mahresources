@@ -1473,6 +1473,13 @@ func (a *pluginDBAdapter) DeleteResource(id uint) error {
 // UpdateResource replaces every field, associations included — an omitted
 // `tags` clears the resource's tags. That is the same contract the other
 // Update* writers carry, and the reason PatchResource exists beside it.
+//
+// Exception: EditResource ignores an empty Meta, Width and Height rather than
+// writing them (resource_crud_context.go), so those three survive an update
+// that omits them, and cannot be cleared through this path either. That is the
+// HTTP edit path's behaviour too; it is documented rather than special-cased
+// here, because diverging would make the plugin writer and the form writer
+// disagree about the same resource.
 func (a *pluginDBAdapter) UpdateResource(id uint, opts map[string]any) (map[string]any, error) {
 	editor := &query_models.ResourceEditor{
 		ID: id,

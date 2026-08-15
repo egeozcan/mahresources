@@ -174,6 +174,60 @@ func TestPluginDBAdapter_UpdateResource(t *testing.T) {
 	}
 }
 
+// The documented exception to update_resource's replace-all contract:
+// EditResource ignores an empty meta/width/height rather than writing them, so
+// those three survive an update that omits them and cannot be cleared. It is
+// the HTTP edit path's behaviour too, so it is pinned rather than diverged from.
+func TestPluginDBAdapter_UpdateResourceCannotClearMeta(t *testing.T) {
+	ctx := createTestContext(t)
+	adapter := &pluginDBAdapter{ctx: ctx}
+
+	created, err := adapter.CreateResourceFromData(
+		"TWV0YSBzdXJ2aXZlcyBhbiB1cGRhdGU=",
+		map[string]any{"name": "meta.txt", "meta": `{"kept":true}`},
+	)
+	if err != nil {
+		t.Fatalf("CreateResourceFromData: %v", err)
+	}
+	id := uint(created["id"].(float64))
+
+	// Omitted entirely.
+	if _, err := adapter.UpdateResource(id, map[string]any{"name": "renamed.txt"}); err != nil {
+		t.Fatalf("UpdateResource: %v", err)
+	}
+	after, err := adapter.GetResourceData(id)
+	if err != nil {
+		t.Fatalf("GetResourceData: %v", err)
+	}
+	if after["meta"] != `{"kept":true}` {
+		t.Errorf("meta should survive an update that omits it, got %v", after["meta"])
+	}
+
+	// Explicitly emptied — also ignored.
+	if _, err := adapter.PatchResource(id, map[string]any{"meta": ""}); err != nil {
+		t.Fatalf("PatchResource: %v", err)
+	}
+	after, err = adapter.GetResourceData(id)
+	if err != nil {
+		t.Fatalf("GetResourceData: %v", err)
+	}
+	if after["meta"] != `{"kept":true}` {
+		t.Errorf("an empty meta is ignored, not written; got %v", after["meta"])
+	}
+
+	// "{}" is how a plugin actually empties it.
+	if _, err := adapter.PatchResource(id, map[string]any{"meta": "{}"}); err != nil {
+		t.Fatalf("PatchResource: %v", err)
+	}
+	after, err = adapter.GetResourceData(id)
+	if err != nil {
+		t.Fatalf("GetResourceData: %v", err)
+	}
+	if after["meta"] != "{}" {
+		t.Errorf(`meta should be emptied by "{}", got %v`, after["meta"])
+	}
+}
+
 // Patch must leave alone what it was not asked to change — including the tags,
 // which UpdateResource would clear.
 func TestPluginDBAdapter_PatchResourcePreservesUnmentionedFields(t *testing.T) {

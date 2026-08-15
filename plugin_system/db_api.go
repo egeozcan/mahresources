@@ -555,6 +555,10 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 	// patch ships with update deliberately: update replaces every field,
 	// associations included, so patching is the only safe way to change one
 	// thing about a resource.
+	//
+	// One exception to replace-all, inherited from EditResource and shared with
+	// the HTTP edit path: an empty meta, width or height is ignored rather than
+	// written, so those three cannot be cleared. Pass "{}" to empty meta.
 	registerIdOptsWriter("update_resource", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) {
 		return w.UpdateResource(id, o)
 	})

@@ -270,9 +270,14 @@ Accepted keys: `name`, `description`, `meta` (JSON string), `owner_id`,
 `original_location`, `width`, `height`, `series_id`. `update_resource` also
 accepts `series_slug`.
 
-`width` and `height` are ignored when `0`, so they cannot be cleared -- the same
-rule the HTTP resource-edit path applies, since a resource's pixel dimensions
-describe its file.
+Three fields cannot be cleared, because the underlying edit ignores their empty
+value -- the same rule the HTTP resource-edit path applies:
+
+- `meta`: passing `""` leaves the stored metadata untouched. This is the one
+  exception to `update_resource`'s replace-all contract. To empty it, pass
+  `"{}"`.
+- `width` and `height`: passing `0` leaves the stored dimensions untouched,
+  since they describe the file.
 
 ```lua
 -- Fill in an empty description without touching anything else.
