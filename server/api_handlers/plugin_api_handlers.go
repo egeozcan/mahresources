@@ -286,6 +286,10 @@ func GetPluginBlockRenderHandler(ctx PluginAPIContext) func(http.ResponseWriter,
 	}
 }
 
+// maxSafeJSInteger is 2^53-1: the browser carries entity ids as JS numbers, and
+// past this they stop being distinguishable from their neighbours.
+const maxSafeJSInteger = 1<<53 - 1
+
 // PluginDisplayTypeInfo describes one installed display renderer.
 type PluginDisplayTypeInfo struct {
 	Type       string `json:"type"`       // full namespaced name, for "x-display"
@@ -349,6 +353,14 @@ func GetPluginDisplayRenderHandler(ctx PluginAPIContext) func(http.ResponseWrite
 		}
 		if req.Type == "" {
 			http.Error(w, "type is required", http.StatusBadRequest)
+			return
+		}
+		// The browser carries this id as a JS number, which stops representing
+		// consecutive integers past 2^53-1. Beyond that the value cannot be
+		// trusted to be the row that was asked for, and a renderer building a
+		// link from it would send the reader somewhere else.
+		if req.EntityID > maxSafeJSInteger {
+			http.Error(w, "entity_id is out of range", http.StatusBadRequest)
 			return
 		}
 
