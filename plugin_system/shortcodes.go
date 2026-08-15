@@ -208,11 +208,10 @@ func (pm *PluginManager) RenderShortcode(reqCtx context.Context, pluginName, ful
 	}
 
 	L := sc.State
-	mu := pm.VMLock(L)
+	mu := pm.LockVM(L)
 	if mu == nil {
 		return "", fmt.Errorf("plugin %q is no longer available", pluginName)
 	}
-	mu.Lock()
 	defer mu.Unlock()
 
 	var metaMap map[string]any
@@ -368,11 +367,10 @@ func (pm *PluginManager) renderShortcodeForDocs(pluginName, fullTypeName string,
 	}
 
 	L := sc.State
-	mu := pm.VMLock(L)
+	mu := pm.LockVM(L)
 	if mu == nil {
 		return "", fmt.Errorf("plugin %q is no longer available", pluginName)
 	}
-	mu.Lock()
 	defer mu.Unlock()
 
 	var metaMap map[string]any

@@ -62,11 +62,10 @@ func (pm *PluginManager) RenderBlock(pluginName, fullTypeName, mode string, ctx 
 	}
 
 	L := pbt.State
-	mu := pm.VMLock(L)
+	mu := pm.LockVM(L)
 	if mu == nil {
 		return "", fmt.Errorf("plugin %q is no longer available", pluginName)
 	}
-	mu.Lock()
 	defer mu.Unlock()
 
 	// Build context table

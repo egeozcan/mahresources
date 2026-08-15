@@ -146,11 +146,11 @@ var templates = map[string]templateInformation{
 	// string, so this one is listed there too — omitted, it would fall through to
 	// capRead and be readable by every authenticated role.
 	"/admin/users/edit": {adaptTemplate(template_context_providers.AdminUserEditContextProvider), "adminUserEdit.tpl", http.MethodGet},
-	"/account":        {adaptTemplate(template_context_providers.AccountContextProvider), "account.tpl", http.MethodGet},
-	"/admin/export":   {adaptTemplate(template_context_providers.AdminExportContextProvider), "adminExport.tpl", http.MethodGet},
-	"/admin/import":   {adaptTemplate(template_context_providers.AdminImportContextProvider), "adminImport.tpl", http.MethodGet},
-	"/admin/shares":   {adaptTemplate(template_context_providers.AdminSharesContextProvider), "adminShares.tpl", http.MethodGet}, // BH-035
-	"/admin/settings": {adaptTemplate(template_context_providers.AdminSettingsContextProvider), "adminSettings.tpl", http.MethodGet},
+	"/account":          {adaptTemplate(template_context_providers.AccountContextProvider), "account.tpl", http.MethodGet},
+	"/admin/export":     {adaptTemplate(template_context_providers.AdminExportContextProvider), "adminExport.tpl", http.MethodGet},
+	"/admin/import":     {adaptTemplate(template_context_providers.AdminImportContextProvider), "adminImport.tpl", http.MethodGet},
+	"/admin/shares":     {adaptTemplate(template_context_providers.AdminSharesContextProvider), "adminShares.tpl", http.MethodGet}, // BH-035
+	"/admin/settings":   {adaptTemplate(template_context_providers.AdminSettingsContextProvider), "adminSettings.tpl", http.MethodGet},
 
 	"/mrql": {adaptTemplate(template_context_providers.MRQLContextProvider), "mrql.tpl", http.MethodGet},
 }
@@ -306,8 +306,10 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 		return
 	}
 
+	// Plugin Lua runs against the unscoped DB handle, so a group-confined
+	// principal must not reach it through the JSON render path either.
 	var pluginRenderer shortcodes.PluginRenderer
-	if pm != nil {
+	if pm != nil && auth.PluginCodeAllowed(reqCtx) {
 		pluginRenderer = func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
 			return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity, sc.InnerContent, sc.IsBlock)
 		}

@@ -23,8 +23,12 @@ func (pm *PluginManager) RenderSlot(slot string, ctx map[string]any) string {
 	var parts []string
 	for _, inj := range injections {
 		L := inj.state
-		mu := pm.VMLock(L)
-		mu.Lock()
+		mu := pm.LockVM(L)
+		if mu == nil {
+			// The plugin was disabled between GetInjections and here; its state is
+			// being closed, so skip it rather than dereferencing a nil lock.
+			continue
+		}
 
 		tbl := goToLuaTable(L, ctx)
 

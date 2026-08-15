@@ -137,8 +137,12 @@ func (pm *PluginManager) RunBeforeHooks(event string, data map[string]any) (map[
 
 	for _, hook := range hooks {
 		L := hook.state
-		mu := pm.VMLock(L)
-		mu.Lock()
+		mu := pm.LockVM(L)
+		if mu == nil {
+			// The plugin was disabled between GetHooks and here; its state is
+			// being closed, so skip it rather than dereferencing a nil lock.
+			continue
+		}
 
 		tbl := goToLuaTable(L, data)
 
@@ -190,8 +194,12 @@ func (pm *PluginManager) RunAfterHooks(event string, data map[string]any) {
 
 	for _, hook := range hooks {
 		L := hook.state
-		mu := pm.VMLock(L)
-		mu.Lock()
+		mu := pm.LockVM(L)
+		if mu == nil {
+			// The plugin was disabled between GetHooks and here; its state is
+			// being closed, so skip it rather than dereferencing a nil lock.
+			continue
+		}
 
 		tbl := goToLuaTable(L, data)
 

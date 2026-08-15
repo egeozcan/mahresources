@@ -89,8 +89,8 @@ type PluginManager struct {
 	displayTypes map[string][]*PluginDisplayType   // pluginName -> display types
 	shortcodes   map[string][]*PluginShortcode     // pluginName -> shortcodes
 	docs         map[string][]*PluginDoc           // pluginName -> general doc entries
-	mu         sync.RWMutex
-	vmLocks    map[*lua.LState]*sync.Mutex
+	mu      sync.RWMutex
+	vmLocks map[*lua.LState]*sync.Mutex
 	dbProvider atomic.Value
 	dbWriter   atomic.Value
 	logger     atomic.Value
@@ -980,11 +980,24 @@ func (pm *PluginManager) DisablePlugin(name string) error {
 		wg.Wait()
 	}
 
-	// Re-acquire to close state safely, then release.
-	pm.mu.Lock()
-	delete(pm.vmLocks, targetState)
-	targetState.Close()
-	pm.mu.Unlock()
+	// Close the state only once nothing is executing on it. Waiting on the action
+	// WaitGroup above does not cover hooks, injections, shortcodes, block/display
+	// renders, pages or API endpoints, all of which call into this state while
+	// holding its VM lock. Taking that lock here waits for whichever of them is
+	// in flight, and removing the vmLocks entry while still holding it is what
+	// lets LockVM tell a caller that queued behind us to back out instead of
+	// running against a closed state.
+	//
+	// pm.mu must not be held while acquiring the VM lock: a caller holding that
+	// lock takes pm.mu.RLock inside LockVM, so the reverse order would deadlock.
+	if mu := pm.VMLock(targetState); mu != nil {
+		mu.Lock()
+		pm.mu.Lock()
+		delete(pm.vmLocks, targetState)
+		pm.mu.Unlock()
+		targetState.Close()
+		mu.Unlock()
+	}
 
 	return nil
 }
@@ -1112,20 +1125,96 @@ func (pm *PluginManager) GetPluginSettings(pluginName string) map[string]any {
 	return result
 }
 
-// VMLock returns the mutex associated with the given Lua state.
+// VMLock returns the mutex associated with the given Lua state, or nil when the
+// manager no longer tracks that state (it was disabled or the manager closed).
+// Every caller must check for nil before locking.
+//
+// The read is guarded: DisablePlugin deletes from pm.vmLocks under pm.mu, so an
+// unguarded read here is a map read racing a map write, which Go can abort the
+// process for. The lock is released before returning, so the caller's own
+// mu.Lock() does not nest inside pm.mu and cannot invert the ordering
+// DisablePlugin relies on when it drops pm.mu to let in-flight goroutines finish.
 func (pm *PluginManager) VMLock(L *lua.LState) *sync.Mutex {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
 	return pm.vmLocks[L]
+}
+
+// LockVM acquires the VM lock for L and returns it, or returns nil when the
+// plugin is gone. A nil return means the caller must not touch L at all: no lock
+// is held in that case.
+//
+// The nil check callers do on VMLock's result is not sufficient on its own,
+// because a caller can capture a live mutex and then block on it while
+// DisablePlugin closes the state. LState.Close() writes state the in-flight
+// L.CallByParam() is reading, so that ordering is a data race and then a nil
+// dereference inside gopher-lua. LockVM closes the window by re-checking
+// liveness *after* the lock is held: DisablePlugin removes the entry while
+// holding this same mutex, so a caller that wins the race sees the entry, and a
+// caller that loses it sees the entry gone and backs out.
+//
+// Lock ordering is mu then pm.mu, matching DisablePlugin. Nothing may take a VM
+// lock while already holding pm.mu.
+func (pm *PluginManager) LockVM(L *lua.LState) *sync.Mutex {
+	mu := pm.VMLock(L)
+	if mu == nil {
+		return nil
+	}
+	mu.Lock()
+	pm.mu.RLock()
+	_, live := pm.vmLocks[L]
+	pm.mu.RUnlock()
+	if !live {
+		mu.Unlock()
+		return nil
+	}
+	return mu
 }
 
 // Close shuts down all Lua VMs. After Close returns, hooks and injections
 // are no-ops.
+//
+// Close now blocks on in-flight plugin work, because it acquires each VM lock
+// before closing that state. Shutdown latency is therefore bounded by whatever
+// is running: up to asyncActionTimeout (5m) for a wedged async action, since
+// nothing here waits on actionInFlight the way it waits on httpWg. That is
+// deliberate for now (waiting is strictly better than the use-after-close crash
+// it replaces), but if shutdown needs a hard ceiling it should get one of its
+// own, in the shape DownloadManager.ShutdownDrainTimeout already uses.
 func (pm *PluginManager) Close() {
 	pm.closed.Store(true)
 	pm.httpWg.Wait() // wait for in-flight HTTP goroutines to finish
 	close(pm.done)
-	for _, L := range pm.states {
+
+	// Same lifecycle DisablePlugin uses, for the same reason: pm.closed is
+	// checked on the way in, so a render or async action that passed that check
+	// can still be inside L.CallByParam here. Closing under it is a data race and
+	// then a nil dereference inside gopher-lua. Take each VM lock (which waits for
+	// whatever is running), drop the vmLocks entry while holding it so anyone
+	// queued behind us backs out of LockVM, then close.
+	//
+	// pm.mu is not held across the VM lock: LockVM takes pm.mu.RLock while holding
+	// the VM lock, so the reverse order would deadlock.
+	pm.mu.RLock()
+	states := make([]*lua.LState, len(pm.states))
+	copy(states, pm.states)
+	pm.mu.RUnlock()
+
+	for _, L := range states {
+		mu := pm.VMLock(L)
+		if mu == nil {
+			continue
+		}
+		mu.Lock()
+		pm.mu.Lock()
+		delete(pm.vmLocks, L)
+		pm.mu.Unlock()
 		L.Close()
+		mu.Unlock()
 	}
+
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 	pm.states = nil
 	pm.hooks = nil
 	pm.injections = nil

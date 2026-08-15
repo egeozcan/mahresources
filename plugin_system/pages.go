@@ -46,8 +46,11 @@ func (pm *PluginManager) HandlePage(pluginName, path string, ctx PageContext) (s
 	}
 
 	L := entry.state
-	mu := pm.VMLock(L)
-	mu.Lock()
+	mu := pm.LockVM(L)
+	if mu == nil {
+		// Disabled between the registry lookup above and here.
+		return "", fmt.Errorf("plugin %q is no longer available", pluginName)
+	}
 	defer mu.Unlock()
 
 	// Build context table

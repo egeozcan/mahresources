@@ -1,7 +1,9 @@
 package template_filters
 
 import (
+	"context"
 	"fmt"
+	"mahresources/auth"
 	"reflect"
 
 	"github.com/flosch/pongo2/v4"
@@ -19,6 +21,24 @@ func (node *pluginSlotNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.
 	}
 	pm, ok := pmVal.(*plugin_system.PluginManager)
 	if !ok || pm == nil {
+		return nil
+	}
+
+	// Injections run plugin Lua against the unscoped DB handle, and six of these
+	// slots live in the base layout, so they fire on every page a group-confined
+	// principal is allowed to read. Skip them for such principals.
+	//
+	// Unlike the shortcode tags, this one has no request context of its own, so
+	// it reads the one the enricher published. Absence fails closed: every site
+	// that publishes _pluginManager publishes _requestContext beside it, so a
+	// missing context means an unrecognised render path, not a legitimate one.
+	var reqCtx context.Context
+	if v, ok := ctx.Public["_requestContext"]; ok && v != nil {
+		if rc, ok := v.(context.Context); ok {
+			reqCtx = rc
+		}
+	}
+	if !auth.PluginCodeAllowed(reqCtx) {
 		return nil
 	}
 

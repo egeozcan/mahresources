@@ -428,11 +428,10 @@ func (pm *PluginManager) processPendingCallbacks() {
 			return
 		}
 
-		mu := pm.VMLock(cb.vm)
+		mu := pm.LockVM(cb.vm)
 		if mu == nil {
 			continue
 		}
-		mu.Lock()
 
 		tbl := goToLuaTable(cb.vm, cb.response)
 

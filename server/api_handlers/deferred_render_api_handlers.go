@@ -3,6 +3,7 @@ package api_handlers
 import (
 	"encoding/json"
 	"errors"
+	"mahresources/auth"
 	"net/http"
 
 	"mahresources/constants"
@@ -47,11 +48,12 @@ type deferredRenderResponse struct {
 // (any authenticated principal, including guests) and is CSRF-exempt like the
 // other read-via-POST endpoints.
 //
-// Because the body is server-authored and fixed by the sealed token, rendering any
-// [plugin:...] it contains is equivalent to the same plugin shortcode rendering
-// inline on the display page (which already happens for every viewer); the caller
-// cannot alter the plugin invocation, so this does not grant the direct plugin-code
-// access that isPluginCodePath denies to group-scoped principals.
+// Because the body is server-authored and fixed by the sealed token, the caller
+// cannot alter a [plugin:...] invocation it contains: this endpoint renders
+// exactly what would have appeared inline. It therefore applies the same rule the
+// inline path does. auth.PluginCodeAllowed gates the renderer, so a group-confined
+// principal gets the "plugin unavailable" comment here just as it does on the
+// display page, and the two surfaces cannot drift apart.
 func GetDeferredRenderHandler(ctx DeferredRenderContext) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		var req deferredRenderRequest
@@ -87,8 +89,10 @@ func GetDeferredRenderHandler(ctx DeferredRenderContext) func(http.ResponseWrite
 		reqCtx, cancel := buildMRQLAPIRenderContext(request.Context(), ctx, true)
 		defer cancel()
 
+		// See auth.PluginCodeAllowed: plugin Lua runs unscoped, so a
+		// group-confined principal must not reach it through a deferred render.
 		var renderer shortcodes.PluginRenderer
-		if pm := ctx.PluginManager(); pm != nil {
+		if pm := ctx.PluginManager(); pm != nil && auth.PluginCodeAllowed(reqCtx) {
 			renderer = func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
 				return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity, sc.InnerContent, sc.IsBlock)
 			}

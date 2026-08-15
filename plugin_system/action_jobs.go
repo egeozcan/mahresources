@@ -242,8 +242,10 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 			ctxData["settings"] = map[string]any{}
 		}
 
-		mu := pm.VMLock(L)
-		mu.Lock()
+		mu := pm.LockVM(L)
+		if mu == nil {
+			return fmt.Errorf("plugin %q is no longer available", job.PluginName)
+		}
 
 		tbl := goToLuaTable(L, ctxData)
 
@@ -292,8 +294,10 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 // runStartJobGoroutine executes a Lua callback from mah.start_job() in a background goroutine.
 func (pm *PluginManager) runStartJobGoroutine(job *ActionJob, L *lua.LState, fn *lua.LFunction, jobID string) {
 	pm.executeAsyncJob(job, fmt.Sprintf("start_job %q", job.PluginName), func() error {
-		mu := pm.VMLock(L)
-		mu.Lock()
+		mu := pm.LockVM(L)
+		if mu == nil {
+			return fmt.Errorf("plugin %q is no longer available", job.PluginName)
+		}
 		defer mu.Unlock()
 
 		timeoutCtx, cancel := context.WithTimeout(context.Background(), asyncActionTimeout)

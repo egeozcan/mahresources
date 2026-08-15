@@ -32,18 +32,16 @@ func BuildPrimaryRouter(appContext *application_context.MahresourcesContext, fs 
 	// direct dependency would be an import cycle. The same plugin enricher the
 	// 404 and 403 pages use goes with it, so an API rejection a browser displays
 	// renders identical chrome to every other page.
-	errorPageEnricher := pluginMenuEnricher(appContext)
 	http_utils.SetHTMLErrorRenderer(func(w http.ResponseWriter, r *http.Request, statusCode int, message string) {
-		template_handlers.RenderHTMLError(w, r, statusCode, message, errorPageEnricher)
+		template_handlers.RenderHTMLError(w, r, statusCode, message, pluginMenuEnricher(appContext, r))
 	})
 
 	registerRoutes(router, appContext)
 
 	// Build a context enricher that adds plugin info to error pages (404/403),
 	// mirroring what wrapContextWithPlugins does for normal routes.
-	notFoundEnricher := pluginMenuEnricher(appContext)
 	router.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		template_handlers.RenderNotFound(w, r, notFoundEnricher)
+		template_handlers.RenderNotFound(w, r, pluginMenuEnricher(appContext, r))
 	})
 
 	filePathPrefix := "/files/"
@@ -101,13 +99,19 @@ func CreateServer(appContext *application_context.MahresourcesContext, fs afero.
 // (menu items, manager handle) into a template context, or nil when no plugin
 // manager is configured. Shared by the 404 and 403 error pages so they render
 // with the same chrome as normal routes.
-func pluginMenuEnricher(appContext *application_context.MahresourcesContext) func(ctx pongo2.Context) pongo2.Context {
+// It takes the request because the plugin render tags need the principal: the
+// error pages extend the same base layout, whose six {% plugin_slot %} tags would
+// otherwise run plugin Lua on the very 403 page a group-confined principal is
+// sent to. Publishing _requestContext alongside _pluginManager keeps that tag's
+// fail-closed check working here exactly as it does on normal routes.
+func pluginMenuEnricher(appContext *application_context.MahresourcesContext, r *http.Request) func(ctx pongo2.Context) pongo2.Context {
 	pm := appContext.PluginManager()
 	if pm == nil {
 		return nil
 	}
 	return func(ctx pongo2.Context) pongo2.Context {
 		ctx["_pluginManager"] = pm
+		ctx["_requestContext"] = r.Context()
 		ctx["pluginMenuItems"] = pm.GetMenuItems()
 		ctx["hasPluginManager"] = true
 		return ctx
@@ -117,7 +121,7 @@ func pluginMenuEnricher(appContext *application_context.MahresourcesContext) fun
 // renderForbiddenPage renders the styled 403 page for browser navigations,
 // enriched with plugin nav so it matches the rest of the app.
 func renderForbiddenPage(appContext *application_context.MahresourcesContext, w http.ResponseWriter, r *http.Request, message string) {
-	template_handlers.RenderForbidden(w, r, message, pluginMenuEnricher(appContext))
+	template_handlers.RenderForbidden(w, r, message, pluginMenuEnricher(appContext, r))
 }
 
 func createCachedStorage(path string) afero.Fs {

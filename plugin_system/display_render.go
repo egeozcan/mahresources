@@ -43,11 +43,10 @@ func (pm *PluginManager) RenderDisplay(pluginName, fullTypeName string, ctx Disp
 	}
 
 	L := dt.State
-	mu := pm.VMLock(L)
+	mu := pm.LockVM(L)
 	if mu == nil {
 		return "", fmt.Errorf("plugin %q is no longer available", pluginName)
 	}
-	mu.Lock()
 	defer mu.Unlock()
 
 	ctxData := map[string]any{

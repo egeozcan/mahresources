@@ -9,6 +9,7 @@ import (
 
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/plugin_system"
 	"mahresources/shortcodes"
 )
@@ -180,6 +181,11 @@ func customCSSReqCtx(ctx *pongo2.ExecutionContext) context.Context {
 }
 
 func customCSSPluginRenderer(ctx *pongo2.ExecutionContext, reqCtx context.Context) shortcodes.PluginRenderer {
+	// See shortcode_tag.go: plugin Lua runs unscoped, so a group-confined
+	// principal must not reach it through custom CSS either.
+	if !auth.PluginCodeAllowed(reqCtx) {
+		return nil
+	}
 	pmVal, ok := ctx.Public["_pluginManager"]
 	if !ok || pmVal == nil {
 		return nil

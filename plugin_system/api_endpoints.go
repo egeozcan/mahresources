@@ -62,8 +62,10 @@ func (pm *PluginManager) HandleAPI(pluginName, method, path string, ctx PageCont
 	pm.mu.RUnlock()
 
 	L := endpoint.state
-	mu := pm.VMLock(L)
-	mu.Lock()
+	mu := pm.LockVM(L)
+	if mu == nil {
+		return APIResponse{StatusCode: 404, Error: "plugin not found"}
+	}
 	defer mu.Unlock()
 
 	// Build context table

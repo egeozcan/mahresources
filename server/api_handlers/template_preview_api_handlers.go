@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"mahresources/auth"
 	"net/http"
 
 	"mahresources/constants"
@@ -85,8 +86,10 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		reqCtx, cancel := buildMRQLAPIRenderContext(request.Context(), ctx, false)
 		defer cancel()
 
+		// See auth.PluginCodeAllowed: plugin Lua runs unscoped, so a
+		// group-confined principal must not reach it through a template preview.
 		var renderer shortcodes.PluginRenderer
-		if pm := ctx.PluginManager(); pm != nil {
+		if pm := ctx.PluginManager(); pm != nil && auth.PluginCodeAllowed(reqCtx) {
 			renderer = func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
 				return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity, sc.InnerContent, sc.IsBlock)
 			}
