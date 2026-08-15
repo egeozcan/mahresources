@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -111,7 +112,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	resp := pm.HandleAPI("dupeapi", "GET", "data", PageContext{
+	resp := pm.HandleAPI(context.Background(), "dupeapi", "GET", "data", PageContext{
 		Path: "/v1/plugins/dupeapi/data", Method: "GET",
 	})
 	if resp.StatusCode != 200 {
@@ -147,7 +148,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	resp := pm.HandleAPI("jsonapi", "GET", "info", PageContext{
+	resp := pm.HandleAPI(context.Background(), "jsonapi", "GET", "info", PageContext{
 		Path: "/v1/plugins/jsonapi/info", Method: "GET",
 	})
 	if resp.StatusCode != 200 {
@@ -191,7 +192,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	resp := pm.HandleAPI("customstatus", "POST", "items", PageContext{
+	resp := pm.HandleAPI(context.Background(), "customstatus", "POST", "items", PageContext{
 		Path: "/v1/plugins/customstatus/items", Method: "POST",
 	})
 	if resp.StatusCode != 201 {
@@ -228,7 +229,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	resp := pm.HandleAPI("nobody", "DELETE", "items", PageContext{
+	resp := pm.HandleAPI(context.Background(), "nobody", "DELETE", "items", PageContext{
 		Path: "/v1/plugins/nobody/items", Method: "DELETE",
 	})
 	if resp.StatusCode != 204 {
@@ -260,7 +261,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	resp := pm.HandleAPI("nobodycustom", "DELETE", "items", PageContext{
+	resp := pm.HandleAPI(context.Background(), "nobodycustom", "DELETE", "items", PageContext{
 		Path: "/v1/plugins/nobodycustom/items", Method: "DELETE",
 	})
 	if resp.StatusCode != 204 {
@@ -276,7 +277,7 @@ func TestHandleAPI_PluginNotFound(t *testing.T) {
 	}
 	defer pm.Close()
 
-	resp := pm.HandleAPI("nonexistent", "GET", "data", PageContext{
+	resp := pm.HandleAPI(context.Background(), "nonexistent", "GET", "data", PageContext{
 		Path: "/v1/plugins/nonexistent/data", Method: "GET",
 	})
 	if resp.StatusCode != 404 {
@@ -308,7 +309,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	resp := pm.HandleAPI("hasapi", "GET", "wrong-path", PageContext{
+	resp := pm.HandleAPI(context.Background(), "hasapi", "GET", "wrong-path", PageContext{
 		Path: "/v1/plugins/hasapi/wrong-path", Method: "GET",
 	})
 	if resp.StatusCode != 404 {
@@ -340,7 +341,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	resp := pm.HandleAPI("methodcheck", "POST", "data", PageContext{
+	resp := pm.HandleAPI(context.Background(), "methodcheck", "POST", "data", PageContext{
 		Path: "/v1/plugins/methodcheck/data", Method: "POST",
 	})
 	if resp.StatusCode != 405 {
@@ -372,7 +373,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	resp := pm.HandleAPI("crashapi", "GET", "boom", PageContext{
+	resp := pm.HandleAPI(context.Background(), "crashapi", "GET", "boom", PageContext{
 		Path: "/v1/plugins/crashapi/boom", Method: "GET",
 	})
 	if resp.StatusCode != 500 {
@@ -404,7 +405,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	resp := pm.HandleAPI("abortapi", "POST", "validate", PageContext{
+	resp := pm.HandleAPI(context.Background(), "abortapi", "POST", "validate", PageContext{
 		Path: "/v1/plugins/abortapi/validate", Method: "POST",
 	})
 	if resp.StatusCode != 400 {
@@ -436,7 +437,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	resp := pm.HandleAPI("queryapi", "GET", "search", PageContext{
+	resp := pm.HandleAPI(context.Background(), "queryapi", "GET", "search", PageContext{
 		Path:   "/v1/plugins/queryapi/search",
 		Method: "GET",
 		Query:  map[string]any{"q": "hello"},
@@ -513,7 +514,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	resp := pm.HandleAPI("doublejson", "GET", "data", PageContext{
+	resp := pm.HandleAPI(context.Background(), "doublejson", "GET", "data", PageContext{
 		Path: "/v1/plugins/doublejson/data", Method: "GET",
 	})
 	if resp.StatusCode != 200 {
@@ -559,7 +560,7 @@ end
 		t.Fatal("expected endpoint to exist after enable")
 	}
 
-	resp := pm.HandleAPI("ephemeral", "GET", "data", PageContext{
+	resp := pm.HandleAPI(context.Background(), "ephemeral", "GET", "data", PageContext{
 		Path: "/v1/plugins/ephemeral/data", Method: "GET",
 	})
 	if resp.StatusCode != 200 {
@@ -576,7 +577,7 @@ end
 		t.Error("expected endpoint to be removed after disable")
 	}
 
-	resp = pm.HandleAPI("ephemeral", "GET", "data", PageContext{
+	resp = pm.HandleAPI(context.Background(), "ephemeral", "GET", "data", PageContext{
 		Path: "/v1/plugins/ephemeral/data", Method: "GET",
 	})
 	if resp.StatusCode != 404 {

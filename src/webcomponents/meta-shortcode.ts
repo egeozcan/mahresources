@@ -276,6 +276,11 @@ export class MetaShortcode extends LitElement {
           schema: schema || {},
           field_path: this.path,
           field_label: this._label,
+          // What is being rendered. Without it a renderer cannot link back to
+          // its own entity or fetch a related record — it only ever saw the
+          // field's value.
+          entity_type: this.entityType,
+          entity_id: Number(this.entityId) || 0,
         }),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);

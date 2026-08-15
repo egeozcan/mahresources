@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -156,7 +157,7 @@ func TestFalAIGeneratePageListsModels(t *testing.T) {
 	// value is never sent anywhere because no prompt is submitted below.
 	pm.SetPluginSettings("fal-ai", map[string]any{"api_key": "test-key-not-used"})
 
-	html, err := pm.HandlePage("fal-ai", "generate", PageContext{
+	html, err := pm.HandlePage(context.Background(), "fal-ai", "generate", PageContext{
 		Path:   "generate",
 		Method: "GET",
 	})

@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,7 +27,7 @@ end
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("display-obj"))
 
-	html, err := pm.RenderDisplay("display-obj", "plugin:display-obj:badge", DisplayRenderContext{
+	html, err := pm.RenderDisplay(context.Background(), "display-obj", "plugin:display-obj:badge", DisplayRenderContext{
 		Value:      map[string]any{"label": "OK"},
 		FieldPath:  "status",
 		FieldLabel: "Status",
@@ -58,7 +59,7 @@ end
 	require.NoError(t, pm.EnablePlugin("display-scalar"))
 
 	// Scalar number value — must not fail
-	html, err := pm.RenderDisplay("display-scalar", "plugin:display-scalar:stars", DisplayRenderContext{
+	html, err := pm.RenderDisplay(context.Background(), "display-scalar", "plugin:display-scalar:stars", DisplayRenderContext{
 		Value:      float64(3),
 		FieldPath:  "rating",
 		FieldLabel: "Rating",
@@ -86,7 +87,7 @@ end
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("display-str"))
 
-	html, err := pm.RenderDisplay("display-str", "plugin:display-str:upper", DisplayRenderContext{
+	html, err := pm.RenderDisplay(context.Background(), "display-str", "plugin:display-str:upper", DisplayRenderContext{
 		Value:      "hello",
 		FieldPath:  "name",
 		FieldLabel: "Name",
@@ -115,7 +116,7 @@ end
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("display-null"))
 
-	html, err := pm.RenderDisplay("display-null", "plugin:display-null:nullable", DisplayRenderContext{
+	html, err := pm.RenderDisplay(context.Background(), "display-null", "plugin:display-null:nullable", DisplayRenderContext{
 		Value:      nil,
 		FieldPath:  "opt",
 		FieldLabel: "Optional",
@@ -151,17 +152,17 @@ end
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("display-badret"))
 
-	_, err = pm.RenderDisplay("display-badret", "plugin:display-badret:nilret", DisplayRenderContext{
+	_, err = pm.RenderDisplay(context.Background(), "display-badret", "plugin:display-badret:nilret", DisplayRenderContext{
 		Value: "test", FieldPath: "x", FieldLabel: "X",
 	})
 	assert.Error(t, err, "nil return should be an error")
 
-	_, err = pm.RenderDisplay("display-badret", "plugin:display-badret:numret", DisplayRenderContext{
+	_, err = pm.RenderDisplay(context.Background(), "display-badret", "plugin:display-badret:numret", DisplayRenderContext{
 		Value: "test", FieldPath: "x", FieldLabel: "X",
 	})
 	assert.Error(t, err, "number return should be an error")
 
-	_, err = pm.RenderDisplay("display-badret", "plugin:display-badret:boolret", DisplayRenderContext{
+	_, err = pm.RenderDisplay(context.Background(), "display-badret", "plugin:display-badret:boolret", DisplayRenderContext{
 		Value: "test", FieldPath: "x", FieldLabel: "X",
 	})
 	assert.Error(t, err, "boolean return should be an error")

@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -47,13 +48,13 @@ end
 	}
 
 	// Test view rendering
-	html, err := pm.RenderBlock("render-test", "plugin:render-test:simple", "view", blockCtx)
+	html, err := pm.RenderBlock(context.Background(), "render-test", "plugin:render-test:simple", "view", blockCtx)
 	require.NoError(t, err)
 	assert.Contains(t, html, "View: 42")
 	assert.Contains(t, html, "note:10")
 
 	// Test edit rendering
-	html, err = pm.RenderBlock("render-test", "plugin:render-test:simple", "edit", blockCtx)
+	html, err = pm.RenderBlock(context.Background(), "render-test", "plugin:render-test:simple", "edit", blockCtx)
 	require.NoError(t, err)
 	assert.Contains(t, html, "Edit: 42")
 }
@@ -76,7 +77,7 @@ end
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("render-mode"))
 
-	_, err = pm.RenderBlock("render-mode", "plugin:render-mode:simple", "invalid", BlockRenderContext{})
+	_, err = pm.RenderBlock(context.Background(), "render-mode", "plugin:render-mode:simple", "invalid", BlockRenderContext{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid render mode")
 }
@@ -87,7 +88,7 @@ func TestRenderBlock_PluginNotFound(t *testing.T) {
 	require.NoError(t, err)
 	defer pm.Close()
 
-	_, err = pm.RenderBlock("nonexistent", "plugin:nonexistent:x", "view", BlockRenderContext{})
+	_, err = pm.RenderBlock(context.Background(), "nonexistent", "plugin:nonexistent:x", "view", BlockRenderContext{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -124,12 +125,12 @@ end
 		Settings: map[string]any{},
 	}
 
-	html, err := pm.RenderBlock("escape-test", "plugin:escape-test:safe", "view", blockCtx)
+	html, err := pm.RenderBlock(context.Background(), "escape-test", "plugin:escape-test:safe", "view", blockCtx)
 	require.NoError(t, err)
 	assert.Contains(t, html, "&lt;script&gt;")
 	assert.NotContains(t, html, "<script>")
 
-	html, err = pm.RenderBlock("escape-test", "plugin:escape-test:safe", "edit", blockCtx)
+	html, err = pm.RenderBlock(context.Background(), "escape-test", "plugin:escape-test:safe", "edit", blockCtx)
 	require.NoError(t, err)
 	assert.Contains(t, html, "&lt;script&gt;")
 	assert.Contains(t, html, "&quot;xss&quot;")
@@ -161,7 +162,7 @@ end
 	delete(pm.vmLocks, pbt.State)
 	pm.mu.Unlock()
 
-	_, err = pm.RenderBlock("nil-lock", "plugin:nil-lock:simple", "view", BlockRenderContext{
+	_, err = pm.RenderBlock(context.Background(), "nil-lock", "plugin:nil-lock:simple", "view", BlockRenderContext{
 		Block:    BlockRenderData{ID: 1, Content: map[string]any{}, State: map[string]any{}},
 		Note:     NoteRenderData{ID: 1},
 		Settings: map[string]any{},
@@ -188,7 +189,7 @@ end
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("plugin-a"))
 
-	_, err = pm.RenderBlock("plugin-b", "plugin:plugin-a:myblock", "view", BlockRenderContext{})
+	_, err = pm.RenderBlock(context.Background(), "plugin-b", "plugin:plugin-a:myblock", "view", BlockRenderContext{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "does not belong")
 }

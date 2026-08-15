@@ -14,17 +14,28 @@ const luaDisplayRenderTimeout = 5 * time.Second
 // DisplayRenderContext holds all context passed to the Lua render function.
 // Value is typed as any because metadata fields can be objects, arrays,
 // strings, numbers, booleans, or null.
+//
+// EntityType and EntityID say what is being rendered. Without them a renderer
+// could not link back to its own entity, fetch a related record, or
+// cross-reference anything — which is why the useful metadata widgets in this
+// repo are hand-placed shortcodes rather than schema-bound display types.
+//
+// Both are client-supplied, like Value. A renderer may use them to look
+// something up and to build a link; it must not treat them as proof of who is
+// asking. Nothing here authorizes a write.
 type DisplayRenderContext struct {
 	Value      any            `json:"value"`
 	Schema     map[string]any `json:"schema"`
 	FieldPath  string         `json:"field_path"`
 	FieldLabel string         `json:"field_label"`
+	EntityType string         `json:"entity_type"`
+	EntityID   uint           `json:"entity_id"`
 	Settings   map[string]any `json:"settings"`
 }
 
 // RenderDisplay executes the Lua render function for a plugin display type
 // and returns the rendered HTML string.
-func (pm *PluginManager) RenderDisplay(pluginName, fullTypeName string, ctx DisplayRenderContext) (string, error) {
+func (pm *PluginManager) RenderDisplay(reqCtx context.Context, pluginName, fullTypeName string, ctx DisplayRenderContext) (string, error) {
 	if pm.closed.Load() {
 		return "", fmt.Errorf("plugin manager is closed")
 	}
@@ -54,6 +65,8 @@ func (pm *PluginManager) RenderDisplay(pluginName, fullTypeName string, ctx Disp
 		"schema":      ctx.Schema,
 		"field_path":  ctx.FieldPath,
 		"field_label": ctx.FieldLabel,
+		"entity_type": ctx.EntityType,
+		"entity_id":   float64(ctx.EntityID),
 	}
 	if ctx.Settings != nil {
 		ctxData["settings"] = ctx.Settings
@@ -63,7 +76,7 @@ func (pm *PluginManager) RenderDisplay(pluginName, fullTypeName string, ctx Disp
 
 	tbl := goToLuaTable(L, ctxData)
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), luaDisplayRenderTimeout)
+	timeoutCtx, cancel := context.WithTimeout(vmParentContext(reqCtx), luaDisplayRenderTimeout)
 	L.SetContext(timeoutCtx)
 
 	err := L.CallByParam(lua.P{

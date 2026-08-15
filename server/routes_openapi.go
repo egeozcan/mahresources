@@ -2749,6 +2749,15 @@ func registerPluginRoutes(r *openapi.Registry) {
 
 	r.Register(openapi.RouteInfo{
 		Method:               http.MethodGet,
+		Path:                 "/v1/plugin/displayTypes",
+		OperationID:          "getPluginDisplayTypes",
+		Summary:              "List plugin display types available for x-display",
+		Tags:                 []string{"plugins"},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:               http.MethodGet,
 		Path:                 "/v1/plugins/manage",
 		OperationID:          "getPluginsManage",
 		Summary:              "Get plugin management information",

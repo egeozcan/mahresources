@@ -283,7 +283,12 @@ func ValidateActionEntityRefs(reader EntityRefReader, action ActionRegistration,
 // RunAction executes a registered plugin action synchronously. It locates
 // the action, validates params, builds a Lua context table, calls the
 // handler, and parses the returned table into an ActionResult.
-func (pm *PluginManager) RunAction(pluginName, actionID string, entityID uint, params map[string]any) (*ActionResult, error) {
+//
+// ctx is the caller's request context. Deriving the Lua deadline from it means
+// an abandoned request stops the handler instead of holding the plugin's VM
+// lock for the full timeout, and puts the per-request MRQL cache within reach
+// of mah.db.mrql_query. The async path has no request and builds its own.
+func (pm *PluginManager) RunAction(ctx context.Context, pluginName, actionID string, entityID uint, params map[string]any) (*ActionResult, error) {
 	if pm.closed.Load() {
 		return nil, fmt.Errorf("plugin manager is closed")
 	}
@@ -325,7 +330,7 @@ func (pm *PluginManager) RunAction(pluginName, actionID string, entityID uint, p
 
 	tbl := goToLuaTable(L, ctxData)
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), luaExecTimeout)
+	timeoutCtx, cancel := context.WithTimeout(vmParentContext(ctx), luaExecTimeout)
 	L.SetContext(timeoutCtx)
 
 	err = L.CallByParam(lua.P{

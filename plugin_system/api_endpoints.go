@@ -31,7 +31,7 @@ type APIResponse struct {
 
 // HandleAPI executes the Lua API handler for the given plugin, method, and path,
 // passing the request context, and returns an APIResponse.
-func (pm *PluginManager) HandleAPI(pluginName, method, path string, ctx PageContext) APIResponse {
+func (pm *PluginManager) HandleAPI(reqCtx context.Context, pluginName, method, path string, ctx PageContext) APIResponse {
 	if pm.closed.Load() {
 		return APIResponse{StatusCode: 500, Error: "plugin manager is closed"}
 	}
@@ -115,7 +115,7 @@ func (pm *PluginManager) HandleAPI(pluginName, method, path string, ctx PageCont
 		return 0
 	}))
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), endpoint.timeout)
+	timeoutCtx, cancel := context.WithTimeout(vmParentContext(reqCtx), endpoint.timeout)
 	L.SetContext(timeoutCtx)
 
 	err := L.CallByParam(lua.P{

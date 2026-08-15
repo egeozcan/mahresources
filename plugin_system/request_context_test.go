@@ -1,0 +1,146 @@
+package plugin_system
+
+import (
+	"context"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+// countingMRQLExecutor records how many queries actually reached the executor,
+// which is what the cache is supposed to reduce.
+type countingMRQLExecutor struct {
+	calls atomic.Int64
+}
+
+func (c *countingMRQLExecutor) ExecuteMRQL(ctx context.Context, query string, opts MRQLExecOptions) (*MRQLResult, error) {
+	c.calls.Add(1)
+	return &MRQLResult{EntityType: "resource", Mode: "flat", Items: []map[string]any{{"id": float64(1)}}}, nil
+}
+
+// Every VM entry point except the shortcode renderer used to build its deadline
+// from context.Background(), which put the per-request MRQL cache out of reach:
+// a page running the same query in a header count and a body table paid twice,
+// while the docs said results were cached.
+func TestRequestContext_MRQLCacheReachableFromPage(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "ctx-test", `
+plugin = { name = "ctx-test", version = "1.0", description = "request context" }
+function init()
+    mah.page("dash", function(ctx)
+        local a = mah.db.mrql_query("type=resource", { limit = 10 })
+        local b = mah.db.mrql_query("type=resource", { limit = 10 })
+        return "<p>" .. #a.items .. #b.items .. "</p>"
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	exec := &countingMRQLExecutor{}
+	mgr.SetMRQLExecutor(exec)
+	if err := mgr.EnablePlugin("ctx-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	html, err := mgr.HandlePage(WithMRQLCache(context.Background()), "ctx-test", "dash", PageContext{Method: "GET"})
+	if err != nil {
+		t.Fatalf("HandlePage: %v", err)
+	}
+	if !strings.Contains(html, "11") {
+		t.Errorf("page rendered %q, want both queries to return one item", html)
+	}
+	if got := exec.calls.Load(); got != 1 {
+		t.Errorf("executor ran %d times, want 1 — the page's MRQL cache was not reachable", got)
+	}
+}
+
+// Without a cache in the context nothing is cached, which is the pre-existing
+// behaviour and must stay correct rather than merely uncached.
+func TestRequestContext_NoCacheStillWorks(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "ctx-test", `
+plugin = { name = "ctx-test", version = "1.0", description = "request context" }
+function init()
+    mah.page("dash", function(ctx)
+        local a = mah.db.mrql_query("type=resource", { limit = 10 })
+        local b = mah.db.mrql_query("type=resource", { limit = 10 })
+        return "<p>" .. #a.items .. #b.items .. "</p>"
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	exec := &countingMRQLExecutor{}
+	mgr.SetMRQLExecutor(exec)
+	if err := mgr.EnablePlugin("ctx-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	if _, err := mgr.HandlePage(context.Background(), "ctx-test", "dash", PageContext{Method: "GET"}); err != nil {
+		t.Fatalf("HandlePage: %v", err)
+	}
+	if got := exec.calls.Load(); got != 2 {
+		t.Errorf("executor ran %d times, want 2 without a cache", got)
+	}
+}
+
+// A cancelled request must stop the plugin, not let it hold the VM lock — which
+// is exclusive across every other surface of that plugin — for the full 30s.
+func TestRequestContext_CancellationStopsThePage(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "ctx-test", `
+plugin = { name = "ctx-test", version = "1.0", description = "request context" }
+function init()
+    mah.page("spin", function(ctx)
+        local n = 0
+        while true do n = n + 1 end
+        return "<p>unreachable</p>"
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	if err := mgr.EnablePlugin("ctx-test"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	reqCtx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err = mgr.HandlePage(reqCtx, "ctx-test", "spin", PageContext{Method: "GET"})
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected the cancelled page render to fail")
+	}
+	// luaPageTimeout is 30s; the cancel must beat it by a wide margin.
+	if elapsed > 5*time.Second {
+		t.Errorf("cancelled render took %v — cancellation did not propagate", elapsed)
+	}
+}
+
+// Hooks and async jobs have no request, so they must keep working when handed
+// no context at all.
+func TestRequestContext_NilContextFallsBackToBackground(t *testing.T) {
+	if got := vmParentContext(nil); got == nil {
+		t.Fatal("vmParentContext(nil) returned nil")
+	}
+	base := context.Background()
+	if got := vmParentContext(base); got != base {
+		t.Errorf("vmParentContext should pass a real context through unchanged")
+	}
+}

@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -38,7 +39,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result, err := pm.RunAction("greeter", "greet", 42, map[string]any{
+	result, err := pm.RunAction(context.Background(), "greeter", "greet", 42, map[string]any{
 		"name": "World",
 	})
 	if err != nil {
@@ -88,7 +89,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result, err := pm.RunAction("full-result", "full", 1, map[string]any{})
+	result, err := pm.RunAction(context.Background(), "full-result", "full", 1, map[string]any{})
 	if err != nil {
 		t.Fatalf("RunAction: %v", err)
 	}
@@ -142,7 +143,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result, err := pm.RunAction("id-check", "check-id", 99, map[string]any{})
+	result, err := pm.RunAction(context.Background(), "id-check", "check-id", 99, map[string]any{})
 	if err != nil {
 		t.Fatalf("RunAction: %v", err)
 	}
@@ -187,7 +188,7 @@ end
 	}
 
 	// Missing required field
-	_, err = pm.RunAction("validator", "validated", 1, map[string]any{})
+	_, err = pm.RunAction(context.Background(), "validator", "validated", 1, map[string]any{})
 	if err == nil {
 		t.Fatal("expected error for missing required field")
 	}
@@ -196,7 +197,7 @@ end
 	}
 
 	// Invalid select value
-	_, err = pm.RunAction("validator", "validated", 1, map[string]any{
+	_, err = pm.RunAction(context.Background(), "validator", "validated", 1, map[string]any{
 		"title":  "test",
 		"format": "bmp",
 	})
@@ -208,7 +209,7 @@ end
 	}
 
 	// Number below min
-	_, err = pm.RunAction("validator", "validated", 1, map[string]any{
+	_, err = pm.RunAction(context.Background(), "validator", "validated", 1, map[string]any{
 		"title":   "test",
 		"quality": float64(0),
 	})
@@ -220,7 +221,7 @@ end
 	}
 
 	// Number above max
-	_, err = pm.RunAction("validator", "validated", 1, map[string]any{
+	_, err = pm.RunAction(context.Background(), "validator", "validated", 1, map[string]any{
 		"title":   "test",
 		"quality": float64(200),
 	})
@@ -232,7 +233,7 @@ end
 	}
 
 	// Valid params — should succeed
-	result, err := pm.RunAction("validator", "validated", 1, map[string]any{
+	result, err := pm.RunAction(context.Background(), "validator", "validated", 1, map[string]any{
 		"title":   "test",
 		"format":  "png",
 		"quality": float64(50),
@@ -275,7 +276,7 @@ end
 	}
 
 	// Nonexistent plugin
-	_, err = pm.RunAction("nonexistent", "some-action", 1, map[string]any{})
+	_, err = pm.RunAction(context.Background(), "nonexistent", "some-action", 1, map[string]any{})
 	if err == nil {
 		t.Fatal("expected error for nonexistent plugin")
 	}
@@ -284,7 +285,7 @@ end
 	}
 
 	// Nonexistent action
-	_, err = pm.RunAction("exists", "fake-action", 1, map[string]any{})
+	_, err = pm.RunAction(context.Background(), "exists", "fake-action", 1, map[string]any{})
 	if err == nil {
 		t.Fatal("expected error for nonexistent action")
 	}
@@ -322,7 +323,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result, err := pm.RunAction("aborter", "abort-action", 1, map[string]any{})
+	result, err := pm.RunAction(context.Background(), "aborter", "abort-action", 1, map[string]any{})
 	if err != nil {
 		t.Fatalf("expected no error (abort returns result), got: %v", err)
 	}
@@ -369,7 +370,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result, err := pm.RunAction("settings-user", "use-settings", 1, map[string]any{})
+	result, err := pm.RunAction(context.Background(), "settings-user", "use-settings", 1, map[string]any{})
 	if err != nil {
 		t.Fatalf("RunAction: %v", err)
 	}

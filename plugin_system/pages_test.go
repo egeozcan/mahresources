@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"testing"
 )
 
@@ -71,7 +72,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html, err := pm.HandlePage("myapp", "hello", PageContext{
+	html, err := pm.HandlePage(context.Background(), "myapp", "hello", PageContext{
 		Path:   "/plugins/myapp/hello",
 		Method: "GET",
 		Query:  map[string]any{},
@@ -108,7 +109,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html, err := pm.HandlePage("search", "results", PageContext{
+	html, err := pm.HandlePage(context.Background(), "search", "results", PageContext{
 		Path:   "/plugins/search/results",
 		Method: "GET",
 		Query:  map[string]any{"q": "test"},
@@ -130,7 +131,7 @@ func TestHandlePage_NotFound(t *testing.T) {
 	}
 	defer pm.Close()
 
-	_, err = pm.HandlePage("nonexistent", "page", PageContext{})
+	_, err = pm.HandlePage(context.Background(), "nonexistent", "page", PageContext{})
 	if err == nil {
 		t.Fatal("expected error for nonexistent plugin page")
 	}
@@ -158,7 +159,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	_, err = pm.HandlePage("broken", "crash", PageContext{})
+	_, err = pm.HandlePage(context.Background(), "broken", "crash", PageContext{})
 	if err == nil {
 		t.Fatal("expected error from crashing handler")
 	}

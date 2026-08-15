@@ -489,6 +489,11 @@ export class SchemaDisplayMode extends LitElement {
           schema: field.rawSchema || {},
           field_path: field.path,
           field_label: field.label,
+          // The schema editor's preview is not bound to a stored entity, so a
+          // renderer is told so explicitly rather than being handed an id that
+          // points at something else.
+          entity_type: '',
+          entity_id: 0,
         }),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);

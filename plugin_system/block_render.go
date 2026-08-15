@@ -35,7 +35,7 @@ type BlockRenderContext struct {
 
 // RenderBlock executes the Lua render function for a plugin block type
 // and returns the rendered HTML string.
-func (pm *PluginManager) RenderBlock(pluginName, fullTypeName, mode string, ctx BlockRenderContext) (string, error) {
+func (pm *PluginManager) RenderBlock(reqCtx context.Context, pluginName, fullTypeName, mode string, ctx BlockRenderContext) (string, error) {
 	if pm.closed.Load() {
 		return "", fmt.Errorf("plugin manager is closed")
 	}
@@ -90,7 +90,7 @@ func (pm *PluginManager) RenderBlock(pluginName, fullTypeName, mode string, ctx 
 
 	tbl := goToLuaTable(L, ctxData)
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), luaBlockRenderTimeout)
+	timeoutCtx, cancel := context.WithTimeout(vmParentContext(reqCtx), luaBlockRenderTimeout)
 	L.SetContext(timeoutCtx)
 
 	err := L.CallByParam(lua.P{

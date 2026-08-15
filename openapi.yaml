@@ -5219,6 +5219,17 @@ paths:
             summary: Disable a plugin
             tags:
                 - plugins
+    /v1/plugin/displayTypes:
+        get:
+            operationId: getPluginDisplayTypes
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: List plugin display types available for x-display
+            tags:
+                - plugins
     /v1/plugin/enable:
         post:
             operationId: enablePlugin

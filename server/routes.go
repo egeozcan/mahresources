@@ -776,6 +776,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// Plugin action routes. The run handler is request-scoped so a group-limited
 	// principal can only target entities inside its subtree.
 	router.Methods(http.MethodGet).Path("/v1/plugin/actions").HandlerFunc(api_handlers.GetPluginActionsHandler(appContext))
+	router.Methods(http.MethodGet).Path("/v1/plugin/displayTypes").HandlerFunc(api_handlers.GetPluginDisplayTypesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/jobs/action/run").HandlerFunc(scopedAPI(appContext, api_handlers.GetActionRunHandler))
 	router.Methods(http.MethodGet).Path("/v1/jobs/action/job").HandlerFunc(api_handlers.GetActionJobHandler(appContext))
 

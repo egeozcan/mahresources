@@ -26,7 +26,7 @@ type PageContext struct {
 
 // HandlePage executes the Lua page handler for the given plugin and path,
 // passing the request context, and returns the rendered HTML string.
-func (pm *PluginManager) HandlePage(pluginName, path string, ctx PageContext) (string, error) {
+func (pm *PluginManager) HandlePage(reqCtx context.Context, pluginName, path string, ctx PageContext) (string, error) {
 	if pm.closed.Load() {
 		return "", fmt.Errorf("plugin manager is closed")
 	}
@@ -82,7 +82,7 @@ func (pm *PluginManager) HandlePage(pluginName, path string, ctx PageContext) (s
 
 	tbl := goToLuaTable(L, ctxData)
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), luaPageTimeout)
+	timeoutCtx, cancel := context.WithTimeout(vmParentContext(reqCtx), luaPageTimeout)
 	L.SetContext(timeoutCtx)
 
 	err := L.CallByParam(lua.P{

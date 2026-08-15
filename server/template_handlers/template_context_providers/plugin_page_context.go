@@ -103,7 +103,10 @@ func PluginPageContextProvider(pm *plugin_system.PluginManager) func(request *ht
 			Principal: auth.DescribeContext(request.Context()),
 		}
 
-		html, err := pm.HandlePage(pluginName, pagePath, pageCtx)
+		// The request context, so an abandoned page render stops instead of
+		// holding this plugin's VM lock for the full 30s, and so identical MRQL
+		// queries within the page collapse to one execution.
+		html, err := pm.HandlePage(plugin_system.WithMRQLCache(request.Context()), pluginName, pagePath, pageCtx)
 		if err != nil {
 			ctx["pluginError"] = err.Error()
 			ctx["pluginPageTitle"] = "Error"

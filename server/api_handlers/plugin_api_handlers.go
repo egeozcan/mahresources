@@ -272,7 +272,10 @@ func GetPluginBlockRenderHandler(ctx PluginAPIContext) func(http.ResponseWriter,
 			Settings: pm.GetPluginSettings(pluginName),
 		}
 
-		html, err := pm.RenderBlock(pluginName, block.Type, mode, renderCtx)
+		// The request context, so an abandoned render stops instead of holding
+		// this plugin's VM lock, and so identical MRQL queries inside the
+		// render collapse to one execution.
+		html, err := pm.RenderBlock(plugin_system.WithMRQLCache(r.Context()), pluginName, block.Type, mode, renderCtx)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -280,6 +283,38 @@ func GetPluginBlockRenderHandler(ctx PluginAPIContext) func(http.ResponseWriter,
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(html))
+	}
+}
+
+// PluginDisplayTypeInfo describes one installed display renderer.
+type PluginDisplayTypeInfo struct {
+	Type       string `json:"type"`       // full namespaced name, for "x-display"
+	Label      string `json:"label"`      // human-readable, declared by the plugin
+	PluginName string `json:"pluginName"` // owning plugin
+}
+
+// GetPluginDisplayTypesHandler lists every registered plugin display type, so a
+// schema author can pick one instead of hand-typing the magic string that
+// "x-display" needs. It mirrors GetBlockTypesHandler, which is what the block
+// picker consumes.
+//
+// Deliberately routed under /v1/plugin/ (singular): it enumerates registrations
+// and executes no Lua, so it must not land under the /v1/plugins/ prefix that
+// isPluginCodePath denies to group-confined principals outright.
+func GetPluginDisplayTypesHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		result := []PluginDisplayTypeInfo{}
+		if pm := ctx.PluginManager(); pm != nil {
+			for _, dt := range pm.GetDisplayTypes() {
+				result = append(result, PluginDisplayTypeInfo{
+					Type:       dt.TypeName,
+					Label:      dt.Label,
+					PluginName: dt.PluginName,
+				})
+			}
+		}
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(result)
 	}
 }
 
@@ -305,6 +340,8 @@ func GetPluginDisplayRenderHandler(ctx PluginAPIContext) func(http.ResponseWrite
 			Schema     map[string]any `json:"schema"`
 			FieldPath  string         `json:"field_path"`
 			FieldLabel string         `json:"field_label"`
+			EntityType string         `json:"entity_type"`
+			EntityID   uint           `json:"entity_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -322,10 +359,12 @@ func GetPluginDisplayRenderHandler(ctx PluginAPIContext) func(http.ResponseWrite
 			Schema:     req.Schema,
 			FieldPath:  req.FieldPath,
 			FieldLabel: req.FieldLabel,
+			EntityType: req.EntityType,
+			EntityID:   req.EntityID,
 			Settings:   pm.GetPluginSettings(pluginName),
 		}
 
-		htmlStr, err := pm.RenderDisplay(pluginName, fullTypeName, renderCtx)
+		htmlStr, err := pm.RenderDisplay(plugin_system.WithMRQLCache(r.Context()), pluginName, fullTypeName, renderCtx)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -446,7 +485,7 @@ func PluginAPIHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Requ
 			Principal: auth.DescribeContext(r.Context()),
 		}
 
-		resp := pm.HandleAPI(pluginName, r.Method, apiPath, pageCtx)
+		resp := pm.HandleAPI(plugin_system.WithMRQLCache(r.Context()), pluginName, r.Method, apiPath, pageCtx)
 
 		w.Header().Set("Content-Type", constants.JSON)
 		if resp.Error != "" {

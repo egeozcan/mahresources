@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -827,6 +828,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 	pm.registerJsonModule(L, mahMod)
 	pm.registerKvModule(L, mahMod, pluginNamePtr)
 	pm.registerImageModule(L, mahMod)
+	pm.registerUtilModule(L, mahMod)
 
 	L.SetGlobal("mah", mahMod)
 }
@@ -1080,6 +1082,24 @@ func (pm *PluginManager) GetBlockTypes() []*PluginBlockType {
 	return result
 }
 
+// GetDisplayTypes returns all plugin-registered display types.
+//
+// The counterpart to GetBlockTypes, and it was missing: display types could
+// only be looked up by exact name, so nothing could enumerate them. A schema
+// author had to hand-type "x-display": "plugin:<n>:<t>" from a README, and a
+// typo degraded silently — which is the likeliest reason the whole display-type
+// surface has no users, while block types, which have both an accessor and an
+// endpoint feeding a picker, do.
+func (pm *PluginManager) GetDisplayTypes() []*PluginDisplayType {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	var result []*PluginDisplayType
+	for _, types := range pm.displayTypes {
+		result = append(result, types...)
+	}
+	return result
+}
+
 // GetPluginBlockType returns a specific plugin block type by full name, or nil.
 func (pm *PluginManager) GetPluginBlockType(fullTypeName string) *PluginBlockType {
 	pm.mu.RLock()
@@ -1153,6 +1173,21 @@ func (pm *PluginManager) VMLock(L *lua.LState) *sync.Mutex {
 // holding this same mutex, so a caller that wins the race sees the entry, and a
 // caller that loses it sees the entry gone and backs out.
 //
+// vmParentContext is the context a VM entry point should hang its timeout off.
+//
+// Entry points that serve a request pass r.Context(), so an abandoned request
+// cancels the Lua call instead of letting it hold the plugin's VM lock — which
+// is exclusive across every other surface of that plugin — for the full
+// timeout. It also carries the per-request MRQL cache, which mah.db.mrql_query
+// reads off L.Context(). Entry points with no request (hooks, async action
+// jobs) pass nil and get Background.
+func vmParentContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
 // Lock ordering is mu then pm.mu, matching DisablePlugin. Nothing may take a VM
 // lock while already holding pm.mu.
 func (pm *PluginManager) LockVM(L *lua.LState) *sync.Mutex {

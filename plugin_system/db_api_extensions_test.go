@@ -15,7 +15,7 @@ type failingQuerier struct {
 
 var errBoom = fmt.Errorf("database is down")
 
-func (f *failingQuerier) GetNoteData(id uint) (map[string]any, error)  { return nil, errBoom }
+func (f *failingQuerier) GetNoteData(id uint) (map[string]any, error) { return nil, errBoom }
 func (f *failingQuerier) GetResourceData(id uint) (map[string]any, error) {
 	return nil, errBoom
 }
@@ -119,13 +119,13 @@ func (stubWriter) UpdateRelationType(map[string]any) (map[string]any, error) {
 func (stubWriter) PatchRelationType(map[string]any) (map[string]any, error) {
 	return nil, errStubWriter
 }
-func (stubWriter) DeleteRelationType(uint) error                        { return errStubWriter }
-func (stubWriter) AddTagsToEntity(string, uint, []uint) error           { return errStubWriter }
-func (stubWriter) RemoveTagsFromEntity(string, uint, []uint) error      { return errStubWriter }
-func (stubWriter) AddGroupsToEntity(string, uint, []uint) error         { return errStubWriter }
-func (stubWriter) RemoveGroupsFromEntity(string, uint, []uint) error    { return errStubWriter }
-func (stubWriter) AddResourcesToNote(uint, []uint) error                { return errStubWriter }
-func (stubWriter) RemoveResourcesFromNote(uint, []uint) error           { return errStubWriter }
+func (stubWriter) DeleteRelationType(uint) error                     { return errStubWriter }
+func (stubWriter) AddTagsToEntity(string, uint, []uint) error        { return errStubWriter }
+func (stubWriter) RemoveTagsFromEntity(string, uint, []uint) error   { return errStubWriter }
+func (stubWriter) AddGroupsToEntity(string, uint, []uint) error      { return errStubWriter }
+func (stubWriter) RemoveGroupsFromEntity(string, uint, []uint) error { return errStubWriter }
+func (stubWriter) AddResourcesToNote(uint, []uint) error             { return errStubWriter }
+func (stubWriter) RemoveResourcesFromNote(uint, []uint) error        { return errStubWriter }
 func (stubWriter) UpdateResource(uint, map[string]any) (map[string]any, error) {
 	return nil, errStubWriter
 }

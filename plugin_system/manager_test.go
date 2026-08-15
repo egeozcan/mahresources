@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -601,7 +602,7 @@ end
 		t.Fatal(err)
 	}
 
-	html, err := pm.HandlePage("settings-test", "show-key", PageContext{
+	html, err := pm.HandlePage(context.Background(), "settings-test", "show-key", PageContext{
 		Path: "/plugins/settings-test/show-key", Method: "GET",
 	})
 	if err != nil {
@@ -635,7 +636,7 @@ end
 		t.Fatal(err)
 	}
 
-	html, err := pm.HandlePage("unknown-key", "test", PageContext{
+	html, err := pm.HandlePage(context.Background(), "unknown-key", "test", PageContext{
 		Path: "/plugins/unknown-key/test", Method: "GET",
 	})
 	if err != nil {

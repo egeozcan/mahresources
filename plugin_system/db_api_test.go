@@ -111,9 +111,9 @@ func (m *mockQuerier) QueryGroups(filter map[string]any) ([]map[string]any, erro
 	}, nil
 }
 
-func (m *mockQuerier) CountNotes(filter map[string]any) (int64, error)    { return 0, nil }
+func (m *mockQuerier) CountNotes(filter map[string]any) (int64, error)     { return 0, nil }
 func (m *mockQuerier) CountResources(filter map[string]any) (int64, error) { return 0, nil }
-func (m *mockQuerier) CountGroups(filter map[string]any) (int64, error)   { return 0, nil }
+func (m *mockQuerier) CountGroups(filter map[string]any) (int64, error)    { return 0, nil }
 
 func (m *mockQuerier) GetResourceFileData(id uint) (string, string, error) {
 	if id == 1 {

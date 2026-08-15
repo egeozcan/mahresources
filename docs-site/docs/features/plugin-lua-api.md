@@ -270,12 +270,26 @@ Accepted keys: `name`, `description`, `meta` (JSON string), `owner_id`,
 `original_location`, `width`, `height`, `series_id`. `update_resource` also
 accepts `series_slug`.
 
+`width` and `height` are ignored when `0`, so they cannot be cleared -- the same
+rule the HTTP resource-edit path applies, since a resource's pixel dimensions
+describe its file.
+
 ```lua
 -- Fill in an empty description without touching anything else.
 local updated, err = mah.db.patch_resource(id, { description = caption })
 ```
 
 Both return the updated resource table, or `nil, error_string`.
+
+:::caution Patch is last-write-wins
+Every `patch_*` function reads the current entity, merges your keys over it, and
+writes the whole thing back. The read is not inside the write's transaction, so
+a concurrent edit landing in between is overwritten by the values the patch
+read: patching a resource's `name` while someone else changes its
+`description` restores the description the patch saw. Prefer `patch_*` over
+`update_*` regardless -- `update_*` clears every field you omit, including
+associations -- but do not treat a patch as an atomic read-modify-write.
+:::
 
 ### Resource Deletion
 
@@ -711,6 +725,72 @@ if not padded then
 end
 ```
 
+## mah.util -- Clock, Encoding, Hashing
+
+The primitives a plugin cannot build for itself inside the sandbox. The VM opens
+`base`, `table`, `string`, `math` and `coroutine` and nothing else, so without
+these a plugin has no clock, no base64, and no way to verify a signature.
+
+Every function is a direct wrapper over Go's standard library with no
+filesystem, process or network reach.
+
+| Function | Returns |
+|----------|---------|
+| `mah.util.now()` | Unix seconds as a number, fractional |
+| `mah.util.now_iso()` | RFC3339 timestamp in **UTC** |
+| `mah.util.base64.encode(str)` | Base64 string |
+| `mah.util.base64.decode(str)` | Decoded string, or `nil, error_string` |
+| `mah.util.hex.encode(str)` | Lowercase hex string |
+| `mah.util.hex.decode(str)` | Decoded string, or `nil, error_string` |
+| `mah.util.sha256(str)` | Lowercase hex digest |
+| `mah.util.hmac_sha256(key, message)` | Lowercase hex digest |
+| `mah.util.secure_compare(a, b)` | Boolean, constant-time for equal-length inputs |
+
+`now_iso()` is UTC deliberately: local-offset timestamps compare
+lexicographically against UTC bounds and mis-sort silently.
+
+### Verifying a webhook signature
+
+The reason `hmac_sha256` and `secure_compare` exist -- a `mah.api` endpoint that
+cannot check a signature has to trust every caller:
+
+```lua
+mah.api("POST", "hook", function(ctx)
+    local secret = mah.get_setting("webhook_secret")
+    local expected = mah.util.hmac_sha256(secret, ctx.body)
+    -- ctx.headers keys are lowercased.
+    local supplied = ctx.headers["x-signature"] or ""
+    if not mah.util.secure_compare(expected, supplied) then
+        ctx.status(401)
+        ctx.json({ error = "bad signature" })
+        return
+    end
+    ctx.json({ ok = true })
+end)
+```
+
+Compare digests with `secure_compare`, not `==`: string equality returns as soon
+as it finds a differing byte, which leaks the expected value through timing.
+
+### Caching with a TTL
+
+`mah.kv` round-trips Lua tables through JSON, so a cached value can carry its own
+timestamp -- which is what makes it expirable:
+
+```lua
+local cached = mah.kv.get("rates")
+if cached and (mah.util.now() - cached.fetched_at) < 3600 then
+    return cached.value
+end
+
+local response = mah.http.get_sync(RATES_URL)
+if response.status_code ~= 200 then
+    return cached and cached.value or nil   -- serve stale rather than nothing
+end
+mah.kv.set("rates", { value = response.body, fetched_at = mah.util.now() })
+return response.body
+```
+
 ## mah.api -- JSON API Endpoints
 
 Register custom JSON API endpoints accessible at `/v1/plugins/{pluginName}/{path}`.
@@ -880,11 +960,32 @@ The `render` function receives a context table:
 | `ctx.schema` | table | The JSON Schema of the property |
 | `ctx.field_path` | string | Dot-notation path (e.g., `"images"`) |
 | `ctx.field_label` | string | Display label (e.g., `"Image Gallery"`) |
+| `ctx.entity_type` | string | `"resource"`, `"note"` or `"group"`; empty string in the schema editor's preview, which is bound to no stored entity |
+| `ctx.entity_id` | number | The entity's ID; `0` in the schema editor's preview |
 | `ctx.settings` | table | Plugin settings key-value pairs |
+
+`entity_type` and `entity_id` let a renderer link back to what it is rendering
+or fetch a related record. Like `ctx.value`, they are supplied by the browser:
+use them to look something up and to build a link, never as proof of who is
+asking. Nothing in this context authorizes a write.
 
 The function must return an HTML string. The HTML is rendered inside the metadata panel on the detail page, inheriting Tailwind CSS classes from the host page.
 
 The render endpoint is `POST /v1/plugins/{pluginName}/display/render` with a 5-second timeout.
+
+### Listing Installed Renderers
+
+```
+GET /v1/plugin/displayTypes
+```
+
+Returns every registered display type as `{ type, label, pluginName }`, where
+`type` is the full `plugin:<pluginName>:<type>` string that `x-display` expects.
+Use it to offer a picker instead of asking schema authors to hand-type the
+string -- a typo in `x-display` degrades silently to the default renderer.
+
+Note the singular `/v1/plugin/` prefix: the catalogue enumerates registrations
+and runs no plugin code, unlike the `/v1/plugins/...` endpoints.
 
 ### Schema Usage
 
