@@ -17,7 +17,9 @@
     <schema-editor mode="display"
         schema='{{ resource.ResourceCategory.MetaSchema }}'
         value='{{ resource.Meta|json }}'
-        name="{{ resource.ResourceCategory.Name }}">
+        name="{{ resource.ResourceCategory.Name }}"
+        entity-type="resource"
+        entity-id="{{ resource.ID }}">
     </schema-editor>
     {% endif %}
     {% endif %}

@@ -160,6 +160,10 @@ export class SchemaDisplayMode extends LitElement {
   @property({ type: Object }) schema: JSONSchema = {};
   @property({ type: Object }) value: any = {};
   @property({ type: String }) name = '';
+  // Empty / 0 when the host is not bound to a stored entity, e.g. the schema
+  // editor's own live preview.
+  @property({ type: String }) entityType = '';
+  @property({ type: Number }) entityId = 0;
 
   @state() private _showEmpty = false;
   @state() private _pluginHtml: Record<string, string> = {};
@@ -489,11 +493,8 @@ export class SchemaDisplayMode extends LitElement {
           schema: field.rawSchema || {},
           field_path: field.path,
           field_label: field.label,
-          // The schema editor's preview is not bound to a stored entity, so a
-          // renderer is told so explicitly rather than being handed an id that
-          // points at something else.
-          entity_type: '',
-          entity_id: 0,
+          entity_type: this.entityType,
+          entity_id: Number(this.entityId) || 0,
         }),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);

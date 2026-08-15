@@ -327,8 +327,11 @@ func ValidateActionParams(action ActionRegistration, params map[string]any) []Va
 			}
 			for _, v := range arr {
 				n, ok := v.(float64)
-				// Reject non-integers (e.g. 1.5), zero, and negatives by round-tripping through uint.
-				if !ok || n <= 0 || n != float64(uint(n)) {
+				// Same bound as the single-value branch: non-integers, zero,
+				// negatives, and anything past 2^53, where float64 stops
+				// representing consecutive integers and the id is already a
+				// different row than the caller wrote.
+				if !ok || n <= 0 || n != float64(uint(n)) || n > maxLuaExactInteger {
 					errs = append(errs, ValidationError{
 						Field:   p.Name,
 						Message: fmt.Sprintf("%s: each ID must be a positive integer", p.Label),

@@ -38,6 +38,15 @@ export class SchemaEditor extends LitElement {
   @property({ type: String }) schema = '';
   @property({ type: String }) value = '';
   @property({ type: String }) name = 'Meta';
+  /**
+   * What is being displayed. `mode="display"` is the metadata panel on every
+   * detail page, so a plugin display renderer reached from here is rendering a
+   * real, identified entity — it needs to know which one to link back to it or
+   * fetch a related record. Absent (the schema editor's own preview) means
+   * "bound to nothing", and the renderer is told so.
+   */
+  @property({ type: String, attribute: 'entity-type' }) entityType = '';
+  @property({ type: Number, attribute: 'entity-id' }) entityId = 0;
   @property({ type: String, attribute: 'meta-query' }) metaQuery = '';
   @property({ type: String, attribute: 'field-name' }) fieldName = 'MetaQuery';
 
@@ -137,6 +146,8 @@ export class SchemaEditor extends LitElement {
           .schema=${this._parsedSchema}
           .value=${parsedValue}
           .name=${this.name}
+          .entityType=${this.entityType}
+          .entityId=${this.entityId}
         ></schema-display-mode>`;
       }
       default:

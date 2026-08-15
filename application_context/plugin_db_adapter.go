@@ -718,11 +718,22 @@ func getStringSliceOpt(opts map[string]any, key string) []string {
 // --- Patch helpers: use current value when key is absent from opts ---
 
 // patchString returns opts[key] if present, otherwise current.
+// patchString returns the supplied string, or the entity's current one when the
+// key is absent — or when the supplied value is not a string at all.
+//
+// getStringOpt answers "" for a value it cannot read, and on a patch that is
+// not "leave it alone", it is "blank it": mah.db.patch_resource(id, {name =
+// false}) silently replaced the resource's name with an empty string. An
+// explicit "" still clears, because that is unambiguous.
 func patchString(opts map[string]any, key, current string) string {
-	if _, exists := opts[key]; exists {
-		return getStringOpt(opts, key)
+	raw, exists := opts[key]
+	if !exists {
+		return current
 	}
-	return current
+	if _, ok := raw.(string); !ok {
+		return current
+	}
+	return getStringOpt(opts, key)
 }
 
 // patchUint returns opts[key] if present, otherwise current.

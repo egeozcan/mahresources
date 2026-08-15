@@ -78,7 +78,9 @@
         <schema-editor mode="display"
             schema='{{ note.NoteType.MetaSchema }}'
             value='{{ note.Meta|json }}'
-            name="{{ note.NoteType.Name }}">
+            name="{{ note.NoteType.Name }}"
+            entity-type="note"
+            entity-id="{{ note.ID }}">
         </schema-editor>
     </div>
     {% endif %}

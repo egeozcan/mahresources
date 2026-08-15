@@ -17,7 +17,9 @@
     <schema-editor mode="display"
         schema='{{ group.Category.MetaSchema }}'
         value='{{ group.Meta|json }}'
-        name="{{ group.Category.Name }}">
+        name="{{ group.Category.Name }}"
+        entity-type="group"
+        entity-id="{{ group.ID }}">
     </schema-editor>
     {% endif %}
     {% endif %}

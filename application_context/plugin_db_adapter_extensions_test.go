@@ -361,3 +361,43 @@ func containsName(items []map[string]any, name string) bool {
 	}
 	return false
 }
+
+// A mistyped scalar field must not blank the stored value. getStringOpt answers
+// "" for a value it cannot read, and on a patch that is "blank it", not "leave
+// it alone".
+func TestPluginDBAdapter_PatchIgnoresMistypedStrings(t *testing.T) {
+	ctx := createTestContext(t)
+	adapter := &pluginDBAdapter{ctx: ctx}
+
+	created, err := adapter.CreateResourceFromData(
+		"TWlzdHlwZWQgc3RyaW5ncw==",
+		map[string]any{"name": "keep-my-name.txt", "description": "keep me"},
+	)
+	if err != nil {
+		t.Fatalf("CreateResourceFromData: %v", err)
+	}
+	id := uint(created["id"].(float64))
+
+	if _, err := adapter.PatchResource(id, map[string]any{"name": false}); err != nil {
+		t.Fatalf("PatchResource: %v", err)
+	}
+	after, err := adapter.GetResourceData(id)
+	if err != nil {
+		t.Fatalf("GetResourceData: %v", err)
+	}
+	if after["name"] != "keep-my-name.txt" {
+		t.Errorf("a mistyped name must not blank the stored one, got %q", after["name"])
+	}
+
+	// An explicit empty string is unambiguous and still clears.
+	if _, err := adapter.PatchResource(id, map[string]any{"description": ""}); err != nil {
+		t.Fatalf("PatchResource(empty): %v", err)
+	}
+	after, err = adapter.GetResourceData(id)
+	if err != nil {
+		t.Fatalf("GetResourceData: %v", err)
+	}
+	if after["description"] != "" {
+		t.Errorf("an explicit empty string should clear, got %q", after["description"])
+	}
+}
