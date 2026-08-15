@@ -12,6 +12,10 @@ Effort M and stayed out. This is the remaining ten, items 03-12.
       anything that then archives, deletes or re-uploads. Reads now return
       `(value, error)`; a getter that merely found nothing still returns nil
       with no error, and the adapter maps `gorm.ErrRecordNotFound` to that.
+      `get_resource_data` is included, with its error as the *third* value
+      because success already occupies two — it is the one read where "not
+      found" is not worth separating from "failed", since a caller about to use
+      the bytes wants the reason either way.
 - [x] **03 — taxonomy list/get.** `list_tags`, `list_categories`,
       `list_note_types`, `list_resource_categories`, `get_note_type`,
       `get_resource_category`. Find-or-create-a-tag is now expressible.
