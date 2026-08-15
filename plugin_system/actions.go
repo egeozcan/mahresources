@@ -420,33 +420,41 @@ func parseFiltersTable(tbl *lua.LTable) (ActionFilter, error) {
 	var f ActionFilter
 	// content_types
 	if ct := tbl.RawGetString("content_types"); ct != lua.LNil {
-		if ctTbl, ok := ct.(*lua.LTable); ok {
-			ctTbl.ForEach(func(_, val lua.LValue) {
-				if s, ok := val.(lua.LString); ok {
-					f.ContentTypes = append(f.ContentTypes, string(s))
-				}
-			})
+		ctTbl, ok := ct.(*lua.LTable)
+		if !ok {
+			return f, fmt.Errorf("filters.content_types must be an array of strings, got %s", ct.Type())
 		}
+		ctTbl.ForEach(func(_, val lua.LValue) {
+			if s, ok := val.(lua.LString); ok {
+				f.ContentTypes = append(f.ContentTypes, string(s))
+			}
+		})
 	}
 	// category_ids
 	if ci := tbl.RawGetString("category_ids"); ci != lua.LNil {
-		if ciTbl, ok := ci.(*lua.LTable); ok {
-			ids, err := collectFilterIDs(f.CategoryIDs, ciTbl, "filters.category_ids")
-			if err != nil {
-				return f, err
-			}
-			f.CategoryIDs = ids
+		// A non-table here used to be skipped, leaving the filter empty — which
+		// means "everywhere", the opposite of what the author wrote.
+		ciTbl, ok := ci.(*lua.LTable)
+		if !ok {
+			return f, fmt.Errorf("filters.category_ids must be an array of ids, got %s", ci.Type())
 		}
+		ids, err := collectFilterIDs(f.CategoryIDs, ciTbl, "filters.category_ids")
+		if err != nil {
+			return f, err
+		}
+		f.CategoryIDs = ids
 	}
 	// note_type_ids
 	if ni := tbl.RawGetString("note_type_ids"); ni != lua.LNil {
-		if niTbl, ok := ni.(*lua.LTable); ok {
-			ids, err := collectFilterIDs(f.NoteTypeIDs, niTbl, "filters.note_type_ids")
-			if err != nil {
-				return f, err
-			}
-			f.NoteTypeIDs = ids
+		niTbl, ok := ni.(*lua.LTable)
+		if !ok {
+			return f, fmt.Errorf("filters.note_type_ids must be an array of ids, got %s", ni.Type())
 		}
+		ids, err := collectFilterIDs(f.NoteTypeIDs, niTbl, "filters.note_type_ids")
+		if err != nil {
+			return f, err
+		}
+		f.NoteTypeIDs = ids
 	}
 	return f, nil
 }

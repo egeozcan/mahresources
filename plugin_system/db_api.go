@@ -288,9 +288,16 @@ func checkEntityIDOpts(L *lua.LState, argIdx int, tbl *lua.LTable) {
 		}
 	}
 	for _, key := range idListOptionKeys {
-		list, ok := tbl.RawGetString(key).(*lua.LTable)
-		if !ok {
+		v := tbl.RawGetString(key)
+		if v == lua.LNil {
 			continue
+		}
+		list, ok := v.(*lua.LTable)
+		if !ok {
+			// Not "no ids": the adapter reads an unusable value as an empty
+			// list and clears the association. `tags = "photos"` must fail, not
+			// strip every tag.
+			L.ArgError(argIdx, fmt.Sprintf("%s must be an array of ids, got %s", key, v.Type()))
 		}
 		checkEntityIDList(L, argIdx, list)
 	}
@@ -831,6 +838,17 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.mrql_query(query, opts) -> result_table or (nil, error_string)
 	dbMod.RawSetString("mrql_query", L.NewFunction(func(L *lua.LState) int {
+		// Arguments are checked before availability: a malformed call is
+		// malformed whether or not the executor happens to be wired up, and
+		// answering "not available" would hide the real mistake.
+		query := L.CheckString(1)
+		optsTbl := L.OptTable(2, L.NewTable())
+		// scope_entity_id names an entity like any other id, and truncating it
+		// scopes the query to a different group's subtree.
+		if v := optsTbl.RawGetString("scope_entity_id"); v != lua.LNil && !validEntityIDValue(v, true) {
+			L.ArgError(2, fmt.Sprintf("scope_entity_id must be a whole number, got %v", v))
+		}
+
 		executor := pm.getMRQLExecutor()
 		if executor == nil {
 			L.Push(lua.LNil)
@@ -838,8 +856,6 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			return 2
 		}
 
-		query := L.CheckString(1)
-		optsTbl := L.OptTable(2, L.NewTable())
 		optsMap := luaTableToGoMap(optsTbl)
 
 		// Extract options

@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -224,5 +225,84 @@ func TestLuaConversion_KeepsDeepAcyclicData(t *testing.T) {
 	}
 	if result["leaf"] != "ok" {
 		t.Errorf("the leaf of 40 levels of acyclic nesting should survive, got %v", result)
+	}
+}
+
+// A value of the wrong shape where an id list belongs is not "no ids": the
+// adapter reads it as an empty list and clears the association.
+func TestDbApi_RejectsMalformedIDList(t *testing.T) {
+	got := renderWithQuerier(t, &mockWriterQuerier{}, `
+        local ok = pcall(function() return mah.db.update_resource(1, { name = "x", tags = "bad" }) end)
+        if ok then return "ACCEPTED" end
+        return "rejected"
+`)
+	if got != "rejected" {
+		t.Errorf("got %q, want a rejection", got)
+	}
+}
+
+// scope_entity_id names an entity like any other id, and truncating it scopes
+// the query to a different group's subtree.
+func TestDbApi_RejectsFractionalScopeEntityID(t *testing.T) {
+	got := renderWithQuerier(t, &mockWriterQuerier{}, `
+        local ok = pcall(function()
+            return mah.db.mrql_query("type=resource", { scope = "entity", entity_type = "group", scope_entity_id = 2.9 })
+        end)
+        if ok then return "ACCEPTED" end
+        return "rejected"
+`)
+	if got != "rejected" {
+		t.Errorf("got %q, want a rejection", got)
+	}
+}
+
+// The budget counts values emitted, not tables visited: a table shared by both
+// branches at each level is only a few dozen distinct tables, but re-expanding
+// a fat leaf under every path emits tens of thousands of copies of it.
+func TestLuaConversion_BoundsASharedDAG(t *testing.T) {
+	done := make(chan int, 1)
+	go func() {
+		L := lua.NewState()
+		defer L.Close()
+		leaf := L.NewTable()
+		for i := 0; i < 2000; i++ {
+			leaf.RawSetString(fmt.Sprintf("k%d", i), lua.LNumber(i))
+		}
+		current := leaf
+		for i := 0; i < 17; i++ {
+			wrapper := L.NewTable()
+			wrapper.RawSetString("a", current)
+			wrapper.RawSetString("b", current)
+			current = wrapper
+		}
+		done <- countValues(luaTableToGoMap(current))
+	}()
+
+	select {
+	case emitted := <-done:
+		if emitted > maxLuaConversionNodes+1000 {
+			t.Errorf("emitted %d values, want the budget to hold it near %d", emitted, maxLuaConversionNodes)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("converting a shared DAG did not terminate in time")
+	}
+}
+
+func countValues(v any) int {
+	switch val := v.(type) {
+	case map[string]any:
+		total := 0
+		for _, item := range val {
+			total += 1 + countValues(item)
+		}
+		return total
+	case []any:
+		total := 0
+		for _, item := range val {
+			total += 1 + countValues(item)
+		}
+		return total
+	default:
+		return 0
 	}
 }

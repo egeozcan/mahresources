@@ -317,23 +317,27 @@ func parseBlockTypeTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Pl
 		if filtersTbl, ok := v.(*lua.LTable); ok {
 			// note_type_ids
 			if ni := filtersTbl.RawGetString("note_type_ids"); ni != lua.LNil {
-				if niTbl, ok := ni.(*lua.LTable); ok {
-					ids, err := collectFilterIDs(cfg.Filters.NoteTypeIDs, niTbl, "filters.note_type_ids")
-					if err != nil {
-						return nil, err
-					}
-					cfg.Filters.NoteTypeIDs = ids
+				niTbl, ok := ni.(*lua.LTable)
+				if !ok {
+					return nil, fmt.Errorf("filters.note_type_ids must be an array of ids, got %s", ni.Type())
 				}
+				ids, err := collectFilterIDs(cfg.Filters.NoteTypeIDs, niTbl, "filters.note_type_ids")
+				if err != nil {
+					return nil, err
+				}
+				cfg.Filters.NoteTypeIDs = ids
 			}
 			// category_ids
 			if ci := filtersTbl.RawGetString("category_ids"); ci != lua.LNil {
-				if ciTbl, ok := ci.(*lua.LTable); ok {
-					ids, err := collectFilterIDs(cfg.Filters.CategoryIDs, ciTbl, "filters.category_ids")
-					if err != nil {
-						return nil, err
-					}
-					cfg.Filters.CategoryIDs = ids
+				ciTbl, ok := ci.(*lua.LTable)
+				if !ok {
+					return nil, fmt.Errorf("filters.category_ids must be an array of ids, got %s", ci.Type())
 				}
+				ids, err := collectFilterIDs(cfg.Filters.CategoryIDs, ciTbl, "filters.category_ids")
+				if err != nil {
+					return nil, err
+				}
+				cfg.Filters.CategoryIDs = ids
 			}
 		}
 	}

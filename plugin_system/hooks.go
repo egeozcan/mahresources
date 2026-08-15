@@ -95,13 +95,28 @@ func (c *luaConversion) enter(tbl *lua.LTable, depth int) bool {
 	if depth >= maxLuaConversionDepth || c.budget <= 0 || c.seen[tbl] {
 		return false
 	}
-	c.budget--
 	c.seen[tbl] = true
 	return true
 }
 
 func (c *luaConversion) leave(tbl *lua.LTable) {
 	delete(c.seen, tbl)
+}
+
+// spend charges one emitted value against the budget, reporting whether there
+// was room for it.
+//
+// The budget counts values produced, not tables visited. Counting tables bounds
+// the wrong thing: a table shared by both branches at each of 17 levels is only
+// a few dozen distinct tables, but re-expanding a fat leaf under each path
+// emits tens of thousands of copies of it. What must be bounded is the size of
+// the Go value being built.
+func (c *luaConversion) spend() bool {
+	if c.budget <= 0 {
+		return false
+	}
+	c.budget--
+	return true
 }
 
 // luaTableToGoMap converts a Lua table to a Go map.
@@ -117,6 +132,9 @@ func luaTableToGoMapDepth(tbl *lua.LTable, depth int, c *luaConversion) map[stri
 	defer c.leave(tbl)
 	tbl.ForEach(func(key, value lua.LValue) {
 		if k, ok := key.(lua.LString); ok {
+			if !c.spend() {
+				return
+			}
 			result[string(k)] = luaValueToGoDepth(value, depth+1, c)
 		}
 	})
@@ -141,9 +159,12 @@ func luaTableToGoDepth(tbl *lua.LTable, depth int, c *luaConversion) any {
 			totalKeys++
 		})
 		if totalKeys == maxN {
-			arr := make([]any, maxN)
+			arr := make([]any, 0, maxN)
 			for i := 1; i <= maxN; i++ {
-				arr[i-1] = luaValueToGoDepth(tbl.RawGetInt(i), depth+1, c)
+				if !c.spend() {
+					break
+				}
+				arr = append(arr, luaValueToGoDepth(tbl.RawGetInt(i), depth+1, c))
 			}
 			return arr
 		}
@@ -154,8 +175,14 @@ func luaTableToGoDepth(tbl *lua.LTable, depth int, c *luaConversion) any {
 	tbl.ForEach(func(key, value lua.LValue) {
 		switch k := key.(type) {
 		case lua.LString:
+			if !c.spend() {
+				return
+			}
 			result[string(k)] = luaValueToGoDepth(value, depth+1, c)
 		case lua.LNumber:
+			if !c.spend() {
+				return
+			}
 			result[lua.LVAsString(key)] = luaValueToGoDepth(value, depth+1, c)
 		}
 	})
