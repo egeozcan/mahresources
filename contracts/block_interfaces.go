@@ -35,6 +35,14 @@ type BlockRebalancer interface {
 	RebalanceBlockPositions(noteID uint) error
 }
 
+// BlockTypeFilterResolver resolves the two values a plugin block type's filters
+// are matched against — the note's own type and the Category of its owning
+// group — so the block-type listing can hide types the create path would
+// refuse. Either return may be nil.
+type BlockTypeFilterResolver interface {
+	BlockTypeFilterSubject(noteID uint) (noteTypeID *uint, ownerCategoryID *uint, err error)
+}
+
 // TableBlockQueryRunner combines block reading and query execution for table blocks.
 type TableBlockQueryRunner interface {
 	GetBlock(id uint) (*models.NoteBlock, error)

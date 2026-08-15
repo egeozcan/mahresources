@@ -1428,8 +1428,26 @@ html {
 
 .plugin-action-modal-result {
     padding: 1rem 1.25rem;
-    color: #047857;
     font-weight: 500;
+}
+
+.plugin-action-modal-result--ok {
+    color: #047857;
+}
+
+/* A refusal must not be styled as a success. */
+.plugin-action-modal-result--bad {
+    color: #b91c1c;
+}
+
+.plugin-action-modal-result-list {
+    margin: 0.5rem 0 0;
+    padding-left: 1.25rem;
+    list-style: disc;
+    font-size: 0.8125rem;
+    font-weight: 400;
+    max-height: 12rem;
+    overflow-y: auto;
 }
 
 .plugin-action-modal-error {

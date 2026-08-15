@@ -136,11 +136,61 @@ end
 // Hooks and async jobs have no request, so they must keep working when handed
 // no context at all.
 func TestRequestContext_NilContextFallsBackToBackground(t *testing.T) {
-	if got := vmParentContext(nil); got == nil {
+	got := vmParentContext(nil)
+	if got == nil {
 		t.Fatal("vmParentContext(nil) returned nil")
 	}
-	base := context.Background()
-	if got := vmParentContext(base); got != base {
-		t.Errorf("vmParentContext should pass a real context through unchanged")
+	if got.Err() != nil {
+		t.Errorf("vmParentContext(nil) should not be already cancelled")
+	}
+	// No request means nothing to be cancelled by.
+	if recovered := vmRequestContext(got); recovered.Done() != nil {
+		t.Error("vmRequestContext should give an uncancellable context when there is no request")
+	}
+}
+
+// A real context stays cancellable through the wrapper, and is recoverable
+// undeadlined for work allowed to outlive the Lua timeout (a 120s sync HTTP
+// call against a 5s render deadline).
+func TestRequestContext_ParentCancellationSurvivesWrapping(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	wrapped := vmParentContext(parent)
+
+	if wrapped.Err() != nil {
+		t.Fatal("wrapped context should start live")
+	}
+
+	recovered := vmRequestContext(wrapped)
+	if recovered != parent {
+		t.Errorf("vmRequestContext should recover the caller's own context")
+	}
+
+	cancel()
+	if wrapped.Err() == nil {
+		t.Error("cancelling the parent must cancel the wrapped context")
+	}
+	if recovered.Err() == nil {
+		t.Error("cancelling the parent must cancel the recovered context")
+	}
+}
+
+// The recovered context must NOT carry the Lua deadline, or a sync HTTP call
+// would be capped at the 5s render timeout instead of its own 120s.
+func TestRequestContext_RecoveredContextDropsTheLuaDeadline(t *testing.T) {
+	parent := context.Background()
+	timeoutCtx, cancel := context.WithTimeout(vmParentContext(parent), 5*time.Millisecond)
+	defer cancel()
+
+	recovered := vmRequestContext(timeoutCtx)
+	if _, hasDeadline := recovered.Deadline(); hasDeadline {
+		t.Error("the recovered context must not inherit the Lua deadline")
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	if timeoutCtx.Err() == nil {
+		t.Fatal("the Lua context should have expired")
+	}
+	if recovered.Err() != nil {
+		t.Error("the recovered context must outlive the expired Lua deadline")
 	}
 }

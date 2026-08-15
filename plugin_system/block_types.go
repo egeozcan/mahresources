@@ -16,9 +16,49 @@ import (
 var _ block_types.BlockType = (*PluginBlockType)(nil)
 
 // BlockTypeFilter restricts which notes/categories can use a plugin block type.
+//
+// NoteTypeIDs matches the note's own type. CategoryIDs matches the Category of
+// the note's owning Group — a note has no category of its own, so "available
+// only inside the Recipes category" means "owned by a group in that category".
 type BlockTypeFilter struct {
 	NoteTypeIDs []uint `json:"note_type_ids,omitempty"`
 	CategoryIDs []uint `json:"category_ids,omitempty"`
+}
+
+// Allows reports whether this filter admits a note with the given note type and
+// owning-group category. Both are pointers because either can be unset, and an
+// unset value cannot satisfy a filter that names specific ids.
+//
+// Filters are AND-joined: a block type declaring both must match both. An empty
+// filter admits everything.
+//
+// This is the single predicate behind both halves of the feature — the write
+// path that refuses a disallowed block, and the picker that does not offer it.
+// They were allowed to drift before: category_ids was parsed, stored and
+// shipped to the browser while nothing read it, and the picker listed every
+// type regardless, so a filtered type was offered on every note and failed only
+// after the click.
+func (f BlockTypeFilter) Allows(noteTypeID, ownerCategoryID *uint) bool {
+	if len(f.NoteTypeIDs) > 0 {
+		if noteTypeID == nil || !containsID(f.NoteTypeIDs, *noteTypeID) {
+			return false
+		}
+	}
+	if len(f.CategoryIDs) > 0 {
+		if ownerCategoryID == nil || !containsID(f.CategoryIDs, *ownerCategoryID) {
+			return false
+		}
+	}
+	return true
+}
+
+func containsID(ids []uint, id uint) bool {
+	for _, candidate := range ids {
+		if candidate == id {
+			return true
+		}
+	}
+	return false
 }
 
 // PluginBlockType implements the block_types.BlockType interface for plugin-defined

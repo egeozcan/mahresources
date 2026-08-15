@@ -350,7 +350,7 @@ func TestDocsPreviewBlockShortcodeNoNestedExpansion(t *testing.T) {
 	require.Len(t, items, 1)
 	require.Len(t, items[0].Examples, 1)
 
-	preview := renderExamplePreview(pm, "sc-preview", "plugin:sc-preview:echo", items[0].Examples[0])
+	preview := renderExamplePreview(context.Background(), pm, "sc-preview", "plugin:sc-preview:echo", items[0].Examples[0])
 	assert.Contains(t, preview, `[meta path="x"]`)
 	assert.NotContains(t, preview, "<meta-shortcode")
 }

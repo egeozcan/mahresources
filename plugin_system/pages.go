@@ -42,7 +42,7 @@ func (pm *PluginManager) HandlePage(reqCtx context.Context, pluginName, path str
 
 	// Fall through to auto-generated docs pages.
 	if !found {
-		return pm.HandleDocsPage(pluginName, path)
+		return pm.HandleDocsPage(reqCtx, pluginName, path)
 	}
 
 	L := entry.state

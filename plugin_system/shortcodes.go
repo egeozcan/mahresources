@@ -348,7 +348,7 @@ func entityFieldValue(fv reflect.Value) any {
 // renderShortcodeForDocs renders a shortcode in documentation preview mode.
 // It uses entityType "group" with entityID 0 and sets preview=true in the
 // context so plugins can disable side effects (e.g. meta-editors skip saves).
-func (pm *PluginManager) renderShortcodeForDocs(pluginName, fullTypeName string, meta json.RawMessage, attrs map[string]string, innerContent string, isBlock bool) (string, error) {
+func (pm *PluginManager) renderShortcodeForDocs(reqCtx context.Context, pluginName, fullTypeName string, meta json.RawMessage, attrs map[string]string, innerContent string, isBlock bool) (string, error) {
 	if pm.closed.Load() {
 		return "", fmt.Errorf("plugin manager is closed")
 	}
@@ -404,7 +404,7 @@ func (pm *PluginManager) renderShortcodeForDocs(pluginName, fullTypeName string,
 
 	tbl := goToLuaTable(L, ctxData)
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), luaShortcodeRenderTimeout)
+	timeoutCtx, cancel := context.WithTimeout(vmParentContext(reqCtx), luaShortcodeRenderTimeout)
 	L.SetContext(timeoutCtx)
 
 	err := L.CallByParam(lua.P{

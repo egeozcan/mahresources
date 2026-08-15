@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -151,7 +152,7 @@ func (pm *PluginManager) HasDocsPage(pluginName, path string) bool {
 }
 
 // HandleDocsPage generates the HTML for a docs index or detail page.
-func (pm *PluginManager) HandleDocsPage(pluginName, path string) (string, error) {
+func (pm *PluginManager) HandleDocsPage(reqCtx context.Context, pluginName, path string) (string, error) {
 	pm.mu.RLock()
 	items := pm.collectDocItems(pluginName)
 	pm.mu.RUnlock()
@@ -175,7 +176,7 @@ func (pm *PluginManager) HandleDocsPage(pluginName, path string) (string, error)
 				if i < len(items)-1 {
 					next = &items[i+1]
 				}
-				return renderDocsDetail(pm, pluginName, item, prev, next), nil
+				return renderDocsDetail(reqCtx, pm, pluginName, item, prev, next), nil
 			}
 		}
 	}
@@ -189,7 +190,7 @@ func (pm *PluginManager) HandleDocsPage(pluginName, path string) (string, error)
 
 // renderExamplePreview attempts to render a shortcode example with its example data.
 // Returns the rendered HTML or empty string if rendering fails or the code doesn't match.
-func renderExamplePreview(pm *PluginManager, pluginName, fullTypeName string, ex ShortcodeDocExample) string {
+func renderExamplePreview(reqCtx context.Context, pm *PluginManager, pluginName, fullTypeName string, ex ShortcodeDocExample) string {
 	// Parse the shortcode from the example code to extract attrs (use ParseWithBlocks to support block shortcodes)
 	parsed := shortcodes.ParseWithBlocks(ex.Code)
 	if len(parsed) != 1 || parsed[0].Name != fullTypeName {
@@ -202,7 +203,7 @@ func renderExamplePreview(pm *PluginManager, pluginName, fullTypeName string, ex
 		return ""
 	}
 
-	result, err := pm.renderShortcodeForDocs(pluginName, fullTypeName, metaJSON, parsed[0].Attrs, parsed[0].InnerContent, parsed[0].IsBlock)
+	result, err := pm.renderShortcodeForDocs(reqCtx, pluginName, fullTypeName, metaJSON, parsed[0].Attrs, parsed[0].InnerContent, parsed[0].IsBlock)
 	if err != nil {
 		log.Printf("[plugin] docs preview: render failed for %s: %v", fullTypeName, err)
 		return ""
@@ -295,7 +296,7 @@ func renderDocsIndex(pluginName string, items []docItem) string {
 	return b.String()
 }
 
-func renderDocsDetail(pm *PluginManager, pluginName string, item docItem, prev, next *docItem) string {
+func renderDocsDetail(reqCtx context.Context, pm *PluginManager, pluginName string, item docItem, prev, next *docItem) string {
 	var b strings.Builder
 
 	b.WriteString(`<div class="max-w-4xl mx-auto px-4 py-8">`)
@@ -408,7 +409,7 @@ func renderDocsDetail(pm *PluginManager, pluginName string, item docItem, prev, 
 
 			// Render live preview if example_data is provided and this is a shortcode
 			if item.Category == "Shortcode" && ex.ExampleData != nil && pm != nil {
-				if preview := renderExamplePreview(pm, pluginName, fullTypeName, ex); preview != "" {
+				if preview := renderExamplePreview(reqCtx, pm, pluginName, fullTypeName, ex); preview != "" {
 					b.WriteString(`<div class="px-4 py-3 border-b border-stone-200 bg-stone-50/50">`)
 					b.WriteString(`<div class="text-[10px] font-medium text-stone-400 uppercase tracking-wider mb-2">Preview</div>`)
 					b.WriteString(`<div>`)

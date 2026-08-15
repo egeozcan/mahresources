@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -176,7 +177,7 @@ func TestHandleDocsIndex(t *testing.T) {
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("indexed"))
 
-	html, err := pm.HandleDocsPage("indexed", "docs")
+	html, err := pm.HandleDocsPage(context.Background(), "indexed", "docs")
 	require.NoError(t, err)
 
 	assert.Contains(t, html, "indexed Documentation")
@@ -216,7 +217,7 @@ func TestHandleDocsDetail(t *testing.T) {
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("detailed"))
 
-	html, err := pm.HandleDocsPage("detailed", "docs/widget")
+	html, err := pm.HandleDocsPage(context.Background(), "detailed", "docs/widget")
 	require.NoError(t, err)
 
 	// Breadcrumb
@@ -337,19 +338,19 @@ func TestDocsPrevNextNavigation(t *testing.T) {
 	require.NoError(t, pm.EnablePlugin("nav-test"))
 
 	// First page: no prev, has next
-	html, err := pm.HandleDocsPage("nav-test", "docs/first")
+	html, err := pm.HandleDocsPage(context.Background(), "nav-test", "docs/first")
 	require.NoError(t, err)
 	assert.Contains(t, html, "Middle")
 	assert.NotContains(t, html, "&larr;")
 
 	// Middle page: has both
-	html, err = pm.HandleDocsPage("nav-test", "docs/middle")
+	html, err = pm.HandleDocsPage(context.Background(), "nav-test", "docs/middle")
 	require.NoError(t, err)
 	assert.Contains(t, html, "First")
 	assert.Contains(t, html, "Last")
 
 	// Last page: has prev, no next
-	html, err = pm.HandleDocsPage("nav-test", "docs/last")
+	html, err = pm.HandleDocsPage(context.Background(), "nav-test", "docs/last")
 	require.NoError(t, err)
 	assert.Contains(t, html, "Middle")
 	assert.NotContains(t, html, "&rarr;")
@@ -410,7 +411,7 @@ func TestGeneralDocDetailPage(t *testing.T) {
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("gen-detail"))
 
-	html, err := pm.HandleDocsPage("gen-detail", "docs/upscale")
+	html, err := pm.HandleDocsPage(context.Background(), "gen-detail", "docs/upscale")
 	require.NoError(t, err)
 
 	assert.Contains(t, html, "Upscale Action")
@@ -447,7 +448,7 @@ func TestMixedDocsIndex(t *testing.T) {
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("mixed"))
 
-	html, err := pm.HandleDocsPage("mixed", "docs")
+	html, err := pm.HandleDocsPage(context.Background(), "mixed", "docs")
 	require.NoError(t, err)
 
 	assert.Contains(t, html, "2 items")
@@ -600,7 +601,7 @@ func TestDocsDetailWithPreview(t *testing.T) {
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("preview"))
 
-	html, err := pm.HandleDocsPage("preview", "docs/badge")
+	html, err := pm.HandleDocsPage(context.Background(), "preview", "docs/badge")
 	require.NoError(t, err)
 
 	// Preview rendered output should appear for the first example
@@ -642,7 +643,7 @@ func TestDocsPreviewRenderError(t *testing.T) {
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("err-preview"))
 
-	html, err := pm.HandleDocsPage("err-preview", "docs/boom")
+	html, err := pm.HandleDocsPage(context.Background(), "err-preview", "docs/boom")
 	require.NoError(t, err)
 
 	// Page should render successfully, just without preview
@@ -678,7 +679,7 @@ func TestDocsPreviewEmptyExampleData(t *testing.T) {
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("empty-data"))
 
-	html, err := pm.HandleDocsPage("empty-data", "docs/widget")
+	html, err := pm.HandleDocsPage(context.Background(), "empty-data", "docs/widget")
 	require.NoError(t, err)
 
 	// Empty example_data (non-nil) should still trigger preview
@@ -717,7 +718,7 @@ func TestDocsPreviewContextHasPreviewFlag(t *testing.T) {
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("flag-check"))
 
-	html, err := pm.HandleDocsPage("flag-check", "docs/check")
+	html, err := pm.HandleDocsPage(context.Background(), "flag-check", "docs/check")
 	require.NoError(t, err)
 
 	assert.Contains(t, html, "PREVIEW_MODE")
@@ -756,7 +757,7 @@ func TestDocsPreviewSkipsMismatchedCode(t *testing.T) {
 	defer pm.Close()
 	require.NoError(t, pm.EnablePlugin("mismatch"))
 
-	html, err := pm.HandleDocsPage("mismatch", "docs/alpha")
+	html, err := pm.HandleDocsPage(context.Background(), "mismatch", "docs/alpha")
 	require.NoError(t, err)
 
 	// Alpha's example has code referencing beta — preview should be skipped

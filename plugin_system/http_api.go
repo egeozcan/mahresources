@@ -156,7 +156,12 @@ func (pm *PluginManager) executeSyncHttpRequest(method, url, body string, header
 		}
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// The Lua deadline is dropped (a 5s render timeout must not cap a 120s
+	// call), but the caller's cancellation is kept: hung against Background
+	// this held the plugin's exclusive VM lock for the full timeout after the
+	// client had already gone away. vmRequestContext yields Background when
+	// there is no request, which is the hook and async-job case.
+	ctx, cancel := context.WithTimeout(vmRequestContext(savedCtx), timeout)
 	defer cancel()
 
 	var bodyReader io.Reader

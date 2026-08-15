@@ -698,10 +698,15 @@ end
 	}
 }
 
-func TestActionRegistration_RejectsRequiredWithShowWhen(t *testing.T) {
+// required + show_when was rejected at registration while validation checked
+// Required with no notion of visibility. ValidateActionParams now resolves
+// visibility from the submitted values first, so the pair is meaningful: the
+// field is mandatory exactly in the branch that shows it. Behaviour is covered
+// in show_when_test.go; this pins that registration accepts it.
+func TestActionRegistration_AllowsRequiredWithShowWhen(t *testing.T) {
 	dir := t.TempDir()
-	writePlugin(t, dir, "bad-plugin", `
-plugin = { name = "bad-plugin", version = "1.0", description = "" }
+	writePlugin(t, dir, "branchy-plugin", `
+plugin = { name = "branchy-plugin", version = "1.0", description = "" }
 function init()
     mah.action({
         id = "x", label = "X", entity = "resource",
@@ -719,9 +724,8 @@ end
 		t.Fatalf("NewPluginManager: %v", err)
 	}
 	defer pm.Close()
-	err = pm.EnablePlugin("bad-plugin")
-	if err == nil || !strings.Contains(err.Error(), "required") || !strings.Contains(err.Error(), "show_when") {
-		t.Errorf("expected required+show_when rejection, got: %v", err)
+	if err := pm.EnablePlugin("branchy-plugin"); err != nil {
+		t.Fatalf("required + show_when should register, got: %v", err)
 	}
 }
 

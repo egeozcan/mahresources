@@ -26,6 +26,29 @@ import (
 // This prevents memory exhaustion from malicious or corrupted calendar URLs.
 const maxICSFileSize = 10 * 1024 * 1024
 
+// BlockTypeFilterSubject returns the two values a plugin block type's filters
+// are matched against: the note's own type, and the Category of the group that
+// owns it. Either may be nil (an untyped note, an unowned note, or an owner
+// with no category), which a filter naming specific ids will not match.
+//
+// It is one query rather than GetNote's full preload: the write path calls it
+// per block create, and the block-type listing calls it per page render.
+func (ctx *MahresourcesContext) BlockTypeFilterSubject(noteID uint) (noteTypeID *uint, ownerCategoryID *uint, err error) {
+	var row struct {
+		NoteTypeId      *uint
+		OwnerCategoryId *uint
+	}
+	err = ctx.db.Model(&models.Note{}).
+		Select("notes.note_type_id AS note_type_id, groups.category_id AS owner_category_id").
+		Joins("LEFT JOIN groups ON groups.id = notes.owner_id").
+		Where("notes.id = ?", noteID).
+		Take(&row).Error
+	if err != nil {
+		return nil, nil, err
+	}
+	return row.NoteTypeId, row.OwnerCategoryId, nil
+}
+
 // CreateBlock creates a new block in a note
 func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor) (*models.NoteBlock, error) {
 	// Validate note exists
@@ -42,20 +65,13 @@ func (ctx *MahresourcesContext) CreateBlock(editor *query_models.NoteBlockEditor
 
 	// Enforce plugin block type filters
 	if pbt, ok := bt.(*plugin_system.PluginBlockType); ok {
-		if len(pbt.Filters.NoteTypeIDs) > 0 {
-			note, err := ctx.GetNote(editor.NoteID)
+		if len(pbt.Filters.NoteTypeIDs) > 0 || len(pbt.Filters.CategoryIDs) > 0 {
+			noteTypeID, ownerCategoryID, err := ctx.BlockTypeFilterSubject(editor.NoteID)
 			if err != nil {
 				return nil, fmt.Errorf("cannot verify block type filters: %w", err)
 			}
-			found := false
-			for _, id := range pbt.Filters.NoteTypeIDs {
-				if note.NoteTypeId != nil && *note.NoteTypeId == id {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, fmt.Errorf("block type %q is not available for this note type", editor.Type)
+			if !pbt.Filters.Allows(noteTypeID, ownerCategoryID) {
+				return nil, fmt.Errorf("block type %q is not available for this note", editor.Type)
 			}
 		}
 	}

@@ -58,13 +58,104 @@ func (pm *PluginManager) FindAction(pluginName, actionID string) (ActionRegistra
 	return action, state, nil
 }
 
+// paramVisible evaluates a param's show_when against the submitted values.
+//
+// This mirrors isParamVisible in src/components/pluginActionModal.js, which is
+// the specification: every key must match (AND), an array-valued expectation
+// means "one of", and anything else is compared for equality. Numbers are
+// compared numerically because a value that arrived as JSON and one that came
+// from a Lua registration are both float64 but a caller may send an int.
+//
+// A controller that is itself absent from the submitted map makes the dependent
+// param invisible. That is the one place server and client can disagree — the
+// client evaluates against its live form state, where a hidden controller still
+// holds a value — and it errs toward not validating rather than toward
+// rejecting an input the user was never shown.
+func paramVisible(p ActionParam, params map[string]any) bool {
+	if len(p.ShowWhen) == 0 {
+		return true
+	}
+	for key, expected := range p.ShowWhen {
+		actual, exists := params[key]
+		if !exists {
+			return false
+		}
+		if options, ok := expected.([]any); ok {
+			matched := false
+			for _, option := range options {
+				if paramValuesEqual(option, actual) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+			continue
+		}
+		if !paramValuesEqual(expected, actual) {
+			return false
+		}
+	}
+	return true
+}
+
+// paramValuesEqual compares two submitted-value-shaped values, treating all
+// numeric types as comparable so an int from JSON matches a float64 from Lua.
+func paramValuesEqual(a, b any) bool {
+	if an, aok := paramNumeric(a); aok {
+		if bn, bok := paramNumeric(b); bok {
+			return an == bn
+		}
+		return false
+	}
+	return a == b
+}
+
+func paramNumeric(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	default:
+		return 0, false
+	}
+}
+
 // ValidateActionParams validates the provided params against the action's
 // parameter definitions. It checks required fields, select option validity,
 // and number range constraints.
+//
+// Visibility is resolved first, from the submitted values. A param hidden by
+// its show_when is not validated, and its submitted value is REMOVED from
+// params, so the handler sees the same absence the UI implied. The browser
+// already strips hidden params, but a direct API caller does not, and a handler
+// that assumed show_when meant absence was wrong for exactly that caller.
 func ValidateActionParams(action ActionRegistration, params map[string]any) []ValidationError {
 	var errs []ValidationError
 
+	// Computed against the submitted map before anything is dropped, so one
+	// hidden param cannot cascade into hiding a sibling that was visible.
+	visible := make(map[string]bool, len(action.Params))
 	for _, p := range action.Params {
+		visible[p.Name] = paramVisible(p, params)
+	}
+
+	for _, p := range action.Params {
+		if !visible[p.Name] {
+			// Never reaches the handler: the user was not shown this field, so
+			// a value for it did not come from them.
+			delete(params, p.Name)
+			continue
+		}
+
 		val, exists := params[p.Name]
 
 		// Required check.

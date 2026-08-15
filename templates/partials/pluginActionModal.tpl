@@ -22,9 +22,28 @@
                     <p class="plugin-action-modal-confirm" x-text="action.confirm"></p>
                 </template>
 
+                {# A refusal is announced as one. Failures take role="alert" so a  #}
+                {# screen reader interrupts with them, keep the modal open (the   #}
+                {# success path closes and reloads on a timer), and list which of #}
+                {# a bulk run's entities failed.                                  #}
                 <template x-if="result">
-                    <div class="plugin-action-modal-result" role="status">
-                        <p x-text="result.message || 'Action completed successfully'"></p>
+                    <div class="plugin-action-modal-result"
+                         :class="resultState === 'ok' ? 'plugin-action-modal-result--ok' : 'plugin-action-modal-result--bad'"
+                         :role="resultState === 'ok' ? 'status' : 'alert'">
+                        <p x-text="resultMessage()"></p>
+                        <template x-if="resultDetails.length > 0">
+                            <ul class="plugin-action-modal-result-list">
+                                <template x-for="detail in resultDetails" :key="detail.id ?? detail.message">
+                                    <li>
+                                        <span x-show="detail.id !== null" x-text="'#' + detail.id + ': '"></span>
+                                        <span x-text="detail.message"></span>
+                                    </li>
+                                </template>
+                            </ul>
+                        </template>
+                        <div class="plugin-action-modal-actions" x-show="resultState !== 'ok'">
+                            <button type="button" @click="close()" class="btn btn-secondary">Close</button>
+                        </div>
                     </div>
                 </template>
 

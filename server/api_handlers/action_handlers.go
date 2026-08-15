@@ -215,17 +215,20 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 			}
 		} else {
 			// Sync execution: run for each entity ID and collect results.
-			// One MRQL cache for the whole bulk run: it is one request, and a
-			// bulk action that asks the same question per entity should pay for
-			// it once.
-			actionCtx := plugin_system.WithMRQLCache(r.Context())
 			results := make([]*plugin_system.ActionResult, 0, len(req.EntityIDs))
 			for _, eid := range req.EntityIDs {
 				if r.Context().Err() != nil {
 					http_utils.HandleError(fmt.Errorf("request cancelled"), w, r, http.StatusRequestTimeout)
 					return
 				}
-				result, err := pm.RunAction(actionCtx, req.Plugin, req.Action, eid, req.Params)
+				// A cache per entity, not per request. An action is a write:
+				// one that queries "unprocessed resources" and then marks the
+				// current one processed would serve the next entity in the
+				// batch the answer from before its own write, because two
+				// entities under one owner group resolve to the same cache key
+				// and nothing invalidates the cache. Within a single entity's
+				// handler, repeated identical queries still collapse.
+				result, err := pm.RunAction(plugin_system.WithMRQLCache(r.Context()), req.Plugin, req.Action, eid, req.Params)
 				if err != nil {
 					http_utils.HandleError(fmt.Errorf("action failed for entity %d: %w", eid, err), w, r, http.StatusInternalServerError)
 					return

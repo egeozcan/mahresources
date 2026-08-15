@@ -1173,6 +1173,10 @@ func (pm *PluginManager) VMLock(L *lua.LState) *sync.Mutex {
 // holding this same mutex, so a caller that wins the race sees the entry, and a
 // caller that loses it sees the entry gone and backs out.
 //
+// vmRequestKey carries the caller's own context, undeadlined, inside the
+// timeout-wrapped context a VM entry point installs on the LState.
+type vmRequestKey struct{}
+
 // vmParentContext is the context a VM entry point should hang its timeout off.
 //
 // Entry points that serve a request pass r.Context(), so an abandoned request
@@ -1181,11 +1185,34 @@ func (pm *PluginManager) VMLock(L *lua.LState) *sync.Mutex {
 // timeout. It also carries the per-request MRQL cache, which mah.db.mrql_query
 // reads off L.Context(). Entry points with no request (hooks, async action
 // jobs) pass nil and get Background.
+//
+// The caller's context is also stashed as a value, so work that must outlive
+// the Lua deadline — a sync HTTP call, which is allowed 120s against a 5s Lua
+// timeout — can still be cancelled by a client disconnect. See
+// vmRequestContext.
 func vmParentContext(ctx context.Context) context.Context {
 	if ctx == nil {
 		return context.Background()
 	}
-	return ctx
+	return context.WithValue(ctx, vmRequestKey{}, ctx)
+}
+
+// vmRequestContext recovers the caller's context from a context installed by
+// vmParentContext: cancelled when the request is, but carrying none of the Lua
+// deadline. A blocking call that legitimately outlives the Lua timeout hangs
+// its own, longer deadline off this rather than off Background, so a client
+// that goes away stops it instead of leaving it holding the VM lock.
+//
+// Falls back to Background, which is the correct answer for a hook or an async
+// job: there is no request to be cancelled by.
+func vmRequestContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	if v, ok := ctx.Value(vmRequestKey{}).(context.Context); ok && v != nil {
+		return v
+	}
+	return context.Background()
 }
 
 // Lock ordering is mu then pm.mu, matching DisablePlugin. Nothing may take a VM

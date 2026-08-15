@@ -225,7 +225,15 @@ export function blockEditor(noteId, initialBlocks = []) {
 
     async loadBlockTypes() {
       try {
-        const res = await fetch('/v1/note/block/types');
+        // Scoped to this note, so the picker offers only what CreateBlock will
+        // accept. The matching rules live on the server: a note's owning-group
+        // category is not available in the browser, and duplicating the rules
+        // here is what let the picker and the write path disagree — a filtered
+        // type was offered on every note and errored after the click.
+        const url = this.noteId
+          ? `/v1/note/block/types?noteId=${encodeURIComponent(this.noteId)}`
+          : '/v1/note/block/types';
+        const res = await fetch(url);
         if (res.ok) {
           const types = await res.json();
           // Update blockTypes with data from server

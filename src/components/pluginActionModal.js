@@ -8,6 +8,18 @@ export function pluginActionModal() {
         errors: {},
         submitting: false,
         result: null,
+        // What the run actually did. A sync handler CAN refuse — it returns
+        // {success=false}, and mah.abort on the sync path produces the same
+        // shape with a 200 — and every refusal used to be announced as
+        // "Action completed successfully" in a role="status" box, after which
+        // the page reloaded anyway. 'ok' | 'failed' | 'partial'.
+        resultState: null,
+        // Per-entity failures from a bulk run, so "3 of 50 failed" can say which.
+        resultDetails: [],
+        // A run that changed something leaves the page stale even when it also
+        // failed, so a partial run reloads when the reader dismisses it rather
+        // than under them while they are still reading why.
+        _reloadOnClose: false,
         // The control the reader pressed to get here. Captured at open, because by
         // the time this modal hands over to the jobs panel its own Run button has
         // focus and is about to be removed by the x-if — see submit().
@@ -45,6 +57,9 @@ export function pluginActionModal() {
             this.action = action;
             this.errors = {};
             this.result = null;
+            this.resultState = null;
+            this.resultDetails = [];
+            this._reloadOnClose = false;
             this.submitting = false;
             this.formValues = {};
             if (action.params) {
@@ -140,9 +155,18 @@ export function pluginActionModal() {
          */
         close({ handOff = false } = {}) {
             const opener = this._opener;
+            const reload = this._reloadOnClose;
             this.isOpen = false;
             this.action = null;
+            this._reloadOnClose = false;
             if (handOff) return;
+            // A partly-successful run changed something, so the page behind this
+            // modal is stale. Reloading on dismissal rather than on a timer is
+            // what lets the reader finish reading which entities failed.
+            if (reload) {
+                window.location.reload();
+                return;
+            }
             this.$nextTick(() => restoreFocus(opener));
         },
 
@@ -158,6 +182,67 @@ export function pluginActionModal() {
                 }
             }
             return true;
+        },
+
+        /**
+         * Read a sync run's outcome off the response.
+         *
+         * The server has always sent it and the modal has always ignored it: a
+         * single run answers with the ActionResult itself ({success, message}),
+         * a bulk run with {results: [ActionResult, ...]}. Neither carries a job
+         * id or a redirect, so both landed in the same branch that announced
+         * success unconditionally and reloaded the page 1.5s later — including
+         * for a handler that refused, and for a bulk run where every entity
+         * failed.
+         */
+        applyResult(data) {
+            this.result = data;
+            this.resultDetails = [];
+
+            const entries = Array.isArray(data?.results) ? data.results : null;
+            if (!entries) {
+                // Single run. `success` is a plain bool on the wire, so it is
+                // always present; treat a malformed response as a failure
+                // rather than announcing a success nobody reported.
+                this.resultState = data?.success === true ? 'ok' : 'failed';
+                return;
+            }
+
+            const failed = [];
+            entries.forEach((entry, i) => {
+                if (entry?.success === true) return;
+                const id = this.action?.entityIds?.[i];
+                failed.push({
+                    id: id ?? null,
+                    message: entry?.message || 'failed',
+                });
+            });
+
+            this.resultDetails = failed;
+            if (failed.length === 0) {
+                this.resultState = 'ok';
+            } else if (failed.length === entries.length) {
+                this.resultState = 'failed';
+            } else {
+                this.resultState = 'partial';
+                // Some entities were changed, so the page behind us is stale.
+                this._reloadOnClose = true;
+            }
+        },
+
+        /** The headline shown in the result box. */
+        resultMessage() {
+            const entries = Array.isArray(this.result?.results) ? this.result.results : null;
+            if (!entries) {
+                return this.result?.message
+                    || (this.resultState === 'ok' ? 'Action completed successfully' : 'Action failed');
+            }
+            const failures = this.resultDetails.length;
+            const total = entries.length;
+            if (failures === 0) {
+                return `Action completed successfully on ${total} ${total === 1 ? 'entity' : 'entities'}`;
+            }
+            return `${failures} of ${total} failed`;
         },
 
         async submit() {
@@ -254,7 +339,8 @@ export function pluginActionModal() {
                 } else if (data.redirect) {
                     window.location.href = data.redirect;
                 } else {
-                    this.result = data;
+                    this.applyResult(data);
+                    if (this.resultState !== 'ok') return;
                     setTimeout(() => {
                         // Guarded like the rest of the continuation: this fires a
                         // second and a half later, by which time the reader may have

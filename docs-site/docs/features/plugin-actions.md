@@ -109,20 +109,49 @@ The `entity_ref` param type lets a plugin action accept references to one or mor
 
 ### Constraints
 
-- `required = true` cannot be combined with `show_when` (any param type, not just `entity_ref`). The server validates required fields before show_when stripping; a hidden required field would fail validation as missing. Workaround: leave `required` false and validate in the handler.
 - `default = "both"` requires `multi = true`.
 - `entity` must be one of `"resource"`, `"note"`, `"group"`. Other values are rejected at plugin load time.
 
-## `show_when` Array Values
+## `show_when`
 
-`show_when` accepts arrays as any-of equality:
+`show_when` gates a param on the values of other params. Every key must match
+(AND-joined), and an array value means any-of:
 
 ```lua
 show_when = { model = {"flux2", "flux2pro", "nanobanana2"} }
--- Visible when formValues.model is any of the listed values.
+-- Visible when model is any of the listed values.
+
+show_when = { model = "b", advanced = true }
+-- Visible only when BOTH hold.
 ```
 
-Scalar values continue to use strict equality (existing behavior, unchanged).
+Scalar values use strict equality, except that numbers compare numerically
+regardless of how they arrived.
+
+### It is enforced on the server, not just drawn in the browser
+
+Visibility is resolved from the submitted values **before** validation runs:
+
+- A hidden param is **not validated**, so `required = true` combines with
+  `show_when`. A mandatory field inside a branch is enforced exactly when the
+  user is in that branch -- previously the pair was rejected at plugin load and
+  the workaround was to mark nothing required and re-check in Lua.
+- A hidden param's submitted value is **dropped before the handler sees it**.
+  The modal already strips hidden params, but a direct API caller does not, so a
+  handler that assumed `show_when` implied absence was wrong for that caller.
+- A param whose controlling param is **absent** from the request counts as
+  hidden. That is the one point where the server can disagree with the browser,
+  which evaluates against its live form state, and it errs toward not
+  validating rather than toward rejecting a field the user was never shown.
+
+```lua
+params = {
+    { name = "mode", type = "select", label = "Mode", options = {"simple", "scheduled"}, default = "simple" },
+    -- Mandatory, but only in the branch that shows it.
+    { name = "publish_at", type = "text", label = "Publish at", required = true,
+      show_when = { mode = "scheduled" } },
+}
+```
 
 ## Action Filters
 
@@ -190,6 +219,31 @@ mah.action({
 | `redirect` | string | Optional URL to redirect to after completion |
 | `job_id` | string | Optional job ID a sync handler can return as a poll handle |
 | `data` | table | Optional additional data |
+
+### How the modal reports a sync result
+
+`success` is honoured, so a handler can refuse and say why:
+
+- `success = true` -- the result is announced in a `role="status"` box and the
+  page reloads after 1.5s.
+- `success = false` (including `mah.abort` on the sync path) -- the `message` is
+  shown as an error in a `role="alert"` box, the modal stays open, and the page
+  does **not** reload, so the reason stays readable.
+- A **bulk** run answers with one result per selected entity. The modal reports
+  how many failed and lists them by entity ID. If some succeeded, the page
+  reloads when the reader dismisses the result rather than under them while they
+  are still reading it.
+
+Return a message with a refusal -- it is the only thing the user will see:
+
+```lua
+handler = function(ctx)
+    if not mah.get_setting("api_key") then
+        return { success = false, message = "Set the API key in plugin settings first" }
+    end
+    -- ...
+end
+```
 
 ## Asynchronous Execution
 

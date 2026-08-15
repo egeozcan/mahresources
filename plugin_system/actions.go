@@ -9,11 +9,12 @@ import (
 
 // ActionParam describes a single parameter for a plugin action.
 //
-// ShowWhen, when set, gates the param's visibility in the action modal:
-// the param renders only if every key in the map equals the live form
-// value for that key (AND-joined equality). Hidden params are also
-// skipped during required-field validation. The map is plumbed verbatim
-// to the frontend, which interprets it identically.
+// ShowWhen, when set, gates the param's visibility: the param applies only if
+// every key in the map equals the submitted value for that key (AND-joined
+// equality; an array-valued expectation means "one of"). Hidden params are
+// skipped during required-field validation and their submitted values are
+// dropped. The map is plumbed verbatim to the frontend, which interprets it
+// identically — see isParamVisible in src/components/pluginActionModal.js.
 type ActionParam struct {
 	Name        string         `json:"name"`
 	Type        string         `json:"type"` // text, textarea, number, select, boolean, hidden, info, entity_ref
@@ -218,13 +219,10 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 
 	// Validate all params.
 	for i, p := range a.Params {
-		// required=true cannot be combined with show_when: the server validates
-		// required fields before show_when stripping, so a hidden param would
-		// always fail the required check when the controlling param hides it.
-		if p.Required && len(p.ShowWhen) > 0 {
-			return nil, fmt.Errorf("param %q: required=true cannot be combined with show_when (server validates required before show_when stripping; see spec)", p.Name)
-		}
-
+		// required=true combined with show_when is allowed: ValidateActionParams
+		// computes visibility from the submitted values before it checks
+		// Required, so a mandatory field inside a branch is enforced exactly
+		// when its branch is the one the user is in.
 		if p.Type == "entity_ref" {
 			if p.Entity == "" {
 				return nil, fmt.Errorf("param %q: type 'entity_ref' requires 'entity' field", p.Name)

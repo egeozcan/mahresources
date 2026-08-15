@@ -879,6 +879,25 @@ Register a custom block type for the note block editor. Call during `init()`.
 | `config.default_state` | table | No | Default state for new blocks |
 | `config.filters` | table | No | Restrict availability by `note_type_ids` and/or `category_ids` |
 
+### Filters
+
+```lua
+filters = {
+    note_type_ids = {2},   -- the note's own Note Type
+    category_ids  = {7},   -- the Category of the note's OWNING GROUP
+}
+```
+
+A note has no category of its own, so `category_ids` means "owned by a group in
+one of these categories". Both filters are AND-joined, and an empty filter
+admits every note. A note that is untyped cannot satisfy `note_type_ids`, and
+one that is unowned (or owned by a group with no category) cannot satisfy
+`category_ids` -- an unset value is not a wildcard.
+
+The same rule governs both halves: the "+ Add Block" picker lists only the types
+a note may use (`GET /v1/note/block/types?noteId=N`), and creating a block the
+filters exclude is refused.
+
 ### Render Functions
 
 Both `render_view` and `render_edit` receive a context table:

@@ -237,8 +237,27 @@ type BlockTypeInfo struct {
 // GetBlockTypesHandler returns all registered block types with their defaults.
 // This allows the frontend to dynamically discover available block types
 // instead of hardcoding them.
-func GetBlockTypesHandler() func(http.ResponseWriter, *http.Request) {
+//
+// With ?noteId=N it returns only the types that note may actually use, applying
+// the same BlockTypeFilter predicate CreateBlock enforces. Filtering here rather
+// than in the picker keeps one implementation of the matching rules: the note's
+// owning-group category is not present in the browser at all, so the client
+// could not apply them even if we wanted it to. Without noteId the response is
+// unfiltered, which is what every other caller gets today.
+func GetBlockTypesHandler(ctx contracts.BlockTypeFilterResolver) func(http.ResponseWriter, *http.Request) {
 	return func(writer http.ResponseWriter, request *http.Request) {
+		var noteTypeID, ownerCategoryID *uint
+		filterToNote := false
+		if noteID := uint(http_utils.GetIntQueryParameter(request, "noteId", 0)); noteID > 0 && ctx != nil {
+			resolvedNoteType, resolvedCategory, err := ctx.BlockTypeFilterSubject(noteID)
+			if err != nil {
+				http_utils.HandleError(err, writer, request, http.StatusNotFound)
+				return
+			}
+			noteTypeID, ownerCategoryID = resolvedNoteType, resolvedCategory
+			filterToNote = true
+		}
+
 		allTypes := block_types.GetAllBlockTypes()
 		result := make([]BlockTypeInfo, 0, len(allTypes))
 
@@ -250,6 +269,9 @@ func GetBlockTypesHandler() func(http.ResponseWriter, *http.Request) {
 			}
 
 			if pbt, ok := bt.(*plugin_system.PluginBlockType); ok {
+				if filterToNote && !pbt.Filters.Allows(noteTypeID, ownerCategoryID) {
+					continue
+				}
 				info.Label = pbt.Label
 				info.Icon = pbt.Icon
 				info.Description = pbt.Description
