@@ -112,9 +112,14 @@ end
 -- raises an error via `error()` if the resource can't be loaded or is in an
 -- unsupported format.
 local function build_data_uri(resource_id)
-    local base64_data, mime_type = mah.db.get_resource_data(resource_id)
+    -- The reason is the third return value. It matters here: "file too large
+    -- (max 52428800 bytes)" and "storage not available" are very different
+    -- problems for whoever is looking at the failed job, and both used to
+    -- surface as the same "Failed to read resource file data".
+    local base64_data, mime_type, err = mah.db.get_resource_data(resource_id)
     if not base64_data then
-        error("Failed to read resource file data for #" .. tostring(resource_id))
+        error("Failed to read resource file data for #" .. tostring(resource_id)
+            .. (err and (": " .. err) or ""))
     end
     if not SUPPORTED_TYPES[mime_type] then
         error("Unsupported image format: " .. mime_type .. " for resource #" .. tostring(resource_id))

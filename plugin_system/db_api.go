@@ -471,18 +471,32 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 	registerCounter("count_resources", func(db EntityQuerier, f map[string]any) (int64, error) { return db.CountResources(f) })
 	registerCounter("count_groups", func(db EntityQuerier, f map[string]any) (int64, error) { return db.CountGroups(f) })
 
-	// mah.db.get_resource_data(id) -> base64_string, mime_type or nil
+	// mah.db.get_resource_data(id) -> (base64_string, mime_type) or (nil, nil, error)
+	//
+	// The error is the THIRD value, not the second: success already occupies two
+	// slots, and putting it second would hand the caller an error string where
+	// it expects a MIME type.
+	//
+	// Unlike the entity getters, this does not separate "not found" from
+	// "failed". A caller is about to use the bytes; if it cannot have them it
+	// wants the reason, and "no such resource" is as good a reason as "file too
+	// large (max 50MB)" or "storage not available" — all three used to arrive as
+	// the same bare nil.
 	dbMod.RawSetString("get_resource_data", L.NewFunction(func(L *lua.LState) int {
 		db := pm.getDbProvider()
 		if db == nil {
 			L.Push(lua.LNil)
-			return 1
+			L.Push(lua.LNil)
+			L.Push(lua.LString("database not available"))
+			return 3
 		}
 		id := checkEntityID(L, 1)
 		base64Data, mimeType, err := db.GetResourceFileData(id)
 		if err != nil {
 			L.Push(lua.LNil)
-			return 1
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 3
 		}
 		L.Push(lua.LString(base64Data))
 		L.Push(lua.LString(mimeType))

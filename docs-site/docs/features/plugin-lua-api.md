@@ -25,9 +25,11 @@ Full CRUD access to all entity types, plus relationship management and resource 
 
 ### Reads and Errors
 
-Every read returns two values: the result, and an error string. A read that
-failed returns `nil, error_string`; a getter that simply found nothing returns
-`nil` with no error. That distinction matters: without it a plugin cannot tell
+Every read returns its result plus an error string. A read that failed returns
+`nil, error_string`; a getter that simply found nothing returns `nil` with no
+error. (`get_resource_data` is the one exception to the *position*: it already
+returns two values on success, so its error is the third -- see
+[Resource File Access](#resource-file-access).) That distinction matters: without it a plugin cannot tell
 an empty library from a database outage, and any branch that archives, deletes
 or re-uploads on "no rows" acts on a false premise.
 
@@ -226,10 +228,24 @@ Runs an [MRQL](./mrql.md) query and returns a result table (`{entity_type, mode,
 ### Resource File Access
 
 ```lua
-local base64_data, mime_type = mah.db.get_resource_data(id)
+local base64_data, mime_type, err = mah.db.get_resource_data(id)
+if not base64_data then
+    return "could not read the file: " .. err
+end
 ```
 
-Returns base64-encoded file content and MIME type string. Maximum file size: **50 MB**. Returns `nil` on error or if the file exceeds the size limit.
+Returns base64-encoded file content and MIME type string. Maximum file size:
+**50 MB**.
+
+The error is the **third** value, not the second -- success already occupies two
+slots, so an error in the second would arrive where the caller expects a MIME
+type. The two-value form keeps working; the third is simply absent on success.
+
+Unlike the entity getters, this does not separate "not found" from "failed": a
+caller is about to use the bytes, and if it cannot have them it wants the reason.
+`file too large (max 52428800 bytes)`, `storage not available` and a missing
+resource are all reported, where previously all three arrived as the same bare
+`nil`.
 
 ### Resource Creation
 

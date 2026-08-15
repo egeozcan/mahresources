@@ -375,3 +375,44 @@ func TestDbApi_UpdateResourceReportsFailure(t *testing.T) {
 		t.Errorf("got %q, want %q", got, "err:resource not found")
 	}
 }
+
+// get_resource_data returns two values on success, so its error is the THIRD —
+// putting it second would hand the caller an error string where it expects a
+// MIME type. Before this, "no such resource", "file too large (max 50MB)" and
+// "storage not available" all arrived as the same bare nil.
+func TestDbApi_GetResourceDataReportsFailure(t *testing.T) {
+	got := renderWithQuerier(t, &mockQuerier{}, `
+        local data, mime, err = mah.db.get_resource_data(999)
+        if data ~= nil then return "unexpected data" end
+        if mime ~= nil then return "mime should be nil, not the error" end
+        if err == nil then return "NO ERROR" end
+        return "err:" .. err
+`)
+	if got != "err:not found" {
+		t.Errorf("got %q, want %q", got, "err:not found")
+	}
+}
+
+// Success is unchanged: two values, and a third that is simply absent.
+func TestDbApi_GetResourceDataSuccessArityUnchanged(t *testing.T) {
+	got := renderWithQuerier(t, &mockQuerier{}, `
+        local data, mime, err = mah.db.get_resource_data(1)
+        if err ~= nil then return "unexpected error: " .. err end
+        return mime .. "|" .. tostring(#data > 0)
+`)
+	if got != "image/jpeg|true" {
+		t.Errorf("got %q, want %q", got, "image/jpeg|true")
+	}
+}
+
+// The two-value call every bundled plugin uses keeps working.
+func TestDbApi_GetResourceDataStaysBackwardCompatible(t *testing.T) {
+	got := renderWithQuerier(t, &mockQuerier{}, `
+        local data, mime = mah.db.get_resource_data(1)
+        if not data then return "no data" end
+        return mime
+`)
+	if got != "image/jpeg" {
+		t.Errorf("got %q, want %q", got, "image/jpeg")
+	}
+}
