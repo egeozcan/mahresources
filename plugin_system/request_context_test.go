@@ -194,3 +194,79 @@ func TestRequestContext_RecoveredContextDropsTheLuaDeadline(t *testing.T) {
 		t.Error("the recovered context must outlive the expired Lua deadline")
 	}
 }
+
+// Injections are the widest render surface there is — six slots live in the
+// base layout, so they run on every page. They looked like the one seam with no
+// request to inherit, because the template tag takes no context parameter; in
+// fact the tag already reads a request context to decide whether plugin code
+// may run at all, and simply did not pass it on.
+func TestRequestContext_CancellationStopsAnInjection(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "spinner", `
+plugin = { name = "spinner", version = "1.0", description = "slot that spins" }
+function init()
+    mah.inject("page_bottom", function(ctx)
+        local n = 0
+        while true do n = n + 1 end
+        return "<p>unreachable</p>"
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	if err := mgr.EnablePlugin("spinner"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	reqCtx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	mgr.RenderSlot(reqCtx, "page_bottom", map[string]any{})
+	elapsed := time.Since(start)
+
+	// luaExecTimeout is 5s; the cancel must beat it by a wide margin.
+	if elapsed > 2*time.Second {
+		t.Errorf("cancelled injection took %v — cancellation did not propagate", elapsed)
+	}
+}
+
+// And an injection can reach the per-request MRQL cache, which it could not
+// while its deadline hung off Background.
+func TestRequestContext_MRQLCacheReachableFromAnInjection(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "counter", `
+plugin = { name = "counter", version = "1.0", description = "slot that queries twice" }
+function init()
+    mah.inject("page_bottom", function(ctx)
+        local a = mah.db.mrql_query("type=resource", { limit = 10 })
+        local b = mah.db.mrql_query("type=resource", { limit = 10 })
+        return "<p>" .. #a.items .. #b.items .. "</p>"
+    end)
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	exec := &countingMRQLExecutor{}
+	mgr.SetMRQLExecutor(exec)
+	if err := mgr.EnablePlugin("counter"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	html := mgr.RenderSlot(WithMRQLCache(context.Background()), "page_bottom", map[string]any{})
+	if !strings.Contains(html, "11") {
+		t.Errorf("slot rendered %q, want both queries to return one item", html)
+	}
+	if got := exec.calls.Load(); got != 1 {
+		t.Errorf("executor ran %d times, want 1 — the injection's MRQL cache was not reachable", got)
+	}
+}

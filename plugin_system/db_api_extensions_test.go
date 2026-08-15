@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"fmt"
 	"testing"
 )
@@ -190,7 +191,7 @@ end
 	if err := mgr.EnablePlugin("db-ext"); err != nil {
 		t.Fatalf("EnablePlugin: %v", err)
 	}
-	return mgr.RenderSlot("test", map[string]any{})
+	return mgr.RenderSlot(context.Background(), "test", map[string]any{})
 }
 
 // --- Item 06: reads report failure instead of looking empty ---

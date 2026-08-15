@@ -416,11 +416,11 @@ func TestGeneralDocDetailPage(t *testing.T) {
 
 	assert.Contains(t, html, "Upscale Action")
 	assert.Contains(t, html, "Increase image resolution.")
-	assert.Contains(t, html, "Action")              // category badge
-	assert.Contains(t, html, "Parameters")           // non-shortcode uses "Parameters" not "Attributes"
+	assert.Contains(t, html, "Action")     // category badge
+	assert.Contains(t, html, "Parameters") // non-shortcode uses "Parameters" not "Attributes"
 	assert.Contains(t, html, "model")
 	assert.Contains(t, html, "Results are added as a new version")
-	assert.NotContains(t, html, "[plugin:")          // no shortcode syntax snippet
+	assert.NotContains(t, html, "[plugin:") // no shortcode syntax snippet
 }
 
 func TestMixedDocsIndex(t *testing.T) {

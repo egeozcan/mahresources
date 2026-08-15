@@ -64,7 +64,10 @@ func (node *pluginSlotNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.
 		}
 	}
 
-	html := pm.RenderSlot(node.slotName, slotCtx)
+	// The same context the gate above was decided from: an abandoned page
+	// stops its injections instead of holding each plugin's VM lock, and
+	// identical MRQL queries across slots collapse to one execution.
+	html := pm.RenderSlot(reqCtx, node.slotName, slotCtx)
 	if html != "" {
 		if _, err := writer.WriteString(html); err != nil {
 			return ctx.Error(fmt.Sprintf("plugin_slot: write error: %s", err), nil)

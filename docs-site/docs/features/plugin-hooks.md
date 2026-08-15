@@ -88,6 +88,15 @@ function init()
 end
 ```
 
+An injection runs inside the request that is rendering the page, so it is
+cancelled when the reader navigates away instead of running to its 5-second
+timeout, and repeated identical `mah.db.mrql_query` calls within one page render
+-- across every slot on it -- collapse to a single execution.
+
+Injections run on **every** page for the six slots that live in the base layout,
+so keep them cheap: the plugin's VM is single-threaded, and a slow injection
+blocks every other surface of that plugin for the duration.
+
 ### Slot Names
 
 Slots are declared with `{% plugin_slot "..." %}` in the templates. Injecting into a name that does not exist is silently a no-op: `RenderSlot` returns an empty string for slots with no registered renderers. The full set of 21 slots:

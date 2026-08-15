@@ -11,7 +11,14 @@ import (
 // RenderSlot executes all injection renderers registered for the given slot,
 // concatenates their string outputs, and returns the combined HTML.
 // Errors in individual renderers are logged and skipped.
-func (pm *PluginManager) RenderSlot(slot string, ctx map[string]any) string {
+//
+// reqCtx is the caller's request context. Injections looked like the one render
+// seam with no request to inherit — the template tag has no ctx parameter — but
+// it already reads one out of the render context to decide whether plugin code
+// may run at all, and simply did not pass it on. They are also the widest
+// surface there is: six slots live in the base layout, so they run on every
+// page. Pass nil where there genuinely is no request.
+func (pm *PluginManager) RenderSlot(reqCtx context.Context, slot string, ctx map[string]any) string {
 	if pm.closed.Load() {
 		return ""
 	}
@@ -32,7 +39,7 @@ func (pm *PluginManager) RenderSlot(slot string, ctx map[string]any) string {
 
 		tbl := goToLuaTable(L, ctx)
 
-		timeoutCtx, cancel := context.WithTimeout(context.Background(), luaExecTimeout)
+		timeoutCtx, cancel := context.WithTimeout(vmParentContext(reqCtx), luaExecTimeout)
 		L.SetContext(timeoutCtx)
 
 		err := L.CallByParam(lua.P{

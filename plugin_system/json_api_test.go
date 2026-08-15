@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"testing"
 )
 
@@ -24,7 +25,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot("test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
 	if html != `"hello"` {
 		t.Errorf("expected '\"hello\"', got %q", html)
 	}
@@ -53,7 +54,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot("test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
 	if html != "test|42" {
 		t.Errorf("expected 'test|42', got %q", html)
 	}
@@ -80,7 +81,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot("test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
 	if html != `["a","b","c"]` {
 		t.Errorf("expected '[\"a\",\"b\",\"c\"]', got %q", html)
 	}
@@ -108,7 +109,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot("test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
 	if html != "2|http://a.com" {
 		t.Errorf("expected '2|http://a.com', got %q", html)
 	}
@@ -135,7 +136,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot("test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
 	if html != "https://example.com/img.png" {
 		t.Errorf("expected 'https://example.com/img.png', got %q", html)
 	}
@@ -162,7 +163,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot("test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
 	if html != "3|2" {
 		t.Errorf("expected '3|2', got %q", html)
 	}
@@ -192,7 +193,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot("test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
 	if html != "error:true" {
 		t.Errorf("expected 'error:true', got %q", html)
 	}
@@ -220,7 +221,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot("test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
 	if html != "true|false" {
 		t.Errorf("expected 'true|false', got %q", html)
 	}
@@ -246,7 +247,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot("test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
 	if html != "null" {
 		t.Errorf("expected 'null', got %q", html)
 	}

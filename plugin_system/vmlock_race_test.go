@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"sync"
 	"testing"
 )
@@ -49,7 +50,7 @@ end
 			defer wg.Done()
 			for j := 0; j < 400; j++ {
 				// Must not panic even once the plugin is gone.
-				_ = pm.RenderSlot("page_bottom", map[string]any{"path": "/x"})
+				_ = pm.RenderSlot(context.Background(), "page_bottom", map[string]any{"path": "/x"})
 			}
 		}()
 	}

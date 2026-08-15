@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,7 +17,7 @@ func pollSlot(t *testing.T, pm *PluginManager, slot string, timeout time.Duratio
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		result := pm.RenderSlot(slot, map[string]any{})
+		result := pm.RenderSlot(context.Background(), slot, map[string]any{})
 		if result != "" {
 			return result
 		}
@@ -774,7 +775,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot("test", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "test", map[string]any{})
 	if result != "200:sync hello" {
 		t.Errorf("expected '200:sync hello', got %q", result)
 	}
@@ -814,7 +815,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot("test", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "test", map[string]any{})
 	if result != "201:sync created" {
 		t.Errorf("expected '201:sync created', got %q", result)
 	}
@@ -848,7 +849,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot("test", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "test", map[string]any{})
 	if result != "ERROR" {
 		t.Errorf("expected 'ERROR', got %q", result)
 	}
@@ -879,7 +880,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot("test", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "test", map[string]any{})
 	if result != "SCHEME_ERROR" {
 		t.Errorf("expected 'SCHEME_ERROR', got %q", result)
 	}
@@ -920,7 +921,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot("test", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "test", map[string]any{})
 	if result != "authed" {
 		t.Errorf("expected 'authed', got %q", result)
 	}
@@ -961,7 +962,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot("test", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "test", map[string]any{})
 	expected := fmt.Sprintf("%d", maxHttpResponseBody)
 	if result != expected {
 		t.Errorf("expected body length %s, got %q", expected, result)

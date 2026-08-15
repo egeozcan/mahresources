@@ -100,8 +100,8 @@ func Test_padDataURIToAspectRatio_wideToSquare(t *testing.T) {
 	if img.Bounds().Dx() != 200 || img.Bounds().Dy() != 200 {
 		t.Fatalf("decoded dimensions %dx%d, want 200x200", img.Bounds().Dx(), img.Bounds().Dy())
 	}
-	assertColor(t, img, 100, 0, white, 0, "top border")    // y=0 is padding
-	assertColor(t, img, 100, 100, red, 0, "center")        // y=100 is source
+	assertColor(t, img, 100, 0, white, 0, "top border") // y=0 is padding
+	assertColor(t, img, 100, 100, red, 0, "center")     // y=100 is source
 	assertColor(t, img, 100, 199, white, 0, "bottom border")
 }
 
@@ -120,8 +120,8 @@ func Test_padDataURIToAspectRatio_tallToSquare(t *testing.T) {
 	}
 
 	img := decodeDataURI(t, out)
-	assertColor(t, img, 0, 100, white, 0, "left border")    // x=0 is padding
-	assertColor(t, img, 100, 100, green, 0, "center")       // x=100 is source
+	assertColor(t, img, 0, 100, white, 0, "left border") // x=0 is padding
+	assertColor(t, img, 100, 100, green, 0, "center")    // x=100 is source
 	assertColor(t, img, 199, 100, white, 0, "right border")
 }
 

@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -29,7 +30,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot("resource_header", map[string]any{
+	result := pm.RenderSlot(context.Background(), "resource_header", map[string]any{
 		"path": "/resource",
 	})
 
@@ -77,7 +78,7 @@ end
 		t.Fatalf("EnablePlugin(bravo): %v", err)
 	}
 
-	result := pm.RenderSlot("page_top", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "page_top", map[string]any{})
 
 	if result != "<header>Alpha</header><header>Bravo</header>" {
 		t.Errorf("expected concatenated output in alphabetical order, got %q", result)
@@ -122,7 +123,7 @@ end
 		t.Fatalf("EnablePlugin(bravo_good): %v", err)
 	}
 
-	result := pm.RenderSlot("sidebar", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "sidebar", map[string]any{})
 
 	if result != "<aside>OK</aside>" {
 		t.Errorf("expected only second plugin output, got %q", result)
@@ -137,7 +138,7 @@ func TestRenderSlot_EmptySlot(t *testing.T) {
 	}
 	defer pm.Close()
 
-	result := pm.RenderSlot("nonexistent_slot", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "nonexistent_slot", map[string]any{})
 
 	if result != "" {
 		t.Errorf("expected empty string for empty slot, got %q", result)
@@ -168,7 +169,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot("entity_info", map[string]any{
+	result := pm.RenderSlot(context.Background(), "entity_info", map[string]any{
 		"entity": map[string]any{
 			"name": "My Resource",
 		},

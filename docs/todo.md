@@ -21,11 +21,15 @@ Effort M and stayed out. This is the remaining ten, items 03-12.
       constant-time compare. A webhook receiver can verify a signature; a cache
       can expire.
 - [x] **07 — request-scoped VM calls.** `HandlePage`, `HandleAPI`,
-      `RenderDisplay`, `RenderBlock` and the sync action path derived their
-      deadline from `context.Background()`: the per-request MRQL cache was
-      unreachable while the docs claimed caching, and an abandoned request ran
-      to its full timeout holding a lock exclusive across every surface of that
-      plugin.
+      `RenderDisplay`, `RenderBlock`, the sync action path and `RenderSlot`
+      derived their deadline from `context.Background()`: the per-request MRQL
+      cache was unreachable while the docs claimed caching, and an abandoned
+      request ran to its full timeout holding a lock exclusive across every
+      surface of that plugin. Injections were the last of these and the widest
+      — six slots live in the base layout — and were nearly missed: the template
+      tag takes no context parameter, so they looked request-less, when in fact
+      the tag already read a request context to gate plugin code and simply did
+      not pass it on.
 - [x] **10 — entity identity in the display render context.** A renderer could
       not tell what it was rendering.
 - [x] **09 — display-type catalogue** at `GET /v1/plugin/displayTypes`.

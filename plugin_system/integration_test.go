@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"testing"
 )
 
@@ -45,7 +46,7 @@ end
 	}
 
 	// Test injection renders with entity context
-	html := mgr.RenderSlot("note_detail_after", map[string]any{
+	html := mgr.RenderSlot(context.Background(), "note_detail_after", map[string]any{
 		"entity": map[string]any{"name": "Test Note [via plugin]"},
 	})
 	expected := "<div class='plugin-injected'>Plugin: Test Note [via plugin]</div>"
