@@ -162,6 +162,11 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 			}
 		}
 
+		// Drop the values of params show_when hides, once, here at the boundary.
+		// The modal already strips them; a direct API caller does not, and a
+		// handler is entitled to read a hidden param's absence as absence.
+		plugin_system.StripHiddenParams(action, req.Params)
+
 		// Validate params upfront.
 		if validationErrs := plugin_system.ValidateActionParams(action, req.Params); len(validationErrs) > 0 {
 			w.Header().Set("Content-Type", constants.JSON)

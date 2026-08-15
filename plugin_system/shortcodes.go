@@ -248,7 +248,12 @@ func (pm *PluginManager) RenderShortcode(reqCtx context.Context, pluginName, ful
 
 	tbl := goToLuaTable(L, ctxData)
 
-	timeoutCtx, cancel := context.WithTimeout(reqCtx, luaShortcodeRenderTimeout)
+	// Through vmParentContext, not reqCtx directly: the shortcode path already
+	// inherited the request's cancellation, but a sync HTTP call inside the
+	// shortcode drops the Lua deadline and needs the request recoverable
+	// undeadlined, or it holds the plugin's VM lock for its full 120s after the
+	// client has gone.
+	timeoutCtx, cancel := context.WithTimeout(vmParentContext(reqCtx), luaShortcodeRenderTimeout)
 	L.SetContext(timeoutCtx)
 
 	err := L.CallByParam(lua.P{

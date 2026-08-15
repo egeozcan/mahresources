@@ -35,6 +35,58 @@ type ActionParam struct {
 	Filters     *ActionFilter  `json:"filters,omitempty"` // nil = inherit action.Filters
 }
 
+// isComparableShowWhenValue reports whether a show_when expectation is a shape
+// paramValuesEqual can actually compare: a scalar, or an array of scalars
+// meaning "one of". Anything else (a nested table) would silently never match,
+// so it is rejected at load rather than at the first run.
+func isComparableShowWhenValue(v any) bool {
+	switch value := v.(type) {
+	case string, bool, float64, float32, int, int64, uint, nil:
+		return true
+	case []any:
+		for _, item := range value {
+			switch item.(type) {
+			case string, bool, float64, float32, int, int64, uint:
+			default:
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+// showWhenExpectationsEqual reports whether two show_when expectations state
+// the same condition. Arrays are compared as sets, so {"a","b"} and {"b","a"}
+// are the same "one of".
+func showWhenExpectationsEqual(a, b any) bool {
+	aList, aIsList := a.([]any)
+	bList, bIsList := b.([]any)
+	if aIsList != bIsList {
+		return false
+	}
+	if !aIsList {
+		return paramValuesEqual(a, b)
+	}
+	if len(aList) != len(bList) {
+		return false
+	}
+	for _, want := range aList {
+		found := false
+		for _, got := range bList {
+			if paramValuesEqual(want, got) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 // ActionFilter restricts which entities an action applies to.
 type ActionFilter struct {
 	ContentTypes []string `json:"content_types,omitempty"`
@@ -217,12 +269,47 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 		}
 	}
 
+	// The conditions of each gated param, for the chained-condition check below.
+	gatedBy := make(map[string]map[string]any, len(a.Params))
+	for _, p := range a.Params {
+		if len(p.ShowWhen) > 0 {
+			gatedBy[p.Name] = p.ShowWhen
+		}
+	}
+
 	// Validate all params.
 	for i, p := range a.Params {
 		// required=true combined with show_when is allowed: ValidateActionParams
 		// computes visibility from the submitted values before it checks
 		// Required, so a mandatory field inside a branch is enforced exactly
 		// when its branch is the one the user is in.
+		for key, expected := range p.ShowWhen {
+			if !isComparableShowWhenValue(expected) {
+				return nil, fmt.Errorf("param %q: show_when[%q] must be a string, number, boolean, or an array of those", p.Name, key)
+			}
+			// Chaining onto a gated param is fine — a sub-mode selector that is
+			// itself gated on a model is an ordinary shape — but only while the
+			// dependent cannot be visible when its controller is hidden.
+			//
+			// If it can, the two sides disagree and the user loses input: the
+			// browser evaluates against its live form state, where a hidden
+			// controller still holds a value, and shows the dependent; but it
+			// strips the hidden controller from the request, so the server sees
+			// no value for it, concludes the dependent is hidden too, and drops
+			// what the user typed.
+			//
+			// Repeating the controller's own conditions rules that out, because
+			// then the dependent being visible implies the controller is.
+			for ctlKey, ctlExpected := range gatedBy[key] {
+				own, present := p.ShowWhen[ctlKey]
+				if !present || !showWhenExpectationsEqual(own, ctlExpected) {
+					return nil, fmt.Errorf(
+						"param %q: show_when depends on %q, which is itself shown only when %s=%v — repeat that condition here, or the field can be visible while the value it depends on is not submitted",
+						p.Name, key, ctlKey, ctlExpected)
+				}
+			}
+		}
+
 		if p.Type == "entity_ref" {
 			if p.Entity == "" {
 				return nil, fmt.Errorf("param %q: type 'entity_ref' requires 'entity' field", p.Name)

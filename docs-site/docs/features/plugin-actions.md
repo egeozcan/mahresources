@@ -144,6 +144,25 @@ Visibility is resolved from the submitted values **before** validation runs:
   which evaluates against its live form state, and it errs toward not
   validating rather than toward rejecting a field the user was never shown.
 
+### Chaining
+
+A `show_when` may name a param that is itself gated -- a sub-mode selector shown
+only for one model, with fields shown only for one sub-mode -- provided the
+dependent **repeats the controller's own conditions**:
+
+```lua
+{name = "upscale_mode", type = "select", options = {"factor", "target"},
+    show_when = {model = "seedvr"}},
+{name = "upscale_factor", type = "number",
+    show_when = {model = "seedvr", upscale_mode = "factor"}},   -- repeats model
+```
+
+Omitting the repeated condition is rejected at plugin load. Without it the
+dependent could be visible while its controller is hidden, and a hidden
+controller is stripped from the request -- so the server would see no value for
+it, conclude the dependent was hidden too, and silently discard what the user
+typed into a field they were shown.
+
 ```lua
 params = {
     { name = "mode", type = "select", label = "Mode", options = {"simple", "scheduled"}, default = "simple" },

@@ -336,7 +336,10 @@ export function pluginActionModal() {
                             detail: { returnFocusTo: opener },
                         }));
                     });
-                } else if (data.redirect) {
+                } else if (data.redirect && data.success !== false) {
+                    // A refusal that also carries a redirect stays here and says
+                    // why; navigating away would be the old bug in another
+                    // costume, with the reason never shown at all.
                     window.location.href = data.redirect;
                 } else {
                     this.applyResult(data);

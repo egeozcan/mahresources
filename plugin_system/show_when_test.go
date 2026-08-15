@@ -88,9 +88,9 @@ func TestShowWhen_RequiredSkippedWhenHidden(t *testing.T) {
 	}
 }
 
-// The API-caller hole: the modal strips hidden params, but a direct caller can
-// submit them. A handler that assumes show_when implies absence was wrong.
-func TestShowWhen_HiddenValuesAreDropped(t *testing.T) {
+// Validation reads; it does not rewrite the caller's params. Dropping hidden
+// values is StripHiddenParams' job, done once at the request boundary.
+func TestShowWhen_ValidationDoesNotMutate(t *testing.T) {
 	action, err := registerShowWhenAction(t, `{
             { name = "mode", type = "select", label = "Mode", options = {"a", "b"}, default = "a" },
             { name = "extra", type = "text", label = "Extra", show_when = { mode = "b" } },
@@ -104,8 +104,8 @@ func TestShowWhen_HiddenValuesAreDropped(t *testing.T) {
 	if len(errs) != 0 {
 		t.Fatalf("unexpected validation errors: %v", errs)
 	}
-	if _, present := params["extra"]; present {
-		t.Error("a hidden param's value must be dropped before the handler sees it")
+	if params["extra"] != "smuggled" {
+		t.Error("ValidateActionParams must not mutate the caller's params")
 	}
 }
 
@@ -217,6 +217,175 @@ func TestShowWhen_AbsentControllerHides(t *testing.T) {
 
 	if errs := ValidateActionParams(action, map[string]any{}); len(errs) != 0 {
 		t.Errorf("an absent controller must hide the dependent param, got %v", errs)
+	}
+}
+
+// Chaining onto a gated param is allowed when the dependent repeats the
+// controller's own conditions — a sub-mode selector gated on a model, with
+// fields gated on both, which is what fal-ai ships.
+func TestShowWhen_AllowsConsistentChain(t *testing.T) {
+	_, err := registerShowWhenAction(t, `{
+            { name = "model", type = "select", label = "Model", options = {"seedvr", "other"}, default = "other" },
+            { name = "upscale_mode", type = "select", label = "Upscale Mode", options = {"factor", "target"},
+              default = "factor", show_when = { model = "seedvr" } },
+            { name = "upscale_factor", type = "number", label = "Factor",
+              show_when = { model = "seedvr", upscale_mode = "factor" } },
+        }`)
+	if err != nil {
+		t.Fatalf("a chain that repeats its controller's condition should register, got: %v", err)
+	}
+}
+
+// A chain that does NOT repeat the controller's conditions is rejected, because
+// the dependent can be visible while the controller is hidden — and a hidden
+// controller is stripped from the request, so the server would conclude the
+// dependent is hidden too and silently drop what the user typed into it.
+func TestShowWhen_RejectsInconsistentChain(t *testing.T) {
+	_, err := registerShowWhenAction(t, `{
+            { name = "mode", type = "select", label = "Mode", options = {"a", "b"}, default = "a" },
+            { name = "middle", type = "text", label = "Middle", show_when = { mode = "b" } },
+            { name = "leaf", type = "text", label = "Leaf", show_when = { middle = "on" } },
+        }`)
+	if err == nil {
+		t.Fatal("a chain that can outlive its controller's visibility should be rejected")
+	}
+	if !strings.Contains(err.Error(), "show_when") {
+		t.Errorf("the error should name show_when, got: %v", err)
+	}
+}
+
+// The guarantee the rule buys: for a consistent chain, stripping cannot change
+// any surviving param's visibility, so the second validation pass agrees with
+// the first.
+func TestShowWhen_ConsistentChainSurvivesStripping(t *testing.T) {
+	action, err := registerShowWhenAction(t, `{
+            { name = "model", type = "select", label = "Model", options = {"seedvr", "other"}, default = "other" },
+            { name = "upscale_mode", type = "select", label = "Upscale Mode", options = {"factor", "target"},
+              default = "factor", show_when = { model = "seedvr" } },
+            { name = "upscale_factor", type = "number", label = "Factor", required = true,
+              show_when = { model = "seedvr", upscale_mode = "factor" } },
+        }`)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// The live branch: controller visible, dependent visible and enforced.
+	live := map[string]any{"model": "seedvr", "upscale_mode": "factor", "upscale_factor": float64(2)}
+	StripHiddenParams(action, live)
+	if _, present := live["upscale_factor"]; !present {
+		t.Error("a visible dependent must survive stripping")
+	}
+	if errs := ValidateActionParams(action, live); len(errs) != 0 {
+		t.Errorf("unexpected errors on the live branch: %v", errs)
+	}
+
+	// The other branch: both stripped, and revalidation still reports nothing.
+	other := map[string]any{"model": "other", "upscale_mode": "factor", "upscale_factor": float64(2)}
+	StripHiddenParams(action, other)
+	if _, present := other["upscale_factor"]; present {
+		t.Error("a hidden dependent must be stripped")
+	}
+	if _, present := other["upscale_mode"]; present {
+		t.Error("a hidden controller must be stripped")
+	}
+	if errs := ValidateActionParams(action, other); len(errs) != 0 {
+		t.Errorf("revalidation after stripping should report nothing, got %v", errs)
+	}
+}
+
+// Validation runs twice for every action — once at the HTTP boundary and again
+// inside RunAction as defense-in-depth — so it must not change its own answer
+// between the two passes, including after the boundary has stripped hidden
+// values.
+func TestShowWhen_ValidationIsIdempotent(t *testing.T) {
+	action, err := registerShowWhenAction(t, `{
+            { name = "mode", type = "select", label = "Mode", options = {"a", "b"}, default = "a" },
+            { name = "extra", type = "text", label = "Extra", required = true, show_when = { mode = "b" } },
+            { name = "always", type = "text", label = "Always" },
+        }`)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	params := map[string]any{"mode": "a", "extra": "stale", "always": "kept"}
+	StripHiddenParams(action, params)
+
+	first := ValidateActionParams(action, params)
+	second := ValidateActionParams(action, params)
+	if len(first) != 0 || len(second) != 0 {
+		t.Errorf("expected no errors on either pass, got %v then %v", first, second)
+	}
+	if params["always"] != "kept" {
+		t.Errorf("a visible param was dropped by revalidation: %v", params["always"])
+	}
+	if _, present := params["extra"]; present {
+		t.Error("the hidden param should have been stripped at the boundary")
+	}
+}
+
+// A show_when expectation that is neither a scalar nor an array of scalars
+// cannot be compared, and comparing two maps with == is a runtime panic rather
+// than a false. Reject the shape at load instead.
+func TestShowWhen_RejectsNonScalarExpectation(t *testing.T) {
+	_, err := registerShowWhenAction(t, `{
+            { name = "controller", type = "text", label = "Controller" },
+            { name = "extra", type = "text", label = "Extra", show_when = { controller = { enabled = true } } },
+        }`)
+	if err == nil {
+		t.Fatal("a table-valued show_when expectation should be rejected")
+	}
+}
+
+// And an uncomparable value arriving at runtime must not panic either: a JSON
+// object posted for a scalar-gated controller is simply not a match.
+func TestShowWhen_UncomparableSubmittedValueDoesNotPanic(t *testing.T) {
+	action, err := registerShowWhenAction(t, `{
+            { name = "mode", type = "select", label = "Mode", options = {"a", "b"}, default = "a" },
+            { name = "extra", type = "text", label = "Extra", required = true, show_when = { mode = "b" } },
+        }`)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// The controller itself is rejected for being the wrong type — that is its
+	// own validation. What must not happen is a panic, or the hidden dependent
+	// being reported as missing.
+	for _, malformed := range []any{map[string]any{"nested": true}, []any{1, 2}} {
+		errs := ValidateActionParams(action, map[string]any{"mode": malformed})
+		for _, e := range errs {
+			if e.Field == "extra" {
+				t.Errorf("the dependent should be hidden, not reported: %v", errs)
+			}
+		}
+		if len(errs) != 1 || errs[0].Field != "mode" {
+			t.Errorf("expected exactly one error, on the controller; got %v", errs)
+		}
+	}
+}
+
+// Stripping is a separate, explicit step taken once at the request boundary.
+func TestShowWhen_StripHiddenParams(t *testing.T) {
+	action, err := registerShowWhenAction(t, `{
+            { name = "mode", type = "select", label = "Mode", options = {"a", "b"}, default = "a" },
+            { name = "extra", type = "text", label = "Extra", show_when = { mode = "b" } },
+        }`)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	params := map[string]any{"mode": "a", "extra": "smuggled"}
+	StripHiddenParams(action, params)
+	if _, present := params["extra"]; present {
+		t.Error("a hidden param's value must be stripped")
+	}
+	if params["mode"] != "a" {
+		t.Error("a visible param must survive stripping")
+	}
+
+	kept := map[string]any{"mode": "b", "extra": "kept"}
+	StripHiddenParams(action, kept)
+	if kept["extra"] != "kept" {
+		t.Errorf("a visible param must survive stripping, got %v", kept["extra"])
 	}
 }
 

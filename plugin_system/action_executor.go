@@ -102,14 +102,29 @@ func paramVisible(p ActionParam, params map[string]any) bool {
 
 // paramValuesEqual compares two submitted-value-shaped values, treating all
 // numeric types as comparable so an int from JSON matches a float64 from Lua.
-func paramValuesEqual(a, b any) bool {
-	if an, aok := paramNumeric(a); aok {
-		if bn, bok := paramNumeric(b); bok {
-			return an == bn
-		}
+//
+// Only scalars can match. A submitted value that is a JSON object or array is
+// never equal to anything — and must not reach ==, which panics on an
+// uncomparable operand rather than returning false.
+func paramValuesEqual(expected, actual any) bool {
+	if en, ok := paramNumeric(expected); ok {
+		an, ok := paramNumeric(actual)
+		return ok && en == an
+	}
+	switch e := expected.(type) {
+	case string:
+		a, ok := actual.(string)
+		return ok && e == a
+	case bool:
+		a, ok := actual.(bool)
+		return ok && e == a
+	case nil:
+		return actual == nil
+	default:
+		// Registration rejects non-scalar expectations, so this is unreachable
+		// for a loaded plugin; answer false rather than assume.
 		return false
 	}
-	return a == b
 }
 
 func paramNumeric(v any) (float64, bool) {
@@ -129,30 +144,45 @@ func paramNumeric(v any) (float64, bool) {
 	}
 }
 
+// StripHiddenParams removes the values of params their show_when hides.
+//
+// Called once, at the request boundary, before the params are handed on. The
+// browser already strips them, but a direct API caller does not, so a handler
+// that assumed show_when implied absence was wrong for exactly that caller.
+//
+// Deliberately separate from ValidateActionParams, which runs a second time
+// inside RunAction as defense-in-depth: a validator that also deleted would see
+// a different map on its second pass, and a param chained onto one it had just
+// dropped would be discarded on the way through.
+func StripHiddenParams(action ActionRegistration, params map[string]any) {
+	if len(params) == 0 {
+		return
+	}
+	hidden := make([]string, 0, len(action.Params))
+	for _, p := range action.Params {
+		if !paramVisible(p, params) {
+			hidden = append(hidden, p.Name)
+		}
+	}
+	// Collected first: deleting inside the loop would change the answer for
+	// params evaluated after it.
+	for _, name := range hidden {
+		delete(params, name)
+	}
+}
+
 // ValidateActionParams validates the provided params against the action's
 // parameter definitions. It checks required fields, select option validity,
 // and number range constraints.
 //
-// Visibility is resolved first, from the submitted values. A param hidden by
-// its show_when is not validated, and its submitted value is REMOVED from
-// params, so the handler sees the same absence the UI implied. The browser
-// already strips hidden params, but a direct API caller does not, and a handler
-// that assumed show_when meant absence was wrong for exactly that caller.
+// Visibility is resolved first, from the submitted values: a param its
+// show_when hides is not validated, because the user was never shown it. This
+// function does not mutate params — see StripHiddenParams.
 func ValidateActionParams(action ActionRegistration, params map[string]any) []ValidationError {
 	var errs []ValidationError
 
-	// Computed against the submitted map before anything is dropped, so one
-	// hidden param cannot cascade into hiding a sibling that was visible.
-	visible := make(map[string]bool, len(action.Params))
 	for _, p := range action.Params {
-		visible[p.Name] = paramVisible(p, params)
-	}
-
-	for _, p := range action.Params {
-		if !visible[p.Name] {
-			// Never reaches the handler: the user was not shown this field, so
-			// a value for it did not come from them.
-			delete(params, p.Name)
+		if !paramVisible(p, params) {
 			continue
 		}
 
