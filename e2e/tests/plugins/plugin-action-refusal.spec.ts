@@ -106,6 +106,63 @@ test.describe('Plugin action refusals', () => {
     await expect(modal.locator('[role="alert"]')).toBeVisible();
   });
 
+  test('the modal names the entities a bulk run failed on', async ({ page, apiClient }) => {
+    // Two resources under one group, so the card action can be run over a
+    // selection and one of the two ids is even.
+    const runId = Date.now() + Math.floor(Math.random() * 100000);
+    const category = await apiClient.createCategory(`Bulk Refusal Category ${runId}`);
+    const group = await apiClient.createGroup({
+      name: `Bulk Refusal Group ${runId}`,
+      categoryId: category.ID,
+    });
+    const a = await apiClient.createResource({
+      filePath: path.join(__dirname, '../../test-assets/sample-image-34.png'),
+      name: `Bulk Refusal A ${runId}`,
+      ownerId: group.ID,
+    });
+    const b = await apiClient.createResource({
+      filePath: path.join(__dirname, '../../test-assets/sample-image-35.png'),
+      name: `Bulk Refusal B ${runId}`,
+      ownerId: group.ID,
+    });
+
+    // Drive the modal itself: the API shape has always been right, and it was
+    // the modal that announced every bulk failure as a success.
+    await page.goto(`/resource?id=${a.ID}`);
+    await page.waitForLoadState('load');
+
+    const evenId = a.ID % 2 === 0 ? a.ID : b.ID;
+    await page.evaluate(
+      ([ids]) => {
+        window.dispatchEvent(
+          new CustomEvent('plugin-action-open', {
+            detail: {
+              plugin: 'test-actions',
+              action: 'refuses-even',
+              label: 'Refuses Even IDs',
+              entityIds: ids,
+              entityType: 'resource',
+              async: false,
+              params: [],
+            },
+          })
+        );
+      },
+      [[a.ID, b.ID]]
+    );
+
+    const modal = page.getByRole('dialog');
+    await expect(modal).toBeVisible();
+    await modal.getByRole('button', { name: 'Run' }).click();
+
+    const alert = modal.locator('[role="alert"]');
+    await expect(alert).toBeVisible({ timeout: 5000 });
+    await expect(alert).toContainText('1 of 2 failed');
+    // Named, so the reader knows which one.
+    await expect(alert).toContainText(`#${evenId}`);
+    await expect(modal.locator('[role="status"]')).toHaveCount(0);
+  });
+
   test('a bulk run reports which entities failed', async ({ apiClient }) => {
     const response = await apiClient.request.post('/v1/jobs/action/run', {
       data: {

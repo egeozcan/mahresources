@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"gorm.io/gorm"
 	"mahresources/constants"
 	"mahresources/contracts"
 	"mahresources/models/block_types"
@@ -260,7 +261,14 @@ func GetBlockTypesHandler(ctx contracts.BlockTypeFilterResolver) func(http.Respo
 		if noteID := uint(http_utils.GetIntQueryParameter(request, "noteId", 0)); noteID > 0 && ctx != nil {
 			resolvedNoteType, resolvedCategory, err := ctx.BlockTypeFilterSubject(noteID)
 			if err != nil {
-				http_utils.HandleError(err, writer, request, http.StatusNotFound)
+				// Only a missing note is a 404. A dropped connection or a
+				// locked database reported as "not found" sends the reader
+				// looking for a note that is right there.
+				status := http.StatusInternalServerError
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					status = http.StatusNotFound
+				}
+				http_utils.HandleError(err, writer, request, status)
 				return
 			}
 			noteTypeID, ownerCategoryID = resolvedNoteType, resolvedCategory

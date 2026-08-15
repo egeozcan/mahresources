@@ -274,11 +274,15 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 	// It also makes stripping ambiguous: one of the two can be hidden while the
 	// other is visible, and there is only one value to keep or drop.
 	seen := make(map[string]bool, len(a.Params))
+	valueless := make(map[string]bool, len(a.Params))
 	for _, p := range a.Params {
 		if seen[p.Name] {
 			return nil, fmt.Errorf("param %q: duplicate parameter name", p.Name)
 		}
 		seen[p.Name] = true
+		if p.Type == "info" {
+			valueless[p.Name] = true
+		}
 	}
 
 	// The conditions of each gated param, for the chained-condition check below.
@@ -302,6 +306,12 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 			// required check, silently turning a mandatory input optional.
 			if !seen[key] {
 				return nil, fmt.Errorf("param %q: show_when refers to %q, which is not a parameter of this action", p.Name, key)
+			}
+			// An info param renders static help text and has no value, so a
+			// condition on one can never be satisfied — the field would be
+			// permanently hidden, and a hidden field skips its required check.
+			if valueless[key] {
+				return nil, fmt.Errorf("param %q: show_when refers to %q, which is an 'info' param and has no value to compare", p.Name, key)
 			}
 			if key == p.Name {
 				return nil, fmt.Errorf("param %q: show_when may not depend on itself", p.Name)

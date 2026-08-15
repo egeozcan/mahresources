@@ -2,6 +2,7 @@ package plugin_system
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -559,5 +560,59 @@ func TestClearFinishedActionJobs_HonoursVisibility(t *testing.T) {
 	}
 	if _, ok := pm.actionJobs["theirs"]; !ok {
 		t.Error("another user's completed action job was cleared")
+	}
+}
+
+// A handler that fails explicitly and then returns a diagnostic table meant to
+// fail. Overwriting that with "completed" hides the failure, and contradicts
+// the documented contract that mah.job_fail decides the outcome.
+func TestAsyncAction_ReturnedTableDoesNotOverwriteAnExplicitFailure(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "failer", `
+plugin = { name = "failer", version = "1.0", description = "explicit failure" }
+function init()
+    mah.action({
+        id = "fails",
+        label = "Fails",
+        entity = "resource",
+        async = true,
+        handler = function(ctx)
+            mah.job_fail(ctx.job_id, "quota exhausted")
+            return { message = "diagnostic" }
+        end,
+    })
+end
+`)
+	mgr, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	if err := mgr.EnablePlugin("failer"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	jobID, err := mgr.RunActionAsync("failer", "fails", 1, nil)
+	if err != nil {
+		t.Fatalf("RunActionAsync: %v", err)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	var job *ActionJob
+	for time.Now().Before(deadline) {
+		job = mgr.GetActionJob(jobID)
+		if job != nil && (job.Status == "failed" || job.Status == "completed") {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if job == nil {
+		t.Fatal("job never appeared")
+	}
+	if job.Status != "failed" {
+		t.Errorf("status = %q, want \"failed\" — an explicit failure must survive the returned table", job.Status)
+	}
+	if !strings.Contains(job.Message, "quota exhausted") {
+		t.Errorf("message = %q, want the failure reason", job.Message)
 	}
 }

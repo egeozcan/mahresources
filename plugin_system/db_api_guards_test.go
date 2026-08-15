@@ -2,6 +2,9 @@ package plugin_system
 
 import (
 	"testing"
+	"time"
+
+	lua "github.com/yuin/gopher-lua"
 )
 
 // recordingWriter remembers the ids it was asked to delete, so a truncated id
@@ -82,5 +85,68 @@ func TestDbApi_GettersRejectFractionalID(t *testing.T) {
 `)
 	if got != "rejected" {
 		t.Errorf("got %q, want a rejection", got)
+	}
+}
+
+// An id embedded in an options table is as load-bearing as a positional one,
+// and every way of not honouring a fractional value is silently wrong:
+// truncating picks the wrong group, treating it as absent clears the owner or
+// widens a filter. Raise instead.
+func TestDbApi_RejectsFractionalEmbeddedID(t *testing.T) {
+	cases := []struct{ name, call string }{
+		{"create owner_id", `mah.db.create_note({ name = "x", owner_id = 2.9 })`},
+		{"update owner_id", `mah.db.update_resource(1, { owner_id = 2.9 })`},
+		{"patch owner_id", `mah.db.patch_resource(1, { owner_id = 2.9 })`},
+		{"tag list", `mah.db.patch_resource(1, { tags = {2.9} })`},
+		{"query filter", `mah.db.query_notes({ owner_id = 2.9 })`},
+		{"count filter", `mah.db.count_notes({ owner_id = 2.9 })`},
+		{"add_tags list", `mah.db.add_tags("resource", 1, {2.9})`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := renderWithQuerier(t, &mockWriterQuerier{}, `
+        local ok = pcall(function() return `+c.call+` end)
+        if ok then return "ACCEPTED" end
+        return "rejected"
+`)
+			if got != "rejected" {
+				t.Errorf("%s: got %q, want a rejection", c.call, got)
+			}
+		})
+	}
+}
+
+// A whole-number embedded id still goes through.
+func TestDbApi_AcceptsWholeEmbeddedID(t *testing.T) {
+	got := renderWithQuerier(t, &mockWriterQuerier{}, `
+        local r, err = mah.db.update_resource(1, { name = "ok", owner_id = 6 / 2 })
+        if err ~= nil then return "err:" .. err end
+        return "updated"
+`)
+	if got != "updated" {
+		t.Errorf("got %q, want %q", got, "updated")
+	}
+}
+
+// A Lua table can point at itself. Following it recursively never terminates
+// and overflows the Go stack, which kills the process rather than the plugin.
+func TestLuaConversion_SurvivesACyclicTable(t *testing.T) {
+	done := make(chan map[string]any, 1)
+	go func() {
+		L := lua.NewState()
+		defer L.Close()
+		tbl := L.NewTable()
+		tbl.RawSetString("name", lua.LString("cyclic"))
+		tbl.RawSetString("self", tbl)
+		done <- luaTableToGoMap(tbl)
+	}()
+
+	select {
+	case result := <-done:
+		if result["name"] != "cyclic" {
+			t.Errorf("the shallow fields should still convert, got %v", result)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("converting a cyclic table did not terminate")
 	}
 }

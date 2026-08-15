@@ -483,3 +483,21 @@ func TestShowWhen_UnconditionalParamsUnaffected(t *testing.T) {
 		t.Errorf("an unconditional required param must still be enforced, got %v", errs)
 	}
 }
+
+// An info param renders static help text and has no value, so a condition on
+// one can never be satisfied: the field would be permanently hidden, and a
+// hidden field skips its required check — silently turning a mandatory input
+// optional.
+func TestShowWhen_RejectsInfoParamAsController(t *testing.T) {
+	_, err := registerShowWhenAction(t, `{
+            { name = "notice", type = "info", label = "Notice", description = "read me" },
+            { name = "approval", type = "text", label = "Approval", required = true,
+              show_when = { notice = true } },
+        }`)
+	if err == nil {
+		t.Fatal("an info param should not be usable as a show_when controller")
+	}
+	if !strings.Contains(err.Error(), "info") {
+		t.Errorf("the error should name the info type, got: %v", err)
+	}
+}

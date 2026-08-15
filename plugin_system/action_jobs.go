@@ -284,6 +284,14 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 		// If the handler returned a table, treat it as the result and mark completed.
 		if isTable {
 			job.mu.Lock()
+			// Unless the handler already decided. A handler that calls
+			// mah.job_fail and then returns a diagnostic table meant to fail,
+			// and overwriting that with "completed" contradicts the documented
+			// contract in the direction that hides the failure.
+			if job.Status == "failed" || job.Status == "cancelled" {
+				job.mu.Unlock()
+				return nil
+			}
 			job.Status = "completed"
 			job.Progress = 100
 			if msg, ok := parsed["message"].(string); ok {

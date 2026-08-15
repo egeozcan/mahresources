@@ -63,10 +63,13 @@ local note = mah.db.get_note(1)  -- the error return is simply discarded
 All IDs are numbers (float64 in Lua). A missing entity is `nil` with no error;
 a failed read is `nil, error_string`.
 
-Every function taking an entity ID rejects one that is not a positive whole
-number, rather than truncating it. Lua has a single number type, so a computed
-ID can arrive fractional -- and `delete_resource(1.9)` silently deleting
-resource 1 is the wrong row, not a rounding error.
+IDs that are not whole numbers are **rejected, not reinterpreted**. Lua has a
+single number type, so a computed ID can arrive fractional, and every way of
+carrying on is silently wrong: truncating `2.9` picks entity 2, and treating it
+as absent clears an owner or widens a filter. This applies to a positional ID
+(`delete_resource(1.9)`), to an ID inside an options or filter table
+(`owner_id`, `category_id`, `note_type_id`, `resource_category_id`,
+`series_id`, ...), and to ID lists (`tags`, `groups`, `notes`, `resources`).
 
 #### Note Fields
 

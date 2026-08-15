@@ -238,6 +238,69 @@ func checkEntityID(L *lua.LState, argIdx int) uint {
 // "id" is already not the number the caller meant.
 const maxLuaExactInteger = 1 << 53
 
+// idOptionKeys are the option-table keys that name a single entity, and
+// idListOptionKeys those that name several. They are validated at the Lua
+// boundary for the same reason a positional id is: an id that is not a whole
+// number cannot be honoured, and every way of not honouring it is silently
+// wrong. Truncating 2.9 picks group 2; treating it as absent clears the owner
+// or drops a filter. Raising is the only answer that does not act on a value
+// the caller did not mean.
+var idOptionKeys = []string{
+	"owner_id", "category_id", "note_type_id", "resource_category_id",
+	"series_id", "from_group_id", "to_group_id", "relation_type_id", "id",
+}
+
+var idListOptionKeys = []string{"tags", "groups", "notes", "resources"}
+
+// checkEntityIDOpts validates every id-shaped entry of an options table.
+func checkEntityIDOpts(L *lua.LState, argIdx int, tbl *lua.LTable) {
+	if tbl == nil {
+		return
+	}
+	for _, key := range idOptionKeys {
+		v := tbl.RawGetString(key)
+		n, ok := v.(lua.LNumber)
+		if !ok {
+			continue
+		}
+		if f := float64(n); f != math.Trunc(f) || f < 0 || f > maxLuaExactInteger {
+			L.ArgError(argIdx, fmt.Sprintf("%s must be a whole number, got %v", key, f))
+		}
+	}
+	for _, key := range idListOptionKeys {
+		list, ok := tbl.RawGetString(key).(*lua.LTable)
+		if !ok {
+			continue
+		}
+		list.ForEach(func(_, value lua.LValue) {
+			n, ok := value.(lua.LNumber)
+			if !ok {
+				return
+			}
+			if f := float64(n); f != math.Trunc(f) || f <= 0 || f > maxLuaExactInteger {
+				L.ArgError(argIdx, fmt.Sprintf("%s must contain whole numbers, got %v", key, f))
+			}
+		})
+	}
+}
+
+// checkEntityIDList validates a bare array of entity ids, as the relationship
+// writers take.
+func checkEntityIDList(L *lua.LState, argIdx int, tbl *lua.LTable) {
+	if tbl == nil {
+		return
+	}
+	tbl.ForEach(func(_, value lua.LValue) {
+		n, ok := value.(lua.LNumber)
+		if !ok {
+			return
+		}
+		if f := float64(n); f != math.Trunc(f) || f <= 0 || f > maxLuaExactInteger {
+			L.ArgError(argIdx, fmt.Sprintf("entity ids must be whole numbers, got %v", f))
+		}
+	})
+}
+
 // registerDbModule registers the mah.db sub-table in the Lua VM.
 // Functions check pm.dbProvider at call time (not at registration) so they
 // work even though the provider is set after plugin loading.
@@ -290,7 +353,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 				L.Push(lua.LString("database not available"))
 				return 2
 			}
-			filter := luaTableToGoMap(L.OptTable(1, L.NewTable()))
+			filterTbl := L.OptTable(1, L.NewTable())
+			checkEntityIDOpts(L, 1, filterTbl)
+			filter := luaTableToGoMap(filterTbl)
 			results, err := fn(db, filter)
 			if err != nil {
 				L.Push(lua.LNil)
@@ -315,7 +380,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 				L.Push(lua.LString("database not available"))
 				return 2
 			}
-			filter := luaTableToGoMap(L.OptTable(1, L.NewTable()))
+			filterTbl := L.OptTable(1, L.NewTable())
+			checkEntityIDOpts(L, 1, filterTbl)
+			filter := luaTableToGoMap(filterTbl)
 			count, err := fn(db, filter)
 			if err != nil {
 				L.Push(lua.LNil)
@@ -473,7 +540,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 				L.Push(lua.LString("database writer not available"))
 				return 2
 			}
-			opts := luaTableToGoMap(L.CheckTable(1))
+			optsTbl := L.CheckTable(1)
+			checkEntityIDOpts(L, 1, optsTbl)
+			opts := luaTableToGoMap(optsTbl)
 			result, err := fn(w, opts)
 			InvalidateMRQLCache(L.Context())
 			if err != nil {
@@ -496,7 +565,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 				return 2
 			}
 			id := checkEntityID(L, 1)
-			opts := luaTableToGoMap(L.CheckTable(2))
+			optsTbl := L.CheckTable(2)
+			checkEntityIDOpts(L, 2, optsTbl)
+			opts := luaTableToGoMap(optsTbl)
 			result, err := fn(w, id, opts)
 			InvalidateMRQLCache(L.Context())
 			if err != nil {
@@ -616,7 +687,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		}
 		entityType := L.CheckString(1)
 		id := checkEntityID(L, 2)
-		ids := luaTableToUintSlice(L.CheckTable(3))
+		idsTbl := L.CheckTable(3)
+		checkEntityIDList(L, 3, idsTbl)
+		ids := luaTableToUintSlice(idsTbl)
 		err := w.AddTagsToEntity(entityType, id, ids)
 		InvalidateMRQLCache(L.Context())
 		if err != nil {
@@ -638,7 +711,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		}
 		entityType := L.CheckString(1)
 		id := checkEntityID(L, 2)
-		ids := luaTableToUintSlice(L.CheckTable(3))
+		idsTbl := L.CheckTable(3)
+		checkEntityIDList(L, 3, idsTbl)
+		ids := luaTableToUintSlice(idsTbl)
 		err := w.RemoveTagsFromEntity(entityType, id, ids)
 		InvalidateMRQLCache(L.Context())
 		if err != nil {
@@ -660,7 +735,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		}
 		entityType := L.CheckString(1)
 		id := checkEntityID(L, 2)
-		ids := luaTableToUintSlice(L.CheckTable(3))
+		idsTbl := L.CheckTable(3)
+		checkEntityIDList(L, 3, idsTbl)
+		ids := luaTableToUintSlice(idsTbl)
 		err := w.AddGroupsToEntity(entityType, id, ids)
 		InvalidateMRQLCache(L.Context())
 		if err != nil {
@@ -682,7 +759,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		}
 		entityType := L.CheckString(1)
 		id := checkEntityID(L, 2)
-		ids := luaTableToUintSlice(L.CheckTable(3))
+		idsTbl := L.CheckTable(3)
+		checkEntityIDList(L, 3, idsTbl)
+		ids := luaTableToUintSlice(idsTbl)
 		err := w.RemoveGroupsFromEntity(entityType, id, ids)
 		InvalidateMRQLCache(L.Context())
 		if err != nil {
@@ -703,7 +782,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			return 2
 		}
 		noteId := checkEntityID(L, 1)
-		ids := luaTableToUintSlice(L.CheckTable(2))
+		idsTbl := L.CheckTable(2)
+		checkEntityIDList(L, 2, idsTbl)
+		ids := luaTableToUintSlice(idsTbl)
 		err := w.AddResourcesToNote(noteId, ids)
 		InvalidateMRQLCache(L.Context())
 		if err != nil {
@@ -724,7 +805,9 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			return 2
 		}
 		noteId := checkEntityID(L, 1)
-		ids := luaTableToUintSlice(L.CheckTable(2))
+		idsTbl := L.CheckTable(2)
+		checkEntityIDList(L, 2, idsTbl)
+		ids := luaTableToUintSlice(idsTbl)
 		err := w.RemoveResourcesFromNote(noteId, ids)
 		InvalidateMRQLCache(L.Context())
 		if err != nil {
