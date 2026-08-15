@@ -323,6 +323,44 @@ func TestShowWhen_ValidationIsIdempotent(t *testing.T) {
 	}
 }
 
+// Params are addressed by name everywhere downstream, so two with the same name
+// have no coherent meaning — and make stripping ambiguous, since one can be
+// hidden while the other is visible and there is a single value to keep or drop.
+func TestShowWhen_RejectsDuplicateParamNames(t *testing.T) {
+	_, err := registerShowWhenAction(t, `{
+            { name = "mode", type = "text", label = "Mode" },
+            { name = "mode", type = "text", label = "Mode again", show_when = { other = "x" } },
+        }`)
+	if err == nil {
+		t.Fatal("duplicate param names should be rejected")
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("the error should say duplicate, got: %v", err)
+	}
+}
+
+// Stripping collects every hidden name before deleting any, so its result does
+// not depend on Go's randomized map iteration order.
+func TestShowWhen_StrippingIsOrderIndependent(t *testing.T) {
+	action, err := registerShowWhenAction(t, `{
+            { name = "mode", type = "select", label = "Mode", options = {"a", "b"}, default = "a" },
+            { name = "one", type = "text", label = "One", show_when = { mode = "b" } },
+            { name = "two", type = "text", label = "Two", show_when = { mode = "b" } },
+            { name = "three", type = "text", label = "Three", show_when = { mode = "a" } },
+        }`)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	for i := 0; i < 50; i++ {
+		params := map[string]any{"mode": "a", "one": "1", "two": "2", "three": "3"}
+		StripHiddenParams(action, params)
+		if len(params) != 2 || params["mode"] != "a" || params["three"] != "3" {
+			t.Fatalf("iteration %d: stripping was order-dependent: %v", i, params)
+		}
+	}
+}
+
 // A show_when expectation that is neither a scalar nor an array of scalars
 // cannot be compared, and comparing two maps with == is a runtime panic rather
 // than a false. Reject the shape at load instead.

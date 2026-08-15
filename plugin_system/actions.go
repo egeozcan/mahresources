@@ -269,6 +269,18 @@ func parseActionTable(L *lua.LState, tbl *lua.LTable, pluginName string) (*Actio
 		}
 	}
 
+	// Params are addressed by name everywhere downstream — the submitted map,
+	// the form model, show_when — so a duplicate name has no coherent meaning.
+	// It also makes stripping ambiguous: one of the two can be hidden while the
+	// other is visible, and there is only one value to keep or drop.
+	seen := make(map[string]bool, len(a.Params))
+	for _, p := range a.Params {
+		if seen[p.Name] {
+			return nil, fmt.Errorf("param %q: duplicate parameter name", p.Name)
+		}
+		seen[p.Name] = true
+	}
+
 	// The conditions of each gated param, for the chained-condition check below.
 	gatedBy := make(map[string]map[string]any, len(a.Params))
 	for _, p := range a.Params {
