@@ -53,7 +53,7 @@ plugin = {
 | `dependencies` | No | Plugin names that must be enabled first. Requires `api_version` |
 | `min_app_version` | No | Recorded and displayed, never enforced. Requires `api_version` |
 
-A plugin that declares `api_version` receives only the capabilities it lists, and its outbound requests are confined to the hosts it declares. A plugin that does not is **legacy**: it keeps the full `mah` surface, with a warning. Legacy is not an exemption from the network rules. See [Plugin Permissions](./plugin-permissions.md) for the capability list, the consent model, and the three network layers.
+A plugin that declares `api_version` receives only the capabilities it lists — plus what those imply, and the handful of modules every plugin gets. If it also declares `network`, its outbound requests are confined to those hosts; **declaring no `network` means any public host**, which is the broadest policy rather than the narrowest. A plugin that declares no `api_version` at all is **legacy**: it keeps the full `mah` surface, with a warning. Legacy is not an exemption from the network rules. See [Plugin Permissions](./plugin-permissions.md) for the capability list, the consent model, and the three network layers.
 
 ## Plugin Lifecycle
 

@@ -70,6 +70,7 @@ const sidebars: SidebarsConfig = {
         'features/custom-block-types',
         'features/entity-picker',
         'features/plugin-system',
+        'features/plugin-permissions',
         'features/plugin-actions',
         'features/plugin-hooks',
         'features/plugin-lua-api',

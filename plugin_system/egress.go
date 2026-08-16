@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"syscall"
 	"time"
+
+	lua "github.com/yuin/gopher-lua"
 )
 
 // Egress control for plugin-initiated outbound requests, in three layers.
@@ -226,6 +229,21 @@ func egressErrorForPlugin(err error) string {
 	return err.Error()
 }
 
+// logEgressRefusal writes the operator's half of a refusal.
+//
+// The plugin is deliberately told less than the truth — naming the resolved
+// address would turn every refusal into an internal DNS map. That argument only
+// holds if the detail goes SOMEWHERE, otherwise "we tell the operator instead"
+// is a claim with nothing behind it and a real misconfiguration (a host the
+// plugin legitimately needs) becomes undiagnosable from either side.
+func logEgressRefusal(err error, pluginName, method, rawURL string) {
+	var blocked *errEgressBlocked
+	if !errors.As(err, &blocked) {
+		return
+	}
+	log.Printf("[plugin] %s: refused %s %s: %s", pluginName, method, rawURL, blocked.Error())
+}
+
 // hostFromURL extracts the host of a request URL.
 //
 // A URL that does not parse, or names no host, is refused rather than allowed:
@@ -440,4 +458,23 @@ func ApplyEgressPolicy(client *http.Client, policy NetworkPolicy, dialTimeout ti
 // the request starts. Exported for the same reason ApplyEgressPolicy is.
 func CheckEgressURL(policy NetworkPolicy, raw string) error {
 	return checkEgressHost(policy, raw)
+}
+
+// pluginNameFor resolves the plugin a VM belongs to, for the operator log.
+//
+// Best-effort by design: a refusal from a VM that is mid-teardown still deserves
+// a log line, so an unknown state is named rather than dropped.
+func (pm *PluginManager) pluginNameFor(L *lua.LState) string {
+	root := mainState(L)
+	if root == nil {
+		return "unknown plugin"
+	}
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	for i, state := range pm.states {
+		if state == root && i < len(pm.plugins) {
+			return pm.plugins[i].Name
+		}
+	}
+	return "unknown plugin"
 }

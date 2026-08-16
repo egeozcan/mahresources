@@ -688,6 +688,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 		result, err := db.CreateResourceFromURL(url, opts)
 		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
+			logEgressRefusal(err, pm.pluginNameFor(L), "GET", url)
 			L.Push(lua.LNil)
 			// Sanitized like the mah.http paths: the host-side downloader wraps
 			// a dial refusal, and both our own message and Go's *net.OpError
@@ -746,6 +747,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 		result, err := db.AddResourceVersionFromURL(resourceID, url, comment)
 		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
+			logEgressRefusal(err, pm.pluginNameFor(L), "GET", url)
 			L.Push(lua.LNil)
 			// Sanitized: see create_resource_from_url above.
 			L.Push(lua.LString(egressErrorForPlugin(err)))
