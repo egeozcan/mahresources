@@ -1,3 +1,111 @@
+# Hook-triggered plugin code ran unscoped (2026-08-16)
+
+The finding the package-2 record carried forward as unverified, and the first of
+the three "what to do next" items on the capability report. It was real, and
+there were two doors rather than the one that had been written down.
+
+## The defect
+
+`auth.PluginCodeAllowed` denies a group-confined principal every plugin code
+path, and that deny matches **URL paths**: `/plugins/…`, `/v1/plugins/…`, and
+the seven render seams. Hooks are not a URL path. They fire from ordinary scoped
+CRUD, which a confined user is entitled to perform, so a group-limited user
+creating a note *inside its own subtree* woke plugin Lua — and that Lua's
+`mah.db` calls read the whole database.
+
+The mechanism was one line: `BindInvocation` rebuilt the caller as
+`&auth.Principal{UserID: inv.ActorUserID}`. That principal carries no role and
+no scope group, so it is neither `IsScoped()` nor `RequiresScope()`,
+`applyPrincipalScope` adds no subtree filter, and every read runs unscoped. The
+comment above it explained why actor 0 must not be bound; nothing had asked what
+the *non-zero* case produced.
+
+**Reproduced before fixing**, in `application_context/plugin_hook_scope_test.go`:
+a user confined to group `inside` creates a note there, and the hook reads back
+`outside`, `outside-note` and `outside-res`.
+
+## The second door
+
+`mah.db.mrql_query` does not go through `BindInvocation` at all — it has its own
+executor (`pluginMRQLAdapter`), wired to the singleton context and never bound to
+anyone. So the same hook could ask MRQL for the entire database, and
+`scope = "global"` asked for it explicitly. Worse in kind than the first door:
+MRQL is the general query language, and `mrql.ResolveScope` on the unscoped
+handle also let a SCOPE clause probe for groups by name outside the subtree.
+
+`ExecuteSingleEntityWithScope` is the only executor entry point that takes a
+scope and asks nothing about the principal — and the plugin adapter was its only
+caller. That is the shape to look for: an entry point whose sole caller is the
+one subsystem that never learned about principals.
+
+## The fix
+
+- `principalForPluginActor` **reads the account** instead of fabricating a
+  principal from the id, so the actor's real role and scope group apply. One
+  chokepoint covers every entry point — hooks, request paths, async jobs and
+  drained HTTP callbacks — because all of them already reduce to an actor id.
+- **Fail-closed** when the account cannot be read. A plugin call outlives the
+  request that started it, so the user may have been deleted or disabled in
+  between, and "I could not find out what you may see" must not resolve to
+  "everything". The deny-all identity is a role that must be scoped with no
+  scope group to resolve, which is this tree's existing fail-closed shape.
+- The MRQL executor carries the actor on `MRQLExecOptions` (a `uint`, the same
+  vocabulary `actor.go` already exchanges — no `*auth.Principal` crosses into
+  `plugin_system`), binds with `WithMRQLPrincipal`, resolves SCOPE through
+  `ResolveMRQLScope`, and clamps the flat path with
+  `effectiveMRQLRequestedScope` exactly as `ExecuteMRQLScoped` does.
+- `MRQLCacheKey` takes the actor. The cache is per-request today, so this
+  changes no hit rate; it is there so that stops being a fact a reader must
+  establish before trusting it.
+
+Deliberately unchanged: the deny itself. A confined principal still cannot reach
+a plugin URL. This removes the *reason* the deny is fail-closed on the hook
+path, which is package 3's stated prerequisite — it does not lift it.
+
+Cost: one indexed read per bind under `-auth` with a non-zero actor, plus the
+subtree CTE `WithPrincipal` already runs for a scoped principal. Both are per
+`mah.db` call, because that is where the bind happens; the CTE is the dominant
+term and is unavoidable wherever the principal comes from. Auth-off pays
+nothing — the actor is 0 and the bind is skipped. If it ever matters, bind once
+per VM entry point rather than per call; do not go back to guessing.
+
+## Tests
+
+Four, all reproducing before fixing where they apply, and all mutation-tested:
+
+| test | mutation that must fail it | result |
+|---|---|---|
+| confined principal sees no `outside` entity | revert `BindInvocation` to the id-only principal | caught |
+| …including through `mrql_query` | drop the flat-path clamp; send `ActorUserID: 0` | caught (both) |
+| confined principal still sees its own subtree | — (guards against a fix that just denies everything) | n/a |
+| unresolvable actor is denied everything | drop the `Disabled` check; make the deny principal an unscoped role | caught (both) |
+| unscoped editor still sees everything | — (guards against over-confining) | n/a |
+
+The role in the fixture is `user`-with-a-scope-group, not `guest`, deliberately:
+a guest cannot write, so a guest can never trigger a create hook. A scope-limited
+user is the only principal that is both confined and able to perform the write
+that wakes the plugin.
+
+| gate | result |
+|---|---|
+| `go build ./...` | clean |
+| `go test --tags 'json1 fts5' ./...` | pass (all packages) |
+| `go vet` | one pre-existing warning (`action_jobs.go:87`, a deliberate snapshot copy), unchanged |
+| Postgres suite | **not run** — no Docker in this environment. The change adds no SQL; it reuses the scope machinery the Postgres suite already covers. |
+
+Browser and CLI E2E not run: no template, JS or CSS surface changed.
+
+## Still open from the capability report
+
+- **Sharp edge 4a** — `POST /v1/resource/remote` and the download queue apply no
+  address filtering. Pre-existing SSRF in the app rather than in the plugin
+  system. It carries one real decision (whether an operator-initiated fetch may
+  reach a private address at all, and what opts in), which is why it is not
+  bundled here.
+- **The action fan-out has no id cap** — still unverified.
+- The rest of item A: the `LState` pool, `mah.db.transaction`, and lifting the
+  confined-principal plugin deny.
+
 # Plugin package format — manifest, grants, egress (2026-08-16)
 
 Plan: [docs/plans/2026-08-16-plugin-package-format.md](plans/2026-08-16-plugin-package-format.md).

@@ -286,6 +286,15 @@ type MRQLExecOptions struct {
 	Buckets int               // max GROUP BY buckets (default 5)
 	ScopeID uint              // resolved owner_id for scoping (0 = no scope filter)
 	Params  map[string]string // $name placeholder bindings (nil/empty when none)
+
+	// ActorUserID is the user whose call this is, or 0 when there is none
+	// (auth off, or a context-less worker path). It is the same uint the rest
+	// of the host exchanges — see actor.go — and it is here because mrql_query
+	// reaches the database through its own executor rather than through
+	// querierFor, so the identity BindInvocation applies never reached it.
+	// Without it a group-confined user's hook could ask MRQL for the whole
+	// database.
+	ActorUserID uint
 }
 
 // MRQLResult holds query results in a plugin_system-safe form (no model imports).
@@ -1168,11 +1177,13 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 			}
 		}
 
+		actor := pm.actorFor(L)
 		execOpts := MRQLExecOptions{
-			Limit:   limit,
-			Buckets: buckets,
-			ScopeID: scopeID,
-			Params:  params,
+			Limit:       limit,
+			Buckets:     buckets,
+			ScopeID:     scopeID,
+			Params:      params,
+			ActorUserID: actor,
 		}
 
 		// Check cache
@@ -1180,7 +1191,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 		if reqCtx == nil {
 			reqCtx = context.Background()
 		}
-		cacheKey := MRQLCacheKey(query, scopeID, limit, buckets, params)
+		cacheKey := MRQLCacheKey(query, scopeID, limit, buckets, params, actor)
 		if cache := MRQLCacheFromContext(reqCtx); cache != nil {
 			if cached, ok := cache.Get(cacheKey); ok {
 				L.Push(mrqlResultToLua(L, cached))

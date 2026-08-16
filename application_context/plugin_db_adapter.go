@@ -44,7 +44,7 @@ type pluginDBAdapter struct {
 func (a *pluginDBAdapter) BindInvocation(inv *plugin_system.Invocation) (plugin_system.EntityQuerier, plugin_system.EntityWriter) {
 	bound := a.ctx
 	if inv != nil && inv.ActorUserID != 0 {
-		bound = a.ctx.WithPrincipal(&auth.Principal{UserID: inv.ActorUserID})
+		bound = a.ctx.WithPrincipal(a.ctx.principalForPluginActor(inv.ActorUserID))
 	} else {
 		clone := *a.ctx
 		bound = &clone
@@ -63,6 +63,49 @@ func (a *pluginDBAdapter) BindInvocation(inv *plugin_system.Invocation) (plugin_
 
 	adapter := &pluginDBAdapter{ctx: bound}
 	return adapter, adapter
+}
+
+// principalForPluginActor resolves the identity a plugin call must run as, from
+// the only thing the plugin host is allowed to know about the caller: a user id.
+//
+// It reads the account rather than fabricating a principal from the id, and that
+// is the whole point. A &auth.Principal{UserID: id} carries no role and no scope
+// group, so it is neither IsScoped nor RequiresScope, applyPrincipalScope adds
+// no subtree filter, and every mah.db call in the invocation runs unscoped. The
+// URL-path deny (auth.PluginCodeAllowed) does not cover this, because hooks are
+// not a URL path: they fire from ordinary scoped CRUD that a group-confined user
+// is entitled to perform, so such a user creating a note in its own subtree woke
+// a plugin that could then read the whole database.
+//
+// Fail-closed when the account cannot be read. A plugin call can outlive the
+// request that started it — an async job or a drained HTTP callback carries its
+// submitter's id and runs later — so the account may have been deleted or
+// disabled in between, and "I could not find out what you may see" must not mean
+// "everything".
+//
+// Cost: one indexed read per bind, plus the subtree CTE that WithPrincipal
+// already runs for a scoped principal. Both are per mah.db call, because that is
+// where the bind happens; the CTE is the dominant term and is unavoidable
+// wherever the principal comes from. If it ever matters, the fix is to bind once
+// per VM entry point rather than once per call — not to guess the principal.
+func (ctx *MahresourcesContext) principalForPluginActor(actorID uint) *auth.Principal {
+	if actorID == 0 {
+		return nil
+	}
+	user, err := ctx.GetUser(actorID)
+	if err != nil || user == nil || user.Disabled {
+		return deniedPluginPrincipal(actorID)
+	}
+	return auth.FromUser(user)
+}
+
+// deniedPluginPrincipal is this tree's canonical deny-all identity: a role that
+// must be scoped (Role.RequiresScopeGroup) with no scope group to resolve, so
+// applyPrincipalScope materialises an empty allow-list — matching no rows and
+// rejecting every scoped write. It is a statement about what the caller may
+// reach, not a claim that the actor is a guest.
+func deniedPluginPrincipal(actorID uint) *auth.Principal {
+	return &auth.Principal{UserID: actorID, Role: models.RoleGuest}
 }
 
 // skipNotFound collapses a missing row to a nil error, so the getters can
