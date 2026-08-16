@@ -732,8 +732,13 @@ func (ctx *MahresourcesContext) fetchICSFromURL(url string) ([]byte, time.Time, 
 // allowedICSScheme reports whether rawURL uses an http(s) scheme. Restricting
 // the scheme (and re-validating redirect targets) limits the calendar fetch from
 // being used as an SSRF primitive against non-http internal services (e.g.
-// file://, gopher://). Private-IP filtering is intentionally NOT applied so that
-// legitimate internal calendar servers keep working on private-network deployments.
+// file://, gopher://).
+//
+// Private-address filtering used to be left off here on the grounds that
+// internal calendar servers are a real use case. They are — which is why the
+// answer is an opt-in that names them (-allow-private-fetch) rather than a hole
+// that admits every internal service along with them. fetchAndCacheICS applies
+// the host policy below.
 func allowedICSScheme(rawURL string) bool {
 	u, err := neturl.Parse(rawURL)
 	if err != nil {
@@ -781,8 +786,37 @@ func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSC
 		client.Timeout = 30 * time.Second
 	}
 
+	// The scheme check above stops file:// and gopher://; it never stopped
+	// http://169.254.169.254/. The host policy does, and this is the third of
+	// the three operator fetch paths it covers — a calendar URL is user-supplied
+	// and fetched server-side like any other.
+	schemeRedirect := client.CheckRedirect
+	client = plugin_system.ApplyEgressPolicy(client, ctx.hostFetchPolicy, client.Timeout)
+	// ApplyEgressPolicy installs its own CheckRedirect — the same 10-hop bound,
+	// plus the policy's host re-check — which replaces the one built above
+	// rather than adding to it. Compose them: the scheme rule is about what this
+	// fetcher accepts at all, the policy about where the server may go.
+	egressRedirect := client.CheckRedirect
+	client.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+		if schemeRedirect != nil {
+			if err := schemeRedirect(r, via); err != nil {
+				return err
+			}
+		}
+		if egressRedirect != nil {
+			return egressRedirect(r, via)
+		}
+		return nil
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
+		// Sanitized: a calendar block's error text is rendered on the page, so
+		// the resolved address must not travel with it. The operator's copy is
+		// the log line the caller writes.
+		if msg, blocked := plugin_system.HostFetchRefusal(err); blocked {
+			return nil, time.Time{}, errors.New(msg)
+		}
 		return nil, time.Time{}, fmt.Errorf("failed to fetch URL: %w", err)
 	}
 	defer resp.Body.Close()

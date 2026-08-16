@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"syscall"
 	"time"
 
@@ -303,10 +304,14 @@ func egressDialControl(policy NetworkPolicy) func(string, string, syscall.RawCon
 		if policy.allowsPrivateAddress(ip) {
 			return nil
 		}
+		advice := policy.PrivateAdvice
+		if advice == "" {
+			advice = "a plugin may only reach one by naming the address or CIDR in `network` " +
+				"and declaring allow_private_hosts"
+		}
 		return &errEgressBlocked{
 			resolved: ip.String(),
-			reason: reason + "; a plugin may only reach one by naming the address or CIDR in `network` " +
-				"and declaring allow_private_hosts",
+			reason:   reason + "; " + advice,
 		}
 	}
 }
@@ -458,6 +463,88 @@ func ApplyEgressPolicy(client *http.Client, policy NetworkPolicy, dialTimeout ti
 // the request starts. Exported for the same reason ApplyEgressPolicy is.
 func CheckEgressURL(policy NetworkPolicy, raw string) error {
 	return checkEgressHost(policy, raw)
+}
+
+// hostFetchAdvice is the remediation an operator gets, rather than the one a
+// plugin author gets. It names the flag because that is the only thing that
+// changes the answer.
+const hostFetchAdvice = "this server may only fetch from one when the address or CIDR block is named in -allow-private-fetch"
+
+// HostFetchPolicy is the egress policy for the application's *own* fetches:
+// POST /v1/resource/remote, the background download queue, and the calendar
+// block's ICS fetch. All three take a URL from a user and fetch it server-side,
+// which is a server-side request forgery primitive unless something says where
+// the server may go.
+//
+// It differs from a plugin's policy in exactly one way, and the difference is
+// the point. Hosts are unrestricted: an operator fetching a file from the
+// public internet is the entire purpose of the feature, and no allowlist of
+// public hosts could be written for it. Private *addresses* are denied unless
+// the operator names them, which is the same rule plugins get and for the same
+// reason — the metadata endpoint at 169.254.169.254 is the target that matters,
+// and it is reachable from any deployment that does not say otherwise.
+//
+// Only addresses and CIDR blocks are accepted. A hostname here would be a
+// silent no-op: the deny is applied to the address a name resolves to, never to
+// the name, so an entry that cannot be compared against an address permits
+// nothing while reading as though it permits something. Refusing it at startup
+// is the difference between a misconfiguration and a false sense of one.
+//
+// An empty list yields a policy that reaches any public host and no private
+// one, which is the safe default a fresh deployment gets without configuring
+// anything.
+func HostFetchPolicy(allowPrivate []string) (NetworkPolicy, error) {
+	policy := NetworkPolicy{Unrestricted: true, PrivateAdvice: hostFetchAdvice}
+
+	for _, raw := range allowPrivate {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			continue
+		}
+		rule, err := parseNetworkRule(entry)
+		if err != nil {
+			return NetworkPolicy{}, fmt.Errorf("-allow-private-fetch %q: %w", entry, err)
+		}
+		if rule.kind != ruleIP && rule.kind != ruleCIDR {
+			return NetworkPolicy{}, fmt.Errorf(
+				"-allow-private-fetch %q: name an address or CIDR block, not a hostname — the deny applies to "+
+					"the address a name resolves to, so a name here would permit nothing", entry)
+		}
+		// The same width bar plugins are held to. An operator writing a /4 has
+		// not named anything; a default route is already refused by the parser.
+		if broad, why := rule.tooBroadForPrivateHosts(); broad {
+			return NetworkPolicy{}, fmt.Errorf("-allow-private-fetch %q: %s", entry, why)
+		}
+		policy.Rules = append(policy.Rules, rule)
+	}
+
+	// Derived, never configured separately: consent to private egress *is* the
+	// list. A true flag with an empty list would permit nothing (an address
+	// rule must still match), and a false one with a populated list would make
+	// the operator's entries silently dead.
+	policy.AllowPrivate = len(policy.Rules) > 0
+	return policy, nil
+}
+
+// HostFetchRefusal renders an egress refusal for a user-facing operator path —
+// the error on a failed download row, or the response to POST
+// /v1/resource/remote.
+//
+// It exists for the same reason PluginMessage does, and is structurally safe
+// the same way: it never reads the resolved address. Under -auth an ordinary
+// user can submit a download, so echoing "10.4.2.17 is a private address" back
+// would make the failure list an internal network scanner. The operator's half
+// is the log line, which keeps the address.
+func HostFetchRefusal(err error) (string, bool) {
+	var blocked *errEgressBlocked
+	if !errors.As(err, &blocked) {
+		return "", false
+	}
+	if blocked.requested == "" {
+		return "blocked request: it resolves to an address this server is not permitted to fetch from", true
+	}
+	return fmt.Sprintf("blocked request to %s: it resolves to an address this server is not permitted to fetch from",
+		blocked.requested), true
 }
 
 // pluginNameFor resolves the plugin a VM belongs to, for the operator log.

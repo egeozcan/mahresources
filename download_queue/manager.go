@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"mahresources/contracts"
 	"mahresources/models"
@@ -17,8 +18,8 @@ import (
 )
 
 const (
-	MaxConcurrentDownloads     = 3
-	MaxQueueSize               = 100
+	MaxConcurrentDownloads = 3
+	MaxQueueSize           = 100
 	// ShutdownDrainTimeout bounds how long Shutdown waits for in-flight download
 	// workers to stamp and record their (cancelled) terminal state.
 	ShutdownDrainTimeout = 5 * time.Second
@@ -35,6 +36,24 @@ const (
 type ManagerConfig struct {
 	Concurrency  int           // max concurrent jobs across all sources
 	JobRetention time.Duration // how long completed/failed jobs linger in memory
+
+	// ClientPolicy decorates the HTTP client each download uses, so the queue
+	// fetches only where the deployment permits. A download URL is user-supplied
+	// and fetched server-side, which is a server-side request forgery primitive
+	// until something says where the server may go.
+	//
+	// Injected rather than imported. The policy and its address classifier live
+	// beside the plugin egress work that wrote them, and this package sits below
+	// the layer that knows about either — the same shape as HistoryRecorder,
+	// declared here and implemented above. nil leaves the client undecorated,
+	// which is what the tests and any embedder that has no policy get.
+	ClientPolicy func(*http.Client) *http.Client
+
+	// RefusalMessage renders a policy refusal for the job's error field, which
+	// its submitter reads. It exists so the address a hostname resolved to does
+	// not travel to whoever submitted the URL; ok is false for any error that is
+	// not a refusal. nil passes errors through unchanged.
+	RefusalMessage func(error) (msg string, ok bool)
 }
 
 // ResourceCreator is the interface needed to create resources
@@ -90,15 +109,15 @@ func (s staticDownloadSettings) ExportRetention() time.Duration { return s.er }
 // constructor) and read under mu.RLock (currentSettings). All other mu-guarded
 // fields follow the same pattern.
 type DownloadManager struct {
-	mu            sync.RWMutex
-	jobs          map[string]*DownloadJob
-	jobOrder      []string // Maintains insertion order
-	resourceCtx   ResourceCreator
-	settings      DownloadSettings
-	semaphore     chan struct{}
+	mu          sync.RWMutex
+	jobs        map[string]*DownloadJob
+	jobOrder    []string // Maintains insertion order
+	resourceCtx ResourceCreator
+	settings    DownloadSettings
+	semaphore   chan struct{}
 	// workers counts the download goroutines in flight, so Shutdown can wait for
 	// their terminal history writes rather than exiting under them.
-	workers sync.WaitGroup
+	workers       sync.WaitGroup
 	subscribers   map[chan JobEvent]struct{}
 	subscribersMu sync.RWMutex
 	// notifyMu orders snapshot-and-publish against itself, so the sequence
@@ -106,12 +125,17 @@ type DownloadManager struct {
 	// Held across a Snapshot and a set of non-blocking sends, and never while any
 	// other lock is being acquired in the other direction: no job method reaches the
 	// manager, and no caller holds a job's mutex across a notification.
-	notifyMu sync.Mutex
+	notifyMu      sync.Mutex
 	cleanupTicker *time.Ticker
 	done          chan struct{}
 	concurrency   int
 	jobRetention  time.Duration
-	exportSweepFn func() // called by cleanupOldJobs to sweep expired export tars from disk
+	// clientPolicy and refusalMessage carry the deployment's egress policy into
+	// each transfer. Both are set once at construction and never reassigned, so
+	// they are read without the mutex. See ManagerConfig.
+	clientPolicy   func(*http.Client) *http.Client
+	refusalMessage func(error) (string, bool)
+	exportSweepFn  func() // called by cleanupOldJobs to sweep expired export tars from disk
 	// history is the durable store for terminal downloads (see history.go). Optional:
 	// nil means the manager keeps its pre-history behaviour, which is what the CLI's
 	// and the tests' bare managers rely on.
@@ -133,15 +157,17 @@ func NewDownloadManagerWithConfig(resourceCtx ResourceCreator, settings Download
 		cfg.JobRetention = JobRetentionDuration
 	}
 	dm := &DownloadManager{
-		jobs:         make(map[string]*DownloadJob),
-		jobOrder:     make([]string, 0),
-		resourceCtx:  resourceCtx,
-		settings:     settings,
-		semaphore:    make(chan struct{}, cfg.Concurrency),
-		subscribers:  make(map[chan JobEvent]struct{}),
-		done:         make(chan struct{}),
-		concurrency:  cfg.Concurrency,
-		jobRetention: cfg.JobRetention,
+		jobs:           make(map[string]*DownloadJob),
+		jobOrder:       make([]string, 0),
+		resourceCtx:    resourceCtx,
+		settings:       settings,
+		semaphore:      make(chan struct{}, cfg.Concurrency),
+		subscribers:    make(map[chan JobEvent]struct{}),
+		done:           make(chan struct{}),
+		concurrency:    cfg.Concurrency,
+		jobRetention:   cfg.JobRetention,
+		clientPolicy:   cfg.ClientPolicy,
+		refusalMessage: cfg.RefusalMessage,
 	}
 
 	// Start cleanup goroutine
@@ -463,7 +489,7 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 // values reflect the live runtime configuration at the moment the download
 // starts.
 func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
-	return &http.Client{
+	client := &http.Client{
 		Timeout: s.OverallTimeout(),
 		Transport: &http.Transport{
 			DialContext:           (&net.Dialer{Timeout: s.ConnectTimeout()}).DialContext,
@@ -472,6 +498,29 @@ func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
 			IdleConnTimeout:       90 * time.Second,
 		},
 	}
+	// Per download, and after the transport is built: the policy replaces the
+	// dialler, so decorating a client that outlived one transfer would let a
+	// pooled connection opened under one policy serve another.
+	if dm.clientPolicy != nil {
+		client = dm.clientPolicy(client)
+	}
+	return client
+}
+
+// describeFetchError renders a transfer failure for the job's error field.
+//
+// The submitter reads that field. A dial refusal's own text names the address
+// the URL resolved to — Go wraps it in *net.OpError, whose prefix carries the
+// address whatever we do to our own message — so a refusal is replaced rather
+// than annotated. Everything else passes through unchanged.
+func (dm *DownloadManager) describeFetchError(err error) error {
+	if dm.refusalMessage == nil || err == nil {
+		return err
+	}
+	if msg, ok := dm.refusalMessage(err); ok {
+		return errors.New(msg)
+	}
+	return err
 }
 
 // attemptReporter is the pair of callbacks one download attempt reports through.
@@ -541,7 +590,7 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, dm.describeFetchError(err)
 	}
 	defer resp.Body.Close()
 

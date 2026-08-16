@@ -166,6 +166,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | Timeout for connecting to remote URLs (default: 30s) |
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | Timeout for idle remote transfers (default: 60s) |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | Maximum total time for remote downloads (default: 30m) |
+| `-allow-private-fetch` | `ALLOW_PRIVATE_FETCH` | Comma-separated private addresses or CIDR blocks the server's **own** fetches may reach (`/v1/resource/remote`, the download queue, calendar blocks). Empty by default, which denies every loopback, link-local, RFC1918 and CGNAT address — the deny that stops a user-supplied URL from reaching `169.254.169.254` or an internal service. Public hosts are unaffected. Entries must be addresses or CIDR blocks, never hostnames; a bad entry fails startup. |
 | `-max-db-connections` | `MAX_DB_CONNECTIONS` | Limit database connection pool size (useful for SQLite under test load) |
 | `-max-job-concurrency` | `MAX_JOB_CONCURRENCY` | Concurrency budget for the shared background job manager (default: 6) |
 | `-export-retention` | `EXPORT_RETENTION` | How long completed group-export tars stay on disk (default: 24h) |

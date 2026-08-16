@@ -1,3 +1,129 @@
+# The application's own fetches are now policed (2026-08-16)
+
+Sharp edge 4a from the capability report, and the second of its three "what to
+do next" items. Item G gave plugins an egress policy and deliberately left the
+operator paths alone — they are not plugin paths — but they are what made G's
+confused-deputy chain reachable, and on their own they are a plain SSRF: an
+authenticated user hands the server a URL, the server fetches it, and the
+response is filed as a resource that user can then read.
+
+## The decision
+
+Recorded because the shape of the fix turned on it, and it was the operator's to
+make rather than the implementation's.
+
+- **Deny private addresses by default; opt in by naming them.** Not "allow with
+  an opt-out", which leaves every default deployment open — and the default
+  deployment is auth-off, where every request is an implicit administrator. Not
+  "deny outright", which silently breaks anyone importing from a LAN NAS, and was
+  rejected for plugins for that same reason.
+- **A startup flag, not a runtime setting.** `-allow-private-fetch` /
+  `ALLOW_PRIVATE_FETCH`. An SSRF allowlist that a hijacked admin session can
+  widen at runtime is a weaker control than one that needs a restart, and this
+  sits with `-trust-proxy-headers` and `-session-cookie-secure` rather than with
+  the retention knobs.
+- **Ignore `HTTP_PROXY` for these fetches**, exactly as plugin egress already
+  does. Through a proxy the dialler connects to the *proxy*, so the address check
+  inspects the proxy and waves everything through — including 169.254.169.254. A
+  proxy-dependent deployment now sees fetches blocked at the firewall rather than
+  silently unpoliced.
+
+## Three paths, not two
+
+The report named two. Mapping every outbound call found a third, and it had a
+comment explaining that it had been left open on purpose:
+
+> `// Private-IP filtering is intentionally NOT applied so that legitimate`
+> `// internal calendar servers keep working on private-network deployments.`
+
+That is the calendar block's ICS fetch — a user-supplied URL, retrieved
+server-side, rendered on the page. Its rationale is real and is exactly what the
+opt-in answers, so it is now policed like the other two rather than exempt.
+`POST /v1/resource/remote` and the download queue are the other two. DeepSeek is
+out of scope: its endpoint is operator-configured, not user-supplied.
+
+## Shape of the fix
+
+`plugin_system.HostFetchPolicy` builds the operator policy out of the machinery
+item G already wrote and exported for host-side callers. It differs from a
+plugin's policy in one way, and the difference is the point: **hosts are
+unrestricted** — fetching from the public internet is the entire feature, and no
+allowlist of public hosts could be written for it — while **private addresses
+need naming**.
+
+- **Only addresses and CIDR blocks are accepted.** A hostname in this list could
+  never match anything, because the deny is applied to the address a name
+  resolves to. Accepting one would leave an operator believing they had opened
+  something they had not, which is the silent-accept failure mode this codebase
+  keeps rediscovering. Refused at startup, with the flag named in the message.
+- **`download_queue` receives a decorator, it does not import the policy.** It
+  sits below the layer that knows what a network policy is, so `ManagerConfig`
+  gained `ClientPolicy` and `RefusalMessage` — the same seam as `HistoryRecorder`,
+  declared there and implemented above. The decorator runs per download, not per
+  manager: the policy replaces the dialler, so a client reused across transfers
+  could serve a pooled connection opened under a policy that no longer applies.
+- **Refusals do not name the resolved address.** They reach whoever submitted the
+  URL, and under `-auth` that is an ordinary user; a list of failed downloads
+  that named resolved addresses would be an internal network scan run at the
+  server's expense. `HostFetchRefusal` is structurally safe the same way
+  `PluginMessage` is — it does not read the field. The operator's copy is the log
+  line, which keeps it.
+- **The advice on a refusal follows the policy's origin.** `NetworkPolicy` gained
+  `PrivateAdvice`, so an operator is pointed at the flag rather than at
+  `allow_private_hosts` in a plugin manifest that has nothing to do with their
+  download. It is part of `Fingerprint`, so two policies that enforce identically
+  but explain themselves differently cannot share a pooled client.
+- **The ICS redirect check is composed, not replaced.** `ApplyEgressPolicy`
+  installs its own `CheckRedirect`; the existing scheme re-validation is chained
+  in front of it rather than overwritten.
+
+## Tests
+
+Nine new, plus the harness changes. Every deny test asserts both halves — the
+refusal happens, and the refusal does not name the resolved address.
+
+| test | mutation that must fail it | result |
+|---|---|---|
+| `/v1/resource/remote` refuses a private address | restore the undecorated operator branch | caught |
+| the download queue refuses one | drop `ClientPolicy` from the manager wiring | caught |
+| the ICS fetch refuses one | drop the decoration | caught |
+| the ICS scheme check still fires | drop the redirect composition | caught |
+| a named address stays reachable (all three paths) | — (guards against a fix that just denies) | n/a |
+| public hosts unaffected | — | n/a |
+| refusal never names the resolved address | make either branch return the operator-facing `Error()` | caught (both) |
+| a hostname / wildcard / `0.0.0.0/0` / `/4` is refused at startup | — | n/a |
+| operator advice names the flag, plugin advice unchanged | — | n/a |
+
+**One of these tests was vacuous and the mutation run is what caught it.** The
+leak test built a refusal with no `requested` host, which is the shape a
+dial-time deny has — so it only ever exercised one of `HostFetchRefusal`'s two
+branches, and making the *other* branch return the address-bearing error changed
+nothing. Both branches are now covered by name. The near-miss before that was a
+mutation that silently failed to apply and read as "not caught"; a mutation
+harness has to prove the edit landed before it can report anything.
+
+**The e2e harness had to opt in**, which is its own evidence: the
+resource-from-URL regression test downloads from the server's own `baseURL`. It
+was verified to fail without `-allow-private-fetch` and pass with it, against a
+real server — the deny is live in the binary, not only in unit tests.
+
+| gate | result |
+|---|---|
+| `go build ./...` | clean |
+| `go test --tags 'json1 fts5' ./...` | pass (all packages) |
+| `go vet` | one pre-existing warning (`action_jobs.go:87`), unchanged |
+| Postgres suite | **not run** — no Docker in this environment; the change adds no SQL |
+
+## Still open
+
+- **Item A**, the rest of scope-aware plugin access: the `LState` pool,
+  `mah.db.transaction`, and lifting the group-confined plugin deny. Both of its
+  gates are now open — G built the grant mechanism, and the hook-scope package
+  removed the reason the deny had to stay fail-closed.
+- **The action fan-out has no id cap** — still unverified.
+- **Plugin distribution** — signed tarballs, `mr plugin install`, an index — as
+  item G's card scoped it out of v1.
+
 # Hook-triggered plugin code ran unscoped (2026-08-16)
 
 The finding the package-2 record carried forward as unverified, and the first of

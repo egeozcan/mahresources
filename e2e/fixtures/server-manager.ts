@@ -150,6 +150,12 @@ export function startServerProcess(port: number, sharePort: number, opts: StartS
   // "URL base is not configured" warning instead, which is correct
   // production behaviour but doesn't match the existing test expectations.
   const sharePublicURL = `http://127.0.0.1:${sharePort}`;
+  // The harness fetches from its own server: the "resource from URL" regression
+  // test downloads ${baseURL}/public/favicon/favicon-32x32.png, which resolves
+  // to loopback. -allow-private-fetch denies every private address by default,
+  // so a deployment that fetches from itself has to say so — and this one does.
+  const allowPrivateFetch = '-allow-private-fetch=127.0.0.1,::1';
+
   if (pgDsn) {
     // Postgres mode: create a per-worker database
     const workerDsn = createWorkerDatabase(pgDsn);
@@ -166,6 +172,7 @@ export function startServerProcess(port: number, sharePort: number, opts: StartS
       '-thumb-worker-disabled',
       '-skip-version-migration',
       '-plugin-path=./e2e/test-plugins',
+      allowPrivateFetch,
       ...authArgs,
     ];
   } else {
@@ -196,6 +203,7 @@ export function startServerProcess(port: number, sharePort: number, opts: StartS
       // opposite of what a timeout is for.
       '-max-db-connections=2',
       '-plugin-path=./e2e/test-plugins',
+      allowPrivateFetch,
       ...authArgs,
     ];
   }
