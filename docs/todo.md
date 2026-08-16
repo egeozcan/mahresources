@@ -778,56 +778,134 @@ be the bypass.
 
 ## Batch 2 — consent and lifecycle
 
-- [ ] `PluginState.GrantsJSON` records what the operator consented to. The
+- [x] `PluginState.GrantsJSON` records what the operator consented to. The
       manifest alone cannot be the grant, or editing `plugin.lua` widens it
       silently.
-- [ ] Load refuses when `declared ⊄ consented`; the UI shows the delta and
+- [x] Load refuses when `declared ⊄ consented`; the UI shows the delta and
       re-enable is the re-consent gesture. Narrowing is not a consent event.
-- [ ] Legacy (no manifest) records `{"legacy":true}`, so growing a manifest is
+- [x] Legacy (no manifest) records `{"legacy":true}`, so growing a manifest is
       a change the operator sees.
-- [ ] Dependencies: enable refuses on a disabled dependency, disable refuses
+- [x] Dependencies: enable refuses on a disabled dependency, disable refuses
       when a dependent is enabled, cycles rejected at discovery.
-- [ ] `ActivateEnabledPlugins` enables in dependency order (repeated pass), and
+- [x] `ActivateEnabledPlugins` enables in dependency order (repeated pass), and
       names whatever is left over.
-- [ ] `/v1/plugins/manage` carries the manifest and grant state.
+- [x] `/v1/plugins/manage` carries the manifest and grant state.
 
 ## Batch 3 — egress (sharp edge #4)
 
-- [ ] Per-plugin host allowlist checked before `Do` on both the sync and async
+- [x] Per-plugin host allowlist checked before `Do` on both the sync and async
       paths.
-- [ ] The same match re-run inside `CheckRedirect`, per hop.
-- [ ] `Transport.DialContext` + `net.Dialer.Control` reject loopback,
+- [x] The same match re-run inside `CheckRedirect`, per hop.
+- [x] `Transport.DialContext` + `net.Dialer.Control` reject loopback,
       link-local, unique-local, private and unspecified **resolved** addresses.
       This is the DNS-rebinding layer; the allowlist sees only a hostname.
-- [ ] `allow_private_hosts` relaxes the dial deny for hosts that already matched
+- [x] `allow_private_hosts` relaxes the dial deny for hosts that already matched
       the allowlist. LAN services are a real use case; a blanket deny gets
       switched off wholesale.
-- [ ] One client per distinct policy. A shared `Transport` pools connections by
+- [x] One client per distinct policy. A shared `Transport` pools connections by
       host, so a shared client lets one plugin reuse another's connection with
       no dial and no check.
-- [ ] Legacy plugins are **not** exempt from the dial deny. It is a
+- [x] Legacy plugins are **not** exempt from the dial deny. It is a
       vulnerability fix, and exempting them exempts everyone who has it today.
 
 ## Batch 4 — the `action.Filters` re-check
 
-- [ ] Submitted `entity_ids` re-checked against the action's own filters, with
+- [x] Submitted `entity_ids` re-checked against the action's own filters, with
       `actionMatchesFilters` — the same predicate that decides what to offer, so
       offer and execute cannot drift.
-- [ ] A mismatch rejects the whole batch (package 1's veto rule), 400 in the
+- [x] A mismatch rejects the whole batch (package 1's veto rule), 400 in the
       existing `{"errors":[...]}` shape, at the existing chokepoint before the
       async/sync fork.
-- [ ] `ResourcesMatching` applies `filter.CategoryIDs`; today an `entity_ref`
+- [x] `ResourcesMatching` applies `filter.CategoryIDs`; today an `entity_ref`
       with a resource-category filter accepts any category.
 
 ## Batch 5 — bundled manifests, UI, docs, e2e
 
-- [ ] Manifests for all six bundled plugins.
-- [ ] `managePlugins.tpl`: capabilities as sentences, the private-hosts line,
+- [x] Manifests for all six bundled plugins.
+- [x] `managePlugins.tpl`: capabilities as sentences, the private-hosts line,
       legacy badge, re-consent state, dependencies.
-- [ ] docs-site plugin pages, `plugin-lua-api.md` capability column.
-- [ ] e2e: `plugin-manage.spec.ts` grant UI; an egress refusal.
-- [ ] Gates: Go unit, browser + CLI e2e, Postgres, `./mr docs lint`,
+- [x] docs-site plugin pages, `plugin-lua-api.md` capability column.
+- [x] e2e: `plugin-manage.spec.ts` grant UI; an egress refusal.
+- [x] Gates: Go unit, browser + CLI e2e, Postgres, `./mr docs lint`,
       `./mahresources` rebuilt first.
+
+
+## What the batches actually cost, and what the reviews found
+
+Batches 2–5 landed in eleven commits. The review protocol changed after batch 1:
+ten alternating rounds there had stopped finding manifest bugs and started
+finding bugs the previous round's fix had introduced, all in VM lifecycle —
+a subsystem this package never scoped. So batch 3, the security payload, kept
+the full alternating loop, and batches 2/4/5 got one round from both reviewers.
+
+**The loop earned its keep exactly where it was aimed.** Batch 3's two rounds
+found two complete bypasses of everything the batch built:
+
+1. **The confused deputy.** `mah.api` handlers and plugin pages received every
+   request header, `Authorization` and `Cookie` included. A plugin could call
+   this server's own API as its caller — `POST /v1/download/submit` with an
+   internal URL — and those are operator paths carrying no plugin policy. The
+   allowlist was bypassed entirely, and `db:write` was not needed either,
+   because the app did the writing. The fix is at the boundary rather than on
+   the outbound request: the credential *is* the capability.
+2. **The oracle, twice.** The dial refusal named the resolved address, so a
+   plugin granted nothing but `http` could map the private network out of the
+   error messages. Round 1 fixed `mah.http`; round 2 found both `mah.db` doors —
+   the ones this package itself opened — still leaking, reachable with the most
+   ordinary manifest there is (`{db:write, http}`, no `network` list, therefore
+   unrestricted). Writing the test found a third thing: `errEgressBlocked` had
+   one `host` field whose safety depended on which check built it. It is two
+   fields now, and `PluginMessage` does not read the unsafe one, so leaking is
+   not something the code can do rather than something it currently doesn't.
+
+**The two reviewers were not interchangeable.** Opus verified the three layers
+exhaustively along the paths that were built and concluded "no blocker"; pi
+ignored those paths and asked what *else* in the application fetches on a
+plugin's behalf. Only the second question found the deputy. Where they
+disagreed on the action-generation TOCTOU — pi blocking, Opus a footnote —
+both were partly right: a plugin cannot reach it (duplicate action ids are
+rejected; only a live state may register), but an operator reload can, and the
+check costs one string comparison.
+
+**Three things were wrong about the code rather than the prose**, found by
+verifying the docs against it:
+
+- "The full detail goes to the application log" was false on three of four
+  paths. The oracle argument depends on that half being true, so the logging was
+  added rather than the sentence dropped.
+- The consent table omitted the primary re-consent trigger for `network` —
+  adding a host. As written, a reader concluded `{"a.com"}` →
+  `{"a.com", "evil.example"}` loads quietly. It refuses.
+- The page was not in `sidebars.ts`, so it was unreachable regardless.
+
+**Two measurement mistakes of mine, both corrected in the record:**
+
+- I reported `go vet` clean before committing batch 1. `go vet ... | head -20 &&
+  echo VET_OK` prints VET_OK whatever vet finds. There is one pre-existing
+  `copylocks` finding (`action_jobs.go:87`), predating package 1; CI runs
+  neither vet nor golangci-lint, so it is left deliberately and stated rather
+  than claimed clean.
+- I reported the filter reader's `uint` assertion proven on Postgres. It was
+  not: `SetupTestEnv` builds SQLite **even under the postgres build tag**, so
+  every existing test of that reader had measured one driver. It is correct —
+  the reader scans into a typed struct, so GORM converts at scan time — and
+  `server/api_tests/action_entity_data_pg_test.go` now measures it on a real
+  container rather than reasoning about it. A wrong type there fails *closed*:
+  every filtered action would silently refuse everything while looking fine.
+
+**Mutation testing caught two vacuous tests of mine**, and one harness bug: a
+mutation runner that reads "non-zero exit" as "caught" also reads a *build
+break* as caught, and an agent was editing the same package concurrently. Two
+results were false. The harness now requires a matched `--- FAIL` line and
+reports INCONCLUSIVE on a compile error; re-running under it found that nothing
+tested `add_resource_version_from_url` against the allowlist at all.
+
+**Carried forward, unverified, for the scope-aware package:** hooks fire on
+ordinary scoped CRUD under an unscoped principal (`BindInvocation` builds a
+`Principal` with a UserID and no role or scope); the action fan-out has no id
+cap; and the application's own remote-fetch endpoints still apply no address
+filtering — which is what made the confused-deputy chain reachable, and is a
+pre-existing SSRF in the app rather than in the plugin system.
 
 # Plugin invocation and hook integrity (2026-08-15)
 
