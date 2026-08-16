@@ -4,9 +4,30 @@
 plugin = {
     api_version = 1,
     capabilities = { "db:read", "db:write", "http", "image", "actions", "jobs", "pages" },
-    network = { "queue.fal.run", "fal.run", "*.fal.run", "fal.ai", "*.fal.ai" },
+    -- Two host families, because the API and the media it produces are not the
+    -- same service. `*.fal.run` / `fal.ai` cover submitting a job and polling it;
+    -- `fal.media` is where the finished file lives, and downloading it is a
+    -- second, separately-addressed request that get_result_url() aims
+    -- create_resource_from_url / add_resource_version_from_url at.
+    --
+    -- The wildcard is deliberate rather than lazy. fal's CDN host carries a
+    -- rotating version prefix — the documented upload format is
+    -- `https://v3b.fal.media/files/b/{prefix}/{filename}` while the same page's
+    -- fallback chain still names `v3.fal.media` and the bare `fal.media`, and
+    -- live output schemas today return `images[].url` on both v3 and v3b. An
+    -- exact list would break on the next roll; the registrable domain is the
+    -- stable unit fal documents as its CDN.
+    -- See https://fal.ai/docs/documentation/model-apis/fal-cdn
+    --
+    -- Not listed: storage.googleapis.com. It appears only in fal's curated
+    -- `example_outputs` documentation assets, never in a real result payload,
+    -- and declaring it would open every Google Cloud Storage bucket there is.
+    network = {
+        "queue.fal.run", "fal.run", "*.fal.run", "fal.ai", "*.fal.ai",
+        "fal.media", "*.fal.media",
+    },
     name = "fal-ai",
-    version = "1.1.0",
+    version = "1.1.1",
     description = "AI-powered image processing using fal.ai - colorize, upscale, restore, AI edit, and vectorize.",
     settings = {
         { name = "api_key", type = "password", label = "FAL.AI API Key" },

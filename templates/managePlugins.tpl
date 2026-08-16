@@ -21,11 +21,15 @@
         <div class="card-header">
             <div class="flex items-start justify-between gap-4 w-full">
                 <div class="min-w-0">
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center flex-wrap gap-2">
                         <h2 class="text-lg font-semibold">{{ plugin.Name }}</h2>
                         <span class="card-badge">v{{ plugin.Version }}</span>
                         {% if plugin.Enabled %}
                         <span class="card-badge card-badge--relation">Enabled</span>
+                        {% endif %}
+                        {% if plugin.Legacy %}
+                        {# The badge says it in words, not only in red: no manifest means the full plugin surface. #}
+                        <span class="card-badge card-badge--danger" data-testid="plugin-legacy-badge-{{ plugin.Name }}">No manifest &mdash; full access</span>
                         {% endif %}
                     </div>
                     {% if plugin.Description %}
@@ -61,8 +65,111 @@
             </div>
         </div>
 
+        {# Access: what the plugin is granted, always rendered, so enabling is an informed decision. #}
+        <div class="card-body border-t border-stone-200 pt-3" data-testid="plugin-access-{{ plugin.Name }}">
+            <h3 class="text-sm font-semibold mb-2 text-stone-700 font-mono">Access</h3>
+
+            {% if plugin.Legacy %}
+            <p class="mb-3 rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-800"
+               data-testid="plugin-legacy-warning-{{ plugin.Name }}">
+                <span aria-hidden="true">&#9888;</span>
+                <strong class="font-semibold">Warning: this plugin declares no manifest.</strong>
+                It says nothing about what it needs, so nothing is withheld from it: it receives
+                the full plugin surface &mdash; every capability listed below &mdash; and it may
+                make outbound requests to any public host.
+            </p>
+            {% endif %}
+
+            <dl class="text-sm text-stone-700 space-y-3">
+                <div>
+                    <dt class="font-semibold text-stone-800">
+                        {% if plugin.Enabled %}This plugin is granted:{% else %}Enabling grants:{% endif %}
+                    </dt>
+                    <dd class="mt-1">
+                        {% if plugin.Capabilities %}
+                        <ul class="list-disc pl-5 space-y-1" data-testid="plugin-capabilities-{{ plugin.Name }}">
+                            {% for capability in plugin.Capabilities %}
+                            <li>{{ plugin.CapabilityLabels|lookup:capability|default:capability }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <p data-testid="plugin-capabilities-{{ plugin.Name }}">
+                            Nothing. This plugin asks for no capabilities, so none of the plugin APIs are installed for it.
+                        </p>
+                        {% endif %}
+                    </dd>
+                </div>
+
+                <div>
+                    <dt class="font-semibold text-stone-800">Outbound network</dt>
+                    <dd class="mt-1" data-testid="plugin-network-{{ plugin.Name }}">
+                        {% if plugin.Network %}
+                        <p>It may connect only to these hosts:</p>
+                        <ul class="list-disc pl-5 space-y-1 font-mono text-xs mt-1">
+                            {% for host in plugin.Network %}
+                            <li>{{ host }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <p>
+                            No allowlist is declared, so it may reach
+                            <strong class="font-semibold">any public host</strong>.
+                            Private network addresses stay blocked.
+                        </p>
+                        {% endif %}
+                    </dd>
+                </div>
+
+                {% if plugin.AllowPrivateHosts %}
+                <div>
+                    <dt class="font-semibold text-stone-800">Private network addresses</dt>
+                    <dd class="mt-1">
+                        <p class="rounded-md bg-red-50 border border-red-200 p-3 text-red-800"
+                           data-testid="plugin-private-hosts-{{ plugin.Name }}">
+                            <span aria-hidden="true">&#9888;</span>
+                            <strong class="font-semibold">Warning:</strong>
+                            it may reach private network addresses, including services running on this machine.
+                            Only the IP addresses and CIDR blocks listed above lift that block; the host names do not.
+                        </p>
+                    </dd>
+                </div>
+                {% endif %}
+
+                {% if plugin.Dependencies %}
+                <div>
+                    <dt class="font-semibold text-stone-800">Requires these plugins</dt>
+                    <dd class="mt-1" data-testid="plugin-dependencies-{{ plugin.Name }}">
+                        <ul class="list-disc pl-5 space-y-1 font-mono text-xs">
+                            {% for dependency in plugin.Dependencies %}
+                            <li>{{ dependency }}</li>
+                            {% endfor %}
+                        </ul>
+                        <p class="text-xs text-stone-500 mt-1">Each one must be enabled first, or enabling this plugin is refused.</p>
+                    </dd>
+                </div>
+                {% endif %}
+
+                {% if not plugin.Legacy %}
+                <div>
+                    <dt class="font-semibold text-stone-800">Plugin API version</dt>
+                    <dd class="mt-1" data-testid="plugin-api-version-{{ plugin.Name }}">{{ plugin.APIVersion }}</dd>
+                </div>
+                {% endif %}
+
+                {% if plugin.MinAppVersion %}
+                <div>
+                    <dt class="font-semibold text-stone-800">Minimum app version</dt>
+                    <dd class="mt-1" data-testid="plugin-min-app-version-{{ plugin.Name }}">
+                        <span class="font-mono text-xs">{{ plugin.MinAppVersion }}</span>
+                        <span class="text-stone-500">&mdash; informational only: it is declared and shown here, but never checked or enforced.</span>
+                    </dd>
+                </div>
+                {% endif %}
+            </dl>
+        </div>
+
         {% if plugin.Settings %}
-        <div class="card-body">
+        <div class="card-body border-t border-stone-200 pt-3">
             <h3 class="text-sm font-semibold mb-2 text-stone-700 font-mono">Settings</h3>
             <form method="POST" action="/v1/plugin/settings"
                   x-data="pluginSettings('{{ plugin.Name }}')"
@@ -146,7 +253,7 @@
             </form>
         </div>
         {% else %}
-        <div class="card-body">
+        <div class="card-body border-t border-stone-200 pt-3">
             <p class="text-sm text-stone-500 italic">No settings declared.</p>
         </div>
         {% endif %}
