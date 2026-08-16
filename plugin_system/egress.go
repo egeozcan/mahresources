@@ -288,6 +288,23 @@ func newPolicyHTTPClient(policy NetworkPolicy) *http.Client {
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return dialer.DialContext(ctx, network, addr)
 			},
+			// Proxy is deliberately nil, and this is a behaviour change:
+			// the previous plugin client left Transport nil and so used
+			// http.DefaultTransport, which honours HTTP_PROXY/HTTPS_PROXY.
+			//
+			// It cannot be restored as-is. Through a proxy, the address the
+			// dialer connects to is the PROXY's, so Control would inspect the
+			// proxy and never see where the request is actually going — layer
+			// (c) would pass every request, including one aimed at
+			// 169.254.169.254, because the proxy is a perfectly ordinary public
+			// host. A proxy-aware egress control has to police the CONNECT
+			// target instead, which is a different mechanism.
+			//
+			// So plugin egress does not use the environment proxy. A deployment
+			// that requires one for outbound traffic will find plugin HTTP
+			// blocked at the firewall rather than silently unpoliced, which is
+			// the right way round. Stated in the release note.
+			Proxy:                 nil,
 			ForceAttemptHTTP2:     true,
 			MaxIdleConns:          32,
 			IdleConnTimeout:       90 * time.Second,
@@ -389,6 +406,10 @@ func ApplyEgressPolicy(client *http.Client, policy NetworkPolicy, dialTimeout ti
 	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return dialer.DialContext(ctx, network, addr)
 	}
+	// Same reasoning as newPolicyHTTPClient: through a proxy, Control inspects
+	// the proxy's address rather than the target's, so layer (c) would pass
+	// everything. Cleared here in case the caller's client had one.
+	transport.Proxy = nil
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= maxHttpRedirects {
 			return fmt.Errorf("stopped after %d redirects", maxHttpRedirects)

@@ -46,6 +46,14 @@ plugin = {
 | `version` | No | Version string |
 | `description` | No | Short description |
 | `settings` | No | Array of setting definitions |
+| `api_version` | No | Declares a permission manifest. See [Plugin Permissions](./plugin-permissions.md) |
+| `capabilities` | No | The `mah` modules to install. Requires `api_version` |
+| `network` | No | Outbound host allowlist. Requires `api_version` |
+| `allow_private_hosts` | No | Permission to reach private addresses. Requires `api_version` |
+| `dependencies` | No | Plugin names that must be enabled first. Requires `api_version` |
+| `min_app_version` | No | Recorded and displayed, never enforced. Requires `api_version` |
+
+A plugin that declares `api_version` receives only the capabilities it lists, and its outbound requests are confined to the hosts it declares. A plugin that does not is **legacy**: it keeps the full `mah` surface, with a warning. Legacy is not an exemption from the network rules. See [Plugin Permissions](./plugin-permissions.md) for the capability list, the consent model, and the three network layers.
 
 ## Plugin Lifecycle
 

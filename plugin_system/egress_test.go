@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPrivateAddressClassification(t *testing.T) {
@@ -414,5 +415,38 @@ func TestTheExtraBlockedRangesAreBlocked(t *testing.T) {
 			}
 			t.Errorf("%s was blocked as %q but is outside every added range", addr, reason)
 		}
+	}
+}
+
+// TestEgressClientsIgnoreTheEnvironmentProxy.
+//
+// Through a proxy, the dialer connects to the PROXY, so Control inspects the
+// proxy's address and never sees the target — layer (c) would pass a request
+// aimed at 169.254.169.254 because the proxy itself is an ordinary public host.
+// Both clients therefore pin Proxy to nil, which is a deliberate behaviour
+// change from the old plugin client (Transport nil, so DefaultTransport, which
+// honours HTTP_PROXY).
+func TestEgressClientsIgnoreTheEnvironmentProxy(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://proxy.invalid:3128")
+	t.Setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+
+	policy := policyFor(t, `capabilities = {"http"}`)
+
+	direct, ok := newPolicyHTTPClient(policy).Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("the policy client does not use an *http.Transport")
+	}
+	if direct.Proxy != nil {
+		t.Error("the policy client would use a proxy, so layer (c) would inspect the proxy's address")
+	}
+
+	// ApplyEgressPolicy must also clear a proxy the caller's client had.
+	hostSide := &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}}
+	decorated, ok := ApplyEgressPolicy(hostSide, policy, time.Second).Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("ApplyEgressPolicy did not leave an *http.Transport")
+	}
+	if decorated.Proxy != nil {
+		t.Error("ApplyEgressPolicy left the caller's proxy in place, so layer (c) inspects the proxy")
 	}
 }

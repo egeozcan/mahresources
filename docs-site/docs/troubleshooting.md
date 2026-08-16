@@ -191,6 +191,28 @@ If an enabled plugin fails to run:
 - For HTTP-related errors, check that target URLs are reachable from the server
 - Each Lua VM is single-threaded; long-running operations in hooks (over 5 seconds) will time out
 
+### Plugin requests are refused with "blocked request"
+
+Plugins may only reach the hosts their manifest declares. A refusal names the host that was asked for; the application log carries the full reason.
+
+- **The host is not in the plugin's `network` list.** Add it, then re-enable the plugin so the new list is consented to. A plugin with no `network` list may reach any public host.
+- **The host resolves to a private address.** Private, loopback, link-local, carrier-grade NAT, reserved and multicast addresses are refused for every plugin, including plugins with no manifest at all. To allow one, the plugin must name the **address** — an IP literal or a CIDR block — in `network` and declare `allow_private_hosts = true`. A hostname does not work here, however it resolves; see [Plugin Permissions](./features/plugin-permissions.md).
+- **The deployment uses an outbound proxy.** Plugin requests deliberately ignore `HTTP_PROXY`/`HTTPS_PROXY`, because through a proxy the address filter would inspect the proxy rather than the request's real destination. Such requests are blocked at the firewall instead.
+
+### A plugin that downloads files stopped working after upgrade
+
+`mah.db.create_resource_from_url` and `mah.db.add_resource_version_from_url` now require the `http` capability in addition to `db:write`, because they open a socket. Add `"http"` to the plugin's `capabilities`, add the host it downloads from to its `network` list, and re-enable it.
+
+The host to add is the one the **files** come from, which is often not the API host. A plugin that calls an API at `api.example` and then downloads results from `cdn.example` needs both.
+
+### A plugin refuses to load: "declares more than was consented to"
+
+The plugin's manifest asks for more than was agreed to when it was enabled — a new capability, a new host, `allow_private_hosts` turned on, or a `network` list removed (which widens it to any public host). The message names the difference.
+
+Re-enable the plugin from the management UI to consent to the new set. Nothing loads until you do; this is the mechanism that stops an edit to `plugin.lua` from silently widening a grant.
+
+Plugins enabled before this feature existed are granted whatever they declare on their first load after upgrade, once, and prompt normally after that.
+
 ### Download Queue Issues
 
 **Stuck downloads:**
