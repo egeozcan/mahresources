@@ -633,6 +633,9 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			pm.SetPrincipalBinder(adapter)
 			pm.SetPluginLogger(adapter)
 			pm.SetKVStore(adapter)
+			// Without this the manager falls back to its in-memory consent
+			// store, which forgets every decision on restart.
+			pm.SetConsentStore(&pluginConsentStore{ctx: ctx})
 			mrqlAdapter := &pluginMRQLAdapter{ctx: ctx}
 			pm.SetMRQLExecutor(mrqlAdapter)
 		}

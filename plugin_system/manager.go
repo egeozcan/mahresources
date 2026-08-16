@@ -3,6 +3,7 @@ package plugin_system
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -128,29 +129,34 @@ type MenuRegistration struct {
 
 // PluginManager loads and manages Lua plugins.
 type PluginManager struct {
-	plugins    []PluginInfo
-	states     []*lua.LState
-	hooks      map[string][]hookEntry
-	injections map[string][]injectionEntry
-	pages      map[string]map[string]pageEntry // pluginName -> path -> handler
-	menuItems  []MenuRegistration
-	actions      map[string][]ActionRegistration // pluginName -> actions
+	plugins      []PluginInfo
+	states       []*lua.LState
+	hooks        map[string][]hookEntry
+	injections   map[string][]injectionEntry
+	pages        map[string]map[string]pageEntry // pluginName -> path -> handler
+	menuItems    []MenuRegistration
+	actions      map[string][]ActionRegistration    // pluginName -> actions
 	apiEndpoints map[string]map[string]*APIEndpoint // pluginName -> "METHOD:path" -> handler
 	blockTypes   map[string][]*PluginBlockType      // pluginName -> block types
-	displayTypes map[string][]*PluginDisplayType   // pluginName -> display types
-	shortcodes   map[string][]*PluginShortcode     // pluginName -> shortcodes
-	docs         map[string][]*PluginDoc           // pluginName -> general doc entries
-	mu      sync.RWMutex
-	vmLocks map[*lua.LState]*sync.Mutex
-	dbProvider atomic.Value
-	dbWriter   atomic.Value
+	displayTypes map[string][]*PluginDisplayType    // pluginName -> display types
+	shortcodes   map[string][]*PluginShortcode      // pluginName -> shortcodes
+	docs         map[string][]*PluginDoc            // pluginName -> general doc entries
+	mu           sync.RWMutex
+	vmLocks      map[*lua.LState]*sync.Mutex
+	dbProvider   atomic.Value
+	dbWriter     atomic.Value
 	// principalBinder binds dbProvider/dbWriter to the principal that triggered
 	// a call. Optional; nil falls back to the unbound provider.
 	principalBinder atomic.Value
 	logger          atomic.Value
-	kvStore      atomic.Value
-	mrqlExecutor atomic.Value
-	closed       atomic.Bool
+	kvStore         atomic.Value
+	mrqlExecutor    atomic.Value
+	// consent holds the persistent ConsentStore. Unset until wiring, which is
+	// why fallbackConsent exists: an unwired manager must still enforce, not
+	// silently skip the check.
+	consent         atomic.Value
+	fallbackConsent *memoryConsentStore
+	closed          atomic.Bool
 
 	// loadWg tracks loads in progress. A loading VM is in vmLocks but not yet in
 	// states, so a Close that only walks states would leave it open — and the
@@ -194,10 +200,10 @@ type PluginManager struct {
 	httpClient  *http.Client
 	httpMu      sync.Mutex
 	httpPending []httpCallback
-	httpNotify  chan struct{}   // buffered(1), signals new callbacks
-	done    chan struct{}   // closed to stop background goroutines (HTTP drain, job cleanup)
+	httpNotify  chan struct{}  // buffered(1), signals new callbacks
+	done        chan struct{}  // closed to stop background goroutines (HTTP drain, job cleanup)
 	httpWg      sync.WaitGroup // tracks in-flight HTTP goroutines
-	httpSem     chan struct{}   // concurrency semaphore
+	httpSem     chan struct{}  // concurrency semaphore
 }
 
 // NewPluginManager scans dir for subdirectories containing plugin.lua,
@@ -223,9 +229,10 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		actionSubs:      make(map[chan ActionJobEvent]struct{}),
 		actionInFlight:  make(map[string]*sync.WaitGroup),
 		loading:         make(map[string]chan struct{}),
+		fallbackConsent: newMemoryConsentStore(),
 		httpClient:      newHttpClient(),
 		httpNotify:      make(chan struct{}, 1),
-		done:        make(chan struct{}),
+		done:            make(chan struct{}),
 		httpSem:         make(chan struct{}, maxConcurrentHttpReqs),
 	}
 
@@ -298,14 +305,158 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		claimed[dp.Name] = name
 		discovered = append(discovered, dp)
 	}
+	surviving := make([]DiscoveredPlugin, 0, len(discovered))
 	for _, dp := range discovered {
 		if contested[dp.Name] {
+			continue
+		}
+		surviving = append(surviving, dp)
+	}
+
+	// A dependency is satisfied only by an *enabled* plugin, so a cycle can
+	// never be satisfied by anything: each member is waiting for another member
+	// that is waiting for it. Left in the discovered set it would be a plugin
+	// the UI offers and every enable refuses, with a message that names a
+	// plugin the operator can see is installed. Rejecting it at discovery makes
+	// it a packaging error, which is what it is.
+	//
+	// Only the members of the cycle are dropped. A plugin that merely *depends*
+	// on one survives and is refused at enable, naming the dependency it cannot
+	// get — a better diagnosis than vanishing from the list.
+	inCycle := pluginsOnADependencyCycle(surviving)
+	for _, dp := range surviving {
+		if inCycle[dp.Name] {
+			log.Printf("[plugin] warning: skipping %q: its dependencies form a cycle (%s), and a "+
+				"dependency is only satisfied by an enabled plugin, so no member of a cycle can ever load",
+				dp.Name, strings.Join(dp.Manifest.Dependencies, ", "))
 			continue
 		}
 		pm.discovered = append(pm.discovered, dp)
 	}
 
 	return pm, nil
+}
+
+// pluginsOnADependencyCycle returns the names that sit on a dependency cycle.
+//
+// Two prunings, because "can reach a cycle" and "is on a cycle" are different
+// questions and only the second should cost a plugin its place in the list:
+//
+//  1. Repeatedly drop nodes with no outgoing edge. What remains is everything
+//     that can reach a cycle.
+//  2. Within that, repeatedly drop nodes with no incoming edge. What remains is
+//     also reachable *from* a cycle — and a node both on a path to a cycle and
+//     on a path from one is on the cycle itself.
+//
+// Edges to names that were never discovered are ignored: an unmet dependency is
+// a different failure, diagnosed at enable.
+func pluginsOnADependencyCycle(plugins []DiscoveredPlugin) map[string]bool {
+	deps := make(map[string][]string, len(plugins))
+	present := make(map[string]bool, len(plugins))
+	for _, dp := range plugins {
+		present[dp.Name] = true
+	}
+	for _, dp := range plugins {
+		for _, dep := range dp.Manifest.Dependencies {
+			if present[dep] {
+				deps[dp.Name] = append(deps[dp.Name], dep)
+			}
+		}
+	}
+
+	remaining := make(map[string]bool, len(plugins))
+	for name := range present {
+		remaining[name] = true
+	}
+
+	// (1) drop anything that depends on nothing still standing.
+	for {
+		dropped := false
+		for name := range remaining {
+			live := false
+			for _, dep := range deps[name] {
+				if remaining[dep] {
+					live = true
+					break
+				}
+			}
+			if !live {
+				delete(remaining, name)
+				dropped = true
+			}
+		}
+		if !dropped {
+			break
+		}
+	}
+
+	// (2) drop anything nothing still standing depends on.
+	for {
+		dropped := false
+		for name := range remaining {
+			needed := false
+			for other := range remaining {
+				for _, dep := range deps[other] {
+					if dep == name {
+						needed = true
+						break
+					}
+				}
+				if needed {
+					break
+				}
+			}
+			if !needed {
+				delete(remaining, name)
+				dropped = true
+			}
+		}
+		if !dropped {
+			break
+		}
+	}
+
+	return remaining
+}
+
+// ErrDependencyNotEnabled is returned when a plugin names a dependency that is
+// installed but not currently enabled.
+var ErrDependencyNotEnabled = errors.New("a dependency is not enabled")
+
+// ErrDependencyInUse is returned when disabling a plugin that another enabled
+// plugin depends on.
+var ErrDependencyInUse = errors.New("another enabled plugin depends on this one")
+
+// checkDependencies enforces the only honest semantic available without a Lua
+// module loader: the named plugin must be enabled right now.
+func (pm *PluginManager) checkDependencies(dp DiscoveredPlugin) error {
+	for _, dep := range dp.Manifest.Dependencies {
+		if pm.GetDiscoveredPlugin(dep) == nil {
+			return fmt.Errorf("plugin %q depends on %q, which is not installed", dp.Name, dep)
+		}
+		if !pm.IsEnabled(dep) {
+			return fmt.Errorf("%w: plugin %q depends on %q; enable %q first",
+				ErrDependencyNotEnabled, dp.Name, dep, dep)
+		}
+	}
+	return nil
+}
+
+// dependentsOf returns the enabled plugins that declare a dependency on name.
+func (pm *PluginManager) dependentsOf(name string) []string {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	var out []string
+	for _, p := range pm.plugins {
+		for _, dep := range p.Manifest.Dependencies {
+			if dep == name {
+				out = append(out, p.Name)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // unsafeBaseFunctions are removed from every VM a plugin's code runs in.
@@ -432,7 +583,6 @@ func readPluginHeader(code []byte, chunkName string) (pluginHeader, error) {
 	h.Settings = extractSettingsFromState(L)
 	return h, nil
 }
-
 
 // readPluginIdentity reads name, version, description and manifest off a VM's
 // `plugin` global.
@@ -683,6 +833,19 @@ func (pm *PluginManager) loadPlugin(dp DiscoveredPlugin) error {
 			"its name, version, description and manifest must be the same on every execution")
 	}
 
+	// Consent is checked here, against header.Manifest — the load-time
+	// declaration, now proved equal to both the discovered copy and to what
+	// this very VM just declared. Checking DiscoveredPlugin.Manifest instead
+	// would verify one manifest and install the grants of another.
+	//
+	// It is the last thing before registerMahModule, which is the only place a
+	// mah key is ever set, and init() at the bottom of this function is the
+	// first Lua that could observe one. So a refusal here has granted nothing.
+	if err := pm.enforceConsent(header.Name, header.Manifest); err != nil {
+		abandon()
+		return err
+	}
+
 	// Only now does the plugin get its host functions, and only the granted
 	// ones. Closures in registerMahModule capture the name pointer.
 	pluginName := header.Name
@@ -741,7 +904,6 @@ func (pm *PluginManager) loadPlugin(dp DiscoveredPlugin) error {
 
 	return nil
 }
-
 
 // jobOwnedBy looks up a job and confirms it belongs to the calling plugin.
 //
@@ -1426,7 +1588,6 @@ func (pm *PluginManager) EnablePlugin(name string) error {
 		return fmt.Errorf("plugin manager is shutting down")
 	}
 
-
 	// Prevent concurrent enable attempts for the same plugin.
 	if _, loaded := pm.enabling.LoadOrStore(name, struct{}{}); loaded {
 		return fmt.Errorf("plugin %q is already being enabled", name)
@@ -1454,6 +1615,13 @@ func (pm *PluginManager) EnablePlugin(name string) error {
 		return fmt.Errorf("plugin %q not found", name)
 	}
 
+	// Checked before the load, not inside it: a dependency is about the plugin
+	// set, not about this plugin's own code, and refusing here means no VM is
+	// ever built for a plugin that cannot run.
+	if err := pm.checkDependencies(*dp); err != nil {
+		return err
+	}
+
 	if err := pm.loadPlugin(*dp); err != nil {
 		return fmt.Errorf("loading plugin %q: %w", name, err)
 	}
@@ -1464,6 +1632,17 @@ func (pm *PluginManager) EnablePlugin(name string) error {
 // DisablePlugin deactivates a running plugin: removes all hooks, injections,
 // pages, menu items, and closes the Lua VM.
 func (pm *PluginManager) DisablePlugin(name string) error {
+	// Refuse, never cascade. Disabling one plugin must not silently disable
+	// another: the operator asked about this plugin, and a dependent going dark
+	// as a side effect is a change they did not make and will not look for.
+	//
+	// Only the public entry point checks. Close tears every plugin down through
+	// finishTeardown directly, and a shutdown that refused to stop a plugin
+	// because something depended on it would never finish.
+	if dependents := pm.dependentsOf(name); len(dependents) > 0 {
+		return fmt.Errorf("%w: %s still depends on %q; disable %s first",
+			ErrDependencyInUse, strings.Join(dependents, ", "), name, strings.Join(dependents, " and "))
+	}
 	return pm.disablePlugin(name, false)
 }
 
@@ -1743,7 +1922,6 @@ func (pm *PluginManager) finishTeardown(name string, state *lua.LState, mu *sync
 	sweep()
 }
 
-
 // waitWithin waits for wg, reporting false if it did not finish in time.
 func waitWithin(wg *sync.WaitGroup, limit time.Duration) bool {
 	done := make(chan struct{})
@@ -1803,7 +1981,6 @@ func closeState(pm *PluginManager, state *lua.LState) {
 	}
 	state.Close()
 }
-
 
 // IsEnabled returns whether a plugin is currently active.
 func (pm *PluginManager) IsEnabled(name string) bool {

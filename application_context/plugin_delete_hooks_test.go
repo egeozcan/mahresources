@@ -54,6 +54,7 @@ func createTestContextWithPlugins(t *testing.T, pluginDir string) *MahresourcesC
 		&models.NoteBlock{},
 		&models.LogEntry{},
 		&models.PluginKV{},
+		&models.PluginState{},
 		// The stamp callback falls back to the root admin when no actor is on
 		// the context, and resolving root reads this table.
 		&models.User{},

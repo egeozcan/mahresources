@@ -148,8 +148,61 @@ theatre.
 - **Narrowing is not a re-consent event.** A plugin that drops a capability
   loads with the smaller declared set (the *declared* set is what is installed;
   the consented set is only ever a ceiling).
-- A **legacy** plugin's consented set records `{"legacy":true}`, so a plugin
-  that later grows a manifest is a change the operator sees.
+- A **legacy** plugin's consented set records `{"legacy":true}`.
+
+### `⊆` is not the same relation on every field
+
+Three of the five fields invert or special-case, and getting one backwards
+grants silently. Written out because a single `for` loop over "is every declared
+entry in the consented list" is wrong for two of them:
+
+| Field | Widening (refuse) | Narrowing (load) |
+|---|---|---|
+| `capabilities` | declared has one consented lacks | declared has fewer |
+| `network` | **consented restricted, declared unrestricted** | declared list ⊆ consented list |
+| `allow_private_hosts` | `false` → `true` | `true` → `false` |
+| `api_version` | declared > consented | declared ≤ consented |
+| `legacy` | manifest → legacy | legacy → manifest (see below) |
+
+**`network` is the inverted one.** An absent or empty `network` means *any
+public host* — the broadest policy, not the narrowest. So a plugin consented at
+`network = {"fal.run"}` that drops the field entirely has widened to the whole
+public internet, and must refuse. Plain subset logic reads an empty declared
+list as trivially contained and would load it.
+
+**Capabilities compare as the *effective* set, not the declared list**, because
+the effective set is what gets installed: `Capabilities()` already adds
+`db:read` whenever `db:write` is present, so a plugin that later spells out both
+has changed nothing an operator would recognise, and must not prompt.
+
+**Legacy → manifest loads; manifest → legacy refuses.** Legacy is the maximum
+grant, so gaining a manifest is strictly a narrowing, and the plan's earlier
+"a change the operator sees" would have punished exactly the migration this
+package wants — every bundled plugin gained a manifest in batch 1, so requiring
+re-consent for that would leave them disabled on upgrade for no security gain.
+The one exception is `allow_private_hosts = true`, which legacy never had: that
+is a widening even out of legacy, and re-consents. Losing a manifest goes the
+other way and always refuses.
+
+### The upgrade: a NULL `GrantsJSON` is grandfathered, once
+
+Every existing `plugin_states` row predates the column, so on the first boot
+after upgrade every enabled plugin has no consented set. Treating that as "never
+consented" would refuse to load every plugin in every deployment — a
+self-inflicted outage on the release that is supposed to *tighten* security.
+
+**NULL/empty consent is backfilled from the load-time manifest and loads**, with
+one log line per plugin naming what was recorded. This is sound rather than
+merely convenient: before this release those plugins ran with the entire `mah`
+surface and no egress control, so grandfathering them to their *declared* set is
+strictly a reduction in privilege. The gesture being trusted is the operator's
+original decision to install and enable the plugin.
+
+It happens exactly once per plugin — after the backfill the row has a consented
+set, and every subsequent widening prompts normally. It is **not** a fallback
+for a row whose consent was written and then failed to parse: that is corruption
+or tampering, and it refuses with `ErrGrantsChanged` rather than silently
+re-granting whatever the file now asks for.
 
 ---
 
@@ -348,14 +401,35 @@ its own test.
 The only honest semantic without a Lua module loader is **"the named plugin must
 be enabled"**:
 
-- `SetPluginEnabled(name, true)` refuses when a dependency is not enabled,
-  naming it.
-- `SetPluginEnabled(name, false)` refuses when an enabled plugin depends on it,
-  naming that plugin. (Refuse, not cascade: disabling one plugin must not
-  silently disable another.)
+- Enabling refuses when a dependency is not enabled, naming it
+  (`ErrDependencyNotEnabled`).
+- Disabling refuses when an enabled plugin depends on it, naming that plugin
+  (`ErrDependencyInUse`). Refuse, not cascade: disabling one plugin must not
+  silently disable another. The operator asked about *this* plugin, and a
+  dependent going dark as a side effect is a change they did not make and will
+  not go looking for.
 - A dependency on an *undiscovered* plugin refuses at enable and is shown in the
   UI.
 - Cycles are rejected at discovery.
+
+**The checks live on `EnablePlugin`/`DisablePlugin`, not on
+`SetPluginEnabled`.** The plan first put them at the `application_context`
+layer; the manager is the right place because the `mr` CLI, the API and the
+template UI all converge there, and a rule enforced one layer up is a rule the
+other two callers do not get. `DisablePlugin` — the public entry — is also the
+only one that checks: `Close` tears every plugin down through `finishTeardown`
+directly, and a shutdown that refused to stop a plugin because something
+depended on it would never finish.
+
+**Only the members of a cycle are dropped, not everything that reaches one.**
+"Can reach a cycle" and "is on a cycle" are different questions, and a plugin
+that merely *depends* on a cycle member is not itself broken packaging. Dropping
+it would make it vanish from the manage UI with no explanation; leaving it lets
+the enable refusal name the dependency it cannot get. `pluginsOnADependencyCycle`
+gets this with two prunings — drop nodes with no outgoing edge until none
+remain (everything that can reach a cycle), then drop nodes with no incoming
+edge (leaving what is also reachable *from* a cycle, which for a node on a path
+both to and from a cycle means the cycle itself). A diamond survives both.
 
 **Boot order.** `ActivateEnabledPlugins` (`plugin_state_context.go:193`)
 iterates states in name order, so a dependent can be enabled before its

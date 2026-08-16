@@ -21,6 +21,41 @@ type pluginListItem struct {
 	Enabled     bool   `json:"enabled"`
 	Settings    any    `json:"settings,omitempty"`
 	Values      any    `json:"values,omitempty"`
+
+	// Legacy is true for a plugin that declares no manifest at all: it keeps
+	// the full mah surface, which is why Capabilities below lists everything.
+	Legacy     bool `json:"legacy"`
+	APIVersion int  `json:"api_version,omitempty"`
+
+	// Capabilities is the effective set (db:write implies db:read), and
+	// CapabilityLabels is the human sentence for each one, so an operator reads
+	// a described power rather than a slug.
+	Capabilities     []string          `json:"capabilities"`
+	CapabilityLabels map[string]string `json:"capability_labels"`
+
+	// Network is the declared egress allowlist in canonical display form. An
+	// empty list means "any public host" — the broadest policy, not the absence
+	// of network access.
+	Network           []string `json:"network,omitempty"`
+	AllowPrivateHosts bool     `json:"allow_private_hosts"`
+
+	Dependencies []string `json:"dependencies,omitempty"`
+
+	// MinAppVersion is informational only: it is parsed and displayed, never
+	// enforced.
+	MinAppVersion string `json:"min_app_version,omitempty"`
+}
+
+// capabilityLabels maps each capability to its human sentence, skipping any
+// that has no label.
+func capabilityLabels(caps []string) map[string]string {
+	labels := make(map[string]string, len(caps))
+	for _, c := range caps {
+		if label, ok := plugin_system.CapabilityLabels[c]; ok {
+			labels[c] = label
+		}
+	}
+	return labels
 }
 
 func GetPluginsManageHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
@@ -48,11 +83,20 @@ func GetPluginsManageHandler(ctx PluginAPIContext) func(http.ResponseWriter, *ht
 
 		var items []pluginListItem
 		for _, dp := range discovered {
+			caps := dp.Manifest.Capabilities().Sorted()
 			item := pluginListItem{
-				Name:        dp.Name,
-				Version:     dp.Version,
-				Description: dp.Description,
-				Settings:    dp.Settings,
+				Name:              dp.Name,
+				Version:           dp.Version,
+				Description:       dp.Description,
+				Settings:          dp.Settings,
+				Legacy:            !dp.Manifest.Declared,
+				APIVersion:        dp.Manifest.APIVersion,
+				Capabilities:      caps,
+				CapabilityLabels:  capabilityLabels(caps),
+				Network:           dp.Manifest.NetworkDisplay(),
+				AllowPrivateHosts: dp.Manifest.AllowPrivateHosts,
+				Dependencies:      dp.Manifest.Dependencies,
+				MinAppVersion:     dp.Manifest.MinAppVersion,
 			}
 			if s, ok := stateMap[dp.Name]; ok {
 				item.Enabled = s.enabled

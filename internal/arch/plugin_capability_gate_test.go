@@ -345,7 +345,6 @@ func TestEveryMahRegistrationHasACapability(t *testing.T) {
 		}
 	}
 
-
 	// guardedCapabilityName returns the capability constant a grants.Has guard
 	// names, or "" if the condition is not one.
 	guardedCapabilityName := func(cond ast.Expr) string {
@@ -744,8 +743,8 @@ func TestNothingReachesTheMahTableFromOutsideItsBuilder(t *testing.T) {
 				}
 			case *ast.SelectorExpr:
 				// A computed argument hides the key: L.GetGlobal("m" + "ah").
-	// (handled below alongside the literal case)
-	// A method value hands the same reach to a variable:
+				// (handled below alongside the literal case)
+				// A method value hands the same reach to a variable:
 				// `get := L.GetGlobal; get("mah")`.
 				if node.Sel.Name == "GetGlobal" || node.Sel.Name == "SetGlobal" {
 					if !isCallee(file, node) {
@@ -1654,4 +1653,131 @@ func TestTeardownUnregistersProcessGlobalBlockTypes(t *testing.T) {
 				"leaves a type backed by a closed VM and breaks every existing note block of that type.", fnName)
 		}
 	}
+}
+
+// TestConsentIsEnforcedBeforeAnyHostFunctionIsInstalled pins the ordering that
+// makes a consent refusal mean anything.
+//
+// registerMahModule is the only place a mah key is ever set, and init() is the
+// first Lua that could observe one. A consent check that ran after either would
+// still report the refusal, and would still be green in every behavioural test
+// that only asserts EnablePlugin returns an error — while the plugin had
+// already been handed the capabilities it was being refused.
+//
+// The rule is positional rather than "is called somewhere", because "somewhere"
+// is exactly the property that does not hold.
+func TestConsentIsEnforcedBeforeAnyHostFunctionIsInstalled(t *testing.T) {
+	root := moduleRoot(t)
+	path := filepath.Join(root, "plugin_system", "manager.go")
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		t.Fatalf("parse manager.go: %v", err)
+	}
+
+	var fn *ast.FuncDecl
+	for _, decl := range file.Decls {
+		if d, ok := decl.(*ast.FuncDecl); ok && d.Name.Name == "loadPlugin" {
+			fn = d
+			break
+		}
+	}
+	if fn == nil {
+		t.Fatal("loadPlugin not found in plugin_system/manager.go; this test needs updating with whatever replaced it")
+	}
+
+	var consentPos, registerPos, initCallPos token.Pos
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if n == nil {
+			return false
+		}
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		switch exprText(fset, call.Fun) {
+		case "pm.enforceConsent":
+			if !consentPos.IsValid() {
+				consentPos = call.Pos()
+			}
+		case "pm.registerMahModule":
+			if !registerPos.IsValid() {
+				registerPos = call.Pos()
+			}
+		case "L.CallByParam":
+			// The init() invocation.
+			if !initCallPos.IsValid() {
+				initCallPos = call.Pos()
+			}
+		}
+		return true
+	})
+
+	if !consentPos.IsValid() {
+		t.Fatal("loadPlugin never calls pm.enforceConsent: a plugin can now widen its own grants by editing plugin.lua")
+	}
+	if !registerPos.IsValid() {
+		t.Fatal("loadPlugin no longer calls pm.registerMahModule; this test needs updating with whatever installs the mah table now")
+	}
+	if consentPos > registerPos {
+		t.Errorf("pm.enforceConsent (line %d) runs AFTER pm.registerMahModule (line %d): "+
+			"the refused plugin has already been handed its host functions",
+			fset.Position(consentPos).Line, fset.Position(registerPos).Line)
+	}
+	if initCallPos.IsValid() && consentPos > initCallPos {
+		t.Errorf("pm.enforceConsent (line %d) runs AFTER init() is called (line %d): "+
+			"the refused plugin has already run",
+			fset.Position(consentPos).Line, fset.Position(initCallPos).Line)
+	}
+
+	// A refusal must abandon the VM. Returning without it leaves the state in
+	// pm.vmLocks and pm.loading, holding its own lock forever.
+	consentStmt := enclosingIfStmt(fn.Body, consentPos)
+	if consentStmt == nil {
+		t.Fatal("the pm.enforceConsent call is not inside an if-statement, so its error cannot be being checked")
+	}
+	body := nodeText(fset, consentStmt.Body)
+	if !strings.Contains(body, "abandon()") {
+		t.Errorf("the pm.enforceConsent failure branch does not call abandon(): the VM, its lock entry "+
+			"and its loading marker are leaked on refusal. Branch was:\n%s", body)
+	}
+	if !strings.Contains(body, "return") {
+		t.Errorf("the pm.enforceConsent failure branch does not return, so the load continues after a refusal. Branch was:\n%s", body)
+	}
+}
+
+// enclosingIfStmt finds the innermost if-statement whose init or condition
+// contains pos.
+func enclosingIfStmt(body *ast.BlockStmt, pos token.Pos) *ast.IfStmt {
+	var found *ast.IfStmt
+	ast.Inspect(body, func(n ast.Node) bool {
+		if n == nil {
+			return false
+		}
+		stmt, ok := n.(*ast.IfStmt)
+		if !ok {
+			return true
+		}
+		if stmt.Init != nil && pos >= stmt.Init.Pos() && pos <= stmt.Init.End() {
+			found = stmt
+			return false
+		}
+		if stmt.Cond != nil && pos >= stmt.Cond.Pos() && pos <= stmt.Cond.End() {
+			found = stmt
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// nodeText renders any AST node back to source, for matching on statement
+// bodies rather than expressions.
+func nodeText(fset *token.FileSet, n ast.Node) string {
+	var buf bytes.Buffer
+	if err := printer.Fprint(&buf, fset, n); err != nil {
+		return ""
+	}
+	return buf.String()
 }
