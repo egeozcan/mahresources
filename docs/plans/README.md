@@ -17,6 +17,7 @@ the code wins. For how the system is actually put together see
 - [2026-07-08-schema-editor-scalar-meta-edit-bug.md](2026-07-08-schema-editor-scalar-meta-edit-bug.md)
 - [2026-07-26-headless-selector-core-refactor.md](2026-07-26-headless-selector-core-refactor.md)
 - [2026-07-27-headless-selector-handover.md](2026-07-27-headless-selector-handover.md)
+- [2026-08-15-plugin-invocation-and-hook-integrity.md](2026-08-15-plugin-invocation-and-hook-integrity.md)
 
 ## Archive
 

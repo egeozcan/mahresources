@@ -194,24 +194,54 @@ func (ctx *MahresourcesContext) UpdateTag(tagQuery *query_models.TagCreator) (*m
 	return &tag, nil
 }
 
-func (ctx *MahresourcesContext) DeleteTag(tagId uint) error {
-	_, hookErr := ctx.RunBeforePluginHooks("before_tag_delete", map[string]any{"id": float64(tagId)})
-	if hookErr != nil {
-		return hookErr
-	}
+// tagDeleteEffect is the after-commit payload for one deleted tag, mirroring
+// groupDeleteEffect.
+type tagDeleteEffect struct {
+	ID   uint
+	Name string
+}
 
+// prepareTagDelete runs the before-delete hook, giving a plugin its veto.
+func (ctx *MahresourcesContext) prepareTagDelete(tagID uint) error {
+	_, err := ctx.RunBeforePluginHooks("before_tag_delete", map[string]any{"id": float64(tagID)})
+	return err
+}
+
+// deleteTagInTransaction performs only the database work and returns the effect
+// payload to emit once the owning transaction has committed.
+func (ctx *MahresourcesContext) deleteTagInTransaction(tagID uint) (tagDeleteEffect, error) {
 	// Load tag name before deletion for audit log
 	var tag models.Tag
-	if err := ctx.db.First(&tag, tagId).Error; err != nil {
-		return err
+	if err := ctx.db.First(&tag, tagID).Error; err != nil {
+		return tagDeleteEffect{}, err
 	}
-	tagName := tag.Name
+	if err := ctx.db.Select(clause.Associations).Delete(&tag).Error; err != nil {
+		return tagDeleteEffect{}, err
+	}
+	return tagDeleteEffect{ID: tagID, Name: tag.Name}, nil
+}
 
-	err := ctx.db.Select(clause.Associations).Delete(&tag).Error
-	if err == nil {
-		ctx.Logger().Info(models.LogActionDelete, "tag", &tagId, tagName, "Deleted tag", nil)
-		ctx.RunAfterPluginHooks("after_tag_delete", map[string]any{"id": float64(tagId), "name": tagName})
+// emitTagDeleteEffects runs the log line, after-hook and cache invalidation for
+// a committed batch. See emitNoteDeleteEffects.
+func (ctx *MahresourcesContext) emitTagDeleteEffects(events []tagDeleteEffect) {
+	for _, event := range events {
+		id := event.ID
+		ctx.Logger().Info(models.LogActionDelete, "tag", &id, event.Name, "Deleted tag", nil)
+		ctx.RunAfterPluginHooks("after_tag_delete", map[string]any{"id": float64(event.ID), "name": event.Name})
 		ctx.InvalidateSearchCacheByType(EntityTypeTag)
 	}
-	return err
+}
+
+func (ctx *MahresourcesContext) DeleteTag(tagId uint) error {
+	if err := ctx.prepareTagDelete(tagId); err != nil {
+		return err
+	}
+
+	effect, err := ctx.deleteTagInTransaction(tagId)
+	if err != nil {
+		return err
+	}
+
+	ctx.emitTagDeleteEffects([]tagDeleteEffect{effect})
+	return nil
 }

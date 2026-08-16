@@ -159,12 +159,25 @@ func (ctx *MahresourcesContext) BulkAddMetaToNotes(query *query_models.BulkEditM
 }
 
 func (ctx *MahresourcesContext) BulkDeleteNotes(query *query_models.BulkQuery) error {
-	return ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+	var deleteEffects []noteDeleteEffect
+
+	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
 		for _, id := range query.ID {
-			if err := altCtx.DeleteNote(id); err != nil {
+			if err := altCtx.prepareNoteDelete(id); err != nil {
 				return err
 			}
+			effect, err := altCtx.deleteNoteInTransaction(id)
+			if err != nil {
+				return err
+			}
+			deleteEffects = append(deleteEffects, effect)
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	ctx.emitNoteDeleteEffects(deleteEffects)
+	return nil
 }

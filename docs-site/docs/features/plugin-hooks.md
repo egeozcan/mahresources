@@ -56,6 +56,38 @@ mah.on("after_group_delete", function(data)
 end)
 ```
 
+### When Hooks Run Relative to the Database
+
+An **after hook runs once the change is durable** — after the transaction that made it has committed. A bulk delete of fifty notes commits, then fires fifty `after_note_delete` hooks; if the transaction rolls back, none of them fire. This means a write your after hook makes through `mah.db` is an ordinary write, not one contending with a transaction that is still open.
+
+A **before hook can veto, and a veto means the change does not happen.** On a bulk operation that covers the whole batch: aborting the deletion of one resource in a selection of fifty leaves all fifty in place, and aborting the deletion of one merge loser rolls the entire merge back.
+
+:::warning Writing to the database from a before hook
+A before hook may run inside the caller's open transaction, while your `mah.db` write is issued on a separate connection. On SQLite that write contends with the transaction for the writer lock and can fail. Read freely in a before hook; do your writing in the matching after hook, where the transaction has already committed.
+:::
+
+### Reentrancy: a Plugin Is Not Notified of Its Own Writes
+
+If a hook dispatch would re-enter a plugin that is **already running on the current call chain**, that plugin's hook is skipped and a warning is logged. The write itself still happens; only the notification is dropped.
+
+This covers two shapes:
+
+- Your plugin hooks `after_tag_create` and something in your plugin creates a tag. Your hook does not fire for that tag.
+- Your plugin writes a group, another plugin's `after_group_create` hook writes a note, and your plugin hooks `after_note_create`. Your hook does not fire for that note, because your plugin is still running further up the chain.
+
+The rule applies per plugin: it never suppresses a *different* plugin's hook. (A different plugin's hook can still be skipped for the unrelated reason below, if its own VM is busy.) The rule exists because each plugin runs in a single Lua VM behind a non-reentrant lock: without it, re-entering that VM would block forever.
+
+### When a Hook's Plugin Is Busy
+
+A plugin is single-threaded, so a hook may have to wait for its own plugin's VM — a long `mah.http.*_sync` call holds it for up to 120 seconds. A hook dispatched from **inside another plugin's code** waits at most 5 seconds, which stops two plugins that hook each other's writes from deadlocking. What happens then depends on which side of the operation the hook is on:
+
+| | On timeout |
+|---|---|
+| **Before hook** | The operation **fails** with an error. The hook that could not run might have been the one that would have vetoed, so proceeding would let unrelated contention silently disable a guard. |
+| **After hook** | Skipped and logged. The change has already committed, so this is a missed notification, not a bypassed check. |
+
+A hook dispatched from ordinary application code — the common case — waits as long as it needs to and is never skipped for this reason.
+
 ### Abort Mechanism
 
 `mah.abort(reason)` raises a special Lua error that the hook runner intercepts. The operation is cancelled and the reason is returned to the client. This works in both before hooks and action handlers.

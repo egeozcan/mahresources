@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
@@ -22,6 +23,36 @@ import (
 // pluginDBAdapter implements plugin_system.EntityQuerier using MahresourcesContext.
 type pluginDBAdapter struct {
 	ctx *MahresourcesContext
+}
+
+// BindInvocation returns querier and writer views that run as the user who
+// triggered this plugin call, and that carry the call chain so a nested hook
+// dispatch can refuse to re-enter a VM already on it.
+//
+// This is what makes a plugin's writes land with a real CreatedByUserId. Before
+// it, every mah.db call ran on one adapter captured at wiring time whose context
+// had no principal, so under -auth everything a plugin created was attributed to
+// nobody.
+//
+// A zero actor deliberately skips the bind rather than binding a role-less
+// principal with UserID 0. Auth-off and context-less worker paths land here, and
+// the unbound singleton is exactly where the existing default-actor stamping
+// already produces the right answer (root). applyPrincipalScope happens to
+// early-return on actor 0 today, but relying on that would leave a non-nil
+// principal with no role and no id on the context — a state nothing else in the
+// tree produces.
+func (a *pluginDBAdapter) BindInvocation(inv *plugin_system.Invocation) (plugin_system.EntityQuerier, plugin_system.EntityWriter) {
+	bound := a.ctx
+	if inv != nil && inv.ActorUserID != 0 {
+		bound = a.ctx.WithPrincipal(&auth.Principal{UserID: inv.ActorUserID})
+	} else {
+		clone := *a.ctx
+		bound = &clone
+	}
+	bound.pluginInvocation = inv
+
+	adapter := &pluginDBAdapter{ctx: bound}
+	return adapter, adapter
 }
 
 // skipNotFound collapses a missing row to a nil error, so the getters can

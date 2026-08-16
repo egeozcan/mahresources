@@ -32,7 +32,9 @@ func (ctx *MahresourcesContext) MergeTags(winnerId uint, loserIds []uint) error 
 		return errors.New("invalid winner ID")
 	}
 
-	return ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+	var deleteEffects []tagDeleteEffect
+
+	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
 		var losers []*models.Tag
 		if err := altCtx.db.Find(&losers, &loserIds).Error; err != nil {
 			return err
@@ -131,17 +133,29 @@ func (ctx *MahresourcesContext) MergeTags(winnerId uint, loserIds []uint) error 
 		// Log the merge operation
 		altCtx.Logger().Info(models.LogActionUpdate, "tag", &winner.ID, winner.Name, fmt.Sprintf("Merged %d tags into this tag", len(losers)), nil)
 
-		// Delete losers
+		// Delete losers. Split like the group path so the after-hooks land past
+		// the commit: DeleteTag would emit them from inside this transaction,
+		// telling a plugin a tag is gone before the commit that might roll back.
 		for _, loser := range losers {
-			if err := altCtx.DeleteTag(loser.ID); err != nil {
+			if err := altCtx.prepareTagDelete(loser.ID); err != nil {
 				return err
 			}
+			effect, err := altCtx.deleteTagInTransaction(loser.ID)
+			if err != nil {
+				return err
+			}
+			deleteEffects = append(deleteEffects, effect)
 		}
-
-		altCtx.InvalidateSearchCacheByType(EntityTypeTag)
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	ctx.emitTagDeleteEffects(deleteEffects)
+	ctx.InvalidateSearchCacheByType(EntityTypeTag)
+	return nil
 }
 
 func (ctx *MahresourcesContext) BulkDeleteTags(query *query_models.BulkQuery) error {
@@ -149,12 +163,25 @@ func (ctx *MahresourcesContext) BulkDeleteTags(query *query_models.BulkQuery) er
 		return err
 	}
 
-	return ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
+	var deleteEffects []tagDeleteEffect
+
+	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
 		for _, id := range query.ID {
-			if err := altCtx.DeleteTag(id); err != nil {
+			if err := altCtx.prepareTagDelete(id); err != nil {
 				return err
 			}
+			effect, err := altCtx.deleteTagInTransaction(id)
+			if err != nil {
+				return err
+			}
+			deleteEffects = append(deleteEffects, effect)
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	ctx.emitTagDeleteEffects(deleteEffects)
+	return nil
 }

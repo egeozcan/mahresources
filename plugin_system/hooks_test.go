@@ -34,7 +34,7 @@ end
 		"name": "original",
 	}
 
-	result, err := pm.RunBeforeHooks("before_note_create", data)
+	result, err := pm.RunBeforeHooks(nil, "before_note_create", data)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -72,7 +72,7 @@ end
 		"name": "test",
 	}
 
-	_, err = pm.RunBeforeHooks("before_note_create", data)
+	_, err = pm.RunBeforeHooks(nil, "before_note_create", data)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -115,7 +115,7 @@ end
 		"name": "unchanged",
 	}
 
-	result, err := pm.RunBeforeHooks("before_note_create", data)
+	result, err := pm.RunBeforeHooks(nil, "before_note_create", data)
 	if err != nil {
 		t.Fatalf("expected no error (runtime errors are skipped), got: %v", err)
 	}
@@ -154,7 +154,7 @@ end
 	}
 
 	// Should not panic or error
-	pm.RunAfterHooks("after_note_create", data)
+	pm.RunAfterHooks(nil, "after_note_create", data)
 }
 
 func TestRunBeforeHooks_MultiplePluginsOrder(t *testing.T) {
@@ -202,7 +202,7 @@ end
 		"name": "base",
 	}
 
-	result, err := pm.RunBeforeHooks("before_note_create", data)
+	result, err := pm.RunBeforeHooks(nil, "before_note_create", data)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestRunBeforeHooks_NoHooksRegistered(t *testing.T) {
 		"name": "unchanged",
 	}
 
-	result, err := pm.RunBeforeHooks("nonexistent_event", data)
+	result, err := pm.RunBeforeHooks(nil, "nonexistent_event", data)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

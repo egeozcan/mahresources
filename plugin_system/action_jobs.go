@@ -249,7 +249,10 @@ func (pm *PluginManager) runAsyncActionGoroutine(job *ActionJob, L *lua.LState, 
 
 		tbl := goToLuaTable(L, ctxData)
 
-		timeoutCtx, cancel := context.WithTimeout(context.Background(), asyncActionTimeout)
+		// The submitter is captured at enqueue (ActionJob.ownerUserID), so an
+		// async action's mah.db writes are attributed to whoever ran the action
+		// rather than to nobody. Background-parented: a job outlives its request.
+		timeoutCtx, cancel := context.WithTimeout(invocationContextForJob(job), asyncActionTimeout)
 		L.SetContext(timeoutCtx)
 
 		err := L.CallByParam(lua.P{
@@ -317,7 +320,7 @@ func (pm *PluginManager) runStartJobGoroutine(job *ActionJob, L *lua.LState, fn 
 		}
 		defer mu.Unlock()
 
-		timeoutCtx, cancel := context.WithTimeout(context.Background(), asyncActionTimeout)
+		timeoutCtx, cancel := context.WithTimeout(invocationContextForJob(job), asyncActionTimeout)
 		L.SetContext(timeoutCtx)
 		defer func() {
 			L.RemoveContext()

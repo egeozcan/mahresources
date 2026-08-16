@@ -2,9 +2,11 @@ package plugin_system
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -222,11 +224,117 @@ func luaValueToGoDepth(v lua.LValue, depth int, c *luaConversion) any {
 	}
 }
 
+// skipReentrantHook reports whether dispatching hook would re-enter a plugin VM
+// that is already executing on this call chain, and logs it when it does.
+//
+// Taking that VM's lock again from the same goroutine wedges it permanently: the
+// mutex is not reentrant, the 5s Lua timeout cannot preempt a block inside a Go
+// call, and the lock is never released, so every later entry into that plugin
+// queues behind it forever with no panic and nothing in the log.
+//
+// Both shapes are covered because inv carries the whole chain rather than one
+// state: a plugin writing an entity it hooks itself, and two plugins whose hooks
+// write entities the other hooks. The write still happens; only the notification
+// is dropped, so a plugin is never told about a write made while it was already
+// running. See docs/plans/2026-08-15-plugin-invocation-and-hook-integrity.md §2.
+func (pm *PluginManager) skipReentrantHook(inv *Invocation, hook hookEntry, event string) bool {
+	if !inv.holds(hook.state) {
+		return false
+	}
+	pm.warnHookSkipped(hook.pluginName, event,
+		"it is already running on this call chain (a plugin is not notified of writes made while it is running)")
+	return true
+}
+
+// warnHookSkipped reports a dropped hook dispatch through the application log,
+// so it is visible at /logs rather than only on stderr. Falls back to the
+// process log when no logger is wired (tests, and before wiring completes).
+func (pm *PluginManager) warnHookSkipped(pluginName, event, reason string) {
+	msg := fmt.Sprintf("skipped %q hook: %s", event, reason)
+	if pl := pm.getPluginLogger(); pl != nil {
+		pl.PluginLog(pluginName, "warning", msg, map[string]any{"event": event})
+		return
+	}
+	log.Printf("[plugin] warning: plugin %q: %s", pluginName, msg)
+}
+
+// ErrHookVMBusy is returned by RunBeforeHooks when a nested dispatch could not
+// take a hook's VM lock in time.
+//
+// It exists so contention cannot silently bypass a veto: see lockVMForHook.
+var ErrHookVMBusy = errors.New("plugin hook could not run: its VM was busy")
+
+// lockVMForHook takes hook's VM lock, bounding the wait only when this goroutine
+// already holds one — the sole condition under which it can be half of a lock
+// cycle.
+//
+// Returns (nil, false) when the plugin is gone, which is always a safe skip, and
+// (nil, true) when the plugin is alive but its lock could not be taken in time.
+// The two are separated because the caller's correct response differs, and the
+// difference matters: for an *after* hook a timeout is a missed notification of
+// something already committed, so skipping is honest; for a *before* hook it is
+// a veto that never got to run, and skipping it would mean an unrelated plugin
+// being busy silently disables a protection hook. RunBeforeHooks therefore fails
+// the operation instead.
+func (pm *PluginManager) lockVMForHook(inv *Invocation, hook hookEntry, event string) (*sync.Mutex, bool) {
+	var (
+		mu   *sync.Mutex
+		busy bool
+	)
+	if inv == nil || len(inv.states) == 0 {
+		// Top-level dispatch: holds no VM lock, so it cannot deadlock against
+		// another goroutine's hook dispatch. Wait as long as it takes.
+		mu = pm.LockVM(hook.state)
+	} else {
+		mu, busy = pm.TryLockVMWithin(hook.state, hookLockWait)
+	}
+
+	// Re-check registration on *both* outcomes, because waiting is exactly when
+	// a hook can stop existing. DisablePlugin unregisters hooks first and only
+	// drops the vmLocks entry once it has acquired the VM lock, so for the whole
+	// time it is blocked on a busy VM the plugin still looks live: a dispatcher
+	// working from a snapshot taken before that would fail a caller's write over
+	// a hook that no longer exists (on timeout), or run one (on acquisition).
+	// Both are wrong, and the liveness of the vmLocks entry cannot tell them
+	// apart — the registration is the condition that actually matters.
+	if !pm.hookStillRegistered(hook, event) {
+		if mu != nil {
+			mu.Unlock()
+		}
+		return nil, false
+	}
+	return mu, busy
+}
+
+// hookStillRegistered reports whether hook is still registered for event.
+func (pm *PluginManager) hookStillRegistered(hook hookEntry, event string) bool {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	for _, h := range pm.hooks[event] {
+		if h.state == hook.state && h.fn == hook.fn {
+			return true
+		}
+	}
+	return false
+}
+
+// hookContext returns the context a hook's Lua call runs under: Background, not
+// the request, because a hook has no request of its own — but carrying inv, so a
+// mah.db write made *from* the hook sees the chain it is on and can refuse to
+// re-enter any VM already in it.
+func hookContext(inv *Invocation) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(withInvocation(context.Background(), inv), luaExecTimeout)
+}
+
 // RunBeforeHooks executes all registered hooks for the given event sequentially.
 // Each hook receives the data, can modify it, and returns the modified data.
 // If a hook calls mah.abort(), a PluginAbortError is returned.
 // If a hook has a runtime error, it is logged and skipped.
-func (pm *PluginManager) RunBeforeHooks(event string, data map[string]any) (map[string]any, error) {
+//
+// inv identifies the actor whose write fired this event and the plugin VMs
+// already executing on the call chain. It may be nil, which means "no actor and
+// no chain" — the shape a caller with no plugin manager wiring produces.
+func (pm *PluginManager) RunBeforeHooks(inv *Invocation, event string, data map[string]any) (map[string]any, error) {
 	if pm.closed.Load() {
 		return data, nil
 	}
@@ -237,8 +345,17 @@ func (pm *PluginManager) RunBeforeHooks(event string, data map[string]any) (map[
 
 	for _, hook := range hooks {
 		L := hook.state
-		mu := pm.LockVM(L)
+		if pm.skipReentrantHook(inv, hook, event) {
+			continue
+		}
+		mu, busy := pm.lockVMForHook(inv, hook, event)
 		if mu == nil {
+			if busy {
+				// Fail closed. This hook may be the one that would have vetoed,
+				// and we cannot know without running it.
+				return nil, fmt.Errorf("%w: %q hook for plugin %q did not start within %s",
+					ErrHookVMBusy, event, hook.pluginName, hookLockWait)
+			}
 			// The plugin was disabled between GetHooks and here; its state is
 			// being closed, so skip it rather than dereferencing a nil lock.
 			continue
@@ -246,7 +363,7 @@ func (pm *PluginManager) RunBeforeHooks(event string, data map[string]any) (map[
 
 		tbl := goToLuaTable(L, data)
 
-		timeoutCtx, cancel := context.WithTimeout(context.Background(), luaExecTimeout)
+		timeoutCtx, cancel := hookContext(inv.with(L))
 		L.SetContext(timeoutCtx)
 
 		err := L.CallByParam(lua.P{
@@ -282,8 +399,9 @@ func (pm *PluginManager) RunBeforeHooks(event string, data map[string]any) (map[
 }
 
 // RunAfterHooks executes all registered hooks for the given event.
-// Errors are logged and ignored; execution is synchronous.
-func (pm *PluginManager) RunAfterHooks(event string, data map[string]any) {
+// Errors are logged and ignored; execution is synchronous — on the caller's own
+// goroutine, which is why inv has to carry the whole chain. See RunBeforeHooks.
+func (pm *PluginManager) RunAfterHooks(inv *Invocation, event string, data map[string]any) {
 	if pm.closed.Load() {
 		return
 	}
@@ -294,16 +412,24 @@ func (pm *PluginManager) RunAfterHooks(event string, data map[string]any) {
 
 	for _, hook := range hooks {
 		L := hook.state
-		mu := pm.LockVM(L)
+		if pm.skipReentrantHook(inv, hook, event) {
+			continue
+		}
+		mu, busy := pm.lockVMForHook(inv, hook, event)
 		if mu == nil {
-			// The plugin was disabled between GetHooks and here; its state is
-			// being closed, so skip it rather than dereferencing a nil lock.
+			if busy {
+				// Safe to skip: the change is already committed, so this is a
+				// missed notification rather than a bypassed guard.
+				pm.warnHookSkipped(hook.pluginName, event, fmt.Sprintf(
+					"its VM was busy for %s while this call already held another plugin's VM; "+
+						"skipped rather than risking a lock cycle", hookLockWait))
+			}
 			continue
 		}
 
 		tbl := goToLuaTable(L, data)
 
-		timeoutCtx, cancel := context.WithTimeout(context.Background(), luaExecTimeout)
+		timeoutCtx, cancel := hookContext(inv.with(L))
 		L.SetContext(timeoutCtx)
 
 		err := L.CallByParam(lua.P{

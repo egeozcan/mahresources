@@ -356,6 +356,13 @@ type MahresourcesContext struct {
 	// Set by WithRequest/WithPrincipal. nil on the singleton context, which is
 	// treated as an unrestricted "system" caller (background workers, migrations).
 	principal *auth.Principal
+	// pluginInvocation is set only on a context produced by the plugin DB
+	// adapter's BindInvocation: it means "this work originates inside a plugin
+	// VM call". It is opaque here — application_context stores it and hands it
+	// back to plugin_system when dispatching hooks, so that a hook dispatch can
+	// refuse to re-enter a VM already executing on this call chain. nil
+	// everywhere else, including ordinary requests.
+	pluginInvocation *plugin_system.Invocation
 	// hashQueue is a channel to queue resources for async hash processing
 	hashQueue chan<- uint
 	// thumbnailQueue is a channel to queue video resources for async thumbnail generation
@@ -623,6 +630,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			adapter := &pluginDBAdapter{ctx: ctx}
 			pm.SetEntityQuerier(adapter)
 			pm.SetEntityWriter(adapter)
+			pm.SetPrincipalBinder(adapter)
 			pm.SetPluginLogger(adapter)
 			pm.SetKVStore(adapter)
 			mrqlAdapter := &pluginMRQLAdapter{ctx: ctx}
@@ -651,13 +659,36 @@ func (ctx *MahresourcesContext) RegisterAltFs(key string, fs afero.Fs) {
 	ctx.altFileSystems[key] = fs
 }
 
+// hookInvocation describes, for a hook dispatch, who triggered the write and
+// which plugin VMs are already running on this call chain.
+//
+// It reads both off the receiver, so it is uniform across the two origins and
+// neither caller has to know which one it is in. An ordinary request carries the
+// requesting principal and no invocation. A plugin-originated write runs on the
+// clone that pluginDBAdapter.BindInvocation produced, whose principal *is* the
+// actor and whose pluginInvocation is the chain so far.
+func (ctx *MahresourcesContext) hookInvocation() *plugin_system.Invocation {
+	if ctx.pluginInvocation != nil {
+		return ctx.pluginInvocation
+	}
+	// SuperUser yields no actor, matching plugin_system.actorFromContext and
+	// principalOwnerID in the HTTP layer: with auth off every request is the
+	// same implicit administrator, so a hook that starts a job must leave it
+	// ownerless rather than claiming root submitted it.
+	var actor uint
+	if ctx.principal != nil && !ctx.principal.SuperUser {
+		actor = ctx.principal.UserID
+	}
+	return plugin_system.NewInvocation(actor)
+}
+
 // RunBeforePluginHooks executes before-hooks for the given event.
 // If no plugin manager is active, data is returned unmodified.
 func (ctx *MahresourcesContext) RunBeforePluginHooks(event string, data map[string]any) (map[string]any, error) {
 	if ctx.pluginManager == nil {
 		return data, nil
 	}
-	return ctx.pluginManager.RunBeforeHooks(event, data)
+	return ctx.pluginManager.RunBeforeHooks(ctx.hookInvocation(), event, data)
 }
 
 // RunAfterPluginHooks executes after-hooks for the given event.
@@ -667,7 +698,7 @@ func (ctx *MahresourcesContext) RunAfterPluginHooks(event string, data map[strin
 	if ctx.pluginManager == nil {
 		return
 	}
-	ctx.pluginManager.RunAfterHooks(event, data)
+	ctx.pluginManager.RunAfterHooks(ctx.hookInvocation(), event, data)
 }
 
 // DownloadManager returns the download queue manager for background remote downloads

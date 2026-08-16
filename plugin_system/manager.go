@@ -21,6 +21,13 @@ import (
 
 // Lua execution timeouts.
 const (
+	// hookLockWait bounds how long a *nested* hook dispatch waits for another
+	// plugin's VM lock before skipping the hook. Matched to the hook's own Lua
+	// timeout: a hook that cannot start within the time it is allowed to run is
+	// not worth waiting for, and waiting unbounded there is what allows a lock
+	// cycle between two goroutines to become permanent.
+	hookLockWait = 5 * time.Second
+
 	luaExecTimeout     = 5 * time.Second  // hooks, injections, sync calls
 	luaPageTimeout     = 30 * time.Second // plugin page handlers
 	asyncActionTimeout = 5 * time.Minute  // async actions and start_job
@@ -46,9 +53,14 @@ type DiscoveredPlugin struct {
 }
 
 // hookEntry stores a Lua hook handler and its parent VM.
+//
+// pluginName is captured at registration so a skipped re-entrant dispatch can
+// name the plugin in its warning. mah.on is only reachable from init(), which
+// loadPlugin calls after populating the name, so it is always set here.
 type hookEntry struct {
-	state *lua.LState
-	fn    *lua.LFunction
+	state      *lua.LState
+	fn         *lua.LFunction
+	pluginName string
 }
 
 // injectionEntry stores a Lua injection renderer and its parent VM.
@@ -94,7 +106,10 @@ type PluginManager struct {
 	vmLocks map[*lua.LState]*sync.Mutex
 	dbProvider atomic.Value
 	dbWriter   atomic.Value
-	logger     atomic.Value
+	// principalBinder binds dbProvider/dbWriter to the principal that triggered
+	// a call. Optional; nil falls back to the unbound provider.
+	principalBinder atomic.Value
+	logger          atomic.Value
 	kvStore      atomic.Value
 	mrqlExecutor atomic.Value
 	closed       atomic.Bool
@@ -342,8 +357,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 
 		pm.mu.Lock()
 		pm.hooks[eventName] = append(pm.hooks[eventName], hookEntry{
-			state: L,
-			fn:    handler,
+			state:      L,
+			fn:         handler,
+			pluginName: *pluginNamePtr,
 		})
 		pm.mu.Unlock()
 		return 0
@@ -777,6 +793,12 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 			Progress:   0,
 			Message:    "Waiting to start...",
 			CreatedAt:  time.Now(),
+			// start_job runs while an entry point holds this VM's lock, so the
+			// triggering user is on L's context here. Without an owner the job
+			// is nobody's, and jobVisibleToPrincipal hides an ownerless job from
+			// every non-admin — including the user who just triggered it. The
+			// async *action* path has always set this; start_job never did.
+			ownerUserID: ownerFromInvocation(pm.invocationFor(L)),
 		}
 
 		pm.actionJobsMu.Lock()
@@ -790,7 +812,10 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 
 		go func() {
 			defer wg.Done()
-			pm.runStartJobGoroutine(job, L, fn, jobID)
+			// mainState: start_job is callable from a coroutine, whose LState is
+			// not in vmLocks — the worker would fail the job it just created with
+			// "plugin is no longer available".
+			pm.runStartJobGoroutine(job, mainState(L), fn, jobID)
 		}()
 
 		L.Push(lua.LString(jobID))
@@ -1231,6 +1256,60 @@ func (pm *PluginManager) LockVM(L *lua.LState) *sync.Mutex {
 		return nil
 	}
 	return mu
+}
+
+// vmLockPollInterval is how often TryLockVMWithin retries. Only reached under
+// genuine contention, and only on the nested path, so a short poll is cheaper
+// than the machinery a timed mutex would need.
+const vmLockPollInterval = 2 * time.Millisecond
+
+// TryLockVMWithin is LockVM bounded by wait. It returns (nil, false) when the
+// plugin is gone — the caller must not touch L — and (nil, true) when the plugin
+// is alive but its lock could not be taken in time.
+//
+// This exists to break lock cycles *between* goroutines, which the invocation
+// chain cannot see because a chain is per-call-stack. Two plugins that each hook
+// an entity the other writes can arrive at each other's mutex from opposite
+// directions: goroutine A holds P and waits for Q while B holds Q and waits for
+// P. Both waits are unbounded and the Lua deadline cannot preempt a block inside
+// a Go call, so that is permanent — and it is permanent on the code this
+// replaces too.
+//
+// Only the nested case needs bounding, and only the nested case gets it (see
+// RunAfterHooks): a dispatch that holds no VM lock cannot be a participant in
+// such a cycle, so it keeps waiting as long as it takes, exactly as before.
+func (pm *PluginManager) TryLockVMWithin(L *lua.LState, wait time.Duration) (*sync.Mutex, bool) {
+	mu := pm.VMLock(L)
+	if mu == nil {
+		return nil, false
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		if mu.TryLock() {
+			pm.mu.RLock()
+			_, live := pm.vmLocks[L]
+			pm.mu.RUnlock()
+			if !live {
+				mu.Unlock()
+				return nil, false
+			}
+			return mu, false
+		}
+		if time.Now().After(deadline) {
+			// Distinguish "busy" from "gone" here too, not just on the
+			// acquiring path. DisablePlugin unregisters hooks before it deletes
+			// the vmLocks entry, so a dispatcher working from a hook snapshot
+			// taken just before that can sit here waiting on a plugin that is
+			// being torn down. Reporting it as contention would fail a caller's
+			// write over a hook that no longer exists; a disabled plugin is
+			// always a safe skip.
+			pm.mu.RLock()
+			_, live := pm.vmLocks[L]
+			pm.mu.RUnlock()
+			return nil, live
+		}
+		time.Sleep(vmLockPollInterval)
+	}
 }
 
 // Close shuts down all Lua VMs. After Close returns, hooks and injections

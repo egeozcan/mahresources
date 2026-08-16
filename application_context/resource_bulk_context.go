@@ -459,15 +459,52 @@ type FileCleanupAction struct {
 
 // deleteResourceDBOnly performs only the database operations of DeleteResource.
 // Returns file cleanup actions to be performed after the transaction commits.
-func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileCleanupAction, error) {
+// resourceDeleteEffect is the after-commit payload for one deleted resource,
+// mirroring groupDeleteEffect. The bulk and merge paths collect these inside
+// their transaction and emit them once it has committed, so a plugin is never
+// told a resource was deleted by a transaction that then rolled back.
+type resourceDeleteEffect struct {
+	ID   uint
+	Name string
+}
+
+// prepareResourceDelete runs the before-delete hook, giving a plugin its veto.
+// Called inside the owning transaction on the bulk paths, so a refusal rolls the
+// whole batch back rather than leaving it half-applied.
+func (ctx *MahresourcesContext) prepareResourceDelete(resourceID uint) error {
+	_, err := ctx.RunBeforePluginHooks("before_resource_delete", map[string]any{"id": float64(resourceID)})
+	return err
+}
+
+// emitResourceDeleteEffects runs the after-delete hooks and the search-cache
+// invalidation for a committed batch.
+//
+// The invalidation moved out of the transaction with the hooks, and for the same
+// reason: dropping the cache while the delete could still roll back lets a
+// concurrent search repopulate it from rows that are about to come back, and
+// nothing invalidated it again afterwards. Notes, tags and groups already
+// invalidate post-commit; this makes resources consistent with them.
+func (ctx *MahresourcesContext) emitResourceDeleteEffects(events []resourceDeleteEffect) {
+	if len(events) == 0 {
+		return
+	}
+	for _, event := range events {
+		ctx.RunAfterPluginHooks("after_resource_delete", map[string]any{"id": float64(event.ID), "name": event.Name})
+	}
+	ctx.InvalidateSearchCacheByType(EntityTypeResource)
+}
+
+func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileCleanupAction, resourceDeleteEffect, error) {
 	resource := models.Resource{ID: resourceId}
 	if err := ctx.db.Model(&resource).First(&resource).Error; err != nil {
-		return nil, err
+		return nil, resourceDeleteEffect{}, err
 	}
+
+	effect := resourceDeleteEffect{ID: resourceId, Name: resource.Name}
 
 	fs, storageErr := ctx.GetFsForStorageLocation(resource.StorageLocation)
 	if storageErr != nil {
-		return nil, storageErr
+		return nil, effect, storageErr
 	}
 
 	subFolder := "deleted"
@@ -485,7 +522,7 @@ func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileClea
 	// Clear CurrentVersionID to break circular reference before deletion
 	if resource.CurrentVersionID != nil {
 		if err := ctx.db.Model(&resource).Update("current_version_id", nil).Error; err != nil {
-			return nil, err
+			return nil, effect, err
 		}
 	}
 
@@ -493,17 +530,17 @@ func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileClea
 	// and SQLite FK cascades don't fire reliably inside transactions).
 	if err := ctx.db.Where("resource_id1 = ? OR resource_id2 = ?", resourceId, resourceId).
 		Delete(&models.ResourceSimilarity{}).Error; err != nil {
-		return nil, err
+		return nil, effect, err
 	}
 
 	// Explicitly clean up image_hashes (same reason).
 	if err := ctx.db.Where("resource_id = ?", resourceId).
 		Delete(&models.ImageHash{}).Error; err != nil {
-		return nil, err
+		return nil, effect, err
 	}
 
 	if err := ctx.db.Select(clause.Associations).Delete(&resource).Error; err != nil {
-		return nil, err
+		return nil, effect, err
 	}
 
 	// Auto-delete empty series
@@ -523,7 +560,6 @@ func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileClea
 	}
 
 	ctx.Logger().Info(models.LogActionDelete, "resource", &resourceId, resource.Name, "Deleted resource", nil)
-	ctx.InvalidateSearchCacheByType(EntityTypeResource)
 
 	// NOTE: block-reference scrubbing is NOT done here. The single-item
 	// DeleteResource scrubs in its own transaction; the bulk-delete and
@@ -536,18 +572,27 @@ func (ctx *MahresourcesContext) deleteResourceDBOnly(resourceId uint) (*FileClea
 		SourcePath:         resource.GetCleanLocation(),
 		BackupPath:         backupPath,
 		ShouldRemoveSource: refCount == 0,
-	}, nil
+	}, effect, nil
 }
 
 func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuery) error {
 	var cleanupActions []*FileCleanupAction
+	var deleteEffects []resourceDeleteEffect
 
 	err := ctx.WithTransaction(func(altCtx *MahresourcesContext) error {
 		for _, id := range query.ID {
-			action, err := altCtx.deleteResourceDBOnly(id)
+			// Single-item DeleteResource has always bracketed its work with these
+			// hooks; this path fired neither, so a plugin that mirrors resources
+			// to an external system or vetoes deletion of protected ones worked
+			// for one resource and was silently bypassed for fifty.
+			if err := altCtx.prepareResourceDelete(id); err != nil {
+				return err
+			}
+			action, effect, err := altCtx.deleteResourceDBOnly(id)
 			if err != nil {
 				return err
 			}
+			deleteEffects = append(deleteEffects, effect)
 			if action != nil {
 				cleanupActions = append(cleanupActions, action)
 			}
@@ -557,7 +602,7 @@ func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuer
 	})
 
 	if err != nil {
-		return err // Transaction rolled back, no file operations performed
+		return err // Transaction rolled back, no file operations and no after-hooks
 	}
 
 	// Phase 2: File operations after successful commit
@@ -585,6 +630,13 @@ func (ctx *MahresourcesContext) BulkDeleteResources(query *query_models.BulkQuer
 			_ = action.SourceFS.Remove(action.SourcePath)
 		}
 	}
+
+	// After the files, not before: single-item DeleteResource has always
+	// bracketed its hook this way, and the ordering is load-bearing. The
+	// ShouldRemoveSource decision above was taken inside the transaction; a hook
+	// that runs first and stores content with the same hash can have the file it
+	// just wrote removed by that stale decision.
+	ctx.emitResourceDeleteEffects(deleteEffects)
 
 	return nil
 }
@@ -628,6 +680,7 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 
 	// Two-phase approach: DB operations in transaction, file I/O after commit
 	var cleanupActions []*FileCleanupAction
+	var deleteEffects []resourceDeleteEffect
 
 	err := ctx.WithTransaction(func(transactionCtx *MahresourcesContext) error {
 		tx := transactionCtx.db
@@ -733,6 +786,13 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 		deletedResBackups := make(map[string]types.JSON)
 
 		for _, loser := range losers {
+			// Before any destructive work on this loser, so a veto rolls the
+			// whole merge back. A merge that silently kept one loser alive would
+			// leave the winner holding half its associations.
+			if err := transactionCtx.prepareResourceDelete(loser.ID); err != nil {
+				return err
+			}
+
 			backupData, err := json.Marshal(loser)
 			if err != nil {
 				return err
@@ -752,11 +812,13 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 				return err
 			}
 
-			// DB-only delete; collect file cleanup for after commit
-			action, deleteErr := transactionCtx.deleteResourceDBOnly(loser.ID)
+			// DB-only delete; collect file cleanup and the hook payload for
+			// after commit
+			action, effect, deleteErr := transactionCtx.deleteResourceDBOnly(loser.ID)
 			if deleteErr != nil {
 				return deleteErr
 			}
+			deleteEffects = append(deleteEffects, effect)
 			if action != nil {
 				cleanupActions = append(cleanupActions, action)
 			}
@@ -821,6 +883,9 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 			_ = action.SourceFS.Remove(action.SourcePath)
 		}
 	}
+
+	// After the files, for the reason given in BulkDeleteResources.
+	ctx.emitResourceDeleteEffects(deleteEffects)
 
 	return nil
 }

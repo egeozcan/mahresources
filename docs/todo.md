@@ -1,3 +1,237 @@
+# Plugin invocation and hook integrity (2026-08-15)
+
+Plan: [docs/plans/2026-08-15-plugin-invocation-and-hook-integrity.md](plans/2026-08-15-plugin-invocation-and-hook-integrity.md).
+
+The package after the twelve low-hanging-fruit items, whose record is the
+section immediately below this one. Items 03–12 shipped; item 01 stayed out, and
+it is the gate on everything scope-aware. This package is item 01 plus the two
+open sharp edges that live in the same code.
+
+## Done
+
+- [x] **01 — the invocation.** Every `mah.db.*` call now runs as the principal
+      that triggered it. `Invocation` + `PrincipalBinder`, one binder method
+      rather than a context parameter on 62 interface methods, because
+      `pluginDBAdapter` is a one-field struct wrapping the context, so binding it
+      is a clone plus `WithPrincipal`. The 19 chokepoint call sites in `db_api.go` became
+      `querierFor(L)` / `writerFor(L)`.
+      - 8 of the 13 `LockVM` entry points needed no signature change at all:
+        item 07 had already put the request context on the LState, so the
+        principal was reachable.
+      - The four `Background`-parented ones (async action, `start_job`, hooks,
+        drained HTTP callbacks) carry the actor on the context they install. The
+        HTTP callback captures it at *registration*, since it runs long after
+        the registering call's context is gone.
+      - `mah.start_job` now names an owner. It never did, and
+        `jobVisibleToPrincipal` hides an ownerless job from every non-admin —
+        including the user who just triggered it. The async *action* path had
+        always set this.
+      - Actor 0 deliberately skips the bind rather than binding a role-less
+        principal with `UserID: 0`, so auth-off keeps its existing root
+        attribution through the unbound singleton.
+- [x] **The `auth` edge is confined** to `plugin_system/actor.go`, which reads
+      only `p.UserID` and returns a `uint`. `internal/arch/plugin_auth_import_test.go`
+      fails the build if a second production file imports it. The reason to
+      police it: the next thing a `*auth.Principal` makes possible in that
+      package is deciding a confined principal may run plugin code after all,
+      and that deny is fail-closed today precisely because the host cannot see
+      roles or scope.
+- [x] **Sharp edge #2 — the hook re-entry deadlock.** A hook whose VM is already
+      running on the current call chain is skipped, logged once, and every other
+      plugin's hook still fires. The write itself still happens.
+      - **The report's framing was too narrow, and it changed the fix.** It said
+        the trigger "requires the writing plugin itself to hold the hook". That
+        holds only at depth 1. Hooks dispatch synchronously on the caller's
+        goroutine, so P writes something Q hooks, Q's hook writes something P
+        hooks, and `LockVM(L_P)` blocks on a mutex P's outer frame still holds.
+        Reachable on `master`. So the guard keys on the whole chain, not on one
+        state.
+- [x] **Sharp edge #3a — resource bulk-delete and merge fire delete hooks.**
+      Both routed through `deleteResourceDBOnly`, which contained no hook calls,
+      so a plugin that mirrors resources externally or vetoes deletion of
+      protected ones worked for one resource and was silently bypassed for
+      fifty. A vetoed loser now rolls the whole merge back — a merge that kept
+      one loser alive would leave the winner holding half its associations.
+- [x] **Sharp edge #3b — note and tag after-hooks moved past the commit.** Both
+      bulk paths called the single-item delete from inside `WithTransaction`, so
+      a plugin was told an entity was deleted before the commit that might roll
+      back. Now shaped like the group path (`prepare` / `deleteInTransaction` /
+      `emit`), which was already correct and is the template. The audit log line
+      and cache invalidation moved with the hook, for the same reason.
+
+## Deliberately not in this package
+
+Lifting the group-confined plugin deny, the LState pool, and
+`mah.db.transaction(fn)` — all package 3, and the deny-lift must land behind
+item G's per-plugin grants. Egress control on `mah.http` (sharp edge #4) and the
+server-side `action.Filters` re-check are package 2 (item G).
+
+**The load-bearing property:** nothing here widens what any principal can reach,
+so it ships before item G without violating the report's own ordering caution.
+The single exception is one principal: a `start_job` job becomes visible to its
+own submitter.
+
+## Verification
+
+Every new test was mutation-tested — a passing test that cannot fail is worth
+nothing, and two of these were nearly exactly that.
+
+| Mutation | Result |
+|---|---|
+| Re-entry guard reduced to a **single state** (compare only the executing VM) | `FAIL ... 300.215s` — the mutual cycle wedged and took the Go test timeout. The self case still passed, which is precisely why a single-state design would have looked correct. |
+| `plugin_system/zz_mutation_probe.go` importing `auth` | arch test fails, naming the file |
+| `BulkDeleteResources` reverted to firing no hooks | before/after fired 0 times, want 3 |
+| `BulkDeleteNotes` reverted to emitting inside the transaction | counter fired 1, **tag write lost** — the discriminating assertion |
+| `BindInvocation` reverted to the unbound adapter | `CreatedByUserId is NULL` — the original defect |
+| A stray `getDbProvider()` call added to `db_api.go` | chokepoint arch test fails, naming the enclosing function |
+| `actorFor` reverted to reading only the principal | `actorFor = 0, want 77 from the invocation` |
+| Before-hooks made to skip on lock timeout (like after-hooks) | `RunBeforeHooks succeeded while a veto hook could not run: contention silently bypassed the guard` |
+| `mainState()` normalisation removed | `bound actor = 0, want 4242`, and the coroutine re-entry case stalls 5s |
+| `TryLockVMWithin` liveness recheck on timeout removed | a plugin torn down mid-wait is reported as busy |
+| `after_resource_delete` emitted before the file phase again | the hook's own write lands before the stale removal |
+| `hookStillRegistered` checked on the timeout path only | an unregistered hook is handed a lock and would run |
+| `BulkDeleteResources` transaction removed | the first two resources stay deleted when the third is vetoed |
+| `with()` reduced to a naive `append` | sibling chains see each other's state |
+| `hookStillRegistered` made to reject everything | the positive control fails (it did not, until round 7 rebuilt it) |
+| the skip warning suppressed | no warning reaches the application log |
+| the `mah.http` registration site made principal-only | a callback registered inside a hook runs as actor 0 |
+| `actor.go` given a `*auth.Principal`-returning function | the arch test names the signature |
+
+Two observation methods in the `application_context` tests, deliberately. A
+Lua-side counter read back through an injection slot proves a hook *fired*; a
+tag the hook creates proves it ran *outside* a transaction. The first draft used
+only tags and reported `before_resource_delete` as never firing when it did:
+before-hooks run inside the caller's open transaction, plugin writes are issued
+on a separate connection, and on SQLite they lose the writer lock and vanish.
+That is the same contention noted in §3.3 of the plan, found by tripping over it.
+
+## pi review (`openai-codex/gpt-5.6-sol:high`), findings applied
+
+Nine rounds against the diff on a pinned worktree, each re-snapshotted after the
+previous round's fixes, stopping at two consecutive clean rounds. Findings per
+round: 5, 4, 5, 4, 1, 0, 12, 0, 0 — **28 confirmed defects in total**.
+
+The shape of that curve is the lesson. Round 6 came back clean, and it would
+have been easy to stop there; round 7 asked about a *different half* of the
+change — application_context correctness, test quality and documentation
+literalness rather than plugin_system concurrency — and immediately found
+twelve, including two tests that could not fail and three documentation claims
+that did not match the code. A clean round means the angle is exhausted, not the
+change. Rounds 8 and 9 attacked the integration boundary and
+concurrency-under-load and were both clean, which is the pair that actually
+justified stopping.
+
+Twice the defect was inside the previous round's own fix: the bounded lock wait
+added in round 1 made before-hook vetoes fail open, and the registration check
+added in round 4 covered only the timeout half of the window it was written for.
+A single pass would have shipped both.
+
+### Round 1
+
+One round against the finished diff on a pinned worktree. Five findings, all
+confirmed against the code, all fixed. Two were real defects:
+
+- **The async HTTP callback lost its actor.** It read the actor off the request
+  principal, but hooks, async jobs and drained callbacks carry theirs on an
+  `Invocation` — so `mah.http.get` called from inside a hook queued a callback
+  with actor 0 and everything it wrote was un-attributed. Exactly the case this
+  package exists to fix, missed on the one path that reads the actor twice.
+  Fixed with `pm.actorFor(L)`; mutation-tested.
+- **A lock cycle across goroutines was still permanent.** The invocation chain is
+  per-call-stack and cannot see goroutine A holding plugin P and waiting for Q
+  while B holds Q and waits for P. Pre-existing on `master`, not introduced here.
+  Fixed by bounding the wait **only** on the nested path (`TryLockVMWithin`): a
+  dispatch that holds no VM lock cannot be in such a cycle, so it still waits as
+  long as it takes and the common case is untouched.
+
+Fixing the second one opened a gap of its own, found by reviewing the fix:
+bounding the nested wait made a **before-hook veto fail open**, because a busy
+VM is ordinary and a skipped veto lets the write through. The two dispatchers
+are now asymmetric on purpose — an after-hook timeout is skipped and logged, a
+before-hook timeout fails the operation with `ErrHookVMBusy` — and both
+directions are pinned by tests, since collapsing them onto one code path is the
+obvious future simplification and it reintroduces the bypass silently.
+
+Three smaller ones: the skip warning bypassed the `PluginLogger` and so never
+reached `/logs` as the plan promised; the auth-off system principal was recorded
+as a real actor, disagreeing with `principalOwnerID` and with the job-ownership
+docs (it now yields actor 0, so a plugin job is ownerless under auth-off exactly
+like an async action); and the no-principal test asserted only "not the other
+test's actor", which nearly anything satisfies — it now compares against what a
+direct non-plugin create produces in the same context.
+
+### Rounds 2-5
+
+**Coroutines were a hole in the whole design** (round 2). The coroutine library
+is open to plugins, and gopher-lua hands a Go function the *coroutine's* LState.
+`LState.NewThread` copies the parent's context at creation and never refreshes
+it, so a coroutine made in `init()` had no context — its writes were
+unattributed — and the chain recorded the coroutine pointer, which never matches
+the main state hooks are registered against, so the re-entry guard missed it
+entirely. `mainState()` normalises both; `luaContext()` does the same for the
+MRQL cache. `start_job` and the HTTP callbacks were also holding raw coroutine
+handles, which `vmLocks` does not know, so they were silently dropped or failed
+as "plugin is no longer available".
+
+**An after-hook ran before the file phase** (round 3). `ShouldRemoveSource` is
+decided inside the transaction from a hash reference count; a hook that ran first
+and stored content could have the file it just wrote removed by that stale
+decision. Single-item `DeleteResource` had always fired its hook after the file
+work — the bulk paths are now consistent with it. Resource search-cache
+invalidation moved post-commit for the same reason (round 4), matching notes,
+tags and groups.
+
+**The disable window, twice.** `DisablePlugin` unregisters hooks first and only
+drops the `vmLocks` entry once it has the VM lock, so for as long as it waits the
+plugin still looks live. Round 4: a nested dispatch timing out in that window
+reported contention and failed a caller's write over a hook that no longer
+exists. Round 5: the check was on the timeout path only, so a dispatcher that
+*won* the lock still executed the unregistered hook — a disabled veto hook could
+abort a user's operation. `hookStillRegistered` is now checked on both outcomes.
+
+**Two tests were vacuous, and mutating them is what showed it.** The
+disabled-plugin test deleted the `vmLocks` entry up front, so `TryLockVMWithin`
+returned from its `VMLock` guard and never reached the timeout path at all. The
+ordering test probed the database, where the row is gone whichever order the
+phases run in, instead of the filesystem. Both were rewritten until the mutation
+failed them.
+
+### Round 7 — the different angle
+
+Twelve findings once the questions changed. The two that mattered most were
+tests: `TestLockVMForHook`'s "a registered hook still runs" control called
+`EnablePlugin` on an already-enabled plugin, which errors, so the control never
+executed — an implementation that skipped *every* hook would have passed; and the
+chain-immutability test extended both siblings with the *same* state, where a
+naive `append` cannot corrupt anything, so it could not detect aliasing at all.
+Both were rebuilt until a mutation failed them. A dead `inv` field on
+`pluginDBAdapter`, a missing `MergeTags` test, three documentation statements
+that overclaimed, and an arch rule that confined the `auth` *import* while
+leaving a `*auth.Principal` returnable through type inference were the rest.
+
+## Gates
+
+| Gate | Result |
+|---|---|
+| `go build ./...` | clean |
+| `go vet --tags 'json1 fts5' ./...` | one pre-existing `copylocks` warning on `ActionJob.Snapshot` (`action_jobs.go:87`), confirmed present with these changes stashed |
+| `go test --tags 'json1 fts5' ./...` | pass, 37 packages (baseline: same 37) |
+| `go test --tags 'json1 fts5' -race ./plugin_system/... ./application_context/... ./internal/arch/...` | pass, no data races |
+| Postgres (`./mrql/... ./server/api_tests/...`) | pass |
+| E2E browser + CLI (`test:with-server:all`) | 1991 passed, on a binary rebuilt after the final change |
+
+## Review
+
+The plan predicted three things that held: item 07's context threading made the
+actor plumbing nearly free, the group delete path was the right template, and
+`ActionJob.ownerUserID` already existed so the async-action half was a one-line
+change. It got one thing wrong in a way worth recording — the deadlock's trigger
+condition — and the correction came from designing the fix rather than from
+running the code, because the depth-2 case only becomes visible once you ask
+what the guard should compare against.
+
+---
+
 # Plugin system: the low-hanging-fruit roadmap (2026-08-15)
 
 The 2026-08-15 capability report on the Lua plugin system listed twelve small

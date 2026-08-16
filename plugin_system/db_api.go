@@ -175,6 +175,66 @@ func (pm *PluginManager) getDbWriter() EntityWriter {
 	return v.(EntityWriter)
 }
 
+// PrincipalBinder produces querier and writer views bound to one invocation:
+// running as the user who triggered it, and carrying the chain of plugin VMs
+// already executing so a nested hook dispatch can refuse to re-enter one.
+//
+// It is one method rather than a context parameter on the 62 EntityQuerier and
+// EntityWriter methods because the implementation is a one-field struct whose
+// principal-bound clone is a single line — threading a context through every
+// signature would be churn with no payoff.
+type PrincipalBinder interface {
+	BindInvocation(inv *Invocation) (EntityQuerier, EntityWriter)
+}
+
+// SetPrincipalBinder installs the binder used to run plugin DB calls as their
+// triggering principal. Called after context creation, like the setters above.
+//
+// Optional: with no binder installed, plugin calls fall back to the unbound
+// provider and behave exactly as they did before per-invocation binding. Tests
+// that inject a bare fake querier therefore need no binder.
+func (pm *PluginManager) SetPrincipalBinder(b PrincipalBinder) {
+	pm.principalBinder.Store(b)
+}
+
+// getPrincipalBinder returns the current PrincipalBinder, or nil if not set.
+func (pm *PluginManager) getPrincipalBinder() PrincipalBinder {
+	v := pm.principalBinder.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(PrincipalBinder)
+}
+
+// querierFor returns the EntityQuerier a mah.db read made from L must use: bound
+// to L's triggering principal when a binder is installed, and the unbound
+// provider otherwise.
+func (pm *PluginManager) querierFor(L *lua.LState) EntityQuerier {
+	b := pm.getPrincipalBinder()
+	if b == nil {
+		return pm.getDbProvider()
+	}
+	q, _ := b.BindInvocation(pm.invocationFor(L))
+	if q == nil {
+		return pm.getDbProvider()
+	}
+	return q
+}
+
+// writerFor is querierFor for writes. This is the call that makes a plugin's
+// creates land with a real CreatedByUserId instead of NULL.
+func (pm *PluginManager) writerFor(L *lua.LState) EntityWriter {
+	b := pm.getPrincipalBinder()
+	if b == nil {
+		return pm.getDbWriter()
+	}
+	_, w := b.BindInvocation(pm.invocationFor(L))
+	if w == nil {
+		return pm.getDbWriter()
+	}
+	return w
+}
+
 // MRQLExecutor provides MRQL query execution for plugins.
 type MRQLExecutor interface {
 	ExecuteMRQL(ctx context.Context, query string, opts MRQLExecOptions) (*MRQLResult, error)
@@ -359,7 +419,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 	// registerGetter: mah.db.X(id) -> table | nil | (nil, error)
 	registerGetter := func(name string, fn func(EntityQuerier, uint) (map[string]any, error)) {
 		dbMod.RawSetString(name, L.NewFunction(func(L *lua.LState) int {
-			db := pm.getDbProvider()
+			db := pm.querierFor(L)
 			if db == nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString("database not available"))
@@ -385,7 +445,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 	// registerLister: mah.db.X(filter) -> array of tables or (nil, error)
 	registerLister := func(name string, fn func(EntityQuerier, map[string]any) ([]map[string]any, error)) {
 		dbMod.RawSetString(name, L.NewFunction(func(L *lua.LState) int {
-			db := pm.getDbProvider()
+			db := pm.querierFor(L)
 			if db == nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString("database not available"))
@@ -412,7 +472,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 	// registerCounter: mah.db.X(filter) -> number or (nil, error)
 	registerCounter := func(name string, fn func(EntityQuerier, map[string]any) (int64, error)) {
 		dbMod.RawSetString(name, L.NewFunction(func(L *lua.LState) int {
-			db := pm.getDbProvider()
+			db := pm.querierFor(L)
 			if db == nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString("database not available"))
@@ -483,7 +543,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 	// large (max 50MB)" or "storage not available" — all three used to arrive as
 	// the same bare nil.
 	dbMod.RawSetString("get_resource_data", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
+		db := pm.querierFor(L)
 		if db == nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LNil)
@@ -505,7 +565,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.create_resource_from_url(url, options) -> table or (nil, error)
 	dbMod.RawSetString("create_resource_from_url", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
+		db := pm.querierFor(L)
 		if db == nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString("database not available"))
@@ -518,7 +578,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			opts = luaTableToGoMap(optTbl)
 		}
 		result, err := db.CreateResourceFromURL(url, opts)
-		InvalidateMRQLCache(L.Context())
+		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -530,7 +590,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.create_resource_from_data(base64, options) -> table or (nil, error)
 	dbMod.RawSetString("create_resource_from_data", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
+		db := pm.querierFor(L)
 		if db == nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString("database not available"))
@@ -543,7 +603,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			opts = luaTableToGoMap(optTbl)
 		}
 		result, err := db.CreateResourceFromData(base64Data, opts)
-		InvalidateMRQLCache(L.Context())
+		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -555,7 +615,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.add_resource_version_from_url(resource_id, url, comment) -> table or (nil, error)
 	dbMod.RawSetString("add_resource_version_from_url", L.NewFunction(func(L *lua.LState) int {
-		db := pm.getDbProvider()
+		db := pm.querierFor(L)
 		if db == nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString("database not available"))
@@ -565,7 +625,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		url := L.CheckString(2)
 		comment := L.OptString(3, "")
 		result, err := db.AddResourceVersionFromURL(resourceID, url, comment)
-		InvalidateMRQLCache(L.Context())
+		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -588,7 +648,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 	// registerOptsWriter: mah.db.X(opts) -> table or (nil, error)
 	registerOptsWriter := func(name string, fn optsFunc) {
 		dbMod.RawSetString(name, L.NewFunction(func(L *lua.LState) int {
-			w := pm.getDbWriter()
+			w := pm.writerFor(L)
 			if w == nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString("database writer not available"))
@@ -598,7 +658,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			checkEntityIDOpts(L, 1, optsTbl)
 			opts := luaTableToGoMap(optsTbl)
 			result, err := fn(w, opts)
-			InvalidateMRQLCache(L.Context())
+			InvalidateMRQLCache(pm.luaContext(L))
 			if err != nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString(err.Error()))
@@ -612,7 +672,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 	// registerIdOptsWriter: mah.db.X(id, opts) -> table or (nil, error)
 	registerIdOptsWriter := func(name string, fn idOptsFunc) {
 		dbMod.RawSetString(name, L.NewFunction(func(L *lua.LState) int {
-			w := pm.getDbWriter()
+			w := pm.writerFor(L)
 			if w == nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString("database writer not available"))
@@ -623,7 +683,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			checkEntityIDOpts(L, 2, optsTbl)
 			opts := luaTableToGoMap(optsTbl)
 			result, err := fn(w, id, opts)
-			InvalidateMRQLCache(L.Context())
+			InvalidateMRQLCache(pm.luaContext(L))
 			if err != nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString(err.Error()))
@@ -637,7 +697,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 	// registerDelete: mah.db.X(id) -> true or (nil, error)
 	registerDelete := func(name string, fn deleteFunc) {
 		dbMod.RawSetString(name, L.NewFunction(func(L *lua.LState) int {
-			w := pm.getDbWriter()
+			w := pm.writerFor(L)
 			if w == nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString("database writer not available"))
@@ -645,7 +705,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			}
 			id := checkEntityID(L, 1)
 			err := fn(w, id)
-			InvalidateMRQLCache(L.Context())
+			InvalidateMRQLCache(pm.luaContext(L))
 			if err != nil {
 				L.Push(lua.LNil)
 				L.Push(lua.LString(err.Error()))
@@ -733,7 +793,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.add_tags(entity_type, id, tag_ids) -> true or (nil, error)
 	dbMod.RawSetString("add_tags", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
+		w := pm.writerFor(L)
 		if w == nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString("database writer not available"))
@@ -745,7 +805,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		checkEntityIDList(L, 3, idsTbl)
 		ids := luaTableToUintSlice(idsTbl)
 		err := w.AddTagsToEntity(entityType, id, ids)
-		InvalidateMRQLCache(L.Context())
+		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -757,7 +817,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.remove_tags(entity_type, id, tag_ids) -> true or (nil, error)
 	dbMod.RawSetString("remove_tags", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
+		w := pm.writerFor(L)
 		if w == nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString("database writer not available"))
@@ -769,7 +829,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		checkEntityIDList(L, 3, idsTbl)
 		ids := luaTableToUintSlice(idsTbl)
 		err := w.RemoveTagsFromEntity(entityType, id, ids)
-		InvalidateMRQLCache(L.Context())
+		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -781,7 +841,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.add_groups(entity_type, id, group_ids) -> true or (nil, error)
 	dbMod.RawSetString("add_groups", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
+		w := pm.writerFor(L)
 		if w == nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString("database writer not available"))
@@ -793,7 +853,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		checkEntityIDList(L, 3, idsTbl)
 		ids := luaTableToUintSlice(idsTbl)
 		err := w.AddGroupsToEntity(entityType, id, ids)
-		InvalidateMRQLCache(L.Context())
+		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -805,7 +865,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.remove_groups(entity_type, id, group_ids) -> true or (nil, error)
 	dbMod.RawSetString("remove_groups", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
+		w := pm.writerFor(L)
 		if w == nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString("database writer not available"))
@@ -817,7 +877,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		checkEntityIDList(L, 3, idsTbl)
 		ids := luaTableToUintSlice(idsTbl)
 		err := w.RemoveGroupsFromEntity(entityType, id, ids)
-		InvalidateMRQLCache(L.Context())
+		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -829,7 +889,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.add_resources_to_note(note_id, resource_ids) -> true or (nil, error)
 	dbMod.RawSetString("add_resources_to_note", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
+		w := pm.writerFor(L)
 		if w == nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString("database writer not available"))
@@ -840,7 +900,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		checkEntityIDList(L, 2, idsTbl)
 		ids := luaTableToUintSlice(idsTbl)
 		err := w.AddResourcesToNote(noteId, ids)
-		InvalidateMRQLCache(L.Context())
+		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -852,7 +912,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 
 	// mah.db.remove_resources_from_note(note_id, resource_ids) -> true or (nil, error)
 	dbMod.RawSetString("remove_resources_from_note", L.NewFunction(func(L *lua.LState) int {
-		w := pm.getDbWriter()
+		w := pm.writerFor(L)
 		if w == nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString("database writer not available"))
@@ -863,7 +923,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		checkEntityIDList(L, 2, idsTbl)
 		ids := luaTableToUintSlice(idsTbl)
 		err := w.RemoveResourcesFromNote(noteId, ids)
-		InvalidateMRQLCache(L.Context())
+		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString(err.Error()))
@@ -929,7 +989,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		case "global":
 			scopeID = 0
 		case "parent":
-			db := pm.getDbProvider()
+			db := pm.querierFor(L)
 			if db == nil || scopeEntityID == 0 {
 				scopeID = unresolvedSentinel
 			} else {
@@ -940,7 +1000,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 				scopeID = resolveParentScope(db, scopeEntityID, entityType)
 			}
 		case "root":
-			db := pm.getDbProvider()
+			db := pm.querierFor(L)
 			if db == nil || scopeEntityID == 0 {
 				scopeID = unresolvedSentinel
 			} else {
@@ -962,7 +1022,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 			if entityType == "group" {
 				scopeID = scopeEntityID
 			} else if scopeEntityID > 0 {
-				db := pm.getDbProvider()
+				db := pm.querierFor(L)
 				if db != nil {
 					ownerID := lookupOwnerViaQuerier(db, scopeEntityID, entityType)
 					if ownerID > 0 {
@@ -994,7 +1054,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable) {
 		}
 
 		// Check cache
-		reqCtx := L.Context()
+		reqCtx := pm.luaContext(L)
 		if reqCtx == nil {
 			reqCtx = context.Background()
 		}

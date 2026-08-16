@@ -22,9 +22,15 @@ const (
 )
 
 // httpCallback holds a pending callback to be executed on the Lua VM thread.
+//
+// actor is the user that registered the callback, captured then rather than read
+// when it runs: the callback executes on the drain goroutine long after the
+// registering call's context is gone, so a mah.db write from inside it would
+// otherwise be attributed to nobody.
 type httpCallback struct {
 	vm       *lua.LState
 	fn       *lua.LFunction
+	actor    uint
 	response map[string]any
 }
 
@@ -56,12 +62,12 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 		}
 
 		if err := validateScheme(url); err != nil {
-			pm.queueErrorCallback(L, callback, "GET", url, err.Error())
+			pm.queueErrorCallback(mainState(L), callback, "GET", url, err.Error())
 			return 0
 		}
 
 		pm.httpWg.Add(1)
-		go pm.executeHttpRequest("GET", url, "", headers, timeout, L, callback)
+		go pm.executeHttpRequest("GET", url, "", headers, timeout, mainState(L), callback, pm.actorFor(L))
 		return 0
 	}))
 
@@ -76,12 +82,12 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 		}
 
 		if err := validateScheme(url); err != nil {
-			pm.queueErrorCallback(L, callback, "POST", url, err.Error())
+			pm.queueErrorCallback(mainState(L), callback, "POST", url, err.Error())
 			return 0
 		}
 
 		pm.httpWg.Add(1)
-		go pm.executeHttpRequest("POST", url, body, headers, timeout, L, callback)
+		go pm.executeHttpRequest("POST", url, body, headers, timeout, mainState(L), callback, pm.actorFor(L))
 		return 0
 	}))
 
@@ -95,12 +101,12 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 		headers, timeout, body := extractRequestOptions(L, optsTbl)
 
 		if err := validateScheme(url); err != nil {
-			pm.queueErrorCallback(L, callback, method, url, err.Error())
+			pm.queueErrorCallback(mainState(L), callback, method, url, err.Error())
 			return 0
 		}
 
 		pm.httpWg.Add(1)
-		go pm.executeHttpRequest(method, url, body, headers, timeout, L, callback)
+		go pm.executeHttpRequest(method, url, body, headers, timeout, mainState(L), callback, pm.actorFor(L))
 		return 0
 	}))
 
@@ -285,7 +291,7 @@ func validateScheme(url string) error {
 }
 
 // executeHttpRequest performs the HTTP request in a goroutine and queues the callback.
-func (pm *PluginManager) executeHttpRequest(method, url, body string, headers map[string]string, timeout time.Duration, vm *lua.LState, callback *lua.LFunction) {
+func (pm *PluginManager) executeHttpRequest(method, url, body string, headers map[string]string, timeout time.Duration, vm *lua.LState, callback *lua.LFunction, actor uint) {
 	defer pm.httpWg.Done()
 
 	// Acquire concurrency semaphore
@@ -303,8 +309,9 @@ func (pm *PluginManager) executeHttpRequest(method, url, body string, headers ma
 	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
 		pm.queueHttpCallback(httpCallback{
-			vm: vm,
-			fn: callback,
+			vm:    vm,
+			fn:    callback,
+			actor: actor,
 			response: map[string]any{
 				"error":  err.Error(),
 				"url":    url,
@@ -325,8 +332,9 @@ func (pm *PluginManager) executeHttpRequest(method, url, body string, headers ma
 	resp, err := pm.httpClient.Do(req)
 	if err != nil {
 		pm.queueHttpCallback(httpCallback{
-			vm: vm,
-			fn: callback,
+			vm:    vm,
+			fn:    callback,
+			actor: actor,
 			response: map[string]any{
 				"error":  err.Error(),
 				"url":    url,
@@ -342,8 +350,9 @@ func (pm *PluginManager) executeHttpRequest(method, url, body string, headers ma
 	bodyBytes, err := io.ReadAll(limitedReader)
 	if err != nil {
 		pm.queueHttpCallback(httpCallback{
-			vm: vm,
-			fn: callback,
+			vm:    vm,
+			fn:    callback,
+			actor: actor,
 			response: map[string]any{
 				"error":  fmt.Sprintf("reading response body: %v", err),
 				"url":    url,
@@ -368,8 +377,9 @@ func (pm *PluginManager) executeHttpRequest(method, url, body string, headers ma
 	}
 
 	pm.queueHttpCallback(httpCallback{
-		vm: vm,
-		fn: callback,
+		vm:    vm,
+		fn:    callback,
+		actor: actor,
 		response: map[string]any{
 			"status_code": float64(resp.StatusCode),
 			"status":      resp.Status,
@@ -385,8 +395,9 @@ func (pm *PluginManager) executeHttpRequest(method, url, body string, headers ma
 // queueHttpCallback is non-blocking, so no goroutine is needed.
 func (pm *PluginManager) queueErrorCallback(vm *lua.LState, callback *lua.LFunction, method, url, errMsg string) {
 	pm.queueHttpCallback(httpCallback{
-		vm: vm,
-		fn: callback,
+		vm:    vm,
+		fn:    callback,
+		actor: pm.actorFor(vm),
 		response: map[string]any{
 			"error":  errMsg,
 			"url":    url,
@@ -440,7 +451,10 @@ func (pm *PluginManager) processPendingCallbacks() {
 
 		tbl := goToLuaTable(cb.vm, cb.response)
 
-		timeoutCtx, cancel := context.WithTimeout(context.Background(), luaExecTimeout)
+		// Background-parented (the registering request is long gone), carrying
+		// the actor captured at registration so the callback's own mah.db calls
+		// are attributed. Fresh chain: a drained callback is a new entry.
+		timeoutCtx, cancel := context.WithTimeout(withInvocation(context.Background(), NewInvocation(cb.actor)), luaExecTimeout)
 		cb.vm.SetContext(timeoutCtx)
 
 		err := cb.vm.CallByParam(lua.P{

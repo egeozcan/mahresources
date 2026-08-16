@@ -289,26 +289,61 @@ func (ctx *MahresourcesContext) GetPopularNoteTags(query *query_models.NoteQuery
 	return res, db.Scan(&res).Error
 }
 
-func (ctx *MahresourcesContext) DeleteNote(noteId uint) error {
-	_, hookErr := ctx.RunBeforePluginHooks("before_note_delete", map[string]any{"id": float64(noteId)})
-	if hookErr != nil {
-		return hookErr
-	}
+// noteDeleteEffect is the after-commit payload for one deleted note, mirroring
+// groupDeleteEffect.
+type noteDeleteEffect struct {
+	ID   uint
+	Name string
+}
 
+// prepareNoteDelete runs the before-delete hook, giving a plugin its veto.
+func (ctx *MahresourcesContext) prepareNoteDelete(noteID uint) error {
+	_, err := ctx.RunBeforePluginHooks("before_note_delete", map[string]any{"id": float64(noteID)})
+	return err
+}
+
+// deleteNoteInTransaction performs only the database work and returns the effect
+// payload to emit once the owning transaction has committed.
+func (ctx *MahresourcesContext) deleteNoteInTransaction(noteID uint) (noteDeleteEffect, error) {
 	// Load note name before deletion for audit log
 	var note models.Note
-	if err := ctx.db.First(&note, noteId).Error; err != nil {
-		return err
+	if err := ctx.db.First(&note, noteID).Error; err != nil {
+		return noteDeleteEffect{}, err
 	}
-	noteName := note.Name
+	if err := ctx.db.Select(clause.Associations).Delete(&note).Error; err != nil {
+		return noteDeleteEffect{}, err
+	}
+	return noteDeleteEffect{ID: noteID, Name: note.Name}, nil
+}
 
-	err := ctx.db.Select(clause.Associations).Delete(&note).Error
-	if err == nil {
-		ctx.Logger().Info(models.LogActionDelete, "note", &noteId, noteName, "Deleted note", nil)
-		ctx.RunAfterPluginHooks("after_note_delete", map[string]any{"id": float64(noteId), "name": noteName})
+// emitNoteDeleteEffects runs the log line, after-hook and cache invalidation for
+// a committed batch.
+//
+// Bulk delete used to reach these through the single-item DeleteNote from inside
+// its transaction, so a plugin was told a note had been deleted before the
+// commit that might roll it back. Groups already did this correctly; this is the
+// same shape.
+func (ctx *MahresourcesContext) emitNoteDeleteEffects(events []noteDeleteEffect) {
+	for _, event := range events {
+		id := event.ID
+		ctx.Logger().Info(models.LogActionDelete, "note", &id, event.Name, "Deleted note", nil)
+		ctx.RunAfterPluginHooks("after_note_delete", map[string]any{"id": float64(event.ID), "name": event.Name})
 		ctx.InvalidateSearchCacheByType(EntityTypeNote)
 	}
-	return err
+}
+
+func (ctx *MahresourcesContext) DeleteNote(noteId uint) error {
+	if err := ctx.prepareNoteDelete(noteId); err != nil {
+		return err
+	}
+
+	effect, err := ctx.deleteNoteInTransaction(noteId)
+	if err != nil {
+		return err
+	}
+
+	ctx.emitNoteDeleteEffects([]noteDeleteEffect{effect})
+	return nil
 }
 
 func (ctx *MahresourcesContext) ShareNote(noteId uint) (string, error) {
