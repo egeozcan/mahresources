@@ -311,7 +311,23 @@ export function pluginActionModal() {
                 if (superseded()) return;
 
                 if (!resp.ok) {
-                    this.errors._general = data.error || 'Action failed';
+                    // Two refusal shapes reach here. A single-message failure is
+                    // {"error": "..."}; a validation failure — entity refs, and
+                    // now the action's own filters — is {"errors": [{field,
+                    // message}]}, one entry per offending entity.
+                    //
+                    // Only the first was read, so every validation refusal
+                    // announced itself as a bare "Action failed" while the
+                    // server had already said which entities were at fault. On a
+                    // bulk run that is the whole diagnosis: the user selected
+                    // twenty cards and needs to know which one the action does
+                    // not apply to, not that something went wrong.
+                    const detailed = Array.isArray(data.errors)
+                        ? data.errors.map((e) => e && (e.message || e.field)).filter(Boolean)
+                        : [];
+                    this.errors._general = detailed.length
+                        ? detailed.join('; ')
+                        : data.error || 'Action failed';
                     return;
                 }
 

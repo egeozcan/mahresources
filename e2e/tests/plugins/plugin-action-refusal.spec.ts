@@ -164,6 +164,64 @@ test.describe('Plugin action refusals', () => {
     await expect(modal.locator('[role="status"]')).toHaveCount(0);
   });
 
+  test('a validation refusal names the offending entities instead of "Action failed"', async ({ page, apiClient }) => {
+    // The server has two refusal shapes. A single-message failure is
+    // {"error": "..."}; a validation failure — entity refs, and the action's
+    // own filters — is {"errors": [{field, message}]}, one entry per offending
+    // entity. The modal read only the first, so every validation refusal
+    // announced itself as a bare "Action failed" while the server had already
+    // said exactly which entities were at fault. On a bulk run that message IS
+    // the diagnosis: twenty cards selected, and no indication which one the
+    // action does not apply to.
+    const runId = Date.now() + Math.floor(Math.random() * 100000);
+    const resource = await apiClient.createResource({
+      filePath: path.join(__dirname, '../../test-assets/sample-image-34.png'),
+      name: `Filter Refusal ${runId}`,
+    });
+
+    await page.route('**/v1/jobs/action/run', (route) =>
+      route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          errors: [
+            { field: 'entity_ids', message: 'Shrink Image: resource 4242 does not match this action\'s filters' },
+            { field: 'entity_ids', message: 'Shrink Image: resource 4343 does not match this action\'s filters' },
+          ],
+        }),
+      })
+    );
+
+    await page.goto(`/resource?id=${resource.ID}`);
+    await page.waitForLoadState('load');
+    await page.evaluate((ids) => {
+      window.dispatchEvent(
+        new CustomEvent('plugin-action-open', {
+          detail: {
+            plugin: 'test-actions',
+            action: 'refuses-one',
+            label: 'Shrink Image',
+            entityIds: ids,
+            entityType: 'resource',
+            async: false,
+            params: [],
+          },
+        })
+      );
+    }, [4242, 4343]);
+
+    const modal = page.getByRole('dialog');
+    await expect(modal).toBeVisible();
+    await modal.getByRole('button', { name: 'Run' }).click();
+
+    const alert = modal.locator('[role="alert"]');
+    await expect(alert).toBeVisible({ timeout: 5000 });
+    // Both offenders named, and NOT the generic fallback.
+    await expect(alert).toContainText('4242');
+    await expect(alert).toContainText('4343');
+    await expect(alert).not.toContainText('Action failed');
+  });
+
   test('a bulk run reports which entities failed', async ({ apiClient }) => {
     const response = await apiClient.request.post('/v1/jobs/action/run', {
       data: {
