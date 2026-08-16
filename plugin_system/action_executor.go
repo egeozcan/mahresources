@@ -2,9 +2,13 @@ package plugin_system
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"slices"
+	"sort"
+	"strconv"
+	"strings"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -481,13 +485,66 @@ func ValidateActionEntityFilters(reader ActionEntityDataReader, action ActionReg
 // an abandoned request stops the handler instead of holding the plugin's VM
 // lock for the full timeout, and puts the per-request MRQL cache within reach
 // of mah.db.mrql_query. The async path has no request and builds its own.
-func (pm *PluginManager) RunAction(ctx context.Context, pluginName, actionID string, entityID uint, params map[string]any) (*ActionResult, error) {
+// ActionFiltersFingerprint renders an action's Filters canonically, so a caller
+// that validated one registration can tell whether it is about to run the same
+// one.
+//
+// The executors resolve the action by id, and an id is not a generation: a
+// disable, an edit and a re-enable between validation and execution produce a
+// different registration under the same id. Without this, the entity filters
+// checked at the chokepoint would be generation A's while the handler that runs
+// is generation B's — the execute-time applicability check bypassed by a
+// reload, and trivially so when A declared no filters at all.
+func ActionFiltersFingerprint(f ActionFilter) string {
+	part := func(prefix string, values []string) string {
+		sorted := append([]string(nil), values...)
+		sort.Strings(sorted)
+		return prefix + strings.Join(sorted, ",")
+	}
+	nums := func(prefix string, values []uint) string {
+		sorted := append([]uint(nil), values...)
+		sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+		out := make([]string, 0, len(sorted))
+		for _, v := range sorted {
+			out = append(out, strconv.FormatUint(uint64(v), 10))
+		}
+		return prefix + strings.Join(out, ",")
+	}
+	return strings.Join([]string{
+		part("ct:", f.ContentTypes),
+		nums("cat:", f.CategoryIDs),
+		nums("nt:", f.NoteTypeIDs),
+	}, ";")
+}
+
+// errActionChanged is returned when the registration resolved at execution time
+// is not the one the caller validated.
+var errActionChanged = errors.New("the action was reloaded between validation and execution; nothing was run")
+
+// checkActionUnchanged refuses to run a registration whose filters differ from
+// the ones the caller checked its entities against.
+func checkActionUnchanged(action ActionRegistration, expectFilters string) error {
+	if expectFilters == "" {
+		return nil
+	}
+	if got := ActionFiltersFingerprint(action.Filters); got != expectFilters {
+		return fmt.Errorf("%w: its filters changed (was %q, now %q). Try again", errActionChanged, expectFilters, got)
+	}
+	return nil
+}
+
+// expectFilters is the fingerprint of the registration the caller validated
+// against, or "" to skip the check. See checkActionUnchanged.
+func (pm *PluginManager) RunAction(ctx context.Context, pluginName, actionID string, entityID uint, params map[string]any, expectFilters string) (*ActionResult, error) {
 	if pm.closed.Load() {
 		return nil, fmt.Errorf("plugin manager is closed")
 	}
 
 	action, L, err := pm.FindAction(pluginName, actionID)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkActionUnchanged(action, expectFilters); err != nil {
 		return nil, err
 	}
 

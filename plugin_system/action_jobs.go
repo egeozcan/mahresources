@@ -99,19 +99,28 @@ func generateActionJobID() string {
 // RunActionAsync validates and starts an async action execution, returning the
 // job ID. The job is created without an owner; use RunActionAsyncForOwner to
 // record the submitting user for RBAC visibility.
+//
+// No generation check: this entry point has no production caller and no
+// validated registration to bind to. Anything that grows one should call
+// RunActionAsyncForOwner with a fingerprint instead.
 func (pm *PluginManager) RunActionAsync(pluginName, actionID string, entityID uint, params map[string]any) (string, error) {
-	return pm.RunActionAsyncForOwner(nil, pluginName, actionID, entityID, params)
+	return pm.RunActionAsyncForOwner(nil, pluginName, actionID, entityID, params, "")
 }
 
 // RunActionAsyncForOwner is RunActionAsync but tags the job with the submitting
 // user so it is only listed/streamed to that user (and admins).
-func (pm *PluginManager) RunActionAsyncForOwner(ownerUserID *uint, pluginName, actionID string, entityID uint, params map[string]any) (string, error) {
+// expectFilters is the fingerprint of the registration the caller validated
+// against, or "" to skip the check. See checkActionUnchanged.
+func (pm *PluginManager) RunActionAsyncForOwner(ownerUserID *uint, pluginName, actionID string, entityID uint, params map[string]any, expectFilters string) (string, error) {
 	if pm.closed.Load() {
 		return "", fmt.Errorf("plugin manager is closed")
 	}
 
 	action, L, err := pm.FindAction(pluginName, actionID)
 	if err != nil {
+		return "", err
+	}
+	if err := checkActionUnchanged(action, expectFilters); err != nil {
 		return "", err
 	}
 

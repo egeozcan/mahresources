@@ -217,6 +217,12 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 			}
 		}
 
+		// The executors resolve the action by id, and an id is not a
+		// generation: a disable/edit/re-enable between here and there yields a
+		// different registration under the same id, whose filters these
+		// entities were never checked against. The fingerprint binds the two.
+		expectFilters := plugin_system.ActionFiltersFingerprint(action.Filters)
+
 		if action.Async {
 			// Async execution: create jobs for each entity ID, tagged with the
 			// submitting user so the job listing/SSE only surface them to that
@@ -224,7 +230,7 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 			owner := principalOwnerID(reqPrincipal)
 			jobIDs := make([]string, 0, len(req.EntityIDs))
 			for _, eid := range req.EntityIDs {
-				jobID, err := pm.RunActionAsyncForOwner(owner, req.Plugin, req.Action, eid, req.Params)
+				jobID, err := pm.RunActionAsyncForOwner(owner, req.Plugin, req.Action, eid, req.Params, expectFilters)
 				if err != nil {
 					http_utils.HandleError(fmt.Errorf("failed to start async action for entity %d: %w", eid, err), w, r, http.StatusInternalServerError)
 					return
@@ -254,7 +260,7 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 				// entities under one owner group resolve to the same cache key
 				// and nothing invalidates the cache. Within a single entity's
 				// handler, repeated identical queries still collapse.
-				result, err := pm.RunAction(plugin_system.WithMRQLCache(r.Context()), req.Plugin, req.Action, eid, req.Params)
+				result, err := pm.RunAction(plugin_system.WithMRQLCache(r.Context()), req.Plugin, req.Action, eid, req.Params, expectFilters)
 				if err != nil {
 					http_utils.HandleError(fmt.Errorf("action failed for entity %d: %w", eid, err), w, r, http.StatusInternalServerError)
 					return

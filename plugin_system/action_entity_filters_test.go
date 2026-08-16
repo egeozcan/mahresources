@@ -160,3 +160,64 @@ func TestActionHasEntityFilters(t *testing.T) {
 		}
 	}
 }
+
+// TestAnActionReloadedBetweenValidationAndExecutionIsRefused.
+//
+// The executors resolve an action by id, and an id is not a generation: a
+// disable, a source edit and a re-enable produce a different registration under
+// the same id. Without binding the two, the entities were checked against
+// generation A's filters and generation B's handler runs — the execute-time
+// applicability check bypassed by a reload, and trivially so when A declared no
+// filters at all.
+//
+// Narrow: an operator has to reload the plugin inside the window. But the check
+// costs one string comparison and the failure is silent, which is the wrong
+// combination to leave open.
+func TestAnActionReloadedBetweenValidationAndExecutionIsRefused(t *testing.T) {
+	pdfOnly := ActionFilter{ContentTypes: []string{"application/pdf"}}
+	pngOnly := ActionFilter{ContentTypes: []string{"image/png"}}
+
+	validated := ActionFiltersFingerprint(pdfOnly)
+
+	// The registration that would actually run declares something else.
+	if err := checkActionUnchanged(ActionRegistration{Filters: pngOnly}, validated); err == nil {
+		t.Fatal("an action whose filters changed since validation was allowed to run")
+	} else if !errors.Is(err, errActionChanged) {
+		t.Fatalf("refused for the wrong reason: %v", err)
+	}
+
+	// The same registration still runs.
+	if err := checkActionUnchanged(ActionRegistration{Filters: pdfOnly}, validated); err != nil {
+		t.Fatalf("an unchanged action was refused: %v", err)
+	}
+
+	// The filterless case is the one a naive guard misses: an empty fingerprint
+	// must still be compared, or a reload from no-filters to filtered slips by.
+	filterless := ActionFiltersFingerprint(ActionFilter{})
+	if err := checkActionUnchanged(ActionRegistration{Filters: pngOnly}, filterless); err == nil {
+		t.Fatal("a reload from no filters to filtered was allowed")
+	}
+}
+
+// TestActionFiltersFingerprintIgnoresOrder: a plugin author reordering a list
+// is not a reload, and must not refuse an in-flight request.
+func TestActionFiltersFingerprintIgnoresOrder(t *testing.T) {
+	a := ActionFilter{ContentTypes: []string{"image/png", "application/pdf"}, CategoryIDs: []uint{3, 1}, NoteTypeIDs: []uint{9, 2}}
+	b := ActionFilter{ContentTypes: []string{"application/pdf", "image/png"}, CategoryIDs: []uint{1, 3}, NoteTypeIDs: []uint{2, 9}}
+	if ActionFiltersFingerprint(a) != ActionFiltersFingerprint(b) {
+		t.Fatal("reordering a filter list read as a different action")
+	}
+
+	// But a real difference must not collapse.
+	c := ActionFilter{ContentTypes: []string{"image/png"}, CategoryIDs: []uint{1, 3}, NoteTypeIDs: []uint{2, 9}}
+	if ActionFiltersFingerprint(a) == ActionFiltersFingerprint(c) {
+		t.Fatal("dropping a content type did not change the fingerprint")
+	}
+
+	// The three fields must not bleed into each other.
+	d := ActionFilter{CategoryIDs: []uint{1}}
+	e := ActionFilter{NoteTypeIDs: []uint{1}}
+	if ActionFiltersFingerprint(d) == ActionFiltersFingerprint(e) {
+		t.Fatal("a category filter and a note-type filter fingerprint the same")
+	}
+}
