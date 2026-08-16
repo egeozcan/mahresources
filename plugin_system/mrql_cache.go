@@ -35,8 +35,16 @@ func MRQLCacheFromContext(ctx context.Context) *MRQLCache {
 // MRQLCacheKey builds a deterministic cache key from query parameters. params
 // bindings are folded in (sorted) so two calls that differ only by parameter
 // value do not collide.
-func MRQLCacheKey(query string, scopeID uint, limit, buckets int, params map[string]string) string {
-	base := fmt.Sprintf("%s|%d|%d|%d", query, scopeID, limit, buckets)
+//
+// actorUserID is part of the key because the executor now answers the same
+// query differently per principal: a group-confined caller sees its subtree and
+// an unscoped one sees everything. The cache is per-request today, so the actor
+// is constant within any one instance and this changes no hit rate — it is here
+// so that stops being a fact the reader has to establish before trusting the
+// cache, and so a future process-wide instance cannot serve one user's rows to
+// another.
+func MRQLCacheKey(query string, scopeID uint, limit, buckets int, params map[string]string, actorUserID uint) string {
+	base := fmt.Sprintf("%s|%d|%d|%d|%d", query, scopeID, limit, buckets, actorUserID)
 	if len(params) == 0 {
 		return base
 	}

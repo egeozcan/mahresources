@@ -16,7 +16,26 @@ type pluginMRQLAdapter struct {
 	ctx *MahresourcesContext
 }
 
+// ExecuteMRQL runs a plugin's mrql_query as the principal that triggered the
+// call.
+//
+// mah.db.mrql_query is the one plugin data path that does not go through
+// BindInvocation — it has its own executor — so the identity every other mah.db
+// function acquired had to be carried here separately, as the actor id on
+// MRQLExecOptions. Without the bind below, a group-confined user's write firing
+// a plugin hook let that hook query the entire database through MRQL, which is
+// the same defect the entity readers had and is not covered by the URL-path
+// plugin deny.
+//
+// WithMRQLPrincipal rather than WithPrincipal: MRQL enforces scope in SQL
+// through its own recursive CTE, so flattening the subtree into a Go allow-list
+// here would be duplicated work (see scoping.go).
 func (a *pluginMRQLAdapter) ExecuteMRQL(reqCtx context.Context, query string, opts plugin_system.MRQLExecOptions) (*plugin_system.MRQLResult, error) {
+	execCtx := a.ctx
+	if opts.ActorUserID != 0 {
+		execCtx = a.ctx.WithMRQLPrincipal(reqCtx, a.ctx.principalForPluginActor(opts.ActorUserID))
+	}
+
 	parsed, err := mrql.Parse(query)
 	if err != nil {
 		return nil, err
@@ -46,30 +65,43 @@ func (a *pluginMRQLAdapter) ExecuteMRQL(reqCtx context.Context, query string, op
 	parsed.EntityType = entityType
 
 	// Explicit SCOPE in the query string wins over the plugin's external scope.
+	// ResolveMRQLScope rather than mrql.ResolveScope: for a confined principal
+	// the former resolves within its subtree, so a SCOPE naming a group outside
+	// it cannot be used to probe for that group's existence by name.
 	scopeID := opts.ScopeID
 	if parsed.Scope != nil {
-		resolvedID, err := mrql.ResolveScope(parsed, a.ctx.db)
+		resolvedID, err := execCtx.ResolveMRQLScope(parsed)
 		if err != nil {
 			return nil, err
 		}
 		scopeID = resolvedID
 	}
 
-	// GROUP BY path
+	// GROUP BY path. ExecuteMRQLGroupedWithScope applies the principal's forced
+	// scope itself, so it needs no clamp here.
 	if parsed.GroupBy != nil {
 		if opts.Buckets > 0 {
 			parsed.BucketLimit = opts.Buckets
 		}
-		grouped, err := a.ctx.ExecuteMRQLGroupedWithScope(reqCtx, parsed, scopeID)
+		grouped, err := execCtx.ExecuteMRQLGroupedWithScope(reqCtx, parsed, scopeID)
 		if err != nil {
 			return nil, err
 		}
 		return a.convertGrouped(grouped), nil
 	}
 
-	// Flat path
-	translateOpts := a.ctx.mrqlTranslateOptions()
-	result, err := a.ctx.ExecuteSingleEntityWithScope(reqCtx, parsed, entityType, translateOpts, scopeID)
+	// Flat path. ExecuteSingleEntityWithScope takes the scope it is handed and
+	// asks nothing about the principal — it is the only executor entry point
+	// that does not, which is why the clamp is explicit here and mirrors
+	// ExecuteMRQLScoped: a confined principal's scope replaces whatever the
+	// plugin requested, including scope = "global", and an unresolvable one
+	// becomes the sentinel that matches no rows.
+	effectiveScope, err := execCtx.effectiveMRQLRequestedScope(scopeID)
+	if err != nil {
+		return nil, err
+	}
+	translateOpts := execCtx.mrqlTranslateOptions()
+	result, err := execCtx.ExecuteSingleEntityWithScope(reqCtx, parsed, entityType, translateOpts, effectiveScope)
 	if err != nil {
 		return nil, err
 	}
