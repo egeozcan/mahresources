@@ -81,6 +81,20 @@ Remote download timeouts are configurable via command-line flags or environment 
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | 60s | Timeout when the remote server stops sending data |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | 30m | Maximum total time for a download |
 
+## Where downloads may point
+
+A download URL is supplied by a user and fetched by the server, so the queue
+refuses any URL that resolves to a **private** address — loopback, link-local
+(including the cloud metadata endpoint), RFC1918 and carrier-grade NAT. Public
+hosts are unaffected.
+
+To download from your own network, name the addresses with
+`-allow-private-fetch`; see
+[Fetching from your own network](../configuration/overview.md#fetching-from-your-own-network).
+A download refused this way fails with a "blocked request" error that
+deliberately does not name the address the URL resolved to; the server log has
+the full detail.
+
 ## API Endpoints
 
 ### Legacy Download-Specific Aliases

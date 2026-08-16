@@ -139,6 +139,10 @@ func setupTestEnvWithConfig(t *testing.T, mutate func(*application_context.Mahre
 		RemoteResourceOverallTimeout: 30 * time.Minute,
 		HashSimilarityThreshold:      10,
 		HashAHashThreshold:           5,
+		// The download tests point the queue at an httptest server on loopback,
+		// which the host fetch policy denies by default. Declaring it here is
+		// what a deployment fetching from a LAN service does too.
+		AllowPrivateFetch: []string{"127.0.0.1", "::1"},
 	}
 
 	// Mock filesystem

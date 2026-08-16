@@ -65,6 +65,12 @@ type MahresourcesConfig struct {
 	RemoteResourceIdleTimeout time.Duration
 	// RemoteResourceOverallTimeout is the maximum total time for a remote resource download (default: 30m)
 	RemoteResourceOverallTimeout time.Duration
+	// AllowPrivateFetch lists the private addresses and CIDR blocks the
+	// application's own fetches may reach — /v1/resource/remote, the download
+	// queue, and the calendar block's ICS fetch. Empty (the default) means none
+	// of them, which is what closes the SSRF; entries are validated at startup
+	// by plugin_system.HostFetchPolicy. See -allow-private-fetch.
+	AllowPrivateFetch []string
 	// ICSCacheMaxEntries is the maximum number of ICS calendar files to cache (default: 100)
 	ICSCacheMaxEntries int
 	// ICSCacheTTL is how long cached ICS content is considered fresh (default: 30m)
@@ -220,6 +226,9 @@ type MahresourcesInputConfig struct {
 	RemoteResourceIdleTimeout time.Duration
 	// RemoteResourceOverallTimeout is the maximum total time for a remote resource download (default: 30m)
 	RemoteResourceOverallTimeout time.Duration
+	// AllowPrivateFetch lists private addresses/CIDR blocks the application's
+	// own fetches may reach. See MahresourcesConfig.AllowPrivateFetch.
+	AllowPrivateFetch []string
 	// MaxDBConnections limits the database connection pool size (useful for SQLite in test environments)
 	// When set to 0 (default), no limit is applied
 	MaxDBConnections int
@@ -370,6 +379,13 @@ type MahresourcesContext struct {
 	// keeps /v1/resource and /v1/resource/remote on their existing unrestricted
 	// downloader while a plugin's fetch is policed.
 	pluginEgress *plugin_system.NetworkPolicy
+
+	// hostFetchPolicy polices the application's OWN outbound fetches: the
+	// operator-initiated ones that carry no plugin policy at all. Unlike
+	// pluginEgress it is set on every context, because its whole purpose is to
+	// be the answer when no plugin is involved. Public hosts are unrestricted;
+	// a private address is refused unless -allow-private-fetch names it.
+	hostFetchPolicy plugin_system.NetworkPolicy
 
 	// pluginFetch marks a context bound for a plugin invocation that may fetch.
 	// Without it, AddRemoteResource cannot tell "no plugin is involved, use the
@@ -524,6 +540,21 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		altFileSystems[key] = storage.CreateStorage(path)
 	}
 
+	// Built here rather than taken pre-built from the config so that every
+	// construction path gets one — tests and the e2e harness included — and so
+	// the zero value of MahresourcesConfig means "deny every private address"
+	// rather than "deny everything" or "allow everything".
+	//
+	// main.go validates the same entries at flag-parse time and refuses to
+	// start on a bad one, so an error here is unreachable in a real deployment.
+	// It still fails closed rather than propagating: a policy that could not be
+	// built is not a reason to fetch anywhere.
+	hostFetchPolicy, hostFetchErr := plugin_system.HostFetchPolicy(config.AllowPrivateFetch)
+	if hostFetchErr != nil {
+		log.Printf("[egress] WARNING: -allow-private-fetch could not be parsed (%v); no private address will be reachable", hostFetchErr)
+		hostFetchPolicy, _ = plugin_system.HostFetchPolicy(nil)
+	}
+
 	thumbnailGenerationLock := idlock.New[uint](uint(0), nil)
 	videoThumbConcurrency := config.VideoThumbnailConcurrency
 	if videoThumbConcurrency == 0 {
@@ -549,12 +580,13 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 	icsCache := NewICSCache(icsCacheMaxEntries, icsCacheTTL)
 
 	ctx := &MahresourcesContext{
-		StartedAt:      time.Now(),
-		fs:             filesystem,
-		db:             db,
-		readOnlyDB:     readOnlyDB,
-		Config:         config,
-		altFileSystems: altFileSystems,
+		StartedAt:       time.Now(),
+		fs:              filesystem,
+		db:              db,
+		readOnlyDB:      readOnlyDB,
+		Config:          config,
+		hostFetchPolicy: hostFetchPolicy,
+		altFileSystems:  altFileSystems,
 		groupio:        groupio.NewService(filesystem, altFileSystems),
 		locks: MahresourcesLocks{
 			ThumbnailGenerationLock:      thumbnailGenerationLock,
@@ -591,6 +623,14 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		}, config.ExportRetention),
 		download_queue.ManagerConfig{
 			Concurrency: config.MaxJobConcurrency,
+			// The queue fetches a user-supplied URL on a background worker with
+			// no request and no principal, so it is the operator fetch path
+			// with the least context of its own. It gets the same host policy
+			// as the synchronous one.
+			ClientPolicy: func(client *http.Client) *http.Client {
+				return plugin_system.ApplyEgressPolicy(client, hostFetchPolicy, config.RemoteResourceConnectTimeout)
+			},
+			RefusalMessage: plugin_system.HostFetchRefusal,
 		},
 	)
 
@@ -1225,6 +1265,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		RemoteResourceConnectTimeout: connectTimeout,
 		RemoteResourceIdleTimeout:    idleTimeout,
 		RemoteResourceOverallTimeout: overallTimeout,
+		AllowPrivateFetch:            cfg.AllowPrivateFetch,
 		VideoThumbnailTimeout:        videoThumbTimeout,
 		VideoThumbnailLockTimeout:    videoThumbLockTimeout,
 		VideoThumbnailConcurrency:    cfg.VideoThumbnailConcurrency,

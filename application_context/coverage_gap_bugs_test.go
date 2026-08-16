@@ -48,6 +48,11 @@ func createCoverageTestContext(t *testing.T, cacheName string) *MahresourcesCont
 
 	config := &MahresourcesConfig{
 		DbType: constants.DbTypeSqlite,
+		// httptest servers bind to loopback, which the host fetch policy denies
+		// by default — that deny is the point of -allow-private-fetch. A test
+		// that fetches from its own server declares it, exactly as a deployment
+		// fetching from a LAN service would.
+		AllowPrivateFetch: []string{"127.0.0.1", "::1"},
 	}
 	fs := afero.NewMemMapFs()
 	sqlDB, _ := db.DB()

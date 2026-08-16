@@ -214,26 +214,46 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 
 	// A plugin-triggered fetch is policed by that plugin's declared network
 	// list; an operator-initiated one (POST /v1/resource, /v1/resource/remote)
-	// has no policy and keeps its existing behaviour. The client is built per
-	// call just above, so decorating it here cannot leak a policed connection
-	// into an unpoliced pool.
+	// is policed by the host policy, which allows any public host and no
+	// private address the operator has not named. The client is built per call
+	// just above, so decorating it here cannot leak a policed connection into
+	// an unpoliced pool.
+	//
+	// There is no undecorated branch left. This used to be the operator's
+	// escape from every layer, and it was the reachable half of the
+	// confused-deputy chain the plugin work closed from the other end.
+	policy := ctx.hostFetchPolicy
 	switch {
 	case ctx.pluginEgress != nil:
-		httpClient = plugin_system.ApplyEgressPolicy(httpClient, *ctx.pluginEgress, connectTimeout)
+		policy = *ctx.pluginEgress
 	case ctx.pluginFetch:
-		// A plugin is fetching but its policy did not reach here. Skipping the
-		// decoration would silently drop layers (b) and (c) — the redirect
-		// re-check and the dial-time deny — while the host check in the plugin
-		// process still passed, which is precisely the DNS-rebinding case those
-		// layers exist for. Refuse instead.
+		// A plugin is fetching but its policy did not reach here. Falling back
+		// to the host policy would be wrong in the permissive direction — it
+		// allows every public host, which is what the plugin's own list exists
+		// to narrow — so refuse rather than substitute.
 		return nil, fmt.Errorf("refusing to fetch: this plugin's network policy is not available")
 	}
+	httpClient = plugin_system.ApplyEgressPolicy(httpClient, policy, connectTimeout)
+
+	// hostFetch is true when nothing but the host policy applies. A plugin's
+	// refusals are sanitized at the plugin boundary instead, in that origin's
+	// own wording.
+	hostFetch := ctx.pluginEgress == nil
 
 	setError := func(err error) {
+		// The log keeps the full error, including the address the name resolved
+		// to; the caller is told less. Under -auth an ordinary user may submit
+		// this, so echoing the resolved address back would turn a list of
+		// failures into an internal network scan.
+		ctx.Logger().Warning(models.LogActionCreate, "resource", nil, "Remote resource error", err.Error(), nil)
+		if hostFetch {
+			if msg, blocked := plugin_system.HostFetchRefusal(err); blocked {
+				err = errors.New(msg)
+			}
+		}
 		if firstError == nil {
 			firstError = err
 		}
-		ctx.Logger().Warning(models.LogActionCreate, "resource", nil, "Remote resource error", err.Error(), nil)
 	}
 
 	for _, url := range urls {

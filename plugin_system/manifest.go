@@ -558,9 +558,13 @@ func parseNetworkRule(raw string) (NetworkRule, error) {
 		}
 		// A default route as an allowlist entry says "everything", which is
 		// what omitting the field already says. Its only distinct effect is to
-		// satisfy the rule that allow_private_hosts must name what it reaches.
+		// satisfy the rule that private access must name what it reaches.
+		//
+		// Worded without naming a manifest field: this parser now serves the
+		// operator flag as well, and "omit the network field" is advice about a
+		// file an operator configuring -allow-private-fetch does not have.
 		if ones, _ := cidrPrefix(cidr); ones == 0 {
-			return NetworkRule{}, fmt.Errorf("a default route allows everything: omit the network field to reach any public host")
+			return NetworkRule{}, fmt.Errorf("a default route allows everything: name the addresses or blocks that are actually needed")
 		}
 		// ParseCIDR discards host bits, so "10.0.0.5/8" would be shown to an
 		// operator as a single host and enforced as all of 10.0.0.0/8.
@@ -824,6 +828,14 @@ type NetworkPolicy struct {
 	Rules        []NetworkRule
 	AllowPrivate bool
 	Unrestricted bool
+
+	// PrivateAdvice is the remediation clause appended to a dial-time refusal:
+	// how *this* policy's owner is meant to permit the address, if they should.
+	// Empty means a plugin's manifest, which is the only origin that existed
+	// when this was written. HostFetchPolicy sets it to name the operator flag
+	// instead, because telling an operator to edit `network` in a manifest is
+	// wrong advice for a download the application itself started.
+	PrivateAdvice string
 }
 
 // Allows reports whether the policy permits a request to this host.
@@ -852,6 +864,10 @@ func (p NetworkPolicy) Fingerprint() string {
 	}
 	sort.Strings(raws)
 	raws = dedupeSorted(raws)
-	return fmt.Sprintf("unrestricted=%t;private=%t;hosts=%s",
-		p.Unrestricted, p.AllowPrivate, strings.Join(raws, ","))
+	// PrivateAdvice is included even though it changes no enforcement: two
+	// policies that enforce identically but explain themselves differently must
+	// not share a client, or a refusal would hand one origin's remediation to
+	// the other's caller.
+	return fmt.Sprintf("unrestricted=%t;private=%t;advice=%q;hosts=%s",
+		p.Unrestricted, p.AllowPrivate, p.PrivateAdvice, strings.Join(raws, ","))
 }

@@ -23,6 +23,7 @@ import (
 	"mahresources/hash_worker"
 	"mahresources/models"
 	"mahresources/models/seed"
+	"mahresources/plugin_system"
 	"mahresources/server"
 	"mahresources/storage"
 	"mahresources/thumbnail_worker"
@@ -38,6 +39,18 @@ func (a *altFS) String() string {
 func (a *altFS) Set(value string) error {
 	*a = append(*a, value)
 	return nil
+}
+
+// splitCommaList splits a comma-separated flag value into trimmed, non-empty
+// entries. An unset flag yields nil, which every consumer reads as "none".
+func splitCommaList(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if entry := strings.TrimSpace(part); entry != "" {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 // parseDurationEnv parses a duration from an environment variable, returning the default if not set or invalid
@@ -179,6 +192,7 @@ func main() {
 	remoteConnectTimeout := flag.Duration("remote-connect-timeout", parseDurationEnv("REMOTE_CONNECT_TIMEOUT", 30*time.Second), "Timeout for connecting to remote URLs (env: REMOTE_CONNECT_TIMEOUT)")
 	remoteIdleTimeout := flag.Duration("remote-idle-timeout", parseDurationEnv("REMOTE_IDLE_TIMEOUT", 60*time.Second), "Timeout for idle remote transfers (env: REMOTE_IDLE_TIMEOUT)")
 	remoteOverallTimeout := flag.Duration("remote-overall-timeout", parseDurationEnv("REMOTE_OVERALL_TIMEOUT", 30*time.Minute), "Maximum total time for remote downloads (env: REMOTE_OVERALL_TIMEOUT)")
+	allowPrivateFetch := flag.String("allow-private-fetch", os.Getenv("ALLOW_PRIVATE_FETCH"), "Comma-separated private addresses or CIDR blocks the server's own fetches may reach (/v1/resource/remote, the download queue, calendar blocks). Empty (default) denies every private, loopback and link-local address, which is what stops a user-supplied URL from reaching the cloud metadata endpoint or an internal service. Name addresses, not hostnames (env: ALLOW_PRIVATE_FETCH)")
 
 	// Share server options
 	sharePort := flag.String("share-port", os.Getenv("SHARE_PORT"), "Port for public share server (env: SHARE_PORT)")
@@ -252,6 +266,15 @@ func main() {
 	useMemoryDB := *memoryDB || *ephemeral
 	useMemoryFS := *memoryFS || *ephemeral
 
+	// Parsed here to fail startup on a bad entry, rather than at first fetch on
+	// a background worker where the operator would learn about it from a failed
+	// download. The context builds the policy again from these strings — this
+	// call is the validation, and it is the only one that can refuse to boot.
+	allowPrivateFetchEntries := splitCommaList(*allowPrivateFetch)
+	if _, err := plugin_system.HostFetchPolicy(allowPrivateFetchEntries); err != nil {
+		log.Fatalf("invalid %v", err)
+	}
+
 	// Create configuration
 	cfg := &application_context.MahresourcesInputConfig{
 		FileSavePath:                 *fileSavePath,
@@ -276,6 +299,7 @@ func main() {
 		RemoteResourceConnectTimeout: *remoteConnectTimeout,
 		RemoteResourceIdleTimeout:    *remoteIdleTimeout,
 		RemoteResourceOverallTimeout: *remoteOverallTimeout,
+		AllowPrivateFetch:            allowPrivateFetchEntries,
 		MaxDBConnections:             *maxDBConnections,
 		VideoThumbnailTimeout:        *videoThumbTimeout,
 		VideoThumbnailLockTimeout:    *videoThumbLockTimeout,

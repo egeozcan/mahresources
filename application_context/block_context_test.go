@@ -45,6 +45,11 @@ func createBlockTestContext(t *testing.T) *MahresourcesContext {
 
 	config := &MahresourcesConfig{
 		DbType: constants.DbTypeSqlite,
+		// The ICS tests fetch from an httptest server on loopback, which the
+		// host fetch policy denies by default. Without this the calendar tests
+		// would pass for the wrong reason: the redirect-scheme test would never
+		// reach its redirect, because the first request would not connect.
+		AllowPrivateFetch: []string{"127.0.0.1", "::1"},
 	}
 
 	fs := afero.NewMemMapFs()

@@ -81,6 +81,7 @@ Command-line flags take precedence over environment variables, so a flag overrid
 | `-remote-connect-timeout` | `REMOTE_CONNECT_TIMEOUT` | Timeout for remote connections | `30s` |
 | `-remote-idle-timeout` | `REMOTE_IDLE_TIMEOUT` | Timeout for idle transfers | `60s` |
 | `-remote-overall-timeout` | `REMOTE_OVERALL_TIMEOUT` | Maximum total download time | `30m` |
+| `-allow-private-fetch` | `ALLOW_PRIVATE_FETCH` | Private addresses/CIDR blocks the server's own fetches may reach ([details](#fetching-from-your-own-network)) | (none) |
 | `-mrql-query-timeout` | `MRQL_QUERY_TIMEOUT` | Maximum execution time for MRQL queries | `10s` |
 | `-mrql-default-limit` | `MRQL_DEFAULT_LIMIT` | Default `LIMIT` for MRQL queries without an explicit LIMIT | `500` |
 | `-share-port` | `SHARE_PORT` | Port for public share server | (disabled) |
@@ -108,6 +109,65 @@ be changed at runtime via the admin UI, CLI, or API — no restart needed.
 Boot-only settings include: database DSN, bind addresses, file save path,
 ephemeral mode, alt filesystems, share port, FTS initialization, worker pool
 sizes, and max DB connections.
+
+## Fetching from your own network
+
+Several features hand the server a URL and ask it to fetch: **Add resource from
+URL** (`/v1/resource/remote`), the background **download queue**, and the
+**calendar block**, which retrieves an `.ics` feed. In each case the URL comes
+from whoever is using the app, and the fetch happens from the server.
+
+That means the server can be asked to fetch things the person asking could not
+reach themselves — an admin panel on the internal network, a database's HTTP
+interface, or, on a cloud host, the instance metadata endpoint at
+`169.254.169.254`, which hands out credentials to anything that asks. The
+response is then stored as a resource, or rendered on the page.
+
+So by default the server refuses to fetch from any **private** address:
+
+- loopback (`127.0.0.1`, `::1`)
+- link-local (`169.254.0.0/16`, including the metadata endpoint)
+- private ranges (`10/8`, `172.16/12`, `192.168/16`, `fd00::/8`)
+- carrier-grade NAT (`100.64/10`), multicast and broadcast
+
+**Public hosts are unaffected.** Downloading from the internet — the reason
+these features exist — works exactly as before, with no configuration.
+
+### Allowing specific internal hosts
+
+If you genuinely fetch from your own network — a NAS, an internal calendar
+server, a file server — name what it may reach:
+
+```bash
+./mahresources -allow-private-fetch=192.168.1.5,10.0.0.0/8
+```
+
+```bash
+ALLOW_PRIVATE_FETCH=192.168.1.5,10.0.0.0/8
+```
+
+Two rules, both enforced at startup so a mistake is visible immediately rather
+than as a mysteriously failing download:
+
+- **Name addresses or CIDR blocks, not hostnames.** The check is applied to the
+  address a name resolves to, so a hostname in this list could never match
+  anything — it would look like it permitted something while permitting nothing.
+  Worse, a public hostname whose DNS record points at an internal address would
+  otherwise sail through.
+- **Blocks must be reasonably narrow.** A prefix shorter than `/8` (and the
+  default route `0.0.0.0/0`) is refused: it re-opens everything the setting
+  exists to close, without saying so.
+
+A refused fetch is reported to the user as a blocked request that does not name
+the address the URL resolved to — otherwise a list of failed downloads would map
+your internal network for anyone allowed to submit one. The full detail,
+including the resolved address, goes to the server log.
+
+:::note
+This does not apply to plugins, which have always declared their own network
+access in their manifest (`network` + `allow_private_hosts`). See
+[Plugin permissions](../features/plugin-permissions.md).
+:::
 
 ## Common Configurations
 
