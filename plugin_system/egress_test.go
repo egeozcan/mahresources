@@ -299,7 +299,7 @@ func TestARedirectToAnUndeclaredHostIsRefused(t *testing.T) {
 	if !errors.As(err, &blocked) {
 		t.Fatalf("the request failed, but not because the redirect was refused: %#v", err)
 	}
-	if !strings.Contains(blocked.host, "elsewhere.example") {
+	if !strings.Contains(blocked.requested, "elsewhere.example") {
 		t.Fatalf("refused, but the error does not name the hop it refused: %v", blocked)
 	}
 }

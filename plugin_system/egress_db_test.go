@@ -1,6 +1,9 @@
 package plugin_system
 
 import (
+	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -220,5 +223,86 @@ end
 	urls := fetcher.fetched()
 	if len(urls) != 1 || !strings.Contains(urls[0], "allowed.example") {
 		t.Fatalf("the declared host was not fetched: %v", urls)
+	}
+}
+
+// blockingFetcher returns the error shape the host-side downloader produces
+// when the dial-time deny refuses: our own error, wrapped the way
+// application_context wraps it, inside the *url.Error and *net.OpError Go adds.
+type blockingFetcher struct {
+	mockQuerier
+	stubWriter
+}
+
+func (b *blockingFetcher) BindInvocation(*Invocation) (EntityQuerier, EntityWriter) { return b, b }
+
+func (b *blockingFetcher) blocked() error {
+	inner := &errEgressBlocked{resolved: "10.4.2.17", reason: "a private address"}
+	opErr := &net.OpError{Op: "dial", Net: "tcp", Addr: fakeAddr("10.4.2.17:80"), Err: inner}
+	urlErr := &url.Error{Op: "Get", URL: "http://intranet.example/", Err: opErr}
+	return fmt.Errorf("failed to download: %w", urlErr)
+}
+
+func (b *blockingFetcher) CreateResourceFromURL(string, map[string]any) (map[string]any, error) {
+	return nil, b.blocked()
+}
+
+func (b *blockingFetcher) AddResourceVersionFromURL(uint, string, string) (map[string]any, error) {
+	return nil, b.blocked()
+}
+
+type fakeAddr string
+
+func (f fakeAddr) Network() string { return "tcp" }
+func (f fakeAddr) String() string  { return string(f) }
+
+// TestTheDbFetchersDoNotLeakTheResolvedAddress.
+//
+// The oracle fix first covered mah.http only, and these two doors — the ones
+// this package itself opened — kept pushing the raw error to Lua. The trigger
+// is the most ordinary manifest there is: capabilities {db:write, http} and NO
+// network list, which is unrestricted and so passes the host check for every
+// name. Loop over a wordlist, read the resolved address out of each refusal,
+// and you have mapped the private network without one permitted connection.
+func TestTheDbFetchersDoNotLeakTheResolvedAddress(t *testing.T) {
+	for _, call := range []struct{ name, lua string }{
+		{"create_resource_from_url", `mah.db.create_resource_from_url("http://intranet.example/")`},
+		{"add_resource_version_from_url", `mah.db.add_resource_version_from_url(1, "http://intranet.example/")`},
+	} {
+		t.Run(call.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writePlugin(t, dir, "prober", `
+plugin = { name = "prober", version = "1.0", api_version = 1,
+           capabilities = { "db:write", "http" } }
+leaked = ""
+function init()
+    local ok, err = `+call.lua+`
+    leaked = tostring(err)
+end
+`)
+			pm, err := NewPluginManager(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(pm.Close)
+			f := &blockingFetcher{}
+			pm.SetEntityQuerier(f)
+			pm.SetEntityWriter(f)
+			pm.SetPrincipalBinder(f)
+			if err := pm.EnablePlugin("prober"); err != nil {
+				t.Fatalf("EnablePlugin: %v", err)
+			}
+
+			L := stateForPlugin(t, pm, "prober")
+			got := L.GetGlobal("leaked").String()
+			if got == "" || got == "nil" {
+				t.Fatalf("the plugin saw no error at all: %q", got)
+			}
+			for _, leak := range []string{"10.4.2.17", "dial tcp"} {
+				if strings.Contains(got, leak) {
+					t.Errorf("the refusal leaks %q to Lua: %q", leak, got)
+				}
+			}
+		})
 	}
 }

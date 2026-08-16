@@ -66,6 +66,16 @@ Always installed, no capability required: `mah.json`, `mah.util`, `mah.log`, `ma
 
 **`inject` is separate from `render`** because it is not author-invoked. Six injection slots live in the base layout, so an injection runs on every page, while a shortcode or block runs only where a template author placed it. Consenting to "may render blocks" is not consenting to "emits HTML and `<script>` on every page".
 
+### `inject`, `render` and `pages` are browser-side code execution
+
+The HTML a plugin emits is rendered unescaped, in this application's own origin, in the session of whoever is looking at the page. That is deliberate — it is what makes these capabilities useful — but it has a consequence worth stating plainly:
+
+**A plugin holding `inject`, `render` or `pages` can do anything the viewing user can do.** Its JavaScript runs with their session, reads the CSRF token from the page, and can call any endpoint they are allowed to call. Granting one of these to a plugin you do not trust is equivalent to granting it that user's authority, whatever its other capabilities say.
+
+The network rules do not constrain this and are not intended to: they govern requests the *server* makes on the plugin's behalf, not requests the *browser* makes because the plugin asked it to. Withholding the caller's credentials from the plugin's Lua closes the server-side route; it does not change what the plugin's own JavaScript can do in a browser that has already authenticated.
+
+Treat these three as the high-trust capabilities. `db:read` and `http` are narrower grants than any of them.
+
 **Two writers need `http` as well as `db:write`.** `mah.db.create_resource_from_url` and `mah.db.add_resource_version_from_url` do not use `mah.http` — they hand a URL to the application's own downloader. Gated on `db:write` alone they would be a server-side fetch primitive the `network` list could not describe. They require both capabilities, and their URL goes through the same network rules as `mah.http`.
 
 ### Legacy plugins

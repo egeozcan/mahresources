@@ -284,6 +284,24 @@ func (pm *PluginManager) RenderShortcode(reqCtx context.Context, pluginName, ful
 }
 
 // entityToMap converts an entity struct to a map[string]any using reflection.
+// credentialEntityFields are struct fields that carry a credential and are
+// therefore never handed to a plugin, however privileged it is.
+//
+// entityToMap walks every EXPORTED field reflectively, so a credential added to
+// a model reaches plugins by default. The one that matters today is
+// Note.ShareToken: a bearer token granting anonymous read of that note and its
+// resources, reachable by a plugin holding nothing but `render` — the least
+// privileged capability that sees an entity at all. The rest are listed because
+// the same walk would expose them if those models were ever passed here.
+//
+// Matched on the field NAME, so it covers any model declaring one.
+var credentialEntityFields = map[string]bool{
+	"ShareToken":   true,
+	"TokenHash":    true,
+	"CsrfToken":    true,
+	"PasswordHash": true,
+}
+
 func entityToMap(entity any) map[string]any {
 	v := reflect.ValueOf(entity)
 	if v.Kind() == reflect.Ptr {
@@ -301,6 +319,9 @@ func entityToMap(entity any) map[string]any {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		if !field.IsExported() {
+			continue
+		}
+		if credentialEntityFields[field.Name] {
 			continue
 		}
 		fv := v.Field(i)

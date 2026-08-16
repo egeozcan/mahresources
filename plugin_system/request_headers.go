@@ -62,3 +62,26 @@ func SafeRequestHeaders(header http.Header) map[string]any {
 	}
 	return out
 }
+
+// credentialParams are the request PARAMETER names that carry a credential.
+//
+// The CSRF token is accepted three ways — the X-CSRF-Token header, a
+// csrf_token query parameter (native multipart upload forms, which cannot set
+// a header), and a csrf_token urlencoded form field (see server/csrf.go). A
+// redaction that covers only the header spelling leaves the invariant it claims
+// ("a plugin never sees the caller's credentials") false for the other two, and
+// the query string is handed to plugins in full.
+var credentialParams = map[string]bool{
+	"csrf_token": true,
+}
+
+// StripCredentialParams removes credential-carrying entries from a query or
+// form map built for a plugin. It mutates and returns the map it was given.
+func StripCredentialParams(values map[string]any) map[string]any {
+	for name := range values {
+		if credentialParams[strings.ToLower(name)] {
+			delete(values, name)
+		}
+	}
+	return values
+}

@@ -89,8 +89,8 @@ func PluginPageContextProvider(pm *plugin_system.PluginManager) func(request *ht
 		pageCtx := plugin_system.PageContext{
 			Path:      request.URL.String(),
 			Method:    request.Method,
-			Query:     queryMap,
-			Params:    paramsMap,
+			Query:     plugin_system.StripCredentialParams(queryMap),
+			Params:    plugin_system.StripCredentialParams(paramsMap),
 			Headers:   headerMap,
 			Body:      body,
 			Principal: auth.DescribeContext(request.Context()),

@@ -56,6 +56,10 @@ var extraBlockedRanges = []struct {
 	// spell an IPv4 address — including a private one, and 64:ff9b::a9fe:a9fe
 	// is the metadata endpoint.
 	{mustCIDR("64:ff9b::/96"), "a NAT64-translated address"},
+	// RFC8215 local-use NAT64. Same translation, a prefix an operator picks
+	// themselves, and blocking only the well-known one leaves the deployments
+	// that followed the RFC's advice uncovered.
+	{mustCIDR("64:ff9b:1::/48"), "a NAT64-translated address"},
 	// RFC1122 "this network". IsUnspecified covers only 0.0.0.0 itself, and on
 	// Linux the whole of 0.0.0.0/8 routes to the local host.
 	{mustCIDR("0.0.0.0/8"), "a this-network address"},
@@ -151,35 +155,51 @@ func (p NetworkPolicy) allowsPrivateAddress(ip net.IP) bool {
 
 // errEgressBlocked is the shape a refusal takes.
 //
-// It carries two messages. Error() is the operator's: it names the address and
-// why, and goes to the application log. PluginMessage() is what the plugin is
-// told, and it deliberately says less.
+// The two hosts are separate fields on purpose, and only one of them is ever
+// shown to a plugin. A single "host" field would have to be read differently
+// depending on which check produced it — the allowlist check knows the host the
+// plugin asked for, the dial check knows the address it resolved to — and a
+// message that printed whichever was set would leak the second while looking
+// correct against the first.
 //
-// The distinction is not fussiness. A refusal that names the RESOLVED address
-// is an oracle: a plugin granted nothing but `http` can loop over a wordlist of
-// internal names, read the address back out of each refusal, and map the
-// private network at DNS speed — without ever being allowed to connect to any
-// of it. So the plugin learns that the request was refused and which host it
-// asked for (both of which it already knew), and never learns what that host
-// resolved to.
+// The resolved address must never reach Lua. A refusal that names it is an
+// oracle: a plugin granted nothing but `http` can loop over a wordlist of
+// internal names and read the private network out of the errors, at DNS speed,
+// without ever being permitted to connect to any of it. PluginMessage
+// structurally cannot leak it, because it does not read the field.
 type errEgressBlocked struct {
-	host   string
-	reason string
-	// requested is the host the plugin named, when that differs from the
-	// address the refusal is about.
+	// requested is the host the plugin named. Safe to echo back: it already
+	// knows it, and without it a refusal is unactionable.
 	requested string
+	// resolved is the address that host resolved to, when the refusal is about
+	// the address rather than the name. Operator-facing only.
+	resolved string
+	reason   string
 }
 
 func (e *errEgressBlocked) Error() string {
-	return fmt.Sprintf("blocked request to %s: %s", e.host, e.reason)
+	switch {
+	case e.resolved != "" && e.requested != "":
+		return fmt.Sprintf("blocked request to %s (%s): %s", e.requested, e.resolved, e.reason)
+	case e.resolved != "":
+		return fmt.Sprintf("blocked request to %s: %s", e.resolved, e.reason)
+	}
+	return fmt.Sprintf("blocked request to %s: %s", e.requested, e.reason)
 }
 
-// PluginMessage is the refusal as a plugin may see it.
+// PluginMessage is the refusal as a plugin may see it. It reads `requested` and
+// `reason` and nothing else.
 func (e *errEgressBlocked) PluginMessage() string {
-	if e.requested != "" {
-		return fmt.Sprintf("blocked request to %s: it is not reachable under this plugin's `network` declaration", e.requested)
+	if e.requested == "" {
+		// A dial-time refusal knows the address and not the name. Saying less
+		// is correct here: naming the address is the whole thing to avoid, and
+		// the plugin knows what it asked for.
+		return "blocked request: the address it resolves to is not permitted by this plugin's `network` declaration"
 	}
-	return fmt.Sprintf("blocked request to %s: %s", e.host, e.reason)
+	if e.resolved != "" {
+		return fmt.Sprintf("blocked request to %s: the address it resolves to is not permitted by this plugin's `network` declaration", e.requested)
+	}
+	return fmt.Sprintf("blocked request to %s: %s", e.requested, e.reason)
 }
 
 // sanitizeEgressError renders an error for a plugin.
@@ -197,7 +217,8 @@ func sanitizeEgressError(err error) (string, bool) {
 }
 
 // egressErrorForPlugin is sanitizeEgressError with a passthrough for everything
-// else, which is what both mah.http paths want.
+// else. Every boundary that hands an egress failure to Lua goes through it:
+// both mah.http paths and both mah.db URL fetchers.
 func egressErrorForPlugin(err error) string {
 	if msg, ok := sanitizeEgressError(err); ok {
 		return msg
@@ -226,12 +247,12 @@ func hostFromURL(raw string) (string, error) {
 func checkEgressHost(policy NetworkPolicy, raw string) error {
 	host, err := hostFromURL(raw)
 	if err != nil {
-		return &errEgressBlocked{host: raw, reason: err.Error()}
+		return &errEgressBlocked{requested: raw, reason: err.Error()}
 	}
 	if !policy.Allows(host) {
 		return &errEgressBlocked{
-			host:   host,
-			reason: "the plugin's manifest does not list this host in `network`",
+			requested: host,
+			reason:    "the plugin's manifest does not list this host in `network`",
 		}
 	}
 	return nil
@@ -255,7 +276,7 @@ func egressDialControl(policy NetworkPolicy) func(string, string, syscall.RawCon
 			// Control is documented to receive a resolved address. If it ever
 			// does not, refusing is the only safe reading: the whole point of
 			// this hook is that it sees the address rather than the name.
-			return &errEgressBlocked{host: address, reason: "the resolved address could not be read"}
+			return &errEgressBlocked{resolved: address, reason: "the resolved address could not be read"}
 		}
 		reason := privateAddressReason(ip)
 		if reason == "" {
@@ -265,13 +286,9 @@ func egressDialControl(policy NetworkPolicy) func(string, string, syscall.RawCon
 			return nil
 		}
 		return &errEgressBlocked{
-			host: ip.String(),
+			resolved: ip.String(),
 			reason: reason + "; a plugin may only reach one by naming the address or CIDR in `network` " +
 				"and declaring allow_private_hosts",
-			// Set so the plugin-facing message exists at all. Control does not
-			// know the name that was looked up, and deliberately does not go
-			// looking: what matters is that the plugin is not told the address.
-			requested: "the requested host",
 		}
 	}
 }

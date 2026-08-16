@@ -689,7 +689,13 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
 			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
+			// Sanitized like the mah.http paths: the host-side downloader wraps
+			// a dial refusal, and both our own message and Go's *net.OpError
+			// prefix carry the RESOLVED address. Handing that to Lua turns
+			// every refusal into an internal DNS map — and this door needs no
+			// `network` list at all to be walked, since an absent list is
+			// unrestricted and so passes layer (a) for every name.
+			L.Push(lua.LString(egressErrorForPlugin(err)))
 			return 2
 		}
 		L.Push(goToLuaTable(L, result))
@@ -741,7 +747,8 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
 			L.Push(lua.LNil)
-			L.Push(lua.LString(err.Error()))
+			// Sanitized: see create_resource_from_url above.
+			L.Push(lua.LString(egressErrorForPlugin(err)))
 			return 2
 		}
 		L.Push(goToLuaTable(L, result))

@@ -50,7 +50,13 @@ func (a *pluginDBAdapter) BindInvocation(inv *plugin_system.Invocation) (plugin_
 		bound = &clone
 	}
 	bound.pluginInvocation = inv
-	if inv != nil && inv.Egress != nil {
+	if inv != nil {
+		// pluginFetch is set for EVERY plugin invocation, not only those
+		// carrying a policy. Setting it alongside the policy made it
+		// equivalent to "pluginEgress != nil", which left the fail-closed
+		// branch in AddRemoteResource dead — and that branch exists precisely
+		// for the case where a plugin is fetching and the policy did NOT
+		// survive the trip.
 		bound.pluginEgress = inv.Egress
 		bound.pluginFetch = true
 	}

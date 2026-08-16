@@ -526,7 +526,7 @@ func PluginAPIHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Requ
 		pageCtx := plugin_system.PageContext{
 			Path:      r.URL.String(),
 			Method:    r.Method,
-			Query:     queryMap,
+			Query:     plugin_system.StripCredentialParams(queryMap),
 			Params:    make(map[string]any),
 			Headers:   headerMap,
 			Body:      body,

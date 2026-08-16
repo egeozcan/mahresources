@@ -74,3 +74,63 @@ func TestRedactionCoversThisAppsCredentialSurface(t *testing.T) {
 		}
 	}
 }
+
+// TestTheCSRFTokenIsWithheldInEverySpellingItIsAccepted.
+//
+// server/csrf.go accepts the token three ways: the X-CSRF-Token header, a
+// csrf_token query parameter (native multipart upload forms cannot set a
+// header), and a csrf_token urlencoded form field. Withholding only the header
+// leaves the stated invariant — a plugin never sees the caller's credentials —
+// false for the other two, while the query string is handed over in full.
+func TestTheCSRFTokenIsWithheldInEverySpellingItIsAccepted(t *testing.T) {
+	query := map[string]any{
+		"csrf_token": "tok-do-not-leak",
+		"page":       "2",
+	}
+	if got := StripCredentialParams(query); len(got) != 1 || got["page"] != "2" {
+		t.Fatalf("expected only the credential removed, got %#v", got)
+	}
+
+	form := map[string]any{"CSRF_TOKEN": "tok", "title": "hello"}
+	stripped := StripCredentialParams(form)
+	if _, present := stripped["CSRF_TOKEN"]; present {
+		t.Error("the form field survived a case difference")
+	}
+	if stripped["title"] != "hello" {
+		t.Error("an ordinary form field was removed")
+	}
+}
+
+// TestAPluginNeverSeesAnEntitysShareToken.
+//
+// entityToMap walks every exported field reflectively, so a credential added to
+// a model reaches plugins by default. Note.ShareToken is a bearer token
+// granting anonymous read of that note and its resources — and a shortcode
+// needs only `render`, the least privileged capability that sees an entity at
+// all, to be handed one.
+func TestAPluginNeverSeesAnEntitysShareToken(t *testing.T) {
+	token := "sharetoken-do-not-leak"
+	entity := struct {
+		ID           uint
+		Name         string
+		ShareToken   *string
+		TokenHash    string
+		CsrfToken    string
+		PasswordHash string
+	}{ID: 7, Name: "visible", ShareToken: &token,
+		TokenHash: "hash", CsrfToken: "csrf", PasswordHash: "pw"}
+
+	got := entityToMap(&entity)
+
+	if got["Name"] != "visible" {
+		t.Fatalf("ordinary fields were lost: %#v", got)
+	}
+	if got["ID"] == nil {
+		t.Error("ID was lost")
+	}
+	for _, withheld := range []string{"ShareToken", "TokenHash", "CsrfToken", "PasswordHash"} {
+		if v, present := got[withheld]; present {
+			t.Errorf("%s reached the plugin: %v", withheld, v)
+		}
+	}
+}
