@@ -2,6 +2,9 @@
 -- AI-powered image processing using fal.ai
 
 plugin = {
+    api_version = 1,
+    capabilities = { "db:read", "db:write", "http", "image", "actions", "jobs", "pages" },
+    network = { "queue.fal.run", "fal.run", "*.fal.run", "fal.ai", "*.fal.ai" },
     name = "fal-ai",
     version = "1.1.0",
     description = "AI-powered image processing using fal.ai - colorize, upscale, restore, AI edit, and vectorize.",

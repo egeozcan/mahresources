@@ -65,8 +65,10 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 			pm.queueErrorCallback(mainState(L), callback, "GET", url, err.Error())
 			return 0
 		}
-
-		pm.httpWg.Add(1)
+		if !pm.beginHTTP(L) {
+			pm.queueErrorCallback(mainState(L), callback, "GET", url, errShuttingDown)
+			return 0
+		}
 		go pm.executeHttpRequest("GET", url, "", headers, timeout, mainState(L), callback, pm.actorFor(L))
 		return 0
 	}))
@@ -85,8 +87,10 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 			pm.queueErrorCallback(mainState(L), callback, "POST", url, err.Error())
 			return 0
 		}
-
-		pm.httpWg.Add(1)
+		if !pm.beginHTTP(L) {
+			pm.queueErrorCallback(mainState(L), callback, "POST", url, errShuttingDown)
+			return 0
+		}
 		go pm.executeHttpRequest("POST", url, body, headers, timeout, mainState(L), callback, pm.actorFor(L))
 		return 0
 	}))
@@ -104,8 +108,10 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 			pm.queueErrorCallback(mainState(L), callback, method, url, err.Error())
 			return 0
 		}
-
-		pm.httpWg.Add(1)
+		if !pm.beginHTTP(L) {
+			pm.queueErrorCallback(mainState(L), callback, method, url, errShuttingDown)
+			return 0
+		}
 		go pm.executeHttpRequest(method, url, body, headers, timeout, mainState(L), callback, pm.actorFor(L))
 		return 0
 	}))
@@ -149,8 +155,53 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 	mahMod.RawSetString("http", httpMod)
 }
 
+// errShuttingDown is what a plugin sees when it asks for network work the
+// manager will not be around to finish.
+//
+// Close waits for in-flight HTTP and then closes the drain goroutine, but
+// init() is deliberately unbounded — so a load still running can reach mah.http
+// afterwards. Starting work then adds to a WaitGroup somebody is already
+// waiting on, and queues a callback holding a VM that is about to close.
+const errShuttingDown = "plugin manager is shutting down"
+
+// errRevoked is what a plugin sees once it has been disabled.
+const errRevoked = "this plugin has been disabled"
+
+// beginHTTP admits a request to the in-flight set, or refuses it because the
+// manager is closing.
+//
+// The check and the Add have to be one critical section against Close's flag
+// and its Wait. Separately, a call can read closed=false, be descheduled, and
+// Add after Close has already seen an empty WaitGroup — which both violates the
+// Add-after-Wait rule and leaves a callback queued against a VM about to close,
+// with the drain goroutine already gone.
+func (pm *PluginManager) beginHTTP(L *lua.LState) bool {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	if pm.closed.Load() {
+		return false
+	}
+	// Revoked as well as closed. The DB and KV accessors refuse a revoked VM,
+	// and egress was the one channel that did not — so a plugin an operator had
+	// just disabled kept making arbitrary outbound requests for the rest of its
+	// async allowance, carrying whatever it already held in Lua locals,
+	// including a key it read from mah.get_setting before the disable. That is
+	// the channel a plugin gets disabled *for*.
+	if _, live := pm.vmLocks[mainState(L)]; !live {
+		return false
+	}
+	pm.httpWg.Add(1)
+	return true
+}
+
 // executeSyncHttpRequest performs a blocking HTTP request and returns the response as a Lua table.
 func (pm *PluginManager) executeSyncHttpRequest(method, url, body string, headers map[string]string, timeout time.Duration, L *lua.LState) *lua.LTable {
+	if pm.closed.Load() {
+		return buildSyncErrorResponse(L, method, url, errShuttingDown)
+	}
+	if !pm.stateIsLive(L) {
+		return buildSyncErrorResponse(L, method, url, errRevoked)
+	}
 	// Remove Lua context during blocking HTTP call to avoid premature timeout.
 	// The saved context is restored afterward so subsequent Lua code retains
 	// its original deadline/cancellation behavior.

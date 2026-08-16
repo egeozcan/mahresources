@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"fmt"
 	"slices"
 
@@ -23,31 +24,32 @@ type ValidationError struct {
 	Message string `json:"message"`
 }
 
-// parseSettingsFromLua executes a Lua script string in a throwaway VM and
-// extracts the plugin.settings table into Go structs. Only safe libraries
-// are opened (base, table, string, math). The script's init() is NOT called.
+// parseSettingsFromLua runs a plugin script purely to read its settings block.
+//
+// It goes through the same library set and the same removals as the two VMs
+// that run plugin code for real, and strips the globals metatable before
+// reading, because it is a third environment for the same untrusted input:
+// a differently-sandboxed one would be an arbitrary-path open waiting for its
+// first production caller, and a differently-*stocked* one would be one more
+// way for a file to tell which run it is in.
 func parseSettingsFromLua(script string) ([]SettingDefinition, error) {
 	L := lua.NewState(lua.Options{SkipOpenLibs: true})
 	defer L.Close()
 
-	// Open only safe libraries.
-	for _, pair := range []struct {
-		name string
-		fn   lua.LGFunction
-	}{
-		{lua.BaseLibName, lua.OpenBase},
-		{lua.TabLibName, lua.OpenTable},
-		{lua.StringLibName, lua.OpenString},
-		{lua.MathLibName, lua.OpenMath},
-	} {
-		L.Push(L.NewFunction(pair.fn))
-		L.Push(lua.LString(pair.name))
-		L.Call(1, 0)
-	}
+	openPluginLibraries(L)
+	removeUnsafeBaseFunctions(L)
+
+	// Bounded like the other two, for the same reason: this executes a
+	// plugin's top-level code, and `while true do end` would otherwise hang
+	// whichever caller it eventually acquires.
+	ctx, cancel := context.WithTimeout(context.Background(), pluginHeaderTimeout)
+	defer cancel()
+	L.SetContext(ctx)
 
 	if err := L.DoString(script); err != nil {
 		return nil, fmt.Errorf("executing lua script: %w", err)
 	}
+	L.G.Global.Metatable = lua.LNil
 
 	return extractSettingsFromState(L), nil
 }

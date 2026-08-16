@@ -4,6 +4,8 @@
 -- Usage in templates: [plugin:data-views:shortcode-name attr="value"]
 
 plugin = {
+    api_version = 1,
+    capabilities = { "db:read", "inject", "render" },
     name = "data-views",
     version = "1.0",
     description = "18 data viewing shortcodes for rich display of meta values, charts, tables, and more.",

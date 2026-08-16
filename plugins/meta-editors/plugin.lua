@@ -4,6 +4,8 @@
 -- Each shortcode renders an Alpine.js component that saves via the editMeta API.
 
 plugin = {
+    api_version = 1,
+    capabilities = { "inject", "render" },
     name = "meta-editors",
     version = "1.0",
     description = "17 interactive shortcodes for editing entity meta fields inline.",

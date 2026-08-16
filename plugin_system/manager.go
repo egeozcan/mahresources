@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -28,6 +29,33 @@ const (
 	// cycle between two goroutines to become permanent.
 	hookLockWait = 5 * time.Second
 
+	// pluginHeaderTimeout bounds the top-level code executed to read a
+	// plugin's manifest. That read happens at boot for every plugin directory,
+	// enabled or not, so an unbounded one lets a single runaway plugin.lua hold
+	// the whole server's startup.
+	pluginHeaderTimeout = 5 * time.Second
+
+	// pluginLoadTimeout bounds a plugin's own load: its top-level code and its
+	// init(). Both hold the plugin's VM lock and the enable request, so an
+	// unbounded one holds a request and a core until the process dies.
+	pluginLoadTimeout = 30 * time.Second
+
+	// maxPluginSourceSize caps a plugin.lua. The file is read whole, twice per
+	// load, at boot, for every plugin directory — including ones nobody
+	// enabled. The largest bundled plugin is under 100 KB.
+	maxPluginSourceSize = 4 << 20
+
+	// retireDrainTimeout bounds how long a teardown waits for a plugin's
+	// in-flight async work before giving up on closing its VM.
+	//
+	// A failing init() that already started a job would otherwise block the
+	// enable request for the job's full 5-minute allowance, with the plugin's
+	// name still claimed in `enabling` so a retry is refused. Past the bound the
+	// state is left open — leaking one LState until the process exits — rather
+	// than closed underneath a worker that is still executing on it. Its
+	// registrations are already gone, so nothing can reach it.
+	retireDrainTimeout = 5 * time.Second
+
 	luaExecTimeout     = 5 * time.Second  // hooks, injections, sync calls
 	luaPageTimeout     = 30 * time.Second // plugin page handlers
 	asyncActionTimeout = 5 * time.Minute  // async actions and start_job
@@ -35,12 +63,18 @@ const (
 
 var validPagePath = regexp.MustCompile(`^[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$`)
 
+// validPluginName is the shortcode grammar: a plugin's name prefixes every
+// shortcode it registers ([plugin:<name>:<code>]), so a name outside it
+// produces shortcodes that cannot be written.
+var validPluginName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,49}$`)
+
 // PluginInfo holds metadata about a loaded plugin.
 type PluginInfo struct {
 	Name        string
 	Version     string
 	Description string
 	Dir         string
+	Manifest    Manifest
 }
 
 // DiscoveredPlugin holds metadata about a discovered (but not necessarily loaded) plugin.
@@ -50,6 +84,7 @@ type DiscoveredPlugin struct {
 	Description string
 	Dir         string
 	Settings    []SettingDefinition
+	Manifest    Manifest
 }
 
 // hookEntry stores a Lua hook handler and its parent VM.
@@ -86,6 +121,9 @@ type MenuRegistration struct {
 	PluginName string
 	Label      string
 	FullPath   string
+
+	// state is the VM that registered this entry; see ActionRegistration.
+	state *lua.LState
 }
 
 // PluginManager loads and manages Lua plugins.
@@ -113,6 +151,31 @@ type PluginManager struct {
 	kvStore      atomic.Value
 	mrqlExecutor atomic.Value
 	closed       atomic.Bool
+
+	// loadWg tracks loads in progress. A loading VM is in vmLocks but not yet in
+	// states, so a Close that only walks states would leave it open — and the
+	// load would then publish into the maps Close had just niled.
+	loadWg sync.WaitGroup
+
+	// closeDone guards the one-shot channel close in Close.
+	closeDone sync.Once
+
+	// loading tracks in-flight loads by name, so a disable can wait for one
+	// instead of racing it.
+	//
+	// A loading plugin is not in pm.plugins, so DisablePlugin could not see it,
+	// answered "not enabled", and the caller persisted enabled=false — after
+	// which the load published and the plugin ran on with every granted host
+	// function while the database said it was off.
+	//
+	// The first attempt at this recorded the disable and had the publish step
+	// abandon. That needed three separate maps to agree across four call sites,
+	// and they did not: a second enable could clear the marker before failing,
+	// publication could win the race against recording it, and a wedged init()
+	// left the plugin both undisableable and un-enablable. Waiting is one
+	// mechanism instead of three, and it answers truthfully — including when it
+	// cannot answer at all.
+	loading map[string]chan struct{} // pluginName -> closed when the load ends
 
 	// Discovery-phase data (immutable after construction).
 	discovered     []DiscoveredPlugin
@@ -159,6 +222,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		actionSemaphore: make(chan struct{}, maxConcurrentActions),
 		actionSubs:      make(map[chan ActionJobEvent]struct{}),
 		actionInFlight:  make(map[string]*sync.WaitGroup),
+		loading:         make(map[string]chan struct{}),
 		httpClient:      newHttpClient(),
 		httpNotify:      make(chan struct{}, 1),
 		done:        make(chan struct{}),
@@ -202,6 +266,20 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 	}
 	sort.Strings(pluginDirs)
 
+	// A plugin's name — not its directory — is the key that its enabled state,
+	// its settings, its KV namespace, its job ownership and (in due course) its
+	// consent all hang off.
+	//
+	// So a contested name cannot be awarded to anybody. Electing one claimant
+	// (the first by directory name, say) is an identity takeover: a directory
+	// called "a-thing" that declares the name of a plugin in "z-thing" would
+	// inherit that plugin's persisted enabled flag, its stored settings — API
+	// keys included, and mah.get_setting needs no capability — and its KV
+	// namespace. Both are dropped, and the operator is told which directories
+	// to look at.
+	claimed := make(map[string]string, len(pluginDirs))
+	contested := make(map[string]bool)
+	var discovered []DiscoveredPlugin
 	for _, name := range pluginDirs {
 		pluginDir := filepath.Join(dir, name)
 		scriptPath := filepath.Join(pluginDir, "plugin.lua")
@@ -210,65 +288,43 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 			log.Printf("[plugin] warning: skipping %q: %v", name, err)
 			continue
 		}
+		if first, taken := claimed[dp.Name]; taken {
+			log.Printf("[plugin] warning: skipping both %q and %q: they both call themselves %q, and a "+
+				"plugin's name is what its settings, stored data and enabled state belong to",
+				first, name, dp.Name)
+			contested[dp.Name] = true
+			continue
+		}
+		claimed[dp.Name] = name
+		discovered = append(discovered, dp)
+	}
+	for _, dp := range discovered {
+		if contested[dp.Name] {
+			continue
+		}
 		pm.discovered = append(pm.discovered, dp)
 	}
 
 	return pm, nil
 }
 
-// discoverPlugin creates a temporary Lua VM, executes plugin.lua (top-level
-// code only, NOT init()), reads metadata and settings, then closes the VM.
-func (pm *PluginManager) discoverPlugin(pluginDir, scriptPath string) (DiscoveredPlugin, error) {
-	code, err := os.ReadFile(scriptPath)
-	if err != nil {
-		return DiscoveredPlugin{}, fmt.Errorf("reading plugin.lua: %w", err)
-	}
+// unsafeBaseFunctions are removed from every VM a plugin's code runs in.
+//
+// dofile and loadfile open an arbitrary path; load and loadstring compile
+// arbitrary source. A plugin already runs arbitrary Lua, so in the load VM
+// these are tidiness — but the *header* VM executes top-level code at boot for
+// every plugin directory, enabled or not, and there loadfile is an
+// arbitrary-path open by a plugin nobody turned on.
+var unsafeBaseFunctions = []string{"dofile", "loadfile", "load", "loadstring"}
 
-	L := lua.NewState(lua.Options{SkipOpenLibs: true})
-	defer L.Close()
-
-	for _, pair := range []struct {
-		name string
-		fn   lua.LGFunction
-	}{
-		{lua.BaseLibName, lua.OpenBase},
-		{lua.TabLibName, lua.OpenTable},
-		{lua.StringLibName, lua.OpenString},
-		{lua.MathLibName, lua.OpenMath},
-	} {
-		L.Push(L.NewFunction(pair.fn))
-		L.Push(lua.LString(pair.name))
-		L.Call(1, 0)
-	}
-
-	if err := L.DoString(string(code)); err != nil {
-		return DiscoveredPlugin{}, fmt.Errorf("parsing plugin.lua: %w", err)
-	}
-
-	dp := DiscoveredPlugin{Dir: pluginDir}
-	pluginTable := L.GetGlobal("plugin")
-	if tbl, ok := pluginTable.(*lua.LTable); ok {
-		if v := tbl.RawGetString("name"); v != lua.LNil {
-			dp.Name = v.String()
-		}
-		if v := tbl.RawGetString("version"); v != lua.LNil {
-			dp.Version = v.String()
-		}
-		if v := tbl.RawGetString("description"); v != lua.LNil {
-			dp.Description = v.String()
-		}
-	}
-
-	dp.Settings = extractSettingsFromState(L)
-	return dp, nil
-}
-
-// loadPlugin creates a Lua VM, registers the mah module, executes plugin.lua,
-// reads metadata, and calls init() if present.
-func (pm *PluginManager) loadPlugin(pluginDir, scriptPath string) error {
-	L := lua.NewState(lua.Options{SkipOpenLibs: true})
-
-	// Open only safe libraries (excludes os, io, debug, package)
+// openPluginLibraries opens the safe standard libraries (excluding os, io,
+// debug and package) in a plugin VM.
+//
+// The manifest read and the real run must open exactly the same set, or the
+// difference is a discriminator: a plugin could declare one manifest when
+// `coroutine` is present and another when it is not, the same way it once could
+// with `mah`.
+func openPluginLibraries(L *lua.LState) {
 	for _, pair := range []struct {
 		name string
 		fn   lua.LGFunction
@@ -283,48 +339,375 @@ func (pm *PluginManager) loadPlugin(pluginDir, scriptPath string) error {
 		L.Push(lua.LString(pair.name))
 		L.Call(1, 0)
 	}
+}
 
-	// Remove dangerous base functions
-	for _, name := range []string{"dofile", "loadfile", "load"} {
+func removeUnsafeBaseFunctions(L *lua.LState) {
+	for _, name := range unsafeBaseFunctions {
 		L.SetGlobal(name, lua.LNil)
 	}
+}
 
+// readPluginSource reads a plugin.lua, refusing one that is implausibly large.
+func readPluginSource(scriptPath string) ([]byte, error) {
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading plugin.lua: %w", err)
+	}
+	if info.Size() > maxPluginSourceSize {
+		return nil, fmt.Errorf("plugin.lua is %d bytes, over the %d-byte limit", info.Size(), maxPluginSourceSize)
+	}
+	code, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading plugin.lua: %w", err)
+	}
+	if len(code) > maxPluginSourceSize {
+		return nil, fmt.Errorf("plugin.lua is %d bytes, over the %d-byte limit", len(code), maxPluginSourceSize)
+	}
+	return code, nil
+}
+
+// pluginHeader is everything readable from a plugin.lua without giving it the
+// mah table: its identity, its manifest and its settings definitions.
+type pluginHeader struct {
+	Name        string
+	Version     string
+	Description string
+	Manifest    Manifest
+	Settings    []SettingDefinition
+}
+
+// readPluginHeader executes a plugin.lua's top-level code in a throwaway VM
+// that has no mah table, and reads what the plugin declares about itself.
+//
+// It takes the source rather than a path because the caller must read the file
+// exactly once: loading parses the manifest and then runs the same code, and
+// two reads would leave a window in which the grants belong to a version of the
+// file that is no longer the one being executed.
+func readPluginHeader(code []byte, chunkName string) (pluginHeader, error) {
+	L := lua.NewState(lua.Options{SkipOpenLibs: true})
+	defer L.Close()
+
+	openPluginLibraries(L)
+	removeUnsafeBaseFunctions(L)
+
+	ctx, cancel := context.WithTimeout(context.Background(), pluginHeaderTimeout)
+	defer cancel()
+	L.SetContext(ctx)
+
+	fn, err := L.Load(bytes.NewReader(code), chunkName)
+	if err != nil {
+		return pluginHeader{}, fmt.Errorf("parsing plugin.lua: %w", err)
+	}
+	L.Push(fn)
+	err = L.PCall(0, lua.MultRet, nil)
+
+	// Same reason as the load: everything below reads this VM from Go through
+	// _G, which honours metamethods, and none of it is inside a PCall. Here it
+	// matters more — this runs at boot for every plugin directory, enabled or
+	// not, so `setmetatable(_G, {__index = function() error("boom") end})` in a
+	// file nobody turned on would panic the process during startup, and
+	// disabling the plugin would not help because discovery does not consult
+	// enablement.
+	L.G.Global.Metatable = lua.LNil
+
+	if err != nil {
+		if ctx.Err() != nil {
+			return pluginHeader{}, fmt.Errorf("plugin.lua did not finish its top-level code within %s: "+
+				"registration belongs in init(), and top-level code must return promptly", pluginHeaderTimeout)
+		}
+		// The one error a plugin author hits by accident, worth naming: mah is
+		// deliberately absent here, so a top-level mah call lands as a nil index.
+		if strings.Contains(err.Error(), "attempt to index a non-table object") ||
+			strings.Contains(err.Error(), "attempt to call a non-function object") {
+			return pluginHeader{}, fmt.Errorf("executing plugin.lua's top-level code: %w "+
+				"(note: mah is only available inside init() and the handlers it registers)", err)
+		}
+		return pluginHeader{}, fmt.Errorf("parsing plugin.lua: %w", err)
+	}
+
+	h, err := readPluginIdentity(L)
+	if err != nil {
+		return pluginHeader{}, err
+	}
+	h.Settings = extractSettingsFromState(L)
+	return h, nil
+}
+
+
+// readPluginIdentity reads name, version, description and manifest off a VM's
+// `plugin` global.
+func readPluginIdentity(L *lua.LState) (pluginHeader, error) {
+	var h pluginHeader
+	pluginTable := L.GetGlobal("plugin")
+	tbl, ok := pluginTable.(*lua.LTable)
+	if !ok {
+		// A plugin with no identity cannot be enabled, named in a warning, or
+		// consented to. It used to load anonymously and register under the
+		// empty name.
+		return pluginHeader{}, fmt.Errorf("plugin.lua must define a `plugin` table")
+	}
+	if v := tbl.RawGetString("name"); v != lua.LNil {
+		h.Name = v.String()
+	}
+	if v := tbl.RawGetString("version"); v != lua.LNil {
+		h.Version = v.String()
+	}
+	if v := tbl.RawGetString("description"); v != lua.LNil {
+		h.Description = v.String()
+	}
+	if strings.TrimSpace(h.Name) == "" {
+		return pluginHeader{}, fmt.Errorf("plugin.lua must define plugin.name")
+	}
+	// The name is a map key, a URL segment in every menu href, and the prefix
+	// of every shortcode this plugin registers. It was never checked, so a
+	// plugin called "My Plugin" registered shortcodes no author could invoke
+	// (the shortcode grammar would never match) and put a space in a URL.
+	if !validPluginName.MatchString(h.Name) {
+		return pluginHeader{}, fmt.Errorf("plugin name %q is not usable: it must match %s, because it is "+
+			"a URL segment and the prefix of every shortcode the plugin registers", h.Name, validPluginName)
+	}
+	// A malformed manifest is a hard failure, not a silent legacy fallback: a
+	// typo'd capability that granted nothing would surface as "attempt to call
+	// a nil value" deep inside init(), and a typo'd host as a request that
+	// mysteriously never reaches anything.
+	manifest, err := ParseManifest(tbl)
+	if err != nil {
+		return pluginHeader{}, fmt.Errorf("reading manifest: %w", err)
+	}
+	h.Manifest = manifest
+	return h, nil
+}
+
+// discoverPlugin reads a plugin's metadata and settings without running init().
+func (pm *PluginManager) discoverPlugin(pluginDir, scriptPath string) (DiscoveredPlugin, error) {
+	code, err := readPluginSource(scriptPath)
+	if err != nil {
+		return DiscoveredPlugin{}, err
+	}
+	h, err := readPluginHeader(code, scriptPath)
+	if err != nil {
+		return DiscoveredPlugin{}, err
+	}
+	return DiscoveredPlugin{
+		Name:        h.Name,
+		Version:     h.Version,
+		Description: h.Description,
+		Dir:         pluginDir,
+		Settings:    h.Settings,
+		Manifest:    h.Manifest,
+	}, nil
+}
+
+// loadPlugin creates a Lua VM, runs plugin.lua's top-level code, installs the
+// granted subset of the mah module, and calls init().
+//
+// mah is installed *after* the top-level code, not before. That ordering is the
+// whole safety argument:
+//
+//   - The manifest is read by executing the same bytes in a throwaway VM that
+//     has no mah. If the real VM had mah during its top-level run, the file
+//     could tell the two apart — `if mah then ... else ... end` — and declare a
+//     narrow manifest to a human reading the source while the read that decides
+//     the grants took the other branch. Running both without mah makes the two
+//     environments identical, so the declaration cannot depend on which run it
+//     is in.
+//   - Top-level code then cannot call mah at all, so it cannot commit side
+//     effects before the manifest it declared has been checked. Refusing a load
+//     afterwards can roll back registrations; it cannot roll back a created
+//     tag.
+//
+// Registration therefore belongs in init(), which is what the documentation has
+// always said and what the manifest read has always enforced by accident.
+func (pm *PluginManager) loadPlugin(dp DiscoveredPlugin) error {
+	pluginDir := dp.Dir
+	scriptPath := filepath.Join(pluginDir, "plugin.lua")
+
+	code, err := readPluginSource(scriptPath)
+	if err != nil {
+		return err
+	}
+	header, err := readPluginHeader(code, scriptPath)
+	if err != nil {
+		return err
+	}
+	if header.Name != dp.Name {
+		// The operator enabled a name. Loading a file that now calls itself
+		// something else would register it under an identity nobody chose.
+		return fmt.Errorf("plugin.lua now declares the name %q, not %q; restart the server to re-read the plugin directory",
+			header.Name, dp.Name)
+	}
+	if !header.Manifest.Equal(dp.Manifest) {
+		// The same argument as the name. The discovered list is what the manage
+		// UI renders and what an operator is looking at when they enable
+		// something; loading a different capability list than the one on screen
+		// makes that display a lie for the rest of the process's life.
+		return fmt.Errorf("plugin.lua declares different capabilities than it did at startup; " +
+			"restart the server to re-read the plugin directory")
+	}
+	if header.Manifest.APIVersion > PluginAPIVersion {
+		return fmt.Errorf("plugin declares api_version %d, but this server implements %d",
+			header.Manifest.APIVersion, PluginAPIVersion)
+	}
+
+	if len(header.Manifest.Network) > 0 || header.Manifest.AllowPrivateHosts {
+		// The field that most reads like a security control is the one that
+		// said nothing, while min_app_version — far less consequential —
+		// announced that it is unchecked. Egress enforcement is the next
+		// package; until it lands, a declared allowlist is a statement of
+		// intent and an operator should not read it as a restraint.
+		log.Printf("[plugin] %s declares a network allowlist (%s%s), which this server records but does "+
+			"not yet enforce", header.Name, strings.Join(header.Manifest.Network, ", "),
+			map[bool]string{true: "; allow_private_hosts", false: ""}[header.Manifest.AllowPrivateHosts])
+	}
+	if len(header.Manifest.Dependencies) > 0 {
+		log.Printf("[plugin] %s declares dependencies (%s), which this server records but does not yet enforce",
+			header.Name, strings.Join(header.Manifest.Dependencies, ", "))
+	}
+	if header.Manifest.MinAppVersion != "" {
+		// Recorded and shown, never enforced: there is no application version
+		// constant to compare against, and inventing one nobody maintains
+		// would be worse than saying so.
+		log.Printf("[plugin] %s declares min_app_version %q, which this server does not check",
+			header.Name, header.Manifest.MinAppVersion)
+	}
+
+	grants := header.Manifest.Capabilities()
+	logGrants(header.Name, header.Manifest, grants)
+
+	L := lua.NewState(lua.Options{SkipOpenLibs: true})
+	openPluginLibraries(L)
+	removeUnsafeBaseFunctions(L)
+
+	// The load holds this VM's lock from here until the plugin is published.
+	//
+	// init() runs Lua on L, and mah.start_job hands the same L to a worker
+	// goroutine that takes this lock before touching it. Without holding it,
+	// that worker finds the lock free and runs concurrently with init() —
+	// two goroutines inside one gopher-lua state, which corrupts its stack.
+	vmLock := &sync.Mutex{}
 	pm.mu.Lock()
-	pm.vmLocks[L] = &sync.Mutex{}
-	pm.mu.Unlock()
-
-	// pluginName is populated after DoFile reads the plugin table, but before
-	// init() is called. Closures in registerMahModule capture the pointer so
-	// they see the final value when invoked during init().
-	var pluginName string
-
-	// Register the mah module.
-	pm.registerMahModule(L, &pluginName)
-
-	// Execute plugin.lua.
-	if err := L.DoFile(scriptPath); err != nil {
+	if pm.closed.Load() {
+		// Registering under pm.mu, with the closed check inside it, is what
+		// makes this exclusive with Close: either Close sees this load in
+		// loadWg and waits for it, or this load sees closed and never starts.
+		pm.mu.Unlock()
 		L.Close()
+		return fmt.Errorf("plugin manager is shutting down")
+	}
+	pm.vmLocks[L] = vmLock
+	pm.loadWg.Add(1)
+	loadDone := make(chan struct{})
+	pm.loading[header.Name] = loadDone
+	pm.mu.Unlock()
+	defer func() {
+		pm.mu.Lock()
+		if pm.loading[header.Name] == loadDone {
+			delete(pm.loading, header.Name)
+		}
+		pm.mu.Unlock()
+		close(loadDone)
+		pm.loadWg.Done()
+	}()
+	vmLock.Lock()
+
+	// abandon revokes and unregisters *while still holding the VM lock*, then
+	// releases it and tears down.
+	//
+	// The order matters: a request can already be queued on this lock. Released
+	// first, that request acquires it, finds the liveness entry still present,
+	// and executes a page or endpoint belonging to a plugin whose load just
+	// failed. Revoking first means it re-checks, finds the state gone, and
+	// backs out — which is what LockVM's post-acquire check is for.
+	abandon := func() {
+		pm.mu.Lock()
+		mu, owned := pm.revokeLocked(L)
+		pm.unregisterPluginLocked(header.Name, L)
+		pm.mu.Unlock()
+		vmLock.Unlock()
+		if owned {
+			pm.finishTeardown(header.Name, L, mu)
+		}
+	}
+
+	// The top-level run is bounded. The header read has its own deadline, but
+	// this one holds the VM lock too, so a plugin that never returns holds the
+	// enable request and a core with it.
+	//
+	// The deadline covers only the top-level code, and is dropped before
+	// init(). gopher-lua copies the parent's context into a coroutine when it
+	// is created and never refreshes it, so a context still set across init()
+	// would be inherited by any coroutine created there and then cancelled out
+	// from under it when the load finished — see
+	// TestInvocation_CoroutineWriteUsesTheCurrentRequestActor, which pins
+	// exactly that shape. init() is therefore unbounded, as it has always been:
+	// a plugin that hangs there hangs its own enable request, and an operator
+	// who installed the file could have hung the process a dozen other ways.
+	loadCtx, cancelLoad := context.WithTimeout(context.Background(), pluginLoadTimeout)
+	L.SetContext(loadCtx)
+
+	// Execute plugin.lua — the same bytes the manifest was read from, in the
+	// same mah-less environment the manifest was read in.
+	fn, err := L.Load(bytes.NewReader(code), scriptPath)
+	if err != nil {
+		cancelLoad()
+		abandon()
+		return fmt.Errorf("executing plugin.lua: %w", err)
+	}
+	L.Push(fn)
+	err = L.PCall(0, lua.MultRet, nil)
+
+	// Everything below reaches into this VM from Go — reading `plugin`,
+	// installing `mah`, fetching `init` — and those go through _G, which
+	// honours metamethods. A plugin that leaves a metatable on _G would have
+	// __index/__newindex run as Lua *outside* any PCall and, in a moment, with
+	// no deadline: an error there becomes a panic out of EnablePlugin, and a
+	// loop there hangs the load with the VM lock held. Nothing legitimate needs
+	// a metatable on the globals table.
+	L.G.Global.Metatable = lua.LNil
+
+	L.RemoveContext()
+	cancelLoad()
+	if err != nil {
+		abandon()
 		return fmt.Errorf("executing plugin.lua: %w", err)
 	}
 
-	// Read plugin metadata from the global `plugin` table.
-	info := PluginInfo{Dir: pluginDir}
-	pluginTable := L.GetGlobal("plugin")
-	if tbl, ok := pluginTable.(*lua.LTable); ok {
-		if v := tbl.RawGetString("name"); v != lua.LNil {
-			info.Name = v.String()
-		}
-		if v := tbl.RawGetString("version"); v != lua.LNil {
-			info.Version = v.String()
-		}
-		if v := tbl.RawGetString("description"); v != lua.LNil {
-			info.Description = v.String()
-		}
+	// Both runs saw the same bytes in the same environment, so a disagreement
+	// now means the declaration is not a function of the file — it varies run
+	// to run. Nothing may be granted on that basis.
+	live, err := readPluginIdentity(L)
+	if err != nil || !live.Manifest.Equal(header.Manifest) ||
+		live.Name != header.Name || live.Version != header.Version || live.Description != header.Description {
+		abandon()
+		return fmt.Errorf("plugin.lua declares something different each time it runs; " +
+			"its name, version, description and manifest must be the same on every execution")
 	}
 
-	pluginName = info.Name
+	// Only now does the plugin get its host functions, and only the granted
+	// ones. Closures in registerMahModule capture the name pointer.
+	pluginName := header.Name
+	pm.registerMahModule(L, &pluginName, grants)
+
+	info := PluginInfo{
+		Name:        header.Name,
+		Version:     header.Version,
+		Description: header.Description,
+		Dir:         pluginDir,
+		Manifest:    header.Manifest,
+	}
 
 	// Call init() if it exists.
+	//
+	// Unbounded, for the coroutine reason above — so if it hangs, say which
+	// plugin is hanging. Boot enables plugins before the listener is bound, and
+	// the symptom is otherwise a server that never starts and never explains.
+	stuck := time.AfterFunc(pluginLoadTimeout, func() {
+		log.Printf("[plugin] warning: %s has been inside init() for over %s and is holding its load "+
+			"(and, at startup, the server's start-up) — it will not be interrupted",
+			header.Name, pluginLoadTimeout)
+	})
+	defer stuck.Stop()
+
 	initFn := L.GetGlobal("init")
 	if initFn != lua.LNil {
 		if err := L.CallByParam(lua.P{
@@ -332,53 +715,161 @@ func (pm *PluginManager) loadPlugin(pluginDir, scriptPath string) error {
 			NRet:    0,
 			Protect: true,
 		}); err != nil {
-			L.Close()
+			// Registrations made before the error must go with it. Left
+			// behind, they name a state that is about to be closed, and the
+			// next render of one calls into a closed LState — a segfault
+			// inside gopher-lua, from a plugin that merely failed to load.
+			abandon()
 			return fmt.Errorf("calling init(): %w", err)
 		}
 	}
 
 	pm.mu.Lock()
+	if pm.closed.Load() {
+		// The manager shut down while this plugin was loading. Publishing now
+		// would leave a plugin nobody can disable and a VM nobody closes.
+		pm.mu.Unlock()
+		abandon()
+		return fmt.Errorf("plugin manager is shutting down")
+	}
 	pm.plugins = append(pm.plugins, info)
 	pm.states = append(pm.states, L)
 	pm.mu.Unlock()
 
+	// Published: anything that queued behind this lock may now run.
+	vmLock.Unlock()
+
 	return nil
+}
+
+
+// jobOwnedBy looks up a job and confirms it belongs to the calling plugin.
+//
+// The reporters take a job id and find it in one process-wide map, so without
+// this a plugin could complete or fail another plugin's work — including work
+// it never had any capability to create.
+func (pm *PluginManager) jobOwnedBy(jobID, pluginName string) (*ActionJob, bool) {
+	pm.actionJobsMu.RLock()
+	job, ok := pm.actionJobs[jobID]
+	pm.actionJobsMu.RUnlock()
+	if !ok || job.PluginName != pluginName {
+		return nil, false
+	}
+	return job, true
+}
+
+// logGrants records what a plugin was given, and what it was not.
+//
+// A plugin with no manifest gets everything, which is the one case an operator
+// most needs told: it is the state the manifest exists to replace, and it is
+// invisible in the code. For a plugin that does declare one, the withheld
+// modules are named because an ungranted key is simply absent — which keeps
+// `if mah.kv then` working — so the only other symptom is "attempt to index a
+// nil value" somewhere inside the plugin.
+func logGrants(name string, manifest Manifest, grants CapabilitySet) {
+	if !manifest.Declared {
+		log.Printf("[plugin] %s: no manifest — running with full access to every mah module. "+
+			"Add `api_version = %d` and a `capabilities` list to limit it; unmanifested plugins "+
+			"stop being accepted at the next api_version bump.", name, PluginAPIVersion)
+		return
+	}
+	// The job_* reporters come with either actions or jobs, so naming them on
+	// the withheld line for one while the other is granted tells the operator a
+	// function is absent when it is installed.
+	reportersInstalled := grants.Has(CapActions) || grants.Has(CapJobs)
+	var withheld []string
+	for _, cap := range AllCapabilities {
+		if grants.Has(cap) {
+			continue
+		}
+		surface := CapabilitySurfaces[cap]
+		if (cap == CapJobs || cap == CapActions) && reportersInstalled {
+			surface = CapabilitySurfacesWithoutReporters[cap]
+		}
+		withheld = append(withheld, fmt.Sprintf("%s (capability %q)", surface, cap))
+	}
+	if len(withheld) > 0 {
+		log.Printf("[plugin] %s: not installed: %s", name, strings.Join(withheld, "; "))
+	}
 }
 
 // registerMahModule sets up the mah.on, mah.inject, mah.log, mah.page, mah.menu,
 // and mah.abort functions in the given Lua state. pluginNamePtr is populated by
 // loadPlugin after reading the plugin table, before init() is called.
-func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string) {
+//
+// grants decides what is installed. An ungranted key is never set, so there is
+// nothing to guard at the call sites and nothing for a plugin to reach. Keep
+// every capability decision in this function (and registerDbModule's read/write
+// split) — internal/arch/plugin_capability_gate_test.go fails the build when a
+// registration appears without one.
+func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string, grants CapabilitySet) {
 	mahMod := L.NewTable()
 
-	mahMod.RawSetString("on", L.NewFunction(func(L *lua.LState) int {
+	// setIf installs a root-level mah function only when its capability is
+	// granted. Capability "" means always installed: json, util, log,
+	// html_escape, sleep, abort, doc and get_setting read or write nothing
+	// outside the plugin itself.
+	setIf := func(capability, name string, fn lua.LGFunction) {
+		if capability != "" && !grants.Has(capability) {
+			return
+		}
+		mahMod.RawSetString(name, L.NewFunction(fn))
+	}
+
+	// setIfAny installs a function that more than one capability implies. The
+	// job reporters are the case: an async action is handed a job_id and is
+	// expected to report on it, so "actions" has to reach them, while creating
+	// work of its own stays behind "jobs".
+	setIfAny := func(capabilities []string, name string, fn lua.LGFunction) {
+		for _, c := range capabilities {
+			if grants.Has(c) {
+				mahMod.RawSetString(name, L.NewFunction(fn))
+				return
+			}
+		}
+	}
+
+	setIf(CapHooks, "on", func(L *lua.LState) int {
 		eventName := L.CheckString(1)
 		handler := L.CheckFunction(2)
+		// mainState, not L: a registration made from inside a coroutine would
+		// otherwise be stamped with the coroutine's state, which no dispatch
+		// and no teardown ever matches — so it could never fire and could never
+		// be removed.
+		owner := mainState(L)
 
 		pm.mu.Lock()
+		if !pm.stateMayRegisterLocked(L) {
+			pm.mu.Unlock()
+			return 0
+		}
 		pm.hooks[eventName] = append(pm.hooks[eventName], hookEntry{
-			state:      L,
+			state:      owner,
 			fn:         handler,
 			pluginName: *pluginNamePtr,
 		})
 		pm.mu.Unlock()
 		return 0
-	}))
+	})
 
-	mahMod.RawSetString("inject", L.NewFunction(func(L *lua.LState) int {
+	setIf(CapInject, "inject", func(L *lua.LState) int {
 		slotName := L.CheckString(1)
 		renderFn := L.CheckFunction(2)
 
 		pm.mu.Lock()
+		if !pm.stateMayRegisterLocked(L) {
+			pm.mu.Unlock()
+			return 0
+		}
 		pm.injections[slotName] = append(pm.injections[slotName], injectionEntry{
-			state: L,
+			state: mainState(L),
 			fn:    renderFn,
 		})
 		pm.mu.Unlock()
 		return 0
-	}))
+	})
 
-	mahMod.RawSetString("log", L.NewFunction(func(L *lua.LState) int {
+	setIf("", "log", func(L *lua.LState) int {
 		level := L.CheckString(1)
 		message := L.CheckString(2)
 
@@ -393,15 +884,15 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 			log.Printf("[plugin][%s] %s", level, message)
 		}
 		return 0
-	}))
+	})
 
-	mahMod.RawSetString("abort", L.NewFunction(func(L *lua.LState) int {
+	setIf("", "abort", func(L *lua.LState) int {
 		reason := L.CheckString(1)
 		L.RaiseError("PLUGIN_ABORT: %s", reason)
 		return 0
-	}))
+	})
 
-	mahMod.RawSetString("get_setting", L.NewFunction(func(L *lua.LState) int {
+	setIf("", "get_setting", func(L *lua.LState) int {
 		key := L.CheckString(1)
 		name := *pluginNamePtr
 
@@ -431,9 +922,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 			L.Push(lua.LString(fmt.Sprintf("%v", v)))
 		}
 		return 1
-	}))
+	})
 
-	mahMod.RawSetString("page", L.NewFunction(func(L *lua.LState) int {
+	setIf(CapPages, "page", func(L *lua.LState) int {
 		path := L.CheckString(1)
 		handler := L.CheckFunction(2)
 
@@ -444,15 +935,19 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 
 		name := *pluginNamePtr
 		pm.mu.Lock()
+		if !pm.stateMayRegisterLocked(L) {
+			pm.mu.Unlock()
+			return 0
+		}
 		if pm.pages[name] == nil {
 			pm.pages[name] = make(map[string]pageEntry)
 		}
-		pm.pages[name][path] = pageEntry{state: L, fn: handler}
+		pm.pages[name][path] = pageEntry{state: mainState(L), fn: handler}
 		pm.mu.Unlock()
 		return 0
-	}))
+	})
 
-	mahMod.RawSetString("menu", L.NewFunction(func(L *lua.LState) int {
+	setIf(CapPages, "menu", func(L *lua.LState) int {
 		label := L.CheckString(1)
 		path := L.CheckString(2)
 
@@ -465,16 +960,21 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		fullPath := "/plugins/" + name + "/" + path
 
 		pm.mu.Lock()
+		if !pm.stateMayRegisterLocked(L) {
+			pm.mu.Unlock()
+			return 0
+		}
 		pm.menuItems = append(pm.menuItems, MenuRegistration{
 			PluginName: name,
 			Label:      label,
 			FullPath:   fullPath,
+			state:      mainState(L),
 		})
 		pm.mu.Unlock()
 		return 0
-	}))
+	})
 
-	mahMod.RawSetString("action", L.NewFunction(func(L *lua.LState) int {
+	setIf(CapActions, "action", func(L *lua.LState) int {
 		tbl := L.CheckTable(1)
 		action, err := parseActionTable(L, tbl, *pluginNamePtr)
 		if err != nil {
@@ -482,6 +982,10 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 			return 0
 		}
 		pm.mu.Lock()
+		if !pm.stateMayRegisterLocked(L) {
+			pm.mu.Unlock()
+			return 0
+		}
 		for _, existing := range pm.actions[*pluginNamePtr] {
 			if existing.ID == action.ID {
 				pm.mu.Unlock()
@@ -489,21 +993,26 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 				return 0
 			}
 		}
+		action.state = mainState(L)
 		pm.actions[*pluginNamePtr] = append(pm.actions[*pluginNamePtr], *action)
 		pm.mu.Unlock()
 		return 0
-	}))
+	})
 
-	mahMod.RawSetString("block_type", L.NewFunction(func(L *lua.LState) int {
+	setIf(CapRender, "block_type", func(L *lua.LState) int {
 		tbl := L.CheckTable(1)
 		pbt, err := parseBlockTypeTable(L, tbl, *pluginNamePtr)
 		if err != nil {
 			L.ArgError(1, err.Error())
 			return 0
 		}
-		pbt.State = L
+		pbt.State = mainState(L)
 
 		pm.mu.Lock()
+		if !pm.stateMayRegisterLocked(L) {
+			pm.mu.Unlock()
+			return 0
+		}
 		for _, existing := range pm.blockTypes[*pluginNamePtr] {
 			if existing.TypeName == pbt.TypeName {
 				pm.mu.Unlock()
@@ -512,22 +1021,28 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 			}
 		}
 		pm.blockTypes[*pluginNamePtr] = append(pm.blockTypes[*pluginNamePtr], pbt)
-		pm.mu.Unlock()
-
+		// Under pm.mu, with the local record: a teardown landing between the
+		// two would remove the record and then watch this add the global entry
+		// it can no longer find to remove.
 		block_types.RegisterBlockType(pbt)
+		pm.mu.Unlock()
 		return 0
-	}))
+	})
 
-	mahMod.RawSetString("display_type", L.NewFunction(func(L *lua.LState) int {
+	setIf(CapRender, "display_type", func(L *lua.LState) int {
 		tbl := L.CheckTable(1)
 		dt, err := parseDisplayTypeTable(L, tbl, *pluginNamePtr)
 		if err != nil {
 			L.ArgError(1, err.Error())
 			return 0
 		}
-		dt.State = L
+		dt.State = mainState(L)
 
 		pm.mu.Lock()
+		if !pm.stateMayRegisterLocked(L) {
+			pm.mu.Unlock()
+			return 0
+		}
 		for _, existing := range pm.displayTypes[*pluginNamePtr] {
 			if existing.TypeName == dt.TypeName {
 				pm.mu.Unlock()
@@ -538,18 +1053,22 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		pm.displayTypes[*pluginNamePtr] = append(pm.displayTypes[*pluginNamePtr], dt)
 		pm.mu.Unlock()
 		return 0
-	}))
+	})
 
-	mahMod.RawSetString("shortcode", L.NewFunction(func(L *lua.LState) int {
+	setIf(CapRender, "shortcode", func(L *lua.LState) int {
 		tbl := L.CheckTable(1)
 		sc, err := parseShortcodeTable(L, tbl, *pluginNamePtr)
 		if err != nil {
 			L.ArgError(1, err.Error())
 			return 0
 		}
-		sc.State = L
+		sc.State = mainState(L)
 
 		pm.mu.Lock()
+		if !pm.stateMayRegisterLocked(L) {
+			pm.mu.Unlock()
+			return 0
+		}
 		for _, existing := range pm.shortcodes[*pluginNamePtr] {
 			if existing.TypeName == sc.TypeName {
 				pm.mu.Unlock()
@@ -560,12 +1079,12 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		pm.shortcodes[*pluginNamePtr] = append(pm.shortcodes[*pluginNamePtr], sc)
 		pm.mu.Unlock()
 		return 0
-	}))
+	})
 
-	mahMod.RawSetString("doc", L.NewFunction(func(L *lua.LState) int {
+	setIf("", "doc", func(L *lua.LState) int {
 		tbl := L.CheckTable(1)
 
-		doc := &PluginDoc{PluginName: *pluginNamePtr}
+		doc := &PluginDoc{PluginName: *pluginNamePtr, State: mainState(L)}
 
 		if v := tbl.RawGetString("name"); v == lua.LNil {
 			L.ArgError(1, "missing required field 'name'")
@@ -616,6 +1135,10 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		}
 
 		pm.mu.Lock()
+		if !pm.stateMayRegisterLocked(L) {
+			pm.mu.Unlock()
+			return 0
+		}
 		// Check name uniqueness against other docs.
 		for _, existing := range pm.docs[*pluginNamePtr] {
 			if existing.Name == doc.Name {
@@ -635,9 +1158,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		pm.docs[*pluginNamePtr] = append(pm.docs[*pluginNamePtr], doc)
 		pm.mu.Unlock()
 		return 0
-	}))
+	})
 
-	mahMod.RawSetString("api", L.NewFunction(func(L *lua.LState) int {
+	setIf(CapAPI, "api", func(L *lua.LState) int {
 		method := strings.ToUpper(L.CheckString(1))
 		path := L.CheckString(2)
 		handler := L.CheckFunction(3)
@@ -671,19 +1194,23 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		key := method + ":" + path
 
 		pm.mu.Lock()
+		if !pm.stateMayRegisterLocked(L) {
+			pm.mu.Unlock()
+			return 0
+		}
 		if pm.apiEndpoints[name] == nil {
 			pm.apiEndpoints[name] = make(map[string]*APIEndpoint)
 		}
 		pm.apiEndpoints[name][key] = &APIEndpoint{
-			state:   L,
+			state:   mainState(L),
 			fn:      handler,
 			timeout: timeout,
 		}
 		pm.mu.Unlock()
 		return 0
-	}))
+	})
 
-	mahMod.RawSetString("job_progress", L.NewFunction(func(L *lua.LState) int {
+	setIfAny([]string{CapActions, CapJobs}, "job_progress", func(L *lua.LState) int {
 		jobID := L.CheckString(1)
 		percent := L.CheckInt(2)
 		message := L.CheckString(3)
@@ -694,11 +1221,10 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 			percent = 100
 		}
 
-		pm.actionJobsMu.RLock()
-		job, ok := pm.actionJobs[jobID]
-		pm.actionJobsMu.RUnlock()
-
+		job, ok := pm.jobOwnedBy(jobID, *pluginNamePtr)
 		if !ok {
+			// Same message whether the job does not exist or belongs to
+			// somebody else, so ids stay unguessable.
 			L.ArgError(1, "unknown job_id")
 			return 0
 		}
@@ -716,17 +1242,16 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 			pm.notifyActionJobSubscribers("updated", job)
 		}
 		return 0
-	}))
+	})
 
-	mahMod.RawSetString("job_complete", L.NewFunction(func(L *lua.LState) int {
+	setIfAny([]string{CapActions, CapJobs}, "job_complete", func(L *lua.LState) int {
 		jobID := L.CheckString(1)
 		resultTbl := L.OptTable(2, nil)
 
-		pm.actionJobsMu.RLock()
-		job, ok := pm.actionJobs[jobID]
-		pm.actionJobsMu.RUnlock()
-
+		job, ok := pm.jobOwnedBy(jobID, *pluginNamePtr)
 		if !ok {
+			// Same message whether the job does not exist or belongs to
+			// somebody else, so ids stay unguessable.
 			L.ArgError(1, "unknown job_id")
 			return 0
 		}
@@ -750,17 +1275,16 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 
 		pm.notifyActionJobSubscribers("updated", job)
 		return 0
-	}))
+	})
 
-	mahMod.RawSetString("job_fail", L.NewFunction(func(L *lua.LState) int {
+	setIfAny([]string{CapActions, CapJobs}, "job_fail", func(L *lua.LState) int {
 		jobID := L.CheckString(1)
 		errMsg := L.CheckString(2)
 
-		pm.actionJobsMu.RLock()
-		job, ok := pm.actionJobs[jobID]
-		pm.actionJobsMu.RUnlock()
-
+		job, ok := pm.jobOwnedBy(jobID, *pluginNamePtr)
 		if !ok {
+			// Same message whether the job does not exist or belongs to
+			// somebody else, so ids stay unguessable.
 			L.ArgError(1, "unknown job_id")
 			return 0
 		}
@@ -772,14 +1296,23 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 
 		pm.notifyActionJobSubscribers("updated", job)
 		return 0
-	}))
+	})
 
 	// mah.start_job(label, fn) — create an async job and run fn(job_id) in a background goroutine.
 	// Returns the job ID immediately. The callback receives the job_id as its argument and can use
 	// mah.job_progress, mah.job_complete, mah.job_fail to report status.
-	mahMod.RawSetString("start_job", L.NewFunction(func(L *lua.LState) int {
+	setIf(CapJobs, "start_job", func(L *lua.LState) int {
 		label := L.CheckString(1)
 		fn := L.CheckFunction(2)
+
+		// A revoked plugin may not start new work. Without this the job is
+		// created, immediately failed by the worker (its VM is gone), and
+		// re-creates the in-flight WaitGroup that teardown had just deleted —
+		// leaving an entry nothing ever removes.
+		if !pm.stateIsLive(L) {
+			L.RaiseError("plugin has been disabled")
+			return 0
+		}
 
 		jobID := generateActionJobID()
 		job := &ActionJob{
@@ -820,9 +1353,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 
 		L.Push(lua.LString(jobID))
 		return 1
-	}))
+	})
 
-	mahMod.RawSetString("html_escape", L.NewFunction(func(L *lua.LState) int {
+	setIf("", "html_escape", func(L *lua.LState) int {
 		s := L.CheckString(1)
 		s = strings.ReplaceAll(s, "&", "&amp;")
 		s = strings.ReplaceAll(s, "<", "&lt;")
@@ -831,12 +1364,12 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		s = strings.ReplaceAll(s, "'", "&#39;")
 		L.Push(lua.LString(s))
 		return 1
-	}))
+	})
 
 	// mah.sleep(seconds) - blocks the current Lua VM for the given duration.
 	// Bounded to [0, 30] seconds to prevent abuse. Useful for polling external
 	// async APIs (e.g. fal.ai queue) from within a sync action handler.
-	mahMod.RawSetString("sleep", L.NewFunction(func(L *lua.LState) int {
+	setIf("", "sleep", func(L *lua.LState) int {
 		secs := L.CheckNumber(1)
 		if secs < 0 {
 			secs = 0
@@ -846,13 +1379,22 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string)
 		}
 		time.Sleep(time.Duration(float64(secs) * float64(time.Second)))
 		return 0
-	}))
+	})
 
-	pm.registerDbModule(L, mahMod)
-	pm.registerHttpModule(L, mahMod)
+	// Sub-modules. registerDbModule splits internally, because db:read and
+	// db:write share one table; the rest are whole-module grants.
+	pm.registerDbModule(L, mahMod, grants)
+	if grants.Has(CapHTTP) {
+		pm.registerHttpModule(L, mahMod)
+	}
+	if grants.Has(CapKV) {
+		pm.registerKvModule(L, mahMod, pluginNamePtr)
+	}
+	if grants.Has(CapImage) {
+		pm.registerImageModule(L, mahMod)
+	}
+	// Always installed: neither reads nor writes anything outside the plugin.
 	pm.registerJsonModule(L, mahMod)
-	pm.registerKvModule(L, mahMod, pluginNamePtr)
-	pm.registerImageModule(L, mahMod)
 	pm.registerUtilModule(L, mahMod)
 
 	L.SetGlobal("mah", mahMod)
@@ -880,6 +1422,11 @@ func (pm *PluginManager) GetDiscoveredPlugin(name string) *DiscoveredPlugin {
 // The discovered list is immutable after construction, so no lock is needed to read it.
 // loadPlugin handles its own locking for hook/injection/page/menu registration.
 func (pm *PluginManager) EnablePlugin(name string) error {
+	if pm.closed.Load() {
+		return fmt.Errorf("plugin manager is shutting down")
+	}
+
+
 	// Prevent concurrent enable attempts for the same plugin.
 	if _, loaded := pm.enabling.LoadOrStore(name, struct{}{}); loaded {
 		return fmt.Errorf("plugin %q is already being enabled", name)
@@ -907,8 +1454,7 @@ func (pm *PluginManager) EnablePlugin(name string) error {
 		return fmt.Errorf("plugin %q not found", name)
 	}
 
-	scriptPath := filepath.Join(dp.Dir, "plugin.lua")
-	if err := pm.loadPlugin(dp.Dir, scriptPath); err != nil {
+	if err := pm.loadPlugin(*dp); err != nil {
 		return fmt.Errorf("loading plugin %q: %w", name, err)
 	}
 
@@ -918,7 +1464,20 @@ func (pm *PluginManager) EnablePlugin(name string) error {
 // DisablePlugin deactivates a running plugin: removes all hooks, injections,
 // pages, menu items, and closes the Lua VM.
 func (pm *PluginManager) DisablePlugin(name string) error {
+	return pm.disablePlugin(name, false)
+}
+
+// disablePlugin is DisablePlugin, with waited recording whether it has already
+// waited out an in-flight load of this name.
+func (pm *PluginManager) disablePlugin(name string, waited bool) error {
 	pm.mu.Lock()
+
+	// Close nils plugins and states together; a disable that arrives after it
+	// used to find a name in one and index the other.
+	if pm.closed.Load() {
+		pm.mu.Unlock()
+		return fmt.Errorf("plugin manager is shutting down")
+	}
 
 	var targetState *lua.LState
 	var pluginIdx int = -1
@@ -930,104 +1489,321 @@ func (pm *PluginManager) DisablePlugin(name string) error {
 		}
 	}
 	if targetState == nil {
+		// Not enabled *yet* is a different answer from not enabled. A load in
+		// flight will publish in a moment, and disabling "nothing" would report
+		// success while the plugin came up behind it.
+		if done, loading := pm.loading[name]; loading && !waited {
+			pm.mu.Unlock()
+			select {
+			case <-done:
+				// Published or failed; either way the ordinary path can now see
+				// the truth. One retry only — a second wait would mean another
+				// enable started, which is a new decision, not this one.
+				return pm.disablePlugin(name, true)
+			case <-time.After(retireDrainTimeout):
+				return fmt.Errorf("plugin %q is still loading after %s and cannot be disabled yet; "+
+					"its init() has not returned", name, retireDrainTimeout)
+			}
+		}
 		pm.mu.Unlock()
 		return fmt.Errorf("plugin %q is not enabled", name)
 	}
 
-	// Remove hooks belonging to this state.
+	// Revoke in the same critical section as the unregister. Doing it later —
+	// inside the teardown, after pm.mu has been released — leaves a window in
+	// which the plugin is unregistered but still live, so an invocation already
+	// running can register again, and a concurrent re-enable's registrations
+	// can be overwritten by the generation being disposed of.
+	mu, owned := pm.revokeLocked(targetState)
+	pm.unregisterPluginLocked(name, targetState)
+
+	// Remove from active lists.
+	pm.plugins = append(pm.plugins[:pluginIdx], pm.plugins[pluginIdx+1:]...)
+	pm.states = append(pm.states[:pluginIdx], pm.states[pluginIdx+1:]...)
+
+	// Remove in-memory settings. Only a deliberate disable does this: a failed
+	// load must leave the operator's saved settings alone.
+	delete(pm.pluginSettings, name)
+
+	// Release pm.mu so in-flight goroutines can finish (they need VMLock).
+	pm.mu.Unlock()
+
+	if owned {
+		pm.finishTeardown(name, targetState, mu)
+	}
+
+	return nil
+}
+
+// unregisterPluginLocked removes every registration a plugin made. pm.mu must
+// be held.
+//
+// Hooks and injections are keyed by event and slot, so they are matched by
+// state; everything else is filed under the plugin's name. Both are needed:
+// the same plugin owns registrations of both shapes.
+func (pm *PluginManager) unregisterPluginLocked(name string, state *lua.LState) {
+	// Every removal matches the *state*, never the name alone.
+	//
+	// A name can be held by more than one VM over time: a teardown can still be
+	// finishing while the operator re-enables the plugin, so a name-keyed
+	// delete would take the live generation's pages and actions with it — and
+	// a sweep that skipped name-keyed removal whenever a replacement existed
+	// would leave the dead generation's registrations in place instead, which
+	// is the same bug facing the other way. Matching on the state is the only
+	// rule that is right in both orderings.
 	for event, entries := range pm.hooks {
 		var filtered []hookEntry
 		for _, e := range entries {
-			if e.state != targetState {
+			if e.state != state {
 				filtered = append(filtered, e)
 			}
 		}
 		pm.hooks[event] = filtered
 	}
 
-	// Remove injections belonging to this state.
 	for slot, entries := range pm.injections {
 		var filtered []injectionEntry
 		for _, e := range entries {
-			if e.state != targetState {
+			if e.state != state {
 				filtered = append(filtered, e)
 			}
 		}
 		pm.injections[slot] = filtered
 	}
 
-	// Remove pages for this plugin.
-	delete(pm.pages, name)
+	for path, entry := range pm.pages[name] {
+		if entry.state == state {
+			delete(pm.pages[name], path)
+		}
+	}
+	if len(pm.pages[name]) == 0 {
+		delete(pm.pages, name)
+	}
 
-	// Remove menu items for this plugin.
 	var filteredMenus []MenuRegistration
 	for _, m := range pm.menuItems {
-		if m.PluginName != name {
+		if m.state != state {
 			filteredMenus = append(filteredMenus, m)
 		}
 	}
 	pm.menuItems = filteredMenus
 
-	// Remove actions for this plugin.
-	delete(pm.actions, name)
-
-	// Unregister plugin block types from global registry.
-	for _, pbt := range pm.blockTypes[name] {
-		block_types.UnregisterBlockType(pbt.TypeName)
+	var filteredActions []ActionRegistration
+	for _, a := range pm.actions[name] {
+		if a.state != state {
+			filteredActions = append(filteredActions, a)
+		}
 	}
-	delete(pm.blockTypes, name)
+	if len(filteredActions) == 0 {
+		delete(pm.actions, name)
+	} else {
+		pm.actions[name] = filteredActions
+	}
 
-	// Remove display types for this plugin.
-	delete(pm.displayTypes, name)
+	// Block types also live in a process-global registry.
+	var filteredBlocks []*PluginBlockType
+	for _, pbt := range pm.blockTypes[name] {
+		if pbt.State == state {
+			block_types.UnregisterBlockType(pbt.TypeName)
+		} else {
+			filteredBlocks = append(filteredBlocks, pbt)
+		}
+	}
+	if len(filteredBlocks) == 0 {
+		delete(pm.blockTypes, name)
+	} else {
+		pm.blockTypes[name] = filteredBlocks
+	}
 
-	// Remove shortcodes and general docs for this plugin.
-	delete(pm.shortcodes, name)
-	delete(pm.docs, name)
+	var filteredDisplays []*PluginDisplayType
+	for _, dt := range pm.displayTypes[name] {
+		if dt.State != state {
+			filteredDisplays = append(filteredDisplays, dt)
+		}
+	}
+	if len(filteredDisplays) == 0 {
+		delete(pm.displayTypes, name)
+	} else {
+		pm.displayTypes[name] = filteredDisplays
+	}
 
-	// Remove API endpoints for this plugin.
-	delete(pm.apiEndpoints, name)
+	var filteredShortcodes []*PluginShortcode
+	for _, sc := range pm.shortcodes[name] {
+		if sc.State != state {
+			filteredShortcodes = append(filteredShortcodes, sc)
+		}
+	}
+	if len(filteredShortcodes) == 0 {
+		delete(pm.shortcodes, name)
+	} else {
+		pm.shortcodes[name] = filteredShortcodes
+	}
 
-	// Remove from active lists.
-	pm.plugins = append(pm.plugins[:pluginIdx], pm.plugins[pluginIdx+1:]...)
-	pm.states = append(pm.states[:pluginIdx], pm.states[pluginIdx+1:]...)
+	var filteredDocs []*PluginDoc
+	for _, d := range pm.docs[name] {
+		if d.State != state {
+			filteredDocs = append(filteredDocs, d)
+		}
+	}
+	if len(filteredDocs) == 0 {
+		delete(pm.docs, name)
+	} else {
+		pm.docs[name] = filteredDocs
+	}
 
-	// Remove in-memory settings.
-	delete(pm.pluginSettings, name)
+	for key, ep := range pm.apiEndpoints[name] {
+		if ep.state == state {
+			delete(pm.apiEndpoints[name], key)
+		}
+	}
+	if len(pm.apiEndpoints[name]) == 0 {
+		delete(pm.apiEndpoints, name)
+	}
+}
 
-	// Grab the in-flight WaitGroup before releasing the lock.
+// stateIsLive reports whether a VM has not been revoked. Takes pm.mu itself, so
+// callers must not hold it.
+func (pm *PluginManager) stateIsLive(L *lua.LState) bool {
+	if pm.closed.Load() {
+		return false
+	}
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	_, live := pm.vmLocks[mainState(L)]
+	return live
+}
+
+// stateMayRegisterLocked reports whether a VM is still entitled to register
+// things. pm.mu must be held.
+//
+// A revoked plugin's worker keeps running until it finishes, and it holds a
+// fully-installed mah table the whole time — so without this it can re-register
+// after its teardown swept, and even overwrite a *replacement* generation's
+// page by writing the same path. The vmLocks entry is the same liveness token
+// dispatch uses, so registration and dispatch agree on when a VM is gone.
+func (pm *PluginManager) stateMayRegisterLocked(L *lua.LState) bool {
+	if pm.closed.Load() {
+		return false
+	}
+	_, live := pm.vmLocks[mainState(L)]
+	return live
+}
+
+func (pm *PluginManager) revokeLocked(state *lua.LState) (*sync.Mutex, bool) {
+	mu, owned := pm.vmLocks[state]
+	delete(pm.vmLocks, state)
+	return mu, owned
+}
+
+// finishTeardown waits for a revoked plugin's in-flight async work, closes its
+// VM under mu, and sweeps whatever that work registered on the way out.
+//
+// The caller must already have revoked the state.
+func (pm *PluginManager) finishTeardown(name string, state *lua.LState, mu *sync.Mutex) {
 	pm.actionJobsMu.Lock()
 	wg := pm.actionInFlight[name]
 	delete(pm.actionInFlight, name)
 	pm.actionJobsMu.Unlock()
 
-	// Release pm.mu so in-flight goroutines can finish (they need VMLock).
-	pm.mu.Unlock()
-
-	if wg != nil {
-		wg.Wait()
-	}
-
-	// Close the state only once nothing is executing on it. Waiting on the action
-	// WaitGroup above does not cover hooks, injections, shortcodes, block/display
-	// renders, pages or API endpoints, all of which call into this state while
-	// holding its VM lock. Taking that lock here waits for whichever of them is
-	// in flight, and removing the vmLocks entry while still holding it is what
-	// lets LockVM tell a caller that queued behind us to back out instead of
-	// running against a closed state.
-	//
-	// pm.mu must not be held while acquiring the VM lock: a caller holding that
-	// lock takes pm.mu.RLock inside LockVM, so the reverse order would deadlock.
-	if mu := pm.VMLock(targetState); mu != nil {
-		mu.Lock()
+	// A worker that was already inside when the state was revoked still holds a
+	// fully-installed mah table, so it can register right up until it stops.
+	// stateMayRegisterLocked refuses those now, but the sweep is what removes
+	// anything that landed before the revocation.
+	sweep := func() {
 		pm.mu.Lock()
-		delete(pm.vmLocks, targetState)
+		pm.unregisterPluginLocked(name, state)
 		pm.mu.Unlock()
-		targetState.Close()
-		mu.Unlock()
 	}
 
-	return nil
+	closeUnderLock := func() {
+		if mu != nil {
+			mu.Lock()
+			state.Close()
+			mu.Unlock()
+			return
+		}
+		state.Close()
+	}
+
+	if wg != nil && !waitWithin(wg, retireDrainTimeout) {
+		// The caller is unblocked — an enable request must not wait out a job's
+		// whole allowance — but the plugin is already revoked, so the only
+		// thing still outstanding is closing the VM.
+		log.Printf("[plugin] warning: %s still has async work running after %s; "+
+			"closing its VM once that work stops", name, retireDrainTimeout)
+		go func() {
+			wg.Wait()
+			closeUnderLock()
+			sweep()
+		}()
+		return
+	}
+
+	closeUnderLock()
+	sweep()
 }
+
+
+// waitWithin waits for wg, reporting false if it did not finish in time.
+func waitWithin(wg *sync.WaitGroup, limit time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(limit):
+		return false
+	}
+}
+
+// closeState closes a plugin's LState exactly once, and only if this caller
+// owns the teardown.
+//
+// The vmLocks entry is the ownership token. LockVM acquires the lock and then
+// re-checks that the entry is still there, so of two teardowns racing, the
+// first deletes the entry and closes, and the second is told the state is
+// already gone. A caller that finds no entry must NOT close: an absent entry
+// does not mean nobody is inside — it means somebody else has already taken
+// ownership and may still be executing on it. Closing a live LState is a data
+// race and then a nil dereference inside gopher-lua.
+//
+// Taking the lock also waits for whatever is in flight: hooks, injections,
+// shortcodes, block and display renders, pages and API endpoints all call into
+// the state while holding it.
+//
+// pm.mu must NOT be held: LockVM takes pm.mu.RLock while holding the VM lock,
+// so the reverse order would deadlock.
+func closeState(pm *PluginManager, state *lua.LState) {
+	// The claim every teardown path uses: remove the entry under pm.mu — which
+	// is both the revocation and the ownership claim — and close only if this
+	// caller is the one that removed it.
+	//
+	// One protocol, shared with DisablePlugin and with a failed load: revoke
+	// under pm.mu — which is both the revocation and the claim — and close only
+	// if this caller is the one that removed the entry. Earlier versions of
+	// these paths claimed in opposite orders (lock-then-delete here,
+	// delete-then-lock there), which interleaves into a double close, and each
+	// grew its own copy until the live disable path had drifted away from the
+	// rule entirely.
+	pm.mu.Lock()
+	mu, owned := pm.revokeLocked(state)
+	pm.mu.Unlock()
+	if !owned {
+		return
+	}
+
+	if mu != nil {
+		mu.Lock()
+		state.Close()
+		mu.Unlock()
+		return
+	}
+	state.Close()
+}
+
 
 // IsEnabled returns whether a plugin is currently active.
 func (pm *PluginManager) IsEnabled(name string) bool {
@@ -1043,6 +1819,8 @@ func (pm *PluginManager) IsEnabled(name string) bool {
 
 // Plugins returns a copy of the loaded plugin info list.
 func (pm *PluginManager) Plugins() []PluginInfo {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
 	result := make([]PluginInfo, len(pm.plugins))
 	copy(result, pm.plugins)
 	return result
@@ -1323,9 +2101,26 @@ func (pm *PluginManager) TryLockVMWithin(L *lua.LState, wait time.Duration) (*sy
 // it replaces), but if shutdown needs a hard ceiling it should get one of its
 // own, in the shape DownloadManager.ShutdownDrainTimeout already uses.
 func (pm *PluginManager) Close() {
+	// Under pm.mu so it is exclusive with a load registering itself: a load
+	// that got in first is in loadWg and waited for below; one that arrives
+	// after sees closed and stops before creating anything.
+	pm.mu.Lock()
 	pm.closed.Store(true)
-	pm.httpWg.Wait() // wait for in-flight HTTP goroutines to finish
-	close(pm.done)
+	pm.mu.Unlock()
+	// Bounded: init() is deliberately unbounded (see loadPlugin), so a plugin
+	// wedged there must not turn shutdown into a hang too. A load that finishes
+	// after this re-checks closed under pm.mu and abandons itself.
+	if !waitWithin(&pm.loadWg, retireDrainTimeout) {
+		log.Printf("[plugin] warning: a plugin load is still running after %s; shutting down without it",
+			retireDrainTimeout)
+	}
+
+	// closed was set under pm.mu above, and beginHTTP adds under pm.mu.RLock —
+	// so every Add that will ever happen has happened before this Wait.
+	pm.httpWg.Wait()
+	// Once: Close is a deferred shutdown step and a t.Cleanup in a hundred
+	// tests, so it gets called twice — and closing a closed channel panics.
+	pm.closeDone.Do(func() { close(pm.done) })
 
 	// Same lifecycle DisablePlugin uses, for the same reason: pm.closed is
 	// checked on the way in, so a render or async action that passed that check
@@ -1342,29 +2137,42 @@ func (pm *PluginManager) Close() {
 	pm.mu.RUnlock()
 
 	for _, L := range states {
-		mu := pm.VMLock(L)
-		if mu == nil {
-			continue
-		}
-		mu.Lock()
-		pm.mu.Lock()
-		delete(pm.vmLocks, L)
-		pm.mu.Unlock()
-		L.Close()
-		mu.Unlock()
+		closeState(pm, L)
 	}
 
+	// Emptied, not niled. init() is unbounded and the wait above is not, so a
+	// load can still be running here — and every registration function writes
+	// its map while holding pm.mu. Assignment to a nil map panics; the panic is
+	// caught by the protected Lua call around it, but pm.mu is left locked
+	// forever and the next teardown blocks on it for the life of the process.
+	// An empty map takes the write harmlessly: nothing dispatches once closed.
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
+	// The process-global block-type registry outlives this manager, so entries
+	// pointing at VMs that are about to close have to go with them.
+	for _, types := range pm.blockTypes {
+		for _, pbt := range types {
+			block_types.UnregisterBlockType(pbt.TypeName)
+		}
+	}
+
+	pm.plugins = nil
 	pm.states = nil
-	pm.hooks = nil
-	pm.injections = nil
-	pm.pages = nil
+	pm.hooks = make(map[string][]hookEntry)
+	pm.injections = make(map[string][]injectionEntry)
+	pm.pages = make(map[string]map[string]pageEntry)
 	pm.menuItems = nil
-	pm.actions = nil
-	pm.blockTypes = nil
-	pm.displayTypes = nil
-	pm.shortcodes = nil
-	pm.apiEndpoints = nil
-	pm.vmLocks = nil
+	pm.actions = make(map[string][]ActionRegistration)
+	pm.blockTypes = make(map[string][]*PluginBlockType)
+	pm.displayTypes = make(map[string][]*PluginDisplayType)
+	pm.shortcodes = make(map[string][]*PluginShortcode)
+	pm.docs = make(map[string][]*PluginDoc)
+	// Settings hold operator secrets (a password-typed setting is an API key),
+	// so they go with everything else rather than outliving the manager.
+	pm.pluginSettings = make(map[string]map[string]any)
+	pm.apiEndpoints = make(map[string]map[string]*APIEndpoint)
+	// vmLocks is deliberately left alone. closeState removes each entry as it
+	// closes that state, and a load still running here needs its entry to be
+	// able to close its own VM afterwards. Registration is already refused once
+	// closed is set, so a surviving entry grants nothing.
 }

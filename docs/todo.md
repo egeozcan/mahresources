@@ -1,3 +1,834 @@
+# Plugin package format — manifest, grants, egress (2026-08-16)
+
+Plan: [docs/plans/2026-08-16-plugin-package-format.md](plans/2026-08-16-plugin-package-format.md).
+
+Package 2 of the plugin roadmap: item G. Second because it closes a live
+security hole (sharp edge #4, no egress control on `mah.http`) and because its
+grant mechanism is what lets package 3's deny-lift land per plugin rather than
+globally.
+
+## Batch 1 — manifest and capabilities
+
+- [x] `plugin.api_version` present is the single discriminator for "has a
+      manifest". `PluginAPIVersion = 1`; a higher declared version refuses to
+      load.
+- [x] Manifest fields parsed and validated: `capabilities`, `network`,
+      `allow_private_hosts`, `dependencies`, `min_app_version` (warn-only —
+      there is no app version constant to enforce against).
+- [x] Unknown capability names, non-string entries and unparseable `network`
+      entries are errors, not silent no-ops.
+- [x] The `mah` table is built from the granted set: an ungranted module is
+      absent, not stubbed, so `if mah.kv then` still works.
+- [x] `db:read` / `db:write` split follows `querierFor` vs `writerFor`.
+- [x] `inject` is its own capability, separate from `render`: six of its slots
+      live in the base layout, so it runs on every page.
+- [x] One log line per withheld module, so a nil index is diagnosable — and a
+      loud one for a plugin with no manifest, which is the state the manifest
+      exists to replace.
+- [x] Arch test: a new root-`mah` key or `register*Module` fails the build
+      without a capability decision. Mutation-tested, including the `root :=
+      mahMod` alias and a `setRead` body that reaches `writerFor`.
+
+### What round-1 review changed
+
+Reviewed by pi (`openai-codex/gpt-5.6-sol:high`) and an Opus agent against a
+pinned worktree. Eight findings were real and are fixed; the ninth is recorded
+as a follow-up.
+
+- **Grants now come from the file that actually runs.** The manifest was read at
+  discovery and the grants built from it, but `plugin.lua`'s *top-level* code
+  runs before any post-hoc comparison could notice the file had changed — so a
+  swapped file executed under the old grants and the refusal arrived after the
+  damage. `loadPlugin` now reads the file once, parses the manifest out of those
+  bytes in a throwaway VM, and executes the same bytes. There is no window
+  between the two, and no stale-manifest branch left to reason about.
+  - This means an edited file is honoured as edited. Durable consent (batch 2)
+    is what stops a file widening its own grant; the discovery read never could
+    — an attacker who can rewrite `plugin.lua` can declare anything and wait for
+    a restart.
+- **A metatable on the `plugin` table is refused.** Manifest fields are read with
+  `RawGetString`, which ignores `__index`, so a table inheriting `api_version`
+  read as legacy — full access — while the file appeared to declare a narrow
+  manifest. Honouring `__index` would be worse: an `__index` *function* can
+  answer the parser and the reader differently.
+- **A failed load leaves nothing callable.** A plugin that registered an endpoint
+  and then errored in `init()` kept its registrations while its VM was closed
+  underneath them; the next request entered a closed `LState` and segfaulted
+  inside gopher-lua. pi reproduced it. Registration rollback and teardown are now
+  one path shared with `DisablePlugin` (`unregisterPluginLocked` + `retireState`),
+  which takes the VM lock, drops the lock entry while holding it, then closes.
+  This matters more than it did: under-declaring a capability is now the most
+  likely way to fail `init()`.
+- **Array fields must be arrays.** `ForEach` discards keys, so
+  `capabilities = {secret = "db:write"}` granted a write capability while looking
+  like anything but a capability list. Dense integer keys are now required.
+- **Address rules and name rules never cross.** `*.0.0.1` parsed as a hostname
+  pattern and matched `127.0.0.1`; `*.fal.ai` matched the empty-label host
+  `.fal.ai`. A host that parses as an IP is now matched only by IP/CIDR rules, a
+  name only by name rules, and a numeric last label is refused outright (no
+  top-level domain is numeric).
+- **`plugin.lua` must define a named `plugin` table.** It used to be optional:
+  a plugin without one loaded anonymously and registered under the empty name.
+- **The job reporters are reachable from `actions`.** An async action is handed a
+  `job_id` and is expected to report on it, so requiring `jobs` for
+  `mah.job_progress` would hand a plugin an id it cannot use, with no error
+  saying why. `mah.start_job` — creating work of its own — stays behind `jobs`.
+- **A plugin can only report on its own jobs** (pre-existing). The reporters
+  looked a job up by id in one process-wide map with no ownership check, so one
+  plugin could complete or fail another's work. Unknown and not-yours give the
+  same message, so ids stay unguessable.
+### What round-2 review changed
+
+Both reviewers again, on the round-1 result. Round 1's fixes held; round 2 found
+four more, two of them crashes.
+
+- **A plugin could declare one manifest and run another.** The manifest is read
+  by executing the file in a VM with no `mah`, so the file can tell the two runs
+  apart — `if mah then ... else ... end` — and the read that decides the grants
+  is the one without `mah`. A file that reads as legacy there got the full
+  surface while its source showed a narrow manifest. Reading the same *bytes* is
+  not reading the same *declaration*: the environment is part of the input. The
+  executed file must now re-declare the same manifest, and a mismatch refuses the
+  load — which is safe to check after execution only because a refusal now rolls
+  back completely.
+- **`mah.start_job` from `init()` ran two goroutines inside one `LState`.**
+  `init()` executed without the VM lock, so the worker took the free lock and
+  entered the same gopher-lua state concurrently — 30 data races and stack
+  corruption under `-race`. The load now holds the VM lock from VM creation
+  until the plugin is published; failure paths release it before teardown,
+  which takes it again after waiting on in-flight workers.
+- **Two teardown paths could close one state twice, or close a live one.**
+  `DisablePlugin` racing `Close` left `retireState` seeing no lock entry and
+  closing anyway — while a page handler was executing on it. The `vmLocks` entry
+  is now the ownership token: `LockVM` re-checks it after acquiring, so of two
+  racing teardowns the first deletes and closes and the second is told the state
+  is already gone. A caller that finds no entry must *not* close — an absent
+  entry means somebody else owns the teardown, not that nobody is inside.
+- **The manifest read had no time bound.** `while true do end` at the top of one
+  `plugin.lua` held `NewPluginManager` forever — at boot, for a plugin nobody
+  had enabled. Bounded by `pluginHeaderTimeout` (5s), after which that plugin is
+  skipped and its neighbours load.
+- Also: `strings.Trim(s, "[]")` stripped arbitrary bracket runs, so `[[::1]]` and
+  `]::1[` both parsed as `::1` — a rule whose text differs from the address it
+  grants. And two more arch-guard holes: deleting the check *inside* `setIf`
+  disabled every gate at once (the installers were exempt from the rule because
+  they are what writes `mahMod`), and `dbMod` had no identifier-scope rule, so
+  `alias := dbMod` escaped it. Both now fail the build, mutation-tested.
+
+### What the second reviewer's round-2 pass changed
+
+The two reviewers ran on the same state and found different things. Beyond
+confirming the load-time race independently, this pass added:
+
+- **`db:write` now implies `db:read`, because it always did.** The writers return
+  the entity they wrote, and `patch_note(id, {})` changes nothing while handing
+  back the whole note — so a write-only grant was a read of anything by id,
+  wearing a write's clothes, while the consent label sold the two as separate
+  powers. Stripping the return values was the other option, but a plugin needs
+  them and the next accessor that reads state in order to write it would
+  reintroduce the leak. The implication is explicit instead, so the label is
+  true. The reverse never holds: `db:read` installs no writer, and that is the
+  direction the split exists for.
+- **A failed load can no longer block an enable for five minutes.** The teardown
+  waited unbounded on the plugin's in-flight jobs, so a failing `init()` that
+  had already started one held the HTTP request for the job's whole allowance
+  with the plugin's name still claimed against retries. Bounded at 5s, after
+  which the VM is left open rather than closed underneath a running worker —
+  the same trade `ShutdownDrainTimeout` already makes for download workers, and
+  the registrations are gone either way so nothing can reach it.
+- **Plugin names are validated.** The name is a map key, a URL segment in every
+  menu href, and the prefix of every shortcode the plugin registers, and nothing
+  checked it: a plugin called `My Plugin` registered shortcodes no author could
+  ever write (one of the report's open sharp edges) and put a space in a URL.
+  Now held to the shortcode grammar. **Breaking** for a third-party plugin with
+  an unusual name; all six bundled ones already comply.
+- **`Fingerprint()` no longer over-splits.** It hashed the raw declared text, so
+  `Fal.Run`, `fal.run.` and `fal.run` were three policies — three connection
+  pools in batch 3 for one rule. It now hashes the normalized rule. The reviewer
+  checked the dangerous direction too and confirmed no collision is possible
+  between policies that are *not* interchangeable.
+- **Two more arch-guard rules.** A positive `grants.Has` check is not enough on
+  its own — `if grants.Has(CapKV) { registerHttpModule(...) }` passes one — so
+  each sub-module now pins the capability that must gate it. And a capability
+  passed as a bare string rather than a `Cap` constant is rejected: it would
+  match no grant, installing the function for nobody, or for everybody if
+  spelled `""`.
+
+### What round-3 review changed
+
+- **Top-level code no longer gets `mah` at all.** Round 2 made the executed file
+  re-declare its manifest, which refused a lying plugin — but only *after* its
+  top-level code had already run under the header's grants, so
+  `mah.db.create_tag(...)` was committed before the refusal. Rollback undoes
+  registrations, not a created tag. `mah` is now installed *after* the top-level
+  run, which fixes both halves at once: the manifest read and the real run
+  become identical environments, so `if mah then` cannot make the declaration
+  vary; and top-level code cannot act at all before the manifest it declared has
+  been checked. Registration belongs in `init()` — which the documentation always
+  said and the manifest read had been enforcing by accident.
+- **The top-level run is bounded** (30s). Only the header read was, so
+  `if mah then while true do end end` passed the read and then spun forever
+  holding the VM lock and the enable request. `init()` is deliberately *not*
+  bounded: gopher-lua copies the parent context into a coroutine at creation and
+  never refreshes it, so a deadline spanning `init()` is inherited by any
+  coroutine created there and cancelled out from under it when the load
+  finishes — which is exactly what
+  `TestInvocation_CoroutineWriteUsesTheCurrentRequestActor` pins.
+- **`Close` no longer loses a plugin that is mid-load.** A loading VM is in
+  `vmLocks` but not yet in `states`, so `Close` walked past it, niled the
+  registries, and the load then published into them. Loads now register in a
+  WaitGroup under `pm.mu` with the closed check inside the same critical
+  section: either `Close` sees the load and waits, or the load sees `closed` and
+  stops before creating anything.
+- **`DisablePlugin` after `Close` panicked** — `Close` niled `states` but kept
+  `plugins`, so a disable found the name in one and indexed the other. Both are
+  cleared now, and enable/disable refuse once closed.
+- **Addresses spelled as names are refused.** `net.ParseIP` rejects
+  `0x7f000001`, so it read as a hostname — and a cgo resolver turns it into
+  127.0.0.1, making a rule presented as a name behave as loopback. Hex and
+  decimal address spellings are now caught alongside the numeric-TLD rule.
+- **Two more arch rules.** The guards each read one function, so a helper
+  elsewhere could fetch the table back — `L.GetGlobal("mah").RawSetString(...)`
+  — and add a function to every plugin's surface after every capability decision
+  had been made; that is now a package-wide failure. And a `mah.db` handler
+  passed by name rather than written inline has no body to inspect, so the
+  querier/writer rule silently did not apply to it.
+
+### What the second reviewer's round-3 pass changed
+
+It reproduced its findings against the code in a scratch module rather than
+reading them off the page, and the first one had survived every round so far.
+
+- **A default route satisfied the `allow_private_hosts` guard.** The rule that
+  the flag needs a network list counted rules — and `network = {"0.0.0.0/0",
+  "::/0"}` is two rules. Three lines and a checkbox then granted cloud metadata
+  (`169.254.169.254`), loopback and every RFC1918 address: precisely the hole
+  the package exists to close, wearing the guard that was meant to prevent it.
+  A `/0` is now refused outright (as an allowlist it says "everything", which is
+  what omitting the field already says), and with `allow_private_hosts` every
+  rule must be specific — a name, a wildcard, an address, or a CIDR no broader
+  than /8 (v4) / /32 (v6). `10.0.0.0/8` still works, because that is the real
+  case.
+- **A misspelled `network` key meant "any public host".** Every other typo in
+  this parser fails loudly, but `netowrk = {...}` was merely an unknown key, and
+  no rules reads as unrestricted — the one typo that failed open. A key within
+  one edit of a real field is now an error. The edit-distance check counts an
+  adjacent transposition as one edit, because `netowrk` is the typo people
+  actually make and plain Levenshtein scores it 2.
+- **Two directories could claim one plugin name**, with sort order deciding which
+  loaded. The name, not the directory, is what grants, settings, the KV
+  namespace and job ownership hang off — and, in batch 2, consent.
+- **The two VMs now open the same libraries.** `coroutine` was open in the load
+  VM and not in the manifest read, which is a second discriminator of exactly
+  the kind `mah` was: a plugin could declare one manifest to each. The agreement
+  check would catch it, but the environments should not differ in the first
+  place.
+- **`plugin.lua` is size-capped** (4 MB) before being read. It is read whole,
+  twice per load, at boot, for every directory including ones nobody enabled.
+- **A wedged `init()` now says so.** It stays unbounded for the coroutine reason
+  above, but boot enables plugins *before* the listener is bound, so the symptom
+  was a server that never started and never explained why. A watchdog names the
+  plugin after 30s and lets it continue.
+- **Four more arch-guard gaps.** `setIfAny`'s capability list was never
+  inspected, so widening it to `AllCapabilities` made a function effectively
+  ungated; the installer check asked only whether `grants.Has` appeared, so
+  `_ = grants.Has(capability)` passed while gating nothing; and the `mahMod`
+  rule was scoped to the function that declares the table, leaving every
+  sub-module registrar free to write extra keys into it — two of which are
+  installed for every plugin. Each registrar now writes exactly its own key, and
+  all three mutations fail the build.
+
+### What round-4 review changed
+
+Three of the four came from fixes made in round 3 — a guard that opened a hole,
+and two that moved a hang somewhere worse.
+
+- **The bounded drain let an abandoned plugin keep registering.** Round 3 stopped
+  a failed load from blocking for five minutes by giving up on the teardown
+  after 5s — and giving up left the VM live with its `vmLocks` entry intact, so
+  a job the failing `init()` had started could register a page or an API
+  endpoint *after* the rollback, and it stayed callable. The wait is still
+  bounded for the caller, but the teardown now finishes in the background: when
+  the worker eventually stops, the plugin is unregistered a second time (to
+  remove whatever it registered during the drain) and the VM is closed.
+- **A metatable on `_G` ran Lua outside any protected call.** Reading `plugin`,
+  installing `mah` and fetching `init` all go through `_G`, which honours
+  metamethods — so `setmetatable(_G, {__newindex = function() while true do end
+  end})` at top level would hang the load with the VM lock held, and an error
+  there would panic out of `EnablePlugin` rather than fail it. The globals
+  table's metatable is now stripped before any of those reads. Nothing
+  legitimate needs one.
+- **A wedged `init()` blocked shutdown.** Round 3 put loads in a WaitGroup so
+  `Close` could not lose one; since `init()` is deliberately unbounded, that
+  turned "hangs its own enable" into "hangs the process exit". `Close`'s wait is
+  bounded too now, and a load that finishes afterwards re-checks `closed` and
+  abandons itself.
+- **The agreement check covers identity, not just capabilities.** `Equal` compares
+  the manifest, so a plugin could declare one name, version or description to
+  the manifest read and another to the run — published and attributed under the
+  first while `init()` saw the second.
+- **Two more arch-guard gaps.** The querier-backed write exception was keyed on a
+  method name and never required the registration to still be a *write*, so
+  moving one to `setRead` passed both checks and would have handed a mutation to
+  a `db:read`-only plugin. And the `setRead`/`setWrite` closures were exempt from
+  the `dbMod` rule without anything checking they still consult `canRead` /
+  `canWrite` — deleting those conditions made every db registration
+  unconditional while every other rule passed.
+- The withheld-capability log claimed `jobs` controls the `job_*` reporters;
+  `actions` reaches them too, so the line was telling operators a function was
+  absent when it was not.
+
+### What the second reviewer's round-4 pass changed
+
+- **A revoked plugin kept serving hooks and injections.** The bounded drain left
+  the `vmLocks` entry in place, and that entry is the liveness token every
+  dispatcher checks — so a job still running when the drain timed out could
+  re-register a hook *after* the sweep, and it stayed dispatchable while
+  `DisablePlugin` reported success and the UI showed the plugin off. It survived
+  until the process exited, and re-enabling built a second VM whose disable
+  filtered on the *new* state, leaving the old registration alone. Revocation now
+  takes effect when the operator asks: the entry is dropped immediately, so every
+  dispatcher backs out, and the VM is closed in the background once the worker
+  stops. Both teardown paths sweep a second time afterwards, because a worker
+  holding a live `mah` table can register during the drain.
+  - That second sweep runs by name, arbitrarily later, so it now refuses to
+    touch name-keyed registrations when a *different* state has since taken the
+    name — otherwise a dead load's teardown would revoke the live plugin's pages.
+- **A changed manifest is refused, like a changed name.** The name check already
+  reasoned that "the operator enabled a name"; the same argument applies to the
+  capability list they were looking at when they pressed the button. A file
+  edited after boot loaded under its new capabilities while the manage UI kept
+  rendering the old ones for the rest of the process's life.
+- **`Plugins()` read `pm.plugins` with no lock** while `DisablePlugin` reslices it
+  and `Close` nils it — caught by `-race`. Latent today (one caller, at startup),
+  and not latent at all once batch 5's manage UI lists plugins from a handler.
+- **A CIDR with host bits set displayed as one thing and enforced as another:**
+  `10.0.0.5/8` was shown to the operator as written and enforced as all of
+  `10.0.0.0/8`. Refused now, with the canonical form in the message.
+- **`min_app_version` was recorded here as "warn-only" and was in fact silent** —
+  parsed, stored, compared, never surfaced — and accepted `"banana"`. It now logs
+  once at load, saying explicitly that the server does not check it, and rejects
+  a value that cannot be a version.
+- **The read-path arch guard's comment was false.** It claimed `EntityQuerier`
+  declares every mutation; it declares exactly three write-shaped methods, all of
+  which are exempt — so the rule cannot fire today, and the compiler is what
+  actually stops a read path calling `DeleteGroup`. The comment now says that,
+  and says what the rule is really for: the day a mutation is added to
+  `EntityQuerier`, which is exactly when the split would silently stop meaning
+  anything. The three exemptions gained a behavioural backstop too —
+  `add_resource_version_from_url` (fetch a URL, make it the current content of
+  any resource) appeared in no capability assertion anywhere in the repo, so an
+  arch rule was all that stood between it and the read side.
+
+### What round-5 review changed
+
+Both reviewers again, and both found the same worst item independently. Three of
+the five came from round-4 fixes.
+
+- **The background teardown deleted a replacement generation.** The late sweep
+  matched hooks and injections against the state but deleted pages, menus,
+  actions, API endpoints, shortcodes, display types, docs and *process-global
+  block types* by name alone — and it is spawned precisely so it can run
+  arbitrarily later. Disable a plugin with a job in flight, re-enable it, and
+  when the old job finally stopped, the dead generation's teardown stripped the
+  live one: `IsEnabled` true, hooks still firing, every name-keyed surface gone,
+  no log line. Block types disappearing from the global registry breaks
+  rendering of every existing note block of that type for all users. The sweep
+  now refuses to touch name-keyed registrations when a different state holds the
+  name.
+- **A duplicate name was an identity takeover.** Keeping the first claimant meant
+  a directory sorting earlier could declare an installed plugin's name and
+  inherit its persisted enabled flag, its stored settings — API keys included,
+  and `mah.get_setting` needs no capability — and its KV namespace. A contested
+  name is now awarded to nobody: both claimants are dropped and the operator is
+  told which directories to look at.
+- **A boot-time panic from a plugin nobody enabled.** Round 4 stripped the `_G`
+  metatable in the load VM only. The manifest read does the same metatable-aware
+  `_G` lookups from Go, outside any `PCall`, and it runs at boot for every
+  directory — so `setmetatable(_G, {__index = function() error("boom") end})` in
+  an un-enabled plugin took the process down at startup, with disabling it no
+  remedy because discovery does not consult enablement. The trigger is a *miss*,
+  which is the ordinary case: `init` is optional and `settings` usually absent.
+- **`Close` niling the registries could wedge the manager forever.** `init()` is
+  unbounded and the shutdown wait is not, so a load can still be running; every
+  registration function writes its map while holding `pm.mu`, and a write to a
+  niled map panics *between* Lock and Unlock. The protected Lua call catches the
+  panic; `pm.mu` stays held for the life of the process and the next teardown
+  blocks on it. The maps are emptied rather than niled now.
+- **A wildcard satisfied the "name the private hosts" rule.** Round 4 tightened
+  CIDRs and missed that `*.nip.io` is one entry that reaches loopback, RFC1918
+  and the metadata endpoint, because wildcard-DNS services resolve an address
+  embedded in the name. A wildcard names nothing, so it is refused alongside a
+  broad prefix when `allow_private_hosts` is set.
+- **A mis-cased manifest read as legacy and got all twelve capabilities.**
+  `Network` (one wrong letter) was caught by the near-miss rule; `NETWORK` and
+  `API_VERSION` are several edits away, so they were "unknown keys", which meant
+  no `api_version`, which meant legacy. One wrong-case letter was an error and
+  three were a silent full grant.
+- **Two more arch rules.** `setIf`'s capability *assignment* was unpinned —
+  `setIf(CapKV, "on", ...)` compiled and passed everything — so each root
+  function now pins its capability, exhaustively in both directions. And the
+  package-wide rule recognised only `GetGlobal("mah")`, so `L.G.Global` was an
+  open door to the same table; both are covered now.
+- `parseSettingsFromLua` was a third VM for the same untrusted input, opening a
+  different library set and skipping the unsafe-function removal — dead today,
+  and exactly the arbitrary-path open the header VM's test exists to prevent,
+  waiting for its first caller.
+
+### What round-6 review changed — and the structural fix it forced
+
+Round 5's `nameTakenByAnother` guard was the wrong shape, and round 6 showed why
+from both directions at once:
+
+- **Forwards:** a dead generation's worker could still call `mah.page("home",
+  ...)` and *overwrite* the replacement's entry — same plugin name, same path —
+  and the guard then declined to clean it up, leaving the enabled plugin's page
+  pointing at a closed VM.
+- **Backwards:** if the replacement was still inside `init()` and not yet
+  published, the guard saw no replacement and deleted the new generation's
+  registrations.
+
+Skipping the delete and doing the delete were both wrong because the question
+itself was wrong. **Every registration now carries the state that made it**, and
+teardown removes only what matches that state — hooks and injections always
+worked this way; pages, menus, actions, API endpoints, block types, display
+types, shortcodes and docs now do too. Both orderings are correct for the same
+reason, and the name-ownership guard is gone.
+
+Alongside it, **a state that is no longer live may not register at all**
+(`stateMayRegisterLocked`), which is what stops the overwrite in the first
+place. It uses the same `vmLocks` token dispatch uses, so registration and
+dispatch agree on when a VM is gone — and it closes round 6's other finding
+too, that a load still running after `Close` could repopulate a closed manager's
+registries.
+
+Also fixed:
+
+- **`mah.block_type` registered globally after releasing `pm.mu`**, so a teardown
+  landing in between removed the local record and then watched the global
+  registration complete — an orphan in a process-global registry, backed by a
+  VM about to close. It now happens under the same lock. `Close` unregisters
+  block types too, instead of dropping the map and leaving them.
+- **`Close` no longer replaces `vmLocks`**, which was discarding the teardown
+  token of a load still in flight and leaking its VM.
+- **`apiVersion = 1` still read as legacy and got all twelve capabilities.**
+  Round 5's case-insensitive check did not cover camelCase, hyphens or a
+  zero-width character, all of which are several edits from the real name. Field
+  names are now compared on a normalized form — lower case, letters and digits
+  only — so every way of writing one field name is caught. `apiVersion` is
+  plainly an attempt to declare a manifest, and it was granted the opposite of
+  what it asked for.
+- **Two more arch aliasing routes:** a registrar called through a method value
+  (`register := pm.registerHttpModule`) lost the name its capability pin is keyed
+  on, a registrar could alias `mahMod` internally to add a second root key, and
+  `L.Get(lua.GlobalsIndex)` reached the globals table by another name.
+
+### What round-7 review changed
+
+Three real defects in round 6's own fix, and three more guard gaps.
+
+- **A registration made inside a coroutine was stamped with the coroutine's
+  state.** Liveness checked `mainState(L)` but the stamp stored the raw `L`, and
+  dispatch and teardown are both keyed on the main state — so such an entry
+  could never fire *and* could never be removed. Every registration now stamps
+  `mainState(L)`.
+- **An action ran on whichever VM currently held its plugin's name.**
+  `FindAction` looked the state up by name rather than using the action's own,
+  so a registration that outlived its generation would execute against the
+  *replacement's* VM — running code the replacement does not contain, and
+  calling a handler compiled in one `LState` on another, which gopher-lua does
+  not permit. It now returns the action's own state.
+- **The drain window was still open for registration.** The `vmLocks` entry was
+  removed only when the drain *timed out*, so for the five seconds before that a
+  worker could register after the sweep had already run, and whatever it
+  registered outlived the plugin. Revocation now happens at the start of
+  teardown, and removing the entry doubles as the exactly-once ownership claim:
+  of two teardowns racing, the one that removed it closes the state.
+- **Confusable characters bypassed the manifest key rule.** A Cyrillic "і" in
+  `apі_version` is several bytes from an "i", so it passed the raw near-miss
+  check, and `normalizeKey` dropped it — leaving a name one *deletion* from the
+  real field. The near-miss check now runs on the normalized pair too, which is
+  what catches it. Left alone it read as legacy and was granted all twelve
+  capabilities.
+- **Three more arch aliasing routes:** a *new* sub-module registrar under any
+  existing guard was accepted (registrars must now be pinned by name, not merely
+  guarded), `get := L.GetGlobal` reached the mah table as a method value, and
+  `register := setRead` took a db registration out of every rule that matches the
+  literal callee.
+
+### The second reviewer's round-10 pass: revocation had a hole where it mattered most
+
+Its two lead findings were races in the marker protocol, which had already been
+replaced by then — but its third was new, real, and the sharpest asymmetry in
+the batch:
+
+- **A revoked plugin kept full outbound network.** The DB and KV accessors
+  refused a revoked VM; `mah.http` was gated only on "the manager is closing".
+  So a worker still inside its async allowance could keep making arbitrary
+  requests for up to five minutes after `DisablePlugin` returned and the UI
+  showed the plugin off — carrying whatever it already held in Lua locals,
+  including a key it read from `mah.get_setting` before the disable. Egress is
+  the channel an operator disables a plugin *for*, and it was the one channel
+  revocation did not cover. Both the sync and async paths check liveness now,
+  and the test fails without it.
+- **`mah.start_job` from a revoked worker** created a job the worker then failed
+  — and re-created the in-flight WaitGroup that teardown had just deleted,
+  leaving a map entry nothing removes. It is refused now.
+- **`Close` left plugin settings in memory**, including password-typed ones.
+- **The deleted helper left its documentation behind**, glued above
+  `revokeLocked` and describing the opposite locking contract. In a file where
+  the comments carry the design argument, a comment describing code that no
+  longer exists is the next reader's trap.
+- **Nothing pinned the process-global block-type unregistration.** Filtering the
+  per-plugin slice while dropping that call leaves a type backed by a closed VM,
+  and every existing note block of that type stops rendering for every user.
+  Now an arch rule, mutation-tested against both teardown paths.
+
+### Round 10: the disable-during-load fix was replaced, not patched
+
+Round 9's marker protocol for "a disable arrived while the plugin was loading"
+produced three criticals of its own in one round, all in the same mechanism:
+
+- a second `EnablePlugin` cleared the marker *before* failing to claim the load,
+  so the original load published after the disable had reported success;
+- publication could win the race against recording the marker;
+- and the marker did not revoke or wait for anything, so the loading VM kept
+  running — `init()` could still write the database after the disable returned,
+  and a wedged `init()` left the plugin permanently neither disableable nor
+  enablable.
+
+Three sync-maps had to agree across four call sites and did not. **Waiting is
+one mechanism instead of three:** a disable that finds a load in flight waits
+for it (bounded) and then disables through the ordinary path, which already
+works. A plugin wedged inside `init()` now gets a truthful refusal — "still
+loading, its init() has not returned" — rather than a success the system cannot
+honour. The marker, and the three maps, are gone.
+
+Also this round:
+
+- **`mah.db.mrql_query` had no liveness check at all.** It reaches the database
+  without going through `querierFor`, so a global- or group-scoped query from a
+  revoked worker was untouched by round 9's fix.
+- **`Close` was neither idempotent nor concurrency-safe** — it is a deferred
+  shutdown step *and* a `t.Cleanup` in a great many tests, and the second
+  `close(pm.done)` panics.
+- **Four more arch rules were vacuous**, each in the way this batch keeps
+  rediscovering: `install := setIf` bypassed every rule that matches the literal
+  callee; `capability == "" && !grants.Has(...)` reads as a negative guard and
+  refuses only the ungated functions; `_ = pm.actions` satisfies "the registry is
+  torn down" by naming it; and `if false && !stateMayRegisterLocked(...)` reads
+  as a liveness check. All four now fail the build.
+
+**Residual, stated rather than fixed:** a disable cannot abort an operation
+already inside the database layer. The liveness checks guarantee that no *new*
+operation starts once a plugin is revoked; a write that has already reached the
+backend completes. Aborting mid-operation would need cancellation plumbed
+through the adapter, which is not batch-1 work.
+
+### Both reviewers found the same blocker, and one of them explained why
+
+The second reviewer reproduced the `DisablePlugin` mutex mismatch to a race
+report and a SIGSEGV inside gopher-lua, and added the observation that matters:
+**`retireState` had become production-dead.** Every live path — a failed load,
+`DisablePlugin`, `Close` — had grown its own copy of the claim, so the "one
+ownership protocol" existed in four near-copies, *the only one still covered by
+the double-teardown test was the one nothing ran*, and the divergent copy was
+the live disable path. The helper is deleted and that test now exercises
+`DisablePlugin` directly, including concurrently.
+
+Also from that pass:
+
+- **`go vet` was failing on batch code**: the load-error path returned without
+  releasing the 30s timer. It had been failing since the deadline was added, and
+  no gate in this batch ran `go vet` on it until now.
+- **The liveness arch rule was an allowlist**, so a *new* registration that wrote
+  a registry and was not added to the map was skipped in silence — the same
+  invisibility that let the hole return twice. It is now stated as the
+  *exemption*: a new mah function must be named as non-registering to escape the
+  check, so forgetting to think about it fails the build.
+- **The name-keyed-delete rule matched one spelling.** `pm.actions[name] = nil`
+  clears a plugin's registrations just as thoroughly as `delete` and evaded it.
+- **IPv4-mapped blocks are now displayed the way they are enforced.** The
+  breadth check was fixed in round 8; the text an operator reads was not, so a
+  manifest could show `::ffff:a00:0/104` for what is enforced as `10.0.0.0/8`.
+
+### What round-9 review changed — the reviewers disagreed, and the blocker was real
+
+One reviewer said ship; the other said no, with seven findings. The second was
+right: three were live defects, two of them introduced by round 8's own fixes.
+
+- **A disable could close the wrong generation's VM.** `DisablePlugin` resolved
+  the state and its mutex in two separate lookups. Between them a concurrent
+  disable can retire generation 1 and a re-enable can publish generation 2 —
+  leaving the caller holding generation 1's mutex while it tears down generation
+  2, which is closing a VM under a mutex nobody else takes, i.e. under no mutex
+  at all. The claim now returns the mutex it removed, so the two can never
+  describe different generations.
+- **A disable during `init()` was silently lost.** A loading plugin is not in
+  `pm.plugins`, so the disable found nothing, answered "not enabled", and the
+  context layer read that as success and persisted `enabled=false`. The load
+  then published normally: the plugin ran on with every granted host function
+  while the operator and the database both believed it was off. A disable that
+  arrives during a load is now recorded, and the publish step abandons instead.
+- **A revoked plugin could still write the database for five minutes.**
+  Revocation stopped new dispatch and new registrations, but a worker already
+  inside kept its fully-installed `mah` table until it finished — so
+  `DisablePlugin` returned, the UI showed the plugin off, and
+  `mah.db.create_tag` still succeeded. The DB and KV accessors now refuse a
+  revoked VM, which every caller already renders as "not available". A disable
+  reported complete has to be complete for the operations that change data.
+- The HTTP shutdown check had a TOCTOU: a call could read `closed=false`, be
+  descheduled, and `Add` after `Close` had already seen an empty WaitGroup.
+  Admission and shutdown now share `pm.mu`.
+
+**And three of my own arch rules were vacuous in the same way.** The installer
+rule checked that `grants.Has` *appeared* with a return — so inverting the gate
+passed. The liveness rule had the same polarity hole and accepted a check placed
+*after* the write. The stamp rule accepted any local named `owner` without
+checking it was bound from `mainState(L)`.
+
+The installer rule is now stated as reachability rather than spelling: every
+write to `mahMod` inside an installer must be unreachable unless a grant says
+otherwise — satisfied either by `if !grants.Has(c) { return }` before it or by
+sitting inside an `if grants.Has(c)` body, which are the two shapes actually in
+use. Inverting the gate, deleting it, binding `owner` from `L`, and replacing a
+sub-module guard with a non-`grants` call that merely names the capability are
+all now build failures.
+
+### The second reviewer's round-8 pass: the first "ship it", and what it still found
+
+It traced every one of round 7's lifecycle changes and could not break them —
+the exactly-once claim, `DisablePlugin`'s wait, the `mainState` stamps, and the
+six bundled manifests (which it checked function by function against the
+registrars, finding no under- or over-declaration). Its verdict was ship. Five
+findings came with it, and four are now closed:
+
+- **`db:write` carries a server-side URL fetch the `network` list cannot see.**
+  `create_resource_from_url` and `add_resource_version_from_url` hand an
+  attacker-chosen URL to the application's own downloader. They are gated on
+  `db:write` and have no relation to `Manifest.Network` — so the moment batch 3
+  makes the allowlist look like an enforced control, a `db:write` plugin still
+  holds a full SSRF primitive. The shipped reference manifest proves it:
+  `fal-ai` declares a fal.run allowlist and then downloads its results through
+  `mah.db`, so its declared list is not its real egress surface. **Not fixable in
+  batch 1** — but the `db:write` label now says "and fetch a URL of its choosing
+  into it", and the plan carries it as a binding constraint on batch 3 rather
+  than a footnote.
+- **Three lifecycle invariants had a fix but no guard**, including the one round
+  7 had just fixed. Nothing pinned the `mainState(L)` stamp; the liveness rule
+  skipped a handler passed by name (*the identical hole round 3 closed on the db
+  side, reintroduced in a brand-new rule*) and detected "writes a registry" by
+  string match; and the state-matching rule was asserted for exactly one
+  registry. All three are now pinned by name and mutation-tested.
+- **`closeState` and `retireState` claimed ownership in opposite orders** —
+  lock-then-delete versus delete-then-lock — which interleaves into a double
+  close. Unreachable today, but only because `Close` and `DisablePlugin` can
+  never target one state, an argument that lived nowhere. Both use one protocol
+  now.
+- **The withheld-capability log still named the `job_*` reporters as absent**
+  whenever `jobs` was withheld, even though `actions` installs them. Round 4
+  recorded this as fixed; only the *other* string had been amended.
+- Doc drift: the plan's taxonomy table and its worked example (which taught
+  over-declaration by giving fal-ai `render`), and a stacked duplicate comment.
+
+### What round-8 review changed
+
+Two more windows in the teardown ordering, and the confusable class generalised.
+
+- **A failed load served requests from its own registrations.** The failure path
+  released the VM lock *before* revoking, so a request already queued on that
+  lock acquired it, found the plugin still live, and executed a page or endpoint
+  belonging to a load that had just failed. Revocation and unregistration now
+  happen while the lock is still held, so a queued request re-checks, finds the
+  state gone, and backs out — which is what `LockVM`'s post-acquire check exists
+  for. Reproduced by hammering the endpoint during the load: with the unlock
+  moved back first, the endpoint answers 200.
+- **`DisablePlugin` still had a window.** It unregistered under `pm.mu`, released
+  it, and only then revoked inside the teardown — after taking another mutex.
+  Revocation now happens in the same critical section as the unregister, so
+  "unregistered" and "may not register" are one instant. `revokeLocked` is that
+  step, and it doubles as the exactly-once ownership claim.
+- **Confusable manifest keys, generalised.** Round 7 caught one Cyrillic "і" via
+  the normalized edit distance; two defeat it, and no distance threshold catches
+  every number of them. Any non-ASCII key on the plugin table is now refused
+  outright: that table holds metadata whose field names are ASCII, so a
+  lookalike is either a mistake or a disguise, and reading it as "unknown key,
+  therefore legacy, therefore all twelve capabilities" is the worst possible
+  interpretation.
+- **`::ffff:0:0/96` was a default route wearing a /96.** An IPv4-mapped IPv6
+  block reports its prefix over 128 bits, while `net.IPNet.Contains` converts and
+  matches it as `0.0.0.0/0` — so it walked through the door built to reject a
+  default route, and showed the operator a prefix that was not the one enforced.
+  Breadth is now measured in the family the block is matched in.
+- **`mah.http` refuses to start work once the manager is closing.** `Close` waits
+  for in-flight HTTP and then stops the drain goroutine, but `init()` is
+  deliberately unbounded — so a load still running could add to a WaitGroup
+  somebody was already waiting on, and queue a callback holding a VM about to
+  close.
+- **The example plugin was over-granted.** It declared `db:read`, `db:write`,
+  `http`, `kv` and `api` while every use of those is commented out; its live code
+  needs `hooks`, `inject` and `pages`. Now declared exactly, with a note that
+  uncommenting an example means adding its capability — which is the lesson.
+- **Two arch rules were vacuous.** The liveness rule accepted
+  `_ = pm.stateMayRegisterLocked(L)` (mentioning it, gating nothing), and the
+  mah-table rule was defeated by `g := L.G`. Both now require what they claim,
+  mutation-tested.
+
+### The second reviewer's round-7 pass: the guard asymmetry, and the bundled six
+
+It reached findings 1 and 2 independently (the drain window and `FindAction`),
+and named the reason those kept happening: **capability decisions had a thousand
+lines of AST guard; the lifecycle that makes a grant withdrawable had none.**
+`stateMayRegisterLocked` appeared nowhere outside the file that defines it. So a
+new registration function omitting the liveness check, a new registry left out
+of `Close`, or a teardown branch filtering by name would all have shipped green
+— and one of those was already committed, which is how the `docs` registry was
+found.
+
+Two arch rules now close it, both mutation-tested:
+
+- every registry is touched by *both* `unregisterPluginLocked` and `Close` (the
+  re-committed `docs` omission fails the build);
+- every registration function that writes a registry calls
+  `stateMayRegisterLocked`.
+
+Also from that pass:
+
+- **The six bundled plugins now declare manifests.** Without them every
+  deployment logged six copies of "no manifest — add `api_version = 1`" at boot,
+  telling operators to fix files the project ships. This pulls a piece of batch 5
+  forward deliberately: it is the only test of the taxonomy that is not a
+  fixture, and all 127 plugin e2e tests pass with the six running under real
+  grants.
+- **`network`, `allow_private_hosts` and `dependencies` now say they are not
+  enforced yet.** `min_app_version` — far less consequential — already announced
+  that it is unchecked, while the field that reads most like a security control
+  said nothing.
+- The `pages` capability label admits that every plugin has an auto-generated
+  docs page, because `HasPage` falls through to it. Not an injection (every
+  writer escapes), but the label was not true of the enforcement.
+- Dead code removed (`manifestFromState`).
+- **Left alone, recorded:** `retireState` keys the drain WaitGroup on the plugin
+  name, so a replacement enabled during a drain that starts its own job can land
+  in the dying generation's group — the old disable then waits out the new
+  plugin's work and logs a warning naming the wrong generation. No safety
+  consequence: `closeState` and `LockVM` still serialise on the VM lock.
+
+### The teardown side now has an invariant, and the tests for it were vacuous
+
+The second reviewer's round-6 pass reached the same fix as round 6's other
+report — filter by state, give `PluginDoc` and `MenuRegistration` an owning
+state — and added the observation that mattered most: **no arch guard could
+have caught any of it.** All five pin the *installation* side; nothing anywhere
+mentioned unregister, retire, sweep or disable, and the teardown state machine
+had produced the worst finding in three consecutive rounds.
+
+So there is now one: *no registration may name a state that is not live*
+(`assertNoOrphanRegistrations`), checked at every quiescent point of the
+enable → disable → re-enable → late-sweep sequence, across all ten registries.
+
+**And the tests written for that sequence were passing for the wrong reason.**
+Both set a `generation` global *after* `EnablePlugin`, so it was nil during
+`init()`, the branch that starts the long-running job never ran, and the whole
+interleaving the tests existed to exercise never happened. Removing the guards
+they were meant to protect changed nothing. They now put the two generations in
+two versions of the file (same manifest, different `init()`), and with the
+guards removed they fail:
+
+- dead-state registration allowed → "the live generation's page is gone: the
+  dead one overwrote it and its sweep then removed it"
+- name-keyed sweep restored → "the replacement's page was removed by the dead
+  generation's sweep"
+
+That is the third time in this batch a green suite meant nothing, and the second
+time it was my own test rather than a silently-unapplied edit. The standard the
+arch guards were held to — *demonstrate the failure, or the guard is not
+running* — applies to behavioural tests exactly as much, and it is cheap to
+check: revert the fix, watch the test go red, put it back.
+
+**A note on method:** the first attempt at the last two arch fixes silently did
+not apply — the anchor text had moved — and the tests still passed. The mutation
+run is what caught it. Every guard rule in this batch has a mutation behind it
+for that reason: a guard that cannot be shown to fail is indistinguishable from
+one that is not running.
+
+**Known limit, stated rather than fixed:** the manifest read executes top-level
+code from every plugin directory at boot, including plugins nobody enabled, and
+the time bound does not stop a single huge allocation inside a Go builtin
+(`string.rep("A", 4e9)`). Bounding memory is not something gopher-lua offers. A
+`plugin.lua` is code an operator installed on the server, so this is a robustness
+limit rather than a privilege boundary — but it is the reason discovery should
+eventually read only what it needs.
+
+**Recorded for batch 2, not fixed here:** the discovered manifest and the
+enforced one can differ without the file changing (the header VM runs twice, and
+`tostring({})` and `math.random` differ between runs). Nothing enforces off the
+discovered copy today. Batch 2 must compare consent against the **load-time**
+manifest — the one that produced the grants — and never against
+`pm.discovered[i].Manifest`, which is the obvious thing to reach for and would
+be the bypass.
+
+- **Follow-up, not done here:** `create_resource_from_url`,
+  `create_resource_from_data` and `add_resource_version_from_url` create
+  resources but are declared on `EntityQuerier`, so they are gated as writes
+  while calling `querierFor`. Both accessors bind the same adapter to the same
+  principal, so nothing escapes today — the interface is simply lying. The arch
+  test names them as an explicit exception rather than pretending the rule is
+  clean.
+
+## Batch 2 — consent and lifecycle
+
+- [ ] `PluginState.GrantsJSON` records what the operator consented to. The
+      manifest alone cannot be the grant, or editing `plugin.lua` widens it
+      silently.
+- [ ] Load refuses when `declared ⊄ consented`; the UI shows the delta and
+      re-enable is the re-consent gesture. Narrowing is not a consent event.
+- [ ] Legacy (no manifest) records `{"legacy":true}`, so growing a manifest is
+      a change the operator sees.
+- [ ] Dependencies: enable refuses on a disabled dependency, disable refuses
+      when a dependent is enabled, cycles rejected at discovery.
+- [ ] `ActivateEnabledPlugins` enables in dependency order (repeated pass), and
+      names whatever is left over.
+- [ ] `/v1/plugins/manage` carries the manifest and grant state.
+
+## Batch 3 — egress (sharp edge #4)
+
+- [ ] Per-plugin host allowlist checked before `Do` on both the sync and async
+      paths.
+- [ ] The same match re-run inside `CheckRedirect`, per hop.
+- [ ] `Transport.DialContext` + `net.Dialer.Control` reject loopback,
+      link-local, unique-local, private and unspecified **resolved** addresses.
+      This is the DNS-rebinding layer; the allowlist sees only a hostname.
+- [ ] `allow_private_hosts` relaxes the dial deny for hosts that already matched
+      the allowlist. LAN services are a real use case; a blanket deny gets
+      switched off wholesale.
+- [ ] One client per distinct policy. A shared `Transport` pools connections by
+      host, so a shared client lets one plugin reuse another's connection with
+      no dial and no check.
+- [ ] Legacy plugins are **not** exempt from the dial deny. It is a
+      vulnerability fix, and exempting them exempts everyone who has it today.
+
+## Batch 4 — the `action.Filters` re-check
+
+- [ ] Submitted `entity_ids` re-checked against the action's own filters, with
+      `actionMatchesFilters` — the same predicate that decides what to offer, so
+      offer and execute cannot drift.
+- [ ] A mismatch rejects the whole batch (package 1's veto rule), 400 in the
+      existing `{"errors":[...]}` shape, at the existing chokepoint before the
+      async/sync fork.
+- [ ] `ResourcesMatching` applies `filter.CategoryIDs`; today an `entity_ref`
+      with a resource-category filter accepts any category.
+
+## Batch 5 — bundled manifests, UI, docs, e2e
+
+- [ ] Manifests for all six bundled plugins.
+- [ ] `managePlugins.tpl`: capabilities as sentences, the private-hosts line,
+      legacy badge, re-consent state, dependencies.
+- [ ] docs-site plugin pages, `plugin-lua-api.md` capability column.
+- [ ] e2e: `plugin-manage.spec.ts` grant UI; an egress refusal.
+- [ ] Gates: Go unit, browser + CLI e2e, Postgres, `./mr docs lint`,
+      `./mahresources` rebuilt first.
+
 # Plugin invocation and hook integrity (2026-08-15)
 
 Plan: [docs/plans/2026-08-15-plugin-invocation-and-hook-integrity.md](plans/2026-08-15-plugin-invocation-and-hook-integrity.md).

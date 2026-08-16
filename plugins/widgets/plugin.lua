@@ -4,6 +4,8 @@
 -- Usage in templates: [plugin:widgets:shortcode-name attr="value"]
 
 plugin = {
+    api_version = 1,
+    capabilities = { "db:read", "render" },
     name = "widgets",
     version = "1.0",
     description = "5 shortcodes for category CustomHeader, CustomSidebar, and CustomSummary slots.",

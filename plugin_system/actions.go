@@ -110,6 +110,12 @@ type ActionRegistration struct {
 	Confirm     string         `json:"confirm,omitempty"`
 	BulkMax     int            `json:"bulk_max,omitempty"`
 	Handler     *lua.LFunction `json:"-"`
+
+	// state is the VM that registered this action. Every registration carries
+	// one so teardown can remove exactly what a dying generation registered:
+	// deleting by plugin name alone would take a replacement generation's
+	// registrations with it, and leave a dead generation's in place.
+	state *lua.LState
 }
 
 // parseActionTable parses a Lua table into an ActionRegistration.

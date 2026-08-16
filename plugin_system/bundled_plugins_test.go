@@ -202,3 +202,36 @@ func showWhenValues(p *ActionParam, key string) []string {
 	}
 	return nil
 }
+
+func TestBundledPluginsDeclareManifests(t *testing.T) {
+	// Every bundled plugin ships a manifest, for two reasons. The boot warning
+	// for an unmanifested plugin tells the operator to add one — and for these
+	// six that meant telling them to edit files the project ships. And running
+	// the six real plugins under real grants is the only test of the taxonomy
+	// that is not a test fixture: if a capability is missing, their e2e suite
+	// fails on a nil call.
+	pm, err := NewPluginManager(bundledPluginDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	discovered := pm.DiscoveredPlugins()
+	if len(discovered) == 0 {
+		t.Fatal("no bundled plugins discovered")
+	}
+	for _, dp := range discovered {
+		if !dp.Manifest.Declared {
+			t.Errorf("bundled plugin %q has no manifest, so it loads with the full mah surface and warns "+
+				"the operator to fix a file we ship", dp.Name)
+			continue
+		}
+		granted := dp.Manifest.Capabilities()
+		if len(granted) == len(AllCapabilities) {
+			t.Errorf("bundled plugin %q declares every capability; the point is to declare what it uses", dp.Name)
+		}
+		if len(granted) == 0 {
+			t.Errorf("bundled plugin %q declares no capabilities but is a working plugin", dp.Name)
+		}
+	}
+}

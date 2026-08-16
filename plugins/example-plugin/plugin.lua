@@ -3,6 +3,13 @@
 -- Note: query results are capped at 100 (default limit: 20)
 
 plugin = {
+    api_version = 1,
+    -- Exactly what the live code below uses. The commented-out examples further
+    -- down demonstrate mah.db, mah.http, mah.kv and mah.api; uncommenting one
+    -- means adding its capability here too, which is the point — a plugin
+    -- declares what it uses, not what it might one day use. get_setting and log
+    -- need no capability.
+    capabilities = { "hooks", "inject", "pages" },
     name = "example-plugin",
     version = "1.0",
     description = "Demonstrates the plugin API -- inject HTML, hook events, and use settings",

@@ -7,13 +7,25 @@ import (
 )
 
 // registerKvModule registers the mah.kv sub-table in the Lua VM.
+// kvStoreFor is getKVStore for a call made from L: nil for a revoked VM, which
+// every caller already renders as "not available". Same reason as querierFor —
+// a worker that was inside when its plugin was disabled keeps its mah table
+// until it finishes, and a disable reported complete should not still be able
+// to write the plugin's stored data.
+func (pm *PluginManager) kvStoreFor(L *lua.LState) KVStore {
+	if !pm.stateIsLive(L) {
+		return nil
+	}
+	return pm.getKVStore()
+}
+
 func (pm *PluginManager) registerKvModule(L *lua.LState, mahMod *lua.LTable, pluginNamePtr *string) {
 	kvMod := L.NewTable()
 
 	// mah.kv.get(key) -> value or nil
 	kvMod.RawSetString("get", L.NewFunction(func(L *lua.LState) int {
 		key := L.CheckString(1)
-		kv := pm.getKVStore()
+		kv := pm.kvStoreFor(L)
 		if kv == nil {
 			L.Push(lua.LNil)
 			return 1
@@ -40,7 +52,7 @@ func (pm *PluginManager) registerKvModule(L *lua.LState, mahMod *lua.LTable, plu
 	kvMod.RawSetString("set", L.NewFunction(func(L *lua.LState) int {
 		key := L.CheckString(1)
 		val := L.CheckAny(2)
-		kv := pm.getKVStore()
+		kv := pm.kvStoreFor(L)
 		if kv == nil {
 			L.RaiseError("kv store not available")
 			return 0
@@ -61,7 +73,7 @@ func (pm *PluginManager) registerKvModule(L *lua.LState, mahMod *lua.LTable, plu
 	// mah.kv.delete(key)
 	kvMod.RawSetString("delete", L.NewFunction(func(L *lua.LState) int {
 		key := L.CheckString(1)
-		kv := pm.getKVStore()
+		kv := pm.kvStoreFor(L)
 		if kv == nil {
 			L.RaiseError("kv store not available")
 			return 0
@@ -79,7 +91,7 @@ func (pm *PluginManager) registerKvModule(L *lua.LState, mahMod *lua.LTable, plu
 		if L.GetTop() >= 1 {
 			prefix = L.CheckString(1)
 		}
-		kv := pm.getKVStore()
+		kv := pm.kvStoreFor(L)
 		if kv == nil {
 			L.Push(L.NewTable())
 			return 1

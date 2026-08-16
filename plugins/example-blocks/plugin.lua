@@ -1,4 +1,6 @@
 plugin = {
+    api_version = 1,
+    capabilities = { "render" },
     name = "example-blocks",
     version = "1.0",
     description = "Example plugin demonstrating custom block types"

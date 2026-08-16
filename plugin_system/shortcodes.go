@@ -43,6 +43,9 @@ type PluginDoc struct {
 	Attrs       []ShortcodeDocAttr
 	Examples    []ShortcodeDocExample
 	Notes       []string
+
+	// State is the VM that registered this doc entry; see ActionRegistration.
+	State *lua.LState
 }
 
 type PluginShortcode struct {

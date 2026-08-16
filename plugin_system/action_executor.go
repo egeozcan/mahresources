@@ -43,19 +43,15 @@ func (pm *PluginManager) FindAction(pluginName, actionID string) (ActionRegistra
 		return ActionRegistration{}, nil, fmt.Errorf("no action %q registered for plugin %q", actionID, pluginName)
 	}
 
-	// Find the LState for this plugin by matching pluginName in pm.plugins.
-	var state *lua.LState
-	for i, p := range pm.plugins {
-		if p.Name == pluginName {
-			state = pm.states[i]
-			break
-		}
+	// The action's own state, not "whichever state currently holds this plugin
+	// name". A registration that outlived its generation would otherwise be
+	// paired with the replacement's VM, running code the replacement does not
+	// contain — and a handler compiled in one LState cannot be called on
+	// another at all.
+	if action.state == nil {
+		return ActionRegistration{}, nil, fmt.Errorf("action %q of plugin %q has no VM", actionID, pluginName)
 	}
-	if state == nil {
-		return ActionRegistration{}, nil, fmt.Errorf("no Lua state found for plugin %q", pluginName)
-	}
-
-	return action, state, nil
+	return action, action.state, nil
 }
 
 // paramVisible evaluates a param's show_when against the submitted values.
