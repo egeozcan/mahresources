@@ -149,16 +149,20 @@ func TestScopedUser_ImportDenied(t *testing.T) {
 // scopeRunner is a PluginActionRunner whose entity visibility is controlled by a
 // map, simulating subtree confinement without a real scoped DB.
 type scopeRunner struct {
-	pm      *plugin_system.PluginManager
-	reader  plugin_system.EntityRefReader
-	visible map[uint]bool
+	pm         *plugin_system.PluginManager
+	reader     plugin_system.EntityRefReader
+	dataReader plugin_system.ActionEntityDataReader
+	visible    map[uint]bool
 }
 
 func (r *scopeRunner) PluginManager() *plugin_system.PluginManager          { return r.pm }
 func (r *scopeRunner) ActionEntityRefReader() plugin_system.EntityRefReader { return r.reader }
-func (r *scopeRunner) ResourceVisible(id uint) bool                         { return r.visible[id] }
-func (r *scopeRunner) NoteVisible(id uint) bool                             { return r.visible[id] }
-func (r *scopeRunner) GroupVisible(id uint) bool                            { return r.visible[id] }
+func (r *scopeRunner) ActionEntityDataReader() plugin_system.ActionEntityDataReader {
+	return r.dataReader
+}
+func (r *scopeRunner) ResourceVisible(id uint) bool { return r.visible[id] }
+func (r *scopeRunner) NoteVisible(id uint) bool     { return r.visible[id] }
+func (r *scopeRunner) GroupVisible(id uint) bool    { return r.visible[id] }
 
 // Gap 2: a group-limited principal may only run a plugin action on entities
 // inside its subtree.
@@ -168,9 +172,10 @@ func TestScopedUser_ActionRunConfinedToSubtree(t *testing.T) {
 
 	inRes := tc.CreateResourceWithType(t, "in-res", "image/png")
 	runner := &scopeRunner{
-		pm:      pm,
-		reader:  tc.AppCtx.ActionEntityRefReader(),
-		visible: map[uint]bool{inRes.ID: true},
+		pm:         pm,
+		reader:     tc.AppCtx.ActionEntityRefReader(),
+		dataReader: tc.AppCtx.ActionEntityDataReader(),
+		visible:    map[uint]bool{inRes.ID: true},
 	}
 	handler := api_handlers.GetActionRunHandler(runner)
 	scoped := &auth.Principal{UserID: 7, Role: models.RoleUser, ScopeGroupID: uptr(1)}

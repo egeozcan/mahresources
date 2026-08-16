@@ -74,6 +74,30 @@ func createResourceWithType(t *testing.T, ctx *MahresourcesContext, name, conten
 	return r
 }
 
+// createResourceCategory inserts a ResourceCategory with the given name.
+func createResourceCategory(t *testing.T, ctx *MahresourcesContext, name string) *models.ResourceCategory {
+	t.Helper()
+	rc := &models.ResourceCategory{Name: name}
+	if err := ctx.db.Create(rc).Error; err != nil {
+		t.Fatalf("createResourceCategory(%q): %v", name, err)
+	}
+	return rc
+}
+
+// createResourceInCategory inserts a Resource in the given resource category.
+func createResourceInCategory(t *testing.T, ctx *MahresourcesContext, name, contentType string, categoryID uint) *models.Resource {
+	t.Helper()
+	r := &models.Resource{
+		Name:               name,
+		ContentType:        contentType,
+		ResourceCategoryId: categoryID,
+	}
+	if err := ctx.db.Create(r).Error; err != nil {
+		t.Fatalf("createResourceInCategory(%q, cat=%d): %v", name, categoryID, err)
+	}
+	return r
+}
+
 // createNoteType inserts a NoteType with the given name directly into the test DB.
 func createNoteType(t *testing.T, ctx *MahresourcesContext, name string) *models.NoteType {
 	t.Helper()
@@ -199,6 +223,53 @@ func TestActionEntityRefReader_NotesMatching_FiltersByNoteType(t *testing.T) {
 	}
 	if matched[0] != n1.ID {
 		t.Errorf("expected n1.ID (%d), got %v", n1.ID, matched)
+	}
+}
+
+// An entity_ref param may declare a resource-category filter; before this was
+// fixed the reader passed only Ids and ContentTypes to the query, so a resource
+// of any category was accepted.
+func TestActionEntityRefReader_ResourcesMatching_FiltersByResourceCategory(t *testing.T) {
+	ctx := createIsolatedTestContext(t)
+	wanted := createResourceCategory(t, ctx, "Wanted")
+	other := createResourceCategory(t, ctx, "Other")
+
+	inCat := createResourceInCategory(t, ctx, "a.png", "image/png", wanted.ID)
+	outCat := createResourceInCategory(t, ctx, "b.png", "image/png", other.ID)
+
+	reader := NewActionEntityRefReader(ctx)
+	matched, err := reader.ResourcesMatching(
+		[]uint{inCat.ID, outCat.ID},
+		plugin_system.ActionFilter{CategoryIDs: []uint{wanted.ID}},
+	)
+	if err != nil {
+		t.Fatalf("ResourcesMatching: %v", err)
+	}
+	if len(matched) != 1 || matched[0] != inCat.ID {
+		t.Fatalf("expected only the in-category resource (%d), got %v", inCat.ID, matched)
+	}
+}
+
+// Content type and resource category are ANDed, like every other filter pair.
+func TestActionEntityRefReader_ResourcesMatching_CombinesTypeAndCategory(t *testing.T) {
+	ctx := createIsolatedTestContext(t)
+	wanted := createResourceCategory(t, ctx, "Wanted")
+	other := createResourceCategory(t, ctx, "Other")
+
+	both := createResourceInCategory(t, ctx, "a.png", "image/png", wanted.ID)
+	rightCatWrongType := createResourceInCategory(t, ctx, "b.pdf", "application/pdf", wanted.ID)
+	rightTypeWrongCat := createResourceInCategory(t, ctx, "c.png", "image/png", other.ID)
+
+	reader := NewActionEntityRefReader(ctx)
+	matched, err := reader.ResourcesMatching(
+		[]uint{both.ID, rightCatWrongType.ID, rightTypeWrongCat.ID},
+		plugin_system.ActionFilter{ContentTypes: []string{"image/png"}, CategoryIDs: []uint{wanted.ID}},
+	)
+	if err != nil {
+		t.Fatalf("ResourcesMatching: %v", err)
+	}
+	if len(matched) != 1 || matched[0] != both.ID {
+		t.Fatalf("expected only the resource matching both filters (%d), got %v", both.ID, matched)
 	}
 }
 

@@ -253,6 +253,14 @@ func buildEntityDataFromEntity(entity any, entityType string) map[string]any {
 	case "resource":
 		if r, ok := entity.(*models.Resource); ok {
 			data["content_type"] = r.ContentType
+			// A resource's category lives under "category_id", the key the
+			// filter predicate reads for every entity type. Without it an
+			// action filtered on category_ids was never offered on a resource
+			// detail page. The column is NOT NULL, so only a zero-valued
+			// struct lands here with no category — and 0 is not a real id.
+			if r.ResourceCategoryId != 0 {
+				data["category_id"] = r.ResourceCategoryId
+			}
 		}
 	case "group":
 		if g, ok := entity.(*models.Group); ok && g.CategoryId != nil {

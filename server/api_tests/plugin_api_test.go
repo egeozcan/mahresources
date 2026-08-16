@@ -185,12 +185,16 @@ end
 // arbitrary PluginManager and EntityRefReader. Used in action-run tests
 // that need to bypass the main router.
 type testPluginRunner struct {
-	pm     *plugin_system.PluginManager
-	reader plugin_system.EntityRefReader
+	pm         *plugin_system.PluginManager
+	reader     plugin_system.EntityRefReader
+	dataReader plugin_system.ActionEntityDataReader
 }
 
 func (r *testPluginRunner) PluginManager() *plugin_system.PluginManager          { return r.pm }
 func (r *testPluginRunner) ActionEntityRefReader() plugin_system.EntityRefReader { return r.reader }
+func (r *testPluginRunner) ActionEntityDataReader() plugin_system.ActionEntityDataReader {
+	return r.dataReader
+}
 
 // These tests exercise the handler directly (no request principal), so the
 // runner is unrestricted: every entity is visible, matching admin / auth-off.
@@ -223,8 +227,9 @@ func TestActionRun_RejectsNonExistentEntityRef(t *testing.T) {
 	pm := enableTestPluginWithEntityRef(t, pluginDir)
 
 	runner := &testPluginRunner{
-		pm:     pm,
-		reader: tc.AppCtx.ActionEntityRefReader(),
+		pm:         pm,
+		reader:     tc.AppCtx.ActionEntityRefReader(),
+		dataReader: tc.AppCtx.ActionEntityDataReader(),
 	}
 
 	mux := http.NewServeMux()
@@ -254,8 +259,9 @@ func TestActionRun_BulkFanoutValidatesEntityRefsOnce(t *testing.T) {
 
 	counter := &countingReader{inner: tc.AppCtx.ActionEntityRefReader()}
 	runner := &testPluginRunner{
-		pm:     pm,
-		reader: counter,
+		pm:         pm,
+		reader:     counter,
+		dataReader: tc.AppCtx.ActionEntityDataReader(),
 	}
 
 	mux := http.NewServeMux()

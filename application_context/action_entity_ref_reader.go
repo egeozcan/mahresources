@@ -36,7 +36,17 @@ func chunkUints(ids []uint, size int) [][]uint {
 	return out
 }
 
+// ResourcesMatching applies the resource-category half of the filter in Go
+// rather than in SQL: ResourceSearchQuery carries a single ResourceCategoryId,
+// not a list, so it cannot express the filter's []uint. The rows are already
+// bounded by the chunk size, and GetResources selects whole rows, so
+// ResourceCategoryId is populated on every one of them.
 func (a *actionEntityRefReader) ResourcesMatching(ids []uint, filter plugin_system.ActionFilter) ([]uint, error) {
+	allowedCategories := make(map[uint]struct{}, len(filter.CategoryIDs))
+	for _, id := range filter.CategoryIDs {
+		allowedCategories[id] = struct{}{}
+	}
+
 	var matched []uint
 	for _, chunk := range chunkUints(ids, entityRefChunkSize) {
 		q := &query_models.ResourceSearchQuery{
@@ -48,6 +58,11 @@ func (a *actionEntityRefReader) ResourcesMatching(ids []uint, filter plugin_syst
 			return nil, err
 		}
 		for _, r := range rows {
+			if len(allowedCategories) > 0 {
+				if _, ok := allowedCategories[r.ResourceCategoryId]; !ok {
+					continue
+				}
+			}
 			matched = append(matched, r.ID)
 		}
 	}

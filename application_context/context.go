@@ -370,6 +370,12 @@ type MahresourcesContext struct {
 	// keeps /v1/resource and /v1/resource/remote on their existing unrestricted
 	// downloader while a plugin's fetch is policed.
 	pluginEgress *plugin_system.NetworkPolicy
+
+	// pluginFetch marks a context bound for a plugin invocation that may fetch.
+	// Without it, AddRemoteResource cannot tell "no plugin is involved, use the
+	// unrestricted operator path" from "a plugin is fetching but its policy did
+	// not survive the trip" — and those must not both mean "skip the layers".
+	pluginFetch bool
 	// hashQueue is a channel to queue resources for async hash processing
 	hashQueue chan<- uint
 	// thumbnailQueue is a channel to queue video resources for async thumbnail generation
@@ -660,6 +666,13 @@ func (ctx *MahresourcesContext) PluginManager() *plugin_system.PluginManager {
 // Used by GetActionRunHandler to validate entity_ref param IDs.
 func (ctx *MahresourcesContext) ActionEntityRefReader() plugin_system.EntityRefReader {
 	return NewActionEntityRefReader(ctx)
+}
+
+// ActionEntityDataReader returns an ActionEntityDataReader bound to this
+// context. Used by GetActionRunHandler to re-check an action's Filters against
+// the entities it was asked to run on.
+func (ctx *MahresourcesContext) ActionEntityDataReader() plugin_system.ActionEntityDataReader {
+	return NewActionEntityDataReader(ctx)
 }
 
 // RegisterAltFs adds an alternative filesystem under the given key. This is

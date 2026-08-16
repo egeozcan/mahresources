@@ -421,6 +421,58 @@ func ValidateActionEntityRefs(reader EntityRefReader, action ActionRegistration,
 	return errs, nil
 }
 
+// ActionHasEntityFilters reports whether the action restricts the entities it
+// may run on at all. When it does not, the execute path can skip the extra
+// read entirely.
+func ActionHasEntityFilters(action ActionRegistration) bool {
+	return len(action.Filters.ContentTypes) > 0 ||
+		len(action.Filters.CategoryIDs) > 0 ||
+		len(action.Filters.NoteTypeIDs) > 0
+}
+
+// ValidateActionEntityFilters re-checks an action's own Filters against the
+// entities a caller asked to run it on. GetActions applies the filters when
+// deciding what to OFFER; without this, a direct POST to the run endpoint can
+// run an action on an entity the UI would never have offered it for.
+//
+// It deliberately calls the same actionMatchesFilters the offer path calls, over
+// the same three keys, so offer and execute cannot drift.
+//
+// Returns ([]ValidationError, nil) for entities the filters reject — including
+// entities the reader did not return at all (deleted, or outside the caller's
+// scope), which fail closed. Returns (nil, error) when the reader/DB fails.
+// Filter-less actions return (nil, nil) without touching the reader.
+func ValidateActionEntityFilters(reader ActionEntityDataReader, action ActionRegistration, ids []uint) ([]ValidationError, error) {
+	if !ActionHasEntityFilters(action) || len(ids) == 0 {
+		return nil, nil
+	}
+	if reader == nil {
+		return nil, fmt.Errorf("validating entity filters: no entity data reader")
+	}
+
+	data, err := reader.EntityFilterData(action.Entity, ids)
+	if err != nil {
+		return nil, fmt.Errorf("validating entity filters for %q: %w", action.Entity, err)
+	}
+
+	var errs []ValidationError
+	seen := make(map[uint]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if !actionMatchesFilters(action, data[id]) {
+			errs = append(errs, ValidationError{
+				Field:   "entity_ids",
+				Message: fmt.Sprintf("%s: %s %d does not match this action's filters", action.Label, action.Entity, id),
+			})
+		}
+	}
+
+	return errs, nil
+}
+
 // RunAction executes a registered plugin action synchronously. It locates
 // the action, validates params, builds a Lua context table, calls the
 // handler, and parses the returned table into an ActionResult.

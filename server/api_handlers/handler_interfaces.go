@@ -39,6 +39,7 @@ var (
 	_ PluginManagerProvider     = (*application_context.MahresourcesContext)(nil)
 	_ DeferredRenderContext     = (*application_context.MahresourcesContext)(nil)
 	_ UserSettingsContext       = (*application_context.MahresourcesContext)(nil)
+	_ PluginActionRunner        = (*application_context.MahresourcesContext)(nil)
 )
 
 // PluginManagerProvider is the plugin registry accessor. Several handlers need

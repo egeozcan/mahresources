@@ -19,6 +19,7 @@ import (
 type PluginActionRunner interface {
 	PluginManager() *plugin_system.PluginManager
 	ActionEntityRefReader() plugin_system.EntityRefReader
+	ActionEntityDataReader() plugin_system.ActionEntityDataReader
 	ResourceVisible(id uint) bool
 	NoteVisible(id uint) bool
 	GroupVisible(id uint) bool
@@ -194,6 +195,26 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]any{"errors": refErrs})
 			return
+		}
+
+		// The action's own Filters decide which entities the UI OFFERS it for.
+		// Re-apply them here, over the same predicate, so a direct POST cannot
+		// run a PNG-only action on a PDF. One read for the whole batch, beside
+		// the entity_ref read above, and skipped entirely for an action that
+		// declares no filters. A mismatch — including an entity that came back
+		// missing, so deleted or out of scope — vetoes the whole batch.
+		if plugin_system.ActionHasEntityFilters(action) {
+			filterErrs, err := plugin_system.ValidateActionEntityFilters(ctx.ActionEntityDataReader(), action, req.EntityIDs)
+			if err != nil {
+				http_utils.HandleError(fmt.Errorf("entity filter validation: %w", err), w, r, http.StatusInternalServerError)
+				return
+			}
+			if len(filterErrs) > 0 {
+				w.Header().Set("Content-Type", constants.JSON)
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"errors": filterErrs})
+				return
+			}
 		}
 
 		if action.Async {
