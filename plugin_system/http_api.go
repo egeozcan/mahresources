@@ -13,12 +13,12 @@ import (
 )
 
 const (
-	defaultHttpTimeout      = 10 * time.Second
-	maxHttpTimeout          = 120 * time.Second
-	maxHttpResponseBody     = 5 * 1024 * 1024 // 5MB
-	maxHttpRedirects        = 10
-	maxConcurrentHttpReqs   = 16
-	httpUserAgent           = "mahresources-plugin/1.0"
+	defaultHttpTimeout    = 10 * time.Second
+	maxHttpTimeout        = 120 * time.Second
+	maxHttpResponseBody   = 5 * 1024 * 1024 // 5MB
+	maxHttpRedirects      = 10
+	maxConcurrentHttpReqs = 16
+	httpUserAgent         = "mahresources-plugin/1.0"
 )
 
 // httpCallback holds a pending callback to be executed on the Lua VM thread.
@@ -34,22 +34,12 @@ type httpCallback struct {
 	response map[string]any
 }
 
-// newHttpClient creates the shared HTTP client used for all plugin HTTP requests.
-// Per-request timeouts are enforced via context.WithTimeout, so no client-level
-// Timeout is set here to avoid redundant/conflicting deadline behavior.
-func newHttpClient() *http.Client {
-	return &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxHttpRedirects {
-				return fmt.Errorf("stopped after %d redirects", maxHttpRedirects)
-			}
-			return nil
-		},
-	}
-}
-
 // registerHttpModule registers the mah.http sub-table in the Lua VM.
-func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
+// egress is the plugin's own network policy, captured here rather than looked
+// up per request: the plugin's name is not in scope at the point the request is
+// made, and a lookup keyed on the LState would have to re-derive the main state
+// on a path where the sync entry points pass a possibly-coroutine L.
+func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable, egress NetworkPolicy) {
 	httpMod := L.NewTable()
 
 	// mah.http.get(url, [options,] callback)
@@ -65,11 +55,15 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 			pm.queueErrorCallback(mainState(L), callback, "GET", url, err.Error())
 			return 0
 		}
+		if err := checkEgressHost(egress, url); err != nil {
+			pm.queueErrorCallback(mainState(L), callback, "GET", url, err.Error())
+			return 0
+		}
 		if !pm.beginHTTP(L) {
 			pm.queueErrorCallback(mainState(L), callback, "GET", url, errShuttingDown)
 			return 0
 		}
-		go pm.executeHttpRequest("GET", url, "", headers, timeout, mainState(L), callback, pm.actorFor(L))
+		go pm.executeHttpRequest(egress, "GET", url, "", headers, timeout, mainState(L), callback, pm.actorFor(L))
 		return 0
 	}))
 
@@ -87,11 +81,15 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 			pm.queueErrorCallback(mainState(L), callback, "POST", url, err.Error())
 			return 0
 		}
+		if err := checkEgressHost(egress, url); err != nil {
+			pm.queueErrorCallback(mainState(L), callback, "POST", url, err.Error())
+			return 0
+		}
 		if !pm.beginHTTP(L) {
 			pm.queueErrorCallback(mainState(L), callback, "POST", url, errShuttingDown)
 			return 0
 		}
-		go pm.executeHttpRequest("POST", url, body, headers, timeout, mainState(L), callback, pm.actorFor(L))
+		go pm.executeHttpRequest(egress, "POST", url, body, headers, timeout, mainState(L), callback, pm.actorFor(L))
 		return 0
 	}))
 
@@ -108,11 +106,15 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 			pm.queueErrorCallback(mainState(L), callback, method, url, err.Error())
 			return 0
 		}
+		if err := checkEgressHost(egress, url); err != nil {
+			pm.queueErrorCallback(mainState(L), callback, method, url, err.Error())
+			return 0
+		}
 		if !pm.beginHTTP(L) {
 			pm.queueErrorCallback(mainState(L), callback, method, url, errShuttingDown)
 			return 0
 		}
-		go pm.executeHttpRequest(method, url, body, headers, timeout, mainState(L), callback, pm.actorFor(L))
+		go pm.executeHttpRequest(egress, method, url, body, headers, timeout, mainState(L), callback, pm.actorFor(L))
 		return 0
 	}))
 
@@ -130,7 +132,11 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 			L.Push(buildSyncErrorResponse(L, "GET", url, err.Error()))
 			return 1
 		}
-		L.Push(pm.executeSyncHttpRequest("GET", url, "", headers, timeout, L))
+		if err := checkEgressHost(egress, url); err != nil {
+			L.Push(buildSyncErrorResponse(L, "GET", url, err.Error()))
+			return 1
+		}
+		L.Push(pm.executeSyncHttpRequest(egress, "GET", url, "", headers, timeout, L))
 		return 1
 	}))
 
@@ -148,7 +154,11 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable) {
 			L.Push(buildSyncErrorResponse(L, "POST", url, err.Error()))
 			return 1
 		}
-		L.Push(pm.executeSyncHttpRequest("POST", url, body, headers, timeout, L))
+		if err := checkEgressHost(egress, url); err != nil {
+			L.Push(buildSyncErrorResponse(L, "POST", url, err.Error()))
+			return 1
+		}
+		L.Push(pm.executeSyncHttpRequest(egress, "POST", url, body, headers, timeout, L))
 		return 1
 	}))
 
@@ -195,7 +205,7 @@ func (pm *PluginManager) beginHTTP(L *lua.LState) bool {
 }
 
 // executeSyncHttpRequest performs a blocking HTTP request and returns the response as a Lua table.
-func (pm *PluginManager) executeSyncHttpRequest(method, url, body string, headers map[string]string, timeout time.Duration, L *lua.LState) *lua.LTable {
+func (pm *PluginManager) executeSyncHttpRequest(egress NetworkPolicy, method, url, body string, headers map[string]string, timeout time.Duration, L *lua.LState) *lua.LTable {
 	if pm.closed.Load() {
 		return buildSyncErrorResponse(L, method, url, errShuttingDown)
 	}
@@ -236,7 +246,7 @@ func (pm *PluginManager) executeSyncHttpRequest(method, url, body string, header
 		req.Header.Set(k, v)
 	}
 
-	resp, err := pm.httpClient.Do(req)
+	resp, err := pm.httpClientFor(egress).Do(req)
 	if err != nil {
 		return buildSyncErrorResponse(L, method, url, err.Error())
 	}
@@ -342,7 +352,7 @@ func validateScheme(url string) error {
 }
 
 // executeHttpRequest performs the HTTP request in a goroutine and queues the callback.
-func (pm *PluginManager) executeHttpRequest(method, url, body string, headers map[string]string, timeout time.Duration, vm *lua.LState, callback *lua.LFunction, actor uint) {
+func (pm *PluginManager) executeHttpRequest(egress NetworkPolicy, method, url, body string, headers map[string]string, timeout time.Duration, vm *lua.LState, callback *lua.LFunction, actor uint) {
 	defer pm.httpWg.Done()
 
 	// Acquire concurrency semaphore
@@ -380,7 +390,7 @@ func (pm *PluginManager) executeHttpRequest(method, url, body string, headers ma
 		req.Header.Set(k, v)
 	}
 
-	resp, err := pm.httpClient.Do(req)
+	resp, err := pm.httpClientFor(egress).Do(req)
 	if err != nil {
 		pm.queueHttpCallback(httpCallback{
 			vm:    vm,

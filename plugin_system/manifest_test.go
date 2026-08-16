@@ -232,12 +232,12 @@ func TestNetworkRuleMatching(t *testing.T) {
 	}{
 		{"fal.run", "fal.run", true},
 		{"fal.run", "FAL.RUN", true},
-		{"fal.run", "fal.run.", true},      // trailing dot is the same name
-		{"fal.run", "api.fal.run", false},  // exact means exact
-		{"fal.run", "evilfal.run", false},  // and not a suffix match
+		{"fal.run", "fal.run.", true},     // trailing dot is the same name
+		{"fal.run", "api.fal.run", false}, // exact means exact
+		{"fal.run", "evilfal.run", false}, // and not a suffix match
 		{"*.fal.ai", "queue.fal.ai", true},
 		{"*.fal.ai", "a.b.fal.ai", true},
-		{"*.fal.ai", "fal.ai", false},      // the wildcard needs a label
+		{"*.fal.ai", "fal.ai", false}, // the wildcard needs a label
 		{"*.fal.ai", "notfal.ai", false},
 		{"*.fal.ai", "fal.ai.evil.com", false},
 		{"192.168.1.10", "192.168.1.10", true},
@@ -451,13 +451,13 @@ func TestManifestCatchesANearMissFieldName(t *testing.T) {
 
 func TestNearMissDetectionCoversTheTyposPeopleMake(t *testing.T) {
 	cases := map[string]bool{
-		"netowrk":            true,  // transposition — the common one
-		"capabilites":        true,  // dropped letter
-		"networks":           true,  // extra letter
-		"netwerk":            true,  // substitution
-		"network":            false, // itself
+		"netowrk":             true,  // transposition — the common one
+		"capabilites":         true,  // dropped letter
+		"networks":            true,  // extra letter
+		"netwerk":             true,  // substitution
+		"network":             false, // itself
 		"my_own_plugin_state": false, // a plugin's own key stays legal
-		"deps":               false,
+		"deps":                false,
 	}
 	for key, want := range cases {
 		if got := editDistanceWithin1(key, "network") || editDistanceWithin1(key, "capabilities"); got != want {

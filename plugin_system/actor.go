@@ -45,7 +45,23 @@ type Invocation struct {
 	// when there is none (auth off, or a context-less worker path).
 	ActorUserID uint
 
+	// Egress is the network policy of the plugin that made this call, when the
+	// call can reach the network. Nil for every other call, and for host-side
+	// fetches that no plugin triggered — which is what keeps operator-initiated
+	// downloads on their existing, unrestricted path.
+	Egress *NetworkPolicy
+
 	states []*lua.LState
+}
+
+// withEgress returns a copy carrying a plugin's network policy.
+func (inv *Invocation) withEgress(policy NetworkPolicy) *Invocation {
+	if inv == nil {
+		return nil
+	}
+	copied := *inv
+	copied.Egress = &policy
+	return &copied
 }
 
 // NewInvocation returns an Invocation for a call originating outside any plugin

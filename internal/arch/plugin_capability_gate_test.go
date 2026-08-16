@@ -790,6 +790,15 @@ var querierBackedWrites = map[string]bool{
 	"add_resource_version_from_url": true,
 }
 
+// urlFetchingWrites are the mah.db functions that perform an outbound request
+// by handing a URL to the application's own downloader. They are gated on
+// db:write AND http, and their URL goes through the same egress layers mah.http
+// does.
+var urlFetchingWrites = map[string]bool{
+	"create_resource_from_url":      true,
+	"add_resource_version_from_url": true,
+}
+
 // querierWriteMethods are the EntityQuerier methods those three registrations
 // legitimately call.
 var querierWriteMethods = map[string]bool{
@@ -822,7 +831,7 @@ func TestDbModuleRegistrationsDeclareReadOrWrite(t *testing.T) {
 			return true
 		}
 		ident, ok := assign.Lhs[0].(*ast.Ident)
-		if !ok || (ident.Name != "setRead" && ident.Name != "setWrite") {
+		if !ok || (ident.Name != "setRead" && ident.Name != "setWrite" && ident.Name != "setFetchingWrite") {
 			return true
 		}
 		if lit, ok := assign.Rhs[0].(*ast.FuncLit); ok {
@@ -830,8 +839,8 @@ func TestDbModuleRegistrationsDeclareReadOrWrite(t *testing.T) {
 		}
 		return true
 	})
-	if len(allowedRanges) != 2 {
-		t.Fatalf("expected setRead and setWrite closures in registerDbModule, found %d", len(allowedRanges))
+	if len(allowedRanges) != 3 {
+		t.Fatalf("expected setRead, setWrite and setFetchingWrite closures in registerDbModule, found %d", len(allowedRanges))
 	}
 
 	// Where dbMod comes from, and the one call that hands it on.
@@ -864,25 +873,33 @@ func TestDbModuleRegistrationsDeclareReadOrWrite(t *testing.T) {
 	// they are what writes it — so, as with the mah installers, they are the one
 	// place where deleting a condition makes every registration unconditional
 	// while every other rule still passes.
+	// setFetchingWrite is the third registrar: the two writers that open a
+	// socket need db:write AND http, so its guard must name both. Checking only
+	// for "canWrite" here would accept a guard that had quietly lost the http
+	// half, which is the whole point of the third registrar existing.
+	wants := [][]string{{"canRead"}, {"canWrite"}, {"canWrite", "grants.Has(CapHTTP)"}}
 	for i, r := range allowedRanges {
-		want := "canRead"
-		if i == 1 {
-			want = "canWrite"
+		if i >= len(wants) {
+			break
 		}
-		gated := false
-		ast.Inspect(file, func(n ast.Node) bool {
-			ifStmt, ok := n.(*ast.IfStmt)
-			if !ok || n.Pos() < r[0] || n.End() > r[1] {
+		for _, want := range wants[i] {
+			gated := false
+			ast.Inspect(file, func(n ast.Node) bool {
+				ifStmt, ok := n.(*ast.IfStmt)
+				if !ok || n.Pos() < r[0] || n.End() > r[1] {
+					return true
+				}
+				cond := exprText(fset, ifStmt.Cond)
+				if cond == want || strings.Contains(cond, want) {
+					gated = true
+				}
 				return true
+			})
+			if !gated {
+				t.Errorf("the db registrar at %s has no `%s` in its guard, so every registration it makes is\n"+
+					"unconditional in that dimension and the capability split stops existing.",
+					fset.Position(r[0]), want)
 			}
-			if exprText(fset, ifStmt.Cond) == want {
-				gated = true
-			}
-			return true
-		})
-		if !gated {
-			t.Errorf("the db registrar at %s has no `if %s` guard, so every registration it makes is\n"+
-				"unconditional and the db:read/db:write split stops existing.", fset.Position(r[0]), want)
 		}
 	}
 
@@ -894,7 +911,7 @@ func TestDbModuleRegistrationsDeclareReadOrWrite(t *testing.T) {
 			return true
 		}
 		for _, rhs := range assign.Rhs {
-			if id, ok := rhs.(*ast.Ident); ok && (id.Name == "setRead" || id.Name == "setWrite") {
+			if id, ok := rhs.(*ast.Ident); ok && (id.Name == "setRead" || id.Name == "setWrite" || id.Name == "setFetchingWrite") {
 				t.Errorf("%s is aliased at %s. Every rule here matches the literal callee, so a registration\n"+
 					"made through the alias is unexamined — including which adapter it reaches.",
 					id.Name, fset.Position(assign.Pos()))
@@ -911,7 +928,7 @@ func TestDbModuleRegistrationsDeclareReadOrWrite(t *testing.T) {
 			return true
 		}
 		ident, ok := call.Fun.(*ast.Ident)
-		if !ok || (ident.Name != "setRead" && ident.Name != "setWrite") {
+		if !ok || (ident.Name != "setRead" && ident.Name != "setWrite" && ident.Name != "setFetchingWrite") {
 			return true
 		}
 		registrars++
@@ -930,13 +947,33 @@ func TestDbModuleRegistrationsDeclareReadOrWrite(t *testing.T) {
 	// db:read-only plugin would have got a mutation.
 	for name := range querierBackedWrites {
 		switch registeredWith[name] {
-		case "setWrite":
+		case "setWrite", "setFetchingWrite":
 		case "":
 			t.Errorf("%s is in querierBackedWrites but is not registered in db_api.go; update the list", name)
 		default:
 			t.Errorf("%s is registered with %s. It is in querierBackedWrites, which exempts it from the\n"+
 				"querier/writer cross-check — an exemption that only makes sense for a write. Registered as a\n"+
 				"read, it hands a mutation to a db:read-only plugin.", name, registeredWith[name])
+		}
+	}
+
+	// The two writers that fetch a URL must go through setFetchingWrite.
+	//
+	// Plain setWrite compiles, passes every other rule here, and silently drops
+	// the `http` requirement — handing any db:write plugin a server-side fetch
+	// primitive that its declared `network` list does not describe. That is the
+	// exact hole this package exists to close, so it gets its own rule rather
+	// than relying on someone noticing the registrar name.
+	for name := range urlFetchingWrites {
+		switch registeredWith[name] {
+		case "setFetchingWrite":
+		case "":
+			t.Errorf("%s is in urlFetchingWrites but is not registered in db_api.go; update the list", name)
+		default:
+			t.Errorf("%s is registered with %s, not setFetchingWrite. It opens a socket, so it needs the\n"+
+				"http capability as well as db:write, and its URL must go through the egress layers.\n"+
+				"Registered as a plain write, a db:write-only plugin regains an unrestricted fetch.",
+				name, registeredWith[name])
 		}
 	}
 
@@ -975,7 +1012,7 @@ func TestDbModuleRegistrationsDeclareReadOrWrite(t *testing.T) {
 			return true
 		}
 		ident, ok := call.Fun.(*ast.Ident)
-		if !ok || (ident.Name != "setRead" && ident.Name != "setWrite") {
+		if !ok || (ident.Name != "setRead" && ident.Name != "setWrite" && ident.Name != "setFetchingWrite") {
 			return true
 		}
 		lit, ok := call.Args[1].(*ast.FuncLit)
@@ -991,11 +1028,20 @@ func TestDbModuleRegistrationsDeclareReadOrWrite(t *testing.T) {
 			name = strings.Trim(s.Value, `"`)
 		}
 		want, forbidden := "querierFor", "writerFor"
-		if ident.Name == "setWrite" {
+		switch ident.Name {
+		case "setWrite":
 			want, forbidden = "writerFor", "querierFor"
 			if querierBackedWrites[name] {
 				return true
 			}
+		case "setFetchingWrite":
+			// querierForFetch, specifically. Plain querierFor binds the same
+			// adapter to the same principal and would compile and pass every
+			// other rule here — while silently dropping the plugin's network
+			// policy, so the host-side downloader would fetch with no dial-time
+			// deny and no redirect re-check. The policy only reaches the
+			// fetcher because this accessor puts it on the invocation.
+			want, forbidden = "querierForFetch", "writerFor"
 		}
 		var sawWanted, sawForbidden bool
 		ast.Inspect(lit.Body, func(inner ast.Node) bool {
@@ -1023,8 +1069,9 @@ func TestDbModuleRegistrationsDeclareReadOrWrite(t *testing.T) {
 
 	if len(crossed) > 0 {
 		t.Errorf("read/write registration crosses the adapter it declares: %s.\n"+
-			"setRead bodies must reach the DB through pm.querierFor and setWrite bodies through\n"+
-			"pm.writerFor, or the capability split says one thing and the code does another.",
+			"setRead bodies must reach the DB through pm.querierFor, setWrite bodies through\n"+
+			"pm.writerFor, and setFetchingWrite bodies through pm.querierForFetch — which is the\n"+
+			"only accessor that carries the plugin's network policy to the host-side downloader.",
 			strings.Join(crossed, ", "))
 	}
 	if len(offenders) > 0 {

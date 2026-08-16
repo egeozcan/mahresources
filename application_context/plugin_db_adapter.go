@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"mahresources/auth"
 	"mahresources/constants"
 	"mahresources/models"
 	"mahresources/models/query_models"
 	"mahresources/plugin_system"
+	"math"
 	"mime/multipart"
 	"net/url"
 	"strings"
@@ -50,6 +50,9 @@ func (a *pluginDBAdapter) BindInvocation(inv *plugin_system.Invocation) (plugin_
 		bound = &clone
 	}
 	bound.pluginInvocation = inv
+	if inv != nil {
+		bound.pluginEgress = inv.Egress
+	}
 
 	adapter := &pluginDBAdapter{ctx: bound}
 	return adapter, adapter
@@ -559,6 +562,17 @@ func (a *pluginDBAdapter) AddResourceVersionFromURL(resourceID uint, rawURL stri
 	connectTimeout := a.ctx.Config.RemoteResourceConnectTimeout
 	overallTimeout := a.ctx.Config.RemoteResourceOverallTimeout
 	client := createRemoteResourceHTTPClient(connectTimeout, overallTimeout)
+	// This fetch is only ever reached from a plugin, so a missing policy means
+	// the invocation lost it on the way here rather than that none applies.
+	// Refuse: an unpoliced server-side fetch is what the capability gate on
+	// this function exists to prevent.
+	if a.ctx.pluginEgress == nil {
+		return nil, fmt.Errorf("refusing to fetch: this plugin's network policy is not available")
+	}
+	if err := plugin_system.CheckEgressURL(*a.ctx.pluginEgress, rawURL); err != nil {
+		return nil, err
+	}
+	client = plugin_system.ApplyEgressPolicy(client, *a.ctx.pluginEgress, connectTimeout)
 
 	resp, err := client.Get(rawURL)
 	if err != nil {

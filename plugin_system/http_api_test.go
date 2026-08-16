@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,41 @@ import (
 	"testing"
 	"time"
 )
+
+// loopbackPlugin is the `plugin` manifest line for a test whose plugin talks to
+// an address on this machine.
+//
+// httptest listens on loopback, and the dial-time layer of the egress control
+// denies a loopback address to every plugin — legacy ones included, since
+// exempting them would exempt exactly the population the deny exists for.
+// Reaching one means naming the address in `network` and declaring
+// allow_private_hosts, which is what a real plugin pointed at a LAN service has
+// to do too. Naming the address is required as well as sufficient: a *name*
+// rule deliberately never lifts the deny.
+//
+// The capability list is exactly what these plugins use: mah.http and
+// mah.inject. An ungranted capability is a key that is never set, so widening
+// this would hide a missing grant behind "attempt to index a nil value".
+func loopbackPlugin(name, host string) string {
+	return fmt.Sprintf(`plugin = { name = %q, version = "1.0", description = "http test",
+           api_version = 1,
+           capabilities = { "http", "inject" },
+           network = { %q },
+           allow_private_hosts = true }`, name, host)
+}
+
+// httpTestPlugin is loopbackPlugin for a live httptest server, whose address is
+// read back off its URL rather than assumed: httptest falls back to [::1] when
+// it cannot listen on 127.0.0.1, and the manifest has to name the address that
+// will actually be dialled.
+func httpTestPlugin(t *testing.T, name, srvURL string) string {
+	t.Helper()
+	host, _, err := net.SplitHostPort(strings.TrimPrefix(srvURL, "http://"))
+	if err != nil {
+		t.Fatalf("test bug: could not read the host from %q: %v", srvURL, err)
+	}
+	return loopbackPlugin(name, host)
+}
 
 // pollSlot polls RenderSlot until it returns a non-empty string or times out.
 func pollSlot(t *testing.T, pm *PluginManager, slot string, timeout time.Duration) string {
@@ -36,7 +72,7 @@ func TestHttpApi_GetSuccess(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 http_result = ""
 
 function init()
@@ -51,7 +87,7 @@ function init()
         return http_result
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -81,7 +117,7 @@ func TestHttpApi_PostSuccess(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 http_result = ""
 
 function init()
@@ -96,7 +132,7 @@ function init()
         return http_result
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -130,7 +166,7 @@ func TestHttpApi_RequestPut(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 http_result = ""
 
 function init()
@@ -147,7 +183,7 @@ function init()
         return http_result
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -182,7 +218,7 @@ func TestHttpApi_CustomHeaders(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 http_result = ""
 
 function init()
@@ -195,7 +231,7 @@ function init()
         return http_result
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -226,7 +262,7 @@ func TestHttpApi_ResponseHeaders(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 http_result = ""
 
 function init()
@@ -242,7 +278,7 @@ function init()
         return http_result
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -260,16 +296,25 @@ end
 	}
 }
 
+// TestHttpApi_NetworkError pins that a genuine transport failure reaches the
+// callback as resp.error.
+//
+// The manifest names 127.0.0.1 so the request is actually dialled: without it
+// the egress control refuses the address before any socket is opened, and the
+// test would go green on a refusal that says nothing about transport errors.
+// Port 1 has nothing listening, so what comes back is a real dial failure —
+// asserted as "not the egress refusal" rather than by matching the platform's
+// wording for a refused connection.
 func TestHttpApi_NetworkError(t *testing.T) {
 	dir := t.TempDir()
-	writePlugin(t, dir, "http-test", `
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+	writePlugin(t, dir, "http-test", fmt.Sprintf(`
+%s
 http_result = ""
 
 function init()
     mah.http.get("http://127.0.0.1:1", function(resp)
         if resp.error then
-            http_result = "ERROR"
+            http_result = "ERROR:" .. resp.error
         else
             http_result = "OK"
         end
@@ -278,7 +323,7 @@ function init()
         return http_result
     end)
 end
-`)
+`, loopbackPlugin("http-test", "127.0.0.1")))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -291,8 +336,12 @@ end
 	}
 
 	result := pollSlot(t, pm, "test", 5*time.Second)
-	if result != "ERROR" {
-		t.Errorf("expected 'ERROR', got %q", result)
+	if !strings.HasPrefix(result, "ERROR:") {
+		t.Errorf("expected a transport error, got %q", result)
+	}
+	if strings.Contains(result, "blocked request") {
+		t.Errorf("the request never left the process: egress refused it, so this "+
+			"says nothing about transport errors: %q", result)
 	}
 }
 
@@ -343,7 +392,7 @@ func TestHttpApi_BodySizeLimit(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 http_result = ""
 
 function init()
@@ -358,7 +407,7 @@ function init()
         return http_result
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -387,7 +436,7 @@ func TestHttpApi_Timeout(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 http_result = ""
 
 function init()
@@ -395,7 +444,7 @@ function init()
         timeout = 1
     }, function(resp)
         if resp.error then
-            http_result = "TIMEOUT"
+            http_result = "TIMEOUT:" .. resp.error
         else
             http_result = "OK"
         end
@@ -404,7 +453,7 @@ function init()
         return http_result
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -417,8 +466,15 @@ end
 	}
 
 	result := pollSlot(t, pm, "test", 5*time.Second)
-	if result != "TIMEOUT" {
-		t.Errorf("expected 'TIMEOUT', got %q", result)
+	if !strings.HasPrefix(result, "TIMEOUT:") {
+		t.Errorf("expected the request to time out, got %q", result)
+	}
+	// The manifest names the server's address so the request is really made and
+	// really times out. Without that check this test goes green on the egress
+	// refusal, which arrives instantly and has nothing to do with timeouts.
+	if strings.Contains(result, "blocked request") {
+		t.Errorf("the request never left the process: egress refused it, so no "+
+			"timeout was exercised: %q", result)
 	}
 }
 
@@ -432,7 +488,7 @@ func TestHttpApi_CustomTimeout(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 http_result = ""
 
 function init()
@@ -449,7 +505,7 @@ function init()
         return http_result
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -476,7 +532,7 @@ func TestHttpApi_NonOkStatus(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 http_result = ""
 
 function init()
@@ -491,7 +547,7 @@ function init()
         return http_result
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -522,7 +578,7 @@ func TestHttpApi_UserAgent(t *testing.T) {
 
 	// Test default user-agent
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 http_result = ""
 
 function init()
@@ -533,7 +589,7 @@ function init()
         return http_result
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -557,7 +613,7 @@ end
 	dir2 := t.TempDir()
 	receivedUA = ""
 	writePlugin(t, dir2, "http-test2", fmt.Sprintf(`
-plugin = { name = "http-test2", version = "1.0", description = "http test" }
+%s
 http_result = ""
 
 function init()
@@ -570,7 +626,7 @@ function init()
         return http_result
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test2", srv.URL), srv.URL))
 
 	pm2, err := NewPluginManager(dir2)
 	if err != nil {
@@ -604,7 +660,7 @@ func TestHttpApi_RequestDelete(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 http_result = ""
 
 function init()
@@ -619,7 +675,7 @@ function init()
         return http_result
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -657,7 +713,7 @@ func TestHttpApi_ConcurrentRequests(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 done_count = 0
 http_result = ""
 
@@ -674,7 +730,7 @@ function init()
         return http_result
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -708,7 +764,7 @@ func TestHttpApi_MultiValueHeaders(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 http_result = ""
 
 function init()
@@ -724,7 +780,7 @@ function init()
         return http_result
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -753,7 +809,7 @@ func TestHttpApi_GetSyncSuccess(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 function init()
     mah.inject("test", function(ctx)
         local resp = mah.http.get_sync(%q)
@@ -763,7 +819,7 @@ function init()
         return resp.status_code .. ":" .. resp.body
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -793,7 +849,7 @@ func TestHttpApi_PostSyncSuccess(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 function init()
     mah.inject("test", function(ctx)
         local resp = mah.http.post_sync(%q, "sync-body")
@@ -803,7 +859,7 @@ function init()
         return resp.status_code .. ":" .. resp.body
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -824,20 +880,24 @@ end
 	}
 }
 
+// TestHttpApi_GetSyncNetworkError is TestHttpApi_NetworkError for the sync API:
+// the manifest names the address so a socket is really opened, and the
+// assertion rules out the egress refusal that would otherwise stand in for a
+// transport error.
 func TestHttpApi_GetSyncNetworkError(t *testing.T) {
 	dir := t.TempDir()
-	writePlugin(t, dir, "http-test", `
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+	writePlugin(t, dir, "http-test", fmt.Sprintf(`
+%s
 function init()
     mah.inject("test", function(ctx)
         local resp = mah.http.get_sync("http://127.0.0.1:1")
         if resp.error then
-            return "ERROR"
+            return "ERROR:" .. resp.error
         end
         return "OK"
     end)
 end
-`)
+`, loopbackPlugin("http-test", "127.0.0.1")))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -850,8 +910,12 @@ end
 	}
 
 	result := pm.RenderSlot(context.Background(), "test", map[string]any{})
-	if result != "ERROR" {
-		t.Errorf("expected 'ERROR', got %q", result)
+	if !strings.HasPrefix(result, "ERROR:") {
+		t.Errorf("expected a transport error, got %q", result)
+	}
+	if strings.Contains(result, "blocked request") {
+		t.Errorf("the request never left the process: egress refused it, so this "+
+			"says nothing about transport errors: %q", result)
 	}
 }
 
@@ -897,7 +961,7 @@ func TestHttpApi_PostSyncWithHeaders(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 function init()
     mah.inject("test", function(ctx)
         local resp = mah.http.post_sync(%q, "{}", {
@@ -909,7 +973,7 @@ function init()
         return resp.body
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {
@@ -940,7 +1004,7 @@ func TestHttpApi_GetSyncBodySizeLimit(t *testing.T) {
 
 	dir := t.TempDir()
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
-plugin = { name = "http-test", version = "1.0", description = "http test" }
+%s
 function init()
     mah.inject("test", function(ctx)
         local resp = mah.http.get_sync(%q)
@@ -950,7 +1014,7 @@ function init()
         return tostring(#resp.body)
     end)
 end
-`, srv.URL))
+`, httpTestPlugin(t, "http-test", srv.URL), srv.URL))
 
 	pm, err := NewPluginManager(dir)
 	if err != nil {

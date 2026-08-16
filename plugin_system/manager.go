@@ -156,7 +156,12 @@ type PluginManager struct {
 	// silently skip the check.
 	consent         atomic.Value
 	fallbackConsent *memoryConsentStore
-	closed          atomic.Bool
+
+	// egressClients holds one http.Client per distinct network policy. Keyed on
+	// the policy fingerprint, not the plugin: see httpClientFor.
+	egressMu      sync.RWMutex
+	egressClients map[string]*http.Client
+	closed        atomic.Bool
 
 	// loadWg tracks loads in progress. A loading VM is in vmLocks but not yet in
 	// states, so a Close that only walks states would leave it open — and the
@@ -197,7 +202,6 @@ type PluginManager struct {
 	actionInFlight  map[string]*sync.WaitGroup // pluginName -> in-flight async action count
 
 	// HTTP async callback support
-	httpClient  *http.Client
 	httpMu      sync.Mutex
 	httpPending []httpCallback
 	httpNotify  chan struct{}  // buffered(1), signals new callbacks
@@ -230,7 +234,6 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		actionInFlight:  make(map[string]*sync.WaitGroup),
 		loading:         make(map[string]chan struct{}),
 		fallbackConsent: newMemoryConsentStore(),
-		httpClient:      newHttpClient(),
 		httpNotify:      make(chan struct{}, 1),
 		done:            make(chan struct{}),
 		httpSem:         make(chan struct{}, maxConcurrentHttpReqs),
@@ -849,7 +852,7 @@ func (pm *PluginManager) loadPlugin(dp DiscoveredPlugin) error {
 	// Only now does the plugin get its host functions, and only the granted
 	// ones. Closures in registerMahModule capture the name pointer.
 	pluginName := header.Name
-	pm.registerMahModule(L, &pluginName, grants)
+	pm.registerMahModule(L, &pluginName, grants, header.Manifest.NetworkPolicy())
 
 	info := PluginInfo{
 		Name:        header.Name,
@@ -964,7 +967,7 @@ func logGrants(name string, manifest Manifest, grants CapabilitySet) {
 // every capability decision in this function (and registerDbModule's read/write
 // split) — internal/arch/plugin_capability_gate_test.go fails the build when a
 // registration appears without one.
-func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string, grants CapabilitySet) {
+func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string, grants CapabilitySet, egress NetworkPolicy) {
 	mahMod := L.NewTable()
 
 	// setIf installs a root-level mah function only when its capability is
@@ -1545,9 +1548,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 
 	// Sub-modules. registerDbModule splits internally, because db:read and
 	// db:write share one table; the rest are whole-module grants.
-	pm.registerDbModule(L, mahMod, grants)
+	pm.registerDbModule(L, mahMod, grants, egress)
 	if grants.Has(CapHTTP) {
-		pm.registerHttpModule(L, mahMod)
+		pm.registerHttpModule(L, mahMod, egress)
 	}
 	if grants.Has(CapKV) {
 		pm.registerKvModule(L, mahMod, pluginNamePtr)
@@ -2295,6 +2298,10 @@ func (pm *PluginManager) Close() {
 	// closed was set under pm.mu above, and beginHTTP adds under pm.mu.RLock —
 	// so every Add that will ever happen has happened before this Wait.
 	pm.httpWg.Wait()
+
+	// Every policy client holds its own connection pool, and they are the only
+	// clients plugin egress uses now.
+	pm.closeEgressClients()
 	// Once: Close is a deferred shutdown step and a t.Cleanup in a hundred
 	// tests, so it gets called twice — and closing a closed channel panics.
 	pm.closeDone.Do(func() { close(pm.done) })

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -218,6 +219,7 @@ func (pm *PluginManager) getPrincipalBinder() PrincipalBinder {
 // show the plugin off, and mah.db.delete_resource could still succeed. A
 // disable that is reported complete has to be complete for the operations that
 // change data.
+
 func (pm *PluginManager) querierFor(L *lua.LState) EntityQuerier {
 	if !pm.stateIsLive(L) {
 		return nil
@@ -230,6 +232,29 @@ func (pm *PluginManager) querierFor(L *lua.LState) EntityQuerier {
 	if q == nil {
 		return pm.getDbProvider()
 	}
+	return q
+}
+
+// querierForFetch is querierFor for the two writers that open a socket. The
+// plugin's egress policy rides along on the invocation, so the host-side
+// downloader can apply layers (b) and (c) to the request it makes.
+func (pm *PluginManager) querierForFetch(L *lua.LState, egress NetworkPolicy) EntityQuerier {
+	if !pm.stateIsLive(L) {
+		return nil
+	}
+	b := pm.getPrincipalBinder()
+	if b == nil {
+		// Deliberately NOT the querierFor fallback to the unbound provider.
+		// The policy travels on the invocation, so without a binder there is
+		// nothing to carry it, and the host-side downloader would fetch with no
+		// dial-time deny and no redirect re-check — an unpoliced server-side
+		// fetch, which is the hole this whole path exists to close. Every
+		// wired-up context installs a binder next to the querier
+		// (application_context/context.go), so this is a misconfiguration
+		// rather than a mode.
+		return nil
+	}
+	q, _ := b.BindInvocation(pm.invocationFor(L).withEgress(egress))
 	return q
 }
 
@@ -439,7 +464,7 @@ func checkEntityIDList(L *lua.LState, argIdx int, tbl *lua.LTable) {
 // Every registration goes through setRead or setWrite — never dbMod.RawSetString
 // directly, which internal/arch/plugin_capability_gate_test.go enforces, so a
 // function added later cannot land on the wrong side of the split by omission.
-func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, grants CapabilitySet) {
+func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, grants CapabilitySet, egress NetworkPolicy) {
 	canRead := grants.Has(CapDBRead)
 	canWrite := grants.Has(CapDBWrite)
 	if !canRead && !canWrite {
@@ -455,6 +480,20 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 	}
 	setWrite := func(name string, fn lua.LGFunction) {
 		if canWrite {
+			dbMod.RawSetString(name, L.NewFunction(fn))
+		}
+	}
+	// setFetchingWrite is for the two writers that open a socket.
+	//
+	// They hand a URL to the application's own downloader rather than going
+	// through mah.http, so `db:write` alone would leave a plugin a full
+	// server-side fetch primitive that its declared `network` list cannot
+	// describe — the hole this package exists to close, reached through a
+	// different door. A function that opens a socket is a network function
+	// whichever module it is filed under, so it needs `http` too, and its URL
+	// goes through the same three egress layers.
+	setFetchingWrite := func(name string, fn lua.LGFunction) {
+		if canWrite && grants.Has(CapHTTP) {
 			dbMod.RawSetString(name, L.NewFunction(fn))
 		}
 	}
@@ -618,14 +657,29 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 	})
 
 	// mah.db.create_resource_from_url(url, options) -> table or (nil, error)
-	setWrite("create_resource_from_url", func(L *lua.LState) int {
-		db := pm.querierFor(L)
+	setFetchingWrite("create_resource_from_url", func(L *lua.LState) int {
+		db := pm.querierForFetch(L, egress)
 		if db == nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString("database not available"))
 			return 2
 		}
 		url := L.CheckString(1)
+		// Layer (a), applied here rather than in the downloader because
+		// AddRemoteResource splits its input on newlines and fetches every
+		// line: a check on "the URL" would gate the first and wave through the
+		// rest. Checked before anything is created, so a refused batch leaves
+		// nothing behind.
+		for _, one := range strings.Split(url, "\n") {
+			if strings.TrimSpace(one) == "" {
+				continue
+			}
+			if err := checkEgressHost(egress, strings.TrimSpace(one)); err != nil {
+				L.Push(lua.LNil)
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+		}
 		opts := make(map[string]any)
 		if optTbl := L.OptTable(2, nil); optTbl != nil {
 			checkEntityIDOpts(L, 2, optTbl)
@@ -668,8 +722,8 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 	})
 
 	// mah.db.add_resource_version_from_url(resource_id, url, comment) -> table or (nil, error)
-	setWrite("add_resource_version_from_url", func(L *lua.LState) int {
-		db := pm.querierFor(L)
+	setFetchingWrite("add_resource_version_from_url", func(L *lua.LState) int {
+		db := pm.querierForFetch(L, egress)
 		if db == nil {
 			L.Push(lua.LNil)
 			L.Push(lua.LString("database not available"))
@@ -677,6 +731,11 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 		}
 		resourceID := checkEntityID(L, 1)
 		url := L.CheckString(2)
+		if err := checkEgressHost(egress, url); err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
 		comment := L.OptString(3, "")
 		result, err := db.AddResourceVersionFromURL(resourceID, url, comment)
 		InvalidateMRQLCache(pm.luaContext(L))

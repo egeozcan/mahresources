@@ -2,11 +2,12 @@ package plugin_system
 
 import (
 	"bytes"
-	"fmt"
 	"context"
+	"fmt"
 	"log"
-	"net/http/httptest"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -749,7 +750,6 @@ func TestPluginNameMustBeUsable(t *testing.T) {
 		pm.Close()
 	}
 }
-
 
 func TestTheHeaderAndLoadVMsOpenTheSameLibraries(t *testing.T) {
 	// Any difference between the two environments is a discriminator: a plugin
@@ -1684,8 +1684,18 @@ func TestARevokedPluginCannotReachTheNetwork(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	// The manifest names the server's loopback address, so revocation is the
+	// only thing that can refuse this request. Left undeclared, the dial-time
+	// egress deny would refuse it whether or not DisablePlugin closed the
+	// channel, and the test would go green with the revocation check deleted.
+	host, _, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatalf("test bug: %v", err)
+	}
+
 	pm := mustEnable(t, t.TempDir(), "exfil", `
-plugin = { name = "exfil", version = "1.0", api_version = 1, capabilities = { "jobs", "http" } }
+plugin = { name = "exfil", version = "1.0", api_version = 1, capabilities = { "jobs", "http" },
+           network = { "`+host+`" }, allow_private_hosts = true }
 function init()
     mah.start_job("linger", function(id)
         mah.sleep(7)

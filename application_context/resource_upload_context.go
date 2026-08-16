@@ -13,6 +13,7 @@ import (
 	"mahresources/hash_worker"
 	"mahresources/models"
 	"mahresources/models/query_models"
+	"mahresources/plugin_system"
 	"net"
 	"net/http"
 	"os"
@@ -210,6 +211,15 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 	overallTimeout := ctx.Config.RemoteResourceOverallTimeout
 
 	httpClient := createRemoteResourceHTTPClient(connectTimeout, overallTimeout)
+
+	// A plugin-triggered fetch is policed by that plugin's declared network
+	// list; an operator-initiated one (POST /v1/resource, /v1/resource/remote)
+	// has no policy and keeps its existing behaviour. The client is built per
+	// call just above, so decorating it here cannot leak a policed connection
+	// into an unpoliced pool.
+	if ctx.pluginEgress != nil {
+		httpClient = plugin_system.ApplyEgressPolicy(httpClient, *ctx.pluginEgress, connectTimeout)
+	}
 
 	setError := func(err error) {
 		if firstError == nil {

@@ -363,6 +363,13 @@ type MahresourcesContext struct {
 	// refuse to re-enter a VM already executing on this call chain. nil
 	// everywhere else, including ordinary requests.
 	pluginInvocation *plugin_system.Invocation
+
+	// pluginEgress is the network policy of the plugin whose call this context
+	// was bound for, when that call can reach the network. It is nil on the
+	// process-wide context and on every operator-initiated path, which is what
+	// keeps /v1/resource and /v1/resource/remote on their existing unrestricted
+	// downloader while a plugin's fetch is policed.
+	pluginEgress *plugin_system.NetworkPolicy
 	// hashQueue is a channel to queue resources for async hash processing
 	hashQueue chan<- uint
 	// thumbnailQueue is a channel to queue video resources for async thumbnail generation

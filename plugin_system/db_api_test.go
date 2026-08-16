@@ -598,6 +598,20 @@ end
 	}
 }
 
+// urlFetchBinder installs the invocation-carrying seam that every wired-up
+// context provides (application_context/context.go sets a PrincipalBinder next
+// to the querier).
+//
+// The two *_from_url writers refuse without one, and that is deliberate rather
+// than incidental: the plugin's network policy travels on the invocation, so a
+// manager with no binder has no way to hand the policy to the host-side
+// downloader, and the fetch would go out unpoliced.
+type urlFetchBinder struct{ q EntityQuerier }
+
+func (b urlFetchBinder) BindInvocation(*Invocation) (EntityQuerier, EntityWriter) {
+	return b.q, nil
+}
+
 func TestDbApi_CreateResourceFromURL(t *testing.T) {
 	dir := t.TempDir()
 	writePlugin(t, dir, "db-test", `
@@ -617,7 +631,9 @@ end
 		t.Fatal(err)
 	}
 	defer mgr.Close()
-	mgr.SetEntityQuerier(&mockQuerier{})
+	q := &mockQuerier{}
+	mgr.SetEntityQuerier(q)
+	mgr.SetPrincipalBinder(urlFetchBinder{q: q})
 
 	if err := mgr.EnablePlugin("db-test"); err != nil {
 		t.Fatalf("EnablePlugin: %v", err)
@@ -743,7 +759,9 @@ end
 		t.Fatal(err)
 	}
 	defer mgr.Close()
-	mgr.SetEntityQuerier(&mockQuerier{})
+	q := &mockQuerier{}
+	mgr.SetEntityQuerier(q)
+	mgr.SetPrincipalBinder(urlFetchBinder{q: q})
 
 	if err := mgr.EnablePlugin("db-test"); err != nil {
 		t.Fatalf("EnablePlugin: %v", err)
