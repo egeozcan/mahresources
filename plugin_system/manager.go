@@ -702,19 +702,11 @@ func (pm *PluginManager) loadPlugin(dp DiscoveredPlugin) error {
 			header.Manifest.APIVersion, PluginAPIVersion)
 	}
 
-	if len(header.Manifest.Network) > 0 || header.Manifest.AllowPrivateHosts {
-		// The field that most reads like a security control is the one that
-		// said nothing, while min_app_version — far less consequential —
-		// announced that it is unchecked. Egress enforcement is the next
-		// package; until it lands, a declared allowlist is a statement of
-		// intent and an operator should not read it as a restraint.
-		log.Printf("[plugin] %s declares a network allowlist (%s%s), which this server records but does "+
-			"not yet enforce", header.Name, strings.Join(header.Manifest.Network, ", "),
-			map[bool]string{true: "; allow_private_hosts", false: ""}[header.Manifest.AllowPrivateHosts])
-	}
-	if len(header.Manifest.Dependencies) > 0 {
-		log.Printf("[plugin] %s declares dependencies (%s), which this server records but does not yet enforce",
-			header.Name, strings.Join(header.Manifest.Dependencies, ", "))
+	if header.Manifest.AllowPrivateHosts {
+		// Worth a line on its own every load: it is the one declaration that
+		// lets a plugin reach the machine the server runs on.
+		log.Printf("[plugin] %s may reach private network addresses named in its allowlist (%s)",
+			header.Name, strings.Join(header.Manifest.NetworkDisplay(), ", "))
 	}
 	if header.Manifest.MinAppVersion != "" {
 		// Recorded and shown, never enforced: there is no application version

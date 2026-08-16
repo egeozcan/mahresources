@@ -248,7 +248,7 @@ func (pm *PluginManager) executeSyncHttpRequest(egress NetworkPolicy, method, ur
 
 	resp, err := pm.httpClientFor(egress).Do(req)
 	if err != nil {
-		return buildSyncErrorResponse(L, method, url, err.Error())
+		return buildSyncErrorResponse(L, method, url, egressErrorForPlugin(err))
 	}
 	defer resp.Body.Close()
 
@@ -392,12 +392,15 @@ func (pm *PluginManager) executeHttpRequest(egress NetworkPolicy, method, url, b
 
 	resp, err := pm.httpClientFor(egress).Do(req)
 	if err != nil {
+		// Sanitized: a Control refusal names the resolved address, and Go's own
+		// *net.OpError prefix carries it too. Handing either to Lua turns every
+		// refusal into an internal DNS map.
 		pm.queueHttpCallback(httpCallback{
 			vm:    vm,
 			fn:    callback,
 			actor: actor,
 			response: map[string]any{
-				"error":  err.Error(),
+				"error":  egressErrorForPlugin(err),
 				"url":    url,
 				"method": method,
 			},

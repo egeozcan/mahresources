@@ -50,8 +50,9 @@ func (a *pluginDBAdapter) BindInvocation(inv *plugin_system.Invocation) (plugin_
 		bound = &clone
 	}
 	bound.pluginInvocation = inv
-	if inv != nil {
+	if inv != nil && inv.Egress != nil {
 		bound.pluginEgress = inv.Egress
+		bound.pluginFetch = true
 	}
 
 	adapter := &pluginDBAdapter{ctx: bound}

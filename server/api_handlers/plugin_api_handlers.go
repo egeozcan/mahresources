@@ -497,19 +497,11 @@ func PluginAPIHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Requ
 			}
 		}
 
-		// Build headers map
-		headerMap := make(map[string]any)
-		for k, v := range r.Header {
-			if len(v) == 1 {
-				headerMap[strings.ToLower(k)] = v[0]
-			} else {
-				items := make([]any, len(v))
-				for i, val := range v {
-					items[i] = val
-				}
-				headerMap[strings.ToLower(k)] = items
-			}
-		}
+		// Build headers map, minus the ones that authenticate the caller. A
+		// plugin holding the caller's Authorization header or session cookie
+		// can call this server's own API as that user, and those paths carry no
+		// plugin egress policy. See plugin_system.SafeRequestHeaders.
+		headerMap := plugin_system.SafeRequestHeaders(r.Header)
 
 		// Read body
 		var body string

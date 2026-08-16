@@ -329,3 +329,90 @@ func TestTheClientCacheKeepsPoliciesApart(t *testing.T) {
 		t.Fatal("two identical policies built separate clients")
 	}
 }
+
+// TestARefusalDoesNotLeakTheResolvedAddress.
+//
+// A refusal that names the address a host resolved to is an oracle: a plugin
+// granted nothing but `http` can loop over a wordlist of internal names, read
+// the address out of each refusal, and map the private network at DNS speed
+// without ever being permitted to connect to any of it.
+//
+// The check is on the SANITIZED string, not on our own error text, because the
+// leak survives replacing our message: Go wraps a Control refusal in a
+// *net.OpError whose own prefix ("dial tcp 10.4.2.17:80: ...") carries the
+// address by itself.
+func TestARefusalDoesNotLeakTheResolvedAddress(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer server.Close()
+
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(server.URL, "http://"))
+	if err != nil {
+		t.Fatalf("test bug: %v", err)
+	}
+
+	client := newPolicyHTTPClient(policyFor(t, `capabilities = {"http"}`))
+	resp, reqErr := client.Get(server.URL)
+	if reqErr == nil {
+		resp.Body.Close()
+		t.Fatal("the loopback server was reachable")
+	}
+
+	// The operator's view keeps the detail.
+	if !strings.Contains(reqErr.Error(), host) {
+		t.Fatalf("the operator-facing error lost the address it refused: %v", reqErr)
+	}
+
+	// The plugin's view must not.
+	msg, sanitized := sanitizeEgressError(reqErr)
+	if !sanitized {
+		t.Fatalf("an egress refusal was not recognised as one, so it reaches Lua verbatim: %#v", reqErr)
+	}
+	for _, leak := range []string{host, port, "127.0.0.1", "::1"} {
+		if strings.Contains(msg, leak) {
+			t.Errorf("the plugin-facing refusal leaks %q: %q", leak, msg)
+		}
+	}
+	if msg == "" {
+		t.Error("the plugin is told nothing at all, which it cannot act on")
+	}
+}
+
+// TestAnOrdinaryTransportErrorIsPassedThrough: sanitizing must not swallow the
+// errors a plugin legitimately needs, or every network failure looks like a
+// policy refusal.
+func TestAnOrdinaryTransportErrorIsPassedThrough(t *testing.T) {
+	client := newPolicyHTTPClient(policyFor(t, `capabilities = {"http"}`))
+	// A public-looking host that does not resolve: refused by DNS, not by us.
+	_, err := client.Get("http://does-not-exist.invalid./")
+	if err == nil {
+		t.Fatal("expected a DNS failure")
+	}
+	if _, sanitized := sanitizeEgressError(err); sanitized {
+		t.Fatalf("a DNS failure was reported as an egress refusal: %v", err)
+	}
+	if got := egressErrorForPlugin(err); got != err.Error() {
+		t.Fatalf("a non-egress error was rewritten: %q", got)
+	}
+}
+
+func TestTheExtraBlockedRangesAreBlocked(t *testing.T) {
+	for _, c := range []struct{ addr, why string }{
+		{"198.18.0.1", "RFC2544 benchmarking — Docker Desktop and some VPN clients allocate here"},
+		{"198.19.255.1", "upper half of 198.18.0.0/15"},
+		{"240.0.0.1", "RFC5735 reserved — some k8s CNIs allocate pod IPs here"},
+		{"64:ff9b::7f00:1", "NAT64: this IS 127.0.0.1 on an IPv6-only network with a translator"},
+	} {
+		if reason := privateAddressReason(net.ParseIP(c.addr)); reason == "" {
+			t.Errorf("%s was classified as public (%s)", c.addr, c.why)
+		}
+	}
+	// Neighbours that must stay reachable.
+	for _, addr := range []string{"198.17.255.255", "198.20.0.1", "239.255.255.255", "64:ff9a::1"} {
+		if reason := privateAddressReason(net.ParseIP(addr)); reason != "" {
+			if addr == "239.255.255.255" {
+				continue // multicast, blocked for a different and correct reason
+			}
+			t.Errorf("%s was blocked as %q but is outside every added range", addr, reason)
+		}
+	}
+}

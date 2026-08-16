@@ -50,19 +50,12 @@ func PluginPageContextProvider(pm *plugin_system.PluginManager) func(request *ht
 			}
 		}
 
-		// Build headers map (array when multiple values, like query params)
-		headerMap := make(map[string]any)
-		for k, v := range request.Header {
-			if len(v) == 1 {
-				headerMap[strings.ToLower(k)] = v[0]
-			} else {
-				items := make([]any, len(v))
-				for i, val := range v {
-					items[i] = val
-				}
-				headerMap[strings.ToLower(k)] = items
-			}
-		}
+		// Build headers map (array when multiple values, like query params),
+		// minus the ones that authenticate the caller — a plugin page receives
+		// whatever the browser sent, and the session cookie is enough to call
+		// this server's own API as that user. See
+		// plugin_system.SafeRequestHeaders.
+		headerMap := plugin_system.SafeRequestHeaders(request.Header)
 
 		// Read body for POST requests (limited to 50MB)
 		var body string

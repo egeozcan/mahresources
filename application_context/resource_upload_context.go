@@ -217,8 +217,16 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 	// has no policy and keeps its existing behaviour. The client is built per
 	// call just above, so decorating it here cannot leak a policed connection
 	// into an unpoliced pool.
-	if ctx.pluginEgress != nil {
+	switch {
+	case ctx.pluginEgress != nil:
 		httpClient = plugin_system.ApplyEgressPolicy(httpClient, *ctx.pluginEgress, connectTimeout)
+	case ctx.pluginFetch:
+		// A plugin is fetching but its policy did not reach here. Skipping the
+		// decoration would silently drop layers (b) and (c) — the redirect
+		// re-check and the dial-time deny — while the host check in the plugin
+		// process still passed, which is precisely the DNS-rebinding case those
+		// layers exist for. Refuse instead.
+		return nil, fmt.Errorf("refusing to fetch: this plugin's network policy is not available")
 	}
 
 	setError := func(err error) {

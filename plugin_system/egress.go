@@ -2,6 +2,7 @@ package plugin_system
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -36,6 +37,40 @@ import (
 // RFC4193, and 100.64/10 is neither — while being routable inside most hosting
 // providers' networks, which is precisely where a plugin reaching it matters.
 var cgnat = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
+// extraBlockedRanges are ranges no net.IP predicate covers that are reachable
+// in real deployments. Each earns its place; the long tail of reserved-but-dead
+// space (6to4, Teredo, IPv4-compatible IPv6, 192.0.0.0/24, TEST-NET) is
+// deliberately absent, because a classifier padded with unroutable prefixes is
+// harder to audit and no safer.
+var extraBlockedRanges = []struct {
+	net    *net.IPNet
+	reason string
+}{
+	// RFC2544 benchmarking. Docker Desktop, Netskope and several VPN clients
+	// hand out synthetic addresses here.
+	{mustCIDR("198.18.0.0/15"), "a benchmarking-range address"},
+	// RFC5735 reserved. Several Kubernetes CNIs allocate pod addresses from it.
+	{mustCIDR("240.0.0.0/4"), "a reserved address"},
+	// RFC6052 NAT64. On an IPv6-only network with a translator, this is how you
+	// spell an IPv4 address — including a private one, and 64:ff9b::a9fe:a9fe
+	// is the metadata endpoint.
+	{mustCIDR("64:ff9b::/96"), "a NAT64-translated address"},
+	// RFC1122 "this network". IsUnspecified covers only 0.0.0.0 itself, and on
+	// Linux the whole of 0.0.0.0/8 routes to the local host.
+	{mustCIDR("0.0.0.0/8"), "a this-network address"},
+	// RFC3879 deprecated site-local IPv6. Deprecated is not the same as
+	// unrouted: stacks that still honour it treat this as a private network.
+	{mustCIDR("fec0::/10"), "a site-local address"},
+}
+
+func mustCIDR(s string) *net.IPNet {
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		panic("egress: bad built-in CIDR " + s + ": " + err.Error())
+	}
+	return n
+}
 
 // privateAddressReason names why an address is not publicly routable, or
 // returns "" when it is.
@@ -74,6 +109,11 @@ func privateAddressReason(ip net.IP) string {
 	case ip.Equal(net.IPv4bcast):
 		return "the broadcast address"
 	}
+	for _, r := range extraBlockedRanges {
+		if r.net.Contains(ip) {
+			return r.reason
+		}
+	}
 	return ""
 }
 
@@ -109,17 +149,60 @@ func (p NetworkPolicy) allowsPrivateAddress(ip net.IP) bool {
 	return false
 }
 
-// errEgressBlocked is the shape a refusal takes. It is deliberately the same
-// class of failure as a DNS error: a plugin cannot tell "you may not" from
-// "there is nothing there", which is the correct amount to tell code that is
-// probing.
+// errEgressBlocked is the shape a refusal takes.
+//
+// It carries two messages. Error() is the operator's: it names the address and
+// why, and goes to the application log. PluginMessage() is what the plugin is
+// told, and it deliberately says less.
+//
+// The distinction is not fussiness. A refusal that names the RESOLVED address
+// is an oracle: a plugin granted nothing but `http` can loop over a wordlist of
+// internal names, read the address back out of each refusal, and map the
+// private network at DNS speed — without ever being allowed to connect to any
+// of it. So the plugin learns that the request was refused and which host it
+// asked for (both of which it already knew), and never learns what that host
+// resolved to.
 type errEgressBlocked struct {
 	host   string
 	reason string
+	// requested is the host the plugin named, when that differs from the
+	// address the refusal is about.
+	requested string
 }
 
 func (e *errEgressBlocked) Error() string {
 	return fmt.Sprintf("blocked request to %s: %s", e.host, e.reason)
+}
+
+// PluginMessage is the refusal as a plugin may see it.
+func (e *errEgressBlocked) PluginMessage() string {
+	if e.requested != "" {
+		return fmt.Sprintf("blocked request to %s: it is not reachable under this plugin's `network` declaration", e.requested)
+	}
+	return fmt.Sprintf("blocked request to %s: %s", e.host, e.reason)
+}
+
+// sanitizeEgressError renders an error for a plugin.
+//
+// It unwraps rather than string-matches because the leak survives replacing our
+// own text: Go wraps a Control refusal in *net.OpError, whose own prefix
+// ("dial tcp 10.4.2.17:80: ...") carries the resolved address by itself. Only
+// substituting the whole chain removes it.
+func sanitizeEgressError(err error) (string, bool) {
+	var blocked *errEgressBlocked
+	if errors.As(err, &blocked) {
+		return blocked.PluginMessage(), true
+	}
+	return "", false
+}
+
+// egressErrorForPlugin is sanitizeEgressError with a passthrough for everything
+// else, which is what both mah.http paths want.
+func egressErrorForPlugin(err error) string {
+	if msg, ok := sanitizeEgressError(err); ok {
+		return msg
+	}
+	return err.Error()
 }
 
 // hostFromURL extracts the host of a request URL.
@@ -185,6 +268,10 @@ func egressDialControl(policy NetworkPolicy) func(string, string, syscall.RawCon
 			host: ip.String(),
 			reason: reason + "; a plugin may only reach one by naming the address or CIDR in `network` " +
 				"and declaring allow_private_hosts",
+			// Set so the plugin-facing message exists at all. Control does not
+			// know the name that was looked up, and deliberately does not go
+			// looking: what matters is that the plugin is not told the address.
+			requested: "the requested host",
 		}
 	}
 }
@@ -243,10 +330,17 @@ func (pm *PluginManager) httpClientFor(policy NetworkPolicy) *http.Client {
 	if client, ok := pm.egressClients[key]; ok {
 		return client
 	}
+	client = newPolicyHTTPClient(policy)
+	if pm.closed.Load() {
+		// Close has already released the pool. Caching here would install a
+		// client nothing will ever close — the sync request path is not tracked
+		// by httpWg, so one can arrive after the drain. Hand back a client that
+		// works and is collected with the request.
+		return client
+	}
 	if pm.egressClients == nil {
 		pm.egressClients = make(map[string]*http.Client)
 	}
-	client = newPolicyHTTPClient(policy)
 	pm.egressClients[key] = client
 	return client
 }
