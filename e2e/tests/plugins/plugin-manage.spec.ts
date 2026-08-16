@@ -145,3 +145,159 @@ test.describe('Plugin Management', () => {
     await expect(desktopNav.locator('a[href="/plugins/manage"]')).toBeVisible();
   });
 });
+
+/**
+ * The Access panel is what an operator reads before enabling a plugin, so every
+ * claim it makes is worth pinning — especially the two that are easy to state
+ * backwards: no network allowlist means *any public host*, and a legacy plugin's
+ * capability list is everything rather than what it asked for.
+ *
+ * Fixtures: test-banner is legacy (it declares no manifest, like every plugin
+ * that predates one); test-manifest, test-manifest-private and
+ * test-manifest-empty are declared manifests added for this panel. None of them
+ * needs to be enabled — the panel renders for a discovered plugin either way.
+ */
+test.describe('Plugin Management - Access panel', () => {
+  // Every capability the host grants. A legacy plugin holds all of them, which
+  // is the number this pins.
+  const ALL_CAPABILITY_COUNT = 12;
+
+  test('legacy plugin is flagged and holds every capability', async ({ page }) => {
+    await page.goto('/plugins/manage');
+    await page.waitForLoadState('load');
+
+    await expect(page.getByTestId('plugin-legacy-badge-test-banner')).toBeVisible();
+
+    const warning = page.getByTestId('plugin-legacy-warning-test-banner');
+    await expect(warning).toBeVisible();
+    await expect(warning).toContainText('declares no manifest');
+    await expect(warning).toContainText('any public host');
+
+    const capabilities = page.getByTestId('plugin-capabilities-test-banner');
+    await expect(capabilities.locator('li')).toHaveCount(ALL_CAPABILITY_COUNT);
+
+    // No manifest means no declared API version to show.
+    await expect(page.getByTestId('plugin-api-version-test-banner')).toHaveCount(0);
+  });
+
+  test('capabilities render as sentences, including the ones db:write implies', async ({ page }) => {
+    await page.goto('/plugins/manage');
+    await page.waitForLoadState('load');
+
+    const capabilities = page.getByTestId('plugin-capabilities-test-manifest');
+    const items = capabilities.locator('li');
+
+    // test-manifest declares db:write, hooks and inject. db:read is not
+    // declared: it appears because db:write implies it, and the panel shows the
+    // effective set.
+    await expect(items).toHaveCount(4);
+    await expect(items.nth(0)).toContainText('Read your library');
+    await expect(items.nth(1)).toContainText('Create, change and delete library content');
+    await expect(items.nth(2)).toContainText('React to entity changes');
+    await expect(items.nth(3)).toContainText('Inject HTML and scripts');
+
+    // Sentences, not slugs.
+    await expect(capabilities).not.toContainText('db:write');
+    await expect(capabilities).not.toContainText('db:read');
+
+    // A declared manifest is not flagged as legacy.
+    await expect(page.getByTestId('plugin-legacy-badge-test-manifest')).toHaveCount(0);
+    await expect(page.getByTestId('plugin-legacy-warning-test-manifest')).toHaveCount(0);
+  });
+
+  test('a declared network list shows those hosts, sorted', async ({ page }) => {
+    await page.goto('/plugins/manage');
+    await page.waitForLoadState('load');
+
+    const network = page.getByTestId('plugin-network-test-manifest');
+    await expect(network).toContainText('only to these hosts');
+
+    // Declared as { "api.example.com", "*.cdn.example.org" }: the panel renders
+    // the canonical display form, sorted.
+    const hosts = network.locator('li');
+    await expect(hosts).toHaveCount(2);
+    await expect(hosts.nth(0)).toHaveText('*.cdn.example.org');
+    await expect(hosts.nth(1)).toHaveText('api.example.com');
+
+    // Nothing here says the plugin may reach anything else.
+    await expect(network).not.toContainText('any public host');
+  });
+
+  test('no declared network list means any public host', async ({ page }) => {
+    await page.goto('/plugins/manage');
+    await page.waitForLoadState('load');
+
+    // A declared manifest that omits `network` — the broadest policy, stated as
+    // such rather than as an absence.
+    const network = page.getByTestId('plugin-network-test-manifest-empty');
+    await expect(network).toContainText('No allowlist is declared');
+    await expect(network).toContainText('any public host');
+    await expect(network).toContainText('Private network addresses stay blocked');
+    await expect(network.locator('li')).toHaveCount(0);
+
+    // And the same for a legacy plugin, which declares nothing at all.
+    await expect(page.getByTestId('plugin-network-test-banner')).toContainText('any public host');
+  });
+
+  test('a manifest that asks for no capabilities is granted none', async ({ page }) => {
+    await page.goto('/plugins/manage');
+    await page.waitForLoadState('load');
+
+    const capabilities = page.getByTestId('plugin-capabilities-test-manifest-empty');
+    await expect(capabilities).toContainText('Nothing');
+    await expect(capabilities.locator('li')).toHaveCount(0);
+  });
+
+  test('private network access is warned about, and only for the plugin that declares it', async ({ page }) => {
+    await page.goto('/plugins/manage');
+    await page.waitForLoadState('load');
+
+    const warning = page.getByTestId('plugin-private-hosts-test-manifest-private');
+    await expect(warning).toBeVisible();
+    await expect(warning).toContainText('private network addresses');
+    // The mix the fixture declares is exactly what this sentence distinguishes:
+    // the CIDR block lifts the dial-time deny, the host name does not.
+    await expect(warning).toContainText('the host names do not');
+
+    const network = page.getByTestId('plugin-network-test-manifest-private');
+    const hosts = network.locator('li');
+    await expect(hosts).toHaveCount(2);
+    await expect(hosts.nth(0)).toHaveText('192.168.0.0/16');
+    await expect(hosts.nth(1)).toHaveText('printer.local');
+
+    // Not declared elsewhere, so not warned about elsewhere.
+    await expect(page.getByTestId('plugin-private-hosts-test-manifest')).toHaveCount(0);
+    await expect(page.getByTestId('plugin-private-hosts-test-banner')).toHaveCount(0);
+  });
+
+  test('dependencies, API version and minimum app version are shown', async ({ page }) => {
+    await page.goto('/plugins/manage');
+    await page.waitForLoadState('load');
+
+    const dependencies = page.getByTestId('plugin-dependencies-test-manifest');
+    await expect(dependencies.locator('li')).toHaveText(['test-banner']);
+    await expect(dependencies).toContainText('must be enabled first');
+
+    await expect(page.getByTestId('plugin-api-version-test-manifest')).toHaveText('1');
+
+    const minAppVersion = page.getByTestId('plugin-min-app-version-test-manifest');
+    await expect(minAppVersion).toContainText('1.2.0');
+    // Recorded and displayed, never enforced — the panel has to say so.
+    await expect(minAppVersion).toContainText('never checked or enforced');
+
+    // A plugin declaring neither shows neither.
+    await expect(page.getByTestId('plugin-dependencies-test-manifest-empty')).toHaveCount(0);
+    await expect(page.getByTestId('plugin-min-app-version-test-manifest-empty')).toHaveCount(0);
+  });
+
+  test('every discovered plugin gets an Access panel', async ({ page }) => {
+    await page.goto('/plugins/manage');
+    await page.waitForLoadState('load');
+
+    const cards = page.locator('[data-testid^="plugin-card-"]');
+    const panels = page.locator('[data-testid^="plugin-access-"]');
+    const cardCount = await cards.count();
+    expect(cardCount).toBeGreaterThan(0);
+    await expect(panels).toHaveCount(cardCount);
+  });
+});

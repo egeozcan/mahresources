@@ -1,6 +1,12 @@
 import { test, expect, createCliRunner } from '../../fixtures/cli.fixture';
 
-// The test-plugins directory has: test-actions, test-api, test-banner, test-blocks, test-kvstore
+// The test-plugins directory has: data-views, fal-ai, meta-editors, test-actions,
+// test-api, test-banner, test-blocks, test-kvstore, test-manifest,
+// test-manifest-empty, test-manifest-private, widgets.
+//
+// The three test-manifest-* fixtures are the only ones declaring a manifest;
+// every other entry is legacy, which is why the manage-page Access tests need
+// them to cover the declared-manifest branches at all.
 const TEST_PLUGIN = 'test-banner';
 
 test.describe('Plugins list', () => {
