@@ -12,11 +12,45 @@ import (
 	"mahresources/models/query_models"
 )
 
+// relationInScope reports whether both endpoints of a relation edge are visible
+// under the current principal's scope.
+//
+// group_relations is not in scopeColumn (scoping.go), and it cannot be: subtree
+// containment for an edge is a property of two columns, not one, so the ORM
+// callbacks that confine groups, resources and notes never see it. GetRelation
+// below has compensated for that on the read path since before this change; the
+// write paths did not, which left every relation edge in the database renameable
+// and deletable by any principal that could reach a write at all. A
+// group-confined user reaches one whenever its own ordinary CRUD wakes a plugin
+// hook, because mah.db exposes UpdateGroupRelation and DeleteGroupRelation.
+//
+// Both endpoints must be visible, not either: an edge whose far end is outside
+// the subtree still describes a group the principal may not see, and renaming or
+// deleting it is a write about that group. AddRelation already enforces this
+// implicitly, by reading both groups through the scoped handle before inserting.
+func (ctx *MahresourcesContext) relationInScope(relation *models.GroupRelation) bool {
+	if !ctx.isScopedPrincipal() {
+		return true
+	}
+	if relation == nil || relation.FromGroupId == nil || relation.ToGroupId == nil {
+		// A dangling edge belongs to no subtree, so no scoped principal owns it.
+		return false
+	}
+	return ctx.GroupVisible(*relation.FromGroupId) && ctx.GroupVisible(*relation.ToGroupId)
+}
+
 func (ctx *MahresourcesContext) EditRelation(query query_models.GroupRelationshipQuery) (*models.GroupRelation, error) {
 	var relation = &models.GroupRelation{ID: query.Id}
 
 	if err := ctx.db.First(relation).Error; err != nil {
 		return nil, err
+	}
+
+	// gorm.ErrRecordNotFound rather than a distinct "forbidden", matching what
+	// GetRelation already answers: an out-of-scope group reads as absent, so a
+	// different answer here would be an oracle for which relation ids exist.
+	if !ctx.relationInScope(relation) {
+		return nil, gorm.ErrRecordNotFound
 	}
 
 	if query.Name != "" {
@@ -355,6 +389,12 @@ func (ctx *MahresourcesContext) DeleteRelationship(relationshipId uint) error {
 	var relation models.GroupRelation
 	if err := ctx.db.First(&relation, relationshipId).Error; err != nil {
 		return err
+	}
+	// Before the back-relation sweep below, not after: that sweep deletes a
+	// second row selected by group ids, so a principal that may not touch this
+	// edge has to be stopped ahead of it. See relationInScope.
+	if !ctx.relationInScope(&relation) {
+		return gorm.ErrRecordNotFound
 	}
 	relationName := relation.Name
 

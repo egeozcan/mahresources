@@ -217,7 +217,7 @@ func TestHookInvocation_ConfinedPrincipalStillSeesItsOwnSubtree(t *testing.T) {
 // drained HTTP callback carries only its submitter's id and runs later — so the
 // account can be gone or disabled by the time the VM reaches the database. Not
 // knowing what a caller may see must not resolve to "everything".
-func TestPrincipalForPluginActor_UnresolvableActorIsDeniedEverything(t *testing.T) {
+func TestPrincipalForPluginActor_UnresolvableActorIsDeniedAllScopedData(t *testing.T) {
 	ctx := newPluginHookTestContext(t, scopeProbePlugin())
 	_, inside := scopeProbeFixture(t, ctx)
 
@@ -252,6 +252,55 @@ func TestPrincipalForPluginActor_UnresolvableActorIsDeniedEverything(t *testing.
 				t.Errorf("an unresolvable actor can see group %d", inside.ID)
 			}
 		})
+	}
+}
+
+// The deny is logged only when it is an outage, never when it is the ordinary
+// case.
+//
+// GetUser maps gorm.ErrRecordNotFound to ErrUserNotFound rather than returning
+// (nil, nil), so a deleted account arrives on the same err != nil branch a
+// failed read does. Logging that branch unconditionally would write one row per
+// mah.db call for the case the design documents as expected — an admin deleting
+// a user while that user's async job is still looping — and it is exactly the
+// case where the write succeeds, since the database is healthy.
+func TestPrincipalForPluginActor_ExpectedRefusalsAreNotLogged(t *testing.T) {
+	ctx := newPluginHookTestContext(t, scopeProbePlugin())
+
+	disabled, err := ctx.CreateUser(&UserInput{
+		Username: "quiet", Password: "password1", Role: models.RoleEditor, Disabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create disabled user: %v", err)
+	}
+
+	// entity_name, not message: Logger.Warning's fourth argument is the entity
+	// name and the fifth is the message, so the label lands in entity_name and
+	// the detail in message. Querying the wrong column made an earlier draft of
+	// this test count zero rows unconditionally, which is to say pass whatever
+	// the code did — the mutation run below is what caught it.
+	countActorLogs := func() int64 {
+		var n int64
+		if err := ctx.db.Model(&models.LogEntry{}).
+			Where("entity_name = ?", "Plugin actor unresolved").Count(&n).Error; err != nil {
+			t.Fatalf("count log entries: %v", err)
+		}
+		return n
+	}
+
+	before := countActorLogs()
+	for i := 0; i < 5; i++ {
+		// A deleted account, five times over, standing in for a job that loops.
+		if p := ctx.principalForPluginActor(4242); p == nil || p.Role != models.RoleGuest {
+			t.Fatalf("deleted actor was not denied: %+v", p)
+		}
+		if p := ctx.principalForPluginActor(disabled.ID); p == nil || p.Role != models.RoleGuest {
+			t.Fatalf("disabled actor was not denied: %+v", p)
+		}
+	}
+	if after := countActorLogs(); after != before {
+		t.Errorf("an expected refusal wrote %d log entries; a job looping over mah.db would fill the log with them",
+			after-before)
 	}
 }
 
