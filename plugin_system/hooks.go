@@ -154,12 +154,6 @@ func luaTableToGoMapDepth(tbl *lua.LTable, depth int, c *luaConversion) map[stri
 	return result
 }
 
-// luaTableToGo converts a Lua table to either []any (if array-like) or map[string]any.
-// A table is array-like if it has only consecutive integer keys starting from 1 with no gaps.
-func luaTableToGo(tbl *lua.LTable) any {
-	return luaTableToGoDepth(tbl, 0, newLuaConversion())
-}
-
 func luaTableToGoDepth(tbl *lua.LTable, depth int, c *luaConversion) any {
 	if !c.enter(tbl, depth) {
 		return nil

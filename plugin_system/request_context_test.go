@@ -136,7 +136,10 @@ end
 // Hooks and async jobs have no request, so they must keep working when handed
 // no context at all.
 func TestRequestContext_NilContextFallsBackToBackground(t *testing.T) {
-	got := vmParentContext(nil)
+	// A typed nil rather than the literal: passing nil is the whole point of
+	// this test, and staticcheck's SA1012 fires on the literal at a call site.
+	var noContext context.Context
+	got := vmParentContext(noContext)
 	if got == nil {
 		t.Fatal("vmParentContext(nil) returned nil")
 	}
