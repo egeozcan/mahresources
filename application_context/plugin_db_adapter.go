@@ -134,7 +134,10 @@ func (ctx *MahresourcesContext) principalForPluginActor(actorID uint) *auth.Prin
 // Relation *edges* were in that set until relationInScope (relation_context.go)
 // took them out. They are the case that shows why the list is worth keeping
 // accurate: an edge is not taxonomy, it is a statement about two groups, and
-// nothing about "carries no owner" made it safe to expose.
+// nothing about "carries no owner" made it safe to expose. Closing that needed
+// two guards, not one — relation types and categories cascade to edges
+// database-wide, so refuseGlobalCascadeWhenScoped (scoping.go) refuses those
+// three operations to a scoped principal as well.
 func deniedPluginPrincipal(actorID uint) *auth.Principal {
 	return &auth.Principal{UserID: actorID, Role: models.RoleGuest}
 }

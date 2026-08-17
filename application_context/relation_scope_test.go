@@ -235,3 +235,90 @@ func TestRelationWrites_ConfinedPrincipalCannotReachAnEdgeThatLeavesItsSubtree(t
 		t.Error("the edge was deleted by a principal that cannot see its far endpoint")
 	}
 }
+
+// The edge guard is only worth what its narrowest door is worth. EditRelation
+// and DeleteRelationship are not the only ways an edge dies: relation types and
+// categories cascade to `DELETE FROM group_relations`, database-wide, with no
+// scope predicate at all — and mah.db exposes delete_relation_type,
+// update_relation_type and delete_category to a hook.
+//
+// So a confined principal that cannot touch an edge directly could still delete
+// every edge of its type, including edges between groups it cannot see. Any
+// claim that edges are confined has to survive this test, not just the direct
+// writes.
+func TestRelationTypeAndCategoryWrites_ConfinedPrincipalCannotCascadeAcrossSubtrees(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(ctx *MahresourcesContext, relTypeID, categoryID uint) error
+	}{
+		{
+			name: "delete_relation_type",
+			run: func(ctx *MahresourcesContext, relTypeID, _ uint) error {
+				return ctx.DeleteRelationshipType(relTypeID)
+			},
+		},
+		{
+			name: "update_relation_type re-pointing its categories",
+			run: func(ctx *MahresourcesContext, relTypeID, categoryID uint) error {
+				_, err := ctx.EditRelationType(&query_models.RelationshipTypeEditorQuery{
+					Id: relTypeID, Name: "repointed", FromCategory: categoryID, ToCategory: categoryID,
+				})
+				return err
+			},
+		},
+		{
+			name: "delete_category",
+			run: func(ctx *MahresourcesContext, _, categoryID uint) error {
+				return ctx.DeleteCategory(categoryID)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := createTestContextWithPlugins(t, t.TempDir())
+			principal, outside, _, _ := relationScopeFixture(t, ctx)
+
+			var rel models.GroupRelation
+			if err := ctx.db.First(&rel, outside.ID).Error; err != nil {
+				t.Fatalf("load the out-of-scope edge: %v", err)
+			}
+			var relType models.GroupRelationType
+			if err := ctx.db.First(&relType, *rel.RelationTypeId).Error; err != nil {
+				t.Fatalf("load the relation type: %v", err)
+			}
+			// A second category, so update_relation_type has somewhere to point
+			// that no group matches, which is what triggers the cascade delete.
+			other := &models.Category{Name: "other-category"}
+			if err := ctx.db.Create(other).Error; err != nil {
+				t.Fatalf("create second category: %v", err)
+			}
+
+			scoped := ctx.WithPrincipal(principal)
+			if err := tc.run(scoped, relType.ID, other.ID); err == nil {
+				t.Errorf("a confined principal performed a global taxonomy write that cascades to relation edges")
+			}
+
+			if _, alive := relationName(t, ctx, outside.ID); !alive {
+				t.Errorf("the edge between two groups the principal cannot see was deleted by the cascade")
+			}
+		})
+	}
+}
+
+// The same operations must keep working for a principal that is not confined.
+func TestRelationTypeWrites_UnscopedPrincipalIsUnaffected(t *testing.T) {
+	ctx := createTestContextWithPlugins(t, t.TempDir())
+	_, outside, _, _ := relationScopeFixture(t, ctx)
+
+	var rel models.GroupRelation
+	if err := ctx.db.First(&rel, outside.ID).Error; err != nil {
+		t.Fatalf("load edge: %v", err)
+	}
+
+	editor, err := ctx.CreateUser(&UserInput{Username: "rt-ed", Password: "password1", Role: models.RoleEditor})
+	if err != nil {
+		t.Fatalf("create editor: %v", err)
+	}
+	if err := ctx.WithPrincipal(auth.FromUser(editor)).DeleteRelationshipType(*rel.RelationTypeId); err != nil {
+		t.Fatalf("an editor could not delete a relation type: %v", err)
+	}
+}

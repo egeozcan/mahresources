@@ -174,6 +174,14 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 }
 
 func (ctx *MahresourcesContext) DeleteCategory(categoryId uint) error {
+	// Deleting a category deletes every relation type that references it, and
+	// with them every edge of those types, database-wide. Checked before the
+	// hook runs, so a refused call cannot fire before_category_delete either.
+	// See refuseGlobalCascadeWhenScoped.
+	if err := ctx.refuseGlobalCascadeWhenScoped("deleting a category"); err != nil {
+		return err
+	}
+
 	_, hookErr := ctx.RunBeforePluginHooks("before_category_delete", map[string]any{"id": float64(categoryId)})
 	if hookErr != nil {
 		return hookErr

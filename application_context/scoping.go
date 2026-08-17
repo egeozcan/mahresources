@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -559,4 +560,36 @@ func statementTable(db *gorm.DB) string {
 		return db.Statement.Schema.Table
 	}
 	return db.Statement.Table
+}
+
+// ErrGlobalCascadeScoped refuses a global-taxonomy write to a group-limited
+// principal, because the write cascades to rows outside every subtree.
+//
+// This is the companion to relationInScope, and it exists because guarding the
+// direct edge writes alone was not worth much. A relation type and a category
+// are global: they carry no owner, scopeColumn cannot map them, and deleting
+// either runs `DELETE FROM group_relations WHERE relation_type_id IN (...)`
+// across the whole database. mah.db exposes delete_relation_type,
+// update_relation_type and delete_category, and a group-confined user reaches a
+// hook through its own ordinary CRUD — so without this, a principal that could
+// not rename one edge could still delete every edge of its type, including
+// edges between groups it cannot see.
+//
+// Scope, not role. A confined principal is refused because the blast radius of
+// the write provably leaves its subtree, which is a statement the scope
+// mechanism can make. That an unscoped *user* can also perform an admin-only
+// taxonomy write is a separate hole — role capability is enforced nowhere below
+// server/ — and it is recorded rather than fixed here.
+//
+// Only the three operations that actually cascade to edges are covered.
+// Creating a category or a relation type touches no existing row, and a group's
+// own category change or deletion reaches only edges of a group the principal
+// already holds.
+var ErrGlobalCascadeScoped = errors.New("not available to a group-limited principal: this operation cascades to rows outside any subtree")
+
+func (ctx *MahresourcesContext) refuseGlobalCascadeWhenScoped(op string) error {
+	if !ctx.isScopedPrincipal() {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", op, ErrGlobalCascadeScoped)
 }
