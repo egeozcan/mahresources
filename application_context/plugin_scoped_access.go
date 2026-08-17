@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,6 +39,16 @@ type scopedPluginAccess struct {
 	// world moved underneath it — without that, a slow read taken before a
 	// revocation can be stored after it, and the permission comes back.
 	generation atomic.Uint64
+	// loading serializes the miss path, and it is not an optimisation. The
+	// generation stamp alone does not order two loaders that started at the
+	// SAME generation: one reads "allowed" just before another process revokes,
+	// the other reads the revocation and publishes it, and then the first
+	// publishes its older answer on top — with a fresh loadedAt, so the stale
+	// permission is trusted for another full TTL. Nor is compare-then-Store
+	// atomic on its own: an invalidation landing between the two lines is lost.
+	// Holding this across the read and the publish makes both impossible, and
+	// the fast path never takes it.
+	loading sync.Mutex
 }
 
 type scopedAccessSnapshot struct {
@@ -141,9 +152,24 @@ func (ctx *MahresourcesContext) readScopedPluginAccess() (map[string]bool, error
 
 func (ctx *MahresourcesContext) loadScopedPluginAccess() (*scopedAccessSnapshot, error) {
 	cache := ctx.scopedAccess
-	var generation uint64
-	if cache != nil {
-		generation = cache.generation.Load()
+	if cache == nil {
+		allowed, err := ctx.readScopedPluginAccess()
+		if err != nil {
+			return nil, err
+		}
+		return &scopedAccessSnapshot{allowed: allowed, loadedAt: time.Now()}, nil
+	}
+
+	cache.loading.Lock()
+	defer cache.loading.Unlock()
+
+	// Another loader may have finished while this one waited for the lock, in
+	// which case its snapshot is by definition at least as new as anything this
+	// call could produce.
+	generation := cache.generation.Load()
+	if existing := cache.snapshot.Load(); existing != nil &&
+		existing.generation == generation && time.Since(existing.loadedAt) <= scopedAccessTTL {
+		return existing, nil
 	}
 
 	allowed, err := ctx.readScopedPluginAccess()
@@ -156,7 +182,7 @@ func (ctx *MahresourcesContext) loadScopedPluginAccess() (*scopedAccessSnapshot,
 	// loader still returns its own result to its own caller, which is at worst
 	// as stale as the moment it started — it simply does not become everyone
 	// else's answer.
-	if cache != nil && cache.generation.Load() == generation {
+	if cache.generation.Load() == generation {
 		cache.snapshot.Store(snapshot)
 	}
 	return snapshot, nil
