@@ -1,3 +1,236 @@
+# A transaction a plugin can join: mah.db.transaction (2026-08-17)
+
+Item A1 from the capability report — the last small piece of item A, alongside the
+LState pool. A multi-step plugin mutation half-applies today when a later step
+fails: there is no way to say "these five writes are one thing".
+
+## The label was wrong, and that is the first finding
+
+The report calls this Effort S on the grounds that "the plumbing exists and
+nothing consumes it". The handle plumbing does exist and does compose —
+`WithPrincipal` then `WithTransaction` preserves scope, actor and transaction
+membership, and `groupio_facade_test.go:411` already pins that direction. Three
+things it does not account for:
+
+1. **Most of the write surface cannot nest.** `create_group`, `update_group`,
+   `patch_group`, `create_note`, `update_note`, `patch_note`,
+   `create_resource_from_*` and `add_resource_version_from_url` all bottom out in
+   `ctx.db.Begin()`. GORM's `Begin` switches on `Statement.ConnPool`; inside a
+   transaction that pool is a `*sql.Tx`, which satisfies neither `TxBeginner` nor
+   `ConnPoolBeginner`, so it returns `ErrInvalidTransaction`. The repo already
+   documents this at `groupio_facade_test.go:128`. Only the
+   `db.Transaction`/`WithTransaction` family savepoint-nests. `CreateGroup` does
+   not even check `tx.Error`, so the failure would surface as an opaque error
+   from the first statement rather than as itself.
+2. **No plugin Lua has ever run with a host transaction open.** Hooks fire
+   strictly before `Begin` and after `Commit`, in every entity path. Inside a
+   plugin transaction an after-hook would announce a write that can still roll
+   back.
+3. **The binder is process-wide.** `writerFor(L)` rebinds off the singleton on
+   every call, so a transactional handle has no channel to reach the writes
+   inside the callback — and `mah.log` and `mah.kv` never go through the binder
+   at all, so they would write on a *second* connection while the transaction
+   holds the first. That is precedent B (`relation_context.go:511`) exactly.
+
+## The shape
+
+**The `Invocation` carries the transaction.** It is the one channel that already
+spans nested plugins on a single call chain: the host passes it to
+`RunBeforeHooks`/`RunAfterHooks`, and `hooks.go` installs it on the *other*
+plugin's LState. So a hook fired by a write inside the transaction joins that
+transaction instead of opening a second connection. A per-LState map would have
+covered only the plugin that opened it.
+
+**One binding object, not four.** `TransactionBinding` is
+`EntityQuerier + EntityWriter + PluginLogger + KVStore`; `pluginDBAdapter`
+already satisfies all four. Every surface a plugin can reach that writes to the
+database must write through the same connection, so the host hands out one
+object bound to the transaction and `querierFor`/`writerFor`/`loggerFor`/`kvFor`
+all prefer it.
+
+**The LState context is saved and restored, never cleared.** `mah.db.transaction`
+installs the transaction-carrying invocation with
+`withInvocation(saved, txInv)` on `mainState(L)` and puts `saved` back on the way
+out — the `http_api.go:218` pattern. Deriving from `saved` keeps the entry
+point's deadline, its request cancellation, the MRQL cache and `vmRequestKey`.
+An unconditional `RemoveContext` here would destroy the outer frame's actor and
+re-entry chain, which is the permanent wedge `hooks.go:224` describes.
+
+**What is refused inside a transaction, and why that is the rule.** The three
+writers that fetch or write a file (`create_resource_from_url`,
+`create_resource_from_data`, `add_resource_version_from_url`), plus
+`mah.http.get_sync`/`post_sync` and `mah.sleep`. The rule is one sentence: *a
+transaction must not hold the database write lock across I/O.* SQLite's
+`busy_timeout` is 10s and `mah.http` allows 120s, `mah.sleep` 30s and a remote
+fetch 30 minutes. Refusing these is right on the merits rather than a
+limitation of the implementation.
+
+`mah.start_job` is deliberately **not** refused: a job runs on its own goroutine
+with a fresh invocation, holds no lock, and is asynchronous by construction. It
+does escape the transaction, and that is documented rather than prevented.
+
+## Batches
+
+### 1. Make the three group/note write paths nest
+
+`CreateGroup`, `UpdateGroup` (`group_crud_context.go:54,198`) and
+`CreateOrUpdateNote` (`note_context.go:86`) convert from `ctx.db.Begin()` to
+`ctx.db.Transaction(...)`, which savepoint-nests. Mechanical: every
+`tx.Rollback(); return nil, err` becomes `return err`, the `defer recover`
+rollback goes (GORM's `Transaction` already rolls back and re-panics), and
+`tx.Commit()` becomes `return nil`. It also closes two pre-existing leaks where
+an early `return nil, err` left the transaction open (`group_crud_context.go:65`,
+`:229` before conversion).
+
+The resource upload and version paths keep their `Begin()`: their writers are
+refused inside a transaction anyway, for the I/O reason above.
+
+- [ ] Red test: each of the three, called inside `WithTransaction`, fails today
+- [ ] Convert; keep the `isForeignKeyError` translation inside the closure
+
+### 2. After-hooks defer to commit
+
+- [ ] `deferredPluginHooks` queue, held by pointer on `MahresourcesContext` so
+      every clone shares it; `RunAfterPluginHooks` appends instead of dispatching
+      when one is installed
+- [ ] Drained after commit, on the pre-transaction context (whose queue is nil,
+      or draining would re-queue); dropped on rollback
+- [ ] Before-hooks still run inside the transaction — they veto, so they must
+
+### 3. `mah.db.transaction(fn)`
+
+- [ ] `Invocation.tx TransactionBinding`, preserved by `with()`; `InTransaction()`
+- [ ] `TransactionRunner` interface; `RunInTransaction` on `pluginDBAdapter`,
+      reusing `BindInvocation`'s principal bind so scope and actor are unchanged
+- [ ] `querierFor`/`writerFor`/`loggerFor`/`kvFor` prefer the binding
+- [ ] Registered through `setWrite` (it needs `CapWrite`), returns `true` or
+      `(nil, err)` per this module's convention
+- [ ] `mah.abort` inside the callback rolls back and re-raises, so a veto still vetoes
+- [ ] A nested `transaction()` joins the open one rather than opening a second
+
+### 4. Refusals
+
+- [x] The three fetching/file writers, by name, with the reason
+- [x] `mah.http.get_sync`/`post_sync`, `mah.sleep`
+
+### 5. Docs and drift guards
+
+- [x] Plugin API docs: the function, what is refused, and that `mrql_query`
+      inside a transaction reads on another connection and so does not see the
+      transaction's own uncommitted writes
+- [x] `internal/arch` guard so a new host-backed write surface cannot skip the binding
+
+## Review
+
+Every batch above landed. Four things changed shape during review, and all four
+were caught by an adversarial pass rather than by the tests as first written.
+
+**Nesting became a savepoint, not a join.** The plan said an inner
+`mah.db.transaction` would join the open one. That is a weaker promise than the
+API makes — an inner failure would commit anyway — and the cross-plugin case
+makes it worse, because a `before_*` hook runs inside the *triggering* plugin's
+transaction, so a plugin can be nested without knowing it.
+`transactionRunnerFor` now returns the open transaction's own binding, so
+`WithTransaction` issues a SAVEPOINT on it. `deferredPluginHooks.drain` forwards
+an inner queue to the outer one instead of dispatching, or a released savepoint
+would announce writes the outer transaction can still roll back.
+
+**A test that passed for the wrong reason.** The first hook test used an
+*after*-hook, which is deferred to the commit and therefore never runs inside the
+transaction at all — so it passed with the propagation channel deleted. Every
+mechanism here is now pinned by ablation: remove `tx` from `Invocation.with()`
+and the before-hook test fails with "no such table" (the second connection made
+visible); remove the deferral and the after-hook fires for a rolled-back write;
+remove the transaction-awareness from `kvStoreFor`/`loggerFor` and the committed
+case loses its value and its log line.
+
+**The stored binding was the wrong thing to hand back.** `querierFor`/`writerFor`
+returned the binding built when the transaction opened, whose context carries the
+*opening* invocation — so a nested plugin's write announced itself with a call
+chain that did not contain the nested plugin, the re-entry guard stopped
+recognising it, and the dispatch went for a VM mutex the same goroutine already
+held. Ablation: 5.02 seconds of block and then a failed write, with the database
+write lock held throughout. `bindOntoTransaction` rebinds the *current*
+invocation onto the transaction's own adapter, which is what keeps both the chain
+and the handle.
+
+**Two refusals were missing, for two different reasons.** `delete_resource`
+removes the file once its own writes commit — inside a transaction that is a
+savepoint release, so a later rollback restores the row and the bytes are gone.
+And `mah.db.transaction` called from a coroutine abandoned the frame silently
+(the whole render returned empty, no error anywhere), because gopher-lua cannot
+yield across a Go call boundary. Both are now refused by name.
+
+**Deferring must delay a notification, never re-address it.** The queue first
+stored only `(event, data)` and drained everything through the opener's context,
+so a nested plugin whose own write raised the hook was told about its own write —
+the one thing the re-entry rule exists to prevent. It now carries the invocation
+the hook was raised with, `DetachedFromTransaction`: the call chain is what must
+survive, the transaction binding is what must not, because these run after the
+commit and a write through a finished transaction's handle is a write through a
+dead one.
+
+**A pre-commit probe was written, removed, and put back — for a different
+reason each time.** Postgres marks a transaction aborted after any failed
+statement, and `mah.db` returns write failures to Lua as values, so a plugin can
+ignore one and keep writing into a transaction that can no longer commit. At the
+outermost boundary pgx already catches this ("commit unexpectedly resulted in
+rollback"), so the probe was removed as redundant. It is not redundant one level
+down: a nested transaction is a savepoint, and GORM releases a savepoint by
+doing nothing when the callback returns nil, so there is no commit for a driver
+to check. Ablation on a real Postgres: without the probe the inner block reports
+`true` while the outer is already doomed; with it the inner reports the failure
+and — because rolling back to the savepoint clears Postgres's aborted state —
+the outer stays usable and commits honestly with nothing in it. That is what a
+savepoint is for.
+
+**The refusal set was enumerated rather than guessed**, and it grew twice.
+`EditResource` touches no files; `deleteGroupInTransaction` orphans resources
+rather than deleting them; `mah.get_setting` reads an in-memory map. What does
+reach I/O is refused, for one of two reasons:
+
+- *it waits*, holding the write lock — the three fetching/file writers,
+  `mah.http.get_sync`/`post_sync`, `mah.sleep`, and `mah.db.get_resource_data`,
+  a **read** that is on the list because it pulls bytes off a possibly-remote
+  filesystem;
+- *it cannot be undone* — `mah.db.delete_resource`, which removes the file once
+  its own writes commit, and the **asynchronous** `mah.http.get`/`post`/`request`,
+  which hold no lock at all but put the request on the wire immediately. A
+  rollback does not recall a POST to a webhook.
+
+The async refusal **raises**, unlike every other error on that surface, and the
+first attempt at it was wrong in an instructive way. Answering through the
+callback looked like the consistent choice — until the review pointed out that
+the callback is queued for the drain goroutine, which runs it after the calling
+hook has returned and released its VM lock while the transaction is still open.
+A `mah.db` write from there escapes the transaction: on Postgres it commits and
+survives the rollback, on SQLite it contends with the write lock. Routing the
+refusal through that channel would have built the exact escape the refusal
+exists to prevent. The asymmetry is forced by the shape of the API — a
+synchronous call has a return value that lands inside the transaction; an
+asynchronous one has only a callback that does not.
+
+`mah.start_job` stays allowed: it is not I/O, it holds no lock, and a job is
+asynchronous by construction. Its escape is documented rather than prevented.
+
+**Cache invalidation after commit, which this feature broke.** Each entity path
+invalidates its own cache entries at the end of its write — outside a
+transaction that is after the write committed; inside one it is before anything
+has. A concurrent search landing in the gap repopulates from the pre-commit
+state and nothing invalidates again, so the stale answer survives the TTL. The
+search cache is now cleared after the commit, and the per-request MRQL cache
+invalidated again there too, because `mrql_query` reads on a separate connection
+and would otherwise serve its pre-commit view for the rest of the request.
+
+**One deliberate behaviour change beyond the plugin surface.** The three
+converted write paths used `defer recover()` to roll back, which *swallowed* the
+panic and returned `(nil, nil)` — a create reporting neither a group nor an
+error. `db.Transaction` rolls back and lets the panic reach the recovery
+middleware.
+
+Gates: `go test ./...` clean; e2e 2001 passed / 6 skipped / 0 failed (browser +
+CLI); Postgres (`mrql` + `api_tests` + the new `application_context` PG test) ok.
+
 # Role capability below server/, and lifting the plugin deny (2026-08-17)
 
 Item A from the capability report, the part the last two packages were clearing the

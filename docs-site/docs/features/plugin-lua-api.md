@@ -497,6 +497,95 @@ Most entity types follow the `(id, opts)` pattern for update/patch:
 
 Supported entity types: `group`, `note`, `tag`, `category`, `resource_category`, `note_type`, `group_relation`, `relation_type`, `resource` (delete only).
 
+### Transactions
+
+`mah.db.transaction(fn)` runs `fn` inside a single database transaction. Every
+write made while it runs commits together, or none of them do.
+
+```lua
+local ok, err = mah.db.transaction(function()
+    local project = mah.db.create_group({ name = "Q3 audit" })
+    local note = mah.db.create_note({ name = "Findings", owner_id = project.id })
+    mah.db.add_tags("note", note.id, { 7 })
+    mah.kv.set("last_import", tostring(project.id))
+end)
+
+if not ok then
+    mah.log("error", "audit setup failed, nothing was created: " .. tostring(err))
+end
+```
+
+| Returns | When |
+|---------|------|
+| `true` | `fn` returned normally and the transaction committed |
+| `nil, error` | `fn` raised an error; everything it wrote was rolled back |
+
+`mah.abort(reason)` inside `fn` still aborts: the transaction rolls back and the
+abort propagates, so a before-hook's veto stays a veto.
+
+**What joins the transaction.** Every `mah.db` call, `mah.kv` write and
+`mah.log` line made while `fn` runs — including those made by *another* plugin's
+`before_*` hook that your writes fire. Stored key-value data and log lines are
+written to the same database, so they roll back with everything else.
+
+**After-hooks wait for the commit.** `after_*` hooks raised by writes inside
+`fn` are dispatched once the transaction commits, and dropped if it rolls back.
+An after-hook announces a write that happened; inside an open transaction it has
+not happened yet.
+
+**What is refused inside a transaction.** A transaction may not do I/O, for two
+different reasons:
+
+| Call | Refusal | Why |
+|------|---------|-----|
+| `mah.db.create_resource_from_url` | `nil, error` | waits on the network |
+| `mah.db.create_resource_from_data` | `nil, error` | waits on the filesystem |
+| `mah.db.add_resource_version_from_url` | `nil, error` | waits on the network |
+| `mah.http.get_sync` / `mah.http.post_sync` | response table with `error` set | waits on the network |
+| `mah.sleep` | raises | waits |
+| `mah.db.get_resource_data` | `nil, nil, error` | reads the file's bytes, from a filesystem that may be remote |
+| `mah.db.delete_resource` | `nil, error` | deletes the file; a rollback restores the row but not the bytes |
+| `mah.http.get` / `post` / `request` | raises | the request is sent immediately; a rollback cannot recall it |
+
+The first four hold the database write lock for as long as they wait, and every
+other writer in the process fails once its lock timeout expires — which is why a
+read is on the list too. The last two are the opposite problem: neither the
+filesystem nor a webhook has a rollback. Read and fetch first, then open the
+transaction and write what you got; delete resources and fire requests outside
+one.
+
+The asynchronous `mah.http` calls raise instead of reporting through their
+callback, unlike every other error on that surface. Their callback runs on a
+later goroutine, after your frame has returned but while the transaction may
+still be open, so a `mah.db` write from inside it would escape the transaction —
+answering the refusal there would build the escape the refusal exists to
+prevent.
+
+`mah.db.transaction` also refuses to run **inside a coroutine**. Its callback is
+invoked from Go, which a coroutine cannot yield across, and a transaction that
+could suspend would hold the write lock until something resumed it.
+
+**What does not join it.** `mah.db.mrql_query` reads on a separate connection,
+so it does not see the transaction's own uncommitted writes. `mah.start_job`
+hands work to another goroutine: the job runs even if the transaction rolls
+back, and its first write contends with the lock your transaction is holding.
+Start jobs after the transaction returns.
+
+Keep the callback short for the same reason: it holds the database write lock
+for as long as it runs, and on SQLite every other writer in the process fails
+once its `busy_timeout` expires.
+
+**Nesting is a savepoint.** Calling `mah.db.transaction` while one is already
+open marks a savepoint on it rather than opening a second transaction: your
+inner block can fail and roll back on its own, and the outer one carries on. If
+the outer transaction later rolls back, your committed inner block goes with it.
+
+This matters more than it looks, because you may be nested without knowing. A
+`before_*` hook runs inside the transaction of whichever plugin's write fired
+it, so a hook that wraps its own work in `mah.db.transaction` is nesting inside
+a stranger's. A savepoint gives it what it asked for without letting it discard
+the caller's writes.
+
 ### Relationship Management
 
 #### Tag Operations
