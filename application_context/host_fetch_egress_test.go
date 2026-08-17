@@ -3,8 +3,10 @@ package application_context
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"strings"
 	"testing"
 	"time"
@@ -319,8 +321,17 @@ func TestHostFetch_RefusalIsLoggedWithTheResolvedAddress(t *testing.T) {
 			// separates them — the address can now only have come from the dial
 			// refusal.
 			url := strings.Replace(srv.URL, "127.0.0.1", "localhost", 1)
-			if strings.Contains(url, "127.0.0.1") {
-				t.Fatalf("test URL still contains the resolved address (%s); the assertion below would be vacuous", url)
+			// Assert the host is a NAME, not "does not contain 127.0.0.1".
+			// httptest falls back to [::1] when it cannot bind 127.0.0.1, and on
+			// such a host the Replace is a no-op the literal check would wave
+			// through — leaving the ::1 assertion below satisfied by the logged
+			// URL itself, which is exactly the vacuity this swap removes.
+			parsed, parseErr := neturl.Parse(url)
+			if parseErr != nil {
+				t.Fatalf("parse test URL %q: %v", url, parseErr)
+			}
+			if net.ParseIP(parsed.Hostname()) != nil {
+				t.Fatalf("test URL host %q is an IP literal; the assertion below would be vacuous", parsed.Hostname())
 			}
 			tc.run(t, ctx, url)
 

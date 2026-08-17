@@ -6601,29 +6601,52 @@ Three layers, because the first two were each found bypassable by review:
 2. `refuseGlobalCascadeWhenScoped` — `EditRelationType`, `DeleteRelationshipType`,
    `DeleteCategory`, which cascade to `DELETE FROM group_relations` database-wide.
    Checked before `before_category_delete` fires.
-3. `globalCascadeDeleteCallback` — a GORM delete callback refusing an ORM delete
-   against `categories` / `group_relation_types` for a scoped principal. Layer 2
-   guarded named functions, and `CategoryCRUD()`'s generic `CRUDWriter.Delete`
-   walks straight past it. **Correction to the commit message of `a06e3c7f`:** that
-   writer is constructed and handed to `server/routes.go` but only its
-   `ListHandler` is routed — the delete route uses `GetRemoveCategoryHandler` →
-   `DeleteCategory`. The bypass was latent, not live. Two evasions remain
-   uncovered and unused: a `db.Table(...)` override (`statementTable` prefers
-   `Statement.Schema.Table`) and association deletes under
-   `SkipDefaultTransaction`.
+3. `globalCascadeDeleteCallback` — a GORM delete callback refusing a delete
+   against `categories` / `group_relation_types` **issued through a handle
+   carrying the scope filter**. It keys on the handle, not the principal, per the
+   tree's doctrine that scope rides inside the `*gorm.DB`.
+
+   **Two corrections to `a06e3c7f`'s commit message, which overstated this.**
+   (i) It said `CategoryCRUD()`'s generic `CRUDWriter.Delete` was "already wired
+   at `server/routes.go`". Only `ListHandler` is routed; `/v1/category/delete`
+   uses `GetRemoveCategoryHandler` → `DeleteCategory`. (ii) More importantly, the
+   callback could not fire for that writer *even if it were wired*:
+   `NewCRUDWriter` captures the handle at construction and `CategoryCRUD()` is
+   called once on the singleton at startup, which carries no scope filter. Layer 3
+   is a forward-looking backstop for a writer built per request (as `SeriesCRUD()`
+   is), plus a real backstop for `DeleteCategory` and `DeleteRelationshipType`
+   whose cascades are transactional. It contributes nothing to `EditRelationType`,
+   whose own write is an UPDATE. Uncovered and unused: a `db.Table(...)` override,
+   and association deletes under `SkipDefaultTransaction`.
+
+   **Separate defect found while reviewing this, NOT fixed:** `CRUDWriter.Delete`
+   is `Select(clause.Associations).Delete(&entity)`, and `models.Category` has
+   `Groups []*Group` as a has-many. GORM emits a real DELETE for a has-many, so
+   deleting a category through that writer would delete every group in it —
+   which is precisely what `DeleteCategory`'s own comment forbids. Unreachable
+   today (the writer's Delete is not routed). Fix by making `CategoryCRUD()`
+   request-scoped without `Select(clause.Associations)`, or by deleting the
+   writer.
 
 **Known open, recorded rather than claimed closed:**
 
 - Changing a group's own category deletes every incident edge that no longer
   matches the relation type, including an edge whose far endpoint is outside the
   subtree (`group_crud_context.go`).
+- Deleting a group deletes every edge incident to it in both directions, far
+  endpoint irrelevant — `deleteGroupInTransaction`'s
+  `Select("...", "Relationships", "BackRelations", ...)`. Same class as the
+  above, defensible for the same reason (the principal controls the near
+  endpoint), and listed for the same reason: an earlier draft of
+  `scoping.go` waved this one off as safe while `CLAUDE.md` listed its sibling
+  as open.
 - Group merge ends with `DELETE FROM group_relations WHERE to_group_id = from_group_id`,
   no subtree predicate. Only degenerate self-edges, which `AddRelation` refuses to
   create — but a legacy or imported row is not covered by that argument.
 - `AddRelationType` writes `BackRelationId` onto an existing reverse type it finds.
   No edge cascade, but "creating touches no existing row" was wrong as stated.
 
-The first two are closable with subtree predicates on those specific statements.
+The first three are closable with subtree predicates on those specific statements.
 Only the general case — a confined caller performing any admin-only taxonomy
 write — needs role capability below `server/`, which does not exist: `CanWrite`,
 `CanEditorWrite` and `CanManageTaxonomy` are consulted only in `server/`, and

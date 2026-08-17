@@ -323,11 +323,17 @@ func TestRelationTypeWrites_UnscopedPrincipalIsUnaffected(t *testing.T) {
 	}
 }
 
-// The named-function guards are one refactor away from being bypassed, and one
-// bypass was already wired: CategoryCRUD() hands out a generic CRUDWriter whose
-// Delete goes straight to the ORM, and server/routes.go wires it. This pins the
-// callback that catches every such path rather than the three functions.
-func TestGlobalCascade_GenericWriterDeleteIsAlsoRefusedWhenScoped(t *testing.T) {
+// globalCascadeDeleteCallback keys on the db HANDLE carrying a scope filter,
+// not on the principal, which is this tree's doctrine: scope rides inside the
+// *gorm.DB. So the representative test is a delete issued through a
+// request-scoped handle, which is what any writer built per request would use.
+//
+// It is deliberately NOT written against CategoryCRUD(). That writer captures
+// the singleton handle at startup (server/routes.go builds it once), and the
+// singleton carries no scope filter, so the callback could not fire for it
+// however the routes were wired. A test that built one from a scoped context
+// would be testing a construction production never performs.
+func TestGlobalCascade_ScopedHandleDeleteIsRefused(t *testing.T) {
 	ctx := createTestContextWithPlugins(t, t.TempDir())
 	principal, outside, _, _ := relationScopeFixture(t, ctx)
 
@@ -335,33 +341,26 @@ func TestGlobalCascade_GenericWriterDeleteIsAlsoRefusedWhenScoped(t *testing.T) 
 	if err := ctx.db.First(&rel, outside.ID).Error; err != nil {
 		t.Fatalf("load edge: %v", err)
 	}
-	var relType models.GroupRelationType
-	if err := ctx.db.First(&relType, *rel.RelationTypeId).Error; err != nil {
-		t.Fatalf("load relation type: %v", err)
-	}
 
 	scoped := ctx.WithPrincipal(principal)
-
-	_, categoryWriter := scoped.CategoryCRUD()
-	if err := categoryWriter.Delete(*relType.FromCategoryId); err == nil {
-		t.Error("the generic category writer deleted a category for a confined principal, bypassing DeleteCategory's guard")
+	if err := scoped.db.Delete(&models.GroupRelationType{}, *rel.RelationTypeId).Error; err == nil {
+		t.Error("a raw ORM delete removed a relation type through a scoped handle")
 	}
 	if _, alive := relationName(t, ctx, outside.ID); !alive {
-		t.Error("the generic writer's cascade deleted an edge between groups the principal cannot see")
+		t.Error("the relation-type delete cascaded to an edge outside the subtree")
 	}
 
-	// The same callback must cover relation types, whatever route reaches them.
-	if err := scoped.db.Delete(&models.GroupRelationType{}, relType.ID).Error; err == nil {
-		t.Error("a raw ORM delete removed a relation type for a confined principal")
-	}
-	if _, alive := relationName(t, ctx, outside.ID); !alive {
-		t.Error("a raw ORM relation-type delete cascaded to an edge outside the subtree")
+	if err := scoped.db.Delete(&models.Category{}, *ctx.mustCategoryID(t, rel)).Error; err == nil {
+		t.Error("a raw ORM delete removed a category through a scoped handle")
 	}
 }
 
-// And it must not touch an unscoped principal, which is how categories are
-// actually managed.
-func TestGlobalCascade_GenericWriterDeleteStillWorksUnscoped(t *testing.T) {
+// The unscoped side of the same callback: an admin's handle carries no scope
+// filter, so nothing is refused. Asserted through DeleteRelationshipType rather
+// than the generic CRUDWriter — see docs/todo.md, that writer would
+// cascade-delete every group in the category, which is a defect to fix rather
+// than a behaviour to pin.
+func TestGlobalCascade_UnscopedHandleIsUnaffected(t *testing.T) {
 	ctx := createTestContextWithPlugins(t, t.TempDir())
 	_, outside, _, _ := relationScopeFixture(t, ctx)
 
@@ -369,17 +368,71 @@ func TestGlobalCascade_GenericWriterDeleteStillWorksUnscoped(t *testing.T) {
 	if err := ctx.db.First(&rel, outside.ID).Error; err != nil {
 		t.Fatalf("load edge: %v", err)
 	}
-	var relType models.GroupRelationType
-	if err := ctx.db.First(&relType, *rel.RelationTypeId).Error; err != nil {
-		t.Fatalf("load relation type: %v", err)
-	}
-
-	admin, err := ctx.CreateUser(&UserInput{Username: "cat-admin", Password: "password1", Role: models.RoleAdmin})
+	admin, err := ctx.CreateUser(&UserInput{Username: "cascade-admin", Password: "password1", Role: models.RoleAdmin})
 	if err != nil {
 		t.Fatalf("create admin: %v", err)
 	}
-	_, categoryWriter := ctx.WithPrincipal(auth.FromUser(admin)).CategoryCRUD()
-	if err := categoryWriter.Delete(*relType.FromCategoryId); err != nil {
-		t.Fatalf("an admin could not delete a category: %v", err)
+	if err := ctx.WithPrincipal(auth.FromUser(admin)).DeleteRelationshipType(*rel.RelationTypeId); err != nil {
+		t.Fatalf("an admin could not delete a relation type: %v", err)
 	}
+}
+
+// An edge with a NULL endpoint belongs to no subtree, so relationInScope denies
+// it. Untested until a mutation run pointed out that flipping that branch to
+// "return true" changed nothing.
+func TestRelationInScope_DanglingEndpointIsDenied(t *testing.T) {
+	ctx := createTestContextWithPlugins(t, t.TempDir())
+	principal, outside, _, _ := relationScopeFixture(t, ctx)
+
+	var rel models.GroupRelation
+	if err := ctx.db.First(&rel, outside.ID).Error; err != nil {
+		t.Fatalf("load edge: %v", err)
+	}
+	rel.ToGroupId = nil
+	scoped := ctx.WithPrincipal(principal)
+
+	if scoped.relationInScope(&rel) {
+		t.Error("an edge with a NULL endpoint was treated as in scope")
+	}
+	if scoped.relationInScope(nil) {
+		t.Error("a nil relation was treated as in scope")
+	}
+}
+
+// The cascade guard must cover a deny-all principal, not only a confined one.
+// A mutation narrowing isScopedPrincipal() to IsScoped() drops exactly this
+// case, and nothing else in the suite ran a deny-all principal against the
+// three cascade operations.
+func TestGlobalCascade_DeniedPluginPrincipalIsRefused(t *testing.T) {
+	ctx := createTestContextWithPlugins(t, t.TempDir())
+	_, outside, _, _ := relationScopeFixture(t, ctx)
+
+	var rel models.GroupRelation
+	if err := ctx.db.First(&rel, outside.ID).Error; err != nil {
+		t.Fatalf("load edge: %v", err)
+	}
+	denied := ctx.WithPrincipal(deniedPluginPrincipal(4242))
+
+	if _, err := denied.EditRelationType(&query_models.RelationshipTypeEditorQuery{
+		Id: *rel.RelationTypeId, Name: "repointed",
+	}); err == nil {
+		t.Error("a denied principal edited a relation type")
+	}
+	if err := denied.DeleteRelationshipType(*rel.RelationTypeId); err == nil {
+		t.Error("a denied principal deleted a relation type")
+	}
+	if _, alive := relationName(t, ctx, outside.ID); !alive {
+		t.Error("a denied principal's cascade deleted an out-of-scope edge")
+	}
+}
+
+// mustCategoryID resolves the category behind an edge's relation type, so the
+// callback test can name one without threading it through the fixture.
+func (ctx *MahresourcesContext) mustCategoryID(t *testing.T, rel models.GroupRelation) *uint {
+	t.Helper()
+	var rt models.GroupRelationType
+	if err := ctx.db.First(&rt, *rel.RelationTypeId).Error; err != nil {
+		t.Fatalf("load relation type: %v", err)
+	}
+	return rt.FromCategoryId
 }
