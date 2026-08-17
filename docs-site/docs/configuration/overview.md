@@ -133,9 +133,11 @@ So by default the server refuses to fetch from any **private** address:
 **Public hosts are unaffected, with one exception.** Downloading from the
 internet, the reason these features exist, works exactly as before with no
 configuration. The exception is `168.63.129.16`: Azure numbered its
-platform-agent endpoint out of public address space, but it is host-internal on
-every Azure VM and serves instance metadata and extension configuration to
-anything that asks, so it is refused like a private address. Name it in
+platform-agent endpoint (WireServer) out of public address space, but it is
+host-internal on every Azure VM and serves goal-state and extension
+configuration to anything that asks, so it is refused like a private address.
+Azure's instance metadata service is a different address, `169.254.169.254`,
+and is already covered as link-local. Name it in
 `-allow-private-fetch` if you genuinely need to reach it.
 
 ### Allowing specific internal hosts

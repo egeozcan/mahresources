@@ -255,6 +255,12 @@ func (ctx *MahresourcesContext) AddRelationType(query *query_models.Relationship
 }
 
 func (ctx *MahresourcesContext) EditRelationType(query *query_models.RelationshipTypeEditorQuery) (*models.GroupRelationType, error) {
+	// Re-pointing a relation type's categories deletes every edge that no longer
+	// matches, database-wide. See refuseGlobalCascadeWhenScoped.
+	if err := ctx.refuseGlobalCascadeWhenScoped("editing a relation type"); err != nil {
+		return nil, err
+	}
+
 	var relationType = models.GroupRelationType{}
 
 	err := ctx.db.Transaction(func(tx *gorm.DB) error {
@@ -419,6 +425,11 @@ func (ctx *MahresourcesContext) DeleteRelationship(relationshipId uint) error {
 }
 
 func (ctx *MahresourcesContext) DeleteRelationshipType(relationshipTypeId uint) error {
+	// Deleting a relation type deletes every edge of that type, everywhere.
+	if err := ctx.refuseGlobalCascadeWhenScoped("deleting a relation type"); err != nil {
+		return err
+	}
+
 	// Load relation type name before deletion for audit log
 	var relationType models.GroupRelationType
 	if err := ctx.db.First(&relationType, relationshipTypeId).Error; err != nil {

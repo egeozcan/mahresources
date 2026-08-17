@@ -304,6 +304,40 @@ func TestPrincipalForPluginActor_ExpectedRefusalsAreNotLogged(t *testing.T) {
 	}
 }
 
+// The other half of the gate: a genuine outage IS logged. Testing only that
+// expected refusals stay quiet would pass if the log line were deleted outright,
+// which is the case it exists for.
+//
+// The outage is simulated by dropping the users table, not by closing the
+// connection: GetUser then fails with something that is not ErrUserNotFound
+// while log_entries is still writable, which is the shape of the real case this
+// line is meant to catch.
+func TestPrincipalForPluginActor_AnOutageIsLogged(t *testing.T) {
+	ctx := newPluginHookTestContext(t, scopeProbePlugin())
+
+	countActorLogs := func() int64 {
+		var n int64
+		if err := ctx.db.Model(&models.LogEntry{}).
+			Where("entity_name = ?", "Plugin actor unresolved").Count(&n).Error; err != nil {
+			t.Fatalf("count log entries: %v", err)
+		}
+		return n
+	}
+	before := countActorLogs()
+
+	if err := ctx.db.Migrator().DropTable(&models.User{}); err != nil {
+		t.Fatalf("drop users table: %v", err)
+	}
+
+	if p := ctx.principalForPluginActor(1); p == nil || p.Role != models.RoleGuest {
+		t.Fatalf("an unreadable actor was not denied: %+v", p)
+	}
+	if after := countActorLogs(); after != before+1 {
+		t.Errorf("an outage wrote %d log entries, want 1: the operator cannot tell it from an ordinary refusal",
+			after-before)
+	}
+}
+
 // An unscoped actor must keep the view it has always had. This is the regression
 // guard on the fix: binding the principal properly must not accidentally confine
 // an editor or an admin.
