@@ -436,3 +436,36 @@ func (ctx *MahresourcesContext) mustCategoryID(t *testing.T, rel models.GroupRel
 	}
 	return rt.FromCategoryId
 }
+
+// UpdateGroup's scoped UPDATE matches no rows for a group outside the subtree,
+// but RowsAffected is never consulted and the relation cleanup that follows is
+// keyed on the caller-supplied id rather than on what was actually updated. So
+// a scoped hook calling mah.db.update_group with an arbitrary id deletes the
+// constrained edges incident to a group it cannot see.
+//
+// This is not the known-open "a group's own category change" case: here the
+// principal controls NEITHER endpoint, and no category of its own changes.
+func TestUpdateGroup_ConfinedPrincipalCannotCascadeIntoAGroupItCannotSee(t *testing.T) {
+	ctx := createTestContextWithPlugins(t, t.TempDir())
+	principal, outside, _, _ := relationScopeFixture(t, ctx)
+
+	var rel models.GroupRelation
+	if err := ctx.db.First(&rel, outside.ID).Error; err != nil {
+		t.Fatalf("load edge: %v", err)
+	}
+
+	scoped := ctx.WithPrincipal(principal)
+	// Clearing the category is what triggers the cascade delete of every
+	// constrained edge incident to *from_group_id*.
+	_, err := scoped.UpdateGroup(&query_models.GroupEditor{
+		GroupCreator: query_models.GroupCreator{Name: "renamed-from-outside"},
+		ID:           *rel.FromGroupId,
+	})
+	if err == nil {
+		t.Error("a confined principal updated a group outside its subtree")
+	}
+
+	if _, alive := relationName(t, ctx, outside.ID); !alive {
+		t.Error("the update cascaded into an edge between two groups the principal cannot see")
+	}
+}

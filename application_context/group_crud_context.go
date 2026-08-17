@@ -160,6 +160,21 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		return nil, err
 	}
 
+	// The scoped UPDATE below matches no rows for a group outside the subtree,
+	// but RowsAffected is never consulted, and the relation cleanup that follows
+	// is keyed on groupQuery.ID rather than on what was actually updated. Without
+	// this check a group-limited caller — reaching here through mah.db.update_group
+	// from a hook — deletes the constrained edges incident to a group it cannot
+	// see, controlling NEITHER endpoint. That is a different and worse case than
+	// re-categorising a group it does own, which is listed as known-open.
+	//
+	// Checked before the hook fires, so a refused update does not run
+	// before_group_update either, matching DeleteCategory. visibleGroupIDs reads
+	// the allow-list already on the db context and issues no query.
+	if !ctx.visibleGroupIDs([]uint{groupQuery.ID})[groupQuery.ID] {
+		return nil, gorm.ErrRecordNotFound
+	}
+
 	hookData := map[string]any{
 		"id":          float64(groupQuery.ID),
 		"name":        groupQuery.Name,
