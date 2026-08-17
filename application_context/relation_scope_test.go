@@ -17,15 +17,22 @@ import (
 // a principal that cannot see either endpoint must not be able to rename the
 // edge between them, still less delete it.
 
-// relationScopeFixture builds a relation between two groups OUTSIDE the
-// principal's subtree, plus one wholly INSIDE it, and returns a principal
+// relationScopeFixture builds three edges — one wholly OUTSIDE the principal's
+// subtree, one wholly INSIDE it, and one MIXED — and returns a principal
 // confined to "inside".
+//
+// The mixed edge is the one that separates "both endpoints visible" from
+// "either endpoint visible", and it is the case that matters: an edge with one
+// foot in the subtree still names a group outside it, so renaming or deleting it
+// is a write about a group the principal may not see. A guard written with ||
+// instead of && passes every test that only uses wholly-outside edges, which is
+// exactly how mutation testing caught an earlier draft of this file.
 //
 // The user's role is RoleUser rather than RoleGuest for the same reason the
 // hook-scope fixture gives: a guest cannot write at all, so a guest never
 // reaches a write path. A scope-limited user is the principal that is both
 // confined and able to act.
-func relationScopeFixture(t *testing.T, ctx *MahresourcesContext) (principal *auth.Principal, outside, inside *models.GroupRelation) {
+func relationScopeFixture(t *testing.T, ctx *MahresourcesContext) (principal *auth.Principal, outside, inside, mixed *models.GroupRelation) {
 	t.Helper()
 
 	category := &models.Category{Name: "rel-category"}
@@ -73,6 +80,7 @@ func relationScopeFixture(t *testing.T, ctx *MahresourcesContext) (principal *au
 
 	outside = newRelation("outside-edge", outsideA, outsideB)
 	inside = newRelation("inside-edge", insideA, insideB)
+	mixed = newRelation("mixed-edge", insideA, outsideB)
 
 	user, err := ctx.CreateUser(&UserInput{
 		Username:     "confined-rel",
@@ -83,7 +91,7 @@ func relationScopeFixture(t *testing.T, ctx *MahresourcesContext) (principal *au
 	if err != nil {
 		t.Fatalf("create confined user: %v", err)
 	}
-	return auth.FromUser(user), outside, inside
+	return auth.FromUser(user), outside, inside, mixed
 }
 
 func relationName(t *testing.T, ctx *MahresourcesContext, id uint) (string, bool) {
@@ -98,7 +106,7 @@ func relationName(t *testing.T, ctx *MahresourcesContext, id uint) (string, bool
 
 func TestEditRelation_ConfinedPrincipalCannotRenameAnEdgeItCannotSee(t *testing.T) {
 	ctx := createTestContextWithPlugins(t, t.TempDir())
-	principal, outside, _ := relationScopeFixture(t, ctx)
+	principal, outside, _, _ := relationScopeFixture(t, ctx)
 
 	scoped := ctx.WithPrincipal(principal)
 	if _, err := scoped.EditRelation(query_models.GroupRelationshipQuery{
@@ -119,7 +127,7 @@ func TestEditRelation_ConfinedPrincipalCannotRenameAnEdgeItCannotSee(t *testing.
 
 func TestDeleteRelationship_ConfinedPrincipalCannotDeleteAnEdgeItCannotSee(t *testing.T) {
 	ctx := createTestContextWithPlugins(t, t.TempDir())
-	principal, outside, _ := relationScopeFixture(t, ctx)
+	principal, outside, _, _ := relationScopeFixture(t, ctx)
 
 	scoped := ctx.WithPrincipal(principal)
 	if err := scoped.DeleteRelationship(outside.ID); err == nil {
@@ -135,7 +143,7 @@ func TestDeleteRelationship_ConfinedPrincipalCannotDeleteAnEdgeItCannotSee(t *te
 // through the subtree mechanism. Relation edges must be part of that.
 func TestRelationWrites_DeniedPluginPrincipalReachesNothing(t *testing.T) {
 	ctx := createTestContextWithPlugins(t, t.TempDir())
-	_, outside, inside := relationScopeFixture(t, ctx)
+	_, outside, inside, _ := relationScopeFixture(t, ctx)
 
 	denied := ctx.WithPrincipal(deniedPluginPrincipal(4242))
 
@@ -159,7 +167,7 @@ func TestRelationWrites_DeniedPluginPrincipalReachesNothing(t *testing.T) {
 // pass the tests above and be useless.
 func TestRelationWrites_ConfinedPrincipalStillReachesItsOwnSubtree(t *testing.T) {
 	ctx := createTestContextWithPlugins(t, t.TempDir())
-	principal, _, inside := relationScopeFixture(t, ctx)
+	principal, _, inside, _ := relationScopeFixture(t, ctx)
 
 	scoped := ctx.WithPrincipal(principal)
 	if _, err := scoped.EditRelation(query_models.GroupRelationshipQuery{
@@ -183,7 +191,7 @@ func TestRelationWrites_ConfinedPrincipalStillReachesItsOwnSubtree(t *testing.T)
 // always had.
 func TestRelationWrites_UnscopedPrincipalIsUnaffected(t *testing.T) {
 	ctx := createTestContextWithPlugins(t, t.TempDir())
-	_, outside, _ := relationScopeFixture(t, ctx)
+	_, outside, _, _ := relationScopeFixture(t, ctx)
 
 	editor, err := ctx.CreateUser(&UserInput{Username: "rel-ed", Password: "password1", Role: models.RoleEditor})
 	if err != nil {
@@ -198,5 +206,32 @@ func TestRelationWrites_UnscopedPrincipalIsUnaffected(t *testing.T) {
 	}
 	if err := unscoped.DeleteRelationship(outside.ID); err != nil {
 		t.Fatalf("an editor could not delete a relation: %v", err)
+	}
+}
+
+// An edge with exactly one endpoint inside the subtree. This is the case that
+// pins the guard to "both endpoints", not "either": a mutation relaxing && to
+// || is invisible to every test above, because their out-of-scope edge has both
+// feet outside and stays denied either way.
+func TestRelationWrites_ConfinedPrincipalCannotReachAnEdgeThatLeavesItsSubtree(t *testing.T) {
+	ctx := createTestContextWithPlugins(t, t.TempDir())
+	principal, _, _, mixed := relationScopeFixture(t, ctx)
+
+	scoped := ctx.WithPrincipal(principal)
+
+	if _, err := scoped.EditRelation(query_models.GroupRelationshipQuery{
+		Id: mixed.ID, Name: "renamed-across-the-boundary",
+	}); err == nil {
+		t.Error("a confined principal renamed an edge whose far endpoint is outside its subtree")
+	}
+	if name, _ := relationName(t, ctx, mixed.ID); name != "mixed-edge" {
+		t.Errorf("relation name is %q; the write landed despite the error", name)
+	}
+
+	if err := scoped.DeleteRelationship(mixed.ID); err == nil {
+		t.Error("a confined principal deleted an edge whose far endpoint is outside its subtree")
+	}
+	if _, alive := relationName(t, ctx, mixed.ID); !alive {
+		t.Error("the edge was deleted by a principal that cannot see its far endpoint")
 	}
 }

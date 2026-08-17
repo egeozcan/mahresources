@@ -587,7 +587,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 		Config:          config,
 		hostFetchPolicy: hostFetchPolicy,
 		altFileSystems:  altFileSystems,
-		groupio:        groupio.NewService(filesystem, altFileSystems),
+		groupio:         groupio.NewService(filesystem, altFileSystems),
 		locks: MahresourcesLocks{
 			ThumbnailGenerationLock:      thumbnailGenerationLock,
 			VideoThumbnailGenerationLock: videoThumbnailGenerationLock,
