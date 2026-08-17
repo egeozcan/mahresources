@@ -1042,7 +1042,7 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			details = luaTableToGoMap(detailsTbl)
 		}
 
-		if pl := pm.getPluginLogger(); pl != nil {
+		if pl := pm.loggerFor(L); pl != nil {
 			pl.PluginLog(*pluginNamePtr, level, message, details)
 		} else {
 			log.Printf("[plugin][%s] %s", level, message)
@@ -1534,6 +1534,14 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	// Bounded to [0, 30] seconds to prevent abuse. Useful for polling external
 	// async APIs (e.g. fal.ai queue) from within a sync action handler.
 	setIf("", "sleep", func(L *lua.LState) int {
+		// Raised rather than returned: sleep has no return value to carry a
+		// refusal, and returning 0 silently would make a plugin that polls an
+		// external API inside a transaction look like it worked while it held
+		// the write lock for up to 30 seconds.
+		if pm.inTransaction(L) {
+			L.RaiseError("%s", refusedInTransaction("mah.sleep", whyItWaits))
+			return 0
+		}
 		secs := L.CheckNumber(1)
 		if secs < 0 {
 			secs = 0

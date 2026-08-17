@@ -224,15 +224,50 @@ func (pm *PluginManager) querierFor(L *lua.LState) EntityQuerier {
 	if !pm.stateIsLive(L) {
 		return nil
 	}
+	inv := pm.invocationFor(L)
+	if tx := inv.transactionBinding(); tx != nil {
+		q, _ := bindOntoTransaction(tx, inv)
+		return q
+	}
 	b := pm.getPrincipalBinder()
 	if b == nil {
 		return pm.getDbProvider()
 	}
-	q, _ := b.BindInvocation(pm.invocationFor(L))
+	q, _ := b.BindInvocation(inv)
 	if q == nil {
 		return pm.getDbProvider()
 	}
 	return q
+}
+
+// bindOntoTransaction rebinds inv onto the open transaction's own handle,
+// rather than handing back the binding the transaction was opened with.
+//
+// The difference is the call chain, and it is not cosmetic. The stored binding
+// was built when the transaction opened, so its context carries the *opening*
+// invocation — and every hook a write through it fires is dispatched from that
+// context. A nested plugin's write would therefore announce itself with a chain
+// that does not contain the nested plugin, so the re-entry guard — whose whole
+// job is to stop a plugin being notified of a write made while it is running —
+// would let that dispatch through and go for a VM mutex this same goroutine
+// already holds. A before-hook blocks for hookLockWait and then fails the
+// write; an after-hook blocks and is dropped. Both inside the transaction,
+// holding the database write lock for the wait.
+//
+// Rebinding through the transaction's *own* adapter is what keeps the handle:
+// BindInvocation clones that adapter's context, whose db is the transaction,
+// and WithPrincipal preserves the connection pool. Going back to the
+// process-wide binder here is the version that would lose it.
+func bindOntoTransaction(tx TransactionBinding, inv *Invocation) (EntityQuerier, EntityWriter) {
+	binder, ok := tx.(PrincipalBinder)
+	if !ok {
+		return tx, tx
+	}
+	q, w := binder.BindInvocation(inv)
+	if q == nil || w == nil {
+		return tx, tx
+	}
+	return q, w
 }
 
 // querierForFetch is querierFor for the two writers that open a socket. The
@@ -264,15 +299,40 @@ func (pm *PluginManager) writerFor(L *lua.LState) EntityWriter {
 	if !pm.stateIsLive(L) {
 		return nil
 	}
+	inv := pm.invocationFor(L)
+	if tx := inv.transactionBinding(); tx != nil {
+		_, w := bindOntoTransaction(tx, inv)
+		return w
+	}
 	b := pm.getPrincipalBinder()
 	if b == nil {
 		return pm.getDbWriter()
 	}
-	_, w := b.BindInvocation(pm.invocationFor(L))
+	_, w := b.BindInvocation(inv)
 	if w == nil {
 		return pm.getDbWriter()
 	}
 	return w
+}
+
+// loggerFor is getPluginLogger for a call made from L. Inside a
+// mah.db.transaction it is the transaction's own handle: mah.log writes a row,
+// and a row written on a second connection blocks on the writer lock the
+// transaction is holding.
+func (pm *PluginManager) loggerFor(L *lua.LState) PluginLogger {
+	if tx := pm.invocationFor(L).transactionBinding(); tx != nil {
+		return tx
+	}
+	return pm.getPluginLogger()
+}
+
+// loggerForInvocation is loggerFor where there is no LState to read — hook
+// dispatch, which has the invocation itself.
+func (pm *PluginManager) loggerForInvocation(inv *Invocation) PluginLogger {
+	if tx := inv.transactionBinding(); tx != nil {
+		return tx
+	}
+	return pm.getPluginLogger()
 }
 
 // MRQLExecutor provides MRQL query execution for plugins.
@@ -645,6 +705,17 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 	// large (max 50MB)" or "storage not available" — all three used to arrive as
 	// the same bare nil.
 	setRead("get_resource_data", func(L *lua.LState) int {
+		// A read, and refused inside a transaction all the same: it pulls the
+		// file's bytes off a filesystem that may be an alternative or a remote
+		// one, and base64-encodes up to the size cap. The rule is about I/O
+		// under the write lock, not about writes — a slow read here stalls every
+		// other writer in the process exactly as a slow fetch would.
+		if pm.inTransaction(L) {
+			L.Push(lua.LNil)
+			L.Push(lua.LNil)
+			L.Push(lua.LString(refusedInTransaction("mah.db.get_resource_data", whyItWaits)))
+			return 3
+		}
 		db := pm.querierFor(L)
 		if db == nil {
 			L.Push(lua.LNil)
@@ -667,6 +738,11 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 
 	// mah.db.create_resource_from_url(url, options) -> table or (nil, error)
 	setFetchingWrite("create_resource_from_url", func(L *lua.LState) int {
+		if pm.inTransaction(L) {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(refusedInTransaction("mah.db.create_resource_from_url", whyItWaits)))
+			return 2
+		}
 		db := pm.querierForFetch(L, egress)
 		if db == nil {
 			L.Push(lua.LNil)
@@ -714,6 +790,11 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 
 	// mah.db.create_resource_from_data(base64, options) -> table or (nil, error)
 	setWrite("create_resource_from_data", func(L *lua.LState) int {
+		if pm.inTransaction(L) {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(refusedInTransaction("mah.db.create_resource_from_data", whyItWaits)))
+			return 2
+		}
 		db := pm.querierFor(L)
 		if db == nil {
 			L.Push(lua.LNil)
@@ -739,6 +820,11 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 
 	// mah.db.add_resource_version_from_url(resource_id, url, comment) -> table or (nil, error)
 	setFetchingWrite("add_resource_version_from_url", func(L *lua.LState) int {
+		if pm.inTransaction(L) {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(refusedInTransaction("mah.db.add_resource_version_from_url", whyItWaits)))
+			return 2
+		}
 		db := pm.querierForFetch(L, egress)
 		if db == nil {
 			L.Push(lua.LNil)
@@ -918,7 +1004,33 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 	registerIdOptsWriter("patch_resource", func(w EntityWriter, id uint, o map[string]any) (map[string]any, error) {
 		return w.PatchResource(id, o)
 	})
-	registerDelete("delete_resource", func(w EntityWriter, id uint) error { return w.DeleteResource(id) })
+	// Not registerDelete: delete_resource is the one writer whose effects are
+	// not all in the database. DeleteResource removes the file after its own
+	// writes commit — which inside a transaction is a savepoint release, not a
+	// commit — so a later rollback restores the row and leaves the bytes gone.
+	setWrite("delete_resource", func(L *lua.LState) int {
+		w := pm.writerFor(L)
+		if w == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("database writer not available"))
+			return 2
+		}
+		if pm.inTransaction(L) {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(refusedInTransaction("mah.db.delete_resource", whyItCannotBeUndone)))
+			return 2
+		}
+		id := checkEntityID(L, 1)
+		err := w.DeleteResource(id)
+		InvalidateMRQLCache(pm.luaContext(L))
+		if err != nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		L.Push(lua.LTrue)
+		return 1
+	})
 
 	// --- Relationship management ---
 
@@ -1062,6 +1174,28 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 		}
 		L.Push(lua.LTrue)
 		return 1
+	})
+
+	// mah.db.transaction(fn) -> true or (nil, error)
+	//
+	// Every mah.db, mah.kv and mah.log call made while fn runs — including one
+	// made by another plugin's hook that fn's writes fire — joins one database
+	// transaction. fn raising an error rolls all of it back; mah.abort still
+	// aborts. What is refused inside it is listed at refusedInTransaction.
+	//
+	// A write registration because it is one: CapWrite is the capability that
+	// decides whether a plugin may change anything, and a transaction is only
+	// ever a way of changing several things at once.
+	setWrite("transaction", func(L *lua.LState) int {
+		// Availability is asked of the same accessor every other write uses, so
+		// a revoked VM refuses here exactly as it refuses the writes inside.
+		if w := pm.writerFor(L); w == nil {
+			L.Push(lua.LNil)
+			L.Push(lua.LString("database writer not available"))
+			return 2
+		}
+		fn := L.CheckFunction(1)
+		return pm.runDbTransaction(L, fn)
 	})
 
 	// mah.db.mrql_query(query, opts) -> result_table or (nil, error_string)

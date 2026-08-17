@@ -51,7 +51,65 @@ type Invocation struct {
 	// downloads on their existing, unrestricted path.
 	Egress *NetworkPolicy
 
+	// tx is the host object every mah.db, mah.kv and mah.log call on this chain
+	// must run through while a mah.db.transaction is open, and nil otherwise.
+	//
+	// It rides here rather than on the LState because the Invocation is the one
+	// channel that already spans *several plugins* on a single call chain: a
+	// write inside the transaction fires another plugin's hook, and the host
+	// hands this Invocation to RunBeforeHooks/RunAfterHooks, which installs it
+	// on that plugin's own state. So the hook's writes join the transaction
+	// instead of opening a second connection and blocking on the writer lock the
+	// transaction is holding. Anything keyed on the LState would have covered
+	// only the plugin that opened it.
+	tx TransactionBinding
+
 	states []*lua.LState
+}
+
+// InTransaction reports whether a mah.db.transaction is open on this call chain.
+func (inv *Invocation) InTransaction() bool {
+	return inv != nil && inv.tx != nil
+}
+
+// BoundToTransaction returns a copy of inv whose database, key-value and log
+// calls run through binding. The host calls it once, inside the transaction it
+// has just opened, and hands the result back through TransactionRunner.
+func (inv *Invocation) BoundToTransaction(binding TransactionBinding) *Invocation {
+	if binding == nil {
+		return inv
+	}
+	var copied Invocation
+	if inv != nil {
+		copied = *inv
+	}
+	copied.tx = binding
+	return &copied
+}
+
+// DetachedFromTransaction returns a copy of inv that keeps its actor and its
+// call chain but no longer routes through the transaction.
+//
+// It is what an after-hook deferred to the commit must be dispatched with. The
+// chain has to survive, or the plugin whose own write raised the hook stops
+// being recognised as the one that made it and gets notified of it. The binding
+// must not: by the time the hook runs the transaction has committed, and a
+// write through a finished transaction's handle is a write through a dead one.
+func (inv *Invocation) DetachedFromTransaction() *Invocation {
+	if inv == nil || inv.tx == nil {
+		return inv
+	}
+	copied := *inv
+	copied.tx = nil
+	return &copied
+}
+
+// transactionBinding is the open transaction's host object, or nil.
+func (inv *Invocation) transactionBinding() TransactionBinding {
+	if inv == nil {
+		return nil
+	}
+	return inv.tx
 }
 
 // withEgress returns a copy carrying a plugin's network policy.
@@ -95,7 +153,12 @@ func (inv *Invocation) with(L *lua.LState) *Invocation {
 	}
 	states := make([]*lua.LState, len(inv.states), len(inv.states)+1)
 	copy(states, inv.states)
-	return &Invocation{ActorUserID: inv.ActorUserID, states: append(states, L)}
+	// tx is carried: a write inside a transaction fires a hook in another
+	// plugin, and this is the copy that plugin's mah.db calls read. Dropping it
+	// here would silently put the hook's writes on a second connection, which is
+	// the whole failure this field exists to prevent. Egress is deliberately not
+	// carried — querierForFetch attaches it per call, after this.
+	return &Invocation{ActorUserID: inv.ActorUserID, tx: inv.tx, states: append(states, L)}
 }
 
 // withInvocation returns a child context carrying inv, for a VM entry point that

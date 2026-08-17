@@ -400,6 +400,15 @@ type MahresourcesContext struct {
 	// unrestricted operator path" from "a plugin is fetching but its policy did
 	// not survive the trip" — and those must not both mean "skip the layers".
 	pluginFetch bool
+
+	// deferredHooks is set only on a context inside a plugin transaction
+	// (RunInTransaction). While it is set, RunAfterPluginHooks queues rather
+	// than dispatches: an after-hook announces a write, and inside an open
+	// transaction the write has not happened yet and may never. A pointer, so
+	// every clone this context makes — including the one BindInvocation builds
+	// for another plugin's hook — appends to the same queue.
+	deferredHooks *deferredPluginHooks
+
 	// hashQueue is a channel to queue resources for async hash processing
 	hashQueue chan<- uint
 	// thumbnailQueue is a channel to queue video resources for async thumbnail generation
@@ -787,6 +796,14 @@ func (ctx *MahresourcesContext) RunBeforePluginHooks(event string, data map[stri
 // If no plugin manager is active, this is a no-op.
 func (ctx *MahresourcesContext) RunAfterPluginHooks(event string, data map[string]any) {
 	if ctx.pluginManager == nil {
+		return
+	}
+	// Inside a plugin transaction, queue instead. See deferredPluginHooks: an
+	// after-hook says a write happened, and here it has not committed yet.
+	// Queued before the manager check would be wrong the other way — with no
+	// manager there is nothing to dispatch to, ever.
+	if ctx.deferredHooks != nil {
+		ctx.deferredHooks.add(ctx.hookInvocation(), event, data)
 		return
 	}
 	ctx.pluginManager.RunAfterHooks(ctx.hookInvocation(), event, data)

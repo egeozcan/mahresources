@@ -51,6 +51,9 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable, e
 			return 0
 		}
 
+		if pm.inTransaction(L) {
+			return raiseAsyncHttpRefusal(L, "mah.http.get")
+		}
 		if err := validateScheme(url); err != nil {
 			pm.queueErrorCallback(mainState(L), callback, "GET", url, err.Error())
 			return 0
@@ -77,6 +80,9 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable, e
 			return 0
 		}
 
+		if pm.inTransaction(L) {
+			return raiseAsyncHttpRefusal(L, "mah.http.post")
+		}
 		if err := validateScheme(url); err != nil {
 			pm.queueErrorCallback(mainState(L), callback, "POST", url, err.Error())
 			return 0
@@ -102,6 +108,9 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable, e
 
 		headers, timeout, body := extractRequestOptions(L, optsTbl)
 
+		if pm.inTransaction(L) {
+			return raiseAsyncHttpRefusal(L, "mah.http.request")
+		}
 		if err := validateScheme(url); err != nil {
 			pm.queueErrorCallback(mainState(L), callback, method, url, err.Error())
 			return 0
@@ -128,6 +137,10 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable, e
 		if optTbl := L.OptTable(2, nil); optTbl != nil {
 			headers, timeout, _ = extractRequestOptions(L, optTbl)
 		}
+		if pm.inTransaction(L) {
+			L.Push(buildSyncErrorResponse(L, "GET", url, refusedInTransaction("mah.http.get_sync", whyItWaits)))
+			return 1
+		}
 		if err := validateScheme(url); err != nil {
 			L.Push(buildSyncErrorResponse(L, "GET", url, err.Error()))
 			return 1
@@ -149,6 +162,10 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable, e
 		timeout := defaultHttpTimeout
 		if optTbl := L.OptTable(3, nil); optTbl != nil {
 			headers, timeout, _ = extractRequestOptions(L, optTbl)
+		}
+		if pm.inTransaction(L) {
+			L.Push(buildSyncErrorResponse(L, "POST", url, refusedInTransaction("mah.http.post_sync", whyItWaits)))
+			return 1
 		}
 		if err := validateScheme(url); err != nil {
 			L.Push(buildSyncErrorResponse(L, "POST", url, err.Error()))

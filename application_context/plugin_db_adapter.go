@@ -42,6 +42,14 @@ type pluginDBAdapter struct {
 // principal with no role and no id on the context — a state nothing else in the
 // tree produces.
 func (a *pluginDBAdapter) BindInvocation(inv *plugin_system.Invocation) (plugin_system.EntityQuerier, plugin_system.EntityWriter) {
+	adapter := &pluginDBAdapter{ctx: a.boundContext(inv)}
+	return adapter, adapter
+}
+
+// boundContext is the context half of BindInvocation, shared with
+// RunInTransaction so that opening a transaction for a plugin binds its
+// principal by exactly the same rule as every other call it makes.
+func (a *pluginDBAdapter) boundContext(inv *plugin_system.Invocation) *MahresourcesContext {
 	var bound *MahresourcesContext
 	if inv != nil && inv.ActorUserID != 0 {
 		bound = a.ctx.WithPrincipal(a.ctx.principalForPluginActor(inv.ActorUserID))
@@ -60,9 +68,7 @@ func (a *pluginDBAdapter) BindInvocation(inv *plugin_system.Invocation) (plugin_
 		bound.pluginEgress = inv.Egress
 		bound.pluginFetch = true
 	}
-
-	adapter := &pluginDBAdapter{ctx: bound}
-	return adapter, adapter
+	return bound
 }
 
 // principalForPluginActor resolves the identity a plugin call must run as, from

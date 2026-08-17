@@ -16,6 +16,14 @@ func (pm *PluginManager) kvStoreFor(L *lua.LState) KVStore {
 	if !pm.stateIsLive(L) {
 		return nil
 	}
+	// Inside a mah.db.transaction, through the transaction — a plugin's stored
+	// data is written to the same database as everything else, so a write on a
+	// second connection would block on the lock the transaction holds. It also
+	// means stored data rolls back with the transaction, which is what an author
+	// who wrapped a cursor update and an entity write together asked for.
+	if tx := pm.invocationFor(L).transactionBinding(); tx != nil {
+		return tx
+	}
 	return pm.getKVStore()
 }
 

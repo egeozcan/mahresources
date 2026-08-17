@@ -235,7 +235,7 @@ func (pm *PluginManager) skipReentrantHook(inv *Invocation, hook hookEntry, even
 	if !inv.holds(hook.state) {
 		return false
 	}
-	pm.warnHookSkipped(hook.pluginName, event,
+	pm.warnHookSkipped(inv, hook.pluginName, event,
 		"it is already running on this call chain (a plugin is not notified of writes made while it is running)")
 	return true
 }
@@ -243,9 +243,9 @@ func (pm *PluginManager) skipReentrantHook(inv *Invocation, hook hookEntry, even
 // warnHookSkipped reports a dropped hook dispatch through the application log,
 // so it is visible at /logs rather than only on stderr. Falls back to the
 // process log when no logger is wired (tests, and before wiring completes).
-func (pm *PluginManager) warnHookSkipped(pluginName, event, reason string) {
+func (pm *PluginManager) warnHookSkipped(inv *Invocation, pluginName, event, reason string) {
 	msg := fmt.Sprintf("skipped %q hook: %s", event, reason)
-	if pl := pm.getPluginLogger(); pl != nil {
+	if pl := pm.loggerForInvocation(inv); pl != nil {
 		pl.PluginLog(pluginName, "warning", msg, map[string]any{"event": event})
 		return
 	}
@@ -414,7 +414,7 @@ func (pm *PluginManager) RunAfterHooks(inv *Invocation, event string, data map[s
 			if busy {
 				// Safe to skip: the change is already committed, so this is a
 				// missed notification rather than a bypassed guard.
-				pm.warnHookSkipped(hook.pluginName, event, fmt.Sprintf(
+				pm.warnHookSkipped(inv, hook.pluginName, event, fmt.Sprintf(
 					"its VM was busy for %s while this call already held another plugin's VM; "+
 						"skipped rather than risking a lock cycle", hookLockWait))
 			}
