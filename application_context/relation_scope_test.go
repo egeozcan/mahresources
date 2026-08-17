@@ -322,3 +322,64 @@ func TestRelationTypeWrites_UnscopedPrincipalIsUnaffected(t *testing.T) {
 		t.Fatalf("an editor could not delete a relation type: %v", err)
 	}
 }
+
+// The named-function guards are one refactor away from being bypassed, and one
+// bypass was already wired: CategoryCRUD() hands out a generic CRUDWriter whose
+// Delete goes straight to the ORM, and server/routes.go wires it. This pins the
+// callback that catches every such path rather than the three functions.
+func TestGlobalCascade_GenericWriterDeleteIsAlsoRefusedWhenScoped(t *testing.T) {
+	ctx := createTestContextWithPlugins(t, t.TempDir())
+	principal, outside, _, _ := relationScopeFixture(t, ctx)
+
+	var rel models.GroupRelation
+	if err := ctx.db.First(&rel, outside.ID).Error; err != nil {
+		t.Fatalf("load edge: %v", err)
+	}
+	var relType models.GroupRelationType
+	if err := ctx.db.First(&relType, *rel.RelationTypeId).Error; err != nil {
+		t.Fatalf("load relation type: %v", err)
+	}
+
+	scoped := ctx.WithPrincipal(principal)
+
+	_, categoryWriter := scoped.CategoryCRUD()
+	if err := categoryWriter.Delete(*relType.FromCategoryId); err == nil {
+		t.Error("the generic category writer deleted a category for a confined principal, bypassing DeleteCategory's guard")
+	}
+	if _, alive := relationName(t, ctx, outside.ID); !alive {
+		t.Error("the generic writer's cascade deleted an edge between groups the principal cannot see")
+	}
+
+	// The same callback must cover relation types, whatever route reaches them.
+	if err := scoped.db.Delete(&models.GroupRelationType{}, relType.ID).Error; err == nil {
+		t.Error("a raw ORM delete removed a relation type for a confined principal")
+	}
+	if _, alive := relationName(t, ctx, outside.ID); !alive {
+		t.Error("a raw ORM relation-type delete cascaded to an edge outside the subtree")
+	}
+}
+
+// And it must not touch an unscoped principal, which is how categories are
+// actually managed.
+func TestGlobalCascade_GenericWriterDeleteStillWorksUnscoped(t *testing.T) {
+	ctx := createTestContextWithPlugins(t, t.TempDir())
+	_, outside, _, _ := relationScopeFixture(t, ctx)
+
+	var rel models.GroupRelation
+	if err := ctx.db.First(&rel, outside.ID).Error; err != nil {
+		t.Fatalf("load edge: %v", err)
+	}
+	var relType models.GroupRelationType
+	if err := ctx.db.First(&relType, *rel.RelationTypeId).Error; err != nil {
+		t.Fatalf("load relation type: %v", err)
+	}
+
+	admin, err := ctx.CreateUser(&UserInput{Username: "cat-admin", Password: "password1", Role: models.RoleAdmin})
+	if err != nil {
+		t.Fatalf("create admin: %v", err)
+	}
+	_, categoryWriter := ctx.WithPrincipal(auth.FromUser(admin)).CategoryCRUD()
+	if err := categoryWriter.Delete(*relType.FromCategoryId); err != nil {
+		t.Fatalf("an admin could not delete a category: %v", err)
+	}
+}

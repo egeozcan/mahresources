@@ -339,6 +339,7 @@ func registerScopeCallbacks(ctx *MahresourcesContext) {
 
 	d := db.Callback().Delete()
 	_ = d.Before("gorm:delete").Register("mahresources:scope_delete", scopeReadCallback)
+	_ = d.Before("gorm:delete").Register("mahresources:global_cascade_delete", globalCascadeDeleteCallback)
 
 	c := db.Callback().Create()
 	_ = c.Before("gorm:create").Register("mahresources:scope_create", scopeCreateCallback)
@@ -586,6 +587,31 @@ func statementTable(db *gorm.DB) string {
 // own category change or deletion reaches only edges of a group the principal
 // already holds.
 var ErrGlobalCascadeScoped = errors.New("not available to a group-limited principal: this operation cascades to rows outside any subtree")
+
+// globalCascadeTable names the tables whose DELETE reaches rows in every
+// subtree. Deleting a category deletes the relation types that reference it,
+// and deleting a relation type deletes every edge of that type — neither
+// bounded by an owner, because neither table has one.
+func globalCascadeTable(table string) bool {
+	return table == "categories" || table == "group_relation_types"
+}
+
+// globalCascadeDeleteCallback is the chokepoint behind
+// refuseGlobalCascadeWhenScoped. The explicit checks in DeleteCategory and
+// DeleteRelationshipType give a scoped caller a clear error before any hook
+// fires; this catches every OTHER way a delete reaches those tables through the
+// ORM — the generic CRUDWriter.Delete wired at server/routes.go, and any writer
+// added later. A guard only on the named functions is one refactor away from
+// being bypassed, and a reviewer found exactly that bypass already wired.
+func globalCascadeDeleteCallback(db *gorm.DB) {
+	if scopeFromContext(db.Statement.Context) == nil {
+		return // unscoped principal: nothing to confine
+	}
+	if !globalCascadeTable(statementTable(db)) {
+		return
+	}
+	_ = db.AddError(ErrGlobalCascadeScoped)
+}
 
 func (ctx *MahresourcesContext) refuseGlobalCascadeWhenScoped(op string) error {
 	if !ctx.isScopedPrincipal() {

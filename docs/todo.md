@@ -6592,3 +6592,31 @@ triggered it. `CanManageTaxonomy` has no production call site at all — the gat
 is `principalSatisfies`' `default: return false` arm after the `IsAdmin`
 short-circuit. Global taxonomy (tags, categories, note types, relation types)
 carries no owner and stays reachable to a confined or deny-all principal.
+
+### Relation-edge confinement: what is closed and what is not (2026-08-17)
+
+Three layers, because the first two were each found bypassable by review:
+
+1. `relationInScope` — `EditRelation`, `DeleteRelationship`. Both endpoints must be visible.
+2. `refuseGlobalCascadeWhenScoped` — `EditRelationType`, `DeleteRelationshipType`,
+   `DeleteCategory`, which cascade to `DELETE FROM group_relations` database-wide.
+   Checked before `before_category_delete` fires.
+3. `globalCascadeDeleteCallback` — a GORM delete callback refusing any ORM delete
+   against `categories` / `group_relation_types` for a scoped principal. Layer 2
+   guarded named functions and `CategoryCRUD()`'s generic `CRUDWriter.Delete`
+   walked straight past it, already wired at `server/routes.go`.
+
+**Known open, recorded rather than claimed closed:**
+
+- Changing a group's own category deletes every incident edge that no longer
+  matches the relation type, including an edge whose far endpoint is outside the
+  subtree (`group_crud_context.go`).
+- Group merge ends with `DELETE FROM group_relations WHERE to_group_id = from_group_id`,
+  no subtree predicate. Only degenerate self-edges, which `AddRelation` refuses to
+  create — but a legacy or imported row is not covered by that argument.
+- `AddRelationType` writes `BackRelationId` onto an existing reverse type it finds.
+  No edge cascade, but "creating touches no existing row" was wrong as stated.
+
+All three need role capability below `server/`, which does not exist: `CanWrite`,
+`CanEditorWrite` and `CanManageTaxonomy` are consulted only in `server/`, and
+`CanManageTaxonomy` has no production call site at all. That remains the open item.
