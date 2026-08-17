@@ -547,8 +547,30 @@ func (ctx *MahresourcesContext) DeleteNoteType(noteTypeId uint) error {
 	return err
 }
 
+// requireNoteInScope loads the note through the scoped handle so that the
+// association writers below cannot act on a note the principal may not see.
+//
+// They need it because they hand GORM a bare stub — models.Note{ID: n} — and
+// the Association API then emits ONLY join-table SQL. No statement touches
+// `notes`, so scopeReadCallback never fires; and note_tags,
+// groups_related_notes and resource_notes are not in scopeColumn either, so
+// nothing narrows and nothing errors. Without this the call succeeded silently
+// against a note outside the subtree, reachable from a plugin hook through
+// mah.db.add_tags / remove_tags / add_groups / remove_groups /
+// add_resources_to_note / remove_resources_from_note.
+//
+// Select("id") because only existence-under-scope matters; the error is
+// gorm.ErrRecordNotFound, the same answer a scoped read already gives.
+func (ctx *MahresourcesContext) requireNoteInScope(noteId uint) error {
+	var note models.Note
+	return ctx.db.Select("id").First(&note, noteId).Error
+}
+
 // AddTagsToNote appends tags to a note by ID.
 func (ctx *MahresourcesContext) AddTagsToNote(noteId uint, tagIds []uint) error {
+	if err := ctx.requireNoteInScope(noteId); err != nil {
+		return err
+	}
 	if err := ValidateAssociationIDs[models.Tag](ctx.db, tagIds, "tags"); err != nil {
 		return err
 	}
@@ -559,6 +581,9 @@ func (ctx *MahresourcesContext) AddTagsToNote(noteId uint, tagIds []uint) error 
 
 // RemoveTagsFromNote removes tags from a note by ID.
 func (ctx *MahresourcesContext) RemoveTagsFromNote(noteId uint, tagIds []uint) error {
+	if err := ctx.requireNoteInScope(noteId); err != nil {
+		return err
+	}
 	note := models.Note{ID: noteId}
 	tags := BuildAssociationSlice(tagIds, TagFromID)
 	return ctx.db.Model(&note).Association("Tags").Delete(&tags)
@@ -566,6 +591,9 @@ func (ctx *MahresourcesContext) RemoveTagsFromNote(noteId uint, tagIds []uint) e
 
 // AddGroupsToNote appends groups to a note by ID.
 func (ctx *MahresourcesContext) AddGroupsToNote(noteId uint, groupIds []uint) error {
+	if err := ctx.requireNoteInScope(noteId); err != nil {
+		return err
+	}
 	if err := ValidateAssociationIDs[models.Group](ctx.db, groupIds, "groups"); err != nil {
 		return err
 	}
@@ -576,6 +604,9 @@ func (ctx *MahresourcesContext) AddGroupsToNote(noteId uint, groupIds []uint) er
 
 // RemoveGroupsFromNote removes groups from a note by ID.
 func (ctx *MahresourcesContext) RemoveGroupsFromNote(noteId uint, groupIds []uint) error {
+	if err := ctx.requireNoteInScope(noteId); err != nil {
+		return err
+	}
 	note := models.Note{ID: noteId}
 	groups := BuildAssociationSlice(groupIds, GroupFromID)
 	return ctx.db.Model(&note).Association("Groups").Delete(&groups)
@@ -583,6 +614,9 @@ func (ctx *MahresourcesContext) RemoveGroupsFromNote(noteId uint, groupIds []uin
 
 // AddResourcesToNote appends resources to a note by ID.
 func (ctx *MahresourcesContext) AddResourcesToNote(noteId uint, resourceIds []uint) error {
+	if err := ctx.requireNoteInScope(noteId); err != nil {
+		return err
+	}
 	if err := ValidateAssociationIDs[models.Resource](ctx.db, resourceIds, "resources"); err != nil {
 		return err
 	}
@@ -593,6 +627,9 @@ func (ctx *MahresourcesContext) AddResourcesToNote(noteId uint, resourceIds []ui
 
 // RemoveResourcesFromNote removes resources from a note by ID.
 func (ctx *MahresourcesContext) RemoveResourcesFromNote(noteId uint, resourceIds []uint) error {
+	if err := ctx.requireNoteInScope(noteId); err != nil {
+		return err
+	}
 	note := models.Note{ID: noteId}
 	resources := BuildAssociationSlice(resourceIds, ResourceFromID)
 	return ctx.db.Model(&note).Association("Resources").Delete(&resources)
