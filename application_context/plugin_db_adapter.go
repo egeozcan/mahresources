@@ -131,13 +131,22 @@ func (ctx *MahresourcesContext) principalForPluginActor(actorID uint) *auth.Prin
 // mechanism, not of this principal, and role-based capability is not enforced
 // below server/ at all.
 //
-// Relation *edges* were in that set until relationInScope (relation_context.go)
-// took them out. They are the case that shows why the list is worth keeping
-// accurate: an edge is not taxonomy, it is a statement about two groups, and
-// nothing about "carries no owner" made it safe to expose. Closing that needed
-// two guards, not one — relation types and categories cascade to edges
-// database-wide, so refuseGlobalCascadeWhenScoped (scoping.go) refuses those
-// three operations to a scoped principal as well.
+// Relation *edges* were mostly taken out of that set by relationInScope
+// (relation_context.go). They are the case that shows why the list is worth
+// keeping accurate: an edge is not taxonomy, it is a statement about two
+// groups, and nothing about "carries no owner" made it safe to expose.
+//
+// Closing it took three guards, not one. relationInScope covers the direct
+// writes; refuseGlobalCascadeWhenScoped (scoping.go) rejects the three taxonomy
+// operations that cascade to edges database-wide; and globalCascadeDeleteCallback
+// catches every other ORM delete against categories and group_relation_types,
+// because a guard on named functions was already bypassed by the generic
+// CRUDWriter.Delete that CategoryCRUD() returns.
+//
+// Still reachable, deliberately recorded rather than claimed closed: a group's
+// own category change deletes incident edges including ones reaching outside
+// the subtree, and merge's degenerate self-edge sweep is database-wide. Both
+// need role capability below server/, which does not exist. See CLAUDE.md.
 func deniedPluginPrincipal(actorID uint) *auth.Principal {
 	return &auth.Principal{UserID: actorID, Role: models.RoleGuest}
 }
