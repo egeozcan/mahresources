@@ -599,10 +599,20 @@ func globalCascadeTable(table string) bool {
 // globalCascadeDeleteCallback is the chokepoint behind
 // refuseGlobalCascadeWhenScoped. The explicit checks in DeleteCategory and
 // DeleteRelationshipType give a scoped caller a clear error before any hook
-// fires; this catches every OTHER way a delete reaches those tables through the
-// ORM — the generic CRUDWriter.Delete wired at server/routes.go, and any writer
-// added later. A guard only on the named functions is one refactor away from
-// being bypassed, and a reviewer found exactly that bypass already wired.
+// fires; this catches the other ways a delete reaches those tables through the
+// ORM, including the generic CRUDWriter.Delete that CategoryCRUD() returns.
+//
+// That writer is constructed and handed to server/routes.go, but only its
+// ListHandler is routed today — the delete route goes through
+// GetRemoveCategoryHandler to DeleteCategory. So it is a latent bypass, not a
+// live one, and this callback is defence against the routing changing rather
+// than a fix for a reachable hole.
+//
+// Two evasions it does NOT cover, neither used by any live path. statementTable
+// prefers Statement.Schema.Table, so db.Table("categories").Delete(&other)
+// escapes it. And it runs before gorm:delete but after
+// gorm:delete_before_associations, so under SkipDefaultTransaction the
+// association deletes could commit before the rejection.
 func globalCascadeDeleteCallback(db *gorm.DB) {
 	if scopeFromContext(db.Statement.Context) == nil {
 		return // unscoped principal: nothing to confine
