@@ -36,7 +36,15 @@ func (ctx *MahresourcesContext) relationInScope(relation *models.GroupRelation) 
 		// A dangling edge belongs to no subtree, so no scoped principal owns it.
 		return false
 	}
-	return ctx.GroupVisible(*relation.FromGroupId) && ctx.GroupVisible(*relation.ToGroupId)
+	// visibleGroupIDs, not GroupVisible: it reads the allow-list applyPrincipalScope
+	// already materialised onto the db context and issues no query at all, and it
+	// is the helper written for tables scopeColumn does not map. GroupVisible would
+	// run two COUNTs through the scoped handle, each carrying the whole subtree as
+	// an IN list — past SQLite's variable limit that query *errors*, and
+	// entityVisible reads an error as "not visible", so a principal with a large
+	// enough subtree would be denied its own in-subtree edges.
+	visible := ctx.visibleGroupIDs([]uint{*relation.FromGroupId, *relation.ToGroupId})
+	return visible[*relation.FromGroupId] && visible[*relation.ToGroupId]
 }
 
 func (ctx *MahresourcesContext) EditRelation(query query_models.GroupRelationshipQuery) (*models.GroupRelation, error) {
