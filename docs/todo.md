@@ -6601,10 +6601,16 @@ Three layers, because the first two were each found bypassable by review:
 2. `refuseGlobalCascadeWhenScoped` — `EditRelationType`, `DeleteRelationshipType`,
    `DeleteCategory`, which cascade to `DELETE FROM group_relations` database-wide.
    Checked before `before_category_delete` fires.
-3. `globalCascadeDeleteCallback` — a GORM delete callback refusing any ORM delete
+3. `globalCascadeDeleteCallback` — a GORM delete callback refusing an ORM delete
    against `categories` / `group_relation_types` for a scoped principal. Layer 2
-   guarded named functions and `CategoryCRUD()`'s generic `CRUDWriter.Delete`
-   walked straight past it, already wired at `server/routes.go`.
+   guarded named functions, and `CategoryCRUD()`'s generic `CRUDWriter.Delete`
+   walks straight past it. **Correction to the commit message of `a06e3c7f`:** that
+   writer is constructed and handed to `server/routes.go` but only its
+   `ListHandler` is routed — the delete route uses `GetRemoveCategoryHandler` →
+   `DeleteCategory`. The bypass was latent, not live. Two evasions remain
+   uncovered and unused: a `db.Table(...)` override (`statementTable` prefers
+   `Statement.Schema.Table`) and association deletes under
+   `SkipDefaultTransaction`.
 
 **Known open, recorded rather than claimed closed:**
 
@@ -6617,6 +6623,8 @@ Three layers, because the first two were each found bypassable by review:
 - `AddRelationType` writes `BackRelationId` onto an existing reverse type it finds.
   No edge cascade, but "creating touches no existing row" was wrong as stated.
 
-All three need role capability below `server/`, which does not exist: `CanWrite`,
+The first two are closable with subtree predicates on those specific statements.
+Only the general case — a confined caller performing any admin-only taxonomy
+write — needs role capability below `server/`, which does not exist: `CanWrite`,
 `CanEditorWrite` and `CanManageTaxonomy` are consulted only in `server/`, and
 `CanManageTaxonomy` has no production call site at all. That remains the open item.
