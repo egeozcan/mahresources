@@ -95,6 +95,15 @@ func TestApplyDanglingDecisions_GroupRelationDestinationMustBeInScope(t *testing
 	}
 }
 
-// The permissive direction needs no test of its own: every other groupio test
-// drives this same branch through the unrestricted testScope, so a guard that
-// refused in-scope destinations would break them rather than pass unnoticed.
+// Two honest caveats, both found by review rather than by the test passing.
+//
+// No other groupio test reaches case "group_relation": apply_import_test sets
+// every dangling action to "drop", which continues before the switch. So the
+// PERMISSIVE direction is genuinely uncovered here, and a guard that wrongly
+// refused an in-scope destination would not be caught by this file. It would be
+// caught by nothing else either — worth knowing before relying on it.
+//
+// And removing the guard makes this test red by panicking, not by reaching the
+// count assertion: the fixture leaves applyState.collector nil, so execution
+// past the guard dereferences it. The count assertion below is therefore dead
+// code today; the warning assertion is what carries the test.
