@@ -770,8 +770,32 @@ func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSC
 
 	// Use configured timeouts. Re-validate every redirect target so a permitted
 	// initial http(s) URL cannot redirect into a non-http(s) scheme.
+	//
+	// The transport is explicit, mirroring createRemoteResourceHTTPClient. This
+	// client used to leave it nil and inherit http.DefaultTransport; once the
+	// egress policy is applied that is no longer what happens, because
+	// ApplyEgressPolicy finds no *http.Transport to decorate and installs a bare
+	// one — with no idle-connection bound on a transport discarded after every
+	// fetch, and no HTTP/2. Spelling it out keeps this path's connection
+	// behaviour equal to the other two policed ones.
+	//
+	// Proxy stays nil, deliberately and unlike DefaultTransport: through a proxy
+	// the dialler connects to the proxy, so the dial-time address check would
+	// inspect the proxy and pass everything — including the metadata endpoint.
+	// See egress.go. A deployment whose only outbound route is a proxy will find
+	// calendar feeds blocked rather than silently unpoliced.
+	timeout := ctx.Config.RemoteResourceConnectTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
 	client := &http.Client{
-		Timeout: ctx.Config.RemoteResourceConnectTimeout,
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSHandshakeTimeout:   timeout / 2,
+			ResponseHeaderTimeout: timeout,
+			IdleConnTimeout:       90 * time.Second,
+			ForceAttemptHTTP2:     true,
+		},
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
 			if len(via) >= 10 {
 				return fmt.Errorf("stopped after 10 redirects")
@@ -782,16 +806,12 @@ func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSC
 			return nil
 		},
 	}
-	if client.Timeout == 0 {
-		client.Timeout = 30 * time.Second
-	}
-
 	// The scheme check above stops file:// and gopher://; it never stopped
 	// http://169.254.169.254/. The host policy does, and this is the third of
 	// the three operator fetch paths it covers — a calendar URL is user-supplied
 	// and fetched server-side like any other.
 	schemeRedirect := client.CheckRedirect
-	client = plugin_system.ApplyEgressPolicy(client, ctx.hostFetchPolicy, client.Timeout)
+	client = plugin_system.ApplyEgressPolicy(client, ctx.hostFetchPolicy, timeout)
 	// ApplyEgressPolicy installs its own CheckRedirect — the same 10-hop bound,
 	// plus the policy's host re-check — which replaces the one built above
 	// rather than adding to it. Compose them: the scheme rule is about what this
@@ -813,8 +833,12 @@ func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSC
 	if err != nil {
 		// Sanitized: a calendar block's error text is rendered on the page, so
 		// the resolved address must not travel with it. The operator's copy is
-		// the log line the caller writes.
+		// this log line — without it the detail exists nowhere, and an operator
+		// whose internal calendar stopped loading has no way to learn which
+		// address was refused.
 		if msg, blocked := plugin_system.HostFetchRefusal(err); blocked {
+			ctx.Logger().Warning(models.LogActionUpdate, "note_block", nil, "Calendar fetch refused",
+				fmt.Sprintf("%s: %s", url, err.Error()), nil)
 			return nil, time.Time{}, errors.New(msg)
 		}
 		return nil, time.Time{}, fmt.Errorf("failed to fetch URL: %w", err)

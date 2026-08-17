@@ -47,13 +47,26 @@ type ManagerConfig struct {
 	// the layer that knows about either — the same shape as HistoryRecorder,
 	// declared here and implemented above. nil leaves the client undecorated,
 	// which is what the tests and any embedder that has no policy get.
-	ClientPolicy func(*http.Client) *http.Client
+	//
+	// The connect timeout is passed per call rather than captured, because the
+	// decoration replaces the client's dialler and that dialler carries the
+	// timeout. Reading a startup value there while TLSHandshakeTimeout and
+	// ResponseHeaderTimeout beside it still tracked the live runtime setting
+	// left `remote_connect_timeout` half-applied — worse than not applying,
+	// because the symptom does not point at the cause.
+	ClientPolicy func(client *http.Client, connectTimeout time.Duration) *http.Client
 
 	// RefusalMessage renders a policy refusal for the job's error field, which
 	// its submitter reads. It exists so the address a hostname resolved to does
 	// not travel to whoever submitted the URL; ok is false for any error that is
 	// not a refusal. nil passes errors through unchanged.
-	RefusalMessage func(error) (msg string, ok bool)
+	//
+	// It takes the URL, and is the place the unsanitized error is logged: this
+	// package has no logger, and the operator half of a refusal has to go
+	// somewhere or "we tell the operator instead" is a claim with nothing behind
+	// it — an operator debugging a refused internal download would have no way
+	// to learn which address was refused.
+	RefusalMessage func(url string, err error) (msg string, ok bool)
 }
 
 // ResourceCreator is the interface needed to create resources
@@ -133,8 +146,8 @@ type DownloadManager struct {
 	// clientPolicy and refusalMessage carry the deployment's egress policy into
 	// each transfer. Both are set once at construction and never reassigned, so
 	// they are read without the mutex. See ManagerConfig.
-	clientPolicy   func(*http.Client) *http.Client
-	refusalMessage func(error) (string, bool)
+	clientPolicy   func(*http.Client, time.Duration) *http.Client
+	refusalMessage func(string, error) (string, bool)
 	exportSweepFn  func() // called by cleanupOldJobs to sweep expired export tars from disk
 	// history is the durable store for terminal downloads (see history.go). Optional:
 	// nil means the manager keeps its pre-history behaviour, which is what the CLI's
@@ -502,7 +515,7 @@ func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
 	// dialler, so decorating a client that outlived one transfer would let a
 	// pooled connection opened under one policy serve another.
 	if dm.clientPolicy != nil {
-		client = dm.clientPolicy(client)
+		client = dm.clientPolicy(client, s.ConnectTimeout())
 	}
 	return client
 }
@@ -513,11 +526,11 @@ func (dm *DownloadManager) createHTTPClient(s DownloadSettings) *http.Client {
 // the URL resolved to — Go wraps it in *net.OpError, whose prefix carries the
 // address whatever we do to our own message — so a refusal is replaced rather
 // than annotated. Everything else passes through unchanged.
-func (dm *DownloadManager) describeFetchError(err error) error {
+func (dm *DownloadManager) describeFetchError(url string, err error) error {
 	if dm.refusalMessage == nil || err == nil {
 		return err
 	}
-	if msg, ok := dm.refusalMessage(err); ok {
+	if msg, ok := dm.refusalMessage(url, err); ok {
 		return errors.New(msg)
 	}
 	return err
@@ -590,7 +603,7 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, dm.describeFetchError(err)
+		return nil, dm.describeFetchError(job.URL, err)
 	}
 	defer resp.Body.Close()
 

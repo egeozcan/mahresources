@@ -627,10 +627,25 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 			// no request and no principal, so it is the operator fetch path
 			// with the least context of its own. It gets the same host policy
 			// as the synchronous one.
-			ClientPolicy: func(client *http.Client) *http.Client {
-				return plugin_system.ApplyEgressPolicy(client, hostFetchPolicy, config.RemoteResourceConnectTimeout)
+			//
+			// The connect timeout arrives per call: the decoration replaces the
+			// dialler, and the queue reads that timeout from live settings on
+			// every download. Baking in the boot value here would have left the
+			// runtime setting applying to two of a transport's three timeouts.
+			ClientPolicy: func(client *http.Client, connectTimeout time.Duration) *http.Client {
+				return plugin_system.ApplyEgressPolicy(client, hostFetchPolicy, connectTimeout)
 			},
-			RefusalMessage: plugin_system.HostFetchRefusal,
+			// Sanitize for the submitter, and log the unsanitized error here —
+			// download_queue has no logger, and a refusal nobody can diagnose is
+			// the cost of hiding the resolved address from the person who asked.
+			RefusalMessage: func(url string, err error) (string, bool) {
+				msg, blocked := plugin_system.HostFetchRefusal(err)
+				if blocked {
+					ctx.Logger().Warning(models.LogActionCreate, "resource", nil, "Download refused",
+						fmt.Sprintf("%s: %s", url, err.Error()), nil)
+				}
+				return msg, blocked
+			},
 		},
 	)
 

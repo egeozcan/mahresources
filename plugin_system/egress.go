@@ -70,6 +70,13 @@ var extraBlockedRanges = []struct {
 	// RFC3879 deprecated site-local IPv6. Deprecated is not the same as
 	// unrouted: stacks that still honour it treat this as a private network.
 	{mustCIDR("fec0::/10"), "a site-local address"},
+	// Azure's WireServer. A single *public* address, so no net.IP predicate
+	// reaches it, and it is the platform-agent endpoint on every Azure VM —
+	// serving instance metadata and extension configuration to anything on the
+	// host that asks. It is the same class of target as 169.254.169.254 and the
+	// only reason it is not caught beside it is that Azure numbered it out of
+	// public space.
+	{mustCIDR("168.63.129.16/32"), "the Azure platform-agent address"},
 }
 
 func mustCIDR(s string) *net.IPNet {
