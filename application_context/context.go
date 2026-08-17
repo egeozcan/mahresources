@@ -1375,5 +1375,21 @@ func CreateContext() (*MahresourcesContext, *gorm.DB, afero.Fs) {
 		BindAddress:          os.Getenv("BIND_ADDRESS"),
 		FfmpegPath:           os.Getenv("FFMPEG_PATH"),
 		AltFileSystems:       altFSystems,
+		// Read here too, so this constructor's answer to "how many entities may
+		// one action run name" is the operator's rather than the default. A
+		// bad value reads as 0, which selects the default — the same shape
+		// every other limit here uses.
+		MaxActionEntities: maxActionEntitiesFromEnv(),
 	})
+}
+
+// maxActionEntitiesFromEnv reads MAX_ACTION_ENTITIES for the deprecated
+// environment-only constructor. main.go parses the same variable beside its
+// flag; this exists because CreateContext never reaches that code.
+func maxActionEntitiesFromEnv() int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("MAX_ACTION_ENTITIES")))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }

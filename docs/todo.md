@@ -109,6 +109,67 @@ dimension, so a confined caller shares KV state with every other user; and
 `principalForPluginActor` costs a read plus the subtree CTE *per `mah.db` call*,
 which is latent today and becomes the common path once confined users arrive.
 
+## Results
+
+All four batches landed. Each was reviewed by an independent model against a
+pinned worktree before the next one started, and the review of batch 1 changed a
+decision rather than merely finding bugs.
+
+**Batch 1 — `934fc8b2`, review fixes `7ce6e805`.** The guard sits on the
+operations, as planned. The review's two findings were both real:
+
+- **Relation edges were excluded, and my argument for excluding them was
+  wrong.** It ran: an edge is subtree-checkable, `relationInScope` already
+  confines it, so enforcing editor would delete the confined-principal edge
+  editing that guard was built for. The premises are true and the conclusion
+  does not follow — scope and capability answer different questions, and "both
+  endpoints are inside your subtree" is no answer to "may you relate groups at
+  all". Guarded now. The cost is that `relation_scope_test.go` had to build a
+  **synthetic scoped editor**, a principal no stored account can be, because
+  with a scope-limited user every assertion there would pass on the role guard
+  without exercising scope — including the one whose purpose is to prove the
+  guard does not over-refuse.
+- **The drift test admitted two evasions**, both demonstrated and both fixed:
+  a mutation whose verb was not on the list (`BulkDeleteCategories`, which also
+  does not contain "Category"), and a guard present only as a comment —
+  `stripGoComments` parses a *file*, and a lone function declaration is not one,
+  so it returned the fragment unchanged. It now enumerates the *read* prefixes,
+  matches entity stems, and strips comments at file level.
+
+**Batch 2 — `a1c97087`.** `-max-action-entities` (default 1000, zero meaning the
+default rather than unlimited), and a bulk sync run that reports per-entity
+outcomes instead of a 500 describing none of them. A single-entity run keeps its
+500 deliberately: nothing about it is partial.
+
+**Batch 3 — `661489ce`.** A plugin veto is matched by type and answers 400,
+which is what a plugin API endpoint already gives `mah.abort`; the status no
+longer depends on how the plugin author worded the reason. The add-block
+picker's roving tabindex follows focus, with an e2e test verified red before
+green — it focuses an option directly, because `tabindex="-1"` means Tab cannot
+reproduce the defect and assistive technology is the caller that hits it.
+
+**Batch 4 — `d002715e`.** The deny is per plugin and off by default. Three
+things this had to get right, none of them obvious from the plan:
+
+- **A slot renders several plugins' injections at once**, so the decision could
+  not be made per request. `injectionEntry` carries its plugin name now.
+- **A refused shortcode renders the same neutral comment a page with no plugin
+  renderer renders.** Anything more specific turns a page into a way to
+  enumerate which plugins exist, or which ones an account may not use.
+- **The fallback is what protects existing deployments.** A render path with no
+  predicate on its context gets `auth.PluginAccessFor(reqCtx, nil)`, which is
+  exactly the whole-request rule that came before, so an unenumerated path
+  degrades to the old behaviour instead of blanking plugins out for admins.
+
+Deliberately unchanged, and worth not re-deriving: **hooks are not governed by
+the toggle**. They fire from ordinary writes a confined user is entitled to
+make, not from a plugin URL, so no per-plugin door governs them — which is why
+the binding of `mah.db` to the acting principal is the protection that matters
+and this is only the door. Plugin *actions* are likewise untouched: they were
+already reachable at `capWrite`, and narrowing them would contradict "nothing
+changes until an operator says so".
+
+
 # Review fixes for the fetch-egress package (2026-08-17)
 
 Review on PR #56 reproduced the hook-scope escape independently (all four probes

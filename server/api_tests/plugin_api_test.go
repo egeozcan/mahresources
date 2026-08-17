@@ -206,6 +206,11 @@ func (r *testPluginRunner) GroupVisible(uint) bool    { return true }
 // production default rather than a policy this test never set.
 func (r *testPluginRunner) MaxActionEntities() int { return 1000 }
 
+// These tests run the handler with no request principal (admin / auth-off), so
+// the per-plugin toggle is never consulted; answering true keeps the double
+// from deciding something the test is not about.
+func (r *testPluginRunner) PluginAllowsScopedPrincipals(string) bool { return true }
+
 // countingReader wraps an EntityRefReader and counts each method call.
 type countingReader struct {
 	inner plugin_system.EntityRefReader

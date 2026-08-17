@@ -168,6 +168,11 @@ func (r *scopeRunner) GroupVisible(id uint) bool    { return r.visible[id] }
 // production default rather than a policy this test never set.
 func (r *scopeRunner) MaxActionEntities() int { return 1000 }
 
+// The scope tests predate the per-plugin toggle and are about entity
+// visibility, so the plugin under test is open to limited users; the toggle has
+// its own tests.
+func (r *scopeRunner) PluginAllowsScopedPrincipals(string) bool { return true }
+
 // Gap 2: a group-limited principal may only run a plugin action on entities
 // inside its subtree.
 func TestScopedUser_ActionRunConfinedToSubtree(t *testing.T) {

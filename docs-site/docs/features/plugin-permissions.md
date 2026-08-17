@@ -146,6 +146,10 @@ Two consequences worth knowing:
   which is what a page renders when there is no plugin renderer at all. It is
   deliberately indistinguishable: otherwise a page would report which plugins
   exist, and which ones a given account may not use.
+- **Actions are covered.** A group-limited account running a plugin action from
+  a card or the bulk bar gets `403` unless that plugin is open to it. This is
+  the one place the setting *narrows* what such an account could do before, and
+  it is deliberate: an action is the most direct way to make a plugin's Lua run.
 - **Hooks are not covered by this.** They fire from ordinary writes a confined
   user is entitled to make, not from a plugin URL, so a plugin's hooks run for
   every account whatever this setting says. That is why the protection that

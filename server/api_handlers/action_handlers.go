@@ -24,6 +24,7 @@ type PluginActionRunner interface {
 	NoteVisible(id uint) bool
 	GroupVisible(id uint) bool
 	MaxActionEntities() int
+	PluginAllowsScopedPrincipals(pluginName string) bool
 }
 
 // actionScopeRestricted reports whether the request principal is group-limited,
@@ -167,6 +168,18 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 		// the primary entity_ids must be checked explicitly.
 		reqPrincipal := auth.PrincipalFromContext(r.Context())
 		if actionScopeRestricted(reqPrincipal) {
+			// An action is the most direct way there is to make a plugin's Lua
+			// run, so the operator's per-plugin decision has to govern it too.
+			// Gating the indirect surfaces (pages, shortcodes, slots) while
+			// leaving this one open would make the setting mean something
+			// different from what it says.
+			if !ctx.PluginAllowsScopedPrincipals(req.Plugin) {
+				http_utils.HandleError(
+					fmt.Errorf("this plugin is not available to group-limited accounts"),
+					w, r, http.StatusForbidden,
+				)
+				return
+			}
 			for _, eid := range req.EntityIDs {
 				if !entityVisibleForAction(ctx, action.Entity, eid) {
 					http_utils.HandleError(
