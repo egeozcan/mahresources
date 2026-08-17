@@ -107,9 +107,13 @@ func (ctx *MahresourcesContext) PluginAllowsScopedPrincipals(pluginName string) 
 	if cache == nil {
 		// A context built without the cache (a bare struct literal in a test)
 		// still has to answer correctly, so it asks the database. Wiring builds
-		// the cache, so this is not the production path.
+		// the cache, so this is not the production path — but it gets the same
+		// age check anyway, because a bound that holds only on some paths is
+		// not a bound, and the next caller to build a context by hand should
+		// not have to know which kind they made.
+		observedBy := time.Now()
 		allowed, err := ctx.readScopedPluginAccess()
-		if err != nil {
+		if err != nil || time.Since(observedBy) > scopedAccessTTL {
 			return false
 		}
 		return allowed[pluginName]
