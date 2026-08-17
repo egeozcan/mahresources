@@ -359,7 +359,9 @@
         </template>
 
         {# Action buttons #}
-        <div class="flex items-center gap-2 mt-2">
+        {# flex-wrap: this row's width is platform-dependent. The kbd hints below render as two-glyph Mac forms on macOS but as "Ctrl+Enter" / "Ctrl+Shift+Enter" elsewhere, ~24 characters more. #}
+        {# Unwrapped the row measured 455px at a 390px viewport on Linux while fitting on macOS, and html/body are overflow-x clipped app-wide, so Save was unreachable rather than merely off-screen. #}
+        <div class="flex flex-wrap items-center gap-2 mt-2">
             <button type="button"
                     @click="execute()"
                     :disabled="executing"
