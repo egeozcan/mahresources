@@ -24,7 +24,7 @@ func TestAssociationWriters_ConfinedPrincipalCannotTouchEntitiesItCannotSee(t *t
 	ctx := createTestContextWithPlugins(t, t.TempDir())
 	principal, _, _, _ := relationScopeFixture(t, ctx)
 
-	outsideNote, outsideRes, insideGroup, tag := associationFixture(t, ctx, "deny")
+	outsideNote, outsideRes, insideRes, insideGroup, tag := associationFixture(t, ctx, "deny")
 
 	scoped := ctx.WithPrincipal(principal)
 
@@ -36,7 +36,9 @@ func TestAssociationWriters_ConfinedPrincipalCannotTouchEntitiesItCannotSee(t *t
 		{"RemoveTagsFromNote", func() error { return scoped.RemoveTagsFromNote(outsideNote.ID, []uint{tag.ID}) }},
 		{"AddGroupsToNote", func() error { return scoped.AddGroupsToNote(outsideNote.ID, []uint{insideGroup.ID}) }},
 		{"RemoveGroupsFromNote", func() error { return scoped.RemoveGroupsFromNote(outsideNote.ID, []uint{insideGroup.ID}) }},
-		{"AddResourcesToNote", func() error { return scoped.AddResourcesToNote(outsideNote.ID, []uint{outsideRes.ID}) }},
+		// In-subtree resource, out-of-subtree note: the far-side validation passes,
+		// so only the note check can refuse this.
+		{"AddResourcesToNote", func() error { return scoped.AddResourcesToNote(outsideNote.ID, []uint{insideRes.ID}) }},
 		{"RemoveResourcesFromNote", func() error { return scoped.RemoveResourcesFromNote(outsideNote.ID, []uint{outsideRes.ID}) }},
 		{"RemoveGroupsFromResource", func() error { return scoped.RemoveGroupsFromResource(outsideRes.ID, []uint{insideGroup.ID}) }},
 	} {
@@ -54,7 +56,7 @@ func TestAssociationWriters_LegitimateUseIsUnaffected(t *testing.T) {
 	ctx := createTestContextWithPlugins(t, t.TempDir())
 	principal, _, _, _ := relationScopeFixture(t, ctx)
 
-	outsideNote, _, insideGroup, tag := associationFixture(t, ctx, "allow")
+	outsideNote, _, _, insideGroup, tag := associationFixture(t, ctx, "allow")
 
 	// A note owned by the scope group itself: inside the subtree.
 	insideNote := &models.Note{Name: "assoc-inside-note", OwnerId: &insideGroup.ID}
@@ -83,7 +85,7 @@ func TestAssociationWriters_LegitimateUseIsUnaffected(t *testing.T) {
 // associationFixture builds a note and a resource OUTSIDE the principal's
 // subtree (no owner at all), plus the in-scope group and a tag. The suffix keeps
 // names unique across subtests sharing a database.
-func associationFixture(t *testing.T, ctx *MahresourcesContext, suffix string) (*models.Note, *models.Resource, *models.Group, *models.Tag) {
+func associationFixture(t *testing.T, ctx *MahresourcesContext, suffix string) (*models.Note, *models.Resource, *models.Resource, *models.Group, *models.Tag) {
 	t.Helper()
 
 	var insideGroup models.Group
@@ -103,9 +105,23 @@ func associationFixture(t *testing.T, ctx *MahresourcesContext, suffix string) (
 	if err := ctx.db.Create(res).Error; err != nil {
 		t.Fatalf("create outside resource: %v", err)
 	}
+	// Owned by the scope group, so ValidateAssociationIDs accepts it. Without an
+	// in-subtree far side, AddResourcesToNote is refused by that validation
+	// instead of by the note check, and the note check goes untested — cover
+	// that only the far-side validation provides, which is not the guard and
+	// does not survive anyone relaxing it.
+	insideRes := &models.Resource{
+		Name:     "assoc-inside-res-" + suffix,
+		Hash:     "assoc-inside-hash-" + suffix,
+		Location: "assoc-inside-loc-" + suffix,
+		OwnerId:  &insideGroup.ID,
+	}
+	if err := ctx.db.Create(insideRes).Error; err != nil {
+		t.Fatalf("create inside resource: %v", err)
+	}
 	tag := &models.Tag{Name: "assoc-tag-" + suffix}
 	if err := ctx.db.Create(tag).Error; err != nil {
 		t.Fatalf("create tag: %v", err)
 	}
-	return note, res, &insideGroup, tag
+	return note, res, insideRes, &insideGroup, tag
 }
