@@ -892,6 +892,14 @@ func (ctx *MahresourcesContext) MergeResources(winnerId uint, loserIds []uint, k
 
 // RemoveGroupsFromResource removes group associations from a single resource.
 func (ctx *MahresourcesContext) RemoveGroupsFromResource(resourceId uint, groupIds []uint) error {
+	// Same shape as the note association writers: the stub below never touches
+	// `resources`, and groups_related_resources is not in scopeColumn, so
+	// nothing confines this without an explicit scoped read. See
+	// requireNoteInScope.
+	var scoped models.Resource
+	if err := ctx.db.Select("id").First(&scoped, resourceId).Error; err != nil {
+		return err
+	}
 	if len(groupIds) == 0 {
 		return nil
 	}

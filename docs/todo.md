@@ -6656,6 +6656,21 @@ Three layers, because the first two were each found bypassable by review:
    dangling branch, which is mutation-tested. Worth closing when someone next
    touches that fixture.
 
+6. The association writers. Seven functions built a bare stub
+   (`models.Note{ID: n}`) and handed it to GORM's Association API, which emits
+   **only** join-table SQL — so no statement touched `notes`/`resources`,
+   `scopeReadCallback` never fired, and `note_tags`, `groups_related_notes`,
+   `resource_notes` and `groups_related_resources` are not in `scopeColumn`
+   either. Nothing narrowed, nothing errored: a confined principal's hook could
+   tag, group and link a note it could not see, and three of the four `remove_*`
+   cases had **both** endpoints outside the subtree. `requireNoteInScope` (and
+   its inline twin in `resource_bulk_context.go`) now load through the scoped
+   handle first — the idiom `CreateOrUpdateNote`, `EditResource` and
+   `deleteNoteInTransaction` already used.
+
+   Reachable from `mah.db.add_tags` / `remove_tags` / `add_groups` /
+   `remove_groups` / `add_resources_to_note` / `remove_resources_from_note`.
+
 **Known open, recorded rather than claimed closed:**
 
 - Changing a group's own category deletes every incident edge that no longer
