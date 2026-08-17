@@ -445,11 +445,12 @@ func (ctx *MahresourcesContext) DeleteRelationshipType(relationshipTypeId uint) 
 	// means globalCascadeDeleteCallback refusing the final delete rolls the
 	// cascades back rather than leaving them committed.
 	var relationType models.GroupRelationType
-	return ctx.db.Transaction(func(tx *gorm.DB) error {
+	var relationTypeName string
+	err := ctx.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.First(&relationType, relationshipTypeId).Error; err != nil {
 			return err
 		}
-		relationTypeName := relationType.Name
+		relationTypeName = relationType.Name
 
 		// Delete GroupRelation records of the back-relation type (orphaned mirrors
 		// whose forward relations will be deleted). Must happen before clearing
@@ -483,14 +484,21 @@ func (ctx *MahresourcesContext) DeleteRelationshipType(relationshipTypeId uint) 
 			return err
 		}
 
-		if err := tx.Select(clause.Associations).Delete(&relationType).Error; err != nil {
-			return err
-		}
-
-		ctx.Logger().Info(models.LogActionDelete, "relationType", &relationshipTypeId, relationTypeName, "Deleted relation type", nil)
-		ctx.InvalidateSearchCacheByType(EntityTypeRelationType)
-		return nil
+		return tx.Select(clause.Associations).Delete(&relationType).Error
 	})
+	if err != nil {
+		return err
+	}
+
+	// Outside the transaction, deliberately. Logger.log writes through the
+	// PARENT handle, not tx, so logging from inside would ask the pool for a
+	// second connection while this transaction holds one — a deadlock at
+	// -max-db-connections=1 and lock contention above it. Invalidating the cache
+	// after commit rather than before is the same argument: neither should
+	// happen for a transaction that then rolls back.
+	ctx.Logger().Info(models.LogActionDelete, "relationType", &relationshipTypeId, relationTypeName, "Deleted relation type", nil)
+	ctx.InvalidateSearchCacheByType(EntityTypeRelationType)
+	return nil
 }
 
 // categoryNameFor resolves a category id to a quoted name for an error message,

@@ -6628,6 +6628,14 @@ Three layers, because the first two were each found bypassable by review:
    request-scoped without `Select(clause.Associations)`, or by deleting the
    writer.
 
+4. `UpdateGroup`'s visibility check. Found by the fourth review round. The scoped
+   UPDATE matches zero rows for a group outside the subtree, but `RowsAffected` is
+   never consulted and the relation cleanup below it is keyed on
+   `groupQuery.ID` — so `mah.db.update_group(OUTSIDE_ID, ...)` from a hook deleted
+   every constrained edge incident to that group. Distinct from, and worse than,
+   the known-open "group's own category change": the caller controls neither
+   endpoint.
+
 **Known open, recorded rather than claimed closed:**
 
 - Changing a group's own category deletes every incident edge that no longer
