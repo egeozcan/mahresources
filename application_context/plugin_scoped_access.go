@@ -52,19 +52,24 @@ type scopedPluginAccess struct {
 type scopedAccessSnapshot struct {
 	allowed    map[string]bool
 	generation uint64
-	// loadedAt is when the read completed, and it is the only thing bounding
-	// how old a published answer can be.
+	// observedBy is a time the database had certainly not been read before —
+	// taken BEFORE the query, so it is an upper bound on this answer's age
+	// rather than a description of when the work finished.
+	//
+	// That is what makes the TTL a real bound. Stamping completion instead lets
+	// a loader observe the old permission, stall arbitrarily, and then publish
+	// with a fresh timestamp: the stale answer is trusted for another full TTL
+	// measured from long after it was true, and a repeatedly slow loader
+	// extends that indefinitely.
 	//
 	// Two concurrent loaders are NOT ordered, and no local clock can order
-	// them: a loader that started first may observe later, so neither its start
+	// them: a loader that started first may observe last, so neither its start
 	// nor its finish says whose answer is newer. Two attempts to order them
-	// were written and both were wrong. What is true instead is the bound: a
-	// revocation made outside this process can be served for at most one TTL,
-	// whether it was missed by an unlucky interleaving or by never having been
-	// seen at all. That is the same bound multi-process deployment already
-	// implies, which is why this is a limit rather than a hole — and why the
-	// TTL is the number to change if it is ever too long.
-	loadedAt time.Time
+	// were written and both were wrong. The bound is what survives — a
+	// revocation is served for at most one TTL after it commits, whether it was
+	// missed by an unlucky interleaving or belongs to another process — and the
+	// TTL is the number to change if that is ever too long.
+	observedBy time.Time
 }
 
 // PluginAllowsScopedPrincipals reports whether a group-limited user or guest may
@@ -90,7 +95,7 @@ func (ctx *MahresourcesContext) PluginAllowsScopedPrincipals(pluginName string) 
 
 	generation := cache.generation.Load()
 	snapshot := cache.snapshot.Load()
-	if snapshot == nil || snapshot.generation != generation || time.Since(snapshot.loadedAt) > scopedAccessTTL {
+	if snapshot == nil || snapshot.generation != generation || time.Since(snapshot.observedBy) > scopedAccessTTL {
 		loaded, err := ctx.loadScopedPluginAccess()
 		if err != nil {
 			return false
@@ -163,6 +168,7 @@ func (ctx *MahresourcesContext) readScopedPluginAccess() (map[string]bool, error
 func (ctx *MahresourcesContext) loadScopedPluginAccess() (*scopedAccessSnapshot, error) {
 	cache := ctx.scopedAccess
 
+	observedBy := time.Now()
 	var generation uint64
 	if cache != nil {
 		generation = cache.generation.Load()
@@ -173,7 +179,7 @@ func (ctx *MahresourcesContext) loadScopedPluginAccess() (*scopedAccessSnapshot,
 	if err != nil {
 		return nil, err
 	}
-	snapshot := &scopedAccessSnapshot{allowed: allowed, generation: generation, loadedAt: time.Now()}
+	snapshot := &scopedAccessSnapshot{allowed: allowed, generation: generation, observedBy: observedBy}
 
 	if cache != nil {
 		cache.publish(snapshot)
@@ -184,10 +190,15 @@ func (ctx *MahresourcesContext) loadScopedPluginAccess() (*scopedAccessSnapshot,
 // publish installs a snapshot unless a local decision has moved past it, and
 // reports whether it did.
 //
-// One rule, and it is the only one that is actually decidable here: the
-// generation must not have moved. An invalidation during the read means this
-// answer predates a decision made in this process, and this process knows the
-// order of its own decisions exactly.
+// Two rules, both decidable without knowing anything about other loaders:
+//
+//   - The generation must not have moved. An invalidation during the read means
+//     this answer predates a decision made in this process, and a process knows
+//     the order of its own decisions exactly.
+//   - The answer must not already be older than the TTL. A read that stalled
+//     long enough to expire has nothing to offer the next caller, and
+//     publishing it would restart the clock on an answer that was already out
+//     of time.
 //
 // It deliberately does NOT try to order two concurrent loaders. That was
 // attempted twice — first by publish time, then by start time — and both are
@@ -202,6 +213,9 @@ func (c *scopedPluginAccess) publish(snapshot *scopedAccessSnapshot) bool {
 	defer c.publishing.Unlock()
 
 	if c.generation.Load() != snapshot.generation {
+		return false
+	}
+	if time.Since(snapshot.observedBy) > scopedAccessTTL {
 		return false
 	}
 	c.snapshot.Store(snapshot)

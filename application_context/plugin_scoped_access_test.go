@@ -198,7 +198,7 @@ func TestScopedAccessPublish_AnInvalidationDuringTheReadDiscardsIt(t *testing.T)
 	snapshot := &scopedAccessSnapshot{
 		allowed:    map[string]bool{"widgets": true},
 		generation: cache.generation.Load(),
-		loadedAt:   time.Now(),
+		observedBy: time.Now(),
 	}
 
 	cache.generation.Add(1) // the operator revokes while the read is in flight
@@ -208,5 +208,26 @@ func TestScopedAccessPublish_AnInvalidationDuringTheReadDiscardsIt(t *testing.T)
 	}
 	if cache.snapshot.Load() != nil {
 		t.Error("the stale snapshot became everyone else's answer")
+	}
+}
+
+// The bound the TTL claims only holds if a stalled loader cannot restart the
+// clock. This is the interleaving: the read observed the old permission, a
+// revocation committed elsewhere, and the loader woke up much later. Publishing
+// it would trust that answer for another full TTL measured from long after it
+// stopped being true — and a repeatedly slow loader would do it again.
+func TestScopedAccessPublish_AnAnswerOlderThanTheTTLIsNotPublished(t *testing.T) {
+	cache := &scopedPluginAccess{}
+	stalled := &scopedAccessSnapshot{
+		allowed:    map[string]bool{"widgets": true},
+		generation: cache.generation.Load(),
+		observedBy: time.Now().Add(-2 * scopedAccessTTL),
+	}
+
+	if cache.publish(stalled) {
+		t.Error("an answer already older than the TTL was published, so it would be trusted for another one")
+	}
+	if cache.snapshot.Load() != nil {
+		t.Error("the expired snapshot became everyone else's answer")
 	}
 }
