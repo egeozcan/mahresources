@@ -2141,6 +2141,20 @@ func (s *applyState) applyDanglingDecisions() error {
 			}
 
 		case "group_relation":
+			// The destination is chosen by whoever submitted the decisions, and
+			// group_relations is the one table here that scopeColumn does not
+			// map — so unlike the branches above, no GORM callback stands
+			// between this and an arbitrary group id. Without the check a
+			// group-limited user importing an archive could mint a typed edge
+			// from a group in its own subtree to any group in the database, and
+			// tell real ids from invented ones by whether the insert failed on
+			// the foreign key. ScopeResolver exists for exactly this: see its
+			// doc comment in service.go, which names group_relations.
+			if !s.ctx.scope.VisibleGroupIDs([]uint{destID})[destID] {
+				s.result.Warnings = append(s.result.Warnings,
+					fmt.Sprintf("dangling ref %s: destination group is outside your scope, skipping", dr.ID))
+				continue
+			}
 			grtID := s.resolveGRTForDanglingRef(dr)
 			if grtID == 0 {
 				s.result.Warnings = append(s.result.Warnings,

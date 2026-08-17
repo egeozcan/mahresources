@@ -112,7 +112,10 @@ func (ctx *MahresourcesContext) principalForPluginActor(actorID uint) *auth.Prin
 		}
 		return deniedPluginPrincipal(actorID)
 	}
-	if user.Disabled {
+	// GetUser never returns (nil, nil) today, so the nil arm is unreachable. It
+	// stays because this is a security-critical resolver and the alternative to
+	// an unreachable branch here is a nil dereference if that ever changes.
+	if user == nil || user.Disabled {
 		return deniedPluginPrincipal(actorID)
 	}
 	return auth.FromUser(user)

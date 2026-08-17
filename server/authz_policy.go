@@ -194,13 +194,21 @@ func isEditorPath(path string) bool {
 
 // isPluginCodePath matches endpoints that execute plugin (Lua) code: the plugin
 // JSON API catch-all, the block/display render endpoints, and plugin-served
-// pages. Plugin host functions (mah.db.*) run against the UNSCOPED database
-// handle (see application_context.pluginDBAdapter), so a group-confined
-// principal could read or mutate entities outside its subtree through any plugin
-// endpoint whose handler chooses not to honour the advisory principal it is
-// handed. Until plugin data access is itself scope-aware (tree-based RBAC for
-// plugins is a planned follow-up), confined principals are denied these
-// endpoints outright — fail-closed, consistent with every other scoped surface.
+// pages.
+//
+// Plugin host functions (mah.db.*) USED TO run against the unscoped database
+// handle, which was the original reason for this deny. They no longer do:
+// BindInvocation resolves the acting user's real account and binds its scope,
+// and mah.db.mrql_query carries the actor through its own executor (see
+// application_context.principalForPluginActor). The deny stays anyway, for two
+// reasons that outlive the original one. Scope is not capability — role is
+// enforced nowhere below server/, so a confined caller reaching plugin code
+// could still perform an admin-only taxonomy write — and a plugin's Lua is
+// operator-installed code that the subtree model was never designed to sandbox.
+//
+// Tree-based RBAC for plugins remains the planned follow-up; until then confined
+// principals are denied these endpoints outright, fail-closed, consistent with
+// every other scoped surface.
 func isPluginCodePath(path string) bool {
 	return strings.HasPrefix(path, "/v1/plugins/") || strings.HasPrefix(path, "/plugins/")
 }
