@@ -83,10 +83,21 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: e2e/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            e2e/package-lock.json
 
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y gcc libsqlite3-dev jq
+
+      # The doctest harness shells out to the ROOT `npm run build`, which runs
+      # tailwindcss and vite. Without the root install that fails with
+      # "tailwindcss: not found" before a single example runs. The a11y job
+      # already installs both; this job only ever installed e2e's.
+      - name: Install frontend deps
+        run: npm ci
+        env:
+          HUSKY: 0
 
       - name: Build server
         run: go build --tags 'json1 fts5' -o mahresources
