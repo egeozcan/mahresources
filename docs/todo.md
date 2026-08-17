@@ -6554,3 +6554,41 @@ fields (`shared` is a nullable share-token column but only accepts booleans, so 
 documented type is `boolean`). Mutation-tested: re-typing `category` as string, deleting a
 row, inventing a field, misfiling a field into another entity's table, and typing a
 datetime as string are all caught.
+
+## PR #56 review follow-ups (2026-08-17)
+
+Applied on top of `37c897e`, from the second review pass.
+
+**Relation edges were writable from outside the subtree.** `scopeColumn` maps
+`groups`, `resources` and `notes`; `group_relations` is not there and cannot be,
+because containment for an edge is a property of two columns rather than one.
+`GetRelation` had compensated on the read path for some time; the write paths
+never did. `EditRelation` and `DeleteRelationship` loaded an edge by id and
+mutated it with no scope predicate, and `mah.db` exposes `UpdateGroupRelation`
+and `DeleteGroupRelation`, which a group-confined user reaches whenever its own
+ordinary CRUD wakes a plugin hook. `relationInScope` now requires **both**
+endpoints visible and answers `gorm.ErrRecordNotFound`, matching what an
+out-of-scope group already reads as, so it is not an oracle for which relation
+ids exist. `AddRelation` was already fail-closed.
+
+**Two lessons from the mutation runs, both worth keeping:**
+
+1. *Never `git checkout --` a file whose fix is uncommitted.* Reverting a
+   mutation that way took the fix with it, twice, and the second time the
+   symptom was a test failing for what looked like a logic reason. Commit the
+   fix first; then a checkout restores it instead of destroying it.
+2. *A mutation that is not caught is sometimes the test's fault, not the
+   guard's.* Relaxing `relationInScope` from `&&` to `||` survived every test,
+   because the fixture's out-of-scope edge had **both** feet outside and stayed
+   denied either way. The case that distinguishes them is an edge with one
+   endpoint inside — which is also the security-relevant one. Separately,
+   `TestPrincipalForPluginActor_ExpectedRefusalsAreNotLogged` passed
+   unconditionally in draft because it queried `message` for a label
+   `Logger.Warning` puts in `entity_name`.
+
+**Still open, recorded rather than fixed:** role capability is enforced nowhere
+below `server/`, so a hook can perform an admin-only taxonomy write whoever
+triggered it. `CanManageTaxonomy` has no production call site at all — the gate
+is `principalSatisfies`' `default: return false` arm after the `IsAdmin`
+short-circuit. Global taxonomy (tags, categories, note types, relation types)
+carries no owner and stays reachable to a confined or deny-all principal.
