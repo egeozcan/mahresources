@@ -195,6 +195,9 @@ func (ctx *MahresourcesContext) GetRelationType(id uint) (*models.GroupRelationT
 }
 
 func (ctx *MahresourcesContext) AddRelationType(query *query_models.RelationshipTypeEditorQuery) (*models.GroupRelationType, error) {
+	if err := ctx.requireEditorRole("creating a relation type"); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(query.Name) == "" {
 		return nil, errors.New("relation type name is required")
 	}
@@ -263,6 +266,9 @@ func (ctx *MahresourcesContext) AddRelationType(query *query_models.Relationship
 }
 
 func (ctx *MahresourcesContext) EditRelationType(query *query_models.RelationshipTypeEditorQuery) (*models.GroupRelationType, error) {
+	if err := ctx.requireEditorRole("editing a relation type"); err != nil {
+		return nil, err
+	}
 	// Re-pointing a relation type's categories deletes every edge that no longer
 	// matches, database-wide. See refuseGlobalCascadeWhenScoped.
 	if err := ctx.refuseGlobalCascadeWhenScoped("editing a relation type"); err != nil {
@@ -433,6 +439,9 @@ func (ctx *MahresourcesContext) DeleteRelationship(relationshipId uint) error {
 }
 
 func (ctx *MahresourcesContext) DeleteRelationshipType(relationshipTypeId uint) error {
+	if err := ctx.requireEditorRole("deleting a relation type"); err != nil {
+		return err
+	}
 	// Deleting a relation type deletes every edge of that type, everywhere.
 	if err := ctx.refuseGlobalCascadeWhenScoped("deleting a relation type"); err != nil {
 		return err

@@ -42,6 +42,9 @@ func (ctx *MahresourcesContext) GetTemplatePartialsCount(query *query_models.Tem
 }
 
 func (ctx *MahresourcesContext) CreateOrUpdateTemplatePartial(query *query_models.TemplatePartialEditor) (*models.TemplatePartial, error) {
+	if err := ctx.requireTaxonomyRole("saving a template partial"); err != nil {
+		return nil, err
+	}
 	isNew := query.ID == 0
 	var partial models.TemplatePartial
 	if query.ID != 0 {
@@ -81,6 +84,9 @@ func (ctx *MahresourcesContext) CreateOrUpdateTemplatePartial(query *query_model
 }
 
 func (ctx *MahresourcesContext) DeleteTemplatePartial(id uint) error {
+	if err := ctx.requireTaxonomyRole("deleting a template partial"); err != nil {
+		return err
+	}
 	var partial models.TemplatePartial
 	if err := ctx.db.First(&partial, id).Error; err != nil {
 		return err

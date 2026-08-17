@@ -49,6 +49,9 @@ func (ctx *MahresourcesContext) GetCategoriesWithIds(ids *[]uint, limit int) ([]
 }
 
 func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.CategoryCreator) (*models.Category, error) {
+	if err := ctx.requireTaxonomyRole("creating a category"); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(categoryQuery.Name) == "" {
 		return nil, errors.New("category name must be non-empty")
 	}
@@ -111,6 +114,9 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 }
 
 func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.CategoryEditor) (*models.Category, error) {
+	if err := ctx.requireTaxonomyRole("editing a category"); err != nil {
+		return nil, err
+	}
 	if err := ValidateEntityName(categoryQuery.Name, "category"); err != nil {
 		return nil, err
 	}
@@ -174,6 +180,9 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 }
 
 func (ctx *MahresourcesContext) DeleteCategory(categoryId uint) error {
+	if err := ctx.requireTaxonomyRole("deleting a category"); err != nil {
+		return err
+	}
 	// Deleting a category deletes every relation type that references it, and
 	// with them every edge of those types, database-wide. Checked before the
 	// hook runs, so a refused call cannot fire before_category_delete either.

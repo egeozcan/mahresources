@@ -23,6 +23,35 @@ Each VM has a mutex. All calls (hooks, actions, page handlers, HTTP callbacks) a
 
 Full CRUD access to all entity types, plus relationship management and resource file operations.
 
+### Whose access it is
+
+Every `mah.db` call runs as the user who triggered it -- the person viewing the
+page, running the action, or performing the write whose hook woke the plugin --
+not as the operator who installed the plugin. Two limits follow, and both are
+answers rather than errors, so handle them like any other refusal:
+
+- **Subtree scope.** A call made on behalf of a group-limited user sees and
+  writes only that user's subtree. `mrql_query` is included: a query asking for
+  `scope = "global"` still returns that caller's subtree.
+- **Role.** Taxonomy operations require the triggering user's own role to carry
+  them, exactly as the equivalent HTTP endpoint does.
+  `create_category`, `update_category`, `delete_category` and their
+  resource-category equivalents need **admin**; `create_note_type` and the
+  relation-type functions need **editor**. A plugin that creates a category
+  from a hook fired by an ordinary user's upload gets
+  `nil, "creating a category: your role does not have permission to perform this operation"`.
+
+With authentication disabled -- the default -- every request is an implicit
+administrator, so neither limit is visible.
+
+```lua
+local cat, err = mah.db.create_category({ name = "Automation" })
+if not cat then
+    mah.log("info", "not creating the category for this user: " .. tostring(err))
+    return                       -- expected for a non-admin, not a failure
+end
+```
+
 ### Reads and Errors
 
 Every read returns its result plus an error string. A read that failed returns

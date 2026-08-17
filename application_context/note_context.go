@@ -476,6 +476,9 @@ func (ctx *MahresourcesContext) GetNoteTypesCount(query *query_models.NoteTypeQu
 }
 
 func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteTypeEditor) (*models.NoteType, error) {
+	if err := ctx.requireEditorRole("saving a note type"); err != nil {
+		return nil, err
+	}
 	// Findings 17/93: a note type's Meta JSON Schema had no validation either.
 	if err := ValidateMetaSchema(query.MetaSchema); err != nil {
 		return nil, err
@@ -524,6 +527,9 @@ func (ctx *MahresourcesContext) CreateOrUpdateNoteType(query *query_models.NoteT
 }
 
 func (ctx *MahresourcesContext) DeleteNoteType(noteTypeId uint) error {
+	if err := ctx.requireEditorRole("deleting a note type"); err != nil {
+		return err
+	}
 	// Load note type name before deletion for audit log
 	var noteType models.NoteType
 	if err := ctx.db.First(&noteType, noteTypeId).Error; err != nil {

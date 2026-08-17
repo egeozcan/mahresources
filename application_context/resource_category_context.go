@@ -48,6 +48,9 @@ func (ctx *MahresourcesContext) GetResourceCategoriesWithIds(ids *[]uint, limit 
 }
 
 func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.ResourceCategoryCreator) (*models.ResourceCategory, error) {
+	if err := ctx.requireTaxonomyRole("creating a resource category"); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(query.Name) == "" {
 		return nil, errors.New("resource category name must be non-empty")
 	}
@@ -93,6 +96,9 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 }
 
 func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.ResourceCategoryEditor) (*models.ResourceCategory, error) {
+	if err := ctx.requireTaxonomyRole("editing a resource category"); err != nil {
+		return nil, err
+	}
 	var resourceCategory models.ResourceCategory
 	if err := ctx.db.First(&resourceCategory, query.ID).Error; err != nil {
 		return nil, err
@@ -135,6 +141,9 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 }
 
 func (ctx *MahresourcesContext) DeleteResourceCategory(resourceCategoryId uint) error {
+	if err := ctx.requireTaxonomyRole("deleting a resource category"); err != nil {
+		return err
+	}
 	if resourceCategoryId == ctx.DefaultResourceCategoryID {
 		return errors.New("cannot delete the default resource category")
 	}

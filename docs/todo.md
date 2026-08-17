@@ -1,3 +1,114 @@
+# Role capability below server/, and lifting the plugin deny (2026-08-17)
+
+Item A from the capability report, the part the last two packages were clearing the
+way for. The artifact's own "what to do next" is down to this one item; both of its
+stated gates are open (item G built the per-plugin grant, and the hook-scope fix
+removed the reason the deny had to stay fail-closed).
+
+## What the deny actually protects, and why role is the blocker
+
+`isPluginCodePath`'s comment says it plainly: the original reason for the deny —
+`mah.db` running unscoped — is gone, and what outlives it is that **scope is not
+capability**. Role is decided entirely in `server/authz_policy.go`'s
+`principalSatisfies`; nothing below `server/` consults `CanWrite`,
+`CanEditorWrite` or `CanManageTaxonomy` at all. So a confined caller reaching
+plugin code can still perform an admin-only taxonomy write, because tags,
+categories, note types and relation types carry no owner and `scopeColumn` maps
+none of them.
+
+That is the blocker, and it is the first batch.
+
+## Why the guard sits on the operations, not on the tables
+
+The obvious shape — a GORM callback refusing writes to taxonomy tables through a
+role-carrying handle, generalising `globalCascadeDeleteCallback` — was designed
+and then rejected on evidence. Two audits over the write paths found:
+
+- **A plain `user` creates a Category during ordinary upload.** `AddRemoteResource`
+  find-or-creates one from the caller-supplied `GroupCategoryName`
+  (`resource_upload_context.go:284`), on a principal-bound handle, at `capWrite`.
+- **Group import creates and renames rows in six of the nine candidate tables**
+  (`groupio/apply_import.go`), and import is deliberately user-level.
+- **`series` genuinely carries two capabilities.** `/v1/series` is `capEditor`, but
+  a plain user's upload, edit and bulk-delete write the same table — and its
+  create is raw SQL, invisible to any callback.
+- **The guard would be inert exactly where it looks strongest.** Every
+  `editName`/`editDescription` route, `/v1/query/delete` and both saved-MRQL
+  mutation handlers run on writers built once at startup from the unbound
+  singleton, so no callback could ever fire for them.
+
+A table cannot answer "may this caller do this", because two callers writing one
+table are doing different things. The *operation* can. So the guard goes at the
+context-layer operations the HTTP layer gates — `CreateCategory`, not "any INSERT
+into categories" — which leaves the upload's inline find-or-create and the
+importer's direct writes untouched, and covers the plugin surface completely,
+because `pluginDBAdapter.CreateCategory` calls `ctx.CreateCategory`.
+
+## Batches
+
+### 1. Role capability below `server/`
+
+- A typed refusal (`ErrRoleCapability`) and two guards on `MahresourcesContext`,
+  reading the bound principal the same way `refuseGlobalCascadeWhenScoped` reads
+  scope. **A nil principal allows**: singleton, background worker and startup-seed
+  writes carry no identity and are unchanged, which is the same fail-open rule the
+  scope mechanism already lives by, stated rather than implied.
+- Guarded operations, mirroring `server/`'s classification of the routes that call
+  them: Category, ResourceCategory and TemplatePartial create/update/delete at
+  **admin**; NoteType, relation type and relation edge create/update/delete at
+  **editor**.
+- Deliberately **not** guarded: Query, SavedMRQLQuery and Series. Nothing below
+  `server/` calls their operations — no plugin method, no import path — so a guard
+  there could not fire, and a guard that cannot fire invites reliance it cannot
+  repay. Recorded here rather than added.
+- The refusal maps to **403**, through a typed `errors.Is` arm ahead of
+  `statusCodeForError`'s substring scan — which would otherwise hijack a naturally
+  worded message ("cannot be…" → 400, "…not found…" → 404).
+- Drift guard: a source-level test over the guarded operations, so a new taxonomy
+  operation cannot be added without a decision.
+- Behaviour change, stated: a plugin performing a taxonomy write from a hook or
+  action triggered by a non-admin now fails. No bundled plugin does this (the only
+  occurrences in `plugins/` are commented-out examples in `example-plugin`).
+
+### 2. The two live defects on the plugin path a confined user already reaches
+
+- **The async action fan-out has no cap.** One goroutine and one job-map entry per
+  submitted id, eagerly (`action_jobs.go:162`); execution is bounded at 3 but the
+  queue at nothing, and a 1MB body admits ~10^5 ids. `cleanupOldActionJobs` reaps
+  only terminal jobs, so nothing sweeps the backlog.
+- **A sync bulk run reports 500 and discards what already committed.** An error on
+  entity 3 of 5 throws away the per-entity results for 1-2 whose plugin writes are
+  already durable. The modal already renders partial outcomes, so the fix is
+  server-side only; the request-cancelled branch stays a hard stop.
+
+### 3. Two carried defects
+
+- **A before-hook abort returns 500.** `PluginAbortError` is a typed error that no
+  handler inspects, so the status comes from substring-matching the plugin
+  author's own reason text. Plugin API endpoints already answer 400 for the same
+  event; the CRUD path was never wired.
+- **The add-block picker's roving tabindex ignores focus**, so focusing an option
+  by anything but the arrow keys leaves `activePickerIndex` stale.
+
+### 4. Lift the deny, behind a per-plugin operator toggle
+
+Default off, so nothing changes for any installed plugin until an operator says
+so, and a plugin bug's blast radius lands per plugin rather than globally — which
+is how item A's card scoped it. The toggle is operator state, not a manifest
+declaration, so it lives beside the consent record rather than inside it: `Grants`
+mirrors what the plugin asked for, and re-consent semantics must not turn on an
+operator's own decision.
+
+Open pieces this batch has to answer, all named by the recon rather than guessed:
+the render seams gate per *request* today and must gate per *plugin* (the
+shortcode renderer knows the plugin; `RenderSlot` iterates several);
+`internal/arch/plugin_render_gate_test.go` and `plugin_auth_import_test.go` both
+exist to prevent this lift happening by accident and must be deliberately
+rewritten rather than deleted; `mah.kv` is namespaced by plugin name with no user
+dimension, so a confined caller shares KV state with every other user; and
+`principalForPluginActor` costs a read plus the subtree CTE *per `mah.db` call*,
+which is latent today and becomes the common path once confined users arrive.
+
 # Review fixes for the fetch-egress package (2026-08-17)
 
 Review on PR #56 reproduced the hook-scope escape independently (all four probes
