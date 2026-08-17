@@ -52,12 +52,19 @@ type scopedPluginAccess struct {
 type scopedAccessSnapshot struct {
 	allowed    map[string]bool
 	generation uint64
-	// startedAt is when the read BEGAN, not when it finished, and that is what
-	// orders two loaders that started at the same generation: the one that
-	// started earlier holds the older answer, however long each took. Stamping
-	// completion instead is what let a slow stale read overwrite a fresh one
-	// and then look newer than it.
-	startedAt time.Time
+	// loadedAt is when the read completed, and it is the only thing bounding
+	// how old a published answer can be.
+	//
+	// Two concurrent loaders are NOT ordered, and no local clock can order
+	// them: a loader that started first may observe later, so neither its start
+	// nor its finish says whose answer is newer. Two attempts to order them
+	// were written and both were wrong. What is true instead is the bound: a
+	// revocation made outside this process can be served for at most one TTL,
+	// whether it was missed by an unlucky interleaving or by never having been
+	// seen at all. That is the same bound multi-process deployment already
+	// implies, which is why this is a limit rather than a hole — and why the
+	// TTL is the number to change if it is ever too long.
+	loadedAt time.Time
 }
 
 // PluginAllowsScopedPrincipals reports whether a group-limited user or guest may
@@ -83,7 +90,7 @@ func (ctx *MahresourcesContext) PluginAllowsScopedPrincipals(pluginName string) 
 
 	generation := cache.generation.Load()
 	snapshot := cache.snapshot.Load()
-	if snapshot == nil || snapshot.generation != generation || time.Since(snapshot.startedAt) > scopedAccessTTL {
+	if snapshot == nil || snapshot.generation != generation || time.Since(snapshot.loadedAt) > scopedAccessTTL {
 		loaded, err := ctx.loadScopedPluginAccess()
 		if err != nil {
 			return false
@@ -156,7 +163,6 @@ func (ctx *MahresourcesContext) readScopedPluginAccess() (map[string]bool, error
 func (ctx *MahresourcesContext) loadScopedPluginAccess() (*scopedAccessSnapshot, error) {
 	cache := ctx.scopedAccess
 
-	startedAt := time.Now()
 	var generation uint64
 	if cache != nil {
 		generation = cache.generation.Load()
@@ -167,7 +173,7 @@ func (ctx *MahresourcesContext) loadScopedPluginAccess() (*scopedAccessSnapshot,
 	if err != nil {
 		return nil, err
 	}
-	snapshot := &scopedAccessSnapshot{allowed: allowed, generation: generation, startedAt: startedAt}
+	snapshot := &scopedAccessSnapshot{allowed: allowed, generation: generation, loadedAt: time.Now()}
 
 	if cache != nil {
 		cache.publish(snapshot)
@@ -175,28 +181,27 @@ func (ctx *MahresourcesContext) loadScopedPluginAccess() (*scopedAccessSnapshot,
 	return snapshot, nil
 }
 
-// publish installs a snapshot unless something better is already there, and
+// publish installs a snapshot unless a local decision has moved past it, and
 // reports whether it did.
 //
-// Two rules, and each answers a way a revoked permission came back:
+// One rule, and it is the only one that is actually decidable here: the
+// generation must not have moved. An invalidation during the read means this
+// answer predates a decision made in this process, and this process knows the
+// order of its own decisions exactly.
 //
-//   - The generation must not have moved. An invalidation during the read means
-//     this answer predates a decision, so it is not anyone else's answer.
-//   - A snapshot from an EARLIER read never replaces one from a later read,
-//     even at the same generation. Two loaders can straddle a revocation made
-//     in another process, which bumps no generation here: the one that read
-//     "allowed" first must not land on top of the one that read the revocation.
+// It deliberately does NOT try to order two concurrent loaders. That was
+// attempted twice — first by publish time, then by start time — and both are
+// wrong for the same reason: neither says when the database was actually
+// observed, and a loader that starts first can observe last. What survives is
+// the bound in loadedAt's comment: an answer this process did not decide can be
+// stale by at most one TTL.
 //
-// A losing loader still returns its own result to its own caller, which is at
-// worst as stale as the moment it started.
+// A losing loader still returns its own result to its own caller.
 func (c *scopedPluginAccess) publish(snapshot *scopedAccessSnapshot) bool {
 	c.publishing.Lock()
 	defer c.publishing.Unlock()
 
 	if c.generation.Load() != snapshot.generation {
-		return false
-	}
-	if existing := c.snapshot.Load(); existing != nil && !existing.startedAt.Before(snapshot.startedAt) {
 		return false
 	}
 	c.snapshot.Store(snapshot)

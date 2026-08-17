@@ -188,45 +188,17 @@ func TestPluginAllowsScopedPrincipals_WorksWithoutTheCache(t *testing.T) {
 	}
 }
 
-// The case the generation counter alone cannot see: two loaders that both
-// started at the SAME generation, straddling a revocation made in another
-// process — which bumps no generation here. The one that read the older answer
-// must not land on top of the one that read the revocation, however long each
-// read took.
-func TestScopedAccessPublish_AnEarlierReadNeverOverwritesALaterOne(t *testing.T) {
-	cache := &scopedPluginAccess{}
-	generation := cache.generation.Load()
-
-	earlier := &scopedAccessSnapshot{
-		allowed:    map[string]bool{"widgets": true},
-		generation: generation,
-		startedAt:  time.Now().Add(-2 * time.Second),
-	}
-	later := &scopedAccessSnapshot{
-		allowed:    map[string]bool{}, // the revocation, read afterwards
-		generation: generation,
-		startedAt:  time.Now().Add(-1 * time.Second),
-	}
-
-	if !cache.publish(later) {
-		t.Fatal("the later read was refused, so nothing would ever be cached")
-	}
-	if cache.publish(earlier) {
-		t.Error("a read that STARTED earlier replaced a later one at the same generation: the revoked permission is back")
-	}
-	if got := cache.snapshot.Load(); got == nil || got.allowed["widgets"] {
-		t.Errorf("published snapshot is %v, want the revocation", got)
-	}
-}
-
-// And an invalidation during the read still discards the answer, which is the
-// other half of the rule.
+// The rule publish() actually enforces: an invalidation during the read
+// discards that read's answer. Ordering two concurrent loaders is NOT attempted
+// — no local clock can say which of them observed the database later — so what
+// bounds a missed revocation is the TTL, and that is stated in the code rather
+// than asserted here.
 func TestScopedAccessPublish_AnInvalidationDuringTheReadDiscardsIt(t *testing.T) {
 	cache := &scopedPluginAccess{}
 	snapshot := &scopedAccessSnapshot{
 		allowed:    map[string]bool{"widgets": true},
 		generation: cache.generation.Load(),
-		startedAt:  time.Now(),
+		loadedAt:   time.Now(),
 	}
 
 	cache.generation.Add(1) // the operator revokes while the read is in flight
