@@ -60,26 +60,6 @@ func normalizeScopeGroup(role models.Role, scope *uint) *uint {
 	return scope
 }
 
-// validateScopeGroup enforces role scoping rules and verifies the referenced
-// group exists when one is supplied.
-func (ctx *MahresourcesContext) validateScopeGroup(role models.Role, scope *uint) error {
-	scope = normalizeScopeGroup(role, scope)
-	if scope == nil {
-		if role.RequiresScopeGroup() {
-			return ErrScopeGroupRequired
-		}
-		return nil
-	}
-	var count int64
-	if err := ctx.db.Model(&models.Group{}).Where("id = ?", *scope).Count(&count).Error; err != nil {
-		return err
-	}
-	if count == 0 {
-		return ErrScopeGroupMissing
-	}
-	return nil
-}
-
 // CreateUser validates and persists a new user account.
 func (ctx *MahresourcesContext) CreateUser(input *UserInput) (*models.User, error) {
 	username := strings.TrimSpace(input.Username)

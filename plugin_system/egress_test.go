@@ -320,7 +320,13 @@ func TestTheClientCacheKeepsPoliciesApart(t *testing.T) {
 	if pm.httpClientFor(open) == pm.httpClientFor(lan) {
 		t.Fatal("two different policies share one client, so they share a connection pool")
 	}
-	if pm.httpClientFor(open) != pm.httpClientFor(open) {
+	// Hoisted into variables rather than compared inline. These are two
+	// separate calls whose whole point is that the cache returns the same
+	// pointer twice, but written inline staticcheck reads it as x != x and
+	// flags SA4000. The assertion is meaningful; only the spelling was.
+	firstOpen := pm.httpClientFor(open)
+	secondOpen := pm.httpClientFor(open)
+	if firstOpen != secondOpen {
 		t.Fatal("one policy built two clients; the cache is not caching")
 	}
 	// Identical policies spelled differently must still share, or the cache

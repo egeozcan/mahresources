@@ -42,7 +42,7 @@ type pluginDBAdapter struct {
 // principal with no role and no id on the context — a state nothing else in the
 // tree produces.
 func (a *pluginDBAdapter) BindInvocation(inv *plugin_system.Invocation) (plugin_system.EntityQuerier, plugin_system.EntityWriter) {
-	bound := a.ctx
+	var bound *MahresourcesContext
 	if inv != nil && inv.ActorUserID != 0 {
 		bound = a.ctx.WithPrincipal(a.ctx.principalForPluginActor(inv.ActorUserID))
 	} else {
