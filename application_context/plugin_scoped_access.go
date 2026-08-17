@@ -39,22 +39,25 @@ type scopedPluginAccess struct {
 	// world moved underneath it — without that, a slow read taken before a
 	// revocation can be stored after it, and the permission comes back.
 	generation atomic.Uint64
-	// loading serializes the miss path, and it is not an optimisation. The
-	// generation stamp alone does not order two loaders that started at the
-	// SAME generation: one reads "allowed" just before another process revokes,
-	// the other reads the revocation and publishes it, and then the first
-	// publishes its older answer on top — with a fresh loadedAt, so the stale
-	// permission is trusted for another full TTL. Nor is compare-then-Store
-	// atomic on its own: an invalidation landing between the two lines is lost.
-	// Holding this across the read and the publish makes both impossible, and
-	// the fast path never takes it.
-	loading sync.Mutex
+	// publishing makes the compare-and-store atomic, and it is deliberately
+	// held across NOTHING ELSE. An earlier version held it across the database
+	// read too, which inverts against the connection pool: a caller inside a
+	// transaction holds the connection and then asks this cache a question,
+	// while the loader holds this lock and waits for a connection. On SQLite,
+	// where the pool can be one connection, that is a deadlock — and the
+	// clones a transaction makes share this very cache pointer.
+	publishing sync.Mutex
 }
 
 type scopedAccessSnapshot struct {
 	allowed    map[string]bool
 	generation uint64
-	loadedAt   time.Time
+	// startedAt is when the read BEGAN, not when it finished, and that is what
+	// orders two loaders that started at the same generation: the one that
+	// started earlier holds the older answer, however long each took. Stamping
+	// completion instead is what let a slow stale read overwrite a fresh one
+	// and then look newer than it.
+	startedAt time.Time
 }
 
 // PluginAllowsScopedPrincipals reports whether a group-limited user or guest may
@@ -80,7 +83,7 @@ func (ctx *MahresourcesContext) PluginAllowsScopedPrincipals(pluginName string) 
 
 	generation := cache.generation.Load()
 	snapshot := cache.snapshot.Load()
-	if snapshot == nil || snapshot.generation != generation || time.Since(snapshot.loadedAt) > scopedAccessTTL {
+	if snapshot == nil || snapshot.generation != generation || time.Since(snapshot.startedAt) > scopedAccessTTL {
 		loaded, err := ctx.loadScopedPluginAccess()
 		if err != nil {
 			return false
@@ -152,38 +155,50 @@ func (ctx *MahresourcesContext) readScopedPluginAccess() (map[string]bool, error
 
 func (ctx *MahresourcesContext) loadScopedPluginAccess() (*scopedAccessSnapshot, error) {
 	cache := ctx.scopedAccess
-	if cache == nil {
-		allowed, err := ctx.readScopedPluginAccess()
-		if err != nil {
-			return nil, err
-		}
-		return &scopedAccessSnapshot{allowed: allowed, loadedAt: time.Now()}, nil
+
+	startedAt := time.Now()
+	var generation uint64
+	if cache != nil {
+		generation = cache.generation.Load()
 	}
 
-	cache.loading.Lock()
-	defer cache.loading.Unlock()
-
-	// Another loader may have finished while this one waited for the lock, in
-	// which case its snapshot is by definition at least as new as anything this
-	// call could produce.
-	generation := cache.generation.Load()
-	if existing := cache.snapshot.Load(); existing != nil &&
-		existing.generation == generation && time.Since(existing.loadedAt) <= scopedAccessTTL {
-		return existing, nil
-	}
-
+	// The read happens with no lock held, on purpose — see publishing.
 	allowed, err := ctx.readScopedPluginAccess()
 	if err != nil {
 		return nil, err
 	}
-	snapshot := &scopedAccessSnapshot{allowed: allowed, generation: generation, loadedAt: time.Now()}
+	snapshot := &scopedAccessSnapshot{allowed: allowed, generation: generation, startedAt: startedAt}
 
-	// Publish only if nothing changed while the read was in flight. A losing
-	// loader still returns its own result to its own caller, which is at worst
-	// as stale as the moment it started — it simply does not become everyone
-	// else's answer.
-	if cache.generation.Load() == generation {
-		cache.snapshot.Store(snapshot)
+	if cache != nil {
+		cache.publish(snapshot)
 	}
 	return snapshot, nil
+}
+
+// publish installs a snapshot unless something better is already there, and
+// reports whether it did.
+//
+// Two rules, and each answers a way a revoked permission came back:
+//
+//   - The generation must not have moved. An invalidation during the read means
+//     this answer predates a decision, so it is not anyone else's answer.
+//   - A snapshot from an EARLIER read never replaces one from a later read,
+//     even at the same generation. Two loaders can straddle a revocation made
+//     in another process, which bumps no generation here: the one that read
+//     "allowed" first must not land on top of the one that read the revocation.
+//
+// A losing loader still returns its own result to its own caller, which is at
+// worst as stale as the moment it started.
+func (c *scopedPluginAccess) publish(snapshot *scopedAccessSnapshot) bool {
+	c.publishing.Lock()
+	defer c.publishing.Unlock()
+
+	if c.generation.Load() != snapshot.generation {
+		return false
+	}
+	if existing := c.snapshot.Load(); existing != nil && !existing.startedAt.Before(snapshot.startedAt) {
+		return false
+	}
+	c.snapshot.Store(snapshot)
+	return true
 }
