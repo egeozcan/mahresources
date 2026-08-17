@@ -51,13 +51,6 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		groupQuery.Meta = hMeta
 	}
 
-	tx := ctx.db.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
 	var groupUrl *types.URL
 	if groupQuery.URL != "" {
 		parsedURL, err := url.Parse(groupQuery.URL)
@@ -75,64 +68,68 @@ func (ctx *MahresourcesContext) CreateGroup(groupQuery *query_models.GroupCreato
 		URL:         groupUrl,
 	}
 
-	if groupQuery.OwnerId != 0 {
-		var ownerCheck models.Group
-		if err := tx.Select("id").First(&ownerCheck, groupQuery.OwnerId).Error; err != nil {
-			tx.Rollback()
-			return nil, errors.New("owner group not found")
+	// db.Transaction rather than db.Begin: on a handle that is already inside a
+	// transaction, Begin returns ErrInvalidTransaction (a *sql.Tx is neither a
+	// TxBeginner nor a ConnPoolBeginner) while Transaction issues a SAVEPOINT.
+	// mah.db.transaction is the caller that needs that.
+	//
+	// Panics are handled differently now, deliberately. The deferred recover
+	// this replaces rolled back and then *swallowed* the panic, so the function
+	// returned (nil, nil) — a create that reports neither a group nor an error,
+	// which every caller then dereferences. db.Transaction rolls back and lets
+	// the panic continue to the recovery middleware.
+	if err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if groupQuery.OwnerId != 0 {
+			var ownerCheck models.Group
+			if err := tx.Select("id").First(&ownerCheck, groupQuery.OwnerId).Error; err != nil {
+				return errors.New("owner group not found")
+			}
+			group.OwnerId = &groupQuery.OwnerId
 		}
-		group.OwnerId = &groupQuery.OwnerId
-	}
 
-	if groupQuery.CategoryId != 0 {
-		var catCheck models.Category
-		if err := tx.Select("id").First(&catCheck, groupQuery.CategoryId).Error; err != nil {
-			tx.Rollback()
-			return nil, errors.New("category not found")
+		if groupQuery.CategoryId != 0 {
+			var catCheck models.Category
+			if err := tx.Select("id").First(&catCheck, groupQuery.CategoryId).Error; err != nil {
+				return errors.New("category not found")
+			}
 		}
-	}
 
-	if err := tx.Create(&group).Error; err != nil {
-		tx.Rollback()
-		if isForeignKeyError(err) {
-			return nil, errors.New("referenced category or owner does not exist")
+		if err := tx.Create(&group).Error; err != nil {
+			if isForeignKeyError(err) {
+				return errors.New("referenced category or owner does not exist")
+			}
+			return err
 		}
-		return nil, err
-	}
 
-	// Reject self-ownership (can only check after Create assigns the ID)
-	if group.OwnerId != nil && *group.OwnerId == group.ID {
-		tx.Rollback()
-		return nil, errors.New("a group cannot be its own owner")
-	}
-
-	if len(groupQuery.Tags) > 0 {
-		if err := ValidateAssociationIDs[models.Tag](tx, groupQuery.Tags, "tags"); err != nil {
-			tx.Rollback()
-			return nil, err
+		// Reject self-ownership (can only check after Create assigns the ID)
+		if group.OwnerId != nil && *group.OwnerId == group.ID {
+			return errors.New("a group cannot be its own owner")
 		}
-		tags := BuildAssociationSlice(groupQuery.Tags, TagFromID)
 
-		if createTagsErr := tx.Model(&group).Association("Tags").Append(&tags); createTagsErr != nil {
-			tx.Rollback()
-			return nil, createTagsErr
+		if len(groupQuery.Tags) > 0 {
+			if err := ValidateAssociationIDs[models.Tag](tx, groupQuery.Tags, "tags"); err != nil {
+				return err
+			}
+			tags := BuildAssociationSlice(groupQuery.Tags, TagFromID)
+
+			if createTagsErr := tx.Model(&group).Association("Tags").Append(&tags); createTagsErr != nil {
+				return createTagsErr
+			}
 		}
-	}
 
-	if len(groupQuery.Groups) > 0 {
-		if err := ValidateAssociationIDs[models.Group](tx, groupQuery.Groups, "groups"); err != nil {
-			tx.Rollback()
-			return nil, err
+		if len(groupQuery.Groups) > 0 {
+			if err := ValidateAssociationIDs[models.Group](tx, groupQuery.Groups, "groups"); err != nil {
+				return err
+			}
+			groups := BuildAssociationSlice(groupQuery.Groups, GroupFromID)
+
+			if createGroupsErr := tx.Model(&group).Association("RelatedGroups").Append(&groups); createGroupsErr != nil {
+				return createGroupsErr
+			}
 		}
-		groups := BuildAssociationSlice(groupQuery.Groups, GroupFromID)
 
-		if createGroupsErr := tx.Model(&group).Association("RelatedGroups").Append(&groups); createGroupsErr != nil {
-			tx.Rollback()
-			return nil, createGroupsErr
-		}
-	}
-
-	if err := tx.Commit().Error; err != nil {
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 
@@ -195,14 +192,6 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		groupQuery.Meta = hMeta
 	}
 
-	tx := ctx.db.Begin()
-
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
 	groups := BuildAssociationSlicePtr(groupQuery.Groups, GroupPtrFromID)
 	tags := BuildAssociationSlicePtr(groupQuery.Tags, TagPtrFromID)
 
@@ -211,7 +200,6 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 	}
 
 	if err := ValidateMeta(groupQuery.Meta); err != nil {
-		tx.Rollback()
 		return nil, err
 	}
 
@@ -227,7 +215,6 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		parsedURL, err := url.Parse(groupQuery.URL)
 
 		if groupQuery.URL != "" && err != nil {
-			tx.Rollback()
 			return nil, err
 		}
 
@@ -237,120 +224,110 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		group.URL = nil
 	}
 
-	if groupQuery.OwnerId != 0 {
-		if groupQuery.OwnerId == groupQuery.ID {
-			tx.Rollback()
-			return nil, errors.New("a group cannot be its own owner")
-		}
-		// Verify the proposed owner exists, then walk up its ancestry to detect cycles.
-		currentAncestor := groupQuery.OwnerId
-		for i := 0; i < 100; i++ { // depth limit to prevent infinite loops
-			var ancestor models.Group
-			if err := tx.Select("id", "owner_id").First(&ancestor, currentAncestor).Error; err != nil {
-				if i == 0 {
-					// First iteration: the proposed owner itself doesn't exist
-					tx.Rollback()
-					return nil, errors.New("owner group not found")
+	// See CreateGroup: db.Transaction so this path savepoint-nests inside a
+	// transaction the caller already opened.
+	if err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if groupQuery.OwnerId != 0 {
+			if groupQuery.OwnerId == groupQuery.ID {
+				return errors.New("a group cannot be its own owner")
+			}
+			// Verify the proposed owner exists, then walk up its ancestry to detect cycles.
+			currentAncestor := groupQuery.OwnerId
+			for i := 0; i < 100; i++ { // depth limit to prevent infinite loops
+				var ancestor models.Group
+				if err := tx.Select("id", "owner_id").First(&ancestor, currentAncestor).Error; err != nil {
+					if i == 0 {
+						// First iteration: the proposed owner itself doesn't exist
+						return errors.New("owner group not found")
+					}
+					break // further ancestor not found, no cycle
 				}
-				break // further ancestor not found, no cycle
+				if ancestor.OwnerId == nil {
+					break // reached a root group, no cycle
+				}
+				if *ancestor.OwnerId == groupQuery.ID {
+					return errors.New("setting this owner would create an ownership cycle")
+				}
+				currentAncestor = *ancestor.OwnerId
 			}
-			if ancestor.OwnerId == nil {
-				break // reached a root group, no cycle
+			group.OwnerId = &groupQuery.OwnerId
+			group.Owner = &models.Group{ID: groupQuery.OwnerId}
+		} else if err := tx.Model(group).Association("Owner").Clear(); err != nil {
+			return err
+		}
+
+		if groupQuery.CategoryId != 0 {
+			var catCheck models.Category
+			if err := tx.Select("id").First(&catCheck, groupQuery.CategoryId).Error; err != nil {
+				return errors.New("category not found")
 			}
-			if *ancestor.OwnerId == groupQuery.ID {
-				tx.Rollback()
-				return nil, errors.New("setting this owner would create an ownership cycle")
+		}
+
+		if err := tx.Model(group).Select("Name", "Description", "Meta", "URL", "OwnerId", "Owner", "CategoryId").Updates(group).Error; err != nil {
+			if isForeignKeyError(err) {
+				return errors.New("referenced category or owner does not exist")
 			}
-			currentAncestor = *ancestor.OwnerId
+			return err
 		}
-		group.OwnerId = &groupQuery.OwnerId
-		group.Owner = &models.Group{ID: groupQuery.OwnerId}
-	} else if err := tx.Model(group).Association("Owner").Clear(); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
 
-	if groupQuery.CategoryId != 0 {
-		var catCheck models.Category
-		if err := tx.Select("id").First(&catCheck, groupQuery.CategoryId).Error; err != nil {
-			tx.Rollback()
-			return nil, errors.New("category not found")
+		// Clean up GroupRelation records that become invalid after category change.
+		// A relation is invalid if the group's new category doesn't match what
+		// the relation type requires for that position (from or to).
+		newCategoryId := groupQuery.CategoryId
+		if newCategoryId == 0 {
+			// Category cleared: delete all relations where this group occupies a position
+			// that has a non-NULL category constraint on the relation type.
+			if err := tx.Where(
+				"from_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE from_category_id IS NOT NULL)",
+				group.ID,
+			).Delete(&models.GroupRelation{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where(
+				"to_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE to_category_id IS NOT NULL)",
+				group.ID,
+			).Delete(&models.GroupRelation{}).Error; err != nil {
+				return err
+			}
+		} else {
+			// Category changed to a specific value: delete relations where the relation
+			// type's category constraint for this group's position doesn't match.
+			if err := tx.Where(
+				"from_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE from_category_id IS NOT NULL AND from_category_id != ?)",
+				group.ID, newCategoryId,
+			).Delete(&models.GroupRelation{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where(
+				"to_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE to_category_id IS NOT NULL AND to_category_id != ?)",
+				group.ID, newCategoryId,
+			).Delete(&models.GroupRelation{}).Error; err != nil {
+				return err
+			}
 		}
-	}
 
-	if err := tx.Model(group).Select("Name", "Description", "Meta", "URL", "OwnerId", "Owner", "CategoryId").Updates(group).Error; err != nil {
-		tx.Rollback()
-		if isForeignKeyError(err) {
-			return nil, errors.New("referenced category or owner does not exist")
+		if len(groupQuery.Tags) > 0 {
+			if err := ValidateAssociationIDs[models.Tag](tx, groupQuery.Tags, "tags"); err != nil {
+				return err
+			}
 		}
-		return nil, err
-	}
 
-	// Clean up GroupRelation records that become invalid after category change.
-	// A relation is invalid if the group's new category doesn't match what
-	// the relation type requires for that position (from or to).
-	newCategoryId := groupQuery.CategoryId
-	if newCategoryId == 0 {
-		// Category cleared: delete all relations where this group occupies a position
-		// that has a non-NULL category constraint on the relation type.
-		if err := tx.Where(
-			"from_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE from_category_id IS NOT NULL)",
-			group.ID,
-		).Delete(&models.GroupRelation{}).Error; err != nil {
-			tx.Rollback()
-			return nil, err
+		if len(groupQuery.Groups) > 0 {
+			if err := ValidateAssociationIDs[models.Group](tx, groupQuery.Groups, "groups"); err != nil {
+				return err
+			}
 		}
-		if err := tx.Where(
-			"to_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE to_category_id IS NOT NULL)",
-			group.ID,
-		).Delete(&models.GroupRelation{}).Error; err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-	} else {
-		// Category changed to a specific value: delete relations where the relation
-		// type's category constraint for this group's position doesn't match.
-		if err := tx.Where(
-			"from_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE from_category_id IS NOT NULL AND from_category_id != ?)",
-			group.ID, newCategoryId,
-		).Delete(&models.GroupRelation{}).Error; err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-		if err := tx.Where(
-			"to_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE to_category_id IS NOT NULL AND to_category_id != ?)",
-			group.ID, newCategoryId,
-		).Delete(&models.GroupRelation{}).Error; err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-	}
 
-	if len(groupQuery.Tags) > 0 {
-		if err := ValidateAssociationIDs[models.Tag](tx, groupQuery.Tags, "tags"); err != nil {
-			tx.Rollback()
-			return nil, err
+		if err := tx.Model(group).Association("Tags").Replace(tags); err != nil {
+			return err
 		}
-	}
 
-	if len(groupQuery.Groups) > 0 {
-		if err := ValidateAssociationIDs[models.Group](tx, groupQuery.Groups, "groups"); err != nil {
-			tx.Rollback()
-			return nil, err
+		if err := tx.Model(group).Association("RelatedGroups").Replace(groups); err != nil {
+			return err
 		}
-	}
 
-	if err := tx.Model(group).Association("Tags").Replace(tags); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
-	if err := tx.Model(group).Association("RelatedGroups").Replace(groups); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
-	if err := tx.Commit().Error; err != nil {
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 

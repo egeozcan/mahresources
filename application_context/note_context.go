@@ -3,6 +3,7 @@ package application_context
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -83,120 +84,118 @@ func (ctx *MahresourcesContext) CreateOrUpdateNote(noteQuery *query_models.NoteE
 		noteQuery.Meta = hMeta
 	}
 
-	tx := ctx.db.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
+	// db.Transaction rather than db.Begin: Begin returns ErrInvalidTransaction on
+	// a handle that is already inside one, while Transaction issues a SAVEPOINT.
+	// mah.db.transaction is the caller that needs this path to nest. See
+	// CreateGroup for the one deliberate behaviour change — a panic now
+	// propagates instead of being swallowed into a (nil, nil) return.
+	if err := ctx.db.Transaction(func(tx *gorm.DB) error {
+		if noteQuery.ID == 0 {
 
-	if noteQuery.ID == 0 {
-
-		note = models.Note{
-			Name:        noteQuery.Name,
-			Description: noteQuery.Description,
-			Meta:        []byte(noteQuery.Meta),
-			OwnerId:     ownerId,
-			StartDate:   parseHTMLTime(noteQuery.StartDate),
-			EndDate:     parseHTMLTime(noteQuery.EndDate),
-			NoteTypeId:  noteTypeId,
-		}
-
-		if err := tx.Create(&note).Error; err != nil {
-			tx.Rollback()
-			if isForeignKeyError(err) {
-				return nil, errors.New("referenced note type or owner does not exist")
+			note = models.Note{
+				Name:        noteQuery.Name,
+				Description: noteQuery.Description,
+				Meta:        []byte(noteQuery.Meta),
+				OwnerId:     ownerId,
+				StartDate:   parseHTMLTime(noteQuery.StartDate),
+				EndDate:     parseHTMLTime(noteQuery.EndDate),
+				NoteTypeId:  noteTypeId,
 			}
-			return nil, err
-		}
 
-	} else {
-		if err := tx.First(&note, noteQuery.ID).Error; err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-
-		note.Name = noteQuery.Name
-		note.Description = noteQuery.Description
-		note.Meta = []byte(noteQuery.Meta)
-		note.OwnerId = ownerId
-		note.StartDate = parseHTMLTime(noteQuery.StartDate)
-		note.EndDate = parseHTMLTime(noteQuery.EndDate)
-		note.NoteTypeId = noteTypeId
-
-		if err := tx.Save(&note).Error; err != nil {
-			tx.Rollback()
-			if isForeignKeyError(err) {
-				return nil, errors.New("referenced note type or owner does not exist")
+			if err := tx.Create(&note).Error; err != nil {
+				if isForeignKeyError(err) {
+					return errors.New("referenced note type or owner does not exist")
+				}
+				return err
 			}
-			return nil, err
+
+		} else {
+			if err := tx.First(&note, noteQuery.ID).Error; err != nil {
+				return err
+			}
+
+			note.Name = noteQuery.Name
+			note.Description = noteQuery.Description
+			note.Meta = []byte(noteQuery.Meta)
+			note.OwnerId = ownerId
+			note.StartDate = parseHTMLTime(noteQuery.StartDate)
+			note.EndDate = parseHTMLTime(noteQuery.EndDate)
+			note.NoteTypeId = noteTypeId
+
+			if err := tx.Save(&note).Error; err != nil {
+				if isForeignKeyError(err) {
+					return errors.New("referenced note type or owner does not exist")
+				}
+				return err
+			}
+
+			if err := tx.Model(&note).Association("Groups").Clear(); err != nil {
+				return err
+			}
+
+			if err := tx.Model(&note).Association("Tags").Clear(); err != nil {
+				return err
+			}
+
+			if err := tx.Model(&note).Association("Resources").Clear(); err != nil {
+				return err
+			}
 		}
 
-		if err := tx.Model(&note).Association("Groups").Clear(); err != nil {
-			tx.Rollback()
-			return nil, err
+		if len(noteQuery.Groups) > 0 {
+			if err := ValidateAssociationIDs[models.Group](tx, noteQuery.Groups, "groups"); err != nil {
+				return err
+			}
+			groups := BuildAssociationSlice(noteQuery.Groups, GroupFromID)
+
+			if createGroupsErr := tx.Model(&note).Association("Groups").Append(&groups); createGroupsErr != nil {
+				return createGroupsErr
+			}
 		}
 
-		if err := tx.Model(&note).Association("Tags").Clear(); err != nil {
-			tx.Rollback()
-			return nil, err
+		if len(noteQuery.Resources) > 0 {
+			if err := ValidateAssociationIDs[models.Resource](tx, noteQuery.Resources, "resources"); err != nil {
+				return err
+			}
+			resources := BuildAssociationSlice(noteQuery.Resources, ResourceFromID)
+
+			if createResourcesErr := tx.Model(&note).Association("Resources").Append(&resources); createResourcesErr != nil {
+				return createResourcesErr
+			}
 		}
 
-		if err := tx.Model(&note).Association("Resources").Clear(); err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-	}
+		if len(noteQuery.Tags) > 0 {
+			if err := ValidateAssociationIDs[models.Tag](tx, noteQuery.Tags, "tags"); err != nil {
+				return err
+			}
+			tags := BuildAssociationSlice(noteQuery.Tags, TagFromID)
 
-	if len(noteQuery.Groups) > 0 {
-		if err := ValidateAssociationIDs[models.Group](tx, noteQuery.Groups, "groups"); err != nil {
-			tx.Rollback()
-			return nil, err
+			if createTagsErr := tx.Model(&note).Association("Tags").Append(&tags); createTagsErr != nil {
+				return createTagsErr
+			}
 		}
-		groups := BuildAssociationSlice(noteQuery.Groups, GroupFromID)
 
-		if createGroupsErr := tx.Model(&note).Association("Groups").Append(&groups); createGroupsErr != nil {
-			tx.Rollback()
-			return nil, createGroupsErr
+		// Sync description to first text block if blocks exist (backward compatibility)
+		if noteQuery.ID != 0 {
+			var blocks []models.NoteBlock
+			if err := tx.Where("note_id = ? AND type = ?", note.ID, "text").Order("position ASC, id ASC").Limit(1).Find(&blocks).Error; err == nil && len(blocks) > 0 {
+				content, _ := json.Marshal(map[string]string{"text": noteQuery.Description})
+				// The error is logged rather than returned, keeping the existing
+				// behaviour: this is a backward-compatibility sync, and failing a
+				// note update because of it would be a worse answer. Logged
+				// rather than discarded because of where this now runs — inside a
+				// caller's transaction, a failed statement poisons the whole
+				// transaction on Postgres, and the rollback that follows would
+				// otherwise report only that the transaction could not commit,
+				// with nothing anywhere naming the statement that broke it.
+				if err := tx.Model(&blocks[0]).Update("content", content).Error; err != nil {
+					log.Printf("[note] syncing description to the first text block of note %d failed: %v", note.ID, err)
+				}
+			}
 		}
-	}
 
-	if len(noteQuery.Resources) > 0 {
-		if err := ValidateAssociationIDs[models.Resource](tx, noteQuery.Resources, "resources"); err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-		resources := BuildAssociationSlice(noteQuery.Resources, ResourceFromID)
-
-		if createResourcesErr := tx.Model(&note).Association("Resources").Append(&resources); createResourcesErr != nil {
-			tx.Rollback()
-			return nil, createResourcesErr
-		}
-	}
-
-	if len(noteQuery.Tags) > 0 {
-		if err := ValidateAssociationIDs[models.Tag](tx, noteQuery.Tags, "tags"); err != nil {
-			tx.Rollback()
-			return nil, err
-		}
-		tags := BuildAssociationSlice(noteQuery.Tags, TagFromID)
-
-		if createTagsErr := tx.Model(&note).Association("Tags").Append(&tags); createTagsErr != nil {
-			tx.Rollback()
-			return nil, createTagsErr
-		}
-	}
-
-	// Sync description to first text block if blocks exist (backward compatibility)
-	if noteQuery.ID != 0 {
-		var blocks []models.NoteBlock
-		if err := tx.Where("note_id = ? AND type = ?", note.ID, "text").Order("position ASC, id ASC").Limit(1).Find(&blocks).Error; err == nil && len(blocks) > 0 {
-			content, _ := json.Marshal(map[string]string{"text": noteQuery.Description})
-			tx.Model(&blocks[0]).Update("content", content)
-		}
-	}
-
-	if err := tx.Commit().Error; err != nil {
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 
