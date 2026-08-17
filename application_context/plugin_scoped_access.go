@@ -19,6 +19,12 @@ import (
 // path of a busy page is not a query.
 const scopedAccessTTL = 30 * time.Second
 
+// errScopedAccessStale is returned when a load takes longer than the cache
+// trusts an answer for. It is a refusal rather than a result: the caller is
+// deciding a permission, and reads it as "no" like any other failure to find
+// out.
+var errScopedAccessStale = fmt.Errorf("plugin access read outlived its own freshness window")
+
 // scopedPluginAccess is the set of plugins a group-limited principal may reach,
 // held as an immutable snapshot swapped on every change.
 //
@@ -47,6 +53,22 @@ type scopedPluginAccess struct {
 	// where the pool can be one connection, that is a deadlock — and the
 	// clones a transaction makes share this very cache pointer.
 	publishing sync.Mutex
+	// ttl overrides scopedAccessTTL. Zero means the constant; only tests set
+	// it, because the expiry paths are otherwise reachable in thirty-second
+	// increments and would be tested by sleeping or not at all.
+	ttl time.Duration
+}
+
+func (c *scopedPluginAccess) lifetime() time.Duration {
+	if c.ttl > 0 {
+		return c.ttl
+	}
+	return scopedAccessTTL
+}
+
+// stale reports whether an answer is older than the cache trusts.
+func (c *scopedPluginAccess) stale(snapshot *scopedAccessSnapshot) bool {
+	return time.Since(snapshot.observedBy) > c.lifetime()
 }
 
 type scopedAccessSnapshot struct {
@@ -95,7 +117,7 @@ func (ctx *MahresourcesContext) PluginAllowsScopedPrincipals(pluginName string) 
 
 	generation := cache.generation.Load()
 	snapshot := cache.snapshot.Load()
-	if snapshot == nil || snapshot.generation != generation || time.Since(snapshot.observedBy) > scopedAccessTTL {
+	if snapshot == nil || snapshot.generation != generation || cache.stale(snapshot) {
 		loaded, err := ctx.loadScopedPluginAccess()
 		if err != nil {
 			return false
@@ -182,7 +204,14 @@ func (ctx *MahresourcesContext) loadScopedPluginAccess() (*scopedAccessSnapshot,
 	snapshot := &scopedAccessSnapshot{allowed: allowed, generation: generation, observedBy: observedBy}
 
 	if cache != nil {
-		cache.publish(snapshot)
+		// Refusing to publish is not enough on its own: this loader's OWN
+		// caller would still be served the answer it just judged too old, and
+		// that is the interleaving the bound turns on — a read that saw the
+		// permission, a revocation, and a stall past the TTL. An answer the
+		// cache will not keep is not an answer this call may use either.
+		if !cache.publish(snapshot) && cache.stale(snapshot) {
+			return nil, errScopedAccessStale
+		}
 	}
 	return snapshot, nil
 }
@@ -215,7 +244,7 @@ func (c *scopedPluginAccess) publish(snapshot *scopedAccessSnapshot) bool {
 	if c.generation.Load() != snapshot.generation {
 		return false
 	}
-	if time.Since(snapshot.observedBy) > scopedAccessTTL {
+	if c.stale(snapshot) {
 		return false
 	}
 	c.snapshot.Store(snapshot)

@@ -231,3 +231,37 @@ func TestScopedAccessPublish_AnAnswerOlderThanTheTTLIsNotPublished(t *testing.T)
 		t.Error("the expired snapshot became everyone else's answer")
 	}
 }
+
+// The interleaving the whole bound turns on: the read saw the permission, a
+// revocation committed elsewhere, and this loader woke up after the answer had
+// expired. Refusing to publish it is not enough — the loader's own caller must
+// not be served it either, or one request is authorized by an answer the cache
+// itself judged too old.
+//
+// Driven with a one-nanosecond lifetime rather than a sleep, so it exercises
+// the real loader instead of the clock.
+func TestLoadScopedPluginAccess_AnAnswerThatOutlivedItsWindowIsRefused(t *testing.T) {
+	ctx := newScopedAccessTestContext(t)
+	setPluginRow(t, ctx, "widgets", true, true)
+
+	ctx.scopedAccess.ttl = time.Nanosecond
+	ctx.InvalidateScopedPluginAccess()
+
+	if _, err := ctx.loadScopedPluginAccess(); err == nil {
+		t.Error("a load that outlived its own freshness window returned an answer instead of refusing")
+	}
+
+	// And the caller of record reads that refusal as "no", like any other
+	// failure to find out.
+	if ctx.PluginAllowsScopedPrincipals("widgets") {
+		t.Error("an expired read authorized the caller anyway")
+	}
+
+	// The ordinary lifetime still answers, or this would be a cache that never
+	// caches rather than one that refuses stale answers.
+	ctx.scopedAccess.ttl = 0
+	ctx.InvalidateScopedPluginAccess()
+	if !ctx.PluginAllowsScopedPrincipals("widgets") {
+		t.Error("with the normal lifetime the plugin should be reachable")
+	}
+}
