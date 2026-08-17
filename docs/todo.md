@@ -1,3 +1,97 @@
+# Review fixes for the fetch-egress package (2026-08-17)
+
+Review on PR #56 reproduced the hook-scope escape independently (all four probes
+leak on the parent commit, both negative controls pass), and returned "merge it"
+with two regressions to fix first. Both were real; neither was a security hole.
+
+## The two regressions
+
+- **The download queue's connect timeout was half-applied.** `ApplyEgressPolicy`
+  replaces `transport.DialContext`, and the replacement carried the *boot*
+  `RemoteResourceConnectTimeout` while `TLSHandshakeTimeout` and
+  `ResponseHeaderTimeout` beside it still tracked the live runtime setting. A
+  setting that applies to two of three timeouts is worse than one that applies to
+  none, because the symptom does not point at the cause. `ClientPolicy` now takes
+  the connect timeout per call, and the queue passes `s.ConnectTimeout()` — the
+  value it already re-reads per download.
+- **The ICS fetch lost `http.DefaultTransport`.** That client left `Transport`
+  nil; decorating it made `ApplyEgressPolicy` find no `*http.Transport` and
+  install a bare one — no idle bound on a transport discarded after every fetch,
+  and no HTTP/2 once `DialContext` is non-nil. It now builds an explicit
+  transport mirroring `createRemoteResourceHTTPClient`, `Proxy` still nil.
+
+## The doc claim that was false
+
+Both new pages said the resolved address survives in the server log. That held
+for **one of the three paths**: `AddRemoteResource` logged before substituting,
+while the download queue discarded the original error (the package has no logger
+at all) and the ICS fetch replaced it before returning.
+
+The operability cost is the real point — an operator debugging a refused internal
+fetch had no way, anywhere, to learn which address was refused. Fixed by logging
+before sanitizing on both: the queue's `RefusalMessage` seam now takes the URL and
+is where `application_context` writes the operator's copy, which keeps the logger
+in the layer that owns one. `TestHostFetch_RefusalIsLoggedWithTheResolvedAddress`
+covers all three paths and is mutation-tested per path.
+
+## Corrections to overstated text
+
+- **"the caller's real role and scope apply" — only scope applies.** `CanWrite`,
+  `CanEditorWrite` and `CanManageTaxonomy` are referenced only in
+  `server/authz_policy.go`; nothing below `server/` consults them. Role feeds
+  attribution and decides whether a scope is *required*, and authorizes nothing at
+  the context layer. As written a reader would conclude plugin writes are
+  role-checked.
+- **"deny-all" overstated.** `scopeColumn` covers `groups`, `resources` and
+  `notes`, so global taxonomy stays reachable by a denied principal. Now stated as
+  deny-all *for subtree-scoped data*, in the helper's comment and in CLAUDE.md.
+- The IPv6 width bar is `/32`, not `/8`, so `-allow-private-fetch=fd00::/8` fails
+  startup. Documented rather than changed: relaxing it would alter the plugin
+  manifest validation this shares.
+
+## Taken from the review's triage
+
+**Azure's WireServer (`168.63.129.16`) is now blocked.** Pre-existing from the
+plugin egress package and out of this PR's diff, but it is the same class of
+target as `169.254.169.254` — instance metadata and extension configuration to
+anything on the host — and the only reason no `net.IP` predicate catches it is
+that Azure numbered it out of public space. One entry plus a test that also pins
+it to a `/32`, so its neighbours stay reachable.
+
+**`principalForPluginActor` now logs a failed read.** It collapsed "deleted",
+"disabled" and "the read failed" into one silent deny; under SQLite contention a
+transient failure was indistinguishable from a real refusal.
+
+Left alone, with reasons:
+
+- **Role capability is enforced nowhere below `server/`.** Real and pre-existing —
+  the old fabricated principal was equally unchecked, so this PR neither causes
+  nor worsens it. `deleteTagInTransaction` reading and deleting on an unscoped
+  table while `DeleteGroup` goes through `lockScopeGroup` is the sharpest proof.
+  Its own item.
+- **Per-call bind cost.** `principalForPluginActor` costs an indexed read per
+  `mah.db` call, and for a scoped actor `WithPrincipal` additionally runs the
+  subtree CTE — which never ran before, because the principal was never scoped.
+  A hook iterating a thousand entities runs a thousand CTEs. Correctness is right
+  and the constant is not; the remedy (bind once per VM entry point) is named in
+  the code comment.
+
+## What the review settled that this session could not
+
+The 5 `--project=auth` e2e failures are an **environment artifact**, confirmed on
+a machine with a matching Playwright browser: 22 passed on master and 22 passed on
+this branch. This container ships browser build 1194 while the installed
+`@playwright/test` resolves 1228, so launches fail outright. Nothing to open.
+
+The review also ran the **Postgres suite** (`./mrql/... ./server/api_tests/...`),
+which this environment could not: `ok` both, 0 failures.
+
+And it recorded a scope fact worth keeping: the ICS fetch is reachable from the
+**public share server** (`share_server.go:270` routes
+`/s/{token}/block/{blockId}/calendar/events`), so the calendar half of the egress
+work closes a server-side fetch an **unauthenticated** share-link visitor could
+trigger, not only an authenticated user's.
+
 # The application's own fetches are now policed (2026-08-16)
 
 Sharp edge 4a from the capability report, and the second of its three "what to

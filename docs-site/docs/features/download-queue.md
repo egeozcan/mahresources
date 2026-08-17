@@ -92,8 +92,9 @@ To download from your own network, name the addresses with
 `-allow-private-fetch`; see
 [Fetching from your own network](../configuration/overview.md#fetching-from-your-own-network).
 A download refused this way fails with a "blocked request" error that
-deliberately does not name the address the URL resolved to; the server log has
-the full detail.
+deliberately does not name the address the URL resolved to — the submitter is not
+told which internal addresses exist. The full detail, including the resolved
+address, is written to the activity log for administrators.
 
 ## API Endpoints
 

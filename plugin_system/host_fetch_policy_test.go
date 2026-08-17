@@ -170,3 +170,19 @@ func TestNetworkPolicy_FingerprintSeparatesAdvice(t *testing.T) {
 		t.Error("host and plugin policies share a fingerprint despite different remediation advice")
 	}
 }
+
+// A single public address that is nonetheless an instance-metadata endpoint. No
+// net.IP predicate reaches it, so it has to be named — and it is the same class
+// of target as 169.254.169.254, which the classifier does catch.
+func TestPrivateAddressReason_CoversTheAzurePlatformAgent(t *testing.T) {
+	if reason := privateAddressReason(net.ParseIP("168.63.129.16")); reason == "" {
+		t.Error("168.63.129.16 (Azure WireServer) is classified public; it serves instance metadata to anything on the host")
+	}
+	// Only that address, not its neighbours: it is a /32, and widening it would
+	// block unrelated public space.
+	for _, near := range []string{"168.63.129.15", "168.63.129.17", "168.63.128.16"} {
+		if reason := privateAddressReason(net.ParseIP(near)); reason != "" {
+			t.Errorf("%s is blocked as %q; the Azure entry must be a single address", near, reason)
+		}
+	}
+}

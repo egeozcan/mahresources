@@ -158,10 +158,15 @@ than as a mysteriously failing download:
   default route `0.0.0.0/0`) is refused: it re-opens everything the setting
   exists to close, without saying so.
 
+- **IPv6 blocks need a `/32` or longer.** The minimum prefix differs by family:
+  `/8` for IPv4, `/32` for IPv6. Naming a whole IPv6 range such as `fd00::/8` is
+  refused for being too broad; name the specific block or address you need.
+
 A refused fetch is reported to the user as a blocked request that does not name
 the address the URL resolved to — otherwise a list of failed downloads would map
 your internal network for anyone allowed to submit one. The full detail,
-including the resolved address, goes to the server log.
+including the resolved address, is written to the [activity log](../features/activity-log.md)
+by all three paths, where an administrator can read it.
 
 :::note
 This does not apply to plugins, which have always declared their own network

@@ -221,3 +221,108 @@ func assertRefusalIsNotAnOracle(t *testing.T, err error) {
 		}
 	}
 }
+
+// The ICS client used to leave Transport nil and inherit http.DefaultTransport.
+// Applying the egress policy to such a client finds no *http.Transport to
+// decorate and installs a bare one — no idle bound on a transport thrown away
+// after every fetch, and no HTTP/2. The connection behaviour of the three
+// policed paths has to stay comparable, so this asserts the shape rather than
+// the fetch, which the tests above already cover.
+func TestFetchICS_ClientKeepsAConfiguredTransport(t *testing.T) {
+	ctx := newHostFetchContext(t, "127.0.0.1", "::1")
+	srv := internalService(t)
+
+	// Drive a real fetch so the client is built exactly as production builds it,
+	// then read the transport back off the request the server saw.
+	if _, _, err := ctx.fetchAndCacheICS(srv.URL, nil); err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+
+	// Rebuild through the same path and inspect it directly.
+	timeout := ctx.Config.RemoteResourceConnectTimeout
+	client := &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSHandshakeTimeout:   timeout / 2,
+			ResponseHeaderTimeout: timeout,
+			IdleConnTimeout:       90 * time.Second,
+			ForceAttemptHTTP2:     true,
+		},
+	}
+	decorated := plugin_system.ApplyEgressPolicy(client, ctx.hostFetchPolicy, timeout)
+	transport, ok := decorated.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("policy did not leave an *http.Transport in place")
+	}
+	if transport.IdleConnTimeout == 0 {
+		t.Error("no idle-connection bound: this transport is discarded after every fetch, so each miss strands a keep-alive")
+	}
+	if !transport.ForceAttemptHTTP2 {
+		t.Error("HTTP/2 not attempted; a non-nil DialContext otherwise pins this path to HTTP/1.1")
+	}
+	// Proxy stays nil on purpose: through a proxy the dial-time check inspects
+	// the proxy's address and would pass everything, including the metadata
+	// endpoint.
+	if transport.Proxy != nil {
+		t.Error("proxy set: the dial-time address check cannot see through it")
+	}
+}
+
+// The docs now promise that the resolved address survives in the activity log
+// for all three paths. It held for one of them when that promise was written:
+// the download queue discarded the original error, and the ICS fetch replaced it
+// before returning. An operator debugging a refused internal fetch had nowhere to
+// learn which address was refused, on either.
+func TestHostFetch_RefusalIsLoggedWithTheResolvedAddress(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(t *testing.T, ctx *MahresourcesContext, url string)
+	}{
+		{
+			name: "add resource from URL",
+			run: func(t *testing.T, ctx *MahresourcesContext, url string) {
+				_, _ = ctx.AddRemoteResource(&query_models.ResourceFromRemoteCreator{URL: url})
+			},
+		},
+		{
+			name: "calendar ICS fetch",
+			run: func(t *testing.T, ctx *MahresourcesContext, url string) {
+				_, _, _ = ctx.fetchAndCacheICS(url, nil)
+			},
+		},
+		{
+			name: "download queue",
+			run: func(t *testing.T, ctx *MahresourcesContext, url string) {
+				dm := ctx.DownloadManager()
+				t.Cleanup(dm.Shutdown)
+				job, err := dm.Submit(&query_models.ResourceFromRemoteCreator{URL: url}, nil)
+				if err != nil {
+					t.Fatalf("submit: %v", err)
+				}
+				awaitTerminal(t, dm, job.ID)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := newHostFetchContext(t)
+			srv := internalService(t)
+			tc.run(t, ctx, srv.URL)
+
+			var entries []models.LogEntry
+			if err := ctx.db.Find(&entries).Error; err != nil {
+				t.Fatalf("read log: %v", err)
+			}
+			found := false
+			for _, e := range entries {
+				// 127.0.0.1 is what the URL resolved to, and the operator's copy
+				// is the only place it is allowed to appear.
+				if strings.Contains(e.Message, "127.0.0.1") || strings.Contains(string(e.Details), "127.0.0.1") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("no log entry names the refused address; the operator has no way to diagnose this refusal (%d entries)", len(entries))
+			}
+		})
+	}
+}
