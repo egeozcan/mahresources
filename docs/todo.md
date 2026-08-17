@@ -161,6 +161,27 @@ things this had to get right, none of them obvious from the plan:
   exactly the whole-request rule that came before, so an unenumerated path
   degrades to the old behaviour instead of blanking plugins out for admins.
 
+**Two further review rounds changed the package after batch 4 shipped**, and both
+are the kind of thing worth recording rather than re-deriving.
+
+- **The toggle had to govern plugin *actions* too, and that is the one place
+  this package narrows what a group-limited account could do before.** Leaving
+  actions open while gating pages and shortcodes would make the setting mean
+  something other than what it says — an action is the most direct way there is
+  to make a plugin's Lua run. Unscoped roles are unaffected, so a deployment
+  with no scoped users sees no change at all. The user's stated preference was
+  "nothing changes until an operator says so"; this is the deviation from it,
+  and it is theirs to ratify or reverse (the reversal is deleting one gate in
+  `GetActionRunHandler`).
+- **The access cache took three rounds to get right, and each fault could
+  restore a revoked permission.** First a slow load could publish after a
+  revocation; the generation counter fixed that. Then two loaders that started
+  at the *same* generation could still race, and compare-then-Store was not
+  atomic anyway; a mutex across the read and the publish fixed both. And the
+  first tests for it re-implemented the guard inline and asserted against their
+  own copy, so they stayed green with the production check deleted — they drive
+  the real loader now, with the revocation landing inside its own database read.
+
 Deliberately unchanged, and worth not re-deriving: **hooks are not governed by
 the toggle**. They fire from ordinary writes a confined user is entitled to
 make, not from a plugin URL, so no per-plugin door governs them — which is why
