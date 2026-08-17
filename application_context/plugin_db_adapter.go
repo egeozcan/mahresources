@@ -94,16 +94,25 @@ func (ctx *MahresourcesContext) principalForPluginActor(actorID uint) *auth.Prin
 	}
 	user, err := ctx.GetUser(actorID)
 	if err != nil {
-		// Logged rather than folded silently into the deny below: a deleted or
-		// disabled account is an expected refusal, while a failed read is an
-		// outage, and the two produce identical behaviour here. Without this
-		// line an operator sees a plugin quietly seeing nothing and has no way
-		// to tell which of the two is happening.
-		ctx.Logger().Warning(models.LogActionPlugin, "plugin", nil, "Plugin actor unresolved",
-			fmt.Sprintf("could not read user %d; denying this plugin call: %v", actorID, err), nil)
+		// Only an *outage* is logged. A deleted account is an expected refusal
+		// and arrives here as ErrUserNotFound, because GetUser maps
+		// gorm.ErrRecordNotFound to it rather than returning (nil, nil) — so
+		// testing err != nil alone logs the ordinary case and defeats the very
+		// distinction the line exists to draw.
+		//
+		// It matters twice over. An admin deleting a user while that user's
+		// async job is still looping over mah.db would otherwise write one row
+		// per call; and the row is written by Logger.log through the same db
+		// handle whose read just failed, with its own error swallowed to
+		// stdout, so in a real outage it is the least likely write to land.
+		// Logging only the outage keeps the noise off the common path.
+		if !errors.Is(err, ErrUserNotFound) {
+			ctx.Logger().Warning(models.LogActionPlugin, "plugin", nil, "Plugin actor unresolved",
+				fmt.Sprintf("could not read user %d; denying this plugin call: %v", actorID, err), nil)
+		}
 		return deniedPluginPrincipal(actorID)
 	}
-	if user == nil || user.Disabled {
+	if user.Disabled {
 		return deniedPluginPrincipal(actorID)
 	}
 	return auth.FromUser(user)
@@ -117,10 +126,15 @@ func (ctx *MahresourcesContext) principalForPluginActor(actorID uint) *auth.Prin
 //
 // It is a statement about what the caller may reach, not a claim that the actor
 // is a guest. And it is deliberately not called "deny everything": global
-// taxonomy (tags, categories, note types) carries no owner and is not
-// subtree-scoped, so it stays reachable — that is a property of the scope
+// taxonomy (tags, categories, note types, relation types) carries no owner and
+// is not subtree-scoped, so it stays reachable — that is a property of the scope
 // mechanism, not of this principal, and role-based capability is not enforced
 // below server/ at all.
+//
+// Relation *edges* were in that set until relationInScope (relation_context.go)
+// took them out. They are the case that shows why the list is worth keeping
+// accurate: an edge is not taxonomy, it is a statement about two groups, and
+// nothing about "carries no owner" made it safe to expose.
 func deniedPluginPrincipal(actorID uint) *auth.Principal {
 	return &auth.Principal{UserID: actorID, Role: models.RoleGuest}
 }

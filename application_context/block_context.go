@@ -771,13 +771,19 @@ func (ctx *MahresourcesContext) fetchAndCacheICS(url string, existingEntry *ICSC
 	// Use configured timeouts. Re-validate every redirect target so a permitted
 	// initial http(s) URL cannot redirect into a non-http(s) scheme.
 	//
-	// The transport is explicit, mirroring createRemoteResourceHTTPClient. This
-	// client used to leave it nil and inherit http.DefaultTransport; once the
-	// egress policy is applied that is no longer what happens, because
-	// ApplyEgressPolicy finds no *http.Transport to decorate and installs a bare
-	// one — with no idle-connection bound on a transport discarded after every
-	// fetch, and no HTTP/2. Spelling it out keeps this path's connection
-	// behaviour equal to the other two policed ones.
+	// The transport is explicit. This client used to leave it nil and inherit
+	// http.DefaultTransport; once the egress policy is applied that is no longer
+	// what happens, because ApplyEgressPolicy finds no *http.Transport to
+	// decorate and installs a bare one — with no idle-connection bound on a
+	// transport discarded after every fetch, and no HTTP/2.
+	//
+	// The timeouts match createRemoteResourceHTTPClient. ForceAttemptHTTP2 does
+	// not: that function and the download queue's client both leave it unset,
+	// and both keep a non-nil DialContext after decoration, so those two stay
+	// HTTP/1.1. This path is the only policed host fetch that negotiates HTTP/2.
+	// Stated rather than quietly aligned because a calendar feed is a small GET
+	// where h2 costs nothing, while changing the two transfer paths is a
+	// behaviour change that belongs in its own commit.
 	//
 	// Proxy stays nil, deliberately and unlike DefaultTransport: through a proxy
 	// the dialler connects to the proxy, so the dial-time address check would

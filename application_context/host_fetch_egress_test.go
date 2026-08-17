@@ -306,7 +306,23 @@ func TestHostFetch_RefusalIsLoggedWithTheResolvedAddress(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := newHostFetchContext(t)
 			srv := internalService(t)
-			tc.run(t, ctx, srv.URL)
+
+			// The URL names a HOSTNAME, not the address it resolves to. That is
+			// the whole point of the assertion below.
+			//
+			// httptest hands back http://127.0.0.1:PORT, and the log line is
+			// built as `url + ": " + err`. Asserting that the log contains
+			// "127.0.0.1" against that URL is satisfied by the URL alone: the
+			// test would pass while the resolved address was never logged, and
+			// the per-path mutation (deleting the log call) cannot tell the two
+			// apart because it removes the URL too. Swapping in "localhost"
+			// separates them — the address can now only have come from the dial
+			// refusal.
+			url := strings.Replace(srv.URL, "127.0.0.1", "localhost", 1)
+			if strings.Contains(url, "127.0.0.1") {
+				t.Fatalf("test URL still contains the resolved address (%s); the assertion below would be vacuous", url)
+			}
+			tc.run(t, ctx, url)
 
 			var entries []models.LogEntry
 			if err := ctx.db.Find(&entries).Error; err != nil {
@@ -314,14 +330,16 @@ func TestHostFetch_RefusalIsLoggedWithTheResolvedAddress(t *testing.T) {
 			}
 			found := false
 			for _, e := range entries {
-				// 127.0.0.1 is what the URL resolved to, and the operator's copy
-				// is the only place it is allowed to appear.
-				if strings.Contains(e.Message, "127.0.0.1") || strings.Contains(string(e.Details), "127.0.0.1") {
+				detail := e.Message + " " + string(e.Details)
+				// Either loopback literal: "localhost" resolves to ::1 first on
+				// some hosts and 127.0.0.1 on others, and the refusal names
+				// whichever candidate the dialler reached.
+				if strings.Contains(detail, "127.0.0.1") || strings.Contains(detail, "::1") {
 					found = true
 				}
 			}
 			if !found {
-				t.Errorf("no log entry names the refused address; the operator has no way to diagnose this refusal (%d entries)", len(entries))
+				t.Errorf("no log entry names the address %q resolved to; the operator has no way to diagnose this refusal (%d entries)", url, len(entries))
 			}
 		})
 	}

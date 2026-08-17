@@ -86,7 +86,9 @@ Remote download timeouts are configurable via command-line flags or environment 
 A download URL is supplied by a user and fetched by the server, so the queue
 refuses any URL that resolves to a **private** address — loopback, link-local
 (including the cloud metadata endpoint), RFC1918 and carrier-grade NAT. Public
-hosts are unaffected.
+hosts are unaffected, except `168.63.129.16`, Azure's host-internal
+platform-agent endpoint, which is refused like a private address despite being
+numbered out of public space.
 
 To download from your own network, name the addresses with
 `-allow-private-fetch`; see
