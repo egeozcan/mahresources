@@ -28,10 +28,14 @@ import (
 // instead of && passes every test that only uses wholly-outside edges, which is
 // exactly how mutation testing caught an earlier draft of this file.
 //
-// The user's role is RoleUser rather than RoleGuest for the same reason the
-// hook-scope fixture gives: a guest cannot write at all, so a guest never
-// reaches a write path. A scope-limited user is the principal that is both
-// confined and able to act.
+// The principal is a scoped EDITOR, and it is synthetic on purpose: no stored
+// account can be both, because normalizeScopeGroup nils an editor's scope group
+// on create and on update. It is built by hand here so these tests keep
+// measuring the scope rule alone. Edge writes also require the editor role
+// (requireEditorRole, role_capability.go), so a scope-limited *user* is now
+// refused before scope is ever consulted — and a fixture like that would make
+// every assertion below pass for the wrong reason, including the one that
+// exists to prove the guard does not over-refuse.
 func relationScopeFixture(t *testing.T, ctx *MahresourcesContext) (principal *auth.Principal, outside, inside, mixed *models.GroupRelation) {
 	t.Helper()
 
@@ -82,16 +86,13 @@ func relationScopeFixture(t *testing.T, ctx *MahresourcesContext) (principal *au
 	inside = newRelation("inside-edge", insideA, insideB)
 	mixed = newRelation("mixed-edge", insideA, outsideB)
 
-	user, err := ctx.CreateUser(&UserInput{
+	scoped := &auth.Principal{
+		UserID:       1,
 		Username:     "confined-rel",
-		Password:     "password1",
-		Role:         models.RoleUser,
-		ScopeGroupId: &scopeGroup.ID,
-	})
-	if err != nil {
-		t.Fatalf("create confined user: %v", err)
+		Role:         models.RoleEditor,
+		ScopeGroupID: &scopeGroup.ID,
 	}
-	return auth.FromUser(user), outside, inside, mixed
+	return scoped, outside, inside, mixed
 }
 
 func relationName(t *testing.T, ctx *MahresourcesContext, id uint) (string, bool) {

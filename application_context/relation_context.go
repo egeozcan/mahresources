@@ -48,6 +48,10 @@ func (ctx *MahresourcesContext) relationInScope(relation *models.GroupRelation) 
 }
 
 func (ctx *MahresourcesContext) EditRelation(query query_models.GroupRelationshipQuery) (*models.GroupRelation, error) {
+	if err := ctx.requireEditorRole("editing a relation"); err != nil {
+		return nil, err
+	}
+
 	var relation = &models.GroupRelation{ID: query.Id}
 
 	if err := ctx.db.First(relation).Error; err != nil {
@@ -76,6 +80,10 @@ func (ctx *MahresourcesContext) EditRelation(query query_models.GroupRelationshi
 }
 
 func (ctx *MahresourcesContext) AddRelation(fromGroupId, toGroupId, relationTypeId uint, name, description string) (*models.GroupRelation, error) {
+	if err := ctx.requireEditorRole("creating a relation"); err != nil {
+		return nil, err
+	}
+
 	var relationType models.GroupRelationType
 	var fromGroup models.Group
 	var toGroup models.Group
@@ -406,6 +414,10 @@ func (ctx *MahresourcesContext) GetRelationTypesWithIds(ids *[]uint) ([]*models.
 }
 
 func (ctx *MahresourcesContext) DeleteRelationship(relationshipId uint) error {
+	if err := ctx.requireEditorRole("deleting a relation"); err != nil {
+		return err
+	}
+
 	var relation models.GroupRelation
 	if err := ctx.db.First(&relation, relationshipId).Error; err != nil {
 		return err

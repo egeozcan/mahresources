@@ -102,12 +102,14 @@ func TestTaxonomyOperations_RequireTheRoleTheHTTPLayerRequires(t *testing.T) {
 
 	// Each operation is named with the capability server/ requires for the route
 	// that calls it: admin for Category, ResourceCategory and TemplatePartial
-	// (isTaxonomyPath), editor for NoteType and relation types (isEditorPath).
+	// (isTaxonomyPath), editor for NoteType, relation types and relation edges
+	// (isEditorPath).
 	//
-	// Relation *edges* are not here. They are subtree-checkable data about two
-	// groups and relationInScope already confines them; enforcing editor on them
-	// below server/ would remove the confined-principal edge editing that guard
-	// exists for, because no stored account is both scoped and an editor.
+	// Relation edges are here even though relationInScope already confines them,
+	// because scope and capability answer different questions. A plain user is
+	// refused POST /v1/relation outright; without this it could make the same
+	// write through a plugin hook its own upload fired, and "the endpoints are
+	// inside your subtree" is not an answer to "may you relate groups at all".
 	operations := []struct {
 		name      string
 		adminOnly bool
@@ -152,6 +154,15 @@ func TestTaxonomyOperations_RequireTheRoleTheHTTPLayerRequires(t *testing.T) {
 		{"DeleteRelationshipType", false, func(c *MahresourcesContext) error {
 			return c.DeleteRelationshipType(relType.ID)
 		}},
+		{"AddRelation", false, func(c *MahresourcesContext) error {
+			_, err := c.AddRelation(1, 2, relType.ID, "rel-"+randomSuffix(), "")
+			return err
+		}},
+		{"EditRelation", false, func(c *MahresourcesContext) error {
+			_, err := c.EditRelation(query_models.GroupRelationshipQuery{Id: 1, Name: "rel-" + randomSuffix()})
+			return err
+		}},
+		{"DeleteRelationship", false, func(c *MahresourcesContext) error { return c.DeleteRelationship(1) }},
 	}
 
 	roles := []struct {

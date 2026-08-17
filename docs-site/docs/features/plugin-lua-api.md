@@ -36,8 +36,8 @@ answers rather than errors, so handle them like any other refusal:
 - **Role.** Taxonomy operations require the triggering user's own role to carry
   them, exactly as the equivalent HTTP endpoint does.
   `create_category`, `update_category`, `delete_category` and their
-  resource-category equivalents need **admin**; `create_note_type` and the
-  relation-type functions need **editor**. A plugin that creates a category
+  resource-category equivalents need **admin**; `create_note_type`, the
+  relation-type functions and the group-relation functions need **editor**. A plugin that creates a category
   from a hook fired by an ordinary user's upload gets
   `nil, "creating a category: your role does not have permission to perform this operation"`.
 
