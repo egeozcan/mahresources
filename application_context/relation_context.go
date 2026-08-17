@@ -438,51 +438,59 @@ func (ctx *MahresourcesContext) DeleteRelationshipType(relationshipTypeId uint) 
 		return err
 	}
 
-	// Load relation type name before deletion for audit log
+	// One transaction, unlike the sequence this used to be. The edge cascades
+	// below were standalone statements, so a failure between them left the
+	// database holding a relation type whose edges were already gone, or
+	// back-relation pointers cleared for a type that then survived. It also
+	// means globalCascadeDeleteCallback refusing the final delete rolls the
+	// cascades back rather than leaving them committed.
 	var relationType models.GroupRelationType
-	if err := ctx.db.First(&relationType, relationshipTypeId).Error; err != nil {
-		return err
-	}
-	relationTypeName := relationType.Name
+	return ctx.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&relationType, relationshipTypeId).Error; err != nil {
+			return err
+		}
+		relationTypeName := relationType.Name
 
-	// Delete GroupRelation records of the back-relation type (orphaned mirrors
-	// whose forward relations will be deleted). Must happen before clearing
-	// BackRelationId so we still know which type to clean up.
-	if relationType.BackRelationId != nil && *relationType.BackRelationId != relationshipTypeId {
-		if err := ctx.db.Where("relation_type_id = ?", *relationType.BackRelationId).
+		// Delete GroupRelation records of the back-relation type (orphaned mirrors
+		// whose forward relations will be deleted). Must happen before clearing
+		// BackRelationId so we still know which type to clean up.
+		if relationType.BackRelationId != nil && *relationType.BackRelationId != relationshipTypeId {
+			if err := tx.Where("relation_type_id = ?", *relationType.BackRelationId).
+				Delete(&models.GroupRelation{}).Error; err != nil {
+				return err
+			}
+		}
+
+		// Clear BackRelationId on any relation type that references this one,
+		// since SQLite FK constraints (OnDelete:SET NULL) don't fire reliably.
+		if err := tx.Model(&models.GroupRelationType{}).
+			Where("back_relation_id = ?", relationshipTypeId).
+			Update("back_relation_id", nil).Error; err != nil {
+			return err
+		}
+
+		// Clear our own BackRelationId to avoid circular FK issues during deletion
+		if relationType.BackRelationId != nil {
+			if err := tx.Model(&relationType).Update("back_relation_id", nil).Error; err != nil {
+				return err
+			}
+		}
+
+		// Explicitly delete GroupRelation records that reference this type,
+		// since SQLite FK cascades (OnDelete:CASCADE) don't fire reliably.
+		if err := tx.Where("relation_type_id = ?", relationshipTypeId).
 			Delete(&models.GroupRelation{}).Error; err != nil {
 			return err
 		}
-	}
 
-	// Clear BackRelationId on any relation type that references this one,
-	// since SQLite FK constraints (OnDelete:SET NULL) don't fire reliably.
-	if err := ctx.db.Model(&models.GroupRelationType{}).
-		Where("back_relation_id = ?", relationshipTypeId).
-		Update("back_relation_id", nil).Error; err != nil {
-		return err
-	}
-
-	// Clear our own BackRelationId to avoid circular FK issues during deletion
-	if relationType.BackRelationId != nil {
-		if err := ctx.db.Model(&relationType).Update("back_relation_id", nil).Error; err != nil {
+		if err := tx.Select(clause.Associations).Delete(&relationType).Error; err != nil {
 			return err
 		}
-	}
 
-	// Explicitly delete GroupRelation records that reference this type,
-	// since SQLite FK cascades (OnDelete:CASCADE) don't fire reliably.
-	if err := ctx.db.Where("relation_type_id = ?", relationshipTypeId).
-		Delete(&models.GroupRelation{}).Error; err != nil {
-		return err
-	}
-
-	err := ctx.db.Select(clause.Associations).Delete(&relationType).Error
-	if err == nil {
 		ctx.Logger().Info(models.LogActionDelete, "relationType", &relationshipTypeId, relationTypeName, "Deleted relation type", nil)
 		ctx.InvalidateSearchCacheByType(EntityTypeRelationType)
-	}
-	return err
+		return nil
+	})
 }
 
 // categoryNameFor resolves a category id to a quoted name for an error message,

@@ -582,10 +582,12 @@ func statementTable(db *gorm.DB) string {
 // taxonomy write is a separate hole — role capability is enforced nowhere below
 // server/ — and it is recorded rather than fixed here.
 //
-// Only the three operations that actually cascade to edges are covered.
-// Creating a category or a relation type touches no existing row, and a group's
-// own category change or deletion reaches only edges of a group the principal
-// already holds.
+// Only the three operations are covered, and the reasons for the exclusions are
+// recorded in CLAUDE.md and docs/todo.md rather than argued here — deliberately,
+// because an earlier version of this comment justified the exclusions in terms
+// those documents contradict. In particular a group's own category change and
+// its deletion DO reach edges whose far endpoint is outside the subtree; they
+// are listed there as known open, not as safe.
 var ErrGlobalCascadeScoped = errors.New("not available to a group-limited principal: this operation cascades to rows outside any subtree")
 
 // globalCascadeTable names the tables whose DELETE reaches rows in every
@@ -596,23 +598,30 @@ func globalCascadeTable(table string) bool {
 	return table == "categories" || table == "group_relation_types"
 }
 
-// globalCascadeDeleteCallback is the chokepoint behind
-// refuseGlobalCascadeWhenScoped. The explicit checks in DeleteCategory and
-// DeleteRelationshipType give a scoped caller a clear error before any hook
-// fires; this catches the other ways a delete reaches those tables through the
-// ORM, including the generic CRUDWriter.Delete that CategoryCRUD() returns.
+// globalCascadeDeleteCallback is a backstop behind refuseGlobalCascadeWhenScoped.
+// The explicit checks in DeleteCategory and DeleteRelationshipType give a scoped
+// caller a clear error before any hook fires; this catches an ORM delete that
+// reaches those tables some other way.
 //
-// That writer is constructed and handed to server/routes.go, but only its
-// ListHandler is routed today — the delete route goes through
-// GetRemoveCategoryHandler to DeleteCategory. So it is a latent bypass, not a
-// live one, and this callback is defence against the routing changing rather
-// than a fix for a reachable hole.
+// It keys on the HANDLE carrying a scope filter, not on the principal, because
+// that is this tree's doctrine: scope rides inside the *gorm.DB. Two live
+// constructions therefore give a scoped principal an UNFILTERED handle and are
+// not covered — a CRUD writer built once at startup from the singleton (which is
+// how CategoryCRUD() is built, so the callback could not fire for it however the
+// routes were wired), and WithMRQLPrincipal, which omits the filter deliberately.
+// MRQL is read-only, so nothing escapes through it today.
 //
-// Two evasions it does NOT cover, neither used by any live path. statementTable
-// prefers Statement.Schema.Table, so db.Table("categories").Delete(&other)
-// escapes it. And it runs before gorm:delete but after
-// gorm:delete_before_associations, so under SkipDefaultTransaction the
-// association deletes could commit before the rejection.
+// What it is worth, per operation:
+//   - DeleteCategory: a genuine backstop. Its cascade runs inside a transaction,
+//     so refusing the relation-type delete rolls the edge deletes back.
+//   - DeleteRelationshipType: a backstop since that function became transactional.
+//   - EditRelationType: nothing. Its cascade is a DELETE on group_relations (not
+//     a table this covers) and its own write is an UPDATE (not the Delete
+//     processor). Layer 2 is the only guard there.
+//
+// Two evasions it does not cover, neither used by any live path:
+// db.Table("categories").Delete(&other) overrides the model's schema, and under
+// SkipDefaultTransaction the association deletes could commit before the refusal.
 func globalCascadeDeleteCallback(db *gorm.DB) {
 	if scopeFromContext(db.Statement.Context) == nil {
 		return // unscoped principal: nothing to confine

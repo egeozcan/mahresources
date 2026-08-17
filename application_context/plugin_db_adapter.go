@@ -139,17 +139,18 @@ func (ctx *MahresourcesContext) principalForPluginActor(actorID uint) *auth.Prin
 // keeping accurate: an edge is not taxonomy, it is a statement about two
 // groups, and nothing about "carries no owner" made it safe to expose.
 //
-// Closing it took three guards, not one. relationInScope covers the direct
+// Closing it took two guards and a backstop. relationInScope covers the direct
 // writes; refuseGlobalCascadeWhenScoped (scoping.go) rejects the three taxonomy
 // operations that cascade to edges database-wide; and globalCascadeDeleteCallback
-// catches every other ORM delete against categories and group_relation_types,
-// because a guard on named functions was already bypassed by the generic
-// CRUDWriter.Delete that CategoryCRUD() returns.
+// backstops the two of those three whose cascades are transactional, for a
+// delete issued through a handle carrying the scope filter.
 //
-// Still reachable, deliberately recorded rather than claimed closed: a group's
-// own category change deletes incident edges including ones reaching outside
-// the subtree, and merge's degenerate self-edge sweep is database-wide. Both
-// need role capability below server/, which does not exist. See CLAUDE.md.
+// Still reachable, recorded rather than claimed closed: a group's own category
+// change and its deletion both remove incident edges whose far endpoint is
+// outside the subtree, and merge's degenerate self-edge sweep is database-wide.
+// The first three are closable with subtree predicates; only the general case —
+// a confined caller performing any admin-only taxonomy write — needs role
+// capability below server/, which does not exist. See CLAUDE.md.
 func deniedPluginPrincipal(actorID uint) *auth.Principal {
 	return &auth.Principal{UserID: actorID, Role: models.RoleGuest}
 }
