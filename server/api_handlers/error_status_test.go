@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"mahresources/application_context"
+	"mahresources/plugin_system"
 )
 
 // Both authorization refusals below are matched by type, ahead of the substring
@@ -35,8 +36,27 @@ func TestStatusCodeForError_AuthorizationRefusalsAre403(t *testing.T) {
 	}
 }
 
+// A plugin veto is a refusal of a well-formed request, and its status must not
+// depend on how the plugin author phrased the reason. Under the substring scan
+// alone, "this cannot be deleted" was a 400 and "protected by policy" a 500 —
+// the same event, two answers. 400 is what plugin API endpoints already give
+// mah.abort, so the CRUD path joins them rather than inventing a third.
+func TestStatusCodeForError_PluginAbortIsAlways400(t *testing.T) {
+	for _, reason := range []string{"this cannot be deleted", "protected by policy", "nope"} {
+		abort := &plugin_system.PluginAbortError{Reason: reason}
+		if got := statusCodeForError(abort, http.StatusInternalServerError); got != http.StatusBadRequest {
+			t.Errorf("reason %q gave %d, want %d", reason, got, http.StatusBadRequest)
+		}
+		wrapped := fmt.Errorf("deleting note 4: %w", abort)
+		if got := statusCodeForError(wrapped, http.StatusInternalServerError); got != http.StatusBadRequest {
+			t.Errorf("wrapped reason %q gave %d, want %d", reason, got, http.StatusBadRequest)
+		}
+	}
+}
+
 // The other half: adding the typed arms must not turn unrelated errors into
-// 403s, and must not disturb the statuses the substring scan already assigns.
+// 403s or 400s, and must not disturb the statuses the substring scan already
+// assigns.
 func TestStatusCodeForError_LeavesEveryOtherErrorAlone(t *testing.T) {
 	for _, tc := range []struct {
 		name string

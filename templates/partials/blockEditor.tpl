@@ -1015,6 +1015,12 @@
                             :tabindex="idx === activePickerIndex ? 0 : -1"
                             :aria-selected="idx === activePickerIndex"
                             :data-block-type="bt.type"
+                            {# The roving tabindex has to follow focus, not only the arrow keys. #}
+                            {# focusPickerItem sets the index and then focuses, so this is a #}
+                            {# no-op on that path; what it fixes is focus arriving any other #}
+                            {# way — a screen reader moving through the listbox — after which #}
+                            {# the next ArrowDown stepped from the stale index and jumped. #}
+                            @focus="activePickerIndex = idx"
                             @click="addBlock(bt.type); addBlockPickerOpen = false"
                             @keydown.enter.prevent="addBlock(bt.type); addBlockPickerOpen = false"
                             @keydown.space.prevent="addBlock(bt.type); addBlockPickerOpen = false"

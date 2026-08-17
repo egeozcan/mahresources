@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"mahresources/application_context"
+	"mahresources/plugin_system"
 )
 
 // isMRQLFilterError reports whether err originates from a bad list-page MRQL
@@ -40,6 +41,18 @@ func statusCodeForError(err error, fallback int) int {
 	if errors.Is(err, application_context.ErrRoleCapability) ||
 		errors.Is(err, application_context.ErrGlobalCascadeScoped) {
 		return http.StatusForbidden
+	}
+
+	// A plugin veto from a before-hook. The status used to come from the scan
+	// below, over the message "plugin aborted: <the plugin author's own
+	// words>" — so a reason phrased "this cannot be deleted" produced 400 and
+	// "protected by policy" produced 500, for the same event. Plugin API
+	// endpoints already answer 400 for mah.abort (api_endpoints.go), and one
+	// event should not have two statuses depending on which door it came
+	// through, so the CRUD path joins them rather than inventing a third.
+	var abort *plugin_system.PluginAbortError
+	if errors.As(err, &abort) {
+		return http.StatusBadRequest
 	}
 
 	msg := strings.ToLower(err.Error())

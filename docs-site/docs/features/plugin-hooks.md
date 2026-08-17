@@ -92,6 +92,13 @@ A hook dispatched from ordinary application code — the common case — waits a
 
 `mah.abort(reason)` raises a special Lua error that the hook runner intercepts. The operation is cancelled and the reason is returned to the client. This works in both before hooks and action handlers.
 
+A veto answers **HTTP 400**, the same status a plugin API endpoint gives
+`mah.abort`, with the reason as the error message. The status does not depend on
+how the reason is worded -- it used to, because the abort reached the HTTP layer
+as an ordinary error whose message was scanned for familiar phrases, so
+`"this cannot be deleted"` came back 400 and `"protected by policy"` came back
+500 for the same event.
+
 ### Complete Hook Reference
 
 All 30 lifecycle hooks, organized by entity type:
