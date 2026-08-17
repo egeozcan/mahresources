@@ -103,6 +103,12 @@ type hookEntry struct {
 type injectionEntry struct {
 	state *lua.LState
 	fn    *lua.LFunction
+	// plugin is carried on the entry rather than resolved from the state at
+	// render time, because RenderSlot has to decide per plugin whether a
+	// group-limited caller may see this injection at all, once per slot per
+	// page — and mapping a state back to a name is a walk under the manager
+	// lock.
+	plugin string
 }
 
 // pageEntry stores a Lua page handler and its parent VM.
@@ -1019,8 +1025,9 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			return 0
 		}
 		pm.injections[slotName] = append(pm.injections[slotName], injectionEntry{
-			state: mainState(L),
-			fn:    renderFn,
+			state:  mainState(L),
+			fn:     renderFn,
+			plugin: *pluginNamePtr,
 		})
 		pm.mu.Unlock()
 		return 0

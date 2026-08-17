@@ -3,6 +3,7 @@ package shortcodes
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 )
 
@@ -208,6 +209,12 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 						if sc.IsBlock && depth+1 < maxRecursionDepth {
 							replacement = processWithDepth(reqCtx, replacement, ctx, renderer, executor, depth+1)
 						}
+					} else if errors.Is(err, ErrPluginUnavailable) {
+						// Not a failure: this caller may not reach this plugin.
+						// It renders exactly what a context with no plugin
+						// renderer renders, so a page cannot be read for which
+						// plugins exist by comparing the two.
+						replacement = shortcodeComment("plugin unavailable in this context")
 					} else {
 						// Plugin rendering failed — an actionable, author-facing
 						// error. Surface the shortcode name inline with the error

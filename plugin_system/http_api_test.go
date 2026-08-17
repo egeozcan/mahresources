@@ -53,7 +53,7 @@ func pollSlot(t *testing.T, pm *PluginManager, slot string, timeout time.Duratio
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		result := pm.RenderSlot(context.Background(), slot, map[string]any{})
+		result := pm.RenderSlot(context.Background(), slot, map[string]any{}, nil)
 		if result != "" {
 			return result
 		}
@@ -831,7 +831,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if result != "200:sync hello" {
 		t.Errorf("expected '200:sync hello', got %q", result)
 	}
@@ -871,7 +871,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if result != "201:sync created" {
 		t.Errorf("expected '201:sync created', got %q", result)
 	}
@@ -909,7 +909,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if !strings.HasPrefix(result, "ERROR:") {
 		t.Errorf("expected a transport error, got %q", result)
 	}
@@ -944,7 +944,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if result != "SCHEME_ERROR" {
 		t.Errorf("expected 'SCHEME_ERROR', got %q", result)
 	}
@@ -985,7 +985,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if result != "authed" {
 		t.Errorf("expected 'authed', got %q", result)
 	}
@@ -1026,7 +1026,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	expected := fmt.Sprintf("%d", maxHttpResponseBody)
 	if result != expected {
 		t.Errorf("expected body length %s, got %q", expected, result)

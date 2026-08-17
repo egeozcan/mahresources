@@ -48,7 +48,7 @@ end
 	// Test injection renders with entity context
 	html := mgr.RenderSlot(context.Background(), "note_detail_after", map[string]any{
 		"entity": map[string]any{"name": "Test Note [via plugin]"},
-	})
+	}, nil)
 	expected := "<div class='plugin-injected'>Plugin: Test Note [via plugin]</div>"
 	if html != expected {
 		t.Errorf("unexpected injection output: got %q, want %q", html, expected)

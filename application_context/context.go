@@ -418,6 +418,10 @@ type MahresourcesContext struct {
 	// reassignment target when a category is deleted.
 	DefaultResourceCategoryID uint
 	// settings is the runtime-settings service. Installed after AutoMigrate via SetSettings.
+	// scopedAccess caches which plugins group-limited principals may reach. A
+	// pointer, so every shallow clone of this context shares the one cache.
+	scopedAccess *scopedPluginAccess
+
 	settings *RuntimeSettings
 	// exportSweepFs is the filesystem rooted at FileSavePath used by the
 	// startup export/import sweep. Captured at NewMahresourcesContext so
@@ -589,6 +593,7 @@ func NewMahresourcesContext(filesystem afero.Fs, db *gorm.DB, readOnlyDB *sqlx.D
 
 	ctx := &MahresourcesContext{
 		StartedAt:       time.Now(),
+		scopedAccess:    &scopedPluginAccess{},
 		fs:              filesystem,
 		db:              db,
 		readOnlyDB:      readOnlyDB,

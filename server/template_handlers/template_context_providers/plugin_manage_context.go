@@ -15,8 +15,14 @@ type pluginDisplay struct {
 	Description string
 	Enabled     bool
 	HasDocs     bool
-	Settings    []plugin_system.SettingDefinition
-	Values      map[string]any
+
+	// AllowScopedPrincipals is the operator's separate decision about *who* may
+	// reach this plugin, as opposed to what it may do: group-limited users and
+	// guests are refused its pages, endpoints, shortcodes and slots unless this
+	// is on.
+	AllowScopedPrincipals bool
+	Settings              []plugin_system.SettingDefinition
+	Values                map[string]any
 
 	// Legacy is true for a plugin that declares no manifest at all: it keeps
 	// the full mah surface, which is why Capabilities below lists everything.
@@ -72,14 +78,16 @@ func PluginManageContextProvider(appCtx PluginManagePageContext) func(request *h
 		}
 
 		stateMap := make(map[string]struct {
-			enabled  bool
-			settings string
+			enabled     bool
+			settings    string
+			allowScoped bool
 		})
 		for _, s := range states {
 			stateMap[s.PluginName] = struct {
-				enabled  bool
-				settings string
-			}{s.Enabled, s.SettingsJSON}
+				enabled     bool
+				settings    string
+				allowScoped bool
+			}{s.Enabled, s.SettingsJSON, s.AllowScopedPrincipals}
 		}
 
 		var plugins []pluginDisplay
@@ -103,6 +111,7 @@ func PluginManageContextProvider(appCtx PluginManagePageContext) func(request *h
 			}
 			if s, ok := stateMap[dp.Name]; ok {
 				pd.Enabled = s.enabled
+				pd.AllowScopedPrincipals = s.allowScoped
 				if s.settings != "" {
 					json.Unmarshal([]byte(s.settings), &pd.Values)
 				}

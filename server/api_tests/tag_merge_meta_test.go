@@ -15,14 +15,15 @@ import (
 // which do perform this merge.
 //
 // The design document for MergeTags states:
-//   "Follows the exact merge pattern established by MergeGroups"
+//
+//	"Follows the exact merge pattern established by MergeGroups"
 //
 // MergeGroups merges each loser's meta into the winner (winner keys win on
 // conflict) via:
 //
-//   UPDATE groups SET meta = json_patch(
-//       coalesce((SELECT meta FROM groups WHERE id = <loser>), '{}'), meta
-//   ) WHERE id = <winner>
+//	UPDATE groups SET meta = json_patch(
+//	    coalesce((SELECT meta FROM groups WHERE id = <loser>), '{}'), meta
+//	) WHERE id = <winner>
 //
 // MergeTags is missing this step entirely. The loser's meta is serialised into
 // the backup structure but its keys are never actively merged into the winner.
@@ -34,7 +35,9 @@ import (
 //  4. Reload winner — expect meta to contain BOTH "winner_key" AND "loser_key"
 //
 // Expected: winner.Meta contains {"winner_key":"winner_val","loser_key":"loser_val",
-//           "backups":{...}}
+//
+//	"backups":{...}}
+//
 // Actual:   winner.Meta only contains {"backups":{...}} — loser_key is missing.
 func TestMergeTagsLosesLoserMeta(t *testing.T) {
 	tc := SetupTestEnv(t)

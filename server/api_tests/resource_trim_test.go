@@ -163,9 +163,9 @@ func TestTrimVideo_HappyPath_CreatesVersion(t *testing.T) {
 
 	// Trim from 1 to 3 seconds (video is ~6s)
 	resp := tc.MakeFormRequest(http.MethodPost, "/v1/resources/trim", url.Values{
-		"ID":    {strconv.Itoa(int(resource.ID))},
-		"Start": {"1"},
-		"End":   {"3"},
+		"ID":      {strconv.Itoa(int(resource.ID))},
+		"Start":   {"1"},
+		"End":     {"3"},
 		"Comment": {"test trim"},
 	})
 

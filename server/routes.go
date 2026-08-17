@@ -163,6 +163,11 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// Always set — needed for [mrql] shortcodes even without plugins
 		ctx["_appContext"] = appContext
 		ctx["_requestContext"] = request.Context()
+		// Per-plugin, not per-request: an operator may mark individual plugins
+		// as reachable by group-limited users, so the seams need the name to
+		// decide. Absence still fails closed, exactly as the whole-request
+		// gate did.
+		ctx["_pluginAccess"] = auth.PluginAccessFor(request.Context(), appContext.PluginAllowsScopedPrincipals)
 
 		// Expose the authenticated user to templates (nav avatar / logout). The
 		// implicit super-user used when auth is disabled is intentionally not
@@ -317,8 +322,12 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 	// Plugin Lua runs against the unscoped DB handle, so a group-confined
 	// principal must not reach it through the JSON render path either.
 	var pluginRenderer shortcodes.PluginRenderer
-	if pm != nil && auth.PluginCodeAllowed(reqCtx) {
+	if pm != nil && appCtx != nil {
+		access := auth.PluginAccessFor(reqCtx, appCtx.PluginAllowsScopedPrincipals)
 		pluginRenderer = func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
+			if !access(pluginName) {
+				return "", shortcodes.ErrPluginUnavailable
+			}
 			return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity, sc.InnerContent, sc.IsBlock)
 		}
 	}
@@ -818,6 +827,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	// Plugin management API
 	router.Methods(http.MethodGet).Path("/v1/plugins/manage").HandlerFunc(api_handlers.GetPluginsManageHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/plugin/enable").HandlerFunc(api_handlers.GetPluginEnableHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/plugin/scopedAccess").HandlerFunc(api_handlers.GetPluginScopedAccessHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/plugin/disable").HandlerFunc(api_handlers.GetPluginDisableHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/plugin/settings").HandlerFunc(api_handlers.GetPluginSettingsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/plugin/purge-data").HandlerFunc(api_handlers.GetPluginPurgeDataHandler(appContext))

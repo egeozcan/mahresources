@@ -9,7 +9,6 @@ import (
 
 	"github.com/flosch/pongo2/v4"
 	"mahresources/application_context"
-	"mahresources/auth"
 	"mahresources/deferredtoken"
 	"mahresources/mrql"
 	"mahresources/plugin_system"
@@ -75,9 +74,13 @@ func (node *processShortcodesNode) Execute(ctx *pongo2.ExecutionContext, writer 
 	// against the unscoped DB handle. Leaving the renderer nil makes [plugin:*]
 	// render the same "unavailable" comment the share server already produces.
 	var pluginRenderer shortcodes.PluginRenderer
-	if pmVal, ok := ctx.Public["_pluginManager"]; ok && pmVal != nil && auth.PluginCodeAllowed(reqCtx) {
+	access := pluginAccessFromContext(ctx, reqCtx)
+	if pmVal, ok := ctx.Public["_pluginManager"]; ok && pmVal != nil {
 		if pm, ok := pmVal.(*plugin_system.PluginManager); ok && pm != nil {
 			pluginRenderer = func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
+				if !access(pluginName) {
+					return "", shortcodes.ErrPluginUnavailable
+				}
 				return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity, sc.InnerContent, sc.IsBlock)
 			}
 		}

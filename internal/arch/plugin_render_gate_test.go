@@ -34,7 +34,13 @@ func TestPluginRenderSeamsAreGated(t *testing.T) {
 
 	// Calls that cause plugin Lua to execute during a render.
 	invocations := []string{"RenderShortcode(", "RenderSlot("}
-	const gate = "auth.PluginCodeAllowed("
+	// Any of these is a gate. The rule used to be one call — PluginCodeAllowed,
+	// which answers for a whole request — and that is still the answer where a
+	// seam has no plugin name to offer. The per-plugin rule replaced it at the
+	// seams that do: PluginAccessFor builds the predicate, and
+	// pluginAccessFromContext reads the one a page context already carries and
+	// falls back to PluginAccessFor when there is none.
+	gates := []string{"auth.PluginCodeAllowed(", "auth.PluginAccessFor(", "pluginAccessFromContext("}
 
 	var checked int
 
@@ -64,13 +70,17 @@ func TestPluginRenderSeamsAreGated(t *testing.T) {
 		}
 		checked++
 
-		gates := strings.Count(src, gate)
-		if gates < calls {
+		gated := 0
+		for _, gate := range gates {
+			gated += strings.Count(src, gate)
+		}
+		if gated < calls {
 			rel, _ := filepath.Rel(root, path)
 			t.Errorf("%s invokes plugin Lua %d time(s) but gates only %d of them.\n"+
-				"Every RenderShortcode/RenderSlot seam must be guarded by auth.PluginCodeAllowed(reqCtx),\n"+
+				"Every RenderShortcode/RenderSlot seam must build a per-plugin auth.PluginAccess\n"+
+				"(auth.PluginAccessFor / pluginAccessFromContext) or gate on auth.PluginCodeAllowed(reqCtx),\n"+
 				"or a group-confined principal reaches plugin code running on the unscoped DB handle.",
-				rel, calls, gates)
+				rel, calls, gated)
 		}
 		return nil
 	})

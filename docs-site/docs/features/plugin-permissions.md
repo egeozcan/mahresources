@@ -120,6 +120,38 @@ One consequence worth knowing when a bundled plugin's manifest changes in a rele
 
 That is sound rather than merely convenient — before this release those plugins ran with the entire `mah` surface and no network rules, so recording their declared set is strictly a reduction. A consent record that exists but cannot be read is *not* grandfathered: that is corruption or tampering, and it refuses.
 
+## Who may reach a plugin
+
+Capabilities answer what a plugin may do. This answers who may ask it to.
+
+With authentication enabled, a **group-limited** account — a user confined to one
+group's subtree, or any guest — is refused every plugin surface by default: the
+plugin's pages, its JSON endpoints, its shortcodes, the slots it injects into and
+the blocks and metadata displays it renders. Unscoped roles (admin, editor, and a
+user with no scope group) are unaffected, and with authentication off every
+request is an implicit administrator, so none of this is visible.
+
+An operator opens a plugin to those accounts one plugin at a time, with **Allow
+limited users** on `/plugins/manage`. It is off for every plugin until then,
+including plugins that were installed before the control existed.
+
+What it does *not* do is widen the plugin. A confined caller's `mah.db` calls stay
+bound to that caller's own subtree, and taxonomy operations still require that
+caller's own role, exactly as they do everywhere else. The toggle is about the
+door, not about the room.
+
+Two consequences worth knowing:
+
+- **A refused shortcode renders as `<!-- mr:plugin unavailable in this context -->`**,
+  which is what a page renders when there is no plugin renderer at all. It is
+  deliberately indistinguishable: otherwise a page would report which plugins
+  exist, and which ones a given account may not use.
+- **Hooks are not covered by this.** They fire from ordinary writes a confined
+  user is entitled to make, not from a plugin URL, so a plugin's hooks run for
+  every account whatever this setting says. That is why the protection that
+  matters is the binding of `mah.db` to the acting principal rather than the
+  door.
+
 ## Network rules
 
 Three layers apply to every plugin-initiated request, whether through `mah.http` or through the two URL-fetching writers.

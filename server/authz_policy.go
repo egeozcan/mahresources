@@ -137,7 +137,7 @@ func isSystemPath(path string) bool {
 	case "/admin/overview", "/admin/settings", "/plugins/manage",
 		"/admin/users", "/admin/users/edit", "/logs", "/log":
 		return true
-	case "/v1/plugin/enable", "/v1/plugin/disable", "/v1/plugin/settings", "/v1/plugin/purge-data", "/v1/plugins/manage":
+	case "/v1/plugin/enable", "/v1/plugin/disable", "/v1/plugin/scopedAccess", "/v1/plugin/settings", "/v1/plugin/purge-data", "/v1/plugins/manage":
 		return true
 	}
 	switch {
@@ -210,7 +210,29 @@ func isEditorPath(path string) bool {
 // principals are denied these endpoints outright, fail-closed, consistent with
 // every other scoped surface.
 func isPluginCodePath(path string) bool {
-	return strings.HasPrefix(path, "/v1/plugins/") || strings.HasPrefix(path, "/plugins/")
+	_, ok := pluginCodePathName(path)
+	return ok
+}
+
+// pluginCodePathName returns the plugin a plugin-code path belongs to.
+//
+// Both route families put the name in the first segment after the prefix:
+// /plugins/<name>/<page> and /v1/plugins/<name>/... (block render, display
+// render, and the JSON API catch-all). An empty or missing name is still a
+// plugin-code path — /v1/plugins/manage is one — and answers "" so the caller
+// refuses it rather than treating an unparseable path as some named plugin's.
+func pluginCodePathName(path string) (string, bool) {
+	for _, prefix := range []string{"/v1/plugins/", "/plugins/"} {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(path, prefix)
+		if i := strings.IndexByte(rest, '/'); i >= 0 {
+			rest = rest[:i]
+		}
+		return rest, true
+	}
+	return "", false
 }
 
 // withAuthorization enforces role-based access using requiredCapability. It runs
@@ -228,12 +250,18 @@ func withAuthorization(appCtx *application_context.MahresourcesContext, next htt
 			return
 		}
 		p := auth.PrincipalFromContext(r.Context())
-		// Fail-closed: a group-confined principal must never reach plugin code,
-		// which would otherwise run against an unscoped DB handle. SuperUser and
-		// unscoped roles (admin/editor/unscoped user) are unaffected.
-		if isPluginCodePath(r.URL.Path) && (p.IsScoped() || p.RequiresScope()) {
-			denyAccess(appCtx, w, r)
-			return
+		// Fail-closed by default: a group-confined principal reaches a plugin's
+		// own surfaces only where an operator has said so, plugin by plugin.
+		// SuperUser and unscoped roles (admin/editor/unscoped user) are
+		// unaffected. A path whose plugin name cannot be read — /v1/plugins/manage
+		// is the live case, and it is admin-only through isSystemPath anyway —
+		// yields "" and is refused, because "which plugin is this?" has no answer
+		// that could be allowed.
+		if name, isPluginPath := pluginCodePathName(r.URL.Path); isPluginPath && !p.IsAdmin() && (p.IsScoped() || p.RequiresScope()) {
+			if name == "" || !appCtx.PluginAllowsScopedPrincipals(name) {
+				denyAccess(appCtx, w, r)
+				return
+			}
 		}
 		if principalSatisfies(p, requiredCapability(r.Method, r.URL.Path)) {
 			next.ServeHTTP(w, r)

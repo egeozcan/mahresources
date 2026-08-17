@@ -29,7 +29,7 @@ end
 	if err := mgr.EnablePlugin("util-test"); err != nil {
 		t.Fatalf("EnablePlugin: %v", err)
 	}
-	return mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	return mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 }
 
 // The sandbox opens no os library, so before mah.util a plugin could not read

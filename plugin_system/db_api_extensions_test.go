@@ -191,7 +191,7 @@ end
 	if err := mgr.EnablePlugin("db-ext"); err != nil {
 		t.Fatalf("EnablePlugin: %v", err)
 	}
-	return mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	return mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 }
 
 // --- Item 06: reads report failure instead of looking empty ---

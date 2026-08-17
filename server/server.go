@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/spf13/afero"
 	"mahresources/application_context"
+	"mahresources/auth"
 	"mahresources/server/http_utils"
 	"mahresources/server/template_handlers"
 
@@ -112,6 +113,7 @@ func pluginMenuEnricher(appContext *application_context.MahresourcesContext, r *
 	return func(ctx pongo2.Context) pongo2.Context {
 		ctx["_pluginManager"] = pm
 		ctx["_requestContext"] = r.Context()
+		ctx["_pluginAccess"] = auth.PluginAccessFor(r.Context(), appContext.PluginAllowsScopedPrincipals)
 		ctx["pluginMenuItems"] = pm.GetMenuItems()
 		ctx["hasPluginManager"] = true
 		return ctx

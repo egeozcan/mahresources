@@ -19,7 +19,8 @@ import (
 // the entire result becomes NULL — the loser's meta is silently discarded.
 //
 // The correct fix is to coalesce the winner's meta to '{}' as well:
-//   json_patch(coalesce(loser_meta, '{}'), coalesce(meta, '{}'))
+//
+//	json_patch(coalesce(loser_meta, '{}'), coalesce(meta, '{}'))
 //
 // Steps to reproduce:
 //  1. Create a winner tag with NO meta (NULL — the default from CreateTag)
@@ -29,7 +30,8 @@ import (
 //
 // Expected: winner.Meta contains {"color":"red", "backups":{...}}
 // Actual:   winner.Meta is NULL — loser's meta is lost because
-//           json_patch('{"color":"red"}', NULL) returns NULL.
+//
+//	json_patch('{"color":"red"}', NULL) returns NULL.
 func TestMergeTagsNullWinnerMeta(t *testing.T) {
 	tc := SetupTestEnv(t)
 	requireJsonPatch(t, tc.DB)

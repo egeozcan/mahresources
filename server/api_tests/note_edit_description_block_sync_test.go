@@ -23,10 +23,10 @@ import (
 // The generic UpdateDescription (basic_entity_context.go) used by
 // /v1/note/editDescription updates ONLY the description column. It does NOT
 // sync the change to the first text block. As a result:
-//   1. The description and first text block become out of sync.
-//   2. The next block mutation (e.g., creating a second block) triggers
-//      syncFirstTextBlockToDescriptionTx, which overwrites the description
-//      with the STALE block content — silently losing the user's edit.
+//  1. The description and first text block become out of sync.
+//  2. The next block mutation (e.g., creating a second block) triggers
+//     syncFirstTextBlockToDescriptionTx, which overwrites the description
+//     with the STALE block content — silently losing the user's edit.
 func TestNoteEditDescriptionDoesNotSyncToBlock(t *testing.T) {
 	tc := SetupTestEnv(t)
 

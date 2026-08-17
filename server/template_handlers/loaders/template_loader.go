@@ -33,6 +33,7 @@ func MustNewLocalFileSystemLoader(baseDir string, replace map[string]string) *Lo
 // is given (or being set using SetBaseDir), this base directory is being used
 // for path calculation in template inclusions/imports. Otherwise the path
 // is calculated based relatively to the including template's path.
+//
 //goland:noinspection ALL
 func NewLocalFileSystemLoader(baseDir string, replace map[string]string) (*LocalFilesystemLoader, error) {
 	fs := &LocalFilesystemLoader{

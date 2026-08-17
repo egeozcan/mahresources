@@ -22,6 +22,7 @@ func reloadNoteType(t *testing.T, tc *TestContext, id uint) *models.NoteType {
 // share-templating opt-in against two failure modes on the form-encoded edit path:
 //   - a partial update that omits the checkbox must NOT silently clear it, and
 //   - a full form must still be able to turn it both off and on.
+//
 // The hidden "false" companion input makes the full form always submit the field,
 // which is what lets the handler tell a partial update (field absent) apart from a
 // deliberate uncheck (field present as "false").

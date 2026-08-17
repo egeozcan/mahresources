@@ -231,7 +231,7 @@ end
 	}()
 
 	start := time.Now()
-	mgr.RenderSlot(reqCtx, "page_bottom", map[string]any{})
+	mgr.RenderSlot(reqCtx, "page_bottom", map[string]any{}, nil)
 	elapsed := time.Since(start)
 
 	// luaExecTimeout is 5s; the cancel must beat it by a wide margin.
@@ -265,7 +265,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(WithMRQLCache(context.Background()), "page_bottom", map[string]any{})
+	html := mgr.RenderSlot(WithMRQLCache(context.Background()), "page_bottom", map[string]any{}, nil)
 	if !strings.Contains(html, "11") {
 		t.Errorf("slot rendered %q, want both queries to return one item", html)
 	}

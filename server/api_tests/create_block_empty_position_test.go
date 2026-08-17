@@ -23,7 +23,7 @@ import (
 //     -> Note description syncs to "Important content".
 //  3. Create a second text block with Position="" (empty) and default content.
 //     -> syncFirstTextBlockToDescriptionTx finds the new block first
-//        (empty string sorts before "d").
+//     (empty string sorts before "d").
 //     -> Note description is overwritten to "" (the new block's default text).
 //  4. Verify the note description is still "Important content".
 //     -> BUG: description was silently wiped to "".

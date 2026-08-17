@@ -142,7 +142,7 @@ end
 // only way in: the counters deliberately never touch the database.
 func hookFires(t *testing.T, ctx *MahresourcesContext, prefix string) int {
 	t.Helper()
-	out := ctx.PluginManager().RenderSlot(context.Background(), "probe", map[string]any{})
+	out := ctx.PluginManager().RenderSlot(context.Background(), "probe", map[string]any{}, nil)
 	for _, part := range strings.Split(out, ",") {
 		key, value, ok := strings.Cut(part, "=")
 		if !ok || key != prefix {
@@ -582,7 +582,7 @@ end
 `)
 
 	reqCtx := auth.WithPrincipal(context.Background(), &auth.Principal{UserID: actor})
-	if out := ctx.PluginManager().RenderSlot(reqCtx, "probe", map[string]any{}); out != "ok" {
+	if out := ctx.PluginManager().RenderSlot(reqCtx, "probe", map[string]any{}, nil); out != "ok" {
 		t.Fatalf("slot output = %q, want %q", out, "ok")
 	}
 
@@ -648,7 +648,7 @@ end
 `)
 			want := direct(t, ctx)
 
-			if out := ctx.PluginManager().RenderSlot(tc.ctx(), "probe", map[string]any{}); out != "ok" {
+			if out := ctx.PluginManager().RenderSlot(tc.ctx(), "probe", map[string]any{}, nil); out != "ok" {
 				t.Fatalf("slot output = %q", out)
 			}
 

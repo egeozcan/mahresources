@@ -2804,6 +2804,20 @@ func registerPluginRoutes(r *openapi.Registry) {
 
 	r.Register(openapi.RouteInfo{
 		Method:      http.MethodPost,
+		Path:        "/v1/plugin/scopedAccess",
+		OperationID: "setPluginScopedAccess",
+		Summary:     "Allow or refuse group-limited users access to a plugin",
+		Description: "Records whether group-limited users and guests may reach this plugin's own surfaces: its pages, endpoints, shortcodes, injected slots and rendered blocks. Off by default. It does not widen what the plugin may do on their behalf — a confined caller's plugin database calls stay bound to that caller's own subtree and role.",
+		Tags:        []string{"plugins"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "name", Type: "string", Required: true, Description: "Plugin name"},
+			{Name: "allowed", Type: "string", Required: false, Description: "1/true/on/yes to allow; anything else, including absence, refuses"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
 		Path:        "/v1/plugin/purge-data",
 		OperationID: "purgePluginData",
 		Summary:     "Purge all data for a plugin",

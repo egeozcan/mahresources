@@ -242,8 +242,6 @@ func TestImportLifecycle_OwnershipSurvivesTheJobBeingCleared(t *testing.T) {
 	}
 }
 
-
-
 // ownedJobID enqueues a parse job owned by uid and returns its id, for assertions
 // about a job that is still in the queue.
 func ownedJobID(t *testing.T, tc *TestContext, uid uint) string {

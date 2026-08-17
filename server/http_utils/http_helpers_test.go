@@ -151,11 +151,11 @@ func TestRemoveValue(t *testing.T) {
 
 func TestGetQueryParameter(t *testing.T) {
 	tests := []struct {
-		name     string
-		url      string
-		param    string
-		defVal   string
-		want     string
+		name   string
+		url    string
+		param  string
+		defVal string
+		want   string
 	}{
 		{
 			name:   "parameter exists",

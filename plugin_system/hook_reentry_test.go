@@ -180,7 +180,7 @@ func newReentryFixture(t *testing.T, plugins map[string]string) *reentryFixture 
 func (f *reentryFixture) renderOrTimeout(t *testing.T, ctx context.Context) string {
 	t.Helper()
 	done := make(chan string, 1)
-	go func() { done <- f.pm.RenderSlot(ctx, "test", map[string]any{}) }()
+	go func() { done <- f.pm.RenderSlot(ctx, "test", map[string]any{}, nil) }()
 	select {
 	case out := <-done:
 		return out

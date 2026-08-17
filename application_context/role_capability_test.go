@@ -297,7 +297,7 @@ func TestHookInvocation_PluginCannotWriteTaxonomyTheTriggeringRoleLacks(t *testi
 				t.Fatalf("%s could not create a note: %v", tc.name, err)
 			}
 
-			saw := ctx.PluginManager().RenderSlot(context.Background(), "probe", map[string]any{})
+			saw := ctx.PluginManager().RenderSlot(context.Background(), "probe", map[string]any{}, nil)
 			if saw == "never ran" {
 				t.Fatalf("the hook never fired, so this proves nothing")
 			}

@@ -140,6 +140,9 @@ func (ctx *MahresourcesContext) SetPluginEnabled(pluginName string, enabled bool
 			// If the plugin wasn't loaded in memory, the desired state
 			// (disabled) is already achieved — don't revert the DB.
 			if !ctx.pluginManager.IsEnabled(pluginName) {
+				// The scoped-access snapshot keys on the enabled column too, so a plugin
+				// disabled while allowed must stop reading as reachable.
+				ctx.InvalidateScopedPluginAccess()
 				return nil
 			}
 			// Revert DB state on unexpected failure
@@ -150,6 +153,9 @@ func (ctx *MahresourcesContext) SetPluginEnabled(pluginName string, enabled bool
 		}
 	}
 
+	// The scoped-access snapshot keys on the enabled column too, so a plugin
+	// disabled while allowed must stop reading as reachable.
+	ctx.InvalidateScopedPluginAccess()
 	return nil
 }
 

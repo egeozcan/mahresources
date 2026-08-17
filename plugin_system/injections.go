@@ -18,7 +18,12 @@ import (
 // may run at all, and simply did not pass it on. They are also the widest
 // surface there is: six slots live in the base layout, so they run on every
 // page. Pass nil where there genuinely is no request.
-func (pm *PluginManager) RenderSlot(reqCtx context.Context, slot string, ctx map[string]any) string {
+// allow decides, per plugin, whether this caller may see that plugin's
+// injection. A nil filter runs every plugin's injection, which is what the
+// tests in this package want; the one production caller
+// (template_filters/plugin_slot.go) always passes a real one, and
+// internal/arch/plugin_render_gate_test.go fails the build if it stops.
+func (pm *PluginManager) RenderSlot(reqCtx context.Context, slot string, ctx map[string]any, allow func(pluginName string) bool) string {
 	if pm.closed.Load() {
 		return ""
 	}
@@ -29,6 +34,9 @@ func (pm *PluginManager) RenderSlot(reqCtx context.Context, slot string, ctx map
 
 	var parts []string
 	for _, inj := range injections {
+		if allow != nil && !allow(inj.plugin) {
+			continue
+		}
 		L := inj.state
 		mu := pm.LockVM(L)
 		if mu == nil {

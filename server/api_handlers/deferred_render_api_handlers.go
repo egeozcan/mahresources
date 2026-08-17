@@ -92,8 +92,12 @@ func GetDeferredRenderHandler(ctx DeferredRenderContext) func(http.ResponseWrite
 		// See auth.PluginCodeAllowed: plugin Lua runs unscoped, so a
 		// group-confined principal must not reach it through a deferred render.
 		var renderer shortcodes.PluginRenderer
-		if pm := ctx.PluginManager(); pm != nil && auth.PluginCodeAllowed(reqCtx) {
+		if pm := ctx.PluginManager(); pm != nil {
+			access := auth.PluginAccessFor(reqCtx, ctx.PluginAllowsScopedPrincipals)
 			renderer = func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
+				if !access(pluginName) {
+					return "", shortcodes.ErrPluginUnavailable
+				}
 				return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity, sc.InnerContent, sc.IsBlock)
 			}
 		}

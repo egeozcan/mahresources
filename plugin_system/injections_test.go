@@ -32,7 +32,7 @@ end
 
 	result := pm.RenderSlot(context.Background(), "resource_header", map[string]any{
 		"path": "/resource",
-	})
+	}, nil)
 
 	expected := "<div>Hello /resource</div>"
 	if result != expected {
@@ -78,7 +78,7 @@ end
 		t.Fatalf("EnablePlugin(bravo): %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "page_top", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "page_top", map[string]any{}, nil)
 
 	if result != "<header>Alpha</header><header>Bravo</header>" {
 		t.Errorf("expected concatenated output in alphabetical order, got %q", result)
@@ -123,7 +123,7 @@ end
 		t.Fatalf("EnablePlugin(bravo_good): %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "sidebar", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "sidebar", map[string]any{}, nil)
 
 	if result != "<aside>OK</aside>" {
 		t.Errorf("expected only second plugin output, got %q", result)
@@ -138,7 +138,7 @@ func TestRenderSlot_EmptySlot(t *testing.T) {
 	}
 	defer pm.Close()
 
-	result := pm.RenderSlot(context.Background(), "nonexistent_slot", map[string]any{})
+	result := pm.RenderSlot(context.Background(), "nonexistent_slot", map[string]any{}, nil)
 
 	if result != "" {
 		t.Errorf("expected empty string for empty slot, got %q", result)
@@ -173,7 +173,7 @@ end
 		"entity": map[string]any{
 			"name": "My Resource",
 		},
-	})
+	}, nil)
 
 	if !strings.Contains(result, "My Resource") {
 		t.Errorf("expected output to contain 'My Resource', got %q", result)

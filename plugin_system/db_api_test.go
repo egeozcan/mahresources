@@ -191,7 +191,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "Test Note" {
 		t.Errorf("expected 'Test Note', got %q", html)
 	}
@@ -222,7 +222,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "nil" {
 		t.Errorf("expected 'nil', got %q", html)
 	}
@@ -253,7 +253,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "test.jpg|image/jpeg" {
 		t.Errorf("expected 'test.jpg|image/jpeg', got %q", html)
 	}
@@ -284,7 +284,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "Test Group" {
 		t.Errorf("expected 'Test Group', got %q", html)
 	}
@@ -315,7 +315,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "test-tag" {
 		t.Errorf("expected 'test-tag', got %q", html)
 	}
@@ -346,7 +346,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "Test Category" {
 		t.Errorf("expected 'Test Category', got %q", html)
 	}
@@ -377,7 +377,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "2" {
 		t.Errorf("expected '2', got %q", html)
 	}
@@ -408,7 +408,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "file.jpg" {
 		t.Errorf("expected 'file.jpg', got %q", html)
 	}
@@ -439,7 +439,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "Group A" {
 		t.Errorf("expected 'Group A', got %q", html)
 	}
@@ -470,7 +470,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "nil" {
 		t.Errorf("expected 'nil' when no provider set, got %q", html)
 	}
@@ -500,7 +500,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "nil" {
 		t.Errorf("expected 'nil' when no provider set, got %q", html)
 	}
@@ -531,7 +531,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "image/jpeg|true" {
 		t.Errorf("expected 'image/jpeg|true', got %q", html)
 	}
@@ -562,7 +562,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "nil" {
 		t.Errorf("expected 'nil', got %q", html)
 	}
@@ -592,7 +592,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "nil" {
 		t.Errorf("expected 'nil' when no provider set, got %q", html)
 	}
@@ -639,7 +639,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "42|my-image.jpg" {
 		t.Errorf("expected '42|my-image.jpg', got %q", html)
 	}
@@ -670,7 +670,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "43|test-upload.bin" {
 		t.Errorf("expected '43|test-upload.bin', got %q", html)
 	}
@@ -700,7 +700,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "error:database not available" {
 		t.Errorf("expected 'error:database not available', got %q", html)
 	}
@@ -734,7 +734,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "base64_error" {
 		t.Errorf("expected 'base64_error', got %q", html)
 	}
@@ -767,7 +767,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "99|1|v2" {
 		t.Errorf("expected '99|1|v2', got %q", html)
 	}
@@ -797,7 +797,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{})
+	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
 	if html != "error:database not available" {
 		t.Errorf("expected 'error:database not available', got %q", html)
 	}

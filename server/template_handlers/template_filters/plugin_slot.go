@@ -3,7 +3,6 @@ package template_filters
 import (
 	"context"
 	"fmt"
-	"mahresources/auth"
 	"reflect"
 
 	"github.com/flosch/pongo2/v4"
@@ -38,9 +37,12 @@ func (node *pluginSlotNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.
 			reqCtx = rc
 		}
 	}
-	if !auth.PluginCodeAllowed(reqCtx) {
-		return nil
-	}
+	// Per-plugin now: an operator may mark individual plugins reachable by
+	// group-limited users, and a slot renders several plugins' injections at
+	// once, so the decision cannot be made for the request as a whole. Absence
+	// of the predicate fails closed for the same reason the missing request
+	// context does — it means an unrecognised render path.
+	access := pluginAccessFromContext(ctx, reqCtx)
 
 	slotCtx := make(map[string]any)
 	if path, ok := ctx.Public["currentPath"].(string); ok {
@@ -67,7 +69,7 @@ func (node *pluginSlotNode) Execute(ctx *pongo2.ExecutionContext, writer pongo2.
 	// The same context the gate above was decided from: an abandoned page
 	// stops its injections instead of holding each plugin's VM lock, and
 	// identical MRQL queries across slots collapse to one execution.
-	html := pm.RenderSlot(reqCtx, node.slotName, slotCtx)
+	html := pm.RenderSlot(reqCtx, node.slotName, slotCtx, access)
 	if html != "" {
 		if _, err := writer.WriteString(html); err != nil {
 			return ctx.Error(fmt.Sprintf("plugin_slot: write error: %s", err), nil)

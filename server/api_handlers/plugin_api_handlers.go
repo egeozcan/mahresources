@@ -140,6 +140,54 @@ func GetPluginEnableHandler(ctx PluginAPIContext) func(http.ResponseWriter, *htt
 	}
 }
 
+// GetPluginScopedAccessHandler records whether group-limited users and guests
+// may reach one plugin's own surfaces.
+//
+// It is a separate decision from enabling, and deliberately so: enabling is the
+// operator's consent to what the plugin may do, while this is consent to who may
+// ask it to. Off by default, so installing this feature changes nothing until an
+// operator makes that call plugin by plugin.
+func GetPluginScopedAccessHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimSpace(r.FormValue("name"))
+		if name == "" {
+			http_utils.HandleError(
+				fmt.Errorf("missing plugin name"),
+				w, r, http.StatusBadRequest,
+			)
+			return
+		}
+
+		// Absent means off. The manage form is a checkbox, and an unchecked
+		// checkbox is not submitted at all, so reading absence as "leave it as
+		// it was" would make the box impossible to clear.
+		allowed := isTruthyFormValue(r.FormValue("allowed"))
+
+		if err := ctx.SetPluginScopedAccess(name, allowed); err != nil {
+			http_utils.HandleError(err, w, r, http.StatusBadRequest)
+			return
+		}
+
+		if http_utils.RedirectIfHTMLAccepted(w, r, "/plugins/manage") {
+			return
+		}
+
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "name": name, "allow_scoped_principals": allowed})
+	}
+}
+
+// isTruthyFormValue reads the shapes a checkbox and an API client actually send.
+// Anything else is false, which is the safe direction for a permission.
+func isTruthyFormValue(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "on", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
 func GetPluginDisableHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimSpace(r.FormValue("name"))

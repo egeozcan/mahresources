@@ -176,14 +176,15 @@ func buildPluginRenderer(appCtx MRQLAPIContext, reqCtx context.Context) shortcod
 	// Plugin Lua runs against the unscoped DB handle, so a group-confined
 	// principal must not reach it. reqCtx descends from the request context, so
 	// the principal is available here.
-	if !auth.PluginCodeAllowed(reqCtx) {
-		return nil
-	}
+	access := auth.PluginAccessFor(reqCtx, appCtx.PluginAllowsScopedPrincipals)
 	pm := appCtx.PluginManager()
 	if pm == nil {
 		return nil
 	}
 	return func(pluginName string, sc shortcodes.Shortcode, mctx shortcodes.MetaShortcodeContext) (string, error) {
+		if !access(pluginName) {
+			return "", shortcodes.ErrPluginUnavailable
+		}
 		return pm.RenderShortcode(reqCtx, pluginName, sc.Name, mctx.EntityType, mctx.EntityID, mctx.Meta, sc.Attrs, mctx.Entity, sc.InnerContent, sc.IsBlock)
 	}
 }

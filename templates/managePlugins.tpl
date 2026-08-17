@@ -27,6 +27,9 @@
                         {% if plugin.Enabled %}
                         <span class="card-badge card-badge--relation">Enabled</span>
                         {% endif %}
+                        {% if plugin.AllowScopedPrincipals %}
+                        <span class="card-badge" data-testid="plugin-scoped-badge-{{ plugin.Name }}">Open to limited users</span>
+                        {% endif %}
                         {% if plugin.Legacy %}
                         {# The badge says it in words, not only in red: no manifest means the full plugin surface. #}
                         <span class="card-badge card-badge--danger" data-testid="plugin-legacy-badge-{{ plugin.Name }}">No manifest &mdash; full access</span>
@@ -49,6 +52,19 @@
                             {% if plugin.Enabled %}Disable{% else %}Enable{% endif %}
                         </button>
                     </form>
+                    {% if plugin.Enabled %}
+                    {# Who may reach the plugin, which is a different question from what it may do. #}
+                    <form method="POST" action="/v1/plugin/scopedAccess">
+                        <input type="hidden" name="name" value="{{ plugin.Name }}">
+                        <input type="hidden" name="allowed" value="{% if plugin.AllowScopedPrincipals %}0{% else %}1{% endif %}">
+                        <button type="submit"
+                                class="inline-flex justify-center py-2 px-4 border shadow-sm text-sm font-medium font-mono rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 border-stone-300 text-stone-700 bg-white hover:bg-stone-50 focus:ring-amber-600"
+                                data-testid="plugin-scoped-access-{{ plugin.Name }}"
+                                title="Group-limited users and guests are refused this plugin's pages, endpoints and shortcodes unless this is on. It does not widen what the plugin may do on their behalf.">
+                            {% if plugin.AllowScopedPrincipals %}Hide from limited users{% else %}Allow limited users{% endif %}
+                        </button>
+                    </form>
+                    {% endif %}
                     {% if not plugin.Enabled %}
                     <form method="POST" action="/v1/plugin/purge-data"
                           x-data="confirmAction()" x-bind="events"

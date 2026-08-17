@@ -5266,6 +5266,30 @@ paths:
             summary: Purge all data for a plugin
             tags:
                 - plugins
+    /v1/plugin/scopedAccess:
+        post:
+            description: 'Records whether group-limited users and guests may reach this plugin''s own surfaces: its pages, endpoints, shortcodes, injected slots and rendered blocks. Off by default. It does not widen what the plugin may do on their behalf — a confined caller''s plugin database calls stay bound to that caller''s own subtree and role.'
+            operationId: setPluginScopedAccess
+            parameters:
+                - description: Plugin name
+                  in: query
+                  name: name
+                  required: true
+                  schema:
+                    type: string
+                - description: 1/true/on/yes to allow; anything else, including absence, refuses
+                  in: query
+                  name: allowed
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Allow or refuse group-limited users access to a plugin
+            tags:
+                - plugins
     /v1/plugin/settings:
         post:
             operationId: updatePluginSettings

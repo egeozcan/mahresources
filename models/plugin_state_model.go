@@ -20,4 +20,15 @@ type PluginState struct {
 	// column reads, and those are grandfathered on first load. The distinction is
 	// made in plugin_system.ParseGrants, not here.
 	GrantsJSON string `gorm:"type:text"`
+
+	// AllowScopedPrincipals lets group-limited users and guests reach this
+	// plugin's own surfaces: its pages, endpoints, shortcodes, injected slots
+	// and rendered blocks. Off by default, and off is what every existing row
+	// reads as, so installing this changes nothing until an operator decides
+	// plugin by plugin.
+	//
+	// It does not describe what the plugin may then do. A confined caller's
+	// mah.db calls stay bound to that caller's own subtree and role — this only
+	// says whether such a caller may knock on the door.
+	AllowScopedPrincipals bool `gorm:"default:false"`
 }

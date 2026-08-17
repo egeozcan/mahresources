@@ -60,6 +60,10 @@ type ShortcodeLintContext interface {
 // MRQLAPIContext serves the /v1/mrql surface: execution, validation,
 // completion, explain, generation, and the saved-query CRUD.
 type MRQLAPIContext interface {
+	// PluginAllowsScopedPrincipals reports whether a group-limited caller may
+	// reach this plugin's own surfaces. An operator decision, per plugin, so a
+	// seam that renders plugin code needs the name to ask about.
+	PluginAllowsScopedPrincipals(pluginName string) bool
 	PluginManagerProvider
 	template_filters.QueryExecutorContext
 	template_filters.PartialResolverContext
@@ -127,6 +131,7 @@ type PluginAPIContext interface {
 	PluginManagerProvider
 	GetPluginStates() ([]models.PluginState, error)
 	SetPluginEnabled(pluginName string, enabled bool) error
+	SetPluginScopedAccess(pluginName string, allowed bool) error
 	SavePluginSettings(pluginName string, values map[string]any) ([]plugin_system.ValidationError, error)
 	PluginKVPurge(pluginName string) error
 	GetNote(id uint) (*models.Note, error)
@@ -192,6 +197,10 @@ type TemplateGenerationContext interface {
 // TemplatePreviewContext serves the category-template live preview, which
 // renders a real entity through a candidate template.
 type TemplatePreviewContext interface {
+	// PluginAllowsScopedPrincipals reports whether a group-limited caller may
+	// reach this plugin's own surfaces. An operator decision, per plugin, so a
+	// seam that renders plugin code needs the name to ask about.
+	PluginAllowsScopedPrincipals(pluginName string) bool
 	templateRenderContext
 	GetGroup(id uint) (*models.Group, error)
 	GetNote(id uint) (*models.Note, error)
@@ -204,6 +213,10 @@ type TemplatePreviewContext interface {
 // DeferredRenderContext serves the [lazy]/[details] deferred-render endpoint,
 // which opens a signed token and renders its payload.
 type DeferredRenderContext interface {
+	// PluginAllowsScopedPrincipals reports whether a group-limited caller may
+	// reach this plugin's own surfaces. An operator decision, per plugin, so a
+	// seam that renders plugin code needs the name to ask about.
+	PluginAllowsScopedPrincipals(pluginName string) bool
 	TemplatePreviewContext
 }
 
