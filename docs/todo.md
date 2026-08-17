@@ -6636,6 +6636,26 @@ Three layers, because the first two were each found bypassable by review:
    the known-open "group's own category change": the caller controls neither
    endpoint.
 
+5. Group import's scope checks. `apply_import.go` consulted `ScopeResolver`
+   nowhere across ~2,600 lines. Two guards now: the dangling-reference
+   `group_relation` destination, and — the one that matters — the shell-group
+   `map_to_existing` destination, which is where a caller-chosen group id enters
+   `idMap`. Every later edge construction reads `idMap`, including the
+   non-dangling `Relationships` loop, so guarding the id at entry confines both
+   without each new consumer having to remember. `ValidateForApply` null-checks
+   `DestinationID` and nothing else. The sibling `related_group`/`_resource`/`_note`
+   branches are safe only *accidentally*, because their `{ID: n}` stubs go through
+   `scopeCreateCallback`; that is worth a comment if anyone touches them.
+
+   **Test coverage, stated exactly.** The shell-group guard's *permissive*
+   direction is covered: `apply_import_test.go:1061` and `:1166` drive
+   `map_to_existing` and assert `MappedShellGroups`, and they pass with the guard
+   in place, which proves it is reached and does not over-refuse. Its *refusal*
+   direction has no test — the fixture builds a real tar and a full plan, and I
+   did not excavate it. Verified by reading, and by the identical guard in the
+   dangling branch, which is mutation-tested. Worth closing when someone next
+   touches that fixture.
+
 **Known open, recorded rather than claimed closed:**
 
 - Changing a group's own category deletes every incident edge that no longer

@@ -991,6 +991,18 @@ func (s *applyState) applyGroups() error {
 			if gp.Shell && s.decisions.ShellGroupActions != nil {
 				if action, ok := s.decisions.ShellGroupActions[item.ExportID]; ok {
 					if action.Action == "map_to_existing" && action.DestinationID != nil {
+						// This is where a caller-chosen group id enters idMap, and
+						// idMap is what every later edge construction reads. Guarding
+						// only the edge sites would leave the id itself unchecked and
+						// each new consumer to remember; guarding here confines it
+						// once. ValidateForApply null-checks DestinationID and nothing
+						// else, and the GUID-collision sibling below reads through the
+						// scoped handle — this path did no read at all.
+						if !s.ctx.scope.VisibleGroupIDs([]uint{*action.DestinationID})[*action.DestinationID] {
+							s.result.Warnings = append(s.result.Warnings,
+								fmt.Sprintf("shell group %s: destination is outside your scope, skipping", item.ExportID))
+							continue
+						}
 						s.idMap[item.ExportID] = *action.DestinationID
 						s.result.MappedShellGroups++
 						if err := walk(item.Children); err != nil {
