@@ -133,6 +133,11 @@ type MahresourcesConfig struct {
 	// shared decode path). 0 = unlimited (the historical default). Multipart
 	// uploads are governed by MaxUploadSize instead and are unaffected.
 	MaxJSONBodySize int64
+	// MaxActionEntities bounds how many entities one plugin-action run may
+	// name. 0 selects the default rather than "unlimited": an unbounded
+	// fan-out is the defect this exists to stop, and every programmatic config
+	// (api_tests, embeds) carries a zero it never meant as a policy.
+	MaxActionEntities int
 	// MaxUserTokens caps how many API tokens a single user may hold. 0 =
 	// unlimited. Zero-value (test/programmatic configs) keeps the historical
 	// uncapped behaviour; main.go sets a non-zero default for real deployments.
@@ -280,6 +285,9 @@ type MahresourcesInputConfig struct {
 	MaxUploadSize int64
 	// MaxJSONBodySize bounds application/json request bodies. 0 = unlimited.
 	MaxJSONBodySize int64
+	// MaxActionEntities bounds the entities one plugin-action run may name.
+	// 0 selects the default.
+	MaxActionEntities int
 	// MaxUserTokens caps how many API tokens a single user may hold. 0 = unlimited.
 	MaxUserTokens int
 	// MRQLDefaultLimit is the default LIMIT applied to MRQL queries without an
@@ -1307,6 +1315,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		MaxImportSize:                cfg.MaxImportSize,
 		MaxUploadSize:                cfg.MaxUploadSize,
 		MaxJSONBodySize:              cfg.MaxJSONBodySize,
+		MaxActionEntities:            cfg.MaxActionEntities,
 		MaxUserTokens:                cfg.MaxUserTokens,
 		MRQLDefaultLimit:             cfg.MRQLDefaultLimit,
 		MRQLPageQueryBudget:          cfg.MRQLPageQueryBudget,

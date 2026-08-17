@@ -23,6 +23,7 @@ type PluginActionRunner interface {
 	ResourceVisible(id uint) bool
 	NoteVisible(id uint) bool
 	GroupVisible(id uint) bool
+	MaxActionEntities() int
 }
 
 // actionScopeRestricted reports whether the request principal is group-limited,
@@ -146,6 +147,20 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 			return
 		}
 
+		// And the deployment-wide ceiling, which is a different thing from
+		// BulkMax: that one is the action author's policy and defaults to
+		// unlimited, so it bounds nothing for the actions that never set it.
+		// The async branch below creates a goroutine, a job-map entry and an
+		// SSE notification per id before any of them runs, and the 1MB body
+		// limit still admits on the order of 10^5 ids.
+		if max := ctx.MaxActionEntities(); len(req.EntityIDs) > max {
+			http_utils.HandleError(
+				fmt.Errorf("at most %d entities may be submitted in one action run, got %d", max, len(req.EntityIDs)),
+				w, r, http.StatusBadRequest,
+			)
+			return
+		}
+
 		// RBAC: a group-limited principal may only run an action on entities
 		// inside its subtree. The entity-ref params are scoped automatically
 		// because the entity-ref reader runs on this request-scoped context, but
@@ -262,8 +277,26 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 				// handler, repeated identical queries still collapse.
 				result, err := pm.RunAction(plugin_system.WithMRQLCache(r.Context()), req.Plugin, req.Action, eid, req.Params, expectFilters)
 				if err != nil {
-					http_utils.HandleError(fmt.Errorf("action failed for entity %d: %w", eid, err), w, r, http.StatusInternalServerError)
-					return
+					// A single-entity run keeps its status: there is nothing
+					// partial about it, and a caller that reads 5xx as "this
+					// did not happen" is right.
+					if len(req.EntityIDs) == 1 {
+						http_utils.HandleError(fmt.Errorf("action failed for entity %d: %w", eid, err), w, r, http.StatusInternalServerError)
+						return
+					}
+					// In a bulk run it is already false. The entities before
+					// this one ran, and every mah.db write they made is
+					// committed — nothing brackets the batch in a transaction —
+					// so answering 500 for the whole request describes none of
+					// what happened and leaves the caller unable to tell which
+					// half landed. Report it in the entity's own slot and keep
+					// going; the result array is positional, which is how the
+					// modal maps a failure back to an id.
+					results = append(results, &plugin_system.ActionResult{
+						Success: false,
+						Message: err.Error(),
+					})
+					continue
 				}
 				results = append(results, result)
 			}

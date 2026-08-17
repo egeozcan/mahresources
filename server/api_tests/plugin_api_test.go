@@ -202,6 +202,10 @@ func (r *testPluginRunner) ResourceVisible(uint) bool { return true }
 func (r *testPluginRunner) NoteVisible(uint) bool     { return true }
 func (r *testPluginRunner) GroupVisible(uint) bool    { return true }
 
+// The zero value would be a limit of zero, so the double answers with the
+// production default rather than a policy this test never set.
+func (r *testPluginRunner) MaxActionEntities() int { return 1000 }
+
 // countingReader wraps an EntityRefReader and counts each method call.
 type countingReader struct {
 	inner plugin_system.EntityRefReader

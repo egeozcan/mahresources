@@ -176,6 +176,7 @@ All settings can be configured via environment variables (in `.env`) or command-
 | `-max-import-size` | `MAX_IMPORT_SIZE` | Maximum import tar upload size in bytes (default: 10 GB) |
 | `-max-upload-size` | `MAX_UPLOAD_SIZE` | Maximum per-upload body size in bytes for resource and version uploads (default: 2 GB) |
 | `-max-json-body` | `MAX_JSON_BODY` | Maximum `application/json` request body size in bytes. `0` (default) disables the limit, preserving the historical unbounded behaviour. Keyed on Content-Type, so multipart uploads (bounded by `-max-upload-size`) are unaffected. Recommended for `-auth` deployments where any authenticated user can POST JSON. |
+| `-max-action-entities` | `MAX_ACTION_ENTITIES` | Maximum entities one plugin-action run may name (default: `1000`). `0` selects the default rather than "unlimited": the async branch creates a goroutine, a job-map entry and an SSE notification **per submitted id** before any of them runs, and the 1 MB body limit admits on the order of 10^5. An action's own `bulk_max` is the author's policy, checked first and independently; this is the deployment's ceiling. |
 | `-max-user-tokens` | `MAX_USER_TOKENS` | Maximum API tokens a single user may hold; `0` disables the cap (default: `100`). Bounds the self-service token table so one account cannot exhaust it. |
 | `-hash-worker-count` | `HASH_WORKER_COUNT` | Concurrent hash calculation workers (default: 4) |
 | `-hash-batch-size` | `HASH_BATCH_SIZE` | Resources to process per batch (default: 500) |

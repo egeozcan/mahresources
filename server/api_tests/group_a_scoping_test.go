@@ -164,6 +164,10 @@ func (r *scopeRunner) ResourceVisible(id uint) bool { return r.visible[id] }
 func (r *scopeRunner) NoteVisible(id uint) bool     { return r.visible[id] }
 func (r *scopeRunner) GroupVisible(id uint) bool    { return r.visible[id] }
 
+// The zero value would be a limit of zero, so the double answers with the
+// production default rather than a policy this test never set.
+func (r *scopeRunner) MaxActionEntities() int { return 1000 }
+
 // Gap 2: a group-limited principal may only run a plugin action on entities
 // inside its subtree.
 func TestScopedUser_ActionRunConfinedToSubtree(t *testing.T) {

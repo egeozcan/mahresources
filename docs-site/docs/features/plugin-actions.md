@@ -53,9 +53,15 @@ end
 | `params` | table | No | none | User input parameter definitions |
 | `async` | boolean | No | `false` | Run asynchronously via the job system |
 | `confirm` | string | No | `""` | Confirmation message shown before execution |
-| `bulk_max` | number | No | `0` | Maximum entities for bulk execution (0 = unlimited) |
+| `bulk_max` | number | No | `0` | Maximum entities for bulk execution (0 = no limit of the action's own) |
 
 Registering a duplicate `id` within the same plugin raises a Lua error.
+
+`bulk_max` is the action's own policy. Independently of it, the deployment caps
+how many entities one run may name (`-max-action-entities`, default 1000);
+exceeding either is a `400`. The deployment cap exists because an async action
+creates a job, a goroutine and a live-progress notification for every submitted
+id before any of them runs.
 
 ## Action Parameters
 
@@ -375,7 +381,14 @@ Content-Type: application/json
 
 - **Sync actions**: Returns `200 OK` with `ActionResult`
 - **Async actions**: Returns `202 Accepted` with `{ "job_id": "abc123..." }`
-- **Bulk** (multiple `entity_ids`): Returns `{ "results": [...] }` for sync actions or `{ "job_ids": [...] }` for async actions. Respects `bulk_max`.
+- **Bulk** (multiple `entity_ids`): Returns `{ "results": [...] }` for sync actions or `{ "job_ids": [...] }` for async actions. Respects `bulk_max` and `-max-action-entities`.
+
+A bulk sync run is **not atomic**: each entity runs in turn and every write it
+made is committed before the next one starts. So a handler that fails partway
+through returns `200` with one entry per submitted entity, positionally, the
+failed ones carrying `success: false` and a message — not a `5xx` that would
+describe none of what already happened. A **single**-entity run is different and
+keeps its error status, because nothing about it is partial.
 
 ### Get Action Job Status
 

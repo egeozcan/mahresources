@@ -199,10 +199,15 @@ Content-Type: application/json
 
 **Bulk execution** (multiple `entity_ids`) returns wrapped results:
 
-- Sync actions: `{ "results": [...] }`
+- Sync actions: `{ "results": [...] }` -- one entry per submitted entity, in the
+  order they were submitted. A bulk run is not atomic, so an entity whose
+  handler failed carries `success: false` and a message in its own slot and the
+  response is still `200`; a single-entity run keeps its error status instead.
 - Async actions: `{ "job_ids": [...] }`
 
-The `bulk_max` limit on the action registration is enforced.
+The `bulk_max` limit on the action registration is enforced, as is the
+deployment-wide `-max-action-entities` cap (default 1000). Exceeding either is a
+`400`.
 
 ### Get Action Job Status
 
