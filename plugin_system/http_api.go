@@ -361,16 +361,9 @@ func (pm *PluginManager) executeSyncHttpRequest(egress NetworkPolicy, method, ur
 	}
 	defer resp.Body.Close()
 
-	limitedReader := io.LimitReader(resp.Body, maxHttpResponseBody+1)
-	bodyBytes, err := io.ReadAll(limitedReader)
+	bodyStr, truncated, err := readCappedBody(resp.Body, method, url)
 	if err != nil {
 		return buildSyncErrorResponse(L, method, url, fmt.Sprintf("reading response body: %v", err))
-	}
-
-	bodyStr := string(bodyBytes)
-	if len(bodyBytes) > maxHttpResponseBody {
-		bodyStr = bodyStr[:maxHttpResponseBody]
-		log.Printf("[plugin] warning: HTTP response body truncated at %d bytes for %s %s", maxHttpResponseBody, method, url)
 	}
 
 	respHeaders := make(map[string]any)
@@ -384,6 +377,7 @@ func (pm *PluginManager) executeSyncHttpRequest(egress NetworkPolicy, method, ur
 		"status_code": float64(resp.StatusCode),
 		"status":      resp.Status,
 		"body":        bodyStr,
+		"truncated":   truncated,
 		"headers":     respHeaders,
 		"url":         url,
 		"method":      method,
@@ -391,12 +385,37 @@ func (pm *PluginManager) executeSyncHttpRequest(egress NetworkPolicy, method, ur
 }
 
 // buildSyncErrorResponse builds a Lua table for a sync HTTP error.
+//
+// No "truncated": an error table carries no body either, so a field claiming a
+// body arrived whole would be describing something that does not exist. Lua nil
+// is falsy, so `if resp.truncated` still reads correctly on this shape.
 func buildSyncErrorResponse(L *lua.LState, method, url, errMsg string) *lua.LTable {
 	return goToLuaTable(L, map[string]any{
 		"error":  errMsg,
 		"url":    url,
 		"method": method,
 	})
+}
+
+// readCappedBody reads at most maxHttpResponseBody bytes and reports whether
+// there was more. The sync and async paths share it so the reader's size and
+// the comparison against it cannot drift apart: the reader is deliberately one
+// byte over the cap, because that byte is the only evidence a response ran
+// long. Sized at the cap exactly, a complete body and a cut one are the same
+// read, and nothing would ever be reported cut. The extra byte never reaches
+// the plugin.
+func readCappedBody(body io.Reader, method, url string) (string, bool, error) {
+	bodyBytes, err := io.ReadAll(io.LimitReader(body, maxHttpResponseBody+1))
+	if err != nil {
+		return "", false, err
+	}
+
+	if len(bodyBytes) <= maxHttpResponseBody {
+		return string(bodyBytes), false, nil
+	}
+
+	log.Printf("[plugin] warning: HTTP response body truncated at %d bytes for %s %s", maxHttpResponseBody, method, url)
+	return string(bodyBytes[:maxHttpResponseBody]), true, nil
 }
 
 // parseOptionsAndCallback extracts optional options table and required callback
@@ -519,9 +538,7 @@ func (pm *PluginManager) executeHttpRequest(egress NetworkPolicy, method, url, b
 	}
 	defer resp.Body.Close()
 
-	// Read body with size limit
-	limitedReader := io.LimitReader(resp.Body, maxHttpResponseBody+1)
-	bodyBytes, err := io.ReadAll(limitedReader)
+	bodyStr, truncated, err := readCappedBody(resp.Body, method, url)
 	if err != nil {
 		pm.queueHttpCallback(httpCallback{
 			vm:    vm,
@@ -534,12 +551,6 @@ func (pm *PluginManager) executeHttpRequest(egress NetworkPolicy, method, url, b
 			},
 		})
 		return
-	}
-
-	bodyStr := string(bodyBytes)
-	if len(bodyBytes) > maxHttpResponseBody {
-		bodyStr = bodyStr[:maxHttpResponseBody]
-		log.Printf("[plugin] warning: HTTP response body truncated at %d bytes for %s %s", maxHttpResponseBody, method, url)
 	}
 
 	// Build response headers (lowercase keys, comma-joined per RFC 7230)
@@ -558,6 +569,7 @@ func (pm *PluginManager) executeHttpRequest(egress NetworkPolicy, method, url, b
 			"status_code": float64(resp.StatusCode),
 			"status":      resp.Status,
 			"body":        bodyStr,
+			"truncated":   truncated,
 			"headers":     respHeaders,
 			"url":         url,
 			"method":      method,

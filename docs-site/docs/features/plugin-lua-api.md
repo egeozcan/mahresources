@@ -795,11 +795,24 @@ end)
 | `status_code` | number | HTTP status code |
 | `status` | string | Full status text |
 | `body` | string | Response body (truncated at 5 MB) |
+| `truncated` | boolean | Whether the body was cut at the 5 MB limit. Present on every successful response, `false` when the whole body arrived |
 | `headers` | table | Lowercase header names, comma-joined values |
 | `url` | string | Request URL |
 | `method` | string | Request method |
 
+Check `truncated` before decoding, hashing or paginating a response. A cut body is
+still a valid Lua string, so the damage surfaces wherever the plugin next reads it
+rather than at the request that caused it.
+
+```lua
+if response.truncated then
+    mah.log("warning", "response cut at the 5 MB limit", { url = response.url })
+    return
+end
+```
+
 On network error, the response contains `error` (string), `url`, and `method` instead.
+That shape carries no `body`, and so no `truncated` either.
 
 Callbacks are queued and executed on the plugin's VM thread with a 5-second deadline per callback.
 
