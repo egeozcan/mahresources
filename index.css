@@ -4,6 +4,62 @@
 @source "./templates/**/*.tpl";
 @source "./src/**/*.js";
 
+/* Tailwind v4 keeps automatic source detection switched on even when the
+   stylesheet names explicit @source directives, so the two lines above add to
+   the scan rather than define it: every non-gitignored file in the checkout is
+   read for class names. Prose is not exempt. Writing the word "ordinal" in an
+   ordinary sentence in docs/todo.md is what puts an `.ordinal` rule in the
+   shipped stylesheet, which makes a plan document a build input and is why a
+   fresh build of this file stopped reproducing the committed artifact.
+
+   Every glob below was measured, by diffing the class list built with and
+   without it against a reference stylesheet built with detection off and only
+   the trees that genuinely author class attributes named: the .tpl templates,
+   src, every .go file, the plugin Lua and the preset JSON under
+   server/template_presets. Each glob removes zero classes the application asks
+   for; together they remove 114. Do not add one you have not measured that way,
+   because an over-broad exclusion deletes a rule silently and the page that
+   needed it simply renders wrong. Grep is not that measurement: `text-stone-50`
+   is a substring of `text-stone-500` and `ordinal` of `ordinal_position`, and a
+   comment naming a class the file no longer emits reads to grep as a use. All
+   three occur here.
+
+   e2e is excluded whole rather than by extension because a .ts spec is prose
+   where it counts. `w-[18px]` reached the stylesheet only from a comment
+   recording a button's pre-fix classes, and `[role="option"]:visible` is a
+   Playwright selector Tailwind read as an arbitrary variant; both were already
+   dead for anyone building without e2e checked out. The last glob is the
+   go:embed'd CLI help text, prose living inside a Go tree, which no
+   docs-folder-shaped exclusion reaches.
+
+   Two things that look like the fix and are not:
+   - `@source not` cannot override an explicit `@source`. An exclusion that
+     overlaps either line above is a silent no-op, so one glob matching every
+     .md file in the tree would not do what it reads like.
+   - `@import "tailwindcss" source(none);` switches detection off entirely and
+     drops 69 classes the app really uses, because the explicit list is
+     incomplete: src is named by its .js files only while it holds 95 .ts files,
+     and Go string literals, the plugin Lua and the preset JSON are named
+     nowhere. Detection is what reaches all of those today.
+
+   Left in the scan deliberately: public/dist, the committed Vite bundle. It
+   contributes four junk tokens (@container, container!, list-item, resize!) and
+   no used class, but node_modules is gitignored and therefore unscanned, so the
+   bundle is the only path by which a bundled dependency's own class names could
+   reach Tailwind. scripts stays for a different reason: it looks like a tree of
+   shell and is not one, because seed-edge-cases.sh writes a CustomHeader made of
+   real markup, and `bg-blue-50` reaches the stylesheet from that heredoc and
+   from nowhere else. .worktrees needs no entry at all; .gitignore already keeps
+   detection out of it. */
+@source not "./docs/**";
+@source not "./docs-site/**";
+@source not "./e2e/**";
+@source not "./tasks/**";
+@source not "./.claude/**";
+@source not "./skills/**";
+@source not "./*.md";
+@source not "./cmd/**/*.md";
+
 @theme {
   --font-sans: 'IBM Plex Sans', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
