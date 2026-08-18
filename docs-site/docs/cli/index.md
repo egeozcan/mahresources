@@ -118,6 +118,7 @@ sidebar_label: CLI
 | `mr plugin disable` | Disable a plugin | [Details](./plugin/disable.md) |
 | `mr plugin enable` | Enable a plugin | [Details](./plugin/enable.md) |
 | `mr plugin purge-data` | Purge all data for a plugin | [Details](./plugin/purge-data.md) |
+| `mr plugin scoped-access` | Open or close a plugin to group-limited accounts | [Details](./plugin/scoped-access.md) |
 | `mr plugin settings` | Update plugin settings (pass JSON via --data) | [Details](./plugin/settings.md) |
 | `mr plugins` | List installed plugins | [Details](./plugins/index.md) |
 | `mr plugins list` | List plugins and management info | [Details](./plugins/list.md) |
