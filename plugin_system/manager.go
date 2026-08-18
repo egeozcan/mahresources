@@ -148,7 +148,7 @@ type PluginManager struct {
 	shortcodes   map[string][]*PluginShortcode      // pluginName -> shortcodes
 	docs         map[string][]*PluginDoc            // pluginName -> general doc entries
 	mu           sync.RWMutex
-	vmLocks      map[*lua.LState]*sync.Mutex
+	vmLocks      map[*lua.LState]*vmMutex
 	dbProvider   atomic.Value
 	dbWriter     atomic.Value
 	// principalBinder binds dbProvider/dbWriter to the principal that triggered
@@ -232,7 +232,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		displayTypes:    make(map[string][]*PluginDisplayType),
 		shortcodes:      make(map[string][]*PluginShortcode),
 		docs:            make(map[string][]*PluginDoc),
-		vmLocks:         make(map[*lua.LState]*sync.Mutex),
+		vmLocks:         make(map[*lua.LState]*vmMutex),
 		pluginSettings:  make(map[string]map[string]any),
 		actionJobs:      make(map[string]*ActionJob),
 		actionSemaphore: make(chan struct{}, maxConcurrentActions),
@@ -735,7 +735,7 @@ func (pm *PluginManager) loadPlugin(dp DiscoveredPlugin) error {
 	// goroutine that takes this lock before touching it. Without holding it,
 	// that worker finds the lock free and runs concurrently with init() —
 	// two goroutines inside one gopher-lua state, which corrupts its stack.
-	vmLock := &sync.Mutex{}
+	vmLock := newVMMutex()
 	pm.mu.Lock()
 	if pm.closed.Load() {
 		// Registering under pm.mu, with the closed check inside it, is what
@@ -1878,7 +1878,7 @@ func (pm *PluginManager) stateMayRegisterLocked(L *lua.LState) bool {
 	return live
 }
 
-func (pm *PluginManager) revokeLocked(state *lua.LState) (*sync.Mutex, bool) {
+func (pm *PluginManager) revokeLocked(state *lua.LState) (*vmMutex, bool) {
 	mu, owned := pm.vmLocks[state]
 	delete(pm.vmLocks, state)
 	return mu, owned
@@ -1888,7 +1888,7 @@ func (pm *PluginManager) revokeLocked(state *lua.LState) (*sync.Mutex, bool) {
 // VM under mu, and sweeps whatever that work registered on the way out.
 //
 // The caller must already have revoked the state.
-func (pm *PluginManager) finishTeardown(name string, state *lua.LState, mu *sync.Mutex) {
+func (pm *PluginManager) finishTeardown(name string, state *lua.LState, mu *vmMutex) {
 	pm.actionJobsMu.Lock()
 	wg := pm.actionInFlight[name]
 	delete(pm.actionInFlight, name)
@@ -2144,25 +2144,21 @@ func (pm *PluginManager) GetPluginSettings(pluginName string) map[string]any {
 // process for. The lock is released before returning, so the caller's own
 // mu.Lock() does not nest inside pm.mu and cannot invert the ordering
 // DisablePlugin relies on when it drops pm.mu to let in-flight goroutines finish.
-func (pm *PluginManager) VMLock(L *lua.LState) *sync.Mutex {
+func (pm *PluginManager) VMLock(L *lua.LState) *vmMutex {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 	return pm.vmLocks[L]
 }
 
-// LockVM acquires the VM lock for L and returns it, or returns nil when the
-// plugin is gone. A nil return means the caller must not touch L at all: no lock
-// is held in that case.
-//
-// The nil check callers do on VMLock's result is not sufficient on its own,
-// because a caller can capture a live mutex and then block on it while
-// DisablePlugin closes the state. LState.Close() writes state the in-flight
-// L.CallByParam() is reading, so that ordering is a data race and then a nil
-// dereference inside gopher-lua. LockVM closes the window by re-checking
-// liveness *after* the lock is held: DisablePlugin removes the entry while
-// holding this same mutex, so a caller that wins the race sees the entry, and a
-// caller that loses it sees the entry gone and backs out.
-//
+// stillRegistered reports whether L is still in vmLocks, which is the liveness
+// question every acquisition re-asks once it holds the lock.
+func (pm *PluginManager) stillRegistered(L *lua.LState) bool {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	_, live := pm.vmLocks[L]
+	return live
+}
+
 // vmRequestKey carries the caller's own context, undeadlined, inside the
 // timeout-wrapped context a VM entry point installs on the LState.
 type vmRequestKey struct{}
@@ -2205,28 +2201,57 @@ func vmRequestContext(ctx context.Context) context.Context {
 	return context.Background()
 }
 
+// LockVM acquires the VM lock for L and returns it, or returns nil when the
+// plugin is gone. A nil return means the caller must not touch L at all: no lock
+// is held in that case.
+//
 // Lock ordering is mu then pm.mu, matching DisablePlugin. Nothing may take a VM
 // lock while already holding pm.mu.
-func (pm *PluginManager) LockVM(L *lua.LState) *sync.Mutex {
-	mu := pm.VMLock(L)
-	if mu == nil {
-		return nil
-	}
-	mu.Lock()
-	pm.mu.RLock()
-	_, live := pm.vmLocks[L]
-	pm.mu.RUnlock()
-	if !live {
-		mu.Unlock()
-		return nil
-	}
+//
+// (This doc comment spent some time attached to vmRequestKey, several
+// declarations below, where it documented nothing.)
+func (pm *PluginManager) LockVM(L *lua.LState) *vmMutex {
+	// Background never ends, so this is the same unbounded wait it always was.
+	mu, _ := pm.LockVMWithContext(context.Background(), L)
 	return mu
 }
 
-// vmLockPollInterval is how often TryLockVMWithin retries. Only reached under
-// genuine contention, and only on the nested path, so a short poll is cheaper
-// than the machinery a timed mutex would need.
-const vmLockPollInterval = 2 * time.Millisecond
+// LockVMWithContext is LockVM for a caller that can be abandoned: it stops
+// waiting once ctx ends.
+//
+// Three outcomes, and the third is the one this exists for. (mu, nil) is
+// acquired. (nil, nil) is "the plugin is gone", which every caller already
+// handles and must, because touching L after that is a data race and then a nil
+// dereference inside gopher-lua. (nil, err) is "your own request ended while you
+// were queued behind somebody else's call into this plugin", which is not the
+// plugin's fault and must not be reported as though it were missing.
+//
+// Nothing here gives any caller a deadline it did not have. A caller whose
+// context never ends waits exactly as long as before; what changes is only that
+// a client who has already gone away stops holding a goroutine in the queue
+// behind a call that mah.http allows 120 seconds and a remote fetch 30 minutes.
+func (pm *PluginManager) LockVMWithContext(ctx context.Context, L *lua.LState) (*vmMutex, error) {
+	mu := pm.VMLock(L)
+	if mu == nil {
+		return nil, nil
+	}
+	if !mu.LockWithin(ctx, 0) {
+		return nil, errVMWaitAbandoned
+	}
+	// The nil check on VMLock's result above is not sufficient on its own,
+	// because a caller can capture a live mutex and then block on it while
+	// DisablePlugin closes the state. LState.Close() writes state the in-flight
+	// L.CallByParam() is reading, so that ordering is a data race and then a nil
+	// dereference inside gopher-lua. The window closes here, by re-checking
+	// liveness *after* the lock is held: DisablePlugin removes the entry while
+	// holding this very mutex, so a caller that wins the race sees the entry and
+	// one that loses it backs out.
+	if !pm.stillRegistered(L) {
+		mu.Unlock()
+		return nil, nil
+	}
+	return mu, nil
+}
 
 // TryLockVMWithin is LockVM bounded by wait. It returns (nil, false) when the
 // plugin is gone — the caller must not touch L — and (nil, true) when the plugin
@@ -2243,38 +2268,38 @@ const vmLockPollInterval = 2 * time.Millisecond
 // Only the nested case needs bounding, and only the nested case gets it (see
 // RunAfterHooks): a dispatch that holds no VM lock cannot be a participant in
 // such a cycle, so it keeps waiting as long as it takes, exactly as before.
-func (pm *PluginManager) TryLockVMWithin(L *lua.LState, wait time.Duration) (*sync.Mutex, bool) {
+func (pm *PluginManager) TryLockVMWithin(L *lua.LState, wait time.Duration) (*vmMutex, bool) {
 	mu := pm.VMLock(L)
 	if mu == nil {
 		return nil, false
 	}
-	deadline := time.Now().Add(wait)
-	for {
-		if mu.TryLock() {
-			pm.mu.RLock()
-			_, live := pm.vmLocks[L]
-			pm.mu.RUnlock()
-			if !live {
-				mu.Unlock()
-				return nil, false
-			}
-			return mu, false
-		}
-		if time.Now().After(deadline) {
-			// Distinguish "busy" from "gone" here too, not just on the
-			// acquiring path. DisablePlugin unregisters hooks before it deletes
-			// the vmLocks entry, so a dispatcher working from a hook snapshot
-			// taken just before that can sit here waiting on a plugin that is
-			// being torn down. Reporting it as contention would fail a caller's
-			// write over a hook that no longer exists; a disabled plugin is
-			// always a safe skip.
-			pm.mu.RLock()
-			_, live := pm.vmLocks[L]
-			pm.mu.RUnlock()
-			return nil, live
-		}
-		time.Sleep(vmLockPollInterval)
+	// A non-positive wait is handled here rather than passed down, because the
+	// two functions read a zero the opposite way round. LockWithin takes it as
+	// "no deadline of my own", which is what LockVM wants; this is the function
+	// whose entire job is to *bound* the wait, so an unbounded zero would
+	// reinstate the cross-goroutine cycle it exists to break — and it would do
+	// it for the argument a caller would most naturally pass to mean "do not
+	// block". The loop this replaced gave a zero wait one attempt and gave up.
+	acquired := false
+	if wait <= 0 {
+		acquired = mu.TryLock()
+	} else {
+		acquired = mu.LockWithin(context.Background(), wait)
 	}
+	if !acquired {
+		// Distinguish "busy" from "gone" here too, not just on the acquiring
+		// path. DisablePlugin revokes the vmLocks entry only once it holds the
+		// VM lock, so a dispatcher working from a hook snapshot taken before
+		// that can sit here waiting on a plugin that is being torn down.
+		// Reporting it as contention would fail a caller's write over a hook
+		// that no longer exists; a disabled plugin is always a safe skip.
+		return nil, pm.stillRegistered(L)
+	}
+	if !pm.stillRegistered(L) {
+		mu.Unlock()
+		return nil, false
+	}
+	return mu, false
 }
 
 // Close shuts down all Lua VMs. After Close returns, hooks and injections

@@ -1,3 +1,375 @@
+# More than one VM per plugin: the decision (2026-08-17)
+
+Item A2 from the capability report, the last piece of item A. This section is a
+decision document first: what is actually slow, what a second state breaks, the
+three shapes, and a recommendation. The decisions taken are recorded immediately
+below; the analysis they rest on follows.
+
+## Decided
+
+1. **Shape C first, as its own item, then Shape A.**
+2. **K defaults to `1 + maxConcurrentActions`, derived from the constant** rather
+   than written as 4, so raising the job allowance raises the pool with it.
+3. **Shape C item 3 is taken, as a reversal and argued as one.** A render surface
+   caps a synchronous `mah.http` call at the render's own remaining budget. The
+   tree's contrary decision (`http_api.go:243`) was made when a blocked render
+   blocked only itself; it now blocks every surface of the plugin, and a plugin
+   that genuinely needs 120 seconds has the async API.
+4. **Shape C item 4 (confining registration to the load window) moves into Shape
+   A**, batch 3, where it belongs: the doc argues it is scaffolding for replica
+   coherence rather than an independent win, so it should not ship as a defect
+   fix.
+5. The roadmap artifact gets both corrections: the sequential-render claim
+   dropped, async-job serialization promoted to A2's lead motivation.
+
+### Shape C batches
+
+- [ ] **C1. Waiting for a VM honours cancellation.** `LockVM` takes no context
+      (`:2215`), so an abandoned request keeps a goroutine queued behind a
+      120-second call. Every waiter becomes cancellable; nothing gains a new
+      deadline, so a caller that is still there waits exactly as long as it does
+      today.
+- [ ] **C2. The HTTP callback drain stops being one goroutine** (`:248`), so a
+      busy plugin no longer delays every other plugin's callbacks.
+- [ ] **C3. A render's synchronous HTTP is capped at the render's budget**
+      (the reversal above).
+- [ ] **C4. Hook dispatch honours cancellation — but only the half that safely
+      can.** C1 left this surface alone and a review round called it out: a hook
+      that blocks on a busy plugin blocks a user's *write*, which is the most
+      visible form of the defect C1 fixed. It is deliberately not part of C1,
+      because "make hooks cancellable" is two changes with opposite correctness
+      arguments and only one of them is right.
+
+      A **before**-hook may honour it. Abandoning the wait fails the write, and
+      failing a write whose client has gone is safe — it is the same answer
+      `ErrHookVMBusy` already gives when the nested bound expires.
+
+      An **after**-hook may not. It fires after a write has committed, so
+      abandoning it drops plugin-visible bookkeeping for a change that really
+      happened, and the plugin's view of the database silently diverges from the
+      database. A disconnected client is not a reason to skip it, and the
+      deferred queue A1 added (`deferredPluginHooks`) makes the gap wider still:
+      those run at commit, by which point the request may be gone by design.
+
+      Cheap in mechanism, at least: the context is already reachable without
+      touching any of the 35 dispatch sites, because this tree carries it inside
+      the db handle (`ctx.db.Statement.Context`, read that way at
+      `application_context/scoping.go:269`). What it needs is its own tests for
+      the asymmetry, which is why it is its own batch.
+
+## The analysis
+
+## What is slow, and it is not what the report leads with
+
+The report's example is a 120-second `mah.http.get_sync` blocking a plugin's
+pages. That is real: `maxHttpTimeout` is 120s (`http_api.go:17`) and
+`executeSyncHttpRequest` deliberately drops the 5s Lua deadline so the call can
+use all of it (`http_api.go:243-248`), so a render nominally bounded at
+`luaExecTimeout` (5s, `manager.go:60`) can hold the plugin's only VM for 120.
+`create_resource_from_url` is worse at 30 minutes, and reachable from any
+surface.
+
+But the sharpest case is one the tree already documents:
+
+> two jobs of the same plugin run one after another on the same VM
+> (`action_jobs.go:283-288`)
+
+`maxConcurrentActions` is 3 (`action_jobs.go:18`) and a bulk async action
+submits one job per selected entity (`action_handlers.go:260-261`), so selecting
+twenty images and running fal-ai's colorize admits three jobs and then runs them
+**strictly one at a time**, each holding the plugin's only state for a full
+fal.ai round trip, during which every fal-ai page, shortcode, action and hook is
+blocked. A plugin cannot do two things at once even when the host is willing to.
+
+Two claims in the report do not survive contact with the code, and the item
+should not be sold on either:
+
+- *"Concurrent renders of the same plugin's shortcodes on a page."* Renders are
+  sequential on the request goroutine: `RenderSlot` loops the injections for a
+  slot in order (`injections.go:36-41`), and the base layout has six slots
+  (`templates/layouts/base.tpl:37,41,106,108,163,177`). A pool buys
+  cross-request parallelism, not intra-page.
+- *"Effort: Large"* is right, but for a reason the label does not carry: most of
+  the work is not the pool. It is that `*lua.LState` is currently the identity of
+  a plugin generation, in five separate roles, and only one of them is locking.
+
+## The registration table, which decides what is even possible
+
+There are exactly ten registration kinds, all installed in `registerMahModule`
+(`manager.go:968`). Their duplicate behaviour splits three ways, and the split is
+what makes "run `init()` on every state in the pool" a non-starter rather than a
+detail:
+
+| Kind | Duplicate behaviour | Dispatch |
+|---|---|---|
+| `mah.action` (`:1156`), `block_type` (`:1183`), `display_type` (`:1213`), `shortcode` (`:1239`), `doc` (`:1310`) | **`L.ArgError`**, which raises out of `init()` and makes `loadPlugin` call `abandon()` (`:886`) | one |
+| `mah.on` (`:1009`), `mah.inject` (`:1027`), `mah.menu` (`:1131`) | **silent append**, N entries | all N fire |
+| `mah.page` (`:1109`), `mah.api` (`:1368`) | **last-write-wins**, map assign | one |
+
+Every one of those five duplicate checks scans `pm.<map>[*pluginNamePtr]` and
+compares only the id or type name. None compares `entry.state`. So a second
+state of the *same plugin* collides with the first, and the load fails. Five of
+the six bundled plugins register at least one error kind, so a naive pool breaks
+fal-ai (`colorize`), data-views (`badge`), meta-editors (`slider`), widgets
+(`summary`) and example-blocks (`counter`) at enable time.
+
+The sixth, example-plugin, is worse than a hard failure: it registers only
+append and overwrite kinds, so a second `init()` **succeeds silently** and leaves
+a doubled `after_note_create` hook, the footer banner injected twice on every
+page, and a duplicate nav item.
+
+And the interleaving is destructive rather than merely wrong. A replica that
+registers a page and *then* hits the duplicate-action error has already
+overwritten `pm.pages[name][path]` with its own state (`:1109`); `abandon()` then
+runs `unregisterPluginLocked`, whose page sweep deletes every entry whose
+`state` matches (`:1763-1766`). The plugin ends up with no page at all, even
+though the primary registered one. The order is under the plugin author's
+control, so it is silently data-dependent.
+
+## Five things keyed on a pointer that is about to stop being unique
+
+1. **`vmLocks` is not a lock map.** It is simultaneously the mutex table, the
+   liveness token (`stateIsLive`, `:1861`), the registration permit
+   (`stateMayRegisterLocked`, `:1877`), the egress revocation check
+   (`beginHTTP`, `http_api.go:217`) and the claim to close (`revokeLocked`,
+   `:1881`). With K states, "is this plugin alive" has K answers and each gate
+   asks about one.
+2. **`pm.plugins` and `pm.states` are index-coupled parallel arrays**
+   (`:899-900`), read by index in `disablePlugin` (`:1673-1676`), spliced by
+   index (`:1710-1711`), and walked positionally by `pluginNameFor`
+   (`egress.go:568-572`), which returns `"unknown plugin"` for anything absent.
+3. **Every registry entry is a `(state, fn)` pair**, and
+   `unregisterPluginLocked` matches on the state deliberately, because a name can
+   belong to more than one VM over time (`:1733-1742`). Under a pool that same
+   filter stops distinguishing generations and starts distinguishing pool
+   members.
+4. **The re-entry guard is pointer identity.** `holds()` compares `*lua.LState`
+   (`actor.go:133-143`) and `skipReentrantHook` consults it (`hooks.go:234`). A
+   sibling state is a different pointer, so the guard silently stops firing.
+5. **Two paths pin a specific state across a goroutine boundary.**
+   `mah.start_job` hands `mainState(L)` to a worker that locks it minutes later
+   (`:1515`, `action_jobs.go:326`), and `httpCallback.vm` is captured at request
+   time and locked at drain (`http_api.go:31,530`). Neither closure can move to a
+   sibling.
+
+A sixth is a trap rather than a constraint: `lua.LFunction` holds `Env *LTable`
+and `Upvalues` (gopher-lua `value.go:156-162`) and **nothing in gopher-lua
+refuses to run it on another state**. A cross-state call appears to work, then
+mutates one state's tables from another's goroutine. `action_executor.go:50-54`
+already states the rule ("a handler compiled in one LState cannot be called on
+another at all"); it is a convention, and no test can catch breaking it.
+
+## The tree has already named the substrate
+
+The known enable/disable ABA report under `-race` is not a separate problem. Its
+own test says what the fix is:
+
+> `L.Close()` releases the state's registry, so the next enable can allocate its
+> registry over the freed one ... Keying liveness on the `*lua.LState` pointer
+> cannot see that, because the pointer is not what got reused. Fixing it needs a
+> **generation stamped on both the registry entries and the VM registry**
+> (`vmlock_race_test.go:61-69`)
+
+That generation object is exactly what a pool needs: an identity for "this
+enable of this plugin" that owns K states, and that every registry entry, every
+liveness gate and the re-entry chain point at instead of pointing at an
+LState. The pool is what the generation refactor enables, and the ABA fix is
+what it pays for on its own.
+
+There is precedent for the other half too. `readPluginHeader` already executes
+plugin.lua's top-level code in a throwaway VM on every load (`:546-548,561-562`),
+and `readPluginIdentity` already refuses a plugin that "declares something
+different each time it runs" (`:829-835`). "Every state must declare the same
+registrations" is that rule generalised, not a new kind of rule.
+
+## Three shapes
+
+### Shape A: one generation, K states, checkout per call
+
+The generation owns a primary state and K-1 replicas. The primary runs `init()`
+and registers exactly as today, assigning each registration an **ordinal**. Each
+replica runs the same compiled proto and the same `init()` with a per-state
+`replica` flag set: every registration closure verifies that its ordinal matches
+the primary's catalogue (same kind, same name) and stores only its own
+`*lua.LFunction` in the replica's function table, then returns without touching
+`pm.hooks`, `pm.pages` and the rest. A mismatch fails the load, naming the
+divergence.
+
+The registries therefore keep their exact shape and their exact duplicate
+semantics. What changes at the 13 dispatch sites is only how the pair is
+resolved: instead of `mu := pm.LockVM(entry.state)` then `entry.fn`, a caller
+leases a free state from `entry.gen` and takes that state's function for
+`entry.ordinal`.
+
+- **Parallelises**: yes, across requests and across jobs, up to K.
+- Re-entry guard becomes generation identity, which is a no-op at K=1 and so can
+  land and be tested before any replica exists.
+- Pinned work (`start_job`, HTTP callbacks) leases its own specific state rather
+  than any free one.
+- Exhaustion: wait, bounded by the surface's own budget, then degrade per
+  surface. Before-hooks already fail closed on a busy VM (`hooks.go:346-352`);
+  after-hooks already skip; renders render nothing; pages and API endpoints 503.
+  At K=1 with an unbounded wait this is exactly today's behaviour, so the
+  degradation policy is separable and can ship first (Shape C).
+- One open transaction per generation is kept deliberately, by a per-generation
+  token. Today the non-reentrant VM lock is the only thing preventing a plugin
+  from opening two transactions against itself (`db_transaction.go:161`); at
+  `-max-db-connections=1` two would deadlock, and on SQLite the second waits out
+  `busy_timeout` and fails. Nothing about the pool requires giving that up.
+- **Sized against the job allowance, because jobs pin.** A `start_job` worker and
+  an async action hold one specific state for up to `asyncActionTimeout` (5m,
+  `manager.go:62`), and `maxConcurrentActions` is 3 (`action_jobs.go:18`). So a
+  plugin running its full job allowance removes 3 states from circulation, and at
+  K<=3 it has nothing left to serve a page with. Default when enabled:
+  **K = 1 + maxConcurrentActions = 4**, the smallest size at which a plugin
+  saturating the job budget still answers a request. Deployments that raise
+  `maxConcurrentActions` should raise K with it, which argues for deriving the
+  default rather than hard-coding 4.
+- **Open, and new to A1: a pinned callback can drain during the plugin's own
+  transaction.** Today `mah.db.transaction` runs under the VM lock, so the
+  drained HTTP callback (`http_api.go:530`) and the `start_job` worker
+  (`action_jobs.go:326`) cannot run until it commits. Under a pool they can, on
+  the state they are pinned to, with a fresh `Invocation` carrying no transaction
+  binding (`http_api.go:540`, `invocationContextForJob`). Their writes then go
+  out on a second connection and contend with the writer lock the transaction is
+  holding. This is contention, not corruption, and it is the same class as
+  another plugin writing during the transaction, which is already possible and
+  already documented (`plugin-hooks.md:65-68`). But it is new *intra*-plugin
+  behaviour and should be decided rather than discovered: refuse, wait, or
+  document. The transaction token above does not cover it, because neither path
+  opens a transaction.
+
+### Shape B: role-split lanes (a request state and a job state)
+
+Fixed assignment rather than a checkout: renders and endpoints on one state,
+async jobs and callbacks on another. It fixes "a five-minute job blocks every
+fal-ai page" without a general pool.
+
+It needs the *same* replica and ordinal machinery, the same generation identity,
+the same re-entry change and the same teardown surgery, because a job state is
+still a second state that must not double-register. So it costs most of Shape A
+and delivers less: two jobs of one plugin still serialize, and two requests still
+serialize. **Dominated.** Recorded so the option is visibly considered rather
+than missed.
+
+### Shape C: bound the blast radius, add no states
+
+Do not parallelise. Remove the part of the current behaviour that turns "this
+plugin is slow" into "this request hangs". Four changes, and they are not all the
+same kind of change: **two are defects, one reverses a decision the tree made on
+purpose, and one narrows a currently-permitted behaviour.**
+
+1. **DEFECT: lock waits ignore cancellation.** `LockVM`'s `mu.Lock()` (`:2215`)
+   takes no context, so a client that has already disconnected keeps a goroutine
+   queued behind a 120-second call. Every surface except nested hook dispatch
+   waits unboundedly (`TryLockVMWithin` is used only at `hooks.go:283`). The
+   asymmetry is already visible in the tree: `executeSyncHttpRequest` goes to
+   real trouble to keep the *holder* cancellable (`http_api.go:243-248`) while
+   the *waiters* behind it are not.
+2. **DEFECT: the callback drain is one process-wide goroutine** (`:248`) taking
+   an unbounded `LockVM` (`http_api.go:530`), so a busy plugin A delays plugin
+   B's callbacks. Cross-plugin head-of-line blocking, which more states per
+   plugin does not touch at all.
+3. **REVERSAL: capping a render's sync HTTP at the render's own budget.** This
+   is not a bug fix. `http_api.go:243` states the current behaviour as a
+   decision, in exactly the case at issue: "a 5s render timeout must not cap a
+   120s call". Choosing the other way is defensible, because the 5s figure is
+   what the rest of the system is told a render costs, but it is a reversal and
+   should be argued as one, not smuggled in.
+4. **NARROWING, and partly scaffolding: confine registration to the load
+   window.** `stateMayRegisterLocked` permits registration whenever the state is
+   live (`:1873`), while `hookEntry`'s own comment claims "`mah.on` is only
+   reachable from `init()`" (`:92-94`). Refusing it afterwards makes the comment
+   true, but it also removes the case where a replica drifts out of sync with the
+   primary, so it is a prerequisite for Shape A rather than an independent win.
+   It can only ship separately if nothing relies on runtime registration; that
+   has not been checked against third-party plugins, because there are none.
+
+- **Parallelises**: no. A slow plugin is still a single-threaded plugin.
+
+## Recommendation
+
+**Shape C first, as its own item. Then Shape A.**
+
+Items 1 and 2 of Shape C are defects, and they are the difference between "one
+plugin's widget is briefly unavailable" and "the page hangs for two minutes".
+They are worth doing whether or not A2 ever happens, and they give the pool its
+exhaustion policy for free. Items 3 and 4 are decisions rather than fixes and
+should be taken deliberately: 4 in particular is scaffolding for A and has no
+independent reason to ship if A is not going to happen.
+
+Shape A is worth doing after that, and the case for it is the async-job
+serialization above rather than the report's rendering claims. It should land as
+six batches, each of which is a no-op at K=1 and therefore provable against the
+existing suite before any replica exists:
+
+1. **Generation object.** `pluginVM` owns the states, the per-state mutexes, the
+   liveness flag and the plugin name. Registry entries hold `(gen, ordinal)`.
+   `pm.states` and the positional `pluginNameFor` scan go away. Closes the known
+   `-race` ABA on its own terms.
+2. **Re-entry by generation.** `Invocation.states` becomes a chain of
+   generations; `holds()` compares them. Identical behaviour at K=1.
+3. **Replica loading.** Compiled proto shared via `NewFunctionFromProto`
+   (`gopher-lua state.go:1627`), replica flag, ordinal verification, and the
+   "declares the same registrations every time" refusal.
+4. **Checkout.** Lease a free state, or a specific one for pinned work.
+   `-plugin-vm-pool` (default 1 initially, so the default deployment is
+   unchanged until the gates are green).
+5. **The transaction token** and the atomic K-way revoke in teardown.
+6. **Docs, the contract change, and drift guards.**
+
+## What this withdraws from plugin authors, which is the real cost
+
+`plugin-lua-api.md:20` states the guarantee outright:
+
+> Each VM has a mutex. All calls (hooks, actions, page handlers, HTTP callbacks)
+> acquire this mutex, **ensuring single-threaded execution within a single
+> plugin**.
+
+At K>1 that is no longer true, and three things follow:
+
+- **Lua globals fork K ways.** No bundled plugin keeps mutable module state
+  (data-views' `b64lookup` is built once and never written again), but 22 test
+  fixtures in `plugin_system` and around 15 elsewhere do, in Lua globals: a hook
+  counter a later `RenderSlot` reads back, an `http_result` set by a callback.
+  A "lowest free state first" checkout keeps single-threaded sequences on state
+  0, so those fixtures would pass and the change would be latent rather than
+  visible. That is convenient and dangerous in equal measure, and argues for a
+  test mode that forces round-robin.
+- **`mah.kv` read-modify-write becomes a lost update.** `set` is an
+  unconditional upsert with no compare-and-set (`kv_api.go:60`), and the
+  documented mutex is what made the pattern safe. Either the pool ships a CAS or
+  the docs stop licensing it.
+- **`init()` runs K times, and nothing bounds what it may do.** fal-ai's three
+  `mah.log` lines become 3K rows per enable (`fal-ai/plugin.lua:1120,1580,1857`).
+  No bundled `init()` makes a network call or writes an entity, but nothing in
+  the loader prevents one, and a pool would do it K times. "`init()` must only
+  register" becomes a documented requirement enforced by nothing, which is the
+  weakest part of Shape A and worth saying out loud rather than burying.
+- **The documented hook rule survives, but its stated reason does not.**
+  `plugin-hooks.md:69-78` promises "your hook does not fire for that tag" and
+  explains it as "each plugin runs in a single Lua VM behind a non-reentrant
+  lock: without it, re-entering that VM would block forever". Keying the guard on
+  the generation preserves the promise; the explanation has to be rewritten,
+  because with a sibling state available there is no longer a deadlock to point
+  at, only the rule.
+
+## A caveat on the citations above
+
+The load-bearing ones (the registration table, the sweeps at `:1763-1766` and
+`:1843-1846`, `vmlock_race_test.go:61-69`, `plugin-lua-api.md:20`,
+`action_jobs.go:283-288`) were opened and read directly. Others came from a
+survey whose line anchors drifted by 1 to 11 lines even where every quoted string
+was verbatim. Re-derive a cite before writing code against it; the quoted text is
+reliable, the line number is not.
+
+## The alternative worth weighing
+
+Item B, the durable scheduler, is Medium, lifts a whole ceiling on its own, and
+touches none of this. If the appetite is for one more platform item rather than
+a concurrency rebuild, B is the better buy and A2 waits. Shape C should be done
+either way.
+
 # A transaction a plugin can join: mah.db.transaction (2026-08-17)
 
 Item A1 from the capability report — the last small piece of item A, alongside the

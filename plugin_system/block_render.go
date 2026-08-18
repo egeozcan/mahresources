@@ -62,9 +62,9 @@ func (pm *PluginManager) RenderBlock(reqCtx context.Context, pluginName, fullTyp
 	}
 
 	L := pbt.State
-	mu := pm.LockVM(L)
-	if mu == nil {
-		return "", fmt.Errorf("plugin %q is no longer available", pluginName)
+	mu, err := pm.lockVMForRequest(reqCtx, L, pluginName)
+	if err != nil {
+		return "", err
 	}
 	defer mu.Unlock()
 
@@ -93,7 +93,7 @@ func (pm *PluginManager) RenderBlock(reqCtx context.Context, pluginName, fullTyp
 	timeoutCtx, cancel := context.WithTimeout(vmParentContext(reqCtx), luaBlockRenderTimeout)
 	L.SetContext(timeoutCtx)
 
-	err := L.CallByParam(lua.P{
+	err = L.CallByParam(lua.P{
 		Fn:      fn,
 		NRet:    1,
 		Protect: true,

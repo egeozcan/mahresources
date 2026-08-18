@@ -62,7 +62,12 @@ func (pm *PluginManager) HandleAPI(reqCtx context.Context, pluginName, method, p
 	pm.mu.RUnlock()
 
 	L := endpoint.state
-	mu := pm.LockVM(L)
+	mu, err := pm.LockVMWithContext(reqCtx, L)
+	if err != nil {
+		// The caller is gone, so nothing reads this; 503 rather than 404 keeps it
+		// honest for anything that logs it.
+		return APIResponse{StatusCode: 503, Error: err.Error()}
+	}
 	if mu == nil {
 		return APIResponse{StatusCode: 404, Error: "plugin not found"}
 	}
@@ -118,7 +123,7 @@ func (pm *PluginManager) HandleAPI(reqCtx context.Context, pluginName, method, p
 	timeoutCtx, cancel := context.WithTimeout(vmParentContext(reqCtx), endpoint.timeout)
 	L.SetContext(timeoutCtx)
 
-	err := L.CallByParam(lua.P{
+	err = L.CallByParam(lua.P{
 		Fn:      endpoint.fn,
 		NRet:    0,
 		Protect: true,

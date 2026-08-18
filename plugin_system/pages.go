@@ -46,10 +46,9 @@ func (pm *PluginManager) HandlePage(reqCtx context.Context, pluginName, path str
 	}
 
 	L := entry.state
-	mu := pm.LockVM(L)
-	if mu == nil {
-		// Disabled between the registry lookup above and here.
-		return "", fmt.Errorf("plugin %q is no longer available", pluginName)
+	mu, err := pm.lockVMForRequest(reqCtx, L, pluginName)
+	if err != nil {
+		return "", err
 	}
 	defer mu.Unlock()
 
@@ -85,7 +84,7 @@ func (pm *PluginManager) HandlePage(reqCtx context.Context, pluginName, path str
 	timeoutCtx, cancel := context.WithTimeout(vmParentContext(reqCtx), luaPageTimeout)
 	L.SetContext(timeoutCtx)
 
-	err := L.CallByParam(lua.P{
+	err = L.CallByParam(lua.P{
 		Fn:      entry.fn,
 		NRet:    1,
 		Protect: true,

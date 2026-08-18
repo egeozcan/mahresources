@@ -211,9 +211,9 @@ func (pm *PluginManager) RenderShortcode(reqCtx context.Context, pluginName, ful
 	}
 
 	L := sc.State
-	mu := pm.LockVM(L)
-	if mu == nil {
-		return "", fmt.Errorf("plugin %q is no longer available", pluginName)
+	mu, err := pm.lockVMForRequest(reqCtx, L, pluginName)
+	if err != nil {
+		return "", err
 	}
 	defer mu.Unlock()
 
@@ -259,7 +259,7 @@ func (pm *PluginManager) RenderShortcode(reqCtx context.Context, pluginName, ful
 	timeoutCtx, cancel := context.WithTimeout(vmParentContext(reqCtx), luaShortcodeRenderTimeout)
 	L.SetContext(timeoutCtx)
 
-	err := L.CallByParam(lua.P{
+	err = L.CallByParam(lua.P{
 		Fn:      fn,
 		NRet:    1,
 		Protect: true,
@@ -396,9 +396,9 @@ func (pm *PluginManager) renderShortcodeForDocs(reqCtx context.Context, pluginNa
 	}
 
 	L := sc.State
-	mu := pm.LockVM(L)
-	if mu == nil {
-		return "", fmt.Errorf("plugin %q is no longer available", pluginName)
+	mu, err := pm.lockVMForRequest(reqCtx, L, pluginName)
+	if err != nil {
+		return "", err
 	}
 	defer mu.Unlock()
 
@@ -436,7 +436,7 @@ func (pm *PluginManager) renderShortcodeForDocs(reqCtx context.Context, pluginNa
 	timeoutCtx, cancel := context.WithTimeout(vmParentContext(reqCtx), luaShortcodeRenderTimeout)
 	L.SetContext(timeoutCtx)
 
-	err := L.CallByParam(lua.P{
+	err = L.CallByParam(lua.P{
 		Fn:      fn,
 		NRet:    1,
 		Protect: true,

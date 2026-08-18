@@ -38,7 +38,14 @@ func (pm *PluginManager) RenderSlot(reqCtx context.Context, slot string, ctx map
 			continue
 		}
 		L := inj.state
-		mu := pm.LockVM(L)
+		mu, err := pm.LockVMWithContext(reqCtx, L)
+		if err != nil {
+			// The request went away while this slot was queued behind another
+			// call into the plugin. Stop rather than skip: the remaining
+			// injections would each queue behind their own plugin for a page
+			// nobody is waiting for, and six slots run on every page.
+			break
+		}
 		if mu == nil {
 			// The plugin was disabled between GetInjections and here; its state is
 			// being closed, so skip it rather than dereferencing a nil lock.
@@ -50,7 +57,7 @@ func (pm *PluginManager) RenderSlot(reqCtx context.Context, slot string, ctx map
 		timeoutCtx, cancel := context.WithTimeout(vmParentContext(reqCtx), luaExecTimeout)
 		L.SetContext(timeoutCtx)
 
-		err := L.CallByParam(lua.P{
+		err = L.CallByParam(lua.P{
 			Fn:      inj.fn,
 			NRet:    1,
 			Protect: true,

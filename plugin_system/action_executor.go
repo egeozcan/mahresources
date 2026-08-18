@@ -570,11 +570,9 @@ func (pm *PluginManager) RunAction(ctx context.Context, pluginName, actionID str
 		ctxData["settings"] = map[string]any{}
 	}
 
-	// Acquire the VM lock. A nil return means the plugin was disabled between the
-	// registry lookup and here, so its state is closing and must not be touched.
-	mu := pm.LockVM(L)
-	if mu == nil {
-		return nil, fmt.Errorf("plugin %q is no longer available", action.PluginName)
+	mu, err := pm.lockVMForRequest(ctx, L, action.PluginName)
+	if err != nil {
+		return nil, err
 	}
 	defer mu.Unlock()
 

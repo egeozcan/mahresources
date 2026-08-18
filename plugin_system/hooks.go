@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -270,9 +269,9 @@ var ErrHookVMBusy = errors.New("plugin hook could not run: its VM was busy")
 // a veto that never got to run, and skipping it would mean an unrelated plugin
 // being busy silently disables a protection hook. RunBeforeHooks therefore fails
 // the operation instead.
-func (pm *PluginManager) lockVMForHook(inv *Invocation, hook hookEntry, event string) (*sync.Mutex, bool) {
+func (pm *PluginManager) lockVMForHook(inv *Invocation, hook hookEntry, event string) (*vmMutex, bool) {
 	var (
-		mu   *sync.Mutex
+		mu   *vmMutex
 		busy bool
 	)
 	if inv == nil || len(inv.states) == 0 {

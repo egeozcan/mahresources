@@ -54,9 +54,9 @@ func (pm *PluginManager) RenderDisplay(reqCtx context.Context, pluginName, fullT
 	}
 
 	L := dt.State
-	mu := pm.LockVM(L)
-	if mu == nil {
-		return "", fmt.Errorf("plugin %q is no longer available", pluginName)
+	mu, err := pm.lockVMForRequest(reqCtx, L, pluginName)
+	if err != nil {
+		return "", err
 	}
 	defer mu.Unlock()
 
@@ -79,7 +79,7 @@ func (pm *PluginManager) RenderDisplay(reqCtx context.Context, pluginName, fullT
 	timeoutCtx, cancel := context.WithTimeout(vmParentContext(reqCtx), luaDisplayRenderTimeout)
 	L.SetContext(timeoutCtx)
 
-	err := L.CallByParam(lua.P{
+	err = L.CallByParam(lua.P{
 		Fn:      fn,
 		NRet:    1,
 		Protect: true,

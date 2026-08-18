@@ -859,7 +859,7 @@ func TestTryLockVMWithin_ReportsADisabledPluginAsGoneNotBusy(t *testing.T) {
 	defer held.Unlock()
 
 	type result struct {
-		mu   *sync.Mutex
+		mu   *vmMutex
 		busy bool
 	}
 	done := make(chan result, 1)
@@ -964,7 +964,7 @@ end
 	nested := NewInvocation(0).with(otherVM)
 
 	type result struct {
-		mu   *sync.Mutex
+		mu   *vmMutex
 		busy bool
 	}
 	got := make(chan result, 1)
