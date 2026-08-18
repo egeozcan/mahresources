@@ -14,6 +14,10 @@ npm run watch
 # Build CSS only
 npm run build-css
 
+# Check the stylesheet's source scan: prose stays out of public/tailwind.css,
+# and no class the app authors was dropped by an exclusion in index.css
+./scripts/css-scan-test.sh
+
 # Build JS bundle only (Vite)
 npm run build-js
 
