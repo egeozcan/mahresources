@@ -20,10 +20,13 @@ import "context"
 // Fail-closed on both a nil context and a missing principal.
 //
 // A missing principal does NOT mean "auth is disabled". withAuthentication
-// attaches a principal to every request either way: with auth off it builds one
-// from the root admin (SuperUser, so this returns true), and falls back to
-// auth.SystemPrincipal() if that lookup fails. So a request context always
-// carries one, and its absence means this is not a request context at all,
+// attaches a principal to every non-public path either way: with auth off it
+// builds one from the root admin (SuperUser, so this returns true), and falls
+// back to auth.SystemPrincipal() if that lookup fails; with auth on a protected
+// path either carries one or is refused before the handler, and only a public
+// path (/login, /v1/auth/login, /favicon.ico, /public/*) reaches a handler
+// without one. None of those renders a plugin surface. So a request context
+// here always carries one, and its absence means this is not a request context at all,
 // usually because a render path fell back to context.Background(). Treating that
 // as "auth off" would fail open exactly where the caller lost track of who is
 // asking, which is the case this predicate exists to catch.

@@ -17,8 +17,9 @@ func TestPluginCodeAllowed(t *testing.T) {
 	}{
 		{
 			// Not "auth off": withAuthentication attaches a principal to every
-			// request in both modes (root admin when auth is disabled). A missing
-			// one means this is not a request context, so it fails closed.
+			// non-public path in both modes (root admin when auth is disabled), and
+			// no public path renders a plugin surface. A missing one means this is
+			// not a request context, so it fails closed.
 			name:      "no principal",
 			principal: nil,
 			want:      false,

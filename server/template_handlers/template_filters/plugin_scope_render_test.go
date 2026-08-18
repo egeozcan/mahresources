@@ -103,8 +103,9 @@ func TestScopedPrincipalCannotRenderPluginShortcode(t *testing.T) {
 }
 
 // A request context with no principal at all fails closed. withAuthentication
-// attaches one to every request in both auth modes, so its absence means the
-// render path lost track of the caller, and running unscoped plugin code there
+// attaches one to every non-public path in both auth modes, and no public path
+// renders a plugin surface, so its absence means the render path lost track of
+// the caller, and running unscoped plugin code there
 // would be the exact failure the gate exists to prevent.
 func TestMissingPrincipalCannotRenderPluginShortcode(t *testing.T) {
 	pm := enableScopeProbePlugin(t)
