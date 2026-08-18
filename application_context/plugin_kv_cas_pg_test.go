@@ -3,8 +3,6 @@
 package application_context
 
 import (
-	"fmt"
-	"sync"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -83,9 +81,14 @@ func TestPluginKVCompareAndSetPG_Quadrants(t *testing.T) {
 	}
 }
 
-// Postgres runs the writers genuinely in parallel, so this is the sharper half
-// of the concurrency claim: with several connections all inside the same
-// statement, exactly one may be told it wrote.
+// Several connections inside the same statement, and exactly one of them told
+// it wrote.
+//
+// Whether they really are inside it at the same time is not something this
+// test can assert about itself -- one winner is also what a serialized queue of
+// writers reports, whatever the implementation is. The harness it runs on is
+// held to that separately, in
+// TestPluginKVWriterRacePG_CatchesReadThenWrite below.
 func TestPluginKVCompareAndSetPG_ExactlyOneWriterWins(t *testing.T) {
 	const writers = 8
 
@@ -95,43 +98,7 @@ func TestPluginKVCompareAndSetPG_ExactlyOneWriterWins(t *testing.T) {
 		cas := kvCAS(t, ctx)
 		const plugin, key = "pg-racer", "contested"
 
-		if seed != nil {
-			if err := ctx.PluginKVSet(plugin, key, *seed); err != nil {
-				t.Fatalf("seed: %v", err)
-			}
-		}
-
-		var (
-			start   = make(chan struct{})
-			wg      sync.WaitGroup
-			mu      sync.Mutex
-			winners []string
-			errs    []error
-		)
-		for i := 0; i < writers; i++ {
-			wg.Add(1)
-			go func(i int) {
-				defer wg.Done()
-				mine := fmt.Sprintf(`"writer-%d"`, i)
-				<-start
-				ok, err := cas.PluginKVCompareAndSet(plugin, key, seed, mine)
-				mu.Lock()
-				defer mu.Unlock()
-				if err != nil {
-					errs = append(errs, err)
-					return
-				}
-				if ok {
-					winners = append(winners, mine)
-				}
-			}(i)
-		}
-		close(start)
-		wg.Wait()
-
-		for _, err := range errs {
-			t.Errorf("a writer failed: %v", err)
-		}
+		winners := kvWriterRace(t, ctx, cas, plugin, key, seed, writers)
 		if len(winners) != 1 {
 			t.Fatalf("%d of %d writers were told they wrote, want exactly 1: %v",
 				len(winners), writers, winners)
@@ -143,4 +110,64 @@ func TestPluginKVCompareAndSetPG_ExactlyOneWriterWins(t *testing.T) {
 
 	t.Run("from absent", func(t *testing.T) { run(t, nil) })
 	t.Run("from a value", func(t *testing.T) { run(t, expect(`"seed"`)) })
+}
+
+// What the race above is worth, measured.
+//
+// On Postgres, connecting costs far more than the statement does, so writers
+// released into a cold pool queue up in pgx rather than in the row: each one's
+// read lands after the previous one's write, and a compare done in Go reports
+// exactly one winner too. The test above then passes against the very
+// implementation it exists to rule out, and its subject -- the compare being
+// atomic at the storage layer -- goes untested on the dialect that has two
+// databases' worth of ways to get it wrong.
+//
+// So the harness is run against that implementation and required to catch it.
+// A round is caught when it reports anything other than one winner: with the
+// writers genuinely overlapping, several of them read the same state and all
+// write. Rounds each get their own context, because a pool that has already
+// served this test is not the pool the shipped race starts on -- idle
+// connections left over from an earlier round would hand a couple of writers
+// the overlap the barrier is supposed to produce for all of them.
+//
+// Both seed paths, because they fail differently: expecting absent is the
+// insert, expecting the seeded value is the update.
+func TestPluginKVWriterRacePG_CatchesReadThenWrite(t *testing.T) {
+	const (
+		writers = 8
+		rounds  = 6
+	)
+
+	run := func(t *testing.T, seed *string) {
+		t.Helper()
+		counts := make([]int, 0, rounds)
+		for round := 0; round < rounds; round++ {
+			ctx := newPostgresKVContext(t)
+			winners := kvWriterRace(t, ctx, kvReadThenWriteCAS{ctx},
+				"pg-harness", "contested", seed, writers)
+			if len(winners) != 1 {
+				return
+			}
+			counts = append(counts, len(winners))
+		}
+		t.Errorf("%d rounds of %d writers over a read-then-write compare-and-set reported "+
+			"one winner every time (%v): the writers are not overlapping, so "+
+			"TestPluginKVCompareAndSetPG_ExactlyOneWriterWins would pass against a "+
+			"compare done in Go and proves nothing about the statement",
+			rounds, writers, counts)
+	}
+
+	t.Run("from absent", func(t *testing.T) { run(t, nil) })
+	t.Run("from a value", func(t *testing.T) { run(t, expect(`"seed"`)) })
+}
+
+// The lost update, on Postgres. The counter ends at the number of
+// compare-and-sets that reported success, or a write was lost.
+//
+// This is the direct form of the claim and it does not depend on a barrier:
+// the goroutines loop, so after their first iteration they hold connections and
+// genuinely contend. It is the coverage the dialect was missing.
+func TestPluginKVCompareAndSetPG_NoLostUpdate(t *testing.T) {
+	ctx := newPostgresKVContext(t)
+	kvIncrementRace(t, ctx, kvCAS(t, ctx), "pg-counter", "n", 6, 20)
 }

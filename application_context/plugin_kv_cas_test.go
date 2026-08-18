@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -383,43 +382,7 @@ func TestPluginKVCompareAndSet_ExactlyOneWriterWins(t *testing.T) {
 		cas := kvCAS(t, ctx)
 		const plugin, key = "racer", "contested"
 
-		if seed != nil {
-			if err := ctx.PluginKVSet(plugin, key, *seed); err != nil {
-				t.Fatalf("seed: %v", err)
-			}
-		}
-
-		var (
-			start   = make(chan struct{})
-			wg      sync.WaitGroup
-			mu      sync.Mutex
-			winners []string
-			errs    []error
-		)
-		for i := 0; i < writers; i++ {
-			wg.Add(1)
-			go func(i int) {
-				defer wg.Done()
-				mine := fmt.Sprintf(`"writer-%d"`, i)
-				<-start
-				ok, err := cas.PluginKVCompareAndSet(plugin, key, seed, mine)
-				mu.Lock()
-				defer mu.Unlock()
-				if err != nil {
-					errs = append(errs, err)
-					return
-				}
-				if ok {
-					winners = append(winners, mine)
-				}
-			}(i)
-		}
-		close(start)
-		wg.Wait()
-
-		for _, err := range errs {
-			t.Errorf("a writer failed: %v", err)
-		}
+		winners := kvWriterRace(t, ctx, cas, plugin, key, seed, writers)
 		if len(winners) != 1 {
 			t.Fatalf("%d of %d writers were told they wrote, want exactly 1: %v",
 				len(winners), writers, winners)
@@ -437,103 +400,10 @@ func TestPluginKVCompareAndSet_ExactlyOneWriterWins(t *testing.T) {
 	t.Run("from a value", func(t *testing.T) { run(t, expect(`"seed"`)) })
 }
 
-// The lost update itself.
-//
-// Every goroutine reads, then compare-and-sets the value it read to one more,
-// retrying only when the compare refuses. If the compare happens in Go rather
-// than in the statement, two goroutines read the same number, both are told
-// they wrote, and the counter ends below the number of successful writes. That
-// is the whole point of the operation and no single-goroutine test sees it.
+// The lost update itself, on SQLite. Postgres runs the same harness in
+// TestPluginKVCompareAndSetPG_NoLostUpdate, because the statement is where the
+// two databases differ and this is the property that depends on it.
 func TestPluginKVCompareAndSet_NoLostUpdate(t *testing.T) {
-	const (
-		writers   = 6
-		perWriter = 20
-		plugin    = "counter"
-		key       = "n"
-		// A compare that can never match -- an expectation serialized unlike
-		// what set stores, a predicate that matches nothing -- refuses every
-		// attempt, and an uncapped retry loop would hang until the suite's own
-		// timeout instead of saying so.
-		maxAttempts = 10000
-	)
-
 	ctx := newKVRaceContext(t)
-	cas := kvCAS(t, ctx)
-
-	if err := ctx.PluginKVSet(plugin, key, "0"); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	var (
-		wg        sync.WaitGroup
-		mu        sync.Mutex
-		successes int
-		errs      []error
-	)
-	for i := 0; i < writers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			done, attempts := 0, 0
-			for done < perWriter {
-				if attempts++; attempts > maxAttempts {
-					mu.Lock()
-					errs = append(errs, fmt.Errorf("%d attempts produced %d writes: the compare "+
-						"refuses every time", attempts-1, done))
-					mu.Unlock()
-					return
-				}
-				current, found, err := ctx.PluginKVGet(plugin, key)
-				if err != nil {
-					mu.Lock()
-					errs = append(errs, fmt.Errorf("read: %w", err))
-					mu.Unlock()
-					return
-				}
-				if !found {
-					mu.Lock()
-					errs = append(errs, fmt.Errorf("the counter row disappeared"))
-					mu.Unlock()
-					return
-				}
-				var n int
-				if _, err := fmt.Sscanf(current, "%d", &n); err != nil {
-					mu.Lock()
-					errs = append(errs, fmt.Errorf("counter held %q: %w", current, err))
-					mu.Unlock()
-					return
-				}
-				ok, err := cas.PluginKVCompareAndSet(plugin, key, expect(current), fmt.Sprint(n+1))
-				if err != nil {
-					mu.Lock()
-					errs = append(errs, fmt.Errorf("compare-and-set: %w", err))
-					mu.Unlock()
-					return
-				}
-				if ok {
-					done++
-					mu.Lock()
-					successes++
-					mu.Unlock()
-				}
-			}
-		}()
-	}
-	wg.Wait()
-
-	for _, err := range errs {
-		t.Errorf("a writer failed: %v", err)
-	}
-
-	final, found := kvValue(t, ctx, plugin, key)
-	if !found {
-		t.Fatalf("the counter row is gone")
-	}
-	if want := fmt.Sprint(writers * perWriter); successes != writers*perWriter {
-		t.Errorf("%d successful compare-and-sets, want %s", successes, want)
-	}
-	if want := fmt.Sprint(successes); final != want {
-		t.Errorf("counter = %s after %d successful compare-and-sets, want %s: a write was lost, "+
-			"so the compare did not happen in the statement that wrote", final, successes, want)
-	}
+	kvIncrementRace(t, ctx, kvCAS(t, ctx), "counter", "n", 6, 20)
 }
