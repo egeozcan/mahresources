@@ -33,7 +33,8 @@ func repoRootDir(t *testing.T) string {
 // that carve-out costs a deployment nothing because the only callers reaching
 // it are this package's bare handler mounts, and this is the measurement behind
 // that claim: both production mounts are routes, and every route sits behind
-// withAuthentication, which attaches a principal in either auth mode. A later
+// withAuthentication, which attaches a principal to every non-public path
+// in either auth mode, and neither of these handlers is on a public path. A later
 // mount that really does pass no principal cannot appear without this failing,
 // which is the signal to reconsider the carve-out rather than to relax the
 // guard.
