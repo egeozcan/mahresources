@@ -24,14 +24,14 @@ below; the analysis they rest on follows.
 
 ### Shape C batches
 
-- [ ] **C1. Waiting for a VM honours cancellation.** `LockVM` takes no context
+- [x] **C1. Waiting for a VM honours cancellation.** (shipped `400e4f1c`) `LockVM` takes no context
       (`:2215`), so an abandoned request keeps a goroutine queued behind a
       120-second call. Every waiter becomes cancellable; nothing gains a new
       deadline, so a caller that is still there waits exactly as long as it does
       today.
-- [ ] **C2. The HTTP callback drain stops being one goroutine** (`:248`), so a
+- [x] **C2. The HTTP callback drain stops being one goroutine** (shipped `7b54e625`) (`:248`), so a
       busy plugin no longer delays every other plugin's callbacks.
-- [ ] **C3. A render's synchronous HTTP is capped at the render's budget**
+- [x] **C3. A render's synchronous HTTP is capped at the render's budget** (shipped `623740da`)
       (the reversal above).
 
       **What this breaks, deliberately.** The cap applies to every caller that
