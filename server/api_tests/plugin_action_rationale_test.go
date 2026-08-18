@@ -8,7 +8,7 @@ import (
 )
 
 // repoRootDir walks up from the package directory to the module root, so the
-// guard below and the ones in plugin_action_prose_test.go can read sources
+// guard below and the one in plugin_action_prose_test.go can read sources
 // outside their own package.
 func repoRootDir(t *testing.T) string {
 	t.Helper()
