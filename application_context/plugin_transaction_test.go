@@ -48,7 +48,7 @@ func newTwoPluginContext(t *testing.T, sources map[string]string) *MahresourcesC
 	return ctx
 }
 
-// runSlot renders the "run" slot, which is how these plugins are triggered. The
+// runSlot renders the "page_bottom" slot, which is how these plugins are triggered. The
 // slot's return value is the plugin's own report of what happened.
 func runSlot(ctx *MahresourcesContext, slot string) string {
 	return ctx.PluginManager().RenderSlot(context.Background(), slot, map[string]any{}, nil)
@@ -79,7 +79,7 @@ func writerPlugin(name string, fail bool) string {
 	return `plugin = { name = "` + name + `", version = "1.0", description = "writes several things at once" }
 local report = "not run"
 function init()
-    mah.inject("run", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local ok, err = mah.db.transaction(function()
             local g = mah.db.create_group({ name = "tx-group" })
             mah.db.create_note({ name = "tx-note", owner_id = g.id })
@@ -100,7 +100,7 @@ end
 func TestPluginTransaction_CommitsEveryWriteTogether(t *testing.T) {
 	ctx := newTwoPluginContext(t, map[string]string{"writer": writerPlugin("writer", false)})
 
-	if got := runSlot(ctx, "run"); !strings.Contains(got, "committed") {
+	if got := runSlot(ctx, "page_bottom"); !strings.Contains(got, "committed") {
 		t.Fatalf("slot reported %q, want a commit", got)
 	}
 
@@ -118,7 +118,7 @@ func TestPluginTransaction_CommitsEveryWriteTogether(t *testing.T) {
 func TestPluginTransaction_RollsBackEveryWriteTogether(t *testing.T) {
 	ctx := newTwoPluginContext(t, map[string]string{"writer": writerPlugin("writer", true)})
 
-	got := runSlot(ctx, "run")
+	got := runSlot(ctx, "page_bottom")
 	if !strings.Contains(got, "rolled back") {
 		t.Fatalf("slot reported %q, want a rollback", got)
 	}
@@ -162,7 +162,7 @@ function init()
         mah.db.create_tag({ name = "after-tag" })
         return data
     end)
-    mah.inject("fired", function(ctx) return tostring(fired) end)
+    mah.inject("page_top", function(ctx) return tostring(fired) end)
 end
 `
 
@@ -181,7 +181,7 @@ func TestPluginTransaction_BeforeHookWritesJoinTheTransaction(t *testing.T) {
 			"writer":     writerPlugin("writer", false),
 			"hookwriter": hookWriterPlugin,
 		})
-		if got := runSlot(ctx, "run"); !strings.Contains(got, "committed") {
+		if got := runSlot(ctx, "page_bottom"); !strings.Contains(got, "committed") {
 			t.Fatalf("slot reported %q, want a commit", got)
 		}
 		if n := countRows(t, ctx, &models.Tag{}, "name = ?", "before-tag"); n != 1 {
@@ -195,7 +195,7 @@ func TestPluginTransaction_BeforeHookWritesJoinTheTransaction(t *testing.T) {
 			"writer":     writerPlugin("writer", true),
 			"hookwriter": hookWriterPlugin,
 		})
-		if got := runSlot(ctx, "run"); !strings.Contains(got, "rolled back") {
+		if got := runSlot(ctx, "page_bottom"); !strings.Contains(got, "rolled back") {
 			t.Fatalf("slot reported %q, want a rollback", got)
 		}
 		if n := countRows(t, ctx, &models.Tag{}, "name = ?", "before-tag"); n != 0 {
@@ -214,8 +214,8 @@ func TestPluginTransaction_AfterHooksWaitForTheCommit(t *testing.T) {
 			"writer":     writerPlugin("writer", true),
 			"hookwriter": hookWriterPlugin,
 		})
-		runSlot(ctx, "run")
-		if got := runSlot(ctx, "fired"); got != "0" {
+		runSlot(ctx, "page_bottom")
+		if got := runSlot(ctx, "page_top"); got != "0" {
 			t.Errorf("after_note_create fired %s time(s) for a note that was rolled back; "+
 				"a plugin was told about a write that never happened", got)
 		}
@@ -226,8 +226,8 @@ func TestPluginTransaction_AfterHooksWaitForTheCommit(t *testing.T) {
 			"writer":     writerPlugin("writer", false),
 			"hookwriter": hookWriterPlugin,
 		})
-		runSlot(ctx, "run")
-		if got := runSlot(ctx, "fired"); got != "1" {
+		runSlot(ctx, "page_bottom")
+		if got := runSlot(ctx, "page_top"); got != "1" {
 			t.Errorf("after_note_create fired %s time(s) after a committed note, want 1: "+
 				"deferring the hook lost it instead of delaying it", got)
 		}
@@ -267,7 +267,7 @@ function init()
         toldAbout = toldAbout .. tostring(data.name) .. ","
         return data
     end)
-    mah.inject("toldAbout", function(ctx) return toldAbout end)
+    mah.inject("page_top", function(ctx) return toldAbout end)
 end
 `
 	ctx := newTwoPluginContext(t, map[string]string{
@@ -276,13 +276,13 @@ end
 	})
 
 	start := time.Now()
-	got := runSlot(ctx, "run")
+	got := runSlot(ctx, "page_bottom")
 	elapsed := time.Since(start)
 
 	if !strings.Contains(got, "committed") {
 		t.Fatalf("slot reported %q, want a commit: the re-entrant hook dispatch failed the write", got)
 	}
-	told := runSlot(ctx, "toldAbout")
+	told := runSlot(ctx, "page_top")
 	if !strings.Contains(told, "tx-tag") {
 		t.Fatalf("before_tag_create was told about %q, which does not include the triggering "+
 			"plugin's own tag — the hook is not firing at all, so this proves nothing", told)
@@ -325,7 +325,7 @@ function init()
         end)
         return data
     end)
-    mah.inject("seen", function(ctx) return seen end)
+    mah.inject("page_top", function(ctx) return seen end)
 end
 `
 	ctx := newTwoPluginContext(t, map[string]string{"scoped": src})
@@ -338,7 +338,7 @@ end
 		t.Fatalf("confined user could not create a note in its own subtree: %v", err)
 	}
 
-	seen := runSlot(ctx, "seen")
+	seen := runSlot(ctx, "page_top")
 	if seen == "" {
 		t.Fatal("the hook's transaction saw no groups at all, so this proves nothing about scope")
 	}
@@ -380,7 +380,7 @@ func kvPlugin(fail bool) string {
 	}
 	return `plugin = { name = "kvwriter", version = "1.0", description = "stores a cursor" }
 function init()
-    mah.inject("run", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         mah.kv.set("cursor", "before")
         mah.db.transaction(function()
             mah.kv.set("cursor", "after")
@@ -396,7 +396,7 @@ end
 func TestPluginTransaction_StoredDataAndLogsJoinIt(t *testing.T) {
 	t.Run("committed with it", func(t *testing.T) {
 		ctx := newTwoPluginContext(t, map[string]string{"kvwriter": kvPlugin(false)})
-		if got := runSlot(ctx, "run"); got != "after" {
+		if got := runSlot(ctx, "page_bottom"); got != "after" {
 			t.Errorf("mah.kv.get after a committed transaction = %q, want %q: the kv write "+
 				"did not reach the transaction's handle", got, "after")
 		}
@@ -407,7 +407,7 @@ func TestPluginTransaction_StoredDataAndLogsJoinIt(t *testing.T) {
 
 	t.Run("rolled back with it", func(t *testing.T) {
 		ctx := newTwoPluginContext(t, map[string]string{"kvwriter": kvPlugin(true)})
-		if got := runSlot(ctx, "run"); got != "before" {
+		if got := runSlot(ctx, "page_bottom"); got != "before" {
 			t.Errorf("mah.kv.get after a rolled-back transaction = %q, want %q", got, "before")
 		}
 		if n := countRows(t, ctx, &models.LogEntry{}, "message = ?", "inside the transaction"); n != 0 {
@@ -421,7 +421,7 @@ func TestPluginTransaction_StoredDataAndLogsJoinIt(t *testing.T) {
 const refusalPlugin = `plugin = { name = "refused", version = "1.0", description = "tries what it must not" }
 local report = "not run"
 function init()
-    mah.inject("run", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local out = {}
         mah.db.transaction(function()
             local _, err = mah.db.create_resource_from_data("aGk=", { name = "x" })
@@ -448,7 +448,7 @@ end
 func TestPluginTransaction_RefusesCallsThatWaitOnIO(t *testing.T) {
 	ctx := newTwoPluginContext(t, map[string]string{"refused": refusalPlugin})
 
-	got := runSlot(ctx, "run")
+	got := runSlot(ctx, "page_bottom")
 	for _, want := range []string{
 		"mah.db.create_resource_from_data cannot run inside mah.db.transaction",
 		"mah.http.get_sync cannot run inside mah.db.transaction",
@@ -489,7 +489,7 @@ func TestPluginTransaction_RefusesAsyncHttpByRaising(t *testing.T) {
 	const src = `plugin = { name = "asynchttp", version = "1.0", description = "fires a webhook inside a transaction" }
 local callbackRan = false
 function init()
-    mah.inject("run", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local ok, err = mah.db.transaction(function()
             mah.db.create_tag({ name = "before-the-webhook" })
             mah.http.post("https://example.com/webhook", "{}", function(resp)
@@ -498,12 +498,12 @@ function init()
         end)
         return tostring(ok) .. ":" .. tostring(err)
     end)
-    mah.inject("callbackRan", function(ctx) return tostring(callbackRan) end)
+    mah.inject("page_top", function(ctx) return tostring(callbackRan) end)
 end
 `
 	ctx := newTwoPluginContext(t, map[string]string{"asynchttp": src})
 
-	got := runSlot(ctx, "run")
+	got := runSlot(ctx, "page_bottom")
 	if !strings.Contains(got, "mah.http.post cannot run inside mah.db.transaction") {
 		t.Errorf("slot reported %q, want the raised refusal", got)
 	}
@@ -517,7 +517,7 @@ end
 	// Nothing may be queued for the drain goroutine, because a callback that ran
 	// there could write outside the still-open transaction.
 	for i := 0; i < 25; i++ {
-		if ran := runSlot(ctx, "callbackRan"); ran != "false" {
+		if ran := runSlot(ctx, "page_top"); ran != "false" {
 			t.Fatalf("the async callback ran (%q): the refusal was queued rather than raised", ran)
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -535,7 +535,7 @@ func TestPluginTransaction_RefusalsDoNotLeakOutside(t *testing.T) {
 	const src = `plugin = { name = "outside", version = "1.0", description = "sleeps outside a transaction" }
 local report = "not run"
 function init()
-    mah.inject("run", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local ok, err = pcall(function() mah.sleep(0) end)
         report = tostring(ok) .. ":" .. tostring(err)
         return report
@@ -543,7 +543,7 @@ function init()
 end
 `
 	ctx := newTwoPluginContext(t, map[string]string{"outside": src})
-	if got := runSlot(ctx, "run"); !strings.HasPrefix(got, "true") {
+	if got := runSlot(ctx, "page_bottom"); !strings.HasPrefix(got, "true") {
 		t.Errorf("mah.sleep outside a transaction reported %q, want success", got)
 	}
 }
@@ -570,7 +570,7 @@ function init()
         end
         return data
     end)
-    mah.inject("ownWrite", function(ctx) return tostring(ownWrite) end)
+    mah.inject("page_top", function(ctx) return tostring(ownWrite) end)
 end
 `
 	ctx := newTwoPluginContext(t, map[string]string{
@@ -578,10 +578,10 @@ end
 		"nested": nested,
 	})
 
-	if got := runSlot(ctx, "run"); !strings.Contains(got, "committed") {
+	if got := runSlot(ctx, "page_bottom"); !strings.Contains(got, "committed") {
 		t.Fatalf("slot reported %q, want a commit", got)
 	}
-	if got := runSlot(ctx, "ownWrite"); got != "0" {
+	if got := runSlot(ctx, "page_top"); got != "0" {
 		t.Errorf("the nested plugin was told about its own write %s time(s), want 0: the "+
 			"deferred hook was dispatched with the opener's call chain instead of the one it "+
 			"was raised with", got)
@@ -598,7 +598,7 @@ end
 func TestPluginTransaction_RefusedFromACoroutine(t *testing.T) {
 	const src = `plugin = { name = "coro", version = "1.0", description = "yields inside a transaction" }
 function init()
-    mah.inject("run", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local co = coroutine.create(function()
             local ok, err = mah.db.transaction(function()
                 mah.db.create_tag({ name = "coro-tag" })
@@ -609,19 +609,19 @@ function init()
         local resumed, value = coroutine.resume(co)
         return "resumed=" .. tostring(resumed) .. " value=" .. tostring(value)
     end)
-    mah.inject("alive", function(ctx) return "still here" end)
+    mah.inject("page_top", function(ctx) return "still here" end)
 end
 `
 	ctx := newTwoPluginContext(t, map[string]string{"coro": src})
 
-	got := runSlot(ctx, "run")
+	got := runSlot(ctx, "page_bottom")
 	if !strings.Contains(got, "cannot be called from a coroutine") {
 		t.Errorf("slot reported %q, want the coroutine refusal", got)
 	}
 	if !strings.Contains(got, "resumed=true") {
 		t.Errorf("slot reported %q: the coroutine did not run to completion", got)
 	}
-	if alive := runSlot(ctx, "alive"); alive != "still here" {
+	if alive := runSlot(ctx, "page_top"); alive != "still here" {
 		t.Errorf("a later render returned %q: the refused call left the VM unusable", alive)
 	}
 	if n := countRows(t, ctx, &models.Tag{}, "name = ?", "coro-tag"); n != 0 {
@@ -636,7 +636,7 @@ func TestPluginTransaction_AbortStaysAnAbort(t *testing.T) {
 	const src = `plugin = { name = "aborter", version = "1.0", description = "aborts inside a transaction" }
 local report = "not run"
 function init()
-    mah.inject("run", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local ok, err = pcall(function()
             mah.db.transaction(function()
                 mah.db.create_tag({ name = "doomed-tag" })
@@ -650,7 +650,7 @@ end
 `
 	ctx := newTwoPluginContext(t, map[string]string{"aborter": src})
 
-	got := runSlot(ctx, "run")
+	got := runSlot(ctx, "page_bottom")
 	if strings.HasPrefix(got, "true") {
 		t.Errorf("mah.abort inside a transaction did not raise: %q", got)
 	}
@@ -670,7 +670,7 @@ func TestPluginTransaction_NestedTransactionIsASavepoint(t *testing.T) {
 	t.Run("inner failure rolls back only the inner writes", func(t *testing.T) {
 		const src = `plugin = { name = "nester", version = "1.0", description = "nests transactions" }
 function init()
-    mah.inject("run", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local ok, err = mah.db.transaction(function()
             mah.db.create_tag({ name = "outer-tag" })
             local innerOk = mah.db.transaction(function()
@@ -685,7 +685,7 @@ end
 `
 		ctx := newTwoPluginContext(t, map[string]string{"nester": src})
 
-		got := runSlot(ctx, "run")
+		got := runSlot(ctx, "page_bottom")
 		if !strings.HasPrefix(got, "true") {
 			t.Fatalf("the outer transaction did not commit: %q", got)
 		}
@@ -700,7 +700,7 @@ end
 	t.Run("outer failure takes the committed inner with it", func(t *testing.T) {
 		const src = `plugin = { name = "nester", version = "1.0", description = "nests transactions" }
 function init()
-    mah.inject("run", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local ok, err = mah.db.transaction(function()
             local innerOk = mah.db.transaction(function()
                 mah.db.create_tag({ name = "inner-tag" })
@@ -714,7 +714,7 @@ end
 `
 		ctx := newTwoPluginContext(t, map[string]string{"nester": src})
 
-		got := runSlot(ctx, "run")
+		got := runSlot(ctx, "page_bottom")
 		if strings.Contains(got, "inner transaction refused") {
 			t.Fatalf("the nested transaction was refused: %q", got)
 		}
@@ -746,7 +746,7 @@ end
 		"hooknester": hookNester,
 	})
 
-	if got := runSlot(ctx, "run"); !strings.Contains(got, "committed") {
+	if got := runSlot(ctx, "page_bottom"); !strings.Contains(got, "committed") {
 		t.Fatalf("slot reported %q: the hook's failed inner transaction took the caller's down", got)
 	}
 	if n := countRows(t, ctx, &models.Group{}, "name = ?", "tx-group"); n != 1 {

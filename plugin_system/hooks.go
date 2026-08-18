@@ -328,6 +328,14 @@ func hookContext(inv *Invocation) (context.Context, context.CancelFunc) {
 // already executing on the call chain. It may be nil, which means "no actor and
 // no chain" — the shape a caller with no plugin manager wiring produces.
 func (pm *PluginManager) RunBeforeHooks(inv *Invocation, event string, data map[string]any) (map[string]any, error) {
+	// The same catalogue registration is refused against, read from this side
+	// too. Above the closed check and above the no-hooks return, because
+	// neither of those says anything about the name. Reported rather than
+	// failed: the data is the caller's and the typo is ours.
+	if !IsHookEvent(event) {
+		pm.reportUnknownDispatch("hook event", event)
+		return data, nil
+	}
 	if pm.closed.Load() {
 		return data, nil
 	}
@@ -395,6 +403,10 @@ func (pm *PluginManager) RunBeforeHooks(inv *Invocation, event string, data map[
 // Errors are logged and ignored; execution is synchronous — on the caller's own
 // goroutine, which is why inv has to carry the whole chain. See RunBeforeHooks.
 func (pm *PluginManager) RunAfterHooks(inv *Invocation, event string, data map[string]any) {
+	if !IsHookEvent(event) {
+		pm.reportUnknownDispatch("hook event", event)
+		return
+	}
 	if pm.closed.Load() {
 		return
 	}

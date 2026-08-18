@@ -171,7 +171,7 @@ func TestDbApi_GetNote(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local note = mah.db.get_note(1)
         if note then
             return note.name
@@ -191,7 +191,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "Test Note" {
 		t.Errorf("expected 'Test Note', got %q", html)
 	}
@@ -202,7 +202,7 @@ func TestDbApi_GetNoteNotFound(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local note = mah.db.get_note(999)
         if note then
             return "found"
@@ -222,7 +222,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "nil" {
 		t.Errorf("expected 'nil', got %q", html)
 	}
@@ -233,7 +233,7 @@ func TestDbApi_GetResource(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local r = mah.db.get_resource(1)
         if r then
             return r.name .. "|" .. r.content_type
@@ -253,7 +253,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "test.jpg|image/jpeg" {
 		t.Errorf("expected 'test.jpg|image/jpeg', got %q", html)
 	}
@@ -264,7 +264,7 @@ func TestDbApi_GetGroup(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local g = mah.db.get_group(1)
         if g then
             return g.name
@@ -284,7 +284,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "Test Group" {
 		t.Errorf("expected 'Test Group', got %q", html)
 	}
@@ -295,7 +295,7 @@ func TestDbApi_GetTag(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local tag = mah.db.get_tag(1)
         if tag then
             return tag.name
@@ -315,7 +315,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "test-tag" {
 		t.Errorf("expected 'test-tag', got %q", html)
 	}
@@ -326,7 +326,7 @@ func TestDbApi_GetCategory(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local cat = mah.db.get_category(1)
         if cat then
             return cat.name
@@ -346,7 +346,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "Test Category" {
 		t.Errorf("expected 'Test Category', got %q", html)
 	}
@@ -357,7 +357,7 @@ func TestDbApi_QueryNotes(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local notes = mah.db.query_notes({limit = 10})
         if notes then
             return tostring(#notes)
@@ -377,7 +377,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "2" {
 		t.Errorf("expected '2', got %q", html)
 	}
@@ -388,7 +388,7 @@ func TestDbApi_QueryResources(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local resources = mah.db.query_resources({limit = 5})
         if resources then
             return resources[1].name
@@ -408,7 +408,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "file.jpg" {
 		t.Errorf("expected 'file.jpg', got %q", html)
 	}
@@ -419,7 +419,7 @@ func TestDbApi_QueryGroups(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local groups = mah.db.query_groups()
         if groups then
             return groups[1].name
@@ -439,7 +439,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "Group A" {
 		t.Errorf("expected 'Group A', got %q", html)
 	}
@@ -450,7 +450,7 @@ func TestDbApi_NoProvider(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local note = mah.db.get_note(1)
         if note then
             return "found"
@@ -470,7 +470,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "nil" {
 		t.Errorf("expected 'nil' when no provider set, got %q", html)
 	}
@@ -481,7 +481,7 @@ func TestDbApi_NoProviderQueryNotes(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local notes = mah.db.query_notes()
         if notes then
             return "found"
@@ -500,7 +500,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "nil" {
 		t.Errorf("expected 'nil' when no provider set, got %q", html)
 	}
@@ -511,7 +511,7 @@ func TestDbApi_GetResourceData(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local data, mime = mah.db.get_resource_data(1)
         if data then
             return mime .. "|" .. tostring(#data > 0)
@@ -531,7 +531,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "image/jpeg|true" {
 		t.Errorf("expected 'image/jpeg|true', got %q", html)
 	}
@@ -542,7 +542,7 @@ func TestDbApi_GetResourceDataNotFound(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local data = mah.db.get_resource_data(999)
         if data then
             return "found"
@@ -562,7 +562,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "nil" {
 		t.Errorf("expected 'nil', got %q", html)
 	}
@@ -573,7 +573,7 @@ func TestDbApi_GetResourceDataNoProvider(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local data = mah.db.get_resource_data(1)
         if data then
             return "found"
@@ -592,7 +592,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "nil" {
 		t.Errorf("expected 'nil' when no provider set, got %q", html)
 	}
@@ -617,7 +617,7 @@ func TestDbApi_CreateResourceFromURL(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local res, err = mah.db.create_resource_from_url("https://example.com/image.jpg", {name = "my-image.jpg"})
         if res then
             return tostring(res.id) .. "|" .. res.name
@@ -639,7 +639,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "42|my-image.jpg" {
 		t.Errorf("expected '42|my-image.jpg', got %q", html)
 	}
@@ -650,7 +650,7 @@ func TestDbApi_CreateResourceFromData(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local res, err = mah.db.create_resource_from_data("aGVsbG8=", {name = "test-upload.bin"})
         if res then
             return tostring(res.id) .. "|" .. res.name
@@ -670,7 +670,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "43|test-upload.bin" {
 		t.Errorf("expected '43|test-upload.bin', got %q", html)
 	}
@@ -681,7 +681,7 @@ func TestDbApi_CreateResourceFromURLNoProvider(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local res, err = mah.db.create_resource_from_url("https://example.com/img.jpg")
         if res then
             return "ok"
@@ -700,7 +700,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "error:database not available" {
 		t.Errorf("expected 'error:database not available', got %q", html)
 	}
@@ -711,7 +711,7 @@ func TestDbApi_CreateResourceFromDataInvalidBase64(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local res, err = mah.db.create_resource_from_data("!!!not-base64!!!", {name = "bad.bin"})
         if res then
             return "ok"
@@ -734,7 +734,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "base64_error" {
 		t.Errorf("expected 'base64_error', got %q", html)
 	}
@@ -745,7 +745,7 @@ func TestDbApi_AddResourceVersionFromURL(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local ver, err = mah.db.add_resource_version_from_url(1, "https://example.com/result.jpg", "AI edit")
         if ver then
             return tostring(ver.id) .. "|" .. tostring(ver.resource_id) .. "|v" .. tostring(ver.version_number)
@@ -767,7 +767,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "99|1|v2" {
 		t.Errorf("expected '99|1|v2', got %q", html)
 	}
@@ -778,7 +778,7 @@ func TestDbApi_AddResourceVersionFromURLNoProvider(t *testing.T) {
 	writePlugin(t, dir, "db-test", `
 plugin = { name = "db-test", version = "1.0", description = "db api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local ver, err = mah.db.add_resource_version_from_url(1, "https://example.com/result.jpg")
         if ver then
             return "ok"
@@ -797,7 +797,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	html := mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	html := mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if html != "error:database not available" {
 		t.Errorf("expected 'error:database not available', got %q", html)
 	}

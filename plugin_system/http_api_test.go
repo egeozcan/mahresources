@@ -83,7 +83,7 @@ function init()
             http_result = resp.status_code .. ":" .. resp.body
         end
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -99,7 +99,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	if result != "200:hello world" {
 		t.Errorf("expected '200:hello world', got %q", result)
 	}
@@ -128,7 +128,7 @@ function init()
             http_result = resp.status_code .. ":" .. resp.body
         end
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -144,7 +144,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	if result != "201:created" {
 		t.Errorf("expected '201:created', got %q", result)
 	}
@@ -179,7 +179,7 @@ function init()
             http_result = resp.method .. ":" .. resp.body
         end
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -195,7 +195,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	if result != "PUT:updated" {
 		t.Errorf("expected 'PUT:updated', got %q", result)
 	}
@@ -227,7 +227,7 @@ function init()
     }, function(resp)
         http_result = resp.body
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -243,7 +243,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	if result != "ok" {
 		t.Errorf("expected 'ok', got %q", result)
 	}
@@ -274,7 +274,7 @@ function init()
             http_result = "NO_HEADER"
         end
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -290,7 +290,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	if result != "custom-value" {
 		t.Errorf("expected 'custom-value', got %q", result)
 	}
@@ -319,7 +319,7 @@ function init()
             http_result = "OK"
         end
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -335,7 +335,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	if !strings.HasPrefix(result, "ERROR:") {
 		t.Errorf("expected a transport error, got %q", result)
 	}
@@ -359,7 +359,7 @@ function init()
             http_result = "OK"
         end
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -375,7 +375,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	if result != "SCHEME_ERROR" {
 		t.Errorf("expected 'SCHEME_ERROR', got %q", result)
 	}
@@ -403,7 +403,7 @@ function init()
             http_result = tostring(#resp.body)
         end
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -419,7 +419,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	expected := fmt.Sprintf("%d", maxHttpResponseBody)
 	if result != expected {
 		t.Errorf("expected body length %s, got %q", expected, result)
@@ -449,7 +449,7 @@ function init()
             http_result = "OK"
         end
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -465,7 +465,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	if !strings.HasPrefix(result, "TIMEOUT:") {
 		t.Errorf("expected the request to time out, got %q", result)
 	}
@@ -501,7 +501,7 @@ function init()
             http_result = resp.body
         end
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -517,7 +517,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	if result != "ok" {
 		t.Errorf("expected 'ok', got %q", result)
 	}
@@ -543,7 +543,7 @@ function init()
             http_result = resp.status_code .. ":" .. resp.body
         end
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -559,7 +559,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	if result != "404:not found" {
 		t.Errorf("expected '404:not found', got %q", result)
 	}
@@ -585,7 +585,7 @@ function init()
     mah.http.get(%q, function(resp)
         http_result = "done"
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -600,7 +600,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	if result != "done" {
 		t.Errorf("expected 'done', got %q", result)
 	}
@@ -622,7 +622,7 @@ function init()
     }, function(resp)
         http_result = "done"
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -638,7 +638,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result = pollSlot(t, pm2, "test", 5*time.Second)
+	result = pollSlot(t, pm2, "page_bottom", 5*time.Second)
 	if result != "done" {
 		t.Errorf("expected 'done', got %q", result)
 	}
@@ -671,7 +671,7 @@ function init()
             http_result = resp.method .. ":" .. resp.status_code
         end
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -687,7 +687,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	if result != "DELETE:204" {
 		t.Errorf("expected 'DELETE:204', got %q", result)
 	}
@@ -726,7 +726,7 @@ function init()
             end
         end)
     end
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -742,7 +742,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	if result != "ALL_DONE" {
 		t.Errorf("expected 'ALL_DONE', got %q", result)
 	}
@@ -776,7 +776,7 @@ function init()
             http_result = "NO_HEADER"
         end
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -792,7 +792,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pollSlot(t, pm, "test", 5*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 5*time.Second)
 	if result != "val1, val2" {
 		t.Errorf("expected 'val1, val2', got %q", result)
 	}
@@ -811,7 +811,7 @@ func TestHttpApi_GetSyncSuccess(t *testing.T) {
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
 %s
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local resp = mah.http.get_sync(%q)
         if resp.error then
             return "ERR:" .. resp.error
@@ -831,7 +831,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	result := pm.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if result != "200:sync hello" {
 		t.Errorf("expected '200:sync hello', got %q", result)
 	}
@@ -851,7 +851,7 @@ func TestHttpApi_PostSyncSuccess(t *testing.T) {
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
 %s
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local resp = mah.http.post_sync(%q, "sync-body")
         if resp.error then
             return "ERR:" .. resp.error
@@ -871,7 +871,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	result := pm.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if result != "201:sync created" {
 		t.Errorf("expected '201:sync created', got %q", result)
 	}
@@ -889,7 +889,7 @@ func TestHttpApi_GetSyncNetworkError(t *testing.T) {
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
 %s
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local resp = mah.http.get_sync("http://127.0.0.1:1")
         if resp.error then
             return "ERROR:" .. resp.error
@@ -909,7 +909,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	result := pm.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if !strings.HasPrefix(result, "ERROR:") {
 		t.Errorf("expected a transport error, got %q", result)
 	}
@@ -924,7 +924,7 @@ func TestHttpApi_GetSyncInvalidScheme(t *testing.T) {
 	writePlugin(t, dir, "http-test", `
 plugin = { name = "http-test", version = "1.0", description = "http test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local resp = mah.http.get_sync("ftp://example.com/file")
         if resp.error then
             return "SCHEME_ERROR"
@@ -944,7 +944,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	result := pm.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if result != "SCHEME_ERROR" {
 		t.Errorf("expected 'SCHEME_ERROR', got %q", result)
 	}
@@ -963,7 +963,7 @@ func TestHttpApi_PostSyncWithHeaders(t *testing.T) {
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
 %s
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local resp = mah.http.post_sync(%q, "{}", {
             headers = { Authorization = "Key abc123" }
         })
@@ -985,7 +985,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	result := pm.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	if result != "authed" {
 		t.Errorf("expected 'authed', got %q", result)
 	}
@@ -1006,7 +1006,7 @@ func TestHttpApi_GetSyncBodySizeLimit(t *testing.T) {
 	writePlugin(t, dir, "http-test", fmt.Sprintf(`
 %s
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local resp = mah.http.get_sync(%q)
         if resp.error then
             return "ERR:" .. resp.error
@@ -1026,7 +1026,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	result := pm.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	expected := fmt.Sprintf("%d", maxHttpResponseBody)
 	if result != expected {
 		t.Errorf("expected body length %s, got %q", expected, result)

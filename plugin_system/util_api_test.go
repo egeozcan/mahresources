@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// renderUtil boots a one-plugin manager whose "test" slot runs the given Lua
+// renderUtil boots a one-plugin manager whose "page_bottom" slot runs the given Lua
 // and returns what it rendered.
 func renderUtil(t *testing.T, body string) string {
 	t.Helper()
@@ -16,7 +16,7 @@ func renderUtil(t *testing.T, body string) string {
 	writePlugin(t, dir, "util-test", `
 plugin = { name = "util-test", version = "1.0", description = "util api test" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
 `+body+`
     end)
 end
@@ -29,7 +29,7 @@ end
 	if err := mgr.EnablePlugin("util-test"); err != nil {
 		t.Fatalf("EnablePlugin: %v", err)
 	}
-	return mgr.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	return mgr.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 }
 
 // The sandbox opens no os library, so before mah.util a plugin could not read

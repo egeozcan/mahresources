@@ -806,7 +806,7 @@ plugin = { name = "ghost", version = "1.0", api_version = 1, capabilities = { "j
 function init()
     mah.start_job("linger", function(id)
         mah.sleep(7)
-        mah.on("after_create_note", function(ctx) end)
+        mah.on("after_note_create", function(ctx) end)
         mah.job_complete(id)
     end)
 end
@@ -831,7 +831,7 @@ end
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		pm.mu.RLock()
-		hooks := len(pm.hooks["after_create_note"])
+		hooks := len(pm.hooks["after_note_create"])
 		pm.mu.RUnlock()
 		if hooks == 0 {
 			return
@@ -1190,7 +1190,7 @@ func TestNoRegistrationOutlivesItsVM(t *testing.T) {
     mah.block_type({ type = "card", label = "Card",
         render_view = function(ctx) return "" end,
         render_edit = function(ctx) return "" end })
-    mah.on("after_create_note", function(ctx) end)
+    mah.on("after_note_create", function(ctx) end)
     mah.inject("head", function(ctx) return "" end)
     mah.action({ id = "a1", label = "A", entity = "resource", handler = function() return {} end })
     mah.doc({ name = "d1", label = "D" })

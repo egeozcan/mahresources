@@ -101,7 +101,11 @@ as an ordinary error whose message was scanned for familiar phrases, so
 
 ### Complete Hook Reference
 
-All 30 lifecycle hooks, organized by entity type:
+These 30 names are the whole set, and `mah.on` refuses anything else. A misspelled event used to register happily and never fire, which left you with a plugin that loaded cleanly and did nothing; now the plugin fails to load, and the error names the event you asked for alongside the ones that exist.
+
+A refusal takes the whole load with it. Everything the plugin registered before the error is swept, so a plugin reported as failed is never half-installed.
+
+The hooks, organized by entity type:
 
 | Entity | Before Create | After Create | Before Update | After Update | Before Delete | After Delete |
 |--------|--------------|-------------|---------------|-------------|---------------|-------------|
@@ -138,7 +142,7 @@ blocks every other surface of that plugin for the duration.
 
 ### Slot Names
 
-Slots are declared with `{% plugin_slot "..." %}` in the templates. Injecting into a name that does not exist is silently a no-op: `RenderSlot` returns an empty string for slots with no registered renderers. The full set of 21 slots:
+Slots are declared with `{% plugin_slot "..." %}` in the templates. Injecting into a name outside the set below is refused on the same terms as an unknown event: the plugin fails to load, and the error names the slot you asked for alongside the ones that exist. The full set of 21 slots:
 
 | Slot | Location |
 |------|----------|
