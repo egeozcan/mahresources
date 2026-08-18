@@ -2,6 +2,8 @@ package plugin_system
 
 import (
 	"context"
+	"encoding/json"
+	"html"
 	"os"
 	"path/filepath"
 	"strings"
@@ -232,6 +234,59 @@ func TestBundledPluginsDeclareManifests(t *testing.T) {
 		}
 		if len(granted) == 0 {
 			t.Errorf("bundled plugin %q declares no capabilities but is a working plugin", dp.Name)
+		}
+	}
+}
+
+// The escape helpers neutralise the shortcode brackets as HTML entities rather
+// than by removing them, and that choice is what keeps the editors working: an
+// editor's x-data attribute carries JSON arrays and a JS spread, both written by
+// the plugin, and both pass through the same helper as the value they wrap. The
+// browser decodes an attribute before Alpine ever sees it, so the entities cost
+// nothing there -- but a helper that stripped the brackets instead, or escaped
+// into something the HTML parser does not decode, would leave Alpine parsing
+// broken JS with nothing failing until a page rendered it.
+func TestBundledEditorAttributeSurvivesEscaping(t *testing.T) {
+	pm, err := NewPluginManager(bundledPluginDir(t))
+	if err != nil {
+		t.Fatalf("NewPluginManager: %v", err)
+	}
+	defer pm.Close()
+	if err := pm.EnablePlugin("meta-editors"); err != nil {
+		t.Fatalf("EnablePlugin: %v", err)
+	}
+
+	rendered, err := pm.RenderShortcode(
+		context.Background(),
+		"meta-editors",
+		"plugin:meta-editors:multi-select",
+		"resource", 1,
+		json.RawMessage(`{"tags":["a"]}`),
+		map[string]string{"path": "tags", "options": "a,b"},
+		nil,
+		"", false,
+	)
+	if err != nil {
+		t.Fatalf("RenderShortcode: %v", err)
+	}
+
+	// Read the attribute the way the HTML parser does: it ends at the first
+	// unescaped quote, which is itself part of what escaping guarantees.
+	const marker = `x-data="`
+	i := strings.Index(rendered, marker)
+	if i < 0 {
+		t.Fatalf("no x-data attribute in %q", rendered)
+	}
+	rest := rendered[i+len(marker):]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		t.Fatalf("unterminated x-data attribute in %q", rendered)
+	}
+	xdata := html.UnescapeString(rest[:end])
+
+	for _, want := range []string{`options: ["a","b"]`, `let a = [...this.val]`} {
+		if !strings.Contains(xdata, want) {
+			t.Errorf("x-data lost %q after escaping and decoding: %s", want, xdata)
 		}
 	}
 }

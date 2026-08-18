@@ -15,7 +15,10 @@ plugin = {
 -- Helpers
 -- ---------------------------------------------------------------------------
 
---- Escape HTML special characters to prevent XSS.
+--- Escape a value for output: HTML metacharacters, and the shortcode brackets
+--- with them, because this plugin's output goes back through the shortcode
+--- processor and a value somebody typed into a meta field would otherwise run
+--- there as a shortcode. See mah.html_escape in plugin_system/manager.go.
 local function html_escape(str)
     if str == nil then return "" end
     str = tostring(str)
@@ -24,6 +27,8 @@ local function html_escape(str)
     str = str:gsub(">", "&gt;")
     str = str:gsub('"', "&quot;")
     str = str:gsub("'", "&#39;")
+    str = str:gsub("%[", "&#91;")
+    str = str:gsub("%]", "&#93;")
     return str
 end
 

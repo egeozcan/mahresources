@@ -1536,6 +1536,22 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		s = strings.ReplaceAll(s, ">", "&gt;")
 		s = strings.ReplaceAll(s, "\"", "&quot;")
 		s = strings.ReplaceAll(s, "'", "&#39;")
+		// Square brackets too, because a plugin's output is not plain HTML: it
+		// goes back through the shortcode processor, so `[` is a metacharacter
+		// of the output context exactly as `<` is. Without them a plugin that
+		// prints a meta value or an entity field hands whoever wrote that text
+		// a shortcode on the page that printed it, expanded under the reader's
+		// scope rather than the writer's. Quoting the value is no defence: an
+		// attribute span is unescaped only after the pattern has matched it, so
+		// the escaping above is undone again inside a bracket.
+		//
+		// Entities rather than removal, so escaped text still reads as it was
+		// written: the browser renders these as the characters themselves, in
+		// text and in attribute values alike, while shortcodePattern needs a
+		// literal `[` and no longer matches. Appended last, so the `&` each one
+		// introduces is not escaped again.
+		s = strings.ReplaceAll(s, "[", "&#91;")
+		s = strings.ReplaceAll(s, "]", "&#93;")
 		L.Push(lua.LString(s))
 		return 1
 	})
