@@ -33,6 +33,41 @@ func actionScopeRestricted(p *auth.Principal) bool {
 	return p != nil && !p.IsAdmin() && (p.IsScoped() || p.RequiresScope())
 }
 
+// actionPluginAccess answers, per plugin, whether this request may run that
+// plugin's actions. Both action surfaces ask it: the run path refuses with it,
+// and the listing declines to offer what the run path would refuse. An action is
+// the most direct way there is to make a plugin's Lua run, so the operator's
+// per-plugin decision has to govern it; gating the indirect surfaces (pages,
+// shortcodes, slots) while leaving this one open would make the setting mean
+// something different from what it says.
+//
+// The rule itself is auth.PluginActionAccessFor's, not a second copy of it, for
+// the reason DownloadHistoryQuery gives: a listing and the mutation it leads to
+// cannot be allowed to drift apart. The same predicate also filters the action
+// lists the pages render (server/routes.go).
+//
+// It is the reach rule plus the one thing running an action is that reading a
+// page is not: a write. withAuthorization refuses a guest POST
+// /v1/jobs/action/run whatever the toggle says, and that refusal is above this
+// handler, so a filter built on reach alone would keep offering guests buttons
+// that only ever answer 403.
+//
+// One case diverges: a request carrying no principal is unrestricted here and
+// refused there. That is this file's existing treatment of a missing principal,
+// set by actionScopeRestricted, which skips the entity-visibility checks for it.
+// Refusing the plugin while granting every entity would answer "who is asking?"
+// two ways inside one handler. It costs nothing in a deployment: every route
+// sits behind withAuthentication, which attaches a principal to every
+// non-public path in either auth mode, and neither action path is public, so
+// the only callers that reach it are this package's bare handler mounts. That was measured, and TestActionHandlers_BareMountsAreTestsOnly pins
+// it: if that guard ever fails, this carve-out is the thing to reconsider.
+func actionPluginAccess(ctx PluginActionRunner, r *http.Request) auth.PluginAccess {
+	if auth.PrincipalFromContext(r.Context()) == nil {
+		return func(string) bool { return true }
+	}
+	return auth.PluginActionAccessFor(r.Context(), ctx.PluginAllowsScopedPrincipals)
+}
+
 // entityVisibleForAction reports whether the target entity is visible to the
 // (scoped) context for the action's entity type. Entity types that are not
 // subtree-scoped (tags, categories, ...) are always allowed.
@@ -95,13 +130,28 @@ func GetPluginActionsHandler(ctx PluginActionRunner) func(http.ResponseWriter, *
 			entityDataPtr = entityData
 		}
 
+		// Offer only what this caller could actually run. A group-limited account
+		// is refused a plugin it was not opened to, so listing that plugin's
+		// actions hands it a button whose only outcome is a 403. The decision is
+		// read on every request, so a grant or a revocation shows up on the next
+		// load rather than the next restart.
+		//
+		// This executes no plugin code and hides nothing an enumeration could
+		// not recover elsewhere: it removes a dead control, it is not a
+		// containment boundary. The run path is the boundary.
+		access := actionPluginAccess(ctx, r)
 		actions := pm.GetActions(entity, entityDataPtr)
-		if actions == nil {
-			actions = []plugin_system.ActionRegistration{}
+		// Non-nil even when everything is filtered out: the browser maps over
+		// this response, and appending to a nil slice would encode null.
+		offered := make([]plugin_system.ActionRegistration, 0, len(actions))
+		for _, action := range actions {
+			if access(action.PluginName) {
+				offered = append(offered, action)
+			}
 		}
 
 		w.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(w).Encode(actions)
+		_ = json.NewEncoder(w).Encode(offered)
 	}
 }
 
@@ -162,24 +212,20 @@ func GetActionRunHandler(ctx PluginActionRunner) func(http.ResponseWriter, *http
 			return
 		}
 
+		reqPrincipal := auth.PrincipalFromContext(r.Context())
+		if !actionPluginAccess(ctx, r)(req.Plugin) {
+			http_utils.HandleError(
+				fmt.Errorf("this plugin is not available to group-limited accounts"),
+				w, r, http.StatusForbidden,
+			)
+			return
+		}
+
 		// RBAC: a group-limited principal may only run an action on entities
 		// inside its subtree. The entity-ref params are scoped automatically
 		// because the entity-ref reader runs on this request-scoped context, but
 		// the primary entity_ids must be checked explicitly.
-		reqPrincipal := auth.PrincipalFromContext(r.Context())
 		if actionScopeRestricted(reqPrincipal) {
-			// An action is the most direct way there is to make a plugin's Lua
-			// run, so the operator's per-plugin decision has to govern it too.
-			// Gating the indirect surfaces (pages, shortcodes, slots) while
-			// leaving this one open would make the setting mean something
-			// different from what it says.
-			if !ctx.PluginAllowsScopedPrincipals(req.Plugin) {
-				http_utils.HandleError(
-					fmt.Errorf("this plugin is not available to group-limited accounts"),
-					w, r, http.StatusForbidden,
-				)
-				return
-			}
 			for _, eid := range req.EntityIDs {
 				if !entityVisibleForAction(ctx, action.Entity, eid) {
 					http_utils.HandleError(

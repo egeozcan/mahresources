@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/json"
 	"net/url"
+	"strconv"
 
 	"mahresources/cmd/mr/client"
 	"mahresources/cmd/mr/helptext"
@@ -15,7 +16,7 @@ import (
 //go:embed plugins_help/*.md
 var pluginsHelpFS embed.FS
 
-// NewPluginCmd returns the singular "plugin" command with enable/disable/settings/purge-data subcommands.
+// NewPluginCmd returns the singular "plugin" command with enable/disable/scoped-access/settings/purge-data subcommands.
 func NewPluginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	help := helptext.Load(pluginsHelpFS, "plugins_help/plugin.md")
 	pluginCmd := &cobra.Command{
@@ -27,6 +28,7 @@ func NewPluginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 
 	pluginCmd.AddCommand(newPluginEnableCmd(c, opts))
 	pluginCmd.AddCommand(newPluginDisableCmd(c, opts))
+	pluginCmd.AddCommand(newPluginScopedAccessCmd(c, opts))
 	pluginCmd.AddCommand(newPluginSettingsCmd(c, opts))
 	pluginCmd.AddCommand(newPluginPurgeDataCmd(c, opts))
 
@@ -88,6 +90,49 @@ func newPluginDisableCmd(c *client.Client, opts *output.Options) *cobra.Command 
 			return nil
 		},
 	}
+}
+
+func newPluginScopedAccessCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(pluginsHelpFS, "plugins_help/plugin_scoped_access.md")
+	var allowed bool
+
+	cmd := &cobra.Command{
+		Use:         "scoped-access <name>",
+		Short:       "Open or close a plugin to group-limited accounts",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			formData := url.Values{}
+			formData.Set("name", args[0])
+			// The server reads absence as a revocation, because the manage page
+			// posts a checkbox. Sending the decision explicitly both ways keeps
+			// this command saying what the operator said.
+			formData.Set("allowed", strconv.FormatBool(allowed))
+
+			var raw json.RawMessage
+			if err := c.PostForm("/v1/plugin/scopedAccess", nil, formData, &raw); err != nil {
+				return err
+			}
+
+			if opts.JSON {
+				output.PrintSingle(*opts, nil, raw)
+			} else if allowed {
+				output.PrintMessage("Plugin opened to group-limited accounts.")
+			} else {
+				output.PrintMessage("Plugin closed to group-limited accounts.")
+			}
+			return nil
+		},
+	}
+
+	// Required rather than defaulted: a bool flag that defaults to false would
+	// make the bare `mr plugin scoped-access my-plugin` a silent revocation.
+	cmd.Flags().BoolVar(&allowed, "allowed", false, "Whether group-limited users and guests may reach this plugin (required)")
+	cmd.MarkFlagRequired("allowed")
+
+	return cmd
 }
 
 func newPluginSettingsCmd(c *client.Client, opts *output.Options) *cobra.Command {

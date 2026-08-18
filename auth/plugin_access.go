@@ -20,10 +20,13 @@ import "context"
 // Fail-closed on both a nil context and a missing principal.
 //
 // A missing principal does NOT mean "auth is disabled". withAuthentication
-// attaches a principal to every request either way: with auth off it builds one
-// from the root admin (SuperUser, so this returns true), and falls back to
-// auth.SystemPrincipal() if that lookup fails. So a request context always
-// carries one, and its absence means this is not a request context at all,
+// attaches a principal to every non-public path either way: with auth off it
+// builds one from the root admin (SuperUser, so this returns true), and falls
+// back to auth.SystemPrincipal() if that lookup fails; with auth on a protected
+// path either carries one or is refused before the handler, and only a public
+// path (/login, /v1/auth/login, /favicon.ico, /public/*) reaches a handler
+// without one. None of those renders a plugin surface. So a request context
+// here always carries one, and its absence means this is not a request context at all,
 // usually because a render path fell back to context.Background(). Treating that
 // as "auth off" would fail open exactly where the caller lost track of who is
 // asking, which is the case this predicate exists to catch.
@@ -82,4 +85,30 @@ func PluginAccessFor(ctx context.Context, allowsScoped func(pluginName string) b
 		}
 		return allowsScoped(pluginName)
 	}
+}
+
+// PluginActionAccessFor is the rule for one further question: not "may this
+// caller reach the plugin" but "may this caller run one of its actions".
+//
+// Running an action is a write. requiredCapability classifies
+// POST /v1/jobs/action/run as capWrite, and principalSatisfies answers capWrite
+// with Principal.CanWrite, which is the method called here. So a guest is
+// refused every action run by withAuthorization whatever the per-plugin toggle
+// says, and a surface that offers a guest an action offers it a 403. That
+// refusal happens above the handlers, so nothing below the middleware can see it
+// unless it asks, which is what this exists for.
+//
+// Narrowing here rather than inside PluginAccessFor. The toggle opens surfaces a
+// guest is entitled to once an operator has opened them: plugin pages,
+// shortcodes and slots are all capRead. Folding the write capability into the
+// reach predicate would take those away too, which no rule asks for.
+//
+// Reachability is still decided in exactly one place, because this delegates to
+// PluginAccessFor instead of restating it. Both nil cases fail closed: a nil
+// context yields no principal, and a nil principal cannot write.
+func PluginActionAccessFor(ctx context.Context, allowsScoped func(pluginName string) bool) PluginAccess {
+	if !PrincipalFromContext(ctx).CanWrite() {
+		return func(string) bool { return false }
+	}
+	return PluginAccessFor(ctx, allowsScoped)
 }
