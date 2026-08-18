@@ -26,11 +26,19 @@ import (
 	"mahresources/plugin_system"
 )
 
-// The shape of a lifecycle event name. Deliberately looser than the catalogue —
+// The shape of a lifecycle event name. Deliberately looser than the catalogue:
 // it has to match a typo (`after_create_note`) and a genuinely new event
 // (`before_series_create`) as readily as a correct one, or the scan would only
 // ever find what it already knows.
-var hookEventLiteral = regexp.MustCompile(`^(?:before|after)_[a-z]+_[a-z]+$`)
+//
+// Two or more segments after the prefix, because a name is the entity plus the
+// operation and an entity is not always one word. `before_note_block_create`
+// and `before_saved_mrql_query_update` are the shape a hook on NoteBlock or
+// SavedMRQLQuery would take, and a filter that allowed exactly two never
+// compared either one against the catalogue: the event would ship
+// uncatalogued and green, and IsHookEvent would then refuse the plugin that
+// asked for it. Allowing exactly three would only move the blind spot.
+var hookEventLiteral = regexp.MustCompile(`^(?:before|after)_[a-z]+(?:_[a-z]+)+$`)
 
 // dispatchFuncs are the calls that put an event name on the wire. A file is
 // scanned only if it mentions one of them, which keeps an unrelated string
@@ -153,7 +161,16 @@ func TestHookEventCatalogueMatchesWhatTheHostDispatches(t *testing.T) {
 // The slot literals a page actually renders. templateFiles walks templates/;
 // the tag is parsed by server/template_handlers/template_filters/plugin_slot.go,
 // which takes a single string token, so a literal is the only form there is.
-var pluginSlotTag = regexp.MustCompile(`{%\s*plugin_slot\s+"([^"]+)"\s*%}`)
+//
+// Either quote character, and either spelling of the delimiters. pongo2 opens a
+// string on the quote it finds and closes it on the same one (lexer.go
+// stateString, reached from l.accept("\"'")), and `{%-` and `-%}` are in its
+// TokenSymbols, so all of those forms render identically. A form the scan
+// cannot see is a slot the catalogue never learns: mah.inject refuses the name
+// and RenderSlot warns about a slot the page really does declare. Every tag in
+// templates/ is written one way today, which is why scanning the tree cannot
+// find the others.
+var pluginSlotTag = regexp.MustCompile(`{%-?\s*plugin_slot\s+(?:"([^"]+)"|'([^']+)')\s*-?%}`)
 
 func TestInjectionSlotCatalogueMatchesTheTemplates(t *testing.T) {
 	declared := map[string]string{}
@@ -253,7 +270,15 @@ func TestHookEventScanSeesAMultiWordEntity(t *testing.T) {
 func slotNamesIn(body string) []string {
 	var out []string
 	for _, m := range pluginSlotTag.FindAllStringSubmatch(body, -1) {
-		out = append(out, m[1])
+		// One group per quote character, because RE2 has no backreference with
+		// which to say "closed by the quote that opened it". Exactly one group
+		// took part and both require at least one character, so the non-empty
+		// one is the name.
+		name := m[1]
+		if name == "" {
+			name = m[2]
+		}
+		out = append(out, name)
 	}
 	return out
 }
