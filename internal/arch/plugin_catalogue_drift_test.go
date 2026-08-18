@@ -98,7 +98,7 @@ func dispatchedHookEvents(t *testing.T) map[string]string {
 				return true
 			}
 			val, uerr := strconv.Unquote(lit.Value)
-			if uerr != nil || !hookEventLiteral.MatchString(val) {
+			if uerr != nil || !scanSeesEventLiteral(val) {
 				return true
 			}
 			found[val] = filepath.ToSlash(rel)
@@ -158,8 +158,8 @@ var pluginSlotTag = regexp.MustCompile(`{%\s*plugin_slot\s+"([^"]+)"\s*%}`)
 func TestInjectionSlotCatalogueMatchesTheTemplates(t *testing.T) {
 	declared := map[string]string{}
 	for path, body := range templateFiles(t) {
-		for _, m := range pluginSlotTag.FindAllStringSubmatch(body, -1) {
-			declared[m[1]] = path
+		for _, slot := range slotNamesIn(body) {
+			declared[slot] = path
 		}
 	}
 	if len(declared) == 0 {
@@ -192,5 +192,93 @@ func TestInjectionSlotCatalogueMatchesTheTemplates(t *testing.T) {
 	if len(unrendered) > 0 {
 		t.Errorf("plugin_system.AllInjectionSlots lists slots no template renders, so mah.inject accepts a "+
 			"name that is still a silent no-op: %s", strings.Join(unrendered, ", "))
+	}
+}
+
+// scanSeesEventLiteral is how the scan above decides a string literal is an
+// event name. The test below constrains that decision rather than the way it
+// happens to be made today, so a filter that stops being a regexp re-points
+// this one line instead of a table of call sites.
+func scanSeesEventLiteral(s string) bool {
+	return hookEventLiteral.MatchString(s)
+}
+
+// The scan is the only thing standing between a new event and the catalogue, so
+// its filter has to admit every name the host could plausibly dispatch, not
+// only the names it already dispatches. A literal the filter does not match is
+// a literal the guard never compares: the event ships uncatalogued and green,
+// IsHookEvent then refuses the plugin that asks for it, and the host's own
+// dispatch is skipped with a log line for company. That is the exact failure
+// this file exists to prevent, arriving through the guard meant to prevent it.
+//
+// A filter that allows a one-word entity is defeated by every entity in this
+// tree whose name is two, and each of these has CRUD paths that could grow a
+// hook tomorrow: NoteBlock, ResourceVersion, GroupRelation, ResourceCategory,
+// SavedMRQLQuery. The last one is four words, so "allow three" is no fix
+// either.
+//
+// Only the accepting direction is pinned here. Over-loosening is already
+// checked, by TestHookEventCatalogueMatchesWhatTheHostDispatches on a clean
+// tree: a filter loose enough to sweep up an ordinary literal in one of the
+// files it reads reports that literal as an event the catalogue is missing, and
+// goes red at once.
+func TestHookEventScanSeesAMultiWordEntity(t *testing.T) {
+	for _, event := range []string{
+		"before_note_block_create",
+		"after_note_block_delete",
+		"after_resource_version_create",
+		"before_group_relation_create",
+		"after_resource_category_update",
+		"before_saved_mrql_query_update",
+	} {
+		if !scanSeesEventLiteral(event) {
+			t.Errorf("the scan does not recognise %q as an event name, so a dispatch of it added without "+
+				"a catalogue entry passes this guard", event)
+		}
+	}
+
+	// Still a filter. "id" and "name" are ordinary literals in the files the
+	// scan reads; "resource_create" is an event name with its prefix lost.
+	for _, notAnEvent := range []string{"id", "name", "resource_create"} {
+		if scanSeesEventLiteral(notAnEvent) {
+			t.Errorf("the scan reads %q as an event name, so the catalogue is asked to list a string "+
+				"nothing dispatches", notAnEvent)
+		}
+	}
+}
+
+// slotNamesIn returns the slot names a template body declares. The catalogue
+// check above and the test below both read it, so a scan taught to see a
+// spelling it was missing cannot be taught it in only one of the two places.
+func slotNamesIn(body string) []string {
+	var out []string
+	for _, m := range pluginSlotTag.FindAllStringSubmatch(body, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// pongo2 opens a string token on either quote character and closes it on the
+// one it opened with (lexer.go stateString, reached from l.accept("\"'")), so
+// {% plugin_slot 'head' %} parses and renders exactly like the double-quoted
+// form. The scan reads only double quotes, so a slot declared the other legal
+// way is invisible to it: the catalogue never learns the name, mah.inject
+// refuses it, and RenderSlot warns about a slot the template really does
+// declare.
+//
+// Every tag in templates/ is double-quoted today, which is why the catalogue
+// check is green and why scanning the tree cannot find this. It is the defect
+// above wearing different clothes, on the other half of the same file: a form
+// the host accepts and the scan cannot see.
+func TestSlotScanSeesASingleQuotedTag(t *testing.T) {
+	got := slotNamesIn(`{% plugin_slot 'group_detail_sidebar' %}`)
+	if len(got) != 1 || got[0] != "group_detail_sidebar" {
+		t.Errorf("the scan read %q from a single-quoted plugin_slot tag, so a slot declared that way is "+
+			"missing from this guard while the page renders it", got)
+	}
+
+	// The form every template uses today must keep working.
+	if got := slotNamesIn(`{% plugin_slot "head" %}`); len(got) != 1 || got[0] != "head" {
+		t.Errorf("the scan stopped reading the double-quoted form: %q", got)
 	}
 }
