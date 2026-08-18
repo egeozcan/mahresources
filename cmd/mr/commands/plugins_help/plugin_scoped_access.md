@@ -12,6 +12,10 @@ operator's consent to what the plugin may do, while this is consent to
 who may ask it to. It is off by default, so a confined account is
 refused the plugin's pages, API endpoints, shortcodes, slots and
 actions, and the actions it may not run are not offered to it either.
+Guests are read-only, and running an action is a write, so a guest is
+refused every action run however this is set: opening a plugin gives a
+guest its pages, shortcodes and slots, and it is offered no actions
+either way.
 
 Pass the decision explicitly via the required `--allowed` flag; a bare
 call would otherwise read as a revocation. Opening a plugin says

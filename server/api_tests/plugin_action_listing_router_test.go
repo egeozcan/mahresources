@@ -74,12 +74,17 @@ func confinedUserBearer(t *testing.T, tc *TestContext) string {
 	return scopedUserBearer(t, tc, g.ID)
 }
 
-// routerPluginActions lists resource actions through the real router. An empty
-// bearer sends no Authorization header, which is what an auth-off deployment
-// does.
+// routerPluginActions lists resource actions through the real router.
 func routerPluginActions(t *testing.T, tc *TestContext, bearer string) []string {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/v1/plugin/actions?entity=resource", nil)
+	return routerActionsFor(t, tc, bearer, "resource")
+}
+
+// routerActionsFor is the same listing for any entity type. An empty bearer
+// sends no Authorization header, which is what an auth-off deployment does.
+func routerActionsFor(t *testing.T, tc *TestContext, bearer, entity string) []string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/v1/plugin/actions?entity="+entity, nil)
 	req.Header.Set("Accept", "application/json")
 	if bearer != "" {
 		req.Header.Set("Authorization", bearer)

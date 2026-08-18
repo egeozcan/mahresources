@@ -132,12 +132,15 @@ func TestPluginActions_GroupLimitedCallerSeesOnlyPluginsOpenedToThem(t *testing.
 		{"admin", &auth.Principal{UserID: 1, Role: models.RoleAdmin}, both},
 		{"unscoped user", &auth.Principal{UserID: 2, Role: models.RoleUser}, both},
 		{"group-limited user", &auth.Principal{UserID: 3, Role: models.RoleUser, ScopeGroupID: &scope}, []string{"open-plugin"}},
-		{"group-limited guest", &auth.Principal{UserID: 4, Role: models.RoleGuest, ScopeGroupID: &scope}, []string{"open-plugin"}},
+		// A guest is read-only, and running an action is a write: withAuthorization
+		// classifies POST /v1/jobs/action/run as capWrite, which Principal.CanWrite
+		// refuses a guest. So no toggle an operator can set makes an action
+		// runnable for one, and offering it any is offering a 403.
+		{"group-limited guest", &auth.Principal{UserID: 4, Role: models.RoleGuest, ScopeGroupID: &scope}, nil},
 		// A guest whose role mandates a scope but has no group is confined to
-		// nothing, and the run path still puts it through the same per-plugin
-		// toggle. Its emptiness bites at entity visibility, not here, so the
-		// listing must not invent a stricter answer than the run.
-		{"guest with no scope group", &auth.Principal{UserID: 5, Role: models.RoleGuest}, []string{"open-plugin"}},
+		// nothing. Same answer, and for the same reason: the refusal is about
+		// what the role may do, not about where it may do it.
+		{"guest with no scope group", &auth.Principal{UserID: 5, Role: models.RoleGuest}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := listedPlugins(t, pluginActionsResponse(t, runner, tc.principal))

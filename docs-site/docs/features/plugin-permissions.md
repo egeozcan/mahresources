@@ -151,9 +151,12 @@ Two consequences worth knowing:
   a card or the bulk bar gets `403` unless that plugin is open to it. This is
   the one place the setting *narrows* what such an account could do before, and
   it is deliberate: an action is the most direct way to make a plugin's Lua run.
+  A **guest** is refused whatever this setting says, because running an action is
+  a write and a guest is read-only. Opening a plugin to guests gives them its
+  pages, shortcodes and slots, never its actions.
   The buttons follow the same rule, so an action that would be refused is not
   drawn: the detail sidebar, the card menu and the bulk bar each list only the
-  plugins that account may reach, and `GET /v1/plugin/actions` answers the same
+  actions that account could run, and `GET /v1/plugin/actions` answers the same
   way. That is tidiness rather than protection. Drawing a button runs no plugin
   code, and the `403` is what actually holds.
 - **Hooks are not covered by this.** They fire from ordinary writes a confined

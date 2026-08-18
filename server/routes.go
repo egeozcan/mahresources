@@ -167,12 +167,15 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// as reachable by group-limited users, so the seams need the name to
 		// decide. Absence still fails closed, exactly as the whole-request
 		// gate did.
-		//
-		// Bound once and used twice: the seams read it off the context, and the
-		// action lists below are filtered with it. Two predicates built from the
-		// same inputs are a pair that can be edited apart.
 		pluginAccess := auth.PluginAccessFor(request.Context(), appContext.PluginAllowsScopedPrincipals)
 		ctx["_pluginAccess"] = pluginAccess
+		// The action lists below are filtered by a stricter predicate, because
+		// they answer a different question. The seams ask whether this caller may
+		// reach a plugin, which for an opened plugin a guest may; the lists ask
+		// whether it could run one of its actions, which a guest never can,
+		// because that is a write. Reachability is still decided once:
+		// PluginActionAccessFor delegates to PluginAccessFor for that half.
+		actionAccess := auth.PluginActionAccessFor(request.Context(), appContext.PluginAllowsScopedPrincipals)
 
 		// Expose the authenticated user to templates (nav avatar / logout). The
 		// implicit super-user used when auth is disabled is intentionally not
@@ -228,7 +231,7 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		if mainEntity := ctx["mainEntity"]; mainEntity != nil {
 			if entityType, ok := ctx["mainEntityType"].(string); ok && entityType != "" {
 				entityData := buildEntityDataFromEntity(mainEntity, entityType)
-				ctx["pluginDetailActions"] = offeredActions(pluginAccess, pm.GetActionsForPlacement(entityType, "detail", entityData))
+				ctx["pluginDetailActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement(entityType, "detail", entityData))
 			}
 		}
 
@@ -237,13 +240,13 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		path := request.URL.Path
 		switch {
 		case strings.HasPrefix(path, "/resources"):
-			ctx["pluginCardActions"] = offeredActions(pluginAccess, pm.GetActionsForPlacement("resource", "card", nil))
-			ctx["pluginBulkActions"] = offeredActions(pluginAccess, pm.GetActionsForPlacement("resource", "bulk", nil))
+			ctx["pluginCardActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("resource", "card", nil))
+			ctx["pluginBulkActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("resource", "bulk", nil))
 		case strings.HasPrefix(path, "/notes"):
-			ctx["pluginCardActions"] = offeredActions(pluginAccess, pm.GetActionsForPlacement("note", "card", nil))
+			ctx["pluginCardActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("note", "card", nil))
 		case strings.HasPrefix(path, "/groups"):
-			ctx["pluginCardActions"] = offeredActions(pluginAccess, pm.GetActionsForPlacement("group", "card", nil))
-			ctx["pluginBulkActions"] = offeredActions(pluginAccess, pm.GetActionsForPlacement("group", "bulk", nil))
+			ctx["pluginCardActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("group", "card", nil))
+			ctx["pluginBulkActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("group", "bulk", nil))
 		}
 
 		// For JSON responses, process shortcodes in Custom* fields since the
@@ -267,9 +270,10 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 // too.
 //
 // It removes a dead control rather than closing anything: drawing a button runs
-// no plugin code, and the run path is the boundary. Which is also why it asks
-// the page's own predicate instead of a rule of its own. One rule, asked by the
-// render seams, by the listing endpoint and here.
+// no plugin code, and the run path is the boundary. Which is also why it takes
+// the predicate rather than owning one: auth.PluginActionAccessFor is what the
+// two action handlers ask, so the buttons and the endpoint they post to cannot
+// answer differently.
 func offeredActions(access auth.PluginAccess, actions []plugin_system.ActionRegistration) []plugin_system.ActionRegistration {
 	offered := make([]plugin_system.ActionRegistration, 0, len(actions))
 	for _, action := range actions {

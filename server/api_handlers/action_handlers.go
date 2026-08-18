@@ -41,10 +41,16 @@ func actionScopeRestricted(p *auth.Principal) bool {
 // shortcodes, slots) while leaving this one open would make the setting mean
 // something different from what it says.
 //
-// The rule itself is auth.PluginAccessFor's, not a second copy of it, for the
-// reason DownloadHistoryQuery gives: a listing and the mutation it leads to
+// The rule itself is auth.PluginActionAccessFor's, not a second copy of it, for
+// the reason DownloadHistoryQuery gives: a listing and the mutation it leads to
 // cannot be allowed to drift apart. The same predicate also filters the action
 // lists the pages render (server/routes.go).
+//
+// It is the reach rule plus the one thing running an action is that reading a
+// page is not: a write. withAuthorization refuses a guest POST
+// /v1/jobs/action/run whatever the toggle says, and that refusal is above this
+// handler, so a filter built on reach alone would keep offering guests buttons
+// that only ever answer 403.
 //
 // One case diverges: a request carrying no principal is unrestricted here and
 // refused there. That is this file's existing treatment of a missing principal,
@@ -59,7 +65,7 @@ func actionPluginAccess(ctx PluginActionRunner, r *http.Request) auth.PluginAcce
 	if auth.PrincipalFromContext(r.Context()) == nil {
 		return func(string) bool { return true }
 	}
-	return auth.PluginAccessFor(r.Context(), ctx.PluginAllowsScopedPrincipals)
+	return auth.PluginActionAccessFor(r.Context(), ctx.PluginAllowsScopedPrincipals)
 }
 
 // entityVisibleForAction reports whether the target entity is visible to the

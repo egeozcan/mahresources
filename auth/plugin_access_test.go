@@ -93,3 +93,28 @@ func TestPluginCodeAllowedNilContext(t *testing.T) {
 		t.Fatal("PluginCodeAllowed(nil) = true, want false (fail closed)")
 	}
 }
+
+// PluginAccessFor answers "may this caller reach this plugin's code", and that
+// is all it answers. The surfaces it gates are reads a guest is entitled to
+// perform once an operator has opened the plugin: pages, shortcodes and slots
+// are all capRead.
+//
+// Running an action is not one of them. It is a write, refused for a guest by
+// the capability check in withAuthorization, so the predicate that decides which
+// actions to OFFER has to be stricter than this one. Stricter at the offer,
+// though, not here: folding the write capability into this function would take a
+// guest's toggled-on pages away with it, which no rule asks for and no other
+// test would notice, because the scoped principals the render-gate tests use are
+// users and users may write.
+func TestPluginAccessFor_OpenPluginStaysReachableForAReadOnlyGuest(t *testing.T) {
+	scope := uint(7)
+	ctx := WithPrincipal(context.Background(), &Principal{UserID: 5, Role: models.RoleGuest, ScopeGroupID: &scope})
+
+	access := PluginAccessFor(ctx, func(name string) bool { return name == "open-plugin" })
+	if !access("open-plugin") {
+		t.Error("a guest is refused a plugin an operator opened to group-limited accounts")
+	}
+	if access("shut-plugin") {
+		t.Error("a guest reaches a plugin no operator opened")
+	}
+}
