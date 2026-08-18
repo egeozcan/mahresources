@@ -12,35 +12,52 @@
    shipped stylesheet, which makes a plan document a build input and is why a
    fresh build of this file stopped reproducing the committed artifact.
 
-   Every glob below was measured, by diffing the class list built with and
-   without it against a reference stylesheet built with detection off and only
-   the trees that genuinely author class attributes named: the .tpl templates,
-   src, every .go file, the plugin Lua and the preset JSON under
-   server/template_presets. Each glob removes zero classes the application asks
-   for; together they remove 114. Do not add one you have not measured that way,
-   because an over-broad exclusion deletes a rule silently and the page that
-   needed it simply renders wrong. Grep is not that measurement: `text-stone-50`
-   is a substring of `text-stone-500` and `ordinal` of `ordinal_position`, and a
-   comment naming a class the file no longer emits reads to grep as a use. All
-   three occur here.
+   The first exclusion is the general rule, because prose does not stay in a
+   docs folder. It also lives inside Go trees: the go:embed'd CLI help under
+   cmd, the MRQL design documents under mrql, and a README in each of idlock,
+   benchmarks and models. A glob per prose folder has to be extended by whoever
+   writes the next design document, and nothing would tell them to.
+
+   The trees named after it are the ones whose prose is not .md, and they are
+   excluded whole: e2e's .ts specs, the .txt and .html evidence under tasks, the
+   site sources under docs-site, docs' generated .html report and the script
+   that writes it, and .claude's settings and seed script. skills holds only .md
+   today and is named anyway, so a generated asset landing there does not
+   quietly become a build input.
+
+   Every glob was measured, by diffing the class list built with and without it
+   against a reference stylesheet built with detection off and only the trees
+   that genuinely author class attributes named: the .tpl templates, src, every
+   .go file, the plugin Lua and the preset JSON under server/template_presets.
+   That reference is 867 classes and every one of them survives, while the
+   exclusions together remove 114 classes. Do not add one you have not measured
+   that way, because an over-broad exclusion deletes a rule silently and the
+   page that needed it simply renders wrong. Grep is not that measurement:
+   `text-stone-50` is a substring of `text-stone-500` and `ordinal` of
+   `ordinal_position`, and a comment naming a class the file no longer emits
+   reads to grep as a use. All three occur here. scripts/css-scan-test.sh runs
+   both measurements: prose that reaches the stylesheet, and authored classes
+   that no longer do.
 
    e2e is excluded whole rather than by extension because a .ts spec is prose
    where it counts. `w-[18px]` reached the stylesheet only from a comment
    recording a button's pre-fix classes, and `[role="option"]:visible` is a
    Playwright selector Tailwind read as an arbitrary variant; both were already
-   dead for anyone building without e2e checked out. The last glob is the
-   go:embed'd CLI help text, prose living inside a Go tree, which no
-   docs-folder-shaped exclusion reaches.
+   dead for anyone building without e2e checked out.
 
-   Two things that look like the fix and are not:
-   - `@source not` cannot override an explicit `@source`. An exclusion that
-     overlaps either line above is a silent no-op, so one glob matching every
-     .md file in the tree would not do what it reads like.
-   - `@import "tailwindcss" source(none);` switches detection off entirely and
-     drops 69 classes the app really uses, because the explicit list is
-     incomplete: src is named by its .js files only while it holds 95 .ts files,
-     and Go string literals, the plugin Lua and the preset JSON are named
-     nowhere. Detection is what reaches all of those today.
+   One constraint on what can be written below: `@source not` cannot override an
+   explicit `@source`, so an exclusion overlapping either line at the top is a
+   silent no-op. `@source not "./templates/**"` leaves the build at its full 985
+   classes. That is a rule about overlap and not about breadth. The .md
+   exclusion overlaps neither line and fires like any other, removing 105 of
+   those 114 classes on its own and none of the 867. It cannot be written out in
+   this comment, because the glob contains the sequence that ends one.
+
+   What looks like the fix and is not: `@import "tailwindcss" source(none);`
+   switches detection off entirely and drops 70 of those 867 classes, because
+   the explicit list is incomplete. src is named by its .js files only while it
+   holds 95 .ts files, and Go string literals, the plugin Lua and the preset
+   JSON are named nowhere. Detection is what reaches all of those today.
 
    Left in the scan deliberately: public/dist, the committed Vite bundle. It
    contributes four junk tokens (@container, container!, list-item, resize!) and
@@ -51,15 +68,13 @@
    real markup, and `bg-blue-50` reaches the stylesheet from that heredoc and
    from nowhere else. .worktrees needs no entry at all; .gitignore already keeps
    detection out of it. */
+@source not "./**/*.md";
 @source not "./docs/**";
 @source not "./docs-site/**";
 @source not "./e2e/**";
 @source not "./tasks/**";
 @source not "./.claude/**";
 @source not "./skills/**";
-@source not "./*.md";
-@source not "./cmd/**/*.md";
-
 @theme {
   --font-sans: 'IBM Plex Sans', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
