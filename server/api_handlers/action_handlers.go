@@ -59,8 +59,9 @@ func actionScopeRestricted(p *auth.Principal) bool {
 // two ways inside one handler. It costs nothing in a deployment: every route
 // sits behind withAuthentication, which attaches a principal to every
 // non-public path in either auth mode, and neither action path is public, so
-// the only callers that reach it are this package's bare handler mounts. That was measured, and TestActionHandlers_BareMountsAreTestsOnly pins
-// it: if that guard ever fails, this carve-out is the thing to reconsider.
+// the only callers that reach it are this package's bare handler mounts. That
+// was measured, and TestActionHandlers_BareMountsAreTestsOnly pins it: if that
+// guard ever fails, this carve-out is the thing to reconsider.
 func actionPluginAccess(ctx PluginActionRunner, r *http.Request) auth.PluginAccess {
 	if auth.PrincipalFromContext(r.Context()) == nil {
 		return func(string) bool { return true }
