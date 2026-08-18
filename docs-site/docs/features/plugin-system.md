@@ -161,7 +161,7 @@ mah.kv.delete("last_run")
 local keys = mah.kv.list("prefix_")
 ```
 
-Values are JSON-serialized before storage and deserialized on read.
+Values are JSON-serialized before storage and deserialized on read, up to 8 MB per key. For a key that two of a plugin's surfaces may update at once, `mah.kv.compare_and_set` writes only while the stored value is still the one that was read. See the [`mah.kv` reference](./plugin-lua-api.md#mahkv----key-value-storage).
 
 ### Purging Plugin Data
 
