@@ -13,12 +13,21 @@ import (
 )
 
 const (
-	defaultHttpTimeout    = 10 * time.Second
-	maxHttpTimeout        = 120 * time.Second
-	maxHttpResponseBody   = 5 * 1024 * 1024 // 5MB
-	maxHttpRedirects      = 10
-	maxConcurrentHttpReqs = 16
-	httpUserAgent         = "mahresources-plugin/1.0"
+	defaultHttpTimeout = 10 * time.Second
+	maxHttpTimeout     = 120 * time.Second
+	// syncHttpBudgetHeadroom is how far short of its caller's deadline a
+	// synchronous request stops, so the plugin has a moment to see the failure
+	// and render something instead of being killed mid-call.
+	//
+	// It is a real trade, not a free one: a request that would have answered in
+	// the last 250ms of a budget now fails instead. That is the price of the
+	// fallback being reachable at all, and it is the right way round -- a
+	// response arriving with no time left to use it renders nothing either way.
+	syncHttpBudgetHeadroom = 250 * time.Millisecond
+	maxHttpResponseBody    = 5 * 1024 * 1024 // 5MB
+	maxHttpRedirects       = 10
+	maxConcurrentHttpReqs  = 16
+	httpUserAgent          = "mahresources-plugin/1.0"
 )
 
 // httpCallback holds a pending callback to be executed on the Lua VM thread.
@@ -182,6 +191,40 @@ func (pm *PluginManager) registerHttpModule(L *lua.LState, mahMod *lua.LTable, e
 	mahMod.RawSetString("http", httpMod)
 }
 
+// effectiveSyncTimeout decides how long a synchronous plugin request may run:
+// the timeout the plugin asked for, lowered to what remains of its caller's
+// budget less the headroom, when the caller has a budget at all.
+//
+// A pure function taking the numbers rather than a context, because the policy
+// is easy to get subtly wrong in ways no timing test would notice. Every
+// end-to-end test of this can be satisfied by an implementation that returns a
+// millisecond for anything with a deadline, or one that caps at a constant that
+// happens to sit under the assertion's slack. The boundaries are where the
+// meaning lives, so they are asserted directly.
+// requested is positive by construction: extractRequestOptions keeps its
+// default unless the plugin's value is greater than zero, so a plugin cannot ask
+// for a negative timeout and get one back.
+func effectiveSyncTimeout(requested, remaining time.Duration, hasBudget bool) time.Duration {
+	if !hasBudget {
+		return requested
+	}
+	// Compared before subtracting, not after. time.Until saturates at
+	// time.Duration's minimum for an absurdly old deadline, and subtracting the
+	// headroom from that wraps around to a huge positive -- which would read as
+	// an enormous budget and hand back the full requested timeout, the exact
+	// opposite of what an expired deadline should produce.
+	if remaining <= syncHttpBudgetHeadroom {
+		// Nothing usable left. Zero, not negative: the call must fail
+		// immediately rather than be handed a duration that reads as "no
+		// timeout" somewhere downstream.
+		return 0
+	}
+	if usable := remaining - syncHttpBudgetHeadroom; usable < requested {
+		return usable
+	}
+	return requested
+}
+
 // errShuttingDown is what a plugin sees when it asks for network work the
 // manager will not be around to finish.
 //
@@ -240,12 +283,60 @@ func (pm *PluginManager) executeSyncHttpRequest(egress NetworkPolicy, method, ur
 		}
 	}()
 
-	// The Lua deadline is dropped (a 5s render timeout must not cap a 120s
-	// call), but the caller's cancellation is kept: hung against Background
-	// this held the plugin's exclusive VM lock for the full timeout after the
-	// client had already gone away. vmRequestContext yields Background when
-	// there is no request, which is the hook and async-job case.
-	ctx, cancel := context.WithTimeout(vmRequestContext(savedCtx), timeout)
+	// The caller's cancellation is kept -- hung against Background this held the
+	// plugin's exclusive VM lock for the full timeout after the client had gone
+	// away -- and the caller's *budget* is now kept too, as a ceiling on the
+	// timeout the plugin asked for.
+	//
+	// This reverses what this comment used to say: "a 5s render timeout must not
+	// cap a 120s call". On its own that is a fair reading -- an author who asks
+	// for 120 seconds means it -- but it leaves out what the call holds while it
+	// waits. The VM lock is exclusive across every one of that plugin's
+	// surfaces, so a render blocking for two minutes takes the plugin's pages,
+	// shortcodes, blocks, display types, API endpoints and hooks with it, for
+	// every user, to produce a fragment whose own deadline passed 115 seconds
+	// earlier and whose output is discarded. The plugin's timeout is what it may
+	// ask for, not a promise the caller will wait that long.
+	//
+	// Every caller that has a budget imposes it, and in practice they all have
+	// one: 30s for a page, 5s for a hook, an injection or a drained callback,
+	// 5m for an async job. So this is not a render-only rule, and should not be
+	// read as one -- a get_sync that defaults to 10s inside a hook now ends at
+	// about 4.75s. That is the intended reading: a hook blocks the user's write
+	// that fired it, and a drained callback still holds the lock every other
+	// surface of that plugin needs. An async job's 5 minutes leaves the full
+	// 120s untouched, which is the case worth protecting and the one that
+	// survives.
+	//
+	// The requested timeout still wins wherever it is smaller than what the
+	// budget leaves -- which is the remainder minus the headroom, not the
+	// remainder itself -- and a context with no deadline leaves it untouched.
+	// The cap stops slightly short of the budget rather than exactly on it, and
+	// that margin is the difference between a feature and a technicality. These
+	// calls hand the plugin back a table with an error field precisely so it can
+	// degrade -- fall back to cached text, render a placeholder, say the service
+	// is slow. Cutting the request off at the same instant the Lua deadline
+	// fires means that branch never runs: the plugin is killed mid-call and the
+	// surface renders nothing at all. Ending a little early is what turns "your
+	// render was truncated" into something the author can actually handle.
+	//
+	// A budget already spent yields a zero timeout and the request fails at
+	// once, which is the honest answer: there is no time left to make it in.
+	// Whether the plugin gets to *act* on that is a different question and the
+	// answer is often no -- restoring an expired context kills the Lua call --
+	// so the fallback path is reachable in proportion to how much budget was
+	// left, not guaranteed.
+	remaining, hasBudget := time.Duration(0), false
+	if savedCtx != nil {
+		if deadline, ok := savedCtx.Deadline(); ok {
+			remaining, hasBudget = time.Until(deadline), true
+		}
+	}
+	effective := effectiveSyncTimeout(timeout, remaining, hasBudget)
+
+	// vmRequestContext yields Background when there is no request, which is the
+	// hook and async-job case.
+	ctx, cancel := context.WithTimeout(vmRequestContext(savedCtx), effective)
 	defer cancel()
 
 	var bodyReader io.Reader

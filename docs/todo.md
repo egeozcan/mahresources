@@ -33,6 +33,25 @@ below; the analysis they rest on follows.
       busy plugin no longer delays every other plugin's callbacks.
 - [ ] **C3. A render's synchronous HTTP is capped at the render's budget**
       (the reversal above).
+
+      **What this breaks, deliberately.** The cap applies to every caller that
+      has a budget, which is all of them: 30s for a page, 5s for a hook, an
+      injection or a drained callback, 5m for an async job. So a hook that POSTs
+      to an external service and used to succeed at 6s -- outliving its own 5s
+      Lua budget, because the sync call dropped the deadline entirely -- now
+      fails at about 4.75s. That is the point rather than a side effect: it was
+      holding the plugin's every surface for the whole time.
+
+      Two consequences worth naming before anyone hits them. A cancelled POST is
+      ambiguous: the remote may well have processed it while the plugin sees an
+      error, so a retry can duplicate work. And an authorisation hook that
+      genuinely needs longer has no way to say so today.
+
+      The fix for that is **not** a per-call opt-out, which would just restore
+      the two-minute whole-plugin hold under a different name. It is a per-surface
+      budget an operator can raise deliberately, so the cost is visible and
+      bounded rather than granted invisibly to whoever asks. Not built yet; if
+      it is wanted, it belongs with the per-surface timeouts, not here.
 - [ ] **C4. Hook dispatch honours cancellation — but only the half that safely
       can.** C1 left this surface alone and a review round called it out: a hook
       that blocks on a busy plugin blocks a user's *write*, which is the most
