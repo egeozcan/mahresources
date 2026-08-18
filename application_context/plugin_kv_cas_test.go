@@ -236,6 +236,13 @@ func TestPluginKVCompareAndSet_AbsentIsNotStoredNull(t *testing.T) {
 // The compare is scoped by plugin for the same reason every other kv operation
 // is. A conditional statement that forgot the plugin_name predicate would read
 // as correct in every single-plugin test.
+//
+// So every compare below has to contest a row another plugin really holds. A
+// compare aimed at a key nobody holds matches nothing with the predicate and
+// nothing without it, which is a passing assertion that rules out no
+// implementation at all -- and the two failures being ruled out are cross-plugin
+// data isolation, on the one write path that can reach two plugins' rows in a
+// single statement.
 func TestPluginKVCompareAndSet_IsPerPlugin(t *testing.T) {
 	ctx := createTestContext(t)
 	mine := kvTestPlugin(t, ctx) + ":a"
@@ -263,13 +270,51 @@ func TestPluginKVCompareAndSet_IsPerPlugin(t *testing.T) {
 		t.Errorf("the other plugin's value became %q, want %q", val, `"theirs"`)
 	}
 
-	// Nor can I compare against what they hold.
-	ok, err = cas.PluginKVCompareAndSet(mine, "only-theirs", expect(`"theirs"`), `"stolen"`)
+	// Nor can I compare against what they hold. The expectation names the value
+	// sitting in their row and not in mine, so a compare that dropped the plugin
+	// matches theirs, reports the write to me, and leaves their key holding what
+	// I put there.
+	ok, err = cas.PluginKVCompareAndSet(mine, "shared", expect(`"theirs"`), `"stolen"`)
 	if err != nil {
 		t.Fatalf("compare-and-set: %v", err)
 	}
 	if ok {
-		t.Errorf("compare-and-set matched against a key that only another plugin holds")
+		t.Errorf("compare-and-set matched a value that only another plugin holds")
+	}
+	if val, _ := kvValue(t, ctx, theirs, "shared"); val != `"theirs"` {
+		t.Errorf("the other plugin's value became %q, want %q: the compare wrote across plugins",
+			val, `"theirs"`)
+	}
+	if val, _ := kvValue(t, ctx, mine, "shared"); val != `"mine"` {
+		t.Errorf("stored value = %q, want %q: a refused compare-and-set must not write", val, `"mine"`)
+	}
+
+	// The other half, and the one the return value alone cannot describe. When
+	// both plugins hold the same key at the same value, a scoped compare matches
+	// the one row that is mine; an unscoped one matches two, and two is not one,
+	// so RowsAffected reports a refusal to a caller whose write has already
+	// landed in someone else's row.
+	if err := ctx.PluginKVSet(theirs, "same", `1`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := ctx.PluginKVSet(mine, "same", `1`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	ok, err = cas.PluginKVCompareAndSet(mine, "same", expect(`1`), `2`)
+	if err != nil {
+		t.Fatalf("compare-and-set: %v", err)
+	}
+	if !ok {
+		t.Errorf("compare-and-set of my own row = false, want true: another plugin holding the " +
+			"same key at the same value is not a second row of mine")
+	}
+	if val, _ := kvValue(t, ctx, mine, "same"); val != `2` {
+		t.Errorf("stored value = %q, want %q", val, `2`)
+	}
+	if val, _ := kvValue(t, ctx, theirs, "same"); val != `1` {
+		t.Errorf("the other plugin's value became %q, want %q: the compare wrote across plugins",
+			val, `1`)
 	}
 }
 
