@@ -57,7 +57,7 @@ func TestPluginActionProseNamesOnlyDeclaredHelpers(t *testing.T) {
 			return err
 		}
 		if info.IsDir() {
-			if name := info.Name(); name == ".git" || name == "node_modules" {
+			if skipScanDir(path, root, info.Name()) {
 				return filepath.SkipDir
 			}
 			return nil

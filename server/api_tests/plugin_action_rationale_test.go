@@ -55,7 +55,7 @@ func TestActionHandlers_BareMountsAreTestsOnly(t *testing.T) {
 			return err
 		}
 		if info.IsDir() {
-			if name := info.Name(); name == ".git" || name == "node_modules" {
+			if skipScanDir(path, root, info.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -93,4 +93,33 @@ func TestActionHandlers_BareMountsAreTestsOnly(t *testing.T) {
 	if production == 0 || tests == 0 {
 		t.Fatalf("found %d production and %d test mounts, so this guard measured nothing", production, tests)
 	}
+}
+
+// skipScanDir reports whether a walk over this checkout's source should refuse
+// to descend into dir.
+//
+// Name-based skipping is not enough. A nested git worktree is an entire second
+// checkout of this repository sitting inside it -- .worktrees/<branch> is the
+// convention here -- and its copy of routes.go is a real file with real mounts
+// that this repository's guards must not census. It is not this checkout's
+// source, it belongs to another branch, and counting it makes a guard fail on a
+// developer's machine while passing on CI's fresh clone, which is the worst
+// place for a guard to disagree with itself.
+//
+// The test is what a checkout root actually looks like rather than what it is
+// called: a directory that carries its own .git entry is another checkout, and
+// for a worktree that entry is a file rather than a directory. Dot-directories
+// go too, which is how the catalogue drift guard in internal/arch already reads
+// the tree.
+func skipScanDir(path, root, name string) bool {
+	if path == root {
+		return false
+	}
+	if strings.HasPrefix(name, ".") || name == "node_modules" {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
+		return true
+	}
+	return false
 }
