@@ -52,8 +52,8 @@ below; the analysis they rest on follows.
       budget an operator can raise deliberately, so the cost is visible and
       bounded rather than granted invisibly to whoever asks. Not built yet; if
       it is wanted, it belongs with the per-surface timeouts, not here.
-- [ ] **C4. Hook dispatch honours cancellation — but only the half that safely
-      can.** C1 left this surface alone and a review round called it out: a hook
+- [x] **C4. Hook dispatch honours cancellation — but only the half that safely
+      can.** (shipped) C1 left this surface alone and a review round called it out: a hook
       that blocks on a busy plugin blocks a user's *write*, which is the most
       visible form of the defect C1 fixed. It is deliberately not part of C1,
       because "make hooks cancellable" is two changes with opposite correctness
@@ -70,11 +70,32 @@ below; the analysis they rest on follows.
       deferred queue A1 added (`deferredPluginHooks`) makes the gap wider still:
       those run at commit, by which point the request may be gone by design.
 
-      Cheap in mechanism, at least: the context is already reachable without
-      touching any of the 35 dispatch sites, because this tree carries it inside
-      the db handle (`ctx.db.Statement.Context`, read that way at
-      `application_context/scoping.go:269`). What it needs is its own tests for
-      the asymmetry, which is why it is its own batch.
+      **The mechanism this batch predicted was wrong, and wrong in the way that
+      ships a dead feature.** It said the context was already reachable inside
+      the db handle (`ctx.db.Statement.Context`), so no dispatch site needed
+      touching. The first implementation did exactly that and was *correct and
+      unreachable*: `applyPrincipalScope` parents every request-scoped handle on
+      `context.Background()` by explicit design, so that a client hanging up
+      cannot tear a write's own SQL out mid-statement. Every write handler routes
+      through `WithRequest` and so through that, which means the handle is the
+      one source guaranteed never to know the caller's lifetime. Asking it alone
+      could only ever answer `Background`, and a plugin holding its VM for 120s
+      still held every write that raised one of its hooks for the whole 120.
+
+      A review round caught it. `callerContext` now reads the **request** first
+      and the handle second, taking the request off the seam `WithRequest`
+      already stores it on for the logger and the `CreatedByUserId` stamp. The
+      handle stays as the second answer for a caller that bound its context
+      there instead (`WithMRQLPrincipal`, and the dispatcher's own tests). A
+      context value was rejected for the same job because it dies at the next
+      `WithContext`/`WithPrincipal` rebuild, while the struct field survives
+      every shallow copy, `WithTransaction`'s included.
+
+      Nothing about a write's own lifetime changed: parenting a write's SQL on
+      the request is still declined. Only the hook wait gained the caller's
+      lifetime. The asymmetry tests this batch was created for are what the
+      batch actually delivered, and they are the reason the dead version did not
+      ship.
 
 ## The analysis
 
