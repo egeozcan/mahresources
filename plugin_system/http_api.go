@@ -489,10 +489,12 @@ func (pm *PluginManager) queueErrorCallback(vm *lua.LState, callback *lua.LFunct
 	})
 }
 
-// queueHttpCallback appends a callback to the pending list and signals the drain goroutine.
+// queueHttpCallback appends a callback to its VM's queue and signals the drain
+// goroutine. Appending per VM is what keeps one plugin's backlog out of every
+// other plugin's way; within a VM the order queued is the order delivered.
 func (pm *PluginManager) queueHttpCallback(cb httpCallback) {
 	pm.httpMu.Lock()
-	pm.httpPending = append(pm.httpPending, cb)
+	pm.httpPending[cb.vm] = append(pm.httpPending[cb.vm], cb)
 	pm.httpMu.Unlock()
 
 	// Non-blocking signal
@@ -515,44 +517,98 @@ func (pm *PluginManager) drainHttpCallbacks() {
 	}
 }
 
-// processPendingCallbacks drains all pending callbacks and executes them.
+// processPendingCallbacks gives every VM with queued callbacks a worker, and
+// returns without waiting for any of them.
+//
+// It dispatches rather than executes, because executing here is what made one
+// plugin able to stall the rest: this runs on the single drain goroutine, so a
+// callback that blocks on a busy VM blocks the loop that would have delivered
+// everyone else's. A VM that already has a worker is skipped rather than given
+// a second one — that is what keeps a plugin's callbacks in order.
 func (pm *PluginManager) processPendingCallbacks() {
 	pm.httpMu.Lock()
-	pending := pm.httpPending
-	pm.httpPending = nil
+	var starting []*lua.LState
+	for vm := range pm.httpPending {
+		if pm.httpDraining[vm] {
+			continue
+		}
+		pm.httpDraining[vm] = true
+		starting = append(starting, vm)
+	}
 	pm.httpMu.Unlock()
 
-	for _, cb := range pending {
+	for _, vm := range starting {
+		go pm.drainCallbacksFor(vm)
+	}
+}
+
+// drainCallbacksFor delivers one VM's queued callbacks until it runs out.
+//
+// It takes whole batches rather than one callback at a time so that a plugin
+// receiving a burst does not re-take httpMu per callback, and it re-checks the
+// queue before clearing its draining mark. That last step is what makes the
+// wake-up airtight: both it and queueHttpCallback move under httpMu, so a
+// callback arriving late is either seen by this worker or arrives to find no
+// worker marked — in which case the notify it sends starts a fresh one. There
+// is no interleaving where it is both missed and unannounced.
+func (pm *PluginManager) drainCallbacksFor(vm *lua.LState) {
+	for {
+		pm.httpMu.Lock()
+		batch := pm.httpPending[vm]
+		if len(batch) == 0 || pm.closed.Load() {
+			delete(pm.httpPending, vm)
+			delete(pm.httpDraining, vm)
+			pm.httpMu.Unlock()
+			return
+		}
+		delete(pm.httpPending, vm)
+		pm.httpMu.Unlock()
+
+		pm.runCallbackBatch(batch)
+	}
+}
+
+// runCallbackBatch executes callbacks that all belong to one VM, in order.
+//
+// Sequentially and on this goroutine, which is the requirement rather than an
+// implementation detail: a plugin's callbacks routinely mutate the same state,
+// so delivering them concurrently would apply a plugin's own responses in an
+// order it never asked for.
+func (pm *PluginManager) runCallbackBatch(batch []httpCallback) {
+	for _, cb := range batch {
 		if pm.closed.Load() {
 			return
 		}
+		pm.runOneCallback(cb)
+	}
+}
 
-		mu := pm.LockVM(cb.vm)
-		if mu == nil {
-			continue
-		}
+// runOneCallback delivers a single response to its plugin.
+func (pm *PluginManager) runOneCallback(cb httpCallback) {
+	mu := pm.LockVM(cb.vm)
+	if mu == nil {
+		return
+	}
+	defer mu.Unlock()
 
-		tbl := goToLuaTable(cb.vm, cb.response)
+	tbl := goToLuaTable(cb.vm, cb.response)
 
-		// Background-parented (the registering request is long gone), carrying
-		// the actor captured at registration so the callback's own mah.db calls
-		// are attributed. Fresh chain: a drained callback is a new entry.
-		timeoutCtx, cancel := context.WithTimeout(withInvocation(context.Background(), NewInvocation(cb.actor)), luaExecTimeout)
-		cb.vm.SetContext(timeoutCtx)
+	// Background-parented (the registering request is long gone), carrying
+	// the actor captured at registration so the callback's own mah.db calls
+	// are attributed. Fresh chain: a drained callback is a new entry.
+	timeoutCtx, cancel := context.WithTimeout(withInvocation(context.Background(), NewInvocation(cb.actor)), luaExecTimeout)
+	cb.vm.SetContext(timeoutCtx)
 
-		err := cb.vm.CallByParam(lua.P{
-			Fn:      cb.fn,
-			NRet:    0,
-			Protect: true,
-		}, tbl)
+	err := cb.vm.CallByParam(lua.P{
+		Fn:      cb.fn,
+		NRet:    0,
+		Protect: true,
+	}, tbl)
 
-		cb.vm.RemoveContext()
-		cancel()
+	cb.vm.RemoveContext()
+	cancel()
 
-		if err != nil {
-			log.Printf("[plugin] warning: HTTP callback error: %v", err)
-		}
-
-		mu.Unlock()
+	if err != nil {
+		log.Printf("[plugin] warning: HTTP callback error: %v", err)
 	}
 }

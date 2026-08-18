@@ -207,13 +207,21 @@ type PluginManager struct {
 	actionSubsMu    sync.RWMutex
 	actionInFlight  map[string]*sync.WaitGroup // pluginName -> in-flight async action count
 
-	// HTTP async callback support
-	httpMu      sync.Mutex
-	httpPending []httpCallback
-	httpNotify  chan struct{}  // buffered(1), signals new callbacks
-	done        chan struct{}  // closed to stop background goroutines (HTTP drain, job cleanup)
-	httpWg      sync.WaitGroup // tracks in-flight HTTP goroutines
-	httpSem     chan struct{}  // concurrency semaphore
+	// HTTP async callback support.
+	//
+	// Pending callbacks are keyed by the VM that has to run them, not held in
+	// one list, because one list is one queue and a queue moves at the speed of
+	// its slowest entry. A plugin inside a 120-second synchronous call would
+	// otherwise stall every other plugin's callbacks behind its own.
+	// httpDraining names the VMs that already have a worker, so a VM keeps
+	// exactly one and its callbacks stay in the order they were queued.
+	httpMu       sync.Mutex
+	httpPending  map[*lua.LState][]httpCallback
+	httpDraining map[*lua.LState]bool
+	httpNotify   chan struct{}  // buffered(1), signals new callbacks
+	done         chan struct{}  // closed to stop background goroutines (HTTP drain, job cleanup)
+	httpWg       sync.WaitGroup // tracks in-flight HTTP goroutines
+	httpSem      chan struct{}  // concurrency semaphore
 }
 
 // NewPluginManager scans dir for subdirectories containing plugin.lua,
@@ -240,6 +248,8 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		actionInFlight:  make(map[string]*sync.WaitGroup),
 		loading:         make(map[string]chan struct{}),
 		fallbackConsent: newMemoryConsentStore(),
+		httpPending:     make(map[*lua.LState][]httpCallback),
+		httpDraining:    make(map[*lua.LState]bool),
 		httpNotify:      make(chan struct{}, 1),
 		done:            make(chan struct{}),
 		httpSem:         make(chan struct{}, maxConcurrentHttpReqs),
@@ -2355,6 +2365,29 @@ func (pm *PluginManager) Close() {
 	for _, L := range states {
 		closeState(pm, L)
 	}
+
+	// Undelivered callbacks are dropped here rather than left in the maps.
+	//
+	// The drain goroutine selects between done and httpNotify, so with both
+	// ready it can take done and exit leaving callbacks queued. Nothing collects
+	// them afterwards — their VM has no worker and the goroutine that would have
+	// started one is gone — and each entry pins an *lua.LState and an
+	// *lua.LFunction, so a manager still reachable after Close keeps a whole Lua
+	// state alive.
+	//
+	// After the teardown loop, not before it, because httpWg is not the whole
+	// story: the mah.http bindings queue an error callback synchronously on
+	// whatever goroutine called them, which is a render or a hook and is counted
+	// by nothing. Three of those sites fire exactly when closed is set, so a
+	// render running during shutdown actively produces entries. Only once every
+	// state has been locked, revoked and closed is there no Lua left running and
+	// no way to start any. Clearing a draining mark whose worker will delete it
+	// again is harmless, and no worker can be executing a callback here: it
+	// would have had to hold a VM lock that closeState has already taken.
+	pm.httpMu.Lock()
+	pm.httpPending = make(map[*lua.LState][]httpCallback)
+	pm.httpDraining = make(map[*lua.LState]bool)
+	pm.httpMu.Unlock()
 
 	// Emptied, not niled. init() is unbounded and the wait above is not, so a
 	// load can still be running here — and every registration function writes
