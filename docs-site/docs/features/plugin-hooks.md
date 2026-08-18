@@ -88,6 +88,10 @@ A plugin is single-threaded, so a hook may have to wait for its own plugin's VM 
 
 A hook dispatched from ordinary application code — the common case — waits as long as it needs to and is never skipped for this reason.
 
+The same split decides what a **cancelled request** does to a hook that is waiting. A before hook stops waiting when the caller that made the write goes away, and the write fails; nothing was written, so nobody is left believing otherwise, and it is the answer the table above already gives for a busy VM. An after hook never stops waiting. It describes a change that has already committed, so abandoning it would leave your plugin's view of the database permanently out of step with the database, and a browser tab that closed is not a reason for that. Hooks deferred by [`mah.db.transaction`](./plugin-lua-api.md#transactions) make that plainer still: they are dispatched when the transaction commits, by which point the request that started it is often gone by design.
+
+Neither rule bounds how long your hook may *run* once it has the VM. That is the 5-second Lua timeout, and a cancelled request does not shorten it.
+
 ### Abort Mechanism
 
 `mah.abort(reason)` raises a special Lua error that the hook runner intercepts. The operation is cancelled and the reason is returned to the client. This works in both before hooks and action handlers.

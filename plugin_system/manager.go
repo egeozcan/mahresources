@@ -2263,22 +2263,30 @@ func (pm *PluginManager) LockVMWithContext(ctx context.Context, L *lua.LState) (
 	return mu, nil
 }
 
-// TryLockVMWithin is LockVM bounded by wait. It returns (nil, false) when the
-// plugin is gone — the caller must not touch L — and (nil, true) when the plugin
-// is alive but its lock could not be taken in time.
+// TryLockVMWithin is LockVM bounded by two things at once: wait, and ctx. It
+// returns (nil, false) when the plugin is gone — the caller must not touch L —
+// and (nil, true) when the plugin is alive but its lock was not taken before
+// either bound ended.
 //
-// This exists to break lock cycles *between* goroutines, which the invocation
-// chain cannot see because a chain is per-call-stack. Two plugins that each hook
-// an entity the other writes can arrive at each other's mutex from opposite
-// directions: goroutine A holds P and waits for Q while B holds Q and waits for
-// P. Both waits are unbounded and the Lua deadline cannot preempt a block inside
-// a Go call, so that is permanent — and it is permanent on the code this
-// replaces too.
+// ctx is the caller's own, and a caller that has none passes Background, which
+// leaves wait as the only bound and the behaviour exactly what it was. It is a
+// second bound rather than a replacement for wait, because the two answer
+// different questions: wait breaks a deadlock between two goroutines, ctx stops
+// a wait nobody is left to receive the answer of.
+//
+// The deadlock is why this exists at all, and the invocation chain cannot see
+// it, because a chain is per-call-stack. Two plugins that each hook an entity
+// the other writes can arrive at each other's mutex from opposite directions:
+// goroutine A holds P and waits for Q while B holds Q and waits for P. Both
+// waits are unbounded and the Lua deadline cannot preempt a block inside a Go
+// call, so that is permanent — and it is permanent on the code this replaces
+// too.
 //
 // Only the nested case needs bounding, and only the nested case gets it (see
 // RunAfterHooks): a dispatch that holds no VM lock cannot be a participant in
-// such a cycle, so it keeps waiting as long as it takes, exactly as before.
-func (pm *PluginManager) TryLockVMWithin(L *lua.LState, wait time.Duration) (*vmMutex, bool) {
+// such a cycle, so it does not come here at all and waits for as long as its
+// own caller does.
+func (pm *PluginManager) TryLockVMWithin(ctx context.Context, L *lua.LState, wait time.Duration) (*vmMutex, bool) {
 	mu := pm.VMLock(L)
 	if mu == nil {
 		return nil, false
@@ -2292,9 +2300,11 @@ func (pm *PluginManager) TryLockVMWithin(L *lua.LState, wait time.Duration) (*vm
 	// block". The loop this replaced gave a zero wait one attempt and gave up.
 	acquired := false
 	if wait <= 0 {
+		// ctx plays no part here, and cannot: this branch does not wait, so
+		// there is nothing for a cancellation to shorten.
 		acquired = mu.TryLock()
 	} else {
-		acquired = mu.LockWithin(context.Background(), wait)
+		acquired = mu.LockWithin(ctx, wait)
 	}
 	if !acquired {
 		// Distinguish "busy" from "gone" here too, not just on the acquiring

@@ -198,7 +198,7 @@ func TestTryLockVMWithin_ZeroWaitDoesNotBlock(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		mu, busy := pm.TryLockVMWithin(L, 0)
+		mu, busy := pm.TryLockVMWithin(context.Background(), L, 0)
 		done <- result{mu, busy}
 	}()
 
@@ -223,7 +223,7 @@ func TestTryLockVMWithin_ZeroWaitDoesNotBlock(t *testing.T) {
 		if got := <-done; got.mu != nil {
 			got.mu.Unlock()
 		}
-		t.Fatal("TryLockVMWithin(L, 0) blocked; a non-positive wait must not block at all")
+		t.Fatal("TryLockVMWithin(context.Background(), L, 0) blocked; a non-positive wait must not block at all")
 	}
 }
 
