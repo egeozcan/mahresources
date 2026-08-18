@@ -17,7 +17,7 @@ import (
 func casPlugin(body string) string {
 	return `plugin = { name = "caswriter", version = "1.0", description = "compare-and-sets a cursor" }
 function init()
-    mah.inject("run", function(ctx)
+    mah.inject("page_bottom", function(ctx)
 ` + body + `
     end)
 end
@@ -40,7 +40,7 @@ func TestPluginKVCompareAndSet_JoinsTheTransaction(t *testing.T) {
         return "inner=" .. tostring(inner) .. " final=" .. tostring(mah.kv.get("cursor"))
 `)})
 
-		got := runSlot(ctx, "run")
+		got := runSlot(ctx, "page_bottom")
 		if !strings.Contains(got, "inner=true") {
 			t.Errorf("slot reported %q: the compare-and-set did not see the value written "+
 				"earlier in the same transaction, so it did not run on the transaction's handle", got)
@@ -64,7 +64,7 @@ func TestPluginKVCompareAndSet_JoinsTheTransaction(t *testing.T) {
         return "inner=" .. tostring(inner) .. " final=" .. tostring(mah.kv.get("cursor"))
 `)})
 
-		got := runSlot(ctx, "run")
+		got := runSlot(ctx, "page_bottom")
 		if !strings.Contains(got, "inner=true") {
 			t.Errorf("slot reported %q, want inner=true: the compare-and-set that the rollback "+
 				"has to undo never happened", got)
@@ -86,7 +86,7 @@ func TestPluginKVCompareAndSet_WorksOutsideATransaction(t *testing.T) {
             " final=" .. tostring(mah.kv.get("cursor"))
 `)})
 
-	got := runSlot(ctx, "run")
+	got := runSlot(ctx, "page_bottom")
 	for _, want := range []string{"won=true", "lost=false", "final=after"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("slot reported %q, want it to contain %q", got, want)
@@ -102,7 +102,7 @@ func TestPluginKV_MaxValueSizeIsVisibleToLua(t *testing.T) {
         return tostring(mah.kv.max_value_size)
 `)})
 
-	if got, want := runSlot(ctx, "run"), fmt.Sprint(kvValueCapBytes); got != want {
+	if got, want := runSlot(ctx, "page_bottom"), fmt.Sprint(kvValueCapBytes); got != want {
 		t.Errorf("mah.kv.max_value_size = %q, want %q (the cap PluginKVSet enforces)", got, want)
 	}
 }

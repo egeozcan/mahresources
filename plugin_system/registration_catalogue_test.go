@@ -292,7 +292,7 @@ function init() end
 
 	// A host typo must not fail the caller's write: the data is the user's, the
 	// mistake is ours.
-	got, err := pm.RunBeforeHooks(nil, "before_nite_create", map[string]any{"name": "unchanged"})
+	got, err := pm.RunBeforeHooks(nil, nil, "before_nite_create", map[string]any{"name": "unchanged"})
 	if err != nil {
 		t.Fatalf("dispatching an unknown event failed the caller's write: %v", err)
 	}

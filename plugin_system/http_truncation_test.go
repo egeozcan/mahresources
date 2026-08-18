@@ -125,7 +125,7 @@ func truncationManager(t *testing.T, srvURL, luaBody string) *PluginManager {
 func syncReportPlugin(url string) string {
 	return fmt.Sprintf(`
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return report(mah.http.get_sync(%q))
     end)
 end
@@ -142,7 +142,7 @@ function init()
     mah.http.get(%q, function(resp)
         http_result = report(resp)
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return http_result
     end)
 end
@@ -153,7 +153,7 @@ func TestHttpApi_SyncTruncatedFalseAtExactlyTheLimit(t *testing.T) {
 	srv := sizedBodyServer(t)
 	pm := truncationManager(t, srv.URL, syncReportPlugin(sizedBodyURL(srv, maxHttpResponseBody)))
 
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	result := pm.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	want := fmt.Sprintf("%d|boolean|false", maxHttpResponseBody)
 	if result != want {
 		t.Errorf("a body of exactly the limit reported %q, want %q", result, want)
@@ -167,7 +167,7 @@ func TestHttpApi_SyncTruncatedTrueOneByteOverTheLimit(t *testing.T) {
 	// The body is still cut to the limit, not to the limit+1 the reader was
 	// allowed to fetch: the extra byte exists only to make the overflow
 	// detectable and must never reach the plugin.
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	result := pm.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	want := fmt.Sprintf("%d|boolean|true", maxHttpResponseBody)
 	if result != want {
 		t.Errorf("a body one byte over the limit reported %q, want %q", result, want)
@@ -178,7 +178,7 @@ func TestHttpApi_AsyncTruncatedFalseAtExactlyTheLimit(t *testing.T) {
 	srv := sizedBodyServer(t)
 	pm := truncationManager(t, srv.URL, asyncReportPlugin(sizedBodyURL(srv, maxHttpResponseBody)))
 
-	result := pollSlot(t, pm, "test", 10*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 10*time.Second)
 	want := fmt.Sprintf("%d|boolean|false", maxHttpResponseBody)
 	if result != want {
 		t.Errorf("a body of exactly the limit reported %q, want %q", result, want)
@@ -189,7 +189,7 @@ func TestHttpApi_AsyncTruncatedTrueOneByteOverTheLimit(t *testing.T) {
 	srv := sizedBodyServer(t)
 	pm := truncationManager(t, srv.URL, asyncReportPlugin(sizedBodyURL(srv, maxHttpResponseBody+1)))
 
-	result := pollSlot(t, pm, "test", 10*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 10*time.Second)
 	want := fmt.Sprintf("%d|boolean|true", maxHttpResponseBody)
 	if result != want {
 		t.Errorf("a body one byte over the limit reported %q, want %q", result, want)
@@ -213,7 +213,7 @@ function init()
     mah.http.get(%q, function(resp)
         async_result = report(resp)
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         if async_result == "" then
             return ""
         end
@@ -222,7 +222,7 @@ function init()
 end
 `, url, url))
 
-	result := pollSlot(t, pm, "test", 10*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 10*time.Second)
 	want := fmt.Sprintf("sync=%d|boolean|false async=%d|boolean|false", smallBody, smallBody)
 	if result != want {
 		t.Errorf("a small complete body reported %q, want %q", result, want)
@@ -250,7 +250,7 @@ function init()
     mah.http.get(%q, function(resp)
         small_result = report(resp)
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         if big_result == "" or small_result == "" then
             return ""
         end
@@ -259,7 +259,7 @@ function init()
 end
 `, sizedBodyURL(srv, maxHttpResponseBody+1), sizedBodyURL(srv, smallBody)))
 
-	result := pollSlot(t, pm, "test", 15*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 15*time.Second)
 	want := fmt.Sprintf("big=%d|boolean|true small=%d|boolean|false", maxHttpResponseBody, smallBody)
 	if result != want {
 		t.Errorf("two concurrent responses reported %q, want %q", result, want)
@@ -282,7 +282,7 @@ func TestHttpApi_SyncErrorResponseOmitsTruncated(t *testing.T) {
 
 	pm := truncationManager(t, srv.URL, fmt.Sprintf(`
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local refused = mah.http.get_sync(%q)
         local scheme = mah.http.get_sync("ftp://example.com/file")
         return "refused=" .. error_report(refused) .. " scheme=" .. error_report(scheme)
@@ -290,7 +290,7 @@ function init()
 end
 `, dead))
 
-	result := pm.RenderSlot(context.Background(), "test", map[string]any{}, nil)
+	result := pm.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	want := "refused=string/nil/nil scheme=string/nil/nil"
 	if result != want {
 		t.Errorf("sync error tables reported %q, want %q", result, want)
@@ -318,7 +318,7 @@ function init()
     mah.http.get("ftp://example.com/file", function(resp)
         scheme_result = error_report(resp)
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         if refused_result == "" or scheme_result == "" then
             return ""
         end
@@ -327,7 +327,7 @@ function init()
 end
 `, dead))
 
-	result := pollSlot(t, pm, "test", 10*time.Second)
+	result := pollSlot(t, pm, "page_bottom", 10*time.Second)
 	want := "refused=string/nil/nil scheme=string/nil/nil"
 	if result != want {
 		t.Errorf("async error tables reported %q, want %q", result, want)

@@ -61,7 +61,7 @@ function init()
         mah.sleep(` + vmHoldSeconds + `)
         return "held"
     end)
-    mah.inject("probe", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local out = {}
         for k, v in pairs(fires) do
             out[#out + 1] = k .. "=" .. tostring(v)

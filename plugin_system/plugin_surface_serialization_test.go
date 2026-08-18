@@ -75,6 +75,12 @@ func recordingServer(t *testing.T, hold time.Duration) (*httptest.Server, func()
 
 // surfacePlugin registers one plugin on the given slots. Each slot calls the
 // recording server and names itself, so a visit says which surface made it.
+//
+// The slots have to be catalogue names, so they are page_top and page_bottom
+// rather than anything that describes what they stand for here. What the tests
+// below need of them is only that they are two, and distinct: one slot rendered
+// twice is one surface, and both tests would then be asking whether a call
+// overlaps itself.
 func surfacePlugin(t *testing.T, name, url string, slots ...string) string {
 	t.Helper()
 
@@ -186,10 +192,10 @@ const surfaceHold = 150 * time.Millisecond
 func TestPluginSurfaces_CannotRunAtTheSameTime(t *testing.T) {
 	srv, visits := recordingServer(t, surfaceHold)
 	pm := enableSurfacePlugins(t, map[string]string{
-		"twosurfaces": surfacePlugin(t, "twosurfaces", srv.URL, "surface_a", "surface_b"),
+		"twosurfaces": surfacePlugin(t, "twosurfaces", srv.URL, "page_top", "page_bottom"),
 	})
 
-	renderSlotsTogether(t, pm, "surface_a", "surface_b")
+	renderSlotsTogether(t, pm, "page_top", "page_bottom")
 
 	if got := visits(); overlap(t, got) {
 		t.Fatalf("surface %s was inside the plugin from %s to %s while surface %s was inside it "+
@@ -210,11 +216,11 @@ func TestPluginSurfaces_CannotRunAtTheSameTime(t *testing.T) {
 func TestPluginSurfaces_OfDifferentPluginsDoRunAtTheSameTime(t *testing.T) {
 	srv, visits := recordingServer(t, surfaceHold)
 	pm := enableSurfacePlugins(t, map[string]string{
-		"alpha": surfacePlugin(t, "alpha", srv.URL, "surface_a"),
-		"beta":  surfacePlugin(t, "beta", srv.URL, "surface_b"),
+		"alpha": surfacePlugin(t, "alpha", srv.URL, "page_top"),
+		"beta":  surfacePlugin(t, "beta", srv.URL, "page_bottom"),
 	})
 
-	renderSlotsTogether(t, pm, "surface_a", "surface_b")
+	renderSlotsTogether(t, pm, "page_top", "page_bottom")
 
 	if got := visits(); !overlap(t, got) {
 		t.Fatalf("surface %s ran from %s to %s and surface %s only entered at %s: two separate "+
