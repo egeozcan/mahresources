@@ -1258,9 +1258,17 @@ Server-side at template render time. 5-second timeout per render call. Returned 
 
 ### Block Shortcodes
 
-Plugin shortcodes support block mode. When used as `[plugin:name:sc]content[/plugin:name:sc]`, the render function receives `ctx.inner_content` with the raw content between tags, and `ctx.is_block = true`. Nested shortcodes inside plugin block output are expanded automatically after the plugin render function returns.
+Plugin shortcodes support block mode. When used as `[plugin:name:sc]content[/plugin:name:sc]`, the render function receives `ctx.inner_content` with the raw content between tags, and `ctx.is_block = true`.
 
-In docs preview, nested shortcodes inside plugin block output are not expanded (they render as literal text). This is a preview-only limitation.
+### Nested Shortcodes
+
+Shortcodes in the returned HTML are expanded after the render function returns. This holds for both forms: whether the author wrapped a body says nothing about what the render function emits. Expansion is bounded by the same nesting depth limit as every other shortcode, so a shortcode that emits itself stops instead of looping, and an `[mrql]` emitted this way spends the page's inline query budget like one an author wrote.
+
+Only a successful render is expanded. A render function that raises produces a marker naming the shortcode with the error in its `title` attribute, and a caller who may not reach the plugin gets a neutral comment. Neither is re-processed, so an error message quoting whatever the plugin was handed cannot steer the page.
+
+`mah.html_escape` escapes `&`, `<`, `>`, `"` and `'`, not square brackets, so shortcode syntax in text you do not control survives it and is expanded along with the rest of the output. Strip the brackets as well when echoing such text.
+
+In docs preview, shortcodes inside plugin output are not expanded (they render as literal text). This is a preview-only limitation.
 
 ### Example
 

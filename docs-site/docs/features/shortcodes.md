@@ -778,9 +778,11 @@ Plugin shortcodes also support block mode:
 [/plugin:plugin-name:shortcode-name]
 ```
 
-The plugin receives `inner_content` and `is_block` in its render context. Nested shortcodes inside plugin block output are expanded automatically after the plugin returns.
+The plugin receives `inner_content` and `is_block` in its render context.
 
-Note: in docs preview, nested shortcodes inside plugin block output are not expanded (they render as literal text). This is a preview-only limitation; runtime rendering expands them normally.
+Shortcodes in a plugin's returned HTML are expanded after the plugin returns, in both forms: whether the author wrapped a body says nothing about what the plugin emits. Expansion is bounded by the same nesting depth limit as every other shortcode, so a plugin that emits its own shortcode stops instead of looping. Only a successful render is expanded, because an error marker and the "plugin unavailable" comment carry text the plugin did not author.
+
+Note: in docs preview, shortcodes inside plugin output are not expanded (they render as literal text). This is a preview-only limitation; runtime rendering expands them normally.
 
 See [Plugin Lua API](./plugin-lua-api.md#mahshortcode----custom-shortcodes) for registration details.
 
