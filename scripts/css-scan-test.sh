@@ -23,6 +23,7 @@ TAILWIND=./node_modules/.bin/tailwindcss
 TMP=$(mktemp -d) || exit 1
 PROBES=()
 FAILED=0
+git status --porcelain > "$TMP/status-before"
 
 cleanup() {
   # Probe files sit inside the checkout because that is the only place Tailwind
@@ -258,11 +259,16 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-if ! git diff --quiet || [ -n "$(git status --porcelain)" ]; then
-  fail "checkout-is-clean: probe files or a rebuilt stylesheet were left behind"
-  git status --short | sed 's/^/        /'
+# The probes are written into the checkout, so prove they are all gone again.
+# Only what this run added counts: whoever is editing the exclusions runs this
+# with a dirty tree, and failing them for their own work in progress would make
+# the script unusable exactly when it is wanted.
+git status --porcelain > "$TMP/status-after"
+if ! diff -q "$TMP/status-before" "$TMP/status-after" >/dev/null; then
+  fail "probes-are-cleaned-up: this run left files behind"
+  diff "$TMP/status-before" "$TMP/status-after" | grep '^>' | sed 's/^> /        /'
 else
-  pass "checkout-is-clean"
+  pass "probes-are-cleaned-up"
 fi
 
 echo
