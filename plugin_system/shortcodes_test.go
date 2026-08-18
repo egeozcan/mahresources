@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"mahresources/shortcodes"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -353,4 +355,51 @@ func TestDocsPreviewBlockShortcodeNoNestedExpansion(t *testing.T) {
 	preview := renderExamplePreview(context.Background(), pm, "sc-preview", "plugin:sc-preview:echo", items[0].Examples[0])
 	assert.Contains(t, preview, `[meta path="x"]`)
 	assert.NotContains(t, preview, "<meta-shortcode")
+}
+
+// mah.html_escape is the one escaping helper the platform offers, and a plugin's
+// output is re-processed as shortcode source, so it has to neutralise the
+// shortcode brackets along with the HTML metacharacters. Every bundled plugin
+// carries its own copy of the helper, and bundled_plugin_output_test.go holds
+// those; this holds the platform's own, which is what a third-party plugin
+// following the documented pattern relies on.
+func TestHtmlEscapeNeutralisesShortcodeSyntax(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "sc-escape", `
+		plugin = { name = "sc-escape", version = "1.0" }
+		function init()
+			mah.shortcode({
+				name = "echo",
+				label = "Echo",
+				render = function(ctx)
+					return "<span>" .. mah.html_escape(tostring(ctx.value.status)) .. "</span>"
+				end
+			})
+		end
+	`)
+
+	pm, err := NewPluginManager(dir)
+	require.NoError(t, err)
+	defer pm.Close()
+
+	require.NoError(t, pm.EnablePlugin("sc-escape"))
+
+	// The meta value is written by whoever may edit the entity, which under
+	// -auth includes the `user` role; the entity field it reaches for is what
+	// that account would be reading back out on somebody else's page.
+	const injected = "INJECTED-FROM-A-VALUE-A-USER-TYPED"
+	ctx := shortcodes.MetaShortcodeContext{
+		EntityType: "resource",
+		EntityID:   1,
+		Meta:       json.RawMessage(`{"status":"[property path=\"Name\" raw=\"true\"]"}`),
+		Entity:     &testResourceEntity{Name: injected},
+	}
+
+	out := shortcodes.Process(context.Background(),
+		`[plugin:sc-escape:echo]`, ctx, bundledRenderer(pm), nil)
+
+	assert.NotContains(t, out, injected, "the escaped value ran as a shortcode: %s", out)
+	// Still printed, only inert. The entities read as the characters
+	// themselves, so the page shows what was typed.
+	assert.Contains(t, out, "&#91;property", "the value stopped being printed: %s", out)
 }

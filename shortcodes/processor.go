@@ -205,8 +205,17 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 					html, err := renderer(parts[1], sc, ctx)
 					if err == nil {
 						replacement = html
-						// Post-plugin expansion for block shortcodes
-						if sc.IsBlock && depth+1 < maxRecursionDepth {
+						// A plugin's output is template source. Whether the
+						// author wrapped a body says nothing about what the
+						// plugin emits, so the inline form expands exactly as
+						// the block form does; gating this on sc.IsBlock shipped
+						// literal bracket text to the page instead. That makes a
+						// plugin emitting its own shortcode a loop, and the depth
+						// bound is the only thing that stops it. Only this branch
+						// is source: the two below carry text the plugin did not
+						// author, and expanding either would put it through the
+						// template engine.
+						if depth+1 < maxRecursionDepth {
 							replacement = processWithDepth(reqCtx, replacement, ctx, renderer, executor, depth+1)
 						}
 					} else if errors.Is(err, ErrPluginUnavailable) {

@@ -763,6 +763,9 @@ func (a *pluginDBAdapter) KVGet(pluginName, key string) (string, bool, error) {
 func (a *pluginDBAdapter) KVSet(pluginName, key, value string) error {
 	return a.ctx.PluginKVSet(pluginName, key, value)
 }
+func (a *pluginDBAdapter) KVCompareAndSet(pluginName, key string, expected *string, value string) (bool, error) {
+	return a.ctx.PluginKVCompareAndSet(pluginName, key, expected, value)
+}
 func (a *pluginDBAdapter) KVDelete(pluginName, key string) error {
 	return a.ctx.PluginKVDelete(pluginName, key)
 }

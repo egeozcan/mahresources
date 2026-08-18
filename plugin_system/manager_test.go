@@ -186,9 +186,9 @@ end
 	}
 
 	// Verify no hooks for unregistered event
-	hooks = pm.GetHooks("nonexistent_event")
+	hooks = pm.GetHooks("after_note_create")
 	if len(hooks) != 0 {
-		t.Errorf("expected 0 hooks for 'nonexistent_event', got %d", len(hooks))
+		t.Errorf("expected 0 hooks for 'after_note_create', got %d", len(hooks))
 	}
 }
 
@@ -375,7 +375,7 @@ plugin = {
     },
 }
 function init()
-    mah.on("test_event", function(data) return data end)
+    mah.on("before_note_create", function(data) return data end)
 end
 `)
 	writePlugin(t, dir, "bravo", `
@@ -385,7 +385,7 @@ plugin = {
     description = "second plugin",
 }
 function init()
-    mah.inject("test_slot", function(ctx) return "<p>hi</p>" end)
+    mah.inject("page_bottom", function(ctx) return "<p>hi</p>" end)
 end
 `)
 
@@ -420,10 +420,10 @@ end
 	if len(pm.Plugins()) != 0 {
 		t.Errorf("expected 0 active plugins, got %d", len(pm.Plugins()))
 	}
-	if len(pm.GetHooks("test_event")) != 0 {
+	if len(pm.GetHooks("before_note_create")) != 0 {
 		t.Error("expected no hooks registered before enable")
 	}
-	if len(pm.GetInjections("test_slot")) != 0 {
+	if len(pm.GetInjections("page_bottom")) != 0 {
 		t.Error("expected no injections registered before enable")
 	}
 	if pm.IsEnabled("alpha") {
@@ -437,8 +437,8 @@ func TestEnableDisablePlugin(t *testing.T) {
 plugin = { name = "fulltest", version = "1.0", description = "full test" }
 
 function init()
-    mah.on("test_event", function(data) return data end)
-    mah.inject("test_slot", function(ctx) return "<p>injected</p>" end)
+    mah.on("before_note_create", function(data) return data end)
+    mah.inject("page_bottom", function(ctx) return "<p>injected</p>" end)
     mah.page("home", function(ctx) return "<h1>Home</h1>" end)
     mah.menu("Home", "home")
 end
@@ -458,10 +458,10 @@ end
 	if !pm.IsEnabled("fulltest") {
 		t.Error("expected fulltest to be enabled")
 	}
-	if len(pm.GetHooks("test_event")) != 1 {
+	if len(pm.GetHooks("before_note_create")) != 1 {
 		t.Error("expected 1 hook after enable")
 	}
-	if len(pm.GetInjections("test_slot")) != 1 {
+	if len(pm.GetInjections("page_bottom")) != 1 {
 		t.Error("expected 1 injection after enable")
 	}
 	if !pm.HasPage("fulltest", "home") {
@@ -482,10 +482,10 @@ end
 	if len(pm.Plugins()) != 0 {
 		t.Error("expected 0 active plugins after disable")
 	}
-	if len(pm.GetHooks("test_event")) != 0 {
+	if len(pm.GetHooks("before_note_create")) != 0 {
 		t.Error("expected 0 hooks after disable")
 	}
-	if len(pm.GetInjections("test_slot")) != 0 {
+	if len(pm.GetInjections("page_bottom")) != 0 {
 		t.Error("expected 0 injections after disable")
 	}
 	if pm.HasPage("fulltest", "home") {
@@ -502,7 +502,7 @@ end
 	if !pm.IsEnabled("fulltest") {
 		t.Error("expected fulltest to be enabled after re-enable")
 	}
-	if len(pm.GetHooks("test_event")) != 1 {
+	if len(pm.GetHooks("before_note_create")) != 1 {
 		t.Error("expected 1 hook after re-enable")
 	}
 }

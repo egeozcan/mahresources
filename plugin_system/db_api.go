@@ -103,10 +103,28 @@ type PluginLogger interface {
 	PluginLog(pluginName, level, message string, details map[string]any)
 }
 
+// MaxKVValueSize is the largest serialized value a KVStore accepts, in bytes.
+//
+// It sits with the interface rather than with the implementation that enforces
+// it because both sides need the same number: the store refuses anything larger,
+// and mah.kv publishes it as max_value_size so an author can measure a value
+// before writing it rather than only after the refusal unwound their handler.
+const MaxKVValueSize = 8 * 1024 * 1024
+
 // KVStore provides per-plugin key-value storage for plugins.
 type KVStore interface {
 	KVGet(pluginName, key string) (string, bool, error)
 	KVSet(pluginName, key, value string) error
+	// KVCompareAndSet writes value only when the stored value is still
+	// expected, and reports whether it wrote. A nil expected is the other
+	// expectation, "no row may exist yet", which is a different state from a
+	// row holding the JSON null a Lua nil stores.
+	//
+	// The comparison must happen in the statement that writes. An
+	// implementation that reads and then writes reintroduces the lost update
+	// this exists to close, and no single-threaded caller can tell the two
+	// apart.
+	KVCompareAndSet(pluginName, key string, expected *string, value string) (bool, error)
 	KVDelete(pluginName, key string) error
 	KVList(pluginName, prefix string) ([]string, error)
 	KVPurge(pluginName string) error

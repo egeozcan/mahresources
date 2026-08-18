@@ -111,7 +111,7 @@ func newPluginHookTestContext(t *testing.T, luaSource string) *MahresourcesConte
 }
 
 // hookTagPlugin registers a hook per event that bumps a Lua-side counter and
-// also attempts a tag write, and exposes the counters through the "probe" slot.
+// also attempts a tag write, and exposes the counters through the "page_bottom" slot.
 func hookTagPlugin(events map[string]string) string {
 	src := `plugin = { name = "hooktest", version = "1.0", description = "records delete hooks" }
 local fires = {}
@@ -125,7 +125,7 @@ function init()
     end)
 `
 	}
-	src += `    mah.inject("probe", function(ctx)
+	src += `    mah.inject("page_bottom", function(ctx)
         local out = {}
         for k, v in pairs(fires) do
             out[#out + 1] = k .. "=" .. tostring(v)
@@ -142,7 +142,7 @@ end
 // only way in: the counters deliberately never touch the database.
 func hookFires(t *testing.T, ctx *MahresourcesContext, prefix string) int {
 	t.Helper()
-	out := ctx.PluginManager().RenderSlot(context.Background(), "probe", map[string]any{}, nil)
+	out := ctx.PluginManager().RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	for _, part := range strings.Split(out, ",") {
 		key, value, ok := strings.Cut(part, "=")
 		if !ok || key != prefix {
@@ -412,7 +412,7 @@ function init()
         mah.db.create_tag({ name = "echo-" .. tostring(math.floor(data.id)) })
         return data
     end)
-    mah.inject("probe", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return "after=" .. tostring(fires)
     end)
 end
@@ -574,7 +574,7 @@ func TestPluginWrite_IsAttributedToTriggeringUser(t *testing.T) {
 	ctx := newPluginHookTestContext(t, `
 plugin = { name = "hooktest", version = "1.0", description = "writes a tag" }
 function init()
-    mah.inject("probe", function(c)
+    mah.inject("page_bottom", function(c)
         mah.db.create_tag({ name = "made-by-plugin" })
         return "ok"
     end)
@@ -582,7 +582,7 @@ end
 `)
 
 	reqCtx := auth.WithPrincipal(context.Background(), &auth.Principal{UserID: actor})
-	if out := ctx.PluginManager().RenderSlot(reqCtx, "probe", map[string]any{}, nil); out != "ok" {
+	if out := ctx.PluginManager().RenderSlot(reqCtx, "page_bottom", map[string]any{}, nil); out != "ok" {
 		t.Fatalf("slot output = %q, want %q", out, "ok")
 	}
 
@@ -640,7 +640,7 @@ func TestPluginWrite_NoActorLeavesTheStampToTheDefault(t *testing.T) {
 			ctx := newPluginHookTestContext(t, `
 plugin = { name = "hooktest", version = "1.0", description = "writes a tag" }
 function init()
-    mah.inject("probe", function(c)
+    mah.inject("page_bottom", function(c)
         mah.db.create_tag({ name = "made-by-plugin" })
         return "ok"
     end)
@@ -648,7 +648,7 @@ end
 `)
 			want := direct(t, ctx)
 
-			if out := ctx.PluginManager().RenderSlot(tc.ctx(), "probe", map[string]any{}, nil); out != "ok" {
+			if out := ctx.PluginManager().RenderSlot(tc.ctx(), "page_bottom", map[string]any{}, nil); out != "ok" {
 				t.Fatalf("slot output = %q", out)
 			}
 

@@ -88,6 +88,10 @@ A plugin is single-threaded, so a hook may have to wait for its own plugin's VM 
 
 A hook dispatched from ordinary application code — the common case — waits as long as it needs to and is never skipped for this reason.
 
+The same split decides what a **cancelled request** does to a hook that is waiting. A before hook stops waiting when the caller that made the write goes away, and the write fails; nothing was written, so nobody is left believing otherwise, and it is the answer the table above already gives for a busy VM. An after hook never stops waiting. It describes a change that has already committed, so abandoning it would leave your plugin's view of the database permanently out of step with the database, and a browser tab that closed is not a reason for that. Hooks deferred by [`mah.db.transaction`](./plugin-lua-api.md#transactions) make that plainer still: they are dispatched when the transaction commits, by which point the request that started it is often gone by design.
+
+Neither rule bounds how long your hook may *run* once it has the VM. That is the 5-second Lua timeout, and a cancelled request does not shorten it.
+
 ### Abort Mechanism
 
 `mah.abort(reason)` raises a special Lua error that the hook runner intercepts. The operation is cancelled and the reason is returned to the client. This works in both before hooks and action handlers.
@@ -101,7 +105,11 @@ as an ordinary error whose message was scanned for familiar phrases, so
 
 ### Complete Hook Reference
 
-All 30 lifecycle hooks, organized by entity type:
+These 30 names are the whole set, and `mah.on` refuses anything else. A misspelled event used to register happily and never fire, which left you with a plugin that loaded cleanly and did nothing; now the plugin fails to load, and the error names the event you asked for alongside the ones that exist.
+
+A refusal takes the whole load with it. Everything the plugin registered before the error is swept, so a plugin reported as failed is never half-installed.
+
+The hooks, organized by entity type:
 
 | Entity | Before Create | After Create | Before Update | After Update | Before Delete | After Delete |
 |--------|--------------|-------------|---------------|-------------|---------------|-------------|
@@ -138,7 +146,7 @@ blocks every other surface of that plugin for the duration.
 
 ### Slot Names
 
-Slots are declared with `{% plugin_slot "..." %}` in the templates. Injecting into a name that does not exist is silently a no-op: `RenderSlot` returns an empty string for slots with no registered renderers. The full set of 21 slots:
+Slots are declared with `{% plugin_slot "..." %}` in the templates. Injecting into a name outside the set below is refused on the same terms as an unknown event: the plugin fails to load, and the error names the slot you asked for alongside the ones that exist. The full set of 21 slots:
 
 | Slot | Location |
 |------|----------|

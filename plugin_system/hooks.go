@@ -259,27 +259,33 @@ var ErrHookVMBusy = errors.New("plugin hook could not run: its VM was busy")
 
 // lockVMForHook takes hook's VM lock, bounding the wait only when this goroutine
 // already holds one — the sole condition under which it can be half of a lock
-// cycle.
+// cycle. It also gives the wait up whenever reqCtx ends.
+//
+// reqCtx belongs to whoever made the write that raised the event, and only a
+// before-hook has one. RunAfterHooks passes Background, and the argument for
+// that is at its own declaration.
 //
 // Returns (nil, false) when the plugin is gone, which is always a safe skip, and
-// (nil, true) when the plugin is alive but its lock could not be taken in time.
-// The two are separated because the caller's correct response differs, and the
-// difference matters: for an *after* hook a timeout is a missed notification of
-// something already committed, so skipping is honest; for a *before* hook it is
-// a veto that never got to run, and skipping it would mean an unrelated plugin
-// being busy silently disables a protection hook. RunBeforeHooks therefore fails
-// the operation instead.
-func (pm *PluginManager) lockVMForHook(inv *Invocation, hook hookEntry, event string) (*vmMutex, bool) {
+// (nil, true) when the plugin is alive but its lock was not taken: the nested
+// bound expired, or reqCtx did. The two are separated because the caller's
+// correct response differs, and the difference matters: for an *after* hook a
+// timeout is a missed notification of something already committed, so skipping
+// is honest; for a *before* hook it is a veto that never got to run, and
+// skipping it would mean an unrelated plugin being busy silently disables a
+// protection hook. RunBeforeHooks therefore fails the operation instead.
+func (pm *PluginManager) lockVMForHook(reqCtx context.Context, inv *Invocation, hook hookEntry, event string) (*vmMutex, bool) {
 	var (
 		mu   *vmMutex
 		busy bool
 	)
 	if inv == nil || len(inv.states) == 0 {
 		// Top-level dispatch: holds no VM lock, so it cannot deadlock against
-		// another goroutine's hook dispatch. Wait as long as it takes.
-		mu = pm.LockVM(hook.state)
+		// another goroutine's hook dispatch. Wait as long as its caller waits.
+		var err error
+		mu, err = pm.LockVMWithContext(reqCtx, hook.state)
+		busy = err != nil
 	} else {
-		mu, busy = pm.TryLockVMWithin(hook.state, hookLockWait)
+		mu, busy = pm.TryLockVMWithin(reqCtx, hook.state, hookLockWait)
 	}
 
 	// Re-check registration on *both* outcomes, because waiting is exactly when
@@ -319,6 +325,23 @@ func hookContext(inv *Invocation) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(withInvocation(context.Background(), inv), luaExecTimeout)
 }
 
+// beforeHookWaitFailed names which of the two waits ended, because they have
+// different remedies and only one of them is about the plugin at all: a VM held
+// past the bound is the plugin author's problem, a caller that hung up is
+// nobody's.
+//
+// Decided from the caller rather than from the wait, and in that order
+// deliberately. When both have happened (the nested bound expired, and the
+// caller went away) the caller is gone either way, so reporting the request as
+// abandoned is true whichever of the two tripped first.
+func beforeHookWaitFailed(reqCtx context.Context, event, pluginName string) error {
+	if reqCtx != nil && reqCtx.Err() != nil {
+		return fmt.Errorf("%q hook for plugin %q: %w", event, pluginName, errVMWaitAbandoned)
+	}
+	return fmt.Errorf("%w: %q hook for plugin %q did not start within %s",
+		ErrHookVMBusy, event, pluginName, hookLockWait)
+}
+
 // RunBeforeHooks executes all registered hooks for the given event sequentially.
 // Each hook receives the data, can modify it, and returns the modified data.
 // If a hook calls mah.abort(), a PluginAbortError is returned.
@@ -327,7 +350,22 @@ func hookContext(inv *Invocation) (context.Context, context.CancelFunc) {
 // inv identifies the actor whose write fired this event and the plugin VMs
 // already executing on the call chain. It may be nil, which means "no actor and
 // no chain" — the shape a caller with no plugin manager wiring produces.
-func (pm *PluginManager) RunBeforeHooks(inv *Invocation, event string, data map[string]any) (map[string]any, error) {
+//
+// reqCtx bounds only the wait for a busy plugin's VM, not the hook's own
+// execution: a caller that has gone away stops queueing behind somebody else's
+// call into that plugin, and its write fails. That is safe precisely because it
+// is a before-hook. Nothing has been written yet, so nobody is left believing
+// otherwise, and it is the same answer ErrHookVMBusy already gives when a
+// nested dispatch's bound expires. RunAfterHooks may not do this; see there.
+func (pm *PluginManager) RunBeforeHooks(reqCtx context.Context, inv *Invocation, event string, data map[string]any) (map[string]any, error) {
+	// The same catalogue registration is refused against, read from this side
+	// too. Above the closed check and above the no-hooks return, because
+	// neither of those says anything about the name. Reported rather than
+	// failed: the data is the caller's and the typo is ours.
+	if !IsHookEvent(event) {
+		pm.reportUnknownDispatch("hook event", event)
+		return data, nil
+	}
 	if pm.closed.Load() {
 		return data, nil
 	}
@@ -341,13 +379,12 @@ func (pm *PluginManager) RunBeforeHooks(inv *Invocation, event string, data map[
 		if pm.skipReentrantHook(inv, hook, event) {
 			continue
 		}
-		mu, busy := pm.lockVMForHook(inv, hook, event)
+		mu, busy := pm.lockVMForHook(reqCtx, inv, hook, event)
 		if mu == nil {
 			if busy {
 				// Fail closed. This hook may be the one that would have vetoed,
 				// and we cannot know without running it.
-				return nil, fmt.Errorf("%w: %q hook for plugin %q did not start within %s",
-					ErrHookVMBusy, event, hook.pluginName, hookLockWait)
+				return nil, beforeHookWaitFailed(reqCtx, event, hook.pluginName)
 			}
 			// The plugin was disabled between GetHooks and here; its state is
 			// being closed, so skip it rather than dereferencing a nil lock.
@@ -394,7 +431,20 @@ func (pm *PluginManager) RunBeforeHooks(inv *Invocation, event string, data map[
 // RunAfterHooks executes all registered hooks for the given event.
 // Errors are logged and ignored; execution is synchronous — on the caller's own
 // goroutine, which is why inv has to carry the whole chain. See RunBeforeHooks.
+//
+// It takes no caller context, and the omission is the point. An after-hook
+// describes a write that has already committed, so abandoning it drops
+// bookkeeping for a change that really happened and leaves the plugin's view of
+// the database diverged from the database, permanently and silently. A client
+// that hung up is not a reason for that. The deferred queue makes the gap wider
+// still: those hooks are dispatched once a plugin transaction commits, by which
+// point the request that opened it may be gone by design, so honouring a caller
+// context here would skip them routinely rather than rarely.
 func (pm *PluginManager) RunAfterHooks(inv *Invocation, event string, data map[string]any) {
+	if !IsHookEvent(event) {
+		pm.reportUnknownDispatch("hook event", event)
+		return
+	}
 	if pm.closed.Load() {
 		return
 	}
@@ -408,7 +458,7 @@ func (pm *PluginManager) RunAfterHooks(inv *Invocation, event string, data map[s
 		if pm.skipReentrantHook(inv, hook, event) {
 			continue
 		}
-		mu, busy := pm.lockVMForHook(inv, hook, event)
+		mu, busy := pm.lockVMForHook(context.Background(), inv, hook, event)
 		if mu == nil {
 			if busy {
 				// Safe to skip: the change is already committed, so this is a

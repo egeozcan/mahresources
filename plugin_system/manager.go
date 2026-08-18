@@ -169,6 +169,11 @@ type PluginManager struct {
 	egressClients map[string]*http.Client
 	closed        atomic.Bool
 
+	// unknownDispatchWarned holds the hook events and injection slots already
+	// reported as outside the catalogue, so one host typo costs one log line
+	// rather than one per write. See reportUnknownDispatch.
+	unknownDispatchWarned sync.Map
+
 	// loadWg tracks loads in progress. A loading VM is in vmLocks but not yet in
 	// states, so a Close that only walks states would leave it open — and the
 	// load would then publish into the maps Close had just niled.
@@ -1005,6 +1010,23 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	setIf(CapHooks, "on", func(L *lua.LState) int {
 		eventName := L.CheckString(1)
 		handler := L.CheckFunction(2)
+
+		// Refuse a name nothing dispatches, before anything is stored and
+		// before the liveness gate below. That is where mah.page checks its
+		// path, and raising here is all or nothing: a failing init() goes
+		// through loadPlugin's abandon(), which revokes the VM and sweeps every
+		// registration made before the error. So there is no half-loaded plugin
+		// to weigh against saying so loudly.
+		//
+		// The message carries the catalogue itself rather than a description of
+		// it. The author's next question is "then what is it called?", and a
+		// list built from the catalogue cannot come to describe something else.
+		if !IsHookEvent(eventName) {
+			L.ArgError(1, fmt.Sprintf("unknown event %q: nothing dispatches it, so this hook could never fire. Events: %s",
+				eventName, strings.Join(AllHookEvents, ", ")))
+			return 0
+		}
+
 		// mainState, not L: a registration made from inside a coroutine would
 		// otherwise be stamped with the coroutine's state, which no dispatch
 		// and no teardown ever matches — so it could never fire and could never
@@ -1028,6 +1050,15 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	setIf(CapInject, "inject", func(L *lua.LState) int {
 		slotName := L.CheckString(1)
 		renderFn := L.CheckFunction(2)
+
+		// Slot names live only as string literals in the templates, so a
+		// misspelled one is a renderer nothing ever calls. Refused like an
+		// event, and for the same reasons.
+		if !IsInjectionSlot(slotName) {
+			L.ArgError(1, fmt.Sprintf("unknown slot %q: no template renders it, so this injection could never run. Slots: %s",
+				slotName, strings.Join(AllInjectionSlots, ", ")))
+			return 0
+		}
 
 		pm.mu.Lock()
 		if !pm.stateMayRegisterLocked(L) {
@@ -1536,6 +1567,22 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 		s = strings.ReplaceAll(s, ">", "&gt;")
 		s = strings.ReplaceAll(s, "\"", "&quot;")
 		s = strings.ReplaceAll(s, "'", "&#39;")
+		// Square brackets too, because a plugin's output is not plain HTML: it
+		// goes back through the shortcode processor, so `[` is a metacharacter
+		// of the output context exactly as `<` is. Without them a plugin that
+		// prints a meta value or an entity field hands whoever wrote that text
+		// a shortcode on the page that printed it, expanded under the reader's
+		// scope rather than the writer's. Quoting the value is no defence: an
+		// attribute span is unescaped only after the pattern has matched it, so
+		// the escaping above is undone again inside a bracket.
+		//
+		// Entities rather than removal, so escaped text still reads as it was
+		// written: the browser renders these as the characters themselves, in
+		// text and in attribute values alike, while shortcodePattern needs a
+		// literal `[` and no longer matches. Appended last, so the `&` each one
+		// introduces is not escaped again.
+		s = strings.ReplaceAll(s, "[", "&#91;")
+		s = strings.ReplaceAll(s, "]", "&#93;")
 		L.Push(lua.LString(s))
 		return 1
 	})
@@ -2263,22 +2310,30 @@ func (pm *PluginManager) LockVMWithContext(ctx context.Context, L *lua.LState) (
 	return mu, nil
 }
 
-// TryLockVMWithin is LockVM bounded by wait. It returns (nil, false) when the
-// plugin is gone — the caller must not touch L — and (nil, true) when the plugin
-// is alive but its lock could not be taken in time.
+// TryLockVMWithin is LockVM bounded by two things at once: wait, and ctx. It
+// returns (nil, false) when the plugin is gone — the caller must not touch L —
+// and (nil, true) when the plugin is alive but its lock was not taken before
+// either bound ended.
 //
-// This exists to break lock cycles *between* goroutines, which the invocation
-// chain cannot see because a chain is per-call-stack. Two plugins that each hook
-// an entity the other writes can arrive at each other's mutex from opposite
-// directions: goroutine A holds P and waits for Q while B holds Q and waits for
-// P. Both waits are unbounded and the Lua deadline cannot preempt a block inside
-// a Go call, so that is permanent — and it is permanent on the code this
-// replaces too.
+// ctx is the caller's own, and a caller that has none passes Background, which
+// leaves wait as the only bound and the behaviour exactly what it was. It is a
+// second bound rather than a replacement for wait, because the two answer
+// different questions: wait breaks a deadlock between two goroutines, ctx stops
+// a wait nobody is left to receive the answer of.
+//
+// The deadlock is why this exists at all, and the invocation chain cannot see
+// it, because a chain is per-call-stack. Two plugins that each hook an entity
+// the other writes can arrive at each other's mutex from opposite directions:
+// goroutine A holds P and waits for Q while B holds Q and waits for P. Both
+// waits are unbounded and the Lua deadline cannot preempt a block inside a Go
+// call, so that is permanent — and it is permanent on the code this replaces
+// too.
 //
 // Only the nested case needs bounding, and only the nested case gets it (see
 // RunAfterHooks): a dispatch that holds no VM lock cannot be a participant in
-// such a cycle, so it keeps waiting as long as it takes, exactly as before.
-func (pm *PluginManager) TryLockVMWithin(L *lua.LState, wait time.Duration) (*vmMutex, bool) {
+// such a cycle, so it does not come here at all and waits for as long as its
+// own caller does.
+func (pm *PluginManager) TryLockVMWithin(ctx context.Context, L *lua.LState, wait time.Duration) (*vmMutex, bool) {
 	mu := pm.VMLock(L)
 	if mu == nil {
 		return nil, false
@@ -2292,9 +2347,11 @@ func (pm *PluginManager) TryLockVMWithin(L *lua.LState, wait time.Duration) (*vm
 	// block". The loop this replaced gave a zero wait one attempt and gave up.
 	acquired := false
 	if wait <= 0 {
+		// ctx plays no part here, and cannot: this branch does not wait, so
+		// there is nothing for a cancellation to shorten.
 		acquired = mu.TryLock()
 	} else {
-		acquired = mu.LockWithin(context.Background(), wait)
+		acquired = mu.LockWithin(ctx, wait)
 	}
 	if !acquired {
 		// Distinguish "busy" from "gone" here too, not just on the acquiring

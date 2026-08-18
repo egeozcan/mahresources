@@ -654,8 +654,14 @@ Persistent key-value storage scoped to the calling plugin. Values are JSON-seria
 |----------|---------|-------------|
 | `mah.kv.get(key)` | value or `nil` | Read a stored value |
 | `mah.kv.set(key, value)` | `nil` | Write a value (overwrites existing) |
+| `mah.kv.compare_and_set(key, expected, value)` | boolean | Write `value` only while the stored value is still `expected` |
 | `mah.kv.delete(key)` | `nil` | Delete a stored key |
 | `mah.kv.list([prefix])` | table of strings | List keys, optionally filtered by prefix |
+
+| Constant | Description |
+|----------|-------------|
+| `mah.kv.ABSENT` | The expectation "nothing is stored under this key yet" |
+| `mah.kv.max_value_size` | Largest serialized value a key may hold, in bytes (8388608) |
 
 ```lua
 -- Store a table
@@ -676,6 +682,60 @@ mah.kv.delete("config")
 ```
 
 Data is scoped by plugin name -- plugins cannot access another plugin's keys. To purge all KV data for a disabled plugin, use the `POST /v1/plugin/purge-data` endpoint.
+
+### Updating a value another call may be updating
+
+`mah.kv.set` overwrites whatever is there, so reading a value, changing it and writing it back loses any write that landed in between.
+
+Inside one call it cannot happen. A plugin has one VM behind one mutex and every entry into its Lua holds that mutex for the whole call, so no other surface of the same plugin runs while yours does. Two arrangements fall outside that hold, and both are ordinary:
+
+- **The read and the write are in different calls.** The function handed to `mah.start_job`, and the callback handed to an asynchronous `mah.http` call, both run after the call that registered them released the mutex, so nothing spans the pair. A value read in a page handler and written back from the job it started is exposed.
+- **The server runs more than one process.** Each process has its own VM and its own mutex, and nothing orders one against another.
+
+The one-VM hold is how this host runs plugins today, not a promise about how it always will.
+
+`mah.kv.compare_and_set(key, expected, value)` writes only while the stored value is still `expected`. It returns `true` if it wrote and `false` if it did not, and a `false` writes nothing. The comparison runs inside the statement that writes, so nothing can slip between the two.
+
+`expected` is serialized exactly as `mah.kv.set` serializes what it stores, so a value read back with `mah.kv.get` can be handed straight back as the expectation, tables included. Two expectations are special:
+
+- `mah.kv.ABSENT` means "the key does not exist yet". Use it to create a key exactly once.
+- `nil` means "the key holds `null`", because `mah.kv.set(key, nil)` stores a JSON null. A key holding null exists; it is not an absent key, and neither expectation is satisfied by the other's state.
+
+```lua
+-- Increment a counter without losing a concurrent increment.
+for _ = 1, 5 do
+    local current = mah.kv.get("count")
+    local expected = mah.kv.ABSENT
+    if current ~= nil then
+        expected = current
+    end
+    if mah.kv.compare_and_set("count", expected, (current or 0) + 1) then
+        break
+    end
+end
+
+-- Claim a key exactly once. Only the first caller is told true.
+if mah.kv.compare_and_set("lease", mah.kv.ABSENT, { owner = "importer" }) then
+    -- nobody else held it
+end
+```
+
+Inside `mah.db.transaction` the comparison sees the transaction's own uncommitted writes, and its result commits or rolls back with everything else in the block.
+
+### Value size limit
+
+A stored value may be at most `mah.kv.max_value_size` bytes of serialized JSON (8388608, or 8 MB). `mah.kv.set` and `mah.kv.compare_and_set` raise an error naming both the limit and the size offered, which unwinds the handler unless the call is wrapped in `pcall`.
+
+To decide before writing rather than after failing, measure the value first. `mah.json.encode` runs the same encoder the store does, so the length it reports is the length that is checked:
+
+```lua
+local encoded = mah.json.encode(value)
+if #encoded > mah.kv.max_value_size then
+    mah.log("warning", "value too large for kv", { bytes = #encoded })
+else
+    mah.kv.set("cache", value)
+end
+```
 
 ## mah.log -- Logging
 
@@ -795,11 +855,24 @@ end)
 | `status_code` | number | HTTP status code |
 | `status` | string | Full status text |
 | `body` | string | Response body (truncated at 5 MB) |
+| `truncated` | boolean | Whether the body was cut at the 5 MB limit. Present on every successful response, `false` when the whole body arrived |
 | `headers` | table | Lowercase header names, comma-joined values |
 | `url` | string | Request URL |
 | `method` | string | Request method |
 
+Check `truncated` before decoding, hashing or paginating a response. A cut body is
+still a valid Lua string, so the damage surfaces wherever the plugin next reads it
+rather than at the request that caused it.
+
+```lua
+if response.truncated then
+    mah.log("warning", "response cut at the 5 MB limit", { url = response.url })
+    return
+end
+```
+
 On network error, the response contains `error` (string), `url`, and `method` instead.
+That shape carries no `body`, and so no `truncated` either.
 
 Callbacks are queued and executed on the plugin's VM thread with a 5-second deadline per callback.
 
@@ -1254,13 +1327,21 @@ Must match `^[a-z][a-z0-9_-]{0,49}$`. The system expands the shortcode name to `
 
 ### Execution
 
-Server-side at template render time. 5-second timeout per render call. Returned HTML is inlined directly into the page. Use `mah.html_escape(str)` when rendering user-supplied content.
+Server-side at template render time. 5-second timeout per render call. Returned HTML goes back through the shortcode processor before it is inlined into the page (see [Nested Shortcodes](#nested-shortcodes)). Use `mah.html_escape(str)` when rendering user-supplied content.
 
 ### Block Shortcodes
 
-Plugin shortcodes support block mode. When used as `[plugin:name:sc]content[/plugin:name:sc]`, the render function receives `ctx.inner_content` with the raw content between tags, and `ctx.is_block = true`. Nested shortcodes inside plugin block output are expanded automatically after the plugin render function returns.
+Plugin shortcodes support block mode. When used as `[plugin:name:sc]content[/plugin:name:sc]`, the render function receives `ctx.inner_content` with the raw content between tags, and `ctx.is_block = true`.
 
-In docs preview, nested shortcodes inside plugin block output are not expanded (they render as literal text). This is a preview-only limitation.
+### Nested Shortcodes
+
+Shortcodes in the returned HTML are expanded after the render function returns. This holds for both forms: whether the author wrapped a body says nothing about what the render function emits. Expansion is bounded by the same nesting depth limit as every other shortcode, so a shortcode that emits itself stops instead of looping, and an `[mrql]` emitted this way spends the page's inline query budget like one an author wrote.
+
+Only a successful render is expanded. A render function that raises produces a marker naming the shortcode with the error in its `title` attribute, and a caller who may not reach the plugin gets a neutral comment. Neither is re-processed, so an error message quoting whatever the plugin was handed cannot steer the page.
+
+Run text you do not control through `mah.html_escape` before printing it. It escapes the square brackets along with the HTML metacharacters, because this is the output context where they matter: shortcode syntax somebody typed into a meta field would otherwise be expanded on the page that printed it, under the reader's scope rather than the writer's.
+
+In docs preview, shortcodes inside plugin output are not expanded (they render as literal text). This is a preview-only limitation.
 
 ### Example
 
@@ -1350,7 +1431,9 @@ In before hooks, this cancels the entity operation. In action handlers, this ret
 
 ## mah.html_escape(str)
 
-Escapes a string for safe HTML output. Replaces `&`, `<`, `>`, `"`, and `'` with their HTML entity equivalents.
+Escapes a string for safe output. Replaces `&`, `<`, `>`, `"`, `'`, `[` and `]` with their HTML entity equivalents.
+
+The square brackets are escaped because plugin output is re-processed as shortcode source, so text a plugin does not control would otherwise run as a shortcode. Browsers render the entities as the characters themselves, in text and in attribute values alike, so escaped text reads exactly as it was written.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|

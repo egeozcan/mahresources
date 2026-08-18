@@ -24,6 +24,14 @@ import (
 // (template_filters/plugin_slot.go) always passes a real one, and
 // internal/arch/plugin_render_gate_test.go fails the build if it stops.
 func (pm *PluginManager) RenderSlot(reqCtx context.Context, slot string, ctx map[string]any, allow func(pluginName string) bool) string {
+	// Registration refuses a slot outside the catalogue, so a name that reaches
+	// here from outside it is a template naming a slot the host does not know.
+	// Nothing can be registered for it; say so once rather than returning the
+	// empty string that made a misspelled mah.inject invisible.
+	if !IsInjectionSlot(slot) {
+		pm.reportUnknownDispatch("injection slot", slot)
+		return ""
+	}
 	if pm.closed.Load() {
 		return ""
 	}

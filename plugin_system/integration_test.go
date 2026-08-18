@@ -37,7 +37,7 @@ end
 
 	// Test hook modifies data
 	data := map[string]any{"name": "Test Note", "description": "desc"}
-	result, err := mgr.RunBeforeHooks(nil, "before_note_create", data)
+	result, err := mgr.RunBeforeHooks(context.Background(), nil, "before_note_create", data)
 	if err != nil {
 		t.Fatal(err)
 	}

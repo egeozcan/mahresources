@@ -167,7 +167,15 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		// as reachable by group-limited users, so the seams need the name to
 		// decide. Absence still fails closed, exactly as the whole-request
 		// gate did.
-		ctx["_pluginAccess"] = auth.PluginAccessFor(request.Context(), appContext.PluginAllowsScopedPrincipals)
+		pluginAccess := auth.PluginAccessFor(request.Context(), appContext.PluginAllowsScopedPrincipals)
+		ctx["_pluginAccess"] = pluginAccess
+		// The action lists below are filtered by a stricter predicate, because
+		// they answer a different question. The seams ask whether this caller may
+		// reach a plugin, which for an opened plugin a guest may; the lists ask
+		// whether it could run one of its actions, which a guest never can,
+		// because that is a write. Reachability is still decided once:
+		// PluginActionAccessFor delegates to PluginAccessFor for that half.
+		actionAccess := auth.PluginActionAccessFor(request.Context(), appContext.PluginAllowsScopedPrincipals)
 
 		// Expose the authenticated user to templates (nav avatar / logout). The
 		// implicit super-user used when auth is disabled is intentionally not
@@ -223,21 +231,22 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 		if mainEntity := ctx["mainEntity"]; mainEntity != nil {
 			if entityType, ok := ctx["mainEntityType"].(string); ok && entityType != "" {
 				entityData := buildEntityDataFromEntity(mainEntity, entityType)
-				ctx["pluginDetailActions"] = pm.GetActionsForPlacement(entityType, "detail", entityData)
+				ctx["pluginDetailActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement(entityType, "detail", entityData))
 			}
 		}
 
-		// Compute plugin card/bulk actions for list pages (unfiltered)
+		// Compute plugin card/bulk actions for list pages (no entity data, so an
+		// action's own filters cannot narrow them)
 		path := request.URL.Path
 		switch {
 		case strings.HasPrefix(path, "/resources"):
-			ctx["pluginCardActions"] = pm.GetActionsForPlacement("resource", "card", nil)
-			ctx["pluginBulkActions"] = pm.GetActionsForPlacement("resource", "bulk", nil)
+			ctx["pluginCardActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("resource", "card", nil))
+			ctx["pluginBulkActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("resource", "bulk", nil))
 		case strings.HasPrefix(path, "/notes"):
-			ctx["pluginCardActions"] = pm.GetActionsForPlacement("note", "card", nil)
+			ctx["pluginCardActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("note", "card", nil))
 		case strings.HasPrefix(path, "/groups"):
-			ctx["pluginCardActions"] = pm.GetActionsForPlacement("group", "card", nil)
-			ctx["pluginBulkActions"] = pm.GetActionsForPlacement("group", "bulk", nil)
+			ctx["pluginCardActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("group", "card", nil))
+			ctx["pluginBulkActions"] = offeredActions(actionAccess, pm.GetActionsForPlacement("group", "bulk", nil))
 		}
 
 		// For JSON responses, process shortcodes in Custom* fields since the
@@ -249,6 +258,30 @@ func wrapContextWithPlugins(appContext *application_context.MahresourcesContext,
 
 		return ctx
 	}
+}
+
+// offeredActions drops the actions whose plugin this caller may not reach.
+//
+// These lists are where a user actually meets a plugin action: the detail
+// sidebar, the card menu and the bulk bar all render straight out of them, and
+// none of them consults GET /v1/plugin/actions. Offering one that
+// /v1/jobs/action/run refuses (403) draws a button whose only outcome is that
+// refusal, and the operator's decision is per plugin, so the filter has to be
+// too.
+//
+// It removes a dead control rather than closing anything: drawing a button runs
+// no plugin code, and the run path is the boundary. Which is also why it takes
+// the predicate rather than owning one: auth.PluginActionAccessFor is what the
+// two action handlers ask, so the buttons and the endpoint they post to cannot
+// answer differently.
+func offeredActions(access auth.PluginAccess, actions []plugin_system.ActionRegistration) []plugin_system.ActionRegistration {
+	offered := make([]plugin_system.ActionRegistration, 0, len(actions))
+	for _, action := range actions {
+		if access(action.PluginName) {
+			offered = append(offered, action)
+		}
+	}
+	return offered
 }
 
 // buildEntityDataFromEntity extracts filter-relevant fields from an entity for action matching.
