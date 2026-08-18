@@ -200,6 +200,85 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# The third direction. A class the published docs hand out has to be a class
+# the shipped stylesheet serves.
+#
+# CustomHeader, CustomSidebar, CustomSummary and CustomAvatar bodies, custom
+# block type templates and the HTML a plugin shortcode returns all live in the
+# database and render under this stylesheet, and docs-site spells them out as
+# copy-paste examples. An operator who follows the documentation is therefore
+# authoring class attributes that were never in this build's scan. Nothing
+# above sees that: docs-site is excluded on purpose, and the reference above
+# names only the trees that write class attributes the application itself
+# renders. A class that lives only in an example is invisible to both, and
+# losing it looks like nothing until a pasted template renders wrong.
+#
+# Reading docs-site here is not the leak the exclusion closed. Only class
+# attributes inside fenced code blocks count, so a utility name in an ordinary
+# sentence still reaches nothing. shortcode-error, which docs-site spells in
+# prose and nowhere else, is the negative control that pins that.
+#
+# The comparison needs no judgement about which tokens are real utilities.
+# Writing every candidate into a scanned template and diffing that build
+# against the shipped one leaves exactly the documented classes the shipped
+# build does not serve, because a bespoke example class like recipe-card emits
+# no rule in either build and cancels out.
+# ---------------------------------------------------------------------------
+documented=$TMP/documented.tsv
+git ls-files 'docs-site/docs/*.md' | xargs awk -v q="'" '
+  FNR == 1 { inblock = 0 }
+  /^[ \t]*```/ { inblock = !inblock; next }
+  !inblock { next }
+  {
+    re = "class[ \t]*=[ \t]*[\"" q "][^\"" q "]*[\"" q "]"
+    line = $0
+    while (match(line, re)) {
+      attr = substr(line, RSTART, RLENGTH)
+      line = substr(line, RSTART + RLENGTH)
+      sub(/^class[ \t]*=[ \t]*./, "", attr)
+      sub(/.$/, "", attr)
+      n = split(attr, parts, /[ \t]+/)
+      for (i = 1; i <= n; i++)
+        if (parts[i] != "" && !(parts[i] in seen)) {
+          seen[parts[i]] = 1
+          print parts[i] "\t" FILENAME ":" FNR
+        }
+    }
+  }' > "$documented"
+echo "documented: $(cut -f1 "$documented" | sort -u | wc -l | tr -d ' ') distinct class tokens in docs-site examples"
+
+# An empty diff is also what a broken extractor produces, so prove the
+# extractor before believing it. The sentinel is stored reversed for the reason
+# the probe tokens are: this file is scanned too.
+sentinel=$(printf '%s' 'lluf-w' | rev)
+extract_ok=1
+[ -s "$documented" ] || { echo "        no class attributes found at all"; extract_ok=0; }
+cut -f1 "$documented" | grep -qxF "$sentinel" || { echo "        missed $sentinel, which docs-site writes inside a fenced example"; extract_ok=0; }
+if cut -f1 "$documented" | grep -qxF shortcode-error; then
+  echo "        picked up shortcode-error, which docs-site writes only in prose"
+  extract_ok=0
+fi
+if [ "$extract_ok" -eq 1 ]; then pass "documented-tokens-are-extracted"; else fail "documented-tokens-are-extracted"; fi
+
+documented_control=templates/zz-css-scan-documented.tpl
+PROBES+=("$documented_control")
+cut -f1 "$documented" | sort -u | awk '{ printf "<div class=\"%s\"></div>\n", $0 }' > "$documented_control"
+build ./index.css "$TMP/documented.css" || { fail "documented-build"; exit 1; }
+classes "$TMP/documented.css" > "$TMP/documented.classes"
+rm -f "$documented_control"
+comm -13 "$TMP/baseline.classes" "$TMP/documented.classes" > "$TMP/unserved.txt"
+if [ -s "$TMP/unserved.txt" ]; then
+  fail "documented-classes-survive: the stylesheet no longer serves $(wc -l < "$TMP/unserved.txt" | tr -d ' ') classes docs-site hands out:"
+  while read -r sel; do
+    tok=$(printf '%s' "$sel" | sed 's/^\.//; s/\\//g')
+    where=$(awk -F'\t' -v t="$tok" '$1 == t { print $2; exit }' "$documented")
+    printf '        %-24s %s\n' "$sel" "${where:-first documented use not located}"
+  done < "$TMP/unserved.txt"
+else
+  pass "documented-classes-survive"
+fi
+
+# ---------------------------------------------------------------------------
 # Finding B. index.css tells maintainers that one glob matching every .md file
 # "would not do what it reads like", inferring it from the true observation that
 # an exclusion overlapping an explicit @source is a no-op. The inference does
