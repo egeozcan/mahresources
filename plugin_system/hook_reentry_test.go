@@ -564,7 +564,7 @@ func TestTryLockVMWithin_GivesUpWhenTheVMIsHeldElsewhere(t *testing.T) {
 	}
 
 	start := time.Now()
-	mu, timedOut := pm.TryLockVMWithin(L, 60*time.Millisecond)
+	mu, timedOut := pm.TryLockVMWithin(context.Background(), L, 60*time.Millisecond)
 	elapsed := time.Since(start)
 
 	if mu != nil {
@@ -582,7 +582,7 @@ func TestTryLockVMWithin_GivesUpWhenTheVMIsHeldElsewhere(t *testing.T) {
 
 	// Releasing lets it through, so the bound is a timeout and not a refusal.
 	held.Unlock()
-	mu2, _ := pm.TryLockVMWithin(L, time.Second)
+	mu2, _ := pm.TryLockVMWithin(context.Background(), L, time.Second)
 	if mu2 == nil {
 		t.Fatal("TryLockVMWithin failed on a free lock")
 	}
@@ -652,7 +652,7 @@ end
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := pm.RunBeforeHooks(nested, "before_note_delete", map[string]any{"id": float64(1)})
+		_, err := pm.RunBeforeHooks(context.Background(), nested, "before_note_delete", map[string]any{"id": float64(1)})
 		done <- err
 	}()
 
@@ -864,7 +864,7 @@ func TestTryLockVMWithin_ReportsADisabledPluginAsGoneNotBusy(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		mu, busy := pm.TryLockVMWithin(L, 500*time.Millisecond)
+		mu, busy := pm.TryLockVMWithin(context.Background(), L, 500*time.Millisecond)
 		done <- result{mu, busy}
 	}()
 
@@ -969,7 +969,7 @@ end
 	}
 	got := make(chan result, 1)
 	go func() {
-		mu, busy := pm.lockVMForHook(nested, hook, "before_note_delete")
+		mu, busy := pm.lockVMForHook(context.Background(), nested, hook, "before_note_delete")
 		got <- result{mu, busy}
 	}()
 
@@ -1050,7 +1050,7 @@ end
 		{"nested dispatch", NewInvocation(0).with(hook.state)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			mu, busy := pm.lockVMForHook(tc.inv, hook, "before_note_delete")
+			mu, busy := pm.lockVMForHook(context.Background(), tc.inv, hook, "before_note_delete")
 			if mu != nil {
 				mu.Unlock()
 				t.Error("an unregistered hook was handed a lock and would have run: a disabled " +
@@ -1071,7 +1071,7 @@ end
 	if len(live) != 1 {
 		t.Fatalf("expected the control hook to be registered, got %d", len(live))
 	}
-	mu, busy := pm.lockVMForHook(NewInvocation(0), live[0], "after_note_delete")
+	mu, busy := pm.lockVMForHook(context.Background(), NewInvocation(0), live[0], "after_note_delete")
 	if mu == nil {
 		t.Errorf("a registered hook was skipped (busy=%v): the guard rejects everything", busy)
 	} else {

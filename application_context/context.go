@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
@@ -782,13 +783,35 @@ func (ctx *MahresourcesContext) hookInvocation() *plugin_system.Invocation {
 	return plugin_system.NewInvocation(actor)
 }
 
+// callerContext is the context of whoever made the call that raised a hook.
+//
+// Read off the db handle rather than handed in, which is what keeps the ~35
+// sites that raise a hook out of this change: none of them takes a context, and
+// this tree already carries request-scoped state inside the handle. WithPrincipal
+// puts the subtree filter and the acting user there, and visibleGroupIDs reads
+// the filter back from exactly here. Background when there is none: a worker, a
+// startup seed, the singleton handle.
+func (ctx *MahresourcesContext) callerContext() context.Context {
+	if ctx.db == nil || ctx.db.Statement == nil || ctx.db.Statement.Context == nil {
+		return context.Background()
+	}
+	return ctx.db.Statement.Context
+}
+
 // RunBeforePluginHooks executes before-hooks for the given event.
 // If no plugin manager is active, data is returned unmodified.
+//
+// The caller's context bounds the wait for a busy plugin's VM. A before-hook
+// runs before the write it can veto, so giving up on the wait fails the write,
+// and failing a write whose client has already gone is safe: it is the same
+// answer ErrHookVMBusy gives when a nested dispatch's bound expires, and nobody
+// is left believing the write happened. RunAfterPluginHooks passes no context
+// and must not; see plugin_system.RunAfterHooks.
 func (ctx *MahresourcesContext) RunBeforePluginHooks(event string, data map[string]any) (map[string]any, error) {
 	if ctx.pluginManager == nil {
 		return data, nil
 	}
-	return ctx.pluginManager.RunBeforeHooks(ctx.hookInvocation(), event, data)
+	return ctx.pluginManager.RunBeforeHooks(ctx.callerContext(), ctx.hookInvocation(), event, data)
 }
 
 // RunAfterPluginHooks executes after-hooks for the given event.
