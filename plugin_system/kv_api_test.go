@@ -30,6 +30,21 @@ func (m *mockKVStore) KVSet(pluginName, key, value string) error {
 	return nil
 }
 
+// KVCompareAndSet is the double for the conditional write. expected == nil is
+// "no row may exist yet", which is a different expectation from a row holding
+// the JSON null the store keeps for a Lua nil.
+func (m *mockKVStore) KVCompareAndSet(pluginName, key string, expected *string, value string) (bool, error) {
+	current, found, _ := m.KVGet(pluginName, key)
+	if expected == nil {
+		if found {
+			return false, nil
+		}
+	} else if !found || current != *expected {
+		return false, nil
+	}
+	return true, m.KVSet(pluginName, key, value)
+}
+
 func (m *mockKVStore) KVDelete(pluginName, key string) error {
 	if keys, ok := m.data[pluginName]; ok {
 		delete(keys, key)

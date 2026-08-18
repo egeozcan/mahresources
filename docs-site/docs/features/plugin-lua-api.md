@@ -654,8 +654,14 @@ Persistent key-value storage scoped to the calling plugin. Values are JSON-seria
 |----------|---------|-------------|
 | `mah.kv.get(key)` | value or `nil` | Read a stored value |
 | `mah.kv.set(key, value)` | `nil` | Write a value (overwrites existing) |
+| `mah.kv.compare_and_set(key, expected, value)` | boolean | Write `value` only while the stored value is still `expected` |
 | `mah.kv.delete(key)` | `nil` | Delete a stored key |
 | `mah.kv.list([prefix])` | table of strings | List keys, optionally filtered by prefix |
+
+| Constant | Description |
+|----------|-------------|
+| `mah.kv.ABSENT` | The expectation "nothing is stored under this key yet" |
+| `mah.kv.max_value_size` | Largest serialized value a key may hold, in bytes (8388608) |
 
 ```lua
 -- Store a table
@@ -676,6 +682,60 @@ mah.kv.delete("config")
 ```
 
 Data is scoped by plugin name -- plugins cannot access another plugin's keys. To purge all KV data for a disabled plugin, use the `POST /v1/plugin/purge-data` endpoint.
+
+### Updating a value another call may be updating
+
+`mah.kv.set` overwrites whatever is there, so reading a value, changing it and writing it back loses any write that landed in between.
+
+Inside one call it cannot happen. A plugin has one VM behind one mutex and every entry into its Lua holds that mutex for the whole call, so no other surface of the same plugin runs while yours does. Two arrangements fall outside that hold, and both are ordinary:
+
+- **The read and the write are in different calls.** The function handed to `mah.start_job`, and the callback handed to an asynchronous `mah.http` call, both run after the call that registered them released the mutex, so nothing spans the pair. A value read in a page handler and written back from the job it started is exposed.
+- **The server runs more than one process.** Each process has its own VM and its own mutex, and nothing orders one against another.
+
+The one-VM hold is how this host runs plugins today, not a promise about how it always will.
+
+`mah.kv.compare_and_set(key, expected, value)` writes only while the stored value is still `expected`. It returns `true` if it wrote and `false` if it did not, and a `false` writes nothing. The comparison runs inside the statement that writes, so nothing can slip between the two.
+
+`expected` is serialized exactly as `mah.kv.set` serializes what it stores, so a value read back with `mah.kv.get` can be handed straight back as the expectation, tables included. Two expectations are special:
+
+- `mah.kv.ABSENT` means "the key does not exist yet". Use it to create a key exactly once.
+- `nil` means "the key holds `null`", because `mah.kv.set(key, nil)` stores a JSON null. A key holding null exists; it is not an absent key, and neither expectation is satisfied by the other's state.
+
+```lua
+-- Increment a counter without losing a concurrent increment.
+for _ = 1, 5 do
+    local current = mah.kv.get("count")
+    local expected = mah.kv.ABSENT
+    if current ~= nil then
+        expected = current
+    end
+    if mah.kv.compare_and_set("count", expected, (current or 0) + 1) then
+        break
+    end
+end
+
+-- Claim a key exactly once. Only the first caller is told true.
+if mah.kv.compare_and_set("lease", mah.kv.ABSENT, { owner = "importer" }) then
+    -- nobody else held it
+end
+```
+
+Inside `mah.db.transaction` the comparison sees the transaction's own uncommitted writes, and its result commits or rolls back with everything else in the block.
+
+### Value size limit
+
+A stored value may be at most `mah.kv.max_value_size` bytes of serialized JSON (8388608, or 8 MB). `mah.kv.set` and `mah.kv.compare_and_set` raise an error naming both the limit and the size offered, which unwinds the handler unless the call is wrapped in `pcall`.
+
+To decide before writing rather than after failing, measure the value first. `mah.json.encode` runs the same encoder the store does, so the length it reports is the length that is checked:
+
+```lua
+local encoded = mah.json.encode(value)
+if #encoded > mah.kv.max_value_size then
+    mah.log("warning", "value too large for kv", { bytes = #encoded })
+else
+    mah.kv.set("cache", value)
+end
+```
 
 ## mah.log -- Logging
 
