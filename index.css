@@ -30,14 +30,15 @@
    that genuinely author class attributes named: the .tpl templates, src, every
    .go file, the plugin Lua and the preset JSON under server/template_presets.
    That reference is 867 classes and every one of them survives, while the
-   exclusions together remove 114 classes. Do not add one you have not measured
-   that way, because an over-broad exclusion deletes a rule silently and the
-   page that needed it simply renders wrong. Grep is not that measurement:
-   `text-stone-50` is a substring of `text-stone-500` and `ordinal` of
-   `ordinal_position`, and a comment naming a class the file no longer emits
+   exclusions together remove 114 classes; three of those are declared back
+   below, which leaves the shipped build at 874. Do not add one you have not
+   measured that way, because an over-broad exclusion deletes a rule silently
+   and the page that needed it simply renders wrong. Grep is not that
+   measurement: `text-stone-50` is a substring of `text-stone-500` and `ordinal`
+   of `ordinal_position`, and a comment naming a class the file no longer emits
    reads to grep as a use. All three occur here. scripts/css-scan-test.sh runs
-   both measurements: prose that reaches the stylesheet, and authored classes
-   that no longer do.
+   all three measurements: prose that reaches the stylesheet, authored classes
+   that no longer do, and documented classes that no longer do.
 
    e2e is excluded whole rather than by extension because a .ts spec is prose
    where it counts. `w-[18px]` reached the stylesheet only from a comment
@@ -49,9 +50,10 @@
    explicit `@source`, so an exclusion overlapping either line at the top is a
    silent no-op. `@source not "./templates/**"` leaves the build at its full 985
    classes. That is a rule about overlap and not about breadth. The .md
-   exclusion overlaps neither line and fires like any other, removing 105 of
-   those 114 classes on its own and none of the 867. It cannot be written out in
-   this comment, because the glob contains the sequence that ends one.
+   exclusion overlaps neither line and fires like any other, cutting 102 of
+   those 114 on its own once the three below are back, and none of the 867. It
+   cannot be written out in this comment, because the glob contains the sequence
+   that ends one.
 
    What looks like the fix and is not: `@import "tailwindcss" source(none);`
    switches detection off entirely and drops 70 of those 867 classes, because
@@ -67,7 +69,25 @@
    shell and is not one, because seed-edge-cases.sh writes a CustomHeader made of
    real markup, and `bg-blue-50` reaches the stylesheet from that heredoc and
    from nowhere else. .worktrees needs no entry at all; .gitignore already keeps
-   detection out of it. */
+   detection out of it.
+
+   Declared back: the three classes on the @source inline line. A CustomHeader,
+   CustomSidebar, CustomSummary or CustomAvatar body lives in the database and
+   renders under this stylesheet, and docs-site publishes those bodies as
+   copy-paste examples, so a class an example spells is a class an operator
+   pastes into a category and expects to work. bg-gray-300 is the background of
+   the CustomAvatar placeholder circle, h-32 the height of the [mrql]
+   photo-gallery card, and text-yellow-500 the span the plugin rating shortcode
+   returns. Each reached the stylesheet only from docs-site, and docs-site ships
+   in every checkout, so unlike the e2e pair above these worked for everyone
+   until the exclusion removed them. Declaring them is the way back rather than
+   dropping the exclusion, because Tailwind can exclude a file but cannot scan
+   only the fenced blocks inside it, and the fenced blocks are the half of
+   docs-site worth reading for class names. Nothing else here can see this kind
+   of loss: the reference stylesheet names only trees the application itself
+   renders from, so a documented class is invisible to it. The
+   documented-classes-survive check in css-scan-test.sh is what says when this
+   line needs a fourth entry. */
 @source not "./**/*.md";
 @source not "./docs/**";
 @source not "./docs-site/**";
@@ -75,6 +95,7 @@
 @source not "./tasks/**";
 @source not "./.claude/**";
 @source not "./skills/**";
+@source inline("bg-gray-300 h-32 text-yellow-500");
 @theme {
   --font-sans: 'IBM Plex Sans', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
