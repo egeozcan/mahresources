@@ -72,9 +72,12 @@ local FAL_ENDPOINTS = {
     imagen4_ultra = "fal-ai/imagen4/preview/ultra",
 }
 
--- HTML-escape user input to prevent XSS
+-- Escape a value for output: HTML metacharacters, and the shortcode brackets
+-- with them, because this plugin's output goes back through the shortcode
+-- processor. See mah.html_escape in plugin_system/manager.go.
 local function html_escape(s)
     return s:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"):gsub("'", "&#39;")
+        :gsub("%[", "&#91;"):gsub("%]", "&#93;")
 end
 
 -- Supported raster image content types

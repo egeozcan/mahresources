@@ -1327,13 +1327,21 @@ Must match `^[a-z][a-z0-9_-]{0,49}$`. The system expands the shortcode name to `
 
 ### Execution
 
-Server-side at template render time. 5-second timeout per render call. Returned HTML is inlined directly into the page. Use `mah.html_escape(str)` when rendering user-supplied content.
+Server-side at template render time. 5-second timeout per render call. Returned HTML goes back through the shortcode processor before it is inlined into the page (see [Nested Shortcodes](#nested-shortcodes)). Use `mah.html_escape(str)` when rendering user-supplied content.
 
 ### Block Shortcodes
 
-Plugin shortcodes support block mode. When used as `[plugin:name:sc]content[/plugin:name:sc]`, the render function receives `ctx.inner_content` with the raw content between tags, and `ctx.is_block = true`. Nested shortcodes inside plugin block output are expanded automatically after the plugin render function returns.
+Plugin shortcodes support block mode. When used as `[plugin:name:sc]content[/plugin:name:sc]`, the render function receives `ctx.inner_content` with the raw content between tags, and `ctx.is_block = true`.
 
-In docs preview, nested shortcodes inside plugin block output are not expanded (they render as literal text). This is a preview-only limitation.
+### Nested Shortcodes
+
+Shortcodes in the returned HTML are expanded after the render function returns. This holds for both forms: whether the author wrapped a body says nothing about what the render function emits. Expansion is bounded by the same nesting depth limit as every other shortcode, so a shortcode that emits itself stops instead of looping, and an `[mrql]` emitted this way spends the page's inline query budget like one an author wrote.
+
+Only a successful render is expanded. A render function that raises produces a marker naming the shortcode with the error in its `title` attribute, and a caller who may not reach the plugin gets a neutral comment. Neither is re-processed, so an error message quoting whatever the plugin was handed cannot steer the page.
+
+Run text you do not control through `mah.html_escape` before printing it. It escapes the square brackets along with the HTML metacharacters, because this is the output context where they matter: shortcode syntax somebody typed into a meta field would otherwise be expanded on the page that printed it, under the reader's scope rather than the writer's.
+
+In docs preview, shortcodes inside plugin output are not expanded (they render as literal text). This is a preview-only limitation.
 
 ### Example
 
@@ -1423,7 +1431,9 @@ In before hooks, this cancels the entity operation. In action handlers, this ret
 
 ## mah.html_escape(str)
 
-Escapes a string for safe HTML output. Replaces `&`, `<`, `>`, `"`, and `'` with their HTML entity equivalents.
+Escapes a string for safe output. Replaces `&`, `<`, `>`, `"`, `'`, `[` and `]` with their HTML entity equivalents.
+
+The square brackets are escaped because plugin output is re-processed as shortcode source, so text a plugin does not control would otherwise run as a shortcode. Browsers render the entities as the characters themselves, in text and in attribute values alike, so escaped text reads exactly as it was written.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
