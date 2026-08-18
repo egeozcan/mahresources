@@ -367,8 +367,11 @@ type MahresourcesContext struct {
 	// derived context, which is what keeps InitFTS state and cache
 	// invalidation visible across them.
 	search *search.Service
-	// currentRequest holds the current HTTP request for logging purposes.
-	// This is set per-request via WithRequest() to capture request metadata in logs.
+	// currentRequest holds the HTTP request this context is serving, set by
+	// WithRequest(). It is the request metadata the logger stamps, and it is
+	// also this context's answer to "who is the caller and are they still
+	// there": callerContext() reads r.Context() off it so a hook wait can be
+	// abandoned when the client goes away.
 	currentRequest *http.Request
 	// principal is the authenticated identity for this (request-scoped) context.
 	// Set by WithRequest/WithPrincipal. nil on the singleton context, which is
@@ -785,13 +788,28 @@ func (ctx *MahresourcesContext) hookInvocation() *plugin_system.Invocation {
 
 // callerContext is the context of whoever made the call that raised a hook.
 //
-// Read off the db handle rather than handed in, which is what keeps the ~35
-// sites that raise a hook out of this change: none of them takes a context, and
-// this tree already carries request-scoped state inside the handle. WithPrincipal
-// puts the subtree filter and the acting user there, and visibleGroupIDs reads
-// the filter back from exactly here. Background when there is none: a worker, a
-// startup seed, the singleton handle.
+// Read off the receiver rather than handed in, which is what keeps the ~35 sites
+// that raise a hook out of this change: none of them takes a context.
+//
+// The request first, because a write made over HTTP is the case the whole rule
+// is about and the request is what ends when the client hangs up. The db handle
+// second, for a caller that bound its context there instead (WithMRQLPrincipal
+// does): the same place visibleGroupIDs reads the subtree filter back from.
+// Background when there is neither: a worker, a startup seed, the singleton.
+//
+// The order is not a preference between two equivalent sources, it is the only
+// one that works. applyPrincipalScope parents every request-scoped handle on
+// context.Background() deliberately, so that a client hanging up does not tear
+// the write's own SQL out mid-statement, and that decision stands. The handle
+// therefore never carries the request's cancellation and asking it alone was
+// asking the one place guaranteed not to know. Reading the request directly
+// gives the hook wait the caller's lifetime while the write's SQL keeps the
+// detached one it has always had.
 func (ctx *MahresourcesContext) callerContext() context.Context {
+	// (*http.Request).Context never returns nil; it defaults to Background.
+	if ctx.currentRequest != nil {
+		return ctx.currentRequest.Context()
+	}
 	if ctx.db == nil || ctx.db.Statement == nil || ctx.db.Statement.Context == nil {
 		return context.Background()
 	}
