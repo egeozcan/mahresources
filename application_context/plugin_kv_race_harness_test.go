@@ -3,6 +3,8 @@
 package application_context
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"sync"
 	"testing"
@@ -46,6 +48,47 @@ func (r kvReadThenWriteCAS) PluginKVCompareAndSet(pluginName, key string, expect
 	return true, nil
 }
 
+// warmKVPool leaves one live connection per writer sitting in the pool, so the
+// writers released below have nothing left to dial.
+//
+// It holds them all at once on purpose. A warm-up query per goroutine warms
+// nothing in particular, because one connection handed back and taken again can
+// serve all of them; connections held at the same time have to be distinct. The
+// idle limit is raised first because database/sql keeps two and closes the rest
+// as they are returned, which would undo the warming as it finished -- and two
+// warm connections out of eight is a race between two writers with a queue of
+// six behind them.
+func warmKVPool(t *testing.T, ctx *MahresourcesContext, writers int) {
+	t.Helper()
+
+	sqlDB, err := ctx.db.DB()
+	if err != nil {
+		t.Fatalf("pool handle: %v", err)
+	}
+	sqlDB.SetMaxIdleConns(writers)
+
+	// The SQLite race context caps the pool below the writer count, and asking
+	// for a connection past that cap waits for one to be handed back, which
+	// while they are all held is never.
+	if open := sqlDB.Stats().MaxOpenConnections; open > 0 && open < writers {
+		writers = open
+	}
+
+	conns := make([]*sql.Conn, 0, writers)
+	for i := 0; i < writers; i++ {
+		conn, err := sqlDB.Conn(context.Background())
+		if err != nil {
+			t.Fatalf("open warm connection %d: %v", i, err)
+		}
+		conns = append(conns, conn)
+	}
+	for _, conn := range conns {
+		if err := conn.Close(); err != nil {
+			t.Fatalf("return warm connection: %v", err)
+		}
+	}
+}
+
 // kvWriterRace releases writers goroutines at one key with one expectation and
 // reports which of them were told they wrote. Exactly one may be, on either
 // path into the row: everyone expecting absent is the insert, everyone
@@ -62,7 +105,10 @@ func kvWriterRace(t *testing.T, ctx *MahresourcesContext, cas kvCompareAndSetter
 		}
 	}
 
+	warmKVPool(t, ctx, writers)
+
 	var (
+		ready   = make(chan struct{}, writers)
 		start   = make(chan struct{})
 		wg      sync.WaitGroup
 		mu      sync.Mutex
@@ -74,6 +120,7 @@ func kvWriterRace(t *testing.T, ctx *MahresourcesContext, cas kvCompareAndSetter
 		go func(i int) {
 			defer wg.Done()
 			mine := fmt.Sprintf(`"writer-%d"`, i)
+			ready <- struct{}{}
 			<-start
 			ok, err := cas.PluginKVCompareAndSet(plugin, key, seed, mine)
 			mu.Lock()
@@ -89,11 +136,20 @@ func kvWriterRace(t *testing.T, ctx *MahresourcesContext, cas kvCompareAndSetter
 	}
 	// The release, and the whole of what these tests rest on. What it has to
 	// produce is writers inside the statement together rather than queued in
-	// front of it: opening a connection costs far more than the statement does,
-	// so writers released into a cold pool simply run one after another and
-	// every implementation, atomic or not, reports one winner.
-	// TestPluginKVWriterRacePG_CatchesReadThenWrite is what says whether it
-	// does.
+	// front of it, and the expensive part of getting there is not the
+	// statement: opening a connection costs far more, so writers released into
+	// a cold pool simply run one after another and every implementation, atomic
+	// or not, reports one winner. Hence the warmed pool above, and hence
+	// waiting here until every goroutine is parked on start before letting any
+	// of them go -- what is left between the release and the statement is then
+	// a scheduler wakeup rather than a dial.
+	//
+	// TestPluginKVWriterRacePG_CatchesReadThenWrite is what says this is
+	// enough, by running the same barrier against an implementation known to
+	// lose writes and requiring it to be caught.
+	for i := 0; i < writers; i++ {
+		<-ready
+	}
 	close(start)
 	wg.Wait()
 
