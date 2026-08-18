@@ -324,8 +324,24 @@ existing suite before any replica exists:
 
 1. **Generation object.** `pluginVM` owns the states, the per-state mutexes, the
    liveness flag and the plugin name. Registry entries hold `(gen, ordinal)`.
-   `pm.states` and the positional `pluginNameFor` scan go away. Closes the known
-   `-race` ABA on its own terms.
+   `pm.states` and the positional `pluginNameFor` scan go away.
+
+   **Correction (2026-08-18): this batch does not pay for itself.** The plan said
+   it "closes the known `-race` ABA on its own terms", and that was the reason it
+   could ship before any replica existed. The ABA does not reproduce.
+   `vmlock_aba_test.go` was written to provoke it -- `-race`, `GOGC=1`, 120
+   enable/disable cycles against eight goroutines rendering continuously -- and
+   stays clean. The hazard is real in principle: gopher-lua's `Close()` returns
+   call-frame segments to a process-global `sync.Pool`, so the next state can
+   draw the same memory. The protocol is what prevents it. Teardown takes the VM
+   lock before closing, so nothing is executing on a state when its stack is
+   freed, and a captured registry entry keeps the old `*lua.LState` reachable, so
+   its address cannot be reused underneath a reader either.
+
+   So batch 1 is substrate for K>1 and nothing else: a refactor with no
+   observable behaviour change, provable only against the existing suite. That is
+   a weaker case than the plan claimed, and it should be weighed as such before
+   Shape A is started -- if Shape A stalls after batch 1, batch 1 bought nothing.
 2. **Re-entry by generation.** `Invocation.states` becomes a chain of
    generations; `holds()` compares them. Identical behaviour at K=1.
 3. **Replica loading.** Compiled proto shared via `NewFunctionFromProto`
