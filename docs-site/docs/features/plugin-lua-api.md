@@ -1254,7 +1254,7 @@ Must match `^[a-z][a-z0-9_-]{0,49}$`. The system expands the shortcode name to `
 
 ### Execution
 
-Server-side at template render time. 5-second timeout per render call. Returned HTML is inlined directly into the page. Use `mah.html_escape(str)` when rendering user-supplied content.
+Server-side at template render time. 5-second timeout per render call. Returned HTML goes back through the shortcode processor before it is inlined into the page (see [Nested Shortcodes](#nested-shortcodes)). Use `mah.html_escape(str)` when rendering user-supplied content.
 
 ### Block Shortcodes
 
