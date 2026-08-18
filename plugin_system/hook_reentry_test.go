@@ -124,7 +124,7 @@ func (d *hookFiringDB) GetTagData(id uint) (map[string]any, error) {
 }
 
 // reentryFixture wires a set of plugins to a hook-firing fake DB and renders the
-// "test" injection slot the trigger plugin registers.
+// "page_bottom" injection slot the trigger plugin registers.
 type reentryFixture struct {
 	pm  *PluginManager
 	rec *hookRecorder
@@ -180,7 +180,7 @@ func newReentryFixture(t *testing.T, plugins map[string]string) *reentryFixture 
 func (f *reentryFixture) renderOrTimeout(t *testing.T, ctx context.Context) string {
 	t.Helper()
 	done := make(chan string, 1)
-	go func() { done <- f.pm.RenderSlot(ctx, "test", map[string]any{}, nil) }()
+	go func() { done <- f.pm.RenderSlot(ctx, "page_bottom", map[string]any{}, nil) }()
 	select {
 	case out := <-done:
 		return out
@@ -195,7 +195,7 @@ func triggerPlugin(name, body string) string {
 	return fmt.Sprintf(`
 plugin = { name = %q, version = "1.0", description = "trigger" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
 %s
         return "rendered"
     end)
@@ -226,7 +226,7 @@ function init()
         mah.db.get_tag(1)
         return data
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         mah.db.create_note({ name = "n" })
         return "rendered"
     end)
@@ -259,7 +259,7 @@ function init()
         mah.db.get_tag(1)
         return data
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         mah.db.create_group({ name = "g" })
         return "rendered"
     end)
@@ -443,7 +443,7 @@ func TestStartJob_IsOwnedByTheTriggeringUser(t *testing.T) {
 		"p1": `
 plugin = { name = "p1", version = "1.0", description = "starts a job" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return mah.start_job("work", function(job_id) end)
     end)
 end
@@ -476,7 +476,7 @@ func TestStartJob_NoPrincipalLeavesJobUnowned(t *testing.T) {
 		"p1": `
 plugin = { name = "p1", version = "1.0", description = "starts a job" }
 function init()
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         return mah.start_job("work", function(job_id) end)
     end)
 end
@@ -756,7 +756,7 @@ function init()
             coroutine.yield()
         end
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         co()
         return "rendered"
     end)
@@ -807,7 +807,7 @@ function init()
         mah.db.create_note({ name = "from-coroutine" })
         coroutine.yield()
     end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         co()
         return "rendered"
     end)
@@ -1106,7 +1106,7 @@ func TestRunAfterHooks_SkippedDispatchIsLoggedForTheOperator(t *testing.T) {
 plugin = { name = "p1", version = "1.0", description = "writes what it hooks" }
 function init()
     mah.on("after_note_create", function(data) return data end)
-    mah.inject("test", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         mah.db.create_note({ name = "n" })
         return "rendered"
     end)

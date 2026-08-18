@@ -225,7 +225,7 @@ func TestRunBeforeHooks_NoHooksRegistered(t *testing.T) {
 		"name": "unchanged",
 	}
 
-	result, err := pm.RunBeforeHooks(context.Background(), nil, "nonexistent_event", data)
+	result, err := pm.RunBeforeHooks(context.Background(), nil, "before_note_create", data)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

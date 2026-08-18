@@ -358,6 +358,14 @@ func beforeHookWaitFailed(reqCtx context.Context, event, pluginName string) erro
 // otherwise, and it is the same answer ErrHookVMBusy already gives when a
 // nested dispatch's bound expires. RunAfterHooks may not do this; see there.
 func (pm *PluginManager) RunBeforeHooks(reqCtx context.Context, inv *Invocation, event string, data map[string]any) (map[string]any, error) {
+	// The same catalogue registration is refused against, read from this side
+	// too. Above the closed check and above the no-hooks return, because
+	// neither of those says anything about the name. Reported rather than
+	// failed: the data is the caller's and the typo is ours.
+	if !IsHookEvent(event) {
+		pm.reportUnknownDispatch("hook event", event)
+		return data, nil
+	}
 	if pm.closed.Load() {
 		return data, nil
 	}
@@ -433,6 +441,10 @@ func (pm *PluginManager) RunBeforeHooks(reqCtx context.Context, inv *Invocation,
 // point the request that opened it may be gone by design, so honouring a caller
 // context here would skip them routinely rather than rarely.
 func (pm *PluginManager) RunAfterHooks(inv *Invocation, event string, data map[string]any) {
+	if !IsHookEvent(event) {
+		pm.reportUnknownDispatch("hook event", event)
+		return
+	}
 	if pm.closed.Load() {
 		return
 	}

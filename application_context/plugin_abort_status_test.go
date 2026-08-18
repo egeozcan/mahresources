@@ -18,7 +18,7 @@ function init()
     mah.on("before_note_create", function(data)
         mah.abort("` + reason + `")
     end)
-    mah.inject("probe", function(ctx) return "" end)
+    mah.inject("page_bottom", function(ctx) return "" end)
 end
 `
 }

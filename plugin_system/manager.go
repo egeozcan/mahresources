@@ -169,6 +169,11 @@ type PluginManager struct {
 	egressClients map[string]*http.Client
 	closed        atomic.Bool
 
+	// unknownDispatchWarned holds the hook events and injection slots already
+	// reported as outside the catalogue, so one host typo costs one log line
+	// rather than one per write. See reportUnknownDispatch.
+	unknownDispatchWarned sync.Map
+
 	// loadWg tracks loads in progress. A loading VM is in vmLocks but not yet in
 	// states, so a Close that only walks states would leave it open — and the
 	// load would then publish into the maps Close had just niled.
@@ -1005,6 +1010,23 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	setIf(CapHooks, "on", func(L *lua.LState) int {
 		eventName := L.CheckString(1)
 		handler := L.CheckFunction(2)
+
+		// Refuse a name nothing dispatches, before anything is stored and
+		// before the liveness gate below. That is where mah.page checks its
+		// path, and raising here is all or nothing: a failing init() goes
+		// through loadPlugin's abandon(), which revokes the VM and sweeps every
+		// registration made before the error. So there is no half-loaded plugin
+		// to weigh against saying so loudly.
+		//
+		// The message carries the catalogue itself rather than a description of
+		// it. The author's next question is "then what is it called?", and a
+		// list built from the catalogue cannot come to describe something else.
+		if !IsHookEvent(eventName) {
+			L.ArgError(1, fmt.Sprintf("unknown event %q: nothing dispatches it, so this hook could never fire. Events: %s",
+				eventName, strings.Join(AllHookEvents, ", ")))
+			return 0
+		}
+
 		// mainState, not L: a registration made from inside a coroutine would
 		// otherwise be stamped with the coroutine's state, which no dispatch
 		// and no teardown ever matches — so it could never fire and could never
@@ -1028,6 +1050,15 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 	setIf(CapInject, "inject", func(L *lua.LState) int {
 		slotName := L.CheckString(1)
 		renderFn := L.CheckFunction(2)
+
+		// Slot names live only as string literals in the templates, so a
+		// misspelled one is a renderer nothing ever calls. Refused like an
+		// event, and for the same reasons.
+		if !IsInjectionSlot(slotName) {
+			L.ArgError(1, fmt.Sprintf("unknown slot %q: no template renders it, so this injection could never run. Slots: %s",
+				slotName, strings.Join(AllInjectionSlots, ", ")))
+			return 0
+		}
 
 		pm.mu.Lock()
 		if !pm.stateMayRegisterLocked(L) {

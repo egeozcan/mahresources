@@ -16,7 +16,7 @@ function render_banner(ctx)
 end
 
 function init()
-    mah.inject("resource_header", render_banner)
+    mah.inject("resource_detail_before", render_banner)
 end
 `)
 
@@ -30,7 +30,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "resource_header", map[string]any{
+	result := pm.RenderSlot(context.Background(), "resource_detail_before", map[string]any{
 		"path": "/resource",
 	}, nil)
 
@@ -95,7 +95,7 @@ function render(ctx)
 end
 
 function init()
-    mah.inject("sidebar", render)
+    mah.inject("sidebar_top", render)
 end
 `)
 	writePlugin(t, dir, "bravo_good", `
@@ -106,7 +106,7 @@ function render(ctx)
 end
 
 function init()
-    mah.inject("sidebar", render)
+    mah.inject("sidebar_top", render)
 end
 `)
 
@@ -123,7 +123,7 @@ end
 		t.Fatalf("EnablePlugin(bravo_good): %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "sidebar", map[string]any{}, nil)
+	result := pm.RenderSlot(context.Background(), "sidebar_top", map[string]any{}, nil)
 
 	if result != "<aside>OK</aside>" {
 		t.Errorf("expected only second plugin output, got %q", result)
@@ -138,7 +138,7 @@ func TestRenderSlot_EmptySlot(t *testing.T) {
 	}
 	defer pm.Close()
 
-	result := pm.RenderSlot(context.Background(), "nonexistent_slot", map[string]any{}, nil)
+	result := pm.RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 
 	if result != "" {
 		t.Errorf("expected empty string for empty slot, got %q", result)
@@ -155,7 +155,7 @@ function render(ctx)
 end
 
 function init()
-    mah.inject("entity_info", render)
+    mah.inject("resource_detail_sidebar", render)
 end
 `)
 
@@ -169,7 +169,7 @@ end
 		t.Fatalf("EnablePlugin: %v", err)
 	}
 
-	result := pm.RenderSlot(context.Background(), "entity_info", map[string]any{
+	result := pm.RenderSlot(context.Background(), "resource_detail_sidebar", map[string]any{
 		"entity": map[string]any{
 			"name": "My Resource",
 		},

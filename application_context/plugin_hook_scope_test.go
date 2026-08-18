@@ -49,7 +49,7 @@ function init()
         return data
     end)
 
-    mah.inject("probe", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local parts = {}
         for _, kind in ipairs({ "groups", "notes", "resources", "mrql" }) do
             parts[#parts + 1] = kind .. ":" .. table.concat(seen[kind], "|")
@@ -63,7 +63,7 @@ end
 // hookSaw reads back what the hook's mah.db call returned for one entity kind.
 func hookSaw(t *testing.T, ctx *MahresourcesContext, kind string) []string {
 	t.Helper()
-	out := ctx.PluginManager().RenderSlot(context.Background(), "probe", map[string]any{}, nil)
+	out := ctx.PluginManager().RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	for _, part := range strings.Fields(out) {
 		key, value, ok := strings.Cut(part, ":")
 		if !ok || key != kind {

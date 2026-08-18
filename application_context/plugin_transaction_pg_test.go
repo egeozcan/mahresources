@@ -108,7 +108,7 @@ func newPostgresPluginContext(t *testing.T, sources map[string]string) *Mahresou
 func TestPluginTransactionPG_NestedTransactionDoesNotReportAFalseSuccess(t *testing.T) {
 	const src = `plugin = { name = "nestpoisoner", version = "1.0", description = "ignores a failed write inside a nested transaction" }
 function init()
-    mah.inject("run", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local innerOk, innerErr
         local outerOk, outerErr = mah.db.transaction(function()
             innerOk, innerErr = mah.db.transaction(function()
@@ -126,7 +126,7 @@ end
 		t.Fatalf("seed duplicate tag: %v", err)
 	}
 
-	got := ctx.PluginManager().RenderSlot(context.Background(), "run", map[string]any{}, nil)
+	got := ctx.PluginManager().RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 	t.Logf("slot said: %q", got)
 
 	if strings.Contains(got, "inner=true") {
@@ -160,7 +160,7 @@ func TestPluginTransactionPG_PoisonedTransactionIsNotReportedAsCommitted(t *test
 	// exactly as an inattentive author would, and keeps writing.
 	const src = `plugin = { name = "poisoner", version = "1.0", description = "ignores a failed write" }
 function init()
-    mah.inject("run", function(ctx)
+    mah.inject("page_bottom", function(ctx)
         local ok, err = mah.db.transaction(function()
             mah.db.create_tag({ name = "duplicate" })
             mah.db.create_tag({ name = "later-tag" })
@@ -176,7 +176,7 @@ end
 		t.Fatalf("seed duplicate tag: %v", err)
 	}
 
-	got := ctx.PluginManager().RenderSlot(context.Background(), "run", map[string]any{}, nil)
+	got := ctx.PluginManager().RenderSlot(context.Background(), "page_bottom", map[string]any{}, nil)
 
 	var later int64
 	if err := ctx.db.Model(&models.Tag{}).Where("name = ?", "later-tag").Count(&later).Error; err != nil {
