@@ -18,11 +18,13 @@ import (
 )
 
 // mah.kv.set is an unconditional upsert, so read-modify-write over a stored
-// value is safe only for as long as one plugin's Lua cannot run concurrently
-// with itself. That is already thin (two of a plugin's own surfaces served in
-// parallel interleave) and a VM pool would make it false outright. These tests
-// pin a compare-and-set whose compare happens in the database rather than in
-// Go: a read followed by a write reintroduces exactly the lost update the
+// value holds only while nothing writes the key in between. One plugin's Lua is
+// single-threaded within a process, which covers a read and a write inside one
+// call and nothing wider: a mah.start_job function or a drained mah.http
+// callback writes in a later call, a second process is not ordered against the
+// first at all, and a VM pool would remove even the single-call hold. These
+// tests pin a compare-and-set whose compare happens in the database rather than
+// in Go: a read followed by a write reintroduces exactly the lost update the
 // operation exists to close, and only the concurrent cases below can tell the
 // two implementations apart.
 

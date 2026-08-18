@@ -4,7 +4,6 @@ package application_context
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 )
@@ -114,7 +113,7 @@ const pluginLuaAPIPath = "../docs-site/docs/features/plugin-lua-api.md"
 // raised error in production. The page that describes mah.kv has to name it,
 // along with the two things that let an author avoid it and retry safely.
 func TestPluginLuaAPIDocs_KVSectionIsHonest(t *testing.T) {
-	section := luaAPISection(t, "## mah.kv")
+	section := docsSection(t, pluginLuaAPIPath, "## mah.kv")
 
 	for _, want := range []struct{ text, why string }{
 		{fmt.Sprint(kvValueCapBytes), "the value size cap, in the bytes the raised error names"},
@@ -125,34 +124,4 @@ func TestPluginLuaAPIDocs_KVSectionIsHonest(t *testing.T) {
 			t.Errorf("%s: the mah.kv section does not mention %q (%s)", pluginLuaAPIPath, want.text, want.why)
 		}
 	}
-}
-
-// luaAPISection returns the page from the given heading up to the next one of
-// the same level.
-func luaAPISection(t *testing.T, heading string) string {
-	t.Helper()
-	data, err := os.ReadFile(pluginLuaAPIPath)
-	if err != nil {
-		t.Fatalf("reading %s: %v", pluginLuaAPIPath, err)
-	}
-	var (
-		out   []string
-		found bool
-	)
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, heading) {
-			found = true
-			continue
-		}
-		if found && strings.HasPrefix(line, "## ") {
-			break
-		}
-		if found {
-			out = append(out, line)
-		}
-	}
-	if !found {
-		t.Fatalf("%s has no %q heading", pluginLuaAPIPath, heading)
-	}
-	return strings.Join(out, "\n")
 }

@@ -685,7 +685,14 @@ Data is scoped by plugin name -- plugins cannot access another plugin's keys. To
 
 ### Updating a value another call may be updating
 
-`mah.kv.set` overwrites whatever is there, so reading a value, changing it and writing it back loses the write that landed in between. Two of a plugin's surfaces can be served at the same time, which is enough for that to happen.
+`mah.kv.set` overwrites whatever is there, so reading a value, changing it and writing it back loses any write that landed in between.
+
+Inside one call it cannot happen. A plugin has one VM behind one mutex and every entry into its Lua holds that mutex for the whole call, so no other surface of the same plugin runs while yours does. Two arrangements fall outside that hold, and both are ordinary:
+
+- **The read and the write are in different calls.** The function handed to `mah.start_job`, and the callback handed to an asynchronous `mah.http` call, both run after the call that registered them released the mutex, so nothing spans the pair. A value read in a page handler and written back from the job it started is exposed.
+- **The server runs more than one process.** Each process has its own VM and its own mutex, and nothing orders one against another.
+
+The one-VM hold is how this host runs plugins today, not a promise about how it always will.
 
 `mah.kv.compare_and_set(key, expected, value)` writes only while the stored value is still `expected`. It returns `true` if it wrote and `false` if it did not, and a `false` writes nothing. The comparison runs inside the statement that writes, so nothing can slip between the two.
 

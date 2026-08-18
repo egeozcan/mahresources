@@ -59,10 +59,18 @@ func (ctx *MahresourcesContext) PluginKVSet(pluginName, key, value string) error
 //
 // The comparison happens in the database, in the statement that writes. Reading
 // here and then calling PluginKVSet would be the lost update the operation
-// exists to close: PluginKVSet is an unconditional upsert, and read-modify-write
-// over it is safe only for as long as one plugin's Lua cannot run concurrently
-// with itself, which two of its own surfaces served in parallel already
-// disprove.
+// exists to close, because PluginKVSet is an unconditional upsert and nothing
+// holds the key between the read and the write.
+//
+// One plugin's Lua is single-threaded within a process -- every entry into it
+// takes that plugin's VM lock and holds it for the whole call -- so a read and
+// a write inside one call are already covered. What that hold does not cover is
+// where the lost update actually comes from, and neither arrangement is exotic.
+// The read and the write land in separate calls: the function given to
+// mah.start_job and a drained mah.http callback both run after the call that
+// registered them released the lock, so no lock ever spans the pair. Or the
+// deployment runs more than one process, each with its own VM and its own lock
+// and no ordering between them at all.
 //
 // Two statements, because the two expectations are two different conditions and
 // neither is the other in disguise. An insert that does nothing on conflict is

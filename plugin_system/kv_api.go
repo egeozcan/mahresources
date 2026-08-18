@@ -96,7 +96,11 @@ func (pm *PluginManager) registerKvModule(L *lua.LState, mahMod *lua.LTable, plu
 
 	// mah.kv.compare_and_set(key, expected, value) -> boolean
 	//
-	// The answer to two of a plugin's own surfaces updating one key at once.
+	// The answer to a key that something else may have written between an
+	// author's read and their write: a later call into the same plugin, whose
+	// VM lock the earlier call no longer holds, or the same plugin in another
+	// process, which never shared that lock.
+	//
 	// The refusal is a return value rather than a raise because retrying is the
 	// author's whole response to losing the race, and a handler that has already
 	// been unwound cannot retry.

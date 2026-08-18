@@ -135,8 +135,8 @@ func TestPluginKVProse_NamesTheRealExposures(t *testing.T) {
 }
 
 // docsSection returns a page from the given heading up to the next one of the
-// same level. It is luaAPISection from plugin_kv_cas_lua_test.go with the path
-// as an argument; that one should fold into this.
+// same level. Shared with plugin_kv_cas_lua_test.go, which pins a different
+// property of the same section.
 func docsSection(t *testing.T, path, heading string) string {
 	t.Helper()
 
