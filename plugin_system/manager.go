@@ -62,6 +62,18 @@ const (
 	asyncActionTimeout = 5 * time.Minute  // async actions and start_job
 )
 
+// MaxAsyncJobDuration is how long an async job's Lua may execute before its
+// context is cancelled.
+//
+// Exported because a caller outside this package has to reason about it rather
+// than merely respect it. The plugin scheduler holds a database claim on a
+// schedule for the whole of its run — it has no way to ask another process
+// whether that run is still going, since ActionJob is in-memory — so the
+// lifetime of that claim must be derived from this, not guessed alongside it.
+// Raising the timeout without raising the claim's TTL would let a second process
+// reclaim a schedule whose first run is still executing.
+const MaxAsyncJobDuration = asyncActionTimeout
+
 var validPagePath = regexp.MustCompile(`^[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$`)
 
 // validPluginName is the shortcode grammar: a plugin's name prefixes every
@@ -147,6 +159,7 @@ type PluginManager struct {
 	displayTypes map[string][]*PluginDisplayType    // pluginName -> display types
 	shortcodes   map[string][]*PluginShortcode      // pluginName -> shortcodes
 	docs         map[string][]*PluginDoc            // pluginName -> general doc entries
+	schedules    map[string][]ScheduleRegistration  // pluginName -> recurring work
 	mu           sync.RWMutex
 	vmLocks      map[*lua.LState]*vmMutex
 	dbProvider   atomic.Value
@@ -245,6 +258,7 @@ func NewPluginManager(dir string) (*PluginManager, error) {
 		displayTypes:    make(map[string][]*PluginDisplayType),
 		shortcodes:      make(map[string][]*PluginShortcode),
 		docs:            make(map[string][]*PluginDoc),
+		schedules:       make(map[string][]ScheduleRegistration),
 		vmLocks:         make(map[*lua.LState]*vmMutex),
 		pluginSettings:  make(map[string]map[string]any),
 		actionJobs:      make(map[string]*ActionJob),
@@ -1043,6 +1057,46 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			fn:         handler,
 			pluginName: *pluginNamePtr,
 		})
+		pm.mu.Unlock()
+		return 0
+	})
+
+	// mah.schedule({id=..., every="15m", handler=fn, overlap="skip"}) -- run
+	// handler on a recurring interval, durably.
+	//
+	// Registration records the handler here; the durable half is a
+	// PluginSchedule row the application_context bridge syncs after the load.
+	// The two are matched by (plugin name, schedule id), which is what makes a
+	// disabled plugin or a renamed id safe without a cleanup pass.
+	setIf(CapSchedule, "schedule", func(L *lua.LState) int {
+		tbl := L.CheckTable(1)
+
+		reg, err := parseScheduleRegistration(L, tbl, *pluginNamePtr)
+		if err != nil {
+			L.ArgError(1, err.Error())
+			return 0
+		}
+
+		// mainState, not L: a registration made from inside a coroutine would
+		// otherwise be stamped with the coroutine's state, which no dispatch and
+		// no teardown ever matches.
+		owner := mainState(L)
+		reg.state = owner
+
+		pm.mu.Lock()
+		if !pm.stateMayRegisterLocked(L) {
+			pm.mu.Unlock()
+			return 0
+		}
+		for _, existing := range pm.schedules[*pluginNamePtr] {
+			if existing.ScheduleID == reg.ScheduleID {
+				pm.mu.Unlock()
+				L.ArgError(1, fmt.Sprintf("schedule %q is already registered; ids are the durable key "+
+					"for this plugin's schedules and must be unique", reg.ScheduleID))
+				return 0
+			}
+		}
+		pm.schedules[*pluginNamePtr] = append(pm.schedules[*pluginNamePtr], reg)
 		pm.mu.Unlock()
 		return 0
 	})
@@ -1897,6 +1951,18 @@ func (pm *PluginManager) unregisterPluginLocked(name string, state *lua.LState) 
 		pm.docs[name] = filteredDocs
 	}
 
+	var filteredSchedules []ScheduleRegistration
+	for _, sched := range pm.schedules[name] {
+		if sched.state != state {
+			filteredSchedules = append(filteredSchedules, sched)
+		}
+	}
+	if len(filteredSchedules) == 0 {
+		delete(pm.schedules, name)
+	} else {
+		pm.schedules[name] = filteredSchedules
+	}
+
 	for key, ep := range pm.apiEndpoints[name] {
 		if ep.state == state {
 			delete(pm.apiEndpoints[name], key)
@@ -2473,6 +2539,7 @@ func (pm *PluginManager) Close() {
 	pm.displayTypes = make(map[string][]*PluginDisplayType)
 	pm.shortcodes = make(map[string][]*PluginShortcode)
 	pm.docs = make(map[string][]*PluginDoc)
+	pm.schedules = make(map[string][]ScheduleRegistration)
 	// Settings hold operator secrets (a password-typed setting is an API key),
 	// so they go with everything else rather than outliving the manager.
 	pm.pluginSettings = make(map[string]map[string]any)

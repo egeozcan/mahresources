@@ -209,11 +209,6 @@ func isEditorPath(path string) bool {
 // Tree-based RBAC for plugins remains the planned follow-up; until then confined
 // principals are denied these endpoints outright, fail-closed, consistent with
 // every other scoped surface.
-func isPluginCodePath(path string) bool {
-	_, ok := pluginCodePathName(path)
-	return ok
-}
-
 // pluginCodePathName returns the plugin a plugin-code path belongs to.
 //
 // Both route families put the name in the first segment after the prefix:

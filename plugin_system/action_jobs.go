@@ -167,10 +167,67 @@ func (pm *PluginManager) RunActionAsyncForOwner(ownerUserID *uint, pluginName, a
 	return jobID, nil
 }
 
+// acquireJobSlot takes one of the concurrent-async-job slots.
+//
+// A non-positive wait waits forever, which is what an action or a start_job
+// wants: a user asked for that work and nothing else will ask again.
+//
+// A positive wait is for a caller that must not block indefinitely because it is
+// holding something while it waits. The scheduler is the only such caller today,
+// and what it holds is a database claim on the schedule row; a claim of
+// unbounded lifetime cannot have a meaningful expiry, and its expiry is the only
+// thing stopping a second process running the same schedule.
+func (pm *PluginManager) acquireJobSlot(wait time.Duration) bool {
+	if wait <= 0 {
+		pm.actionSemaphore <- struct{}{}
+		return true
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case pm.actionSemaphore <- struct{}{}:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+// FillJobBudgetForTest saturates the async job budget and returns a release
+// function that is safe to call more than once.
+//
+// Exported for application_context's scheduler tests, which have to observe what
+// a tick does when it cannot get a slot and cannot reach this package's
+// unexported semaphore. Idempotent release because the interesting test frees
+// the budget mid-way and still defers a cleanup.
+func (pm *PluginManager) FillJobBudgetForTest() func() {
+	for i := 0; i < maxConcurrentActions; i++ {
+		pm.actionSemaphore <- struct{}{}
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			for i := 0; i < maxConcurrentActions; i++ {
+				<-pm.actionSemaphore
+			}
+		})
+	}
+}
+
 // executeAsyncJob is the common scaffold for running an async job goroutine.
 // It handles panic recovery, semaphore, status transitions, error handling, and default completion.
 // The work function performs the actual Lua call and returns its error.
 func (pm *PluginManager) executeAsyncJob(job *ActionJob, logLabel string, work func() error) {
+	pm.executeAsyncJobWithin(job, logLabel, 0, work)
+}
+
+// executeAsyncJobWithin is executeAsyncJob with a bound on how long it will wait
+// for a free slot, and it reports whether the job ran at all.
+//
+// Returning false means nothing was touched: no status transition, no
+// notification, no work. That is what lets a caller holding a resource treat a
+// full budget as "not now" and give the resource back, rather than parking on
+// the semaphore while it holds it.
+func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, wait time.Duration, work func() error) (ran bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			job.mu.Lock()
@@ -183,7 +240,12 @@ func (pm *PluginManager) executeAsyncJob(job *ActionJob, logLabel string, work f
 	}()
 
 	// Acquire semaphore slot (limits concurrent async actions).
-	pm.actionSemaphore <- struct{}{}
+	if !pm.acquireJobSlot(wait) {
+		return false
+	}
+	// Set before any work, so a panic recovered above still reports that the job
+	// ran: it did, and it failed, which is a different thing from never starting.
+	ran = true
 	defer func() { <-pm.actionSemaphore }()
 
 	// Mark as running.
@@ -201,7 +263,7 @@ func (pm *PluginManager) executeAsyncJob(job *ActionJob, logLabel string, work f
 		alreadyDone := job.Status == "completed" || job.Status == "failed"
 		job.mu.RUnlock()
 		if alreadyDone {
-			return
+			return true
 		}
 
 		errMsg := err.Error()
@@ -215,7 +277,7 @@ func (pm *PluginManager) executeAsyncJob(job *ActionJob, logLabel string, work f
 		job.mu.Unlock()
 		pm.notifyActionJobSubscribers("updated", job)
 		log.Printf("[plugin] %s failed: %v", logLabel, err)
-		return
+		return true
 	}
 
 	// If the work function didn't already set a terminal status, mark completed.
@@ -230,6 +292,7 @@ func (pm *PluginManager) executeAsyncJob(job *ActionJob, logLabel string, work f
 		job.mu.Unlock()
 		pm.notifyActionJobSubscribers("updated", job)
 	}
+	return true
 }
 
 // runAsyncActionGoroutine executes the Lua handler in a background goroutine.

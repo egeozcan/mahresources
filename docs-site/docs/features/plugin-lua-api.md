@@ -784,6 +784,90 @@ end)
 
 The job appears in the job system and is tracked via SSE events.
 
+## mah.schedule -- Recurring Work
+
+```lua
+mah.schedule({ id = "poll-feed", every = "15m", handler = function(job_id) ... end })
+```
+
+Runs `handler` on a repeating interval. Call it from `init()`; it is a registration,
+like `mah.on`, not an action.
+
+This is the only way to make plugin code run when nobody is looking. Everything else
+in this API fires in response to a request or an entity write, so a feed poller, a
+retention policy or a nightly rollup cannot be written without it.
+
+| Field | Type | Description |
+|-----------|------|-------------|
+| `id` | string | Names this schedule. 1-100 characters of letters, digits, `_` or `-`, unique within the plugin. |
+| `every` | string | Interval, as a Go duration: `"30s"`, `"15m"`, `"6h"`. Minimum 30 seconds, maximum 365 days. |
+| `handler` | function | Callback receiving `job_id`, exactly as `mah.start_job` does. |
+| `overlap` | string | `"skip"` (default) or `"allow"`. What to do when a run is still going at the next due time. |
+
+Requires the `schedule` capability.
+
+```lua
+function init()
+    mah.schedule({ id = "poll-feed", every = "15m", handler = function(job_id)
+        local res = mah.http.get_sync("https://example.com/feed.json")
+        if res.error then
+            mah.job_fail(job_id, res.error)
+            return
+        end
+        -- ... create resources from the feed ...
+        mah.job_complete(job_id, { items = 12 })
+    end })
+end
+```
+
+Each run appears in the job system as an ordinary background job, with progress,
+cancellation and SSE events, so `mah.job_progress`, `mah.job_complete` and
+`mah.job_fail` all work exactly as they do inside `mah.start_job`.
+
+### What a schedule survives, and what it does not
+
+A schedule is durable: it is stored in the database and re-armed after a restart,
+which a self-looping `mah.start_job` never could. The **handler** is not stored --
+only the fact that this plugin declared this id. The two are matched by name every
+time the scheduler looks, which is why:
+
+- Disabling the plugin stops its schedules, and re-enabling resumes them.
+- Renaming an `id` starts a new schedule rather than renaming the old one. The old
+  row stays, inert, in case the rename is rolled back.
+- Removing a `mah.schedule` call stops it. The row is not deleted, so restoring the
+  call resumes it with its history.
+
+### Who a schedule runs as
+
+Every run executes as **the operator who enabled the plugin**, and that identity is
+recorded when they enable it. `mah.db` is bound to that account's role and subtree
+exactly as it would be inside one of their own requests, and the job appears in
+their jobs panel.
+
+Two consequences worth knowing before relying on a schedule:
+
+- If that account is **deleted or disabled**, the schedule stops. It does not fall
+  back to an administrator. There is no identity left to run it as, and an
+  unattended timer holding an unbound database handle is not a safe default.
+- A plugin enabled at **startup** for the first time -- before any operator has
+  enabled it in this deployment -- has no owner and does not run until one does.
+  With authentication off this does not arise: every request is the root
+  administrator, and that is who the schedule belongs to.
+
+### Timing you should not rely on
+
+- **The interval is a floor, not an appointment.** The scheduler wakes on its own
+  tick (30 seconds by default, `-plugin-schedule-tick`), so a `"1m"` schedule runs
+  roughly every minute, not on the minute.
+- **A missed window is not made up.** If the process is down for ten hours, a
+  15-minute schedule runs **once** when it comes back and then re-bases. Forty
+  identical catch-up polls have the cost of forty and the value of one.
+- **`overlap = "allow"` buys queueing, not parallelism.** A plugin still runs one
+  thing at a time, so a second run waits for the first to release the plugin's VM.
+  What it buys is that an overrunning run does not cause the next one to be skipped.
+- **In a multi-process deployment each schedule still runs once.** Processes
+  compete for each due run and exactly one wins.
+
 ## mah.http -- HTTP API
 
 Supports both async (callback-based) and sync (blocking) requests.

@@ -125,6 +125,9 @@ type MahresourcesConfig struct {
 	DownloadHistoryRetention time.Duration
 	// DownloadCockpitLimit is how many of the newest jobs the jobs panel renders.
 	DownloadCockpitLimit int
+	// PluginScheduleTick is how often the plugin scheduler looks for due work.
+	// It bounds the resolution of every schedule.
+	PluginScheduleTick time.Duration
 	// MaxImportSize is the upper bound on import tar upload size in bytes
 	MaxImportSize int64
 	// MaxUploadSize is the upper bound on resource + version upload body size
@@ -279,6 +282,9 @@ type MahresourcesInputConfig struct {
 	DownloadHistoryRetention time.Duration
 	// DownloadCockpitLimit is how many of the newest jobs the jobs panel renders.
 	DownloadCockpitLimit int
+	// PluginScheduleTick is how often the plugin scheduler looks for due work.
+	// It bounds the resolution of every schedule.
+	PluginScheduleTick time.Duration
 	// MaxImportSize is the upper bound on import tar upload size in bytes
 	MaxImportSize int64
 	// MaxUploadSize is the upper bound on resource + version upload body size
@@ -1375,6 +1381,7 @@ func CreateContextWithConfig(cfg *MahresourcesInputConfig) (*MahresourcesContext
 		DownloadFailedRetention:      cfg.DownloadFailedRetention,
 		DownloadHistoryRetention:     cfg.DownloadHistoryRetention,
 		DownloadCockpitLimit:         cfg.DownloadCockpitLimit,
+		PluginScheduleTick:           cfg.PluginScheduleTick,
 		MaxImportSize:                cfg.MaxImportSize,
 		MaxUploadSize:                cfg.MaxUploadSize,
 		MaxJSONBodySize:              cfg.MaxJSONBodySize,

@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/flosch/pongo2/v4"
+	"mahresources/models"
 	"mahresources/plugin_system"
 )
 
@@ -46,6 +48,73 @@ type pluginDisplay struct {
 	// MinAppVersion is informational only: it is parsed and displayed, never
 	// enforced.
 	MinAppVersion string
+
+	// Schedules is what this plugin has recorded as recurring work. Rendered
+	// from the stored rows rather than from the live registry, because the two
+	// differ in exactly the cases an operator needs to see: a row whose plugin
+	// is disabled is inert but still there, and a row with no owner never runs.
+	Schedules []scheduleDisplay
+}
+
+// scheduleDisplay is one PluginSchedule row, flattened for the template.
+type scheduleDisplay struct {
+	ScheduleID string
+	Every      string
+	Overlap    string
+	NextDueAt  time.Time
+	LastRunAt  *time.Time
+	LastStatus string
+	LastError  string
+	Runs       int64
+
+	// Owned is false when the operator who enabled the plugin has since been
+	// deleted. The schedule is then stopped, not merely unattributed, so the
+	// page has to say so rather than leaving a blank column.
+	Owned bool
+
+	// Registered is false when the row exists but the plugin no longer declares
+	// this id -- disabled, renamed, or removed from plugin.lua.
+	Registered bool
+}
+
+// scheduleLister is the optional capability this page uses to read schedules.
+//
+// A type assertion rather than a method on PluginManagePageContext: widening
+// that interface would force every test mock of it to grow a method it does not
+// care about, and a page that cannot read schedules should render without them
+// rather than fail to compile its callers.
+type scheduleLister interface {
+	PluginSchedulesFor(pluginName string) ([]models.PluginSchedule, error)
+}
+
+// buildScheduleDisplays reads one plugin's rows and marks each against the live
+// registry.
+func buildScheduleDisplays(appCtx PluginManagePageContext, pm *plugin_system.PluginManager, name string) []scheduleDisplay {
+	lister, ok := appCtx.(scheduleLister)
+	if !ok {
+		return nil
+	}
+	rows, err := lister.PluginSchedulesFor(name)
+	if err != nil {
+		log.Printf("[plugin] warning: failed to load schedules for %q: %v", name, err)
+		return nil
+	}
+	out := make([]scheduleDisplay, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, scheduleDisplay{
+			ScheduleID: row.ScheduleID,
+			Every:      (time.Duration(row.EverySeconds) * time.Second).String(),
+			Overlap:    row.Overlap,
+			NextDueAt:  row.NextDueAt,
+			LastRunAt:  row.LastRunAt,
+			LastStatus: row.LastStatus,
+			LastError:  row.LastError,
+			Runs:       row.Runs,
+			Owned:      row.CreatedByUserId != nil,
+			Registered: pm.ScheduleIsRegistered(name, row.ScheduleID),
+		})
+	}
+	return out
 }
 
 // capabilityLabels maps each capability to its human sentence, skipping any
@@ -108,6 +177,7 @@ func PluginManageContextProvider(appCtx PluginManagePageContext) func(request *h
 				AllowPrivateHosts: dp.Manifest.AllowPrivateHosts,
 				Dependencies:      dp.Manifest.Dependencies,
 				MinAppVersion:     dp.Manifest.MinAppVersion,
+				Schedules:         buildScheduleDisplays(appCtx, pm, dp.Name),
 			}
 			if s, ok := stateMap[dp.Name]; ok {
 				pd.Enabled = s.enabled

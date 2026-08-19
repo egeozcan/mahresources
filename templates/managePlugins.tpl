@@ -273,6 +273,60 @@
             <p class="text-sm text-stone-500 italic">No settings declared.</p>
         </div>
         {% endif %}
+
+        {% if plugin.Schedules %}
+        {# Rendered from the stored rows, not the live registry: the two differ #}
+        {# exactly where an operator needs to look. A disabled plugin's schedule #}
+        {# is still here and inert, and an unowned one has stopped for good. #}
+        <div class="card-body border-t border-stone-200 pt-3" data-testid="plugin-schedules-{{ plugin.Name }}">
+            <h3 class="text-sm font-semibold text-stone-700 mb-2">Schedules</h3>
+            <div class="overflow-x-auto">
+                <table class="min-w-full text-sm">
+                    <thead>
+                        <tr class="text-left text-xs uppercase tracking-wide text-stone-500">
+                            <th class="py-1 pr-4 font-medium" scope="col">Id</th>
+                            <th class="py-1 pr-4 font-medium" scope="col">Every</th>
+                            <th class="py-1 pr-4 font-medium" scope="col">Next due</th>
+                            <th class="py-1 pr-4 font-medium" scope="col">Runs</th>
+                            <th class="py-1 pr-4 font-medium" scope="col">Last outcome</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for schedule in plugin.Schedules %}
+                        <tr class="border-t border-stone-100" data-testid="plugin-schedule-{{ plugin.Name }}-{{ schedule.ScheduleID }}">
+                            <td class="py-1 pr-4 font-mono">{{ schedule.ScheduleID }}</td>
+                            <td class="py-1 pr-4 font-mono">{{ schedule.Every }}{% if schedule.Overlap != "skip" %} <span class="card-badge">{{ schedule.Overlap }}</span>{% endif %}</td>
+                            <td class="py-1 pr-4">
+                                {% if not schedule.Owned %}
+                                <span class="card-badge card-badge--danger">Stopped &mdash; no owner</span>
+                                {% elif not schedule.Registered %}
+                                <span class="card-badge">Not declared</span>
+                                {% else %}
+                                {{ schedule.NextDueAt|date:"2006-01-02 15:04" }}
+                                {% endif %}
+                            </td>
+                            <td class="py-1 pr-4 font-mono">{{ schedule.Runs }}</td>
+                            <td class="py-1 pr-4">
+                                {% if schedule.LastStatus %}
+                                <span class="{% if schedule.LastStatus == "failed" %}text-red-700{% else %}text-stone-600{% endif %}">{{ schedule.LastStatus }}</span>
+                                {% if schedule.LastError %}
+                                <span class="text-stone-500">&mdash; {{ schedule.LastError }}</span>
+                                {% endif %}
+                                {% else %}
+                                <span class="text-stone-500 italic">never run</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <p class="text-xs text-stone-500 mt-2">
+                Each run executes as the operator who enabled this plugin. A schedule whose owner
+                has been deleted stops rather than falling back to an administrator.
+            </p>
+        </div>
+        {% endif %}
     </div>
     {% endfor %}
 </div>

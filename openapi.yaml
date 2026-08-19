@@ -5266,6 +5266,25 @@ paths:
             summary: Purge all data for a plugin
             tags:
                 - plugins
+    /v1/plugin/schedules:
+        get:
+            description: The stored schedules for one plugin, as recorded when it was enabled. `registered` is false when the row exists but the plugin no longer declares that id -- a disabled plugin, a renamed schedule, or a removed mah.schedule call all look like this, and none of them run. `owned` is false when the operator who enabled the plugin has since been deleted, at which point the schedule has stopped rather than merely lost its attribution.
+            operationId: listPluginSchedules
+            parameters:
+                - description: Plugin name
+                  in: query
+                  name: name
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: List a plugin's recurring schedules
+            tags:
+                - plugins
     /v1/plugin/scopedAccess:
         post:
             description: 'Records whether group-limited users and guests may reach this plugin''s own surfaces: its pages, endpoints, shortcodes, injected slots and rendered blocks. Off by default. It does not widen what the plugin may do on their behalf — a confined caller''s plugin database calls stay bound to that caller''s own subtree and role.'

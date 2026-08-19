@@ -128,6 +128,14 @@ func (ctx *MahresourcesContext) SetPluginEnabled(pluginName string, enabled bool
 				Update("enabled", false).Error
 			return err
 		}
+
+		// Record what the plugin declared, against whoever is asking. This is the
+		// only point where both exist: init() runs with its Lua context removed,
+		// so mah.schedule cannot see the operator, and after this call returns the
+		// request context is gone. A failure here is logged rather than returned —
+		// the plugin is enabled and working, and unwinding that to report a
+		// bookkeeping error would be the worse outcome.
+		ctx.syncSchedulesFor(pluginName)
 	} else {
 		// Persist DB state first, then disable in memory.
 		if err := ctx.db.Model(&models.PluginState{}).
@@ -295,7 +303,32 @@ func (ctx *MahresourcesContext) enablePluginAtStartup(pluginName string) bool {
 		})
 		return false
 	}
+
+	// Startup carries no principal, so this creates rows for anything newly
+	// declared and leaves the owner of everything else alone. A schedule first
+	// seen here is unowned and therefore inert until an operator enables the
+	// plugin themselves, which is the fail-closed direction: nobody chose it, so
+	// nothing runs as anybody.
+	ctx.syncSchedulesFor(pluginName)
 	return true
+}
+
+// syncSchedulesFor records a plugin's declared schedules, logging rather than
+// returning a failure: the plugin is loaded and working either way, and the
+// caller's job was to enable it.
+func (ctx *MahresourcesContext) syncSchedulesFor(pluginName string) {
+	if ctx.pluginManager == nil {
+		return
+	}
+	regs := ctx.pluginManager.DeclaredSchedules(pluginName)
+	if len(regs) == 0 {
+		return
+	}
+	if err := ctx.SyncPluginSchedules(pluginName, regs); err != nil {
+		ctx.Logger().Warning("system", "plugin", nil, pluginName, "failed to record plugin schedules", map[string]interface{}{
+			"error": err.Error(),
+		})
+	}
 }
 
 // unmetDependencies returns the plugin's declared dependencies that this run has

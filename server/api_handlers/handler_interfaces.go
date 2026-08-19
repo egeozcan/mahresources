@@ -134,6 +134,7 @@ type PluginAPIContext interface {
 	SetPluginScopedAccess(pluginName string, allowed bool) error
 	SavePluginSettings(pluginName string, values map[string]any) ([]plugin_system.ValidationError, error)
 	PluginKVPurge(pluginName string) error
+	PluginSchedulesFor(pluginName string) ([]models.PluginSchedule, error)
 	GetNote(id uint) (*models.Note, error)
 	GetBlock(id uint) (*models.NoteBlock, error)
 }

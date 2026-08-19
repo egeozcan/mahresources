@@ -1734,6 +1734,55 @@ primary key, its *stored* containment decides — the insert is `ON CONFLICT DO
 NOTHING`, so any owner the caller passed alongside the id changes nothing about
 the row while the join row that follows would still link it.
 
+## Contending real goroutines tests the scheduler, not the code; inject the interleave instead
+
+`TestClaimPluginScheduleUnderConcurrencyAdmitsExactlyOne` runs eight goroutines at one row and
+asserts exactly one claim wins. Against a compare-and-set it passes. Against a claim rewritten as
+read-then-write -- the exact defect it exists to catch -- **it also passes, 4 times in 5**, because
+whether the reads interleave is up to the Go scheduler and SQLite's write serialisation, and neither
+is under the test's control.
+
+The fix is not more goroutines or more iterations. It is to stop racing and open the window on
+purpose:
+
+```go
+ctx.db.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
+    if tx.Statement.Table != "plugin_schedules" { return }
+    once.Do(func() {
+        // A competing process gets there after our read and before our write.
+        sqlDB.Exec(`UPDATE plugin_schedules SET claim_token = ? WHERE id = ?`, "other", id)
+    })
+})
+```
+
+The competing write goes out on the raw `*sql.DB` so it does not re-enter the callback that fired
+it, and `sync.Once` plus a `t.Cleanup` removal keeps it to one interleave. A CAS loses this and
+updates nothing; a read-then-write overwrites the winner and reports success. **5/5 against the
+mutation, where the racy test managed 1/5.**
+
+Keep the racy one as well -- it costs nothing and it covers orderings the injected one does not --
+but do not let it be the guard. Same family as "assert the block, not the attempt": both replace a
+timing hope with a fact the test controls.
+
+## A fixture missing an unrelated row can disarm the callback under test, and then the code it guards may be dead
+
+`TestSyncWithNoOperatorLeavesTheScheduleUnownedAndInert` asserts a schedule created with no operator
+comes out unowned, because the create stamp would otherwise attribute it to the root admin. It
+passed. It also passed with the code it was guarding deleted.
+
+The fixture never created a `User`. `defaultActorID` resolves the root admin, found none, returned
+0, and the stamp wrote nothing -- so the column was NULL for a reason that had nothing to do with
+the subject. **A stamp, sweep or default that reads a row your fixture does not create is a
+mechanism that is switched off, and every assertion downstream of it is vacuous.** Seeding one admin
+turned the test red.
+
+And then the red was informative in the other direction: the write-back it demanded turned out to
+change nothing in *any* configuration, because `defaultActorID` returns 0 whenever auth is enabled
+and returns the same root admin the caller already computed when it is not. The line was deleted
+rather than kept looking load-bearing, and the test now sets `AuthEnabled` explicitly, which is the
+only configuration in which the case it describes exists. **When strengthening a fixture makes a
+test red, check whether the code it now fails against was ever reachable before writing a fix.**
+
 ## A test that passes against the broken code has told you nothing
 
 Fixing the Select All row's load-time animation needed a guard, and three

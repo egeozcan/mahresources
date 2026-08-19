@@ -2,7 +2,7 @@
 @plugin "@tailwindcss/forms";
 @plugin "@tailwindcss/typography";
 @source "./templates/**/*.tpl";
-@source "./src/**/*.js";
+@source "./src/**/*";
 
 /* Tailwind v4 keeps automatic source detection switched on even when the
    stylesheet names explicit @source directives, so the two lines above add to
@@ -56,10 +56,21 @@
    that ends one.
 
    What looks like the fix and is not: `@import "tailwindcss" source(none);`
-   switches detection off entirely and drops 70 of those 867 classes, because
-   the explicit list is incomplete. src is named by its .js files only while it
-   holds 95 .ts files, and Go string literals, the plugin Lua and the preset
-   JSON are named nowhere. Detection is what reaches all of those today.
+   switches detection off entirely and drops 41 of those 867 classes, because
+   the explicit list is still incomplete: Go string literals, the plugin Lua and
+   the preset JSON are named nowhere, and detection is what reaches those today.
+
+   It dropped 70 until the src line above was widened. The other 29 were src's
+   own, and they were reachable only by detection: the line named `.js` while
+   the tree held 95 `.ts` files, four of which author every one of those 29,
+   being the schema editor's form mode, display mode and display renderers, and
+   the meta-shortcode web component. The glob is now the one the
+   reference stylesheet uses for src, so the shipped list and the set no
+   exclusion may cut into cannot disagree about that tree. Widening it changes
+   no output today, because detection already reached the same files; what it
+   removes is the silence. An `@source not` overlapping src would have been a
+   no-op against the .js line and taken all 95 .ts files with it, and
+   source(none) took them without a word.
 
    Left in the scan deliberately: public/dist, the committed Vite bundle. It
    contributes four junk tokens (@container, container!, list-item, resize!) and

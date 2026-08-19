@@ -338,6 +338,74 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Finding C. An explicit @source has to reach the whole tree it names.
+#
+# This is the direction none of the checks above can see. Detection is on, so a
+# glob that names a slice of a tree still builds the same stylesheet as one that
+# names all of it: the files the glob misses are read anyway, by detection, and
+# nothing anywhere fails. `@source "./src/**/*.js"` sat in index.css while src
+# held 95 .ts files, four of which author 29 classes the application really
+# renders, and every check above passed the whole time.
+#
+# What made it matter is that the two ways of losing detection both hide behind
+# that silence. `@source not` cannot override an explicit @source, so an
+# exclusion aimed at src would have been a no-op against the .js line and taken
+# the .ts files with it; source(none) would have dropped them without a word.
+# The glob is the only thing that says which files are named on purpose, and a
+# narrow one says the wrong thing quietly.
+#
+# So build each explicit glob against its own whole tree with detection off, and
+# fail on any class only the whole tree emits. The comparison carries no list of
+# extensions and no expected number: it asks the tree what it authors. A tree
+# that answers with prose is a real finding too, in the other direction, and the
+# fix there is to narrow the tree rather than widen the glob.
+# ---------------------------------------------------------------------------
+tree_probe() {
+  out=./zz-css-scan-tree.css
+  { echo '@import "tailwindcss" source(none);'
+    echo '@plugin "@tailwindcss/forms";'
+    echo '@plugin "@tailwindcss/typography";'
+    echo "@source \"$1\";"; } > "$out"
+  PROBES=("$out")
+  build "$out" "$TMP/$2.css" || return 1
+  classes "$TMP/$2.css" > "$TMP/$2.classes"
+  rm -f "$out"
+  PROBES=()
+}
+
+n=0
+unreached_total=0
+while IFS= read -r glob; do
+  tree=$(printf '%s' "$glob" | sed 's|^\./||; s|/.*$||')
+  if [ ! -d "$tree" ]; then
+    fail "explicit-globs-reach-their-trees: @source \"$glob\" names no directory"
+    continue
+  fi
+  n=$((n + 1))
+  tree_probe "$glob" "glob$n" || { fail "tree-probe-build"; exit 1; }
+  tree_probe "./$tree/**/*" "tree$n" || { fail "tree-probe-build"; exit 1; }
+  comm -13 "$TMP/glob$n.classes" "$TMP/tree$n.classes" > "$TMP/unreached$n.txt"
+  count=$(wc -l < "$TMP/unreached$n.txt" | tr -d ' ')
+  printf '  %-24s reaches %s of the %s classes ./%s/ authors\n' \
+    "$glob" "$(wc -l < "$TMP/glob$n.classes" | tr -d ' ')" \
+    "$(wc -l < "$TMP/tree$n.classes" | tr -d ' ')" "$tree"
+  [ "$count" -eq 0 ] && continue
+  unreached_total=$((unreached_total + count))
+  fail "explicit-globs-reach-their-trees: @source \"$glob\" misses $count classes ./$tree/ authors:"
+  while read -r sel; do
+    tok=$(printf '%s' "$sel" | sed 's/^\.//; s/\\//g')
+    where=$(grep -rl -F -- "$tok" "$tree" 2>/dev/null | head -1)
+    printf '        %-26s %s\n' "$sel" "${where:-first use not located}"
+  done < "$TMP/unreached$n.txt"
+done < <(grep '^@source "' ./index.css | sed 's/^@source "//; s/";$//')
+
+if [ "$n" -eq 0 ]; then
+  fail "explicit-globs-reach-their-trees: index.css names no explicit @source at all"
+elif [ "$unreached_total" -eq 0 ]; then
+  pass "explicit-globs-reach-their-trees"
+fi
+
+# ---------------------------------------------------------------------------
 # The probes are written into the checkout, so prove they are all gone again.
 # Only what this run added counts: whoever is editing the exclusions runs this
 # with a dirty tree, and failing them for their own work in progress would make

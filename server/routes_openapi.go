@@ -2817,6 +2817,19 @@ func registerPluginRoutes(r *openapi.Registry) {
 	})
 
 	r.Register(openapi.RouteInfo{
+		Method:      http.MethodGet,
+		Path:        "/v1/plugin/schedules",
+		OperationID: "listPluginSchedules",
+		Summary:     "List a plugin's recurring schedules",
+		Description: "The stored schedules for one plugin, as recorded when it was enabled. `registered` is false when the row exists but the plugin no longer declares that id -- a disabled plugin, a renamed schedule, or a removed mah.schedule call all look like this, and none of them run. `owned` is false when the operator who enabled the plugin has since been deleted, at which point the schedule has stopped rather than merely lost its attribution.",
+		Tags:        []string{"plugins"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "name", Type: "string", Required: true, Description: "Plugin name"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
 		Method:      http.MethodPost,
 		Path:        "/v1/plugin/purge-data",
 		OperationID: "purgePluginData",

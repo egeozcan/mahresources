@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"strconv"
+	"time"
 
 	"mahresources/cmd/mr/client"
 	"mahresources/cmd/mr/helptext"
@@ -29,6 +30,7 @@ func NewPluginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	pluginCmd.AddCommand(newPluginEnableCmd(c, opts))
 	pluginCmd.AddCommand(newPluginDisableCmd(c, opts))
 	pluginCmd.AddCommand(newPluginScopedAccessCmd(c, opts))
+	pluginCmd.AddCommand(newPluginSchedulesCmd(c, opts))
 	pluginCmd.AddCommand(newPluginSettingsCmd(c, opts))
 	pluginCmd.AddCommand(newPluginPurgeDataCmd(c, opts))
 
@@ -133,6 +135,74 @@ func newPluginScopedAccessCmd(c *client.Client, opts *output.Options) *cobra.Com
 	cmd.MarkFlagRequired("allowed")
 
 	return cmd
+}
+
+func newPluginSchedulesCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(pluginsHelpFS, "plugins_help/plugin_schedules.md")
+
+	return &cobra.Command{
+		Use:         "schedules <name>",
+		Short:       "List a plugin's recurring schedules",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			query := url.Values{}
+			query.Set("name", args[0])
+
+			var raw json.RawMessage
+			if err := c.Get("/v1/plugin/schedules", query, &raw); err != nil {
+				return err
+			}
+
+			var schedules []struct {
+				ScheduleID   string `json:"scheduleId"`
+				EverySeconds int64  `json:"everySeconds"`
+				Overlap      string `json:"overlap"`
+				NextDueAt    string `json:"nextDueAt"`
+				Runs         int64  `json:"runs"`
+				LastStatus   string `json:"lastStatus"`
+				Owned        bool   `json:"owned"`
+				Registered   bool   `json:"registered"`
+			}
+			if err := json.Unmarshal(raw, &schedules); err != nil {
+				// The raw body is still the answer in JSON mode, so a shape this
+				// build does not recognise must not lose it.
+				output.PrintRawJSON(raw)
+				return nil
+			}
+
+			rows := make([][]string, 0, len(schedules))
+			for _, sched := range schedules {
+				// One column for the two ways a schedule stops, because "next due
+				// in four minutes" is actively misleading for a row that will
+				// never be claimed.
+				state := "active"
+				switch {
+				case !sched.Owned:
+					state = "stopped (no owner)"
+				case !sched.Registered:
+					state = "not declared"
+				}
+				last := sched.LastStatus
+				if last == "" {
+					last = "never run"
+				}
+				rows = append(rows, []string{
+					sched.ScheduleID,
+					(time.Duration(sched.EverySeconds) * time.Second).String(),
+					sched.Overlap,
+					state,
+					sched.NextDueAt,
+					strconv.FormatInt(sched.Runs, 10),
+					last,
+				})
+			}
+			output.Print(*opts, []string{"ID", "EVERY", "OVERLAP", "STATE", "NEXT DUE", "RUNS", "LAST"}, rows, raw)
+			return nil
+		},
+	}
 }
 
 func newPluginSettingsCmd(c *client.Client, opts *output.Options) *cobra.Command {

@@ -33,6 +33,12 @@ func stampedModels() []any {
 		// history. The rows survive with a NULL creator, which the visibility
 		// predicate then hides from every non-admin.
 		&models.DownloadHistoryEntry{},
+		// Likewise not content, and here the sweep is load-bearing rather than
+		// tidy: the owner of a schedule is the identity its Lua executes as, so
+		// "the operator was deleted" has to resolve to "this stops" rather than
+		// to a run binding an account that no longer exists. Nulling the column
+		// does exactly that, because a row with no owner is never claimed.
+		&models.PluginSchedule{},
 	}
 }
 

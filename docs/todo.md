@@ -1,3 +1,221 @@
+# Item B: a durable scheduler for the plugin system (2026-08-19)
+
+The first of the six platform items, taken on the tree's own recommendation over
+A2's LState pool. Plugin code ran only in response to a request or an entity
+write, so a feed poller, a retention policy or a nightly rollup was not
+expressible at any price: the closest approximation was a self-looping
+`mah.start_job`, bounded by a 5-minute callback timeout and a 30-second sleep
+clamp, holding the plugin's VM lock throughout, and impossible to re-arm after a
+restart.
+
+Scope was cut with the user before planning: **scheduler only** (the event bus
+half is separately blocked, below), **interval specs only** (`every = "15m"`, no
+cron and no new dependency), and **a run executes as the operator who enabled
+the plugin**.
+
+## Four things the capability report's card got wrong
+
+It was written from a survey, and one of the four changed the design.
+
+1. **`mah.on("job_completed")` is not addable as written.** `mah.on` is a closed
+   30-name allowlist (`plugin_system/catalogue.go:26-46`), all entity lifecycle,
+   and `internal/arch/plugin_catalogue_drift_test.go` fails the build in *both*
+   directions. Out of scope by the scope decision, but recorded so nobody
+   re-prices it as a line of code.
+2. **"Dispatch through `SubmitJobWithOptions`" is the wrong queue.** `mah.start_job`
+   does not use `download_queue` at all; plugin background work runs on
+   `plugin_system`'s own `ActionJob` system. Routing schedules through the
+   download queue would have made a *third* job path -- and a generic
+   `download_queue` job gets no durable row (`recordTerminal` returns early on
+   `runFn != nil`) and is not drained at shutdown (`workers.Add` exists only in
+   `startDownloadWorker`). Schedules dispatch through `executeAsyncJob` instead,
+   which brings panic recovery, the `maxConcurrentActions` budget, the jobs
+   panel's `action_*` events, and the plugin's VM lock.
+3. **`ClaimDownloadHistoryRetry` is not in `download_queue`.** It is
+   `application_context/download_history_context.go:199-228`.
+4. **The owner cannot be captured where the card implies.** `loadPlugin` calls
+   `L.RemoveContext()` *before* `init()` -- deliberately, because gopher-lua
+   copies a parent context into a coroutine at creation and never refreshes it --
+   and `EnablePlugin(name string)` carries no actor. So `mah.schedule` sees actor
+   0. The `application_context` bridge records the owner after the load instead,
+   at both `EnablePlugin` call sites.
+
+## The claim, and why its TTL is arithmetic
+
+One conditional `UPDATE` whose `RowsAffected` is the answer, copied from
+`ClaimDownloadHistoryRetry` with its two rules intact: claim before act, and
+check-and-write in one statement.
+
+What could not be copied is the *lifetime*. `downloadRetryClaimTTL` is one
+minute because that claim spans only claim-to-submit; afterwards "is it still
+running" is answered by looking in the live queue. That leg does not exist here:
+`ActionJob` is in-memory and per-process, so a second process cannot ask whether
+the first one's run is live, and under `overlap = "skip"` the claim must persist
+for the whole run. Hence `ScheduleClaimTTL = ScheduleDispatchWait +
+plugin_system.MaxAsyncJobDuration + 2m`, an expression rather than a literal,
+pinned by `TestScheduleClaimTTLExceedsTheLongestPossibleRun`. A too-short TTL is
+a cross-process double-fire, which is the one defect this feature is graded on.
+
+That in turn forced `executeAsyncJobWithin`: `executeAsyncJob`'s semaphore
+acquire is a blocking send with no escape, and waiting there while holding a
+claim would make the claim's lifetime unbounded, which makes any TTL meaningless.
+The bounded variant reports `ran=false` having touched nothing, so a full budget
+releases the claim and leaves the row due.
+
+## What the mutation pass actually found
+
+Every claim rule was verified by reverting it in a scratch worktree. Three
+mutations were caught immediately. **Two were not, and both were tests certifying
+code that could be broken:**
+
+- **The concurrency test passes against a read-then-write claim 4 times in 5.**
+  Eight goroutines contending one row is a race, and a race can be won by luck.
+  Replaced by `TestClaimPluginScheduleLosesToAClaimThatLandsAfterItsRead`, which
+  opens the window deliberately with a GORM `Before("gorm:update")` callback that
+  lands a competing claim on the raw `*sql.DB`. Measured: **5/5 against the
+  mutation, where the racy one managed 1/5.** The racy test is kept, because it
+  costs nothing and covers shapes the deterministic one does not.
+- **`TestSyncWithNoOperator...` passed because its fixture had no root admin**, so
+  `defaultActorID` resolved to 0, the create stamp wrote nothing, and the column
+  came out NULL whether or not the code did anything. Seeding an admin turned it
+  red -- and then revealed that the "fix" it was guarding, a post-create write-back
+  of the owner, **was dead code in every path**: with auth on `defaultActorID`
+  returns 0, and with auth off both it and the stamp write the root admin. It was
+  deleted rather than left looking load-bearing. The test now sets
+  `AuthEnabled` explicitly, which is the only configuration where the case it
+  describes exists.
+
+Two further failures during the end-to-end pass were test bugs, not code bugs:
+`mah.kv` stores JSON, so a Lua counter reads back as `"1"` and a bare
+`Sscanf("%d")` yields 0 -- indistinguishable from "the schedule never ran".
+
+## The three tests a done-review found missing
+
+All three named a branch that existed and had nothing asserting it, which is the
+shape `docs/lessons.md` calls "a fix recorded in a plan is not a fix":
+
+- **`TestRunScheduleGivesUpRatherThanWaitingForeverForAJobSlot`** was in the
+  approved plan verbatim and had not been written. It fills the async budget and
+  asserts `RunSchedule` reports `ran=false` having touched nothing. It waits on a
+  channel with a 5s bound rather than calling `RunSchedule` inline: under the
+  mutation (an unbounded acquire) the inline version *hangs*, and a hang aborts
+  the whole package and destroys every other test's result to report this one.
+  Bounded, it fails in 5s and says why.
+- **`TestDispatchReleasesTheClaimWhenTheJobBudgetIsFull`** is the database half:
+  a tick that could not get a slot hands its claim back and leaves the row due,
+  and the next tick runs it. Mutation-verified — deleting the release leaves the
+  row claimed and the test names it. `PluginScheduler.dispatchWait` was added as
+  a field so this costs 0.07s instead of sitting out the real 10s bound.
+- **`TestSchedulerRunsAnOverlapAllowSchedule`.** `overlap = "allow"` takes the
+  other branch entirely (advance-and-release at dispatch, outcome recorded by a
+  write that no longer holds the claim) and every other scheduler test used
+  "skip", so `AdvancePluginScheduleAtDispatch` and `RecordPluginScheduleOutcome`
+  had no test executing them at all. What is still **not** covered is the
+  *timing* claim — that a second run may start while the first is going — which
+  needs a handler slow enough to straddle two ticks and is not worth the flake.
+
+## Also fixed here: staticcheck was red on master
+
+`staticcheck ./...` exited 1 at pristine `HEAD`, so the CI job was already
+failing: a nil `context` in `registration_catalogue_test.go:295`, and
+`isPluginCodePath` left unused when the per-plugin deny lift replaced it with
+`pluginCodePathName`. Both fixed; the gate is green.
+
+## Verification
+
+Go suite, staticcheck, `./scripts/css-scan-test.sh`, `npm run build`, and the
+Postgres gate (`./mrql/... ./server/api_tests/...`) all green. Three
+`postgres`-tagged tests were added for the claim itself, because `RowsAffected`
+is the entire mechanism and it is exactly what can differ between dialects.
+
+End to end against a real ephemeral server: a bundled `heartbeat` plugin
+declaring `every = "30s"` was enabled over the API, its row created, claimed by
+the ticker with a crypto-random token, run, and completed -- claim released,
+`next_due_at` advanced by exactly 30s, `runs` incremented, and the manage page
+rendering `beat / 30s / next due / 1 / completed`. A second run fired 30s later
+and the process exited in 0s under the 10s drain bound.
+
+## The observability surface
+
+`GET /v1/plugin/schedules` (admin-only by the `/v1/plugin/` prefix's place in
+`isSystemPath`), a table on `/plugins/manage`, and `mr plugin schedules <name>`.
+Two fields carry the state that is easy to misread and both are surfaced
+everywhere: `registered` is false when the row exists but nothing declares that
+id, and `owned` is false when the operator has been deleted and the schedule has
+therefore stopped. The CLI renders them as one STATE column, because "next due in
+four minutes" is actively misleading for a row that will never be claimed.
+
+Adding the capability moved a number the browser suite pins:
+`plugin-manage.spec.ts`'s `ALL_CAPABILITY_COUNT`, which is what a *legacy*
+(manifest-less) plugin holds. It failed on all three attempts, which is the
+intended way to find out that a new capability has silently widened what a
+manifest-less plugin can do.
+
+## Not built, and knowingly
+
+A run-now control. The plan named one; there is no way to fire a schedule
+manually short of editing `next_due_at`. Nothing depends on it, and the natural
+place for it is beside the row on the manage page.
+
+# The src glob named .js while src was mostly .ts (2026-08-19)
+
+The one item the 2026-08-18 pass left as a gap rather than a decision. CSS-SCAN
+surfaced it and did not close it: `@source "./src/**/*.js"` in `index.css` named
+none of `src`'s 95 `.ts` files, and only Tailwind's automatic source detection
+reached them.
+
+## What was actually at stake
+
+Nothing today, and that is the whole problem. Detection is on, so the shipped
+stylesheet was identical either way and no check could fail. Measured: widening
+the glob leaves `public/tailwind.css` **byte-identical** to the committed copy,
+and the baseline stays at 874 classes against the 867-class reference.
+
+What the narrow glob cost was the two ways of losing detection, both silent:
+
+- `@source not` cannot override an explicit `@source`, so an exclusion aimed at
+  `src` would have been a no-op against the `.js` line and taken all 95 `.ts`
+  files with it.
+- `source(none)` dropped **70** of the 867 authored classes. **29 of those were
+  src's own**, authored by four files: `schema-editor/modes/form-mode.ts`,
+  `schema-editor/modes/display-mode.ts`, `schema-editor/display-renderers.ts`
+  and `webcomponents/meta-shortcode.ts`. With the glob widened, `source(none)`
+  drops 41, and the remainder is the part `index.css` names deliberately:
+  Go string literals, the plugin Lua, the preset JSON.
+
+## The fix
+
+`@source "./src/**/*"`, which is the glob the reference stylesheet in
+`scripts/css-scan-test.sh` already uses for `src`, so the shipped list and the
+set no exclusion may cut into cannot disagree about that tree. It is not
+`.js` + `.ts`: measured, the two produce identical output today (`src`'s only
+other file is one `.html`), and naming the tree rather than two extensions is
+what survives the next extension somebody adds.
+
+## The guard, because a comment would not have caught this either
+
+`explicit-globs-reach-their-trees` builds each explicit `@source` glob against
+its own whole tree with detection off and fails on any class only the whole tree
+emits. It carries no extension list and no expected number: it asks the tree what
+it authors, so it stays true as `src` and `templates` change.
+
+Proved red against the defect it describes -- restoring `./src/**/*.js` fails it
+with 132 classes named, each with the file that authors it -- and green after.
+A tree that answers with prose is a finding in the other direction, and the
+message says so: narrow the tree, do not widen the glob.
+
+## Gates
+
+`./scripts/css-scan-test.sh` all checks passed (baseline 874, reference 867,
+`./templates/**/*.tpl` reaches 783 of 783, `./src/**/*` reaches 205 of 205),
+`npm run build-css` reproduces the committed `public/tailwind.css` byte for byte.
+No Go guard reads this file; the `index.css` the Go tests assert on is
+`public/index.css`, a different file.
+
+**Not wired into CI, and that is unchanged rather than decided here.** The
+CSS-SCAN lane pointed at the script from `CLAUDE.md` (`7f21125d`) instead, and
+`.github/workflows/ci.yml` still runs its four jobs and not this one.
+
 # More than one VM per plugin: the decision (2026-08-17)
 
 Item A2 from the capability report, the last piece of item A. This section is a

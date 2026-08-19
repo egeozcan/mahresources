@@ -65,10 +65,13 @@ An ungranted module is **absent**, not stubbed, so `if mah.kv then` works and a 
 | `api` | `mah.api` |
 | `actions` | `mah.action`, and the `job_*` reporters |
 | `jobs` | `mah.start_job`, and the `job_*` reporters |
+| `schedule` | `mah.schedule` |
 
 Always installed, no capability required: `mah.json`, `mah.util`, `mah.log`, `mah.html_escape`, `mah.sleep`, `mah.abort`, `mah.doc`, `mah.get_setting`. None reads or writes anything outside the plugin itself.
 
 **`db:write` implies `db:read`.** The writers return the entity they wrote — `patch_note(id, {})` changes nothing and hands back the whole note — so a write-only grant was already a read of anything by id. The implication is made explicit so the label an operator consents to is what they actually grant. The reverse never holds.
+
+**`schedule` is separate from `jobs`** for the same kind of reason. `jobs` runs work a user just asked for; `schedule` runs work nobody asked for, on a timer, including while nobody is logged in. Folding it into `jobs` would have silently widened every plugin an operator had already consented to. Because it is its own name, a plugin adding `mah.schedule` refuses to load until the operator re-enables it and sees the new line.
 
 **`inject` is separate from `render`** because it is not author-invoked. Six injection slots live in the base layout, so an injection runs on every page, while a shortcode or block runs only where a template author placed it. Consenting to "may render blocks" is not consenting to "emits HTML and `<script>` on every page".
 

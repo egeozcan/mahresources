@@ -33,7 +33,8 @@ func newHistoryTestContext(t *testing.T, cfg *MahresourcesConfig) *MahresourcesC
 		t.Fatalf("open db: %v", err)
 	}
 	if err := db.AutoMigrate(
-		&models.DownloadHistoryEntry{}, &models.User{}, &models.Group{},
+		&models.DownloadHistoryEntry{},
+		&models.PluginSchedule{}, &models.User{}, &models.Group{},
 		&models.RuntimeSetting{}, &models.LogEntry{}, &models.Session{}, &models.ApiToken{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)

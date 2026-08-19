@@ -157,6 +157,7 @@ func main() {
 	downloadFailedRetention := flag.Duration("download-failed-retention", parseDurationEnv("DOWNLOAD_FAILED_RETENTION", 7*24*time.Hour), "How long a failed or cancelled download stays in the download history (env: DOWNLOAD_FAILED_RETENTION)")
 	downloadHistoryRetention := flag.Duration("download-history-retention", parseDurationEnv("DOWNLOAD_HISTORY_RETENTION", 24*time.Hour), "How long a completed download stays in the download history (env: DOWNLOAD_HISTORY_RETENTION)")
 	downloadCockpitLimit := flag.Int("download-cockpit-limit", parseIntEnv("DOWNLOAD_COCKPIT_LIMIT", 10), "How many finished downloads the jobs panel renders; active work and non-download jobs are never capped (env: DOWNLOAD_COCKPIT_LIMIT)")
+	pluginScheduleTick := flag.Duration("plugin-schedule-tick", parseDurationEnv("PLUGIN_SCHEDULE_TICK", application_context.DefaultScheduleTick), "How often the plugin scheduler looks for due work; bounds the resolution of every plugin schedule (env: PLUGIN_SCHEDULE_TICK)")
 	maxImportSize := flag.Int64("max-import-size", parseInt64Env("MAX_IMPORT_SIZE", 10737418240), "Maximum import tar upload size in bytes (env: MAX_IMPORT_SIZE)")
 	maxUploadSize := flag.Int64("max-upload-size", parseInt64Env("MAX_UPLOAD_SIZE", 2<<30), "Maximum per-upload body size in bytes for resource and version uploads (default: 2 GB, env: MAX_UPLOAD_SIZE)")
 	maxJSONBody := flag.Int64("max-json-body", parseInt64Env("MAX_JSON_BODY", 0), "Maximum application/json request body size in bytes; 0 disables the limit (default: 0/unlimited, env: MAX_JSON_BODY)")
@@ -321,6 +322,7 @@ func main() {
 		DownloadFailedRetention:      *downloadFailedRetention,
 		DownloadHistoryRetention:     *downloadHistoryRetention,
 		DownloadCockpitLimit:         *downloadCockpitLimit,
+		PluginScheduleTick:           *pluginScheduleTick,
 		MaxImportSize:                *maxImportSize,
 		MaxUploadSize:                *maxUploadSize,
 		MaxJSONBodySize:              *maxJSONBody,
@@ -433,7 +435,10 @@ func main() {
 		&models.RuntimeSetting{},
 		&models.SavedMRQLQuery{},
 		&models.TemplatePartial{},
-		&models.DownloadHistoryEntry{}, // no FK association; created_by_user_id is a scalar
+		&models.DownloadHistoryEntry{},
+		// No FK association either; plugin_name/schedule_id is its own key and
+		// created_by_user_id is a scalar.
+		&models.PluginSchedule{}, // no FK association; created_by_user_id is a scalar
 		// Tables with FK to independent tables
 		&models.Group{},             // FK to Category (self-referencing Owner is handled by GORM)
 		&models.GroupRelationType{}, // FK to Category
@@ -647,6 +652,23 @@ func main() {
 	tw.Start()
 	context.SetThumbnailQueue(tw.GetQueue())
 	defer tw.Stop()
+
+	// The plugin scheduler. It owns its own ticker rather than borrowing the
+	// download manager's, whose five-minute interval is hardcoded and whose
+	// registered callbacks take no context and cannot be drained.
+	//
+	// Started here, after the startup plugin enable has had its chance to record
+	// what each plugin declares. It re-reads the due set on every tick, so the
+	// ordering is a courtesy rather than a requirement — but a first tick against
+	// rows that do not exist yet would simply do nothing, which is harder to
+	// read in a log than not ticking at all.
+	//
+	// Stop is deferred like the workers above, and it waits: an ActionJob lives
+	// in this process's memory only, so a run abandoned at exit holds its claim
+	// until that claim expires, and its schedule is unavailable until then.
+	scheduler := application_context.NewPluginScheduler(context, cfg.PluginScheduleTick)
+	scheduler.Start()
+	defer scheduler.Stop()
 
 	// Start share server if configured.
 	//

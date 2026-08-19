@@ -160,7 +160,14 @@ test.describe('Plugin Management', () => {
 test.describe('Plugin Management - Access panel', () => {
   // Every capability the host grants. A legacy plugin holds all of them, which
   // is the number this pins.
-  const ALL_CAPABILITY_COUNT = 12;
+  //
+  // Written out rather than derived, because deriving it from the page would
+  // make the assertion "the page agrees with itself". It must be moved by hand
+  // whenever plugin_system.AllCapabilities grows, and this failing is the
+  // intended way to find out: a new capability silently widening what a
+  // manifest-less plugin holds is exactly what the legacy warning exists to
+  // make visible. Last moved for `schedule`.
+  const ALL_CAPABILITY_COUNT = 13;
 
   test('legacy plugin is flagged and holds every capability', async ({ page }) => {
     await page.goto('/plugins/manage');

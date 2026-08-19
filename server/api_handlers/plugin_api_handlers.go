@@ -177,6 +177,56 @@ func GetPluginScopedAccessHandler(ctx PluginAPIContext) func(http.ResponseWriter
 	}
 }
 
+// GetPluginSchedulesHandler lists a plugin's recurring work.
+//
+// Read-only, and admin-only by virtue of the /v1/plugin/ prefix's place in
+// isSystemPath — the same door every other plugin management endpoint uses.
+//
+// `registered` is the field worth reading: it is false when the row exists but
+// the plugin no longer declares that id, which is what a disabled plugin, a
+// renamed schedule and a removed mah.schedule call all look like. `owned` is
+// false when the operator who enabled the plugin has since been deleted, at
+// which point the schedule has stopped rather than merely lost its label.
+func GetPluginSchedulesHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimSpace(r.FormValue("name"))
+		if name == "" {
+			http_utils.HandleError(fmt.Errorf("missing plugin name"), w, r, http.StatusBadRequest)
+			return
+		}
+
+		rows, err := ctx.PluginSchedulesFor(name)
+		if err != nil {
+			http_utils.HandleError(err, w, r, http.StatusInternalServerError)
+			return
+		}
+
+		pm := ctx.PluginManager()
+		out := make([]map[string]any, 0, len(rows))
+		for _, row := range rows {
+			entry := map[string]any{
+				"scheduleId":   row.ScheduleID,
+				"pluginName":   row.PluginName,
+				"everySeconds": row.EverySeconds,
+				"overlap":      row.Overlap,
+				"nextDueAt":    row.NextDueAt,
+				"runs":         row.Runs,
+				"lastStatus":   row.LastStatus,
+				"lastError":    row.LastError,
+				"owned":        row.CreatedByUserId != nil,
+				"registered":   pm != nil && pm.ScheduleIsRegistered(name, row.ScheduleID),
+			}
+			if row.LastRunAt != nil {
+				entry["lastRunAt"] = row.LastRunAt
+			}
+			out = append(out, entry)
+		}
+
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(out)
+	}
+}
+
 // isTruthyFormValue reads the shapes a checkbox and an API client actually send.
 // Anything else is false, which is the safe direction for a permission.
 func isTruthyFormValue(v string) bool {

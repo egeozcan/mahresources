@@ -81,6 +81,7 @@ var setIfRegistrations = map[string]string{
 	"shortcode":    "CapRender",
 	"api":          "CapAPI",
 	"start_job":    "CapJobs",
+	"schedule":     "CapSchedule",
 }
 
 // setIfAnyRegistrations pins every multi-capability registration and the exact
@@ -1299,7 +1300,7 @@ func registeringFunctions() map[string]bool {
 // shutdown must both account for every one of them.
 var registryFields = []string{
 	"hooks", "injections", "pages", "menuItems", "actions",
-	"blockTypes", "displayTypes", "shortcodes", "docs", "apiEndpoints",
+	"blockTypes", "displayTypes", "shortcodes", "docs", "apiEndpoints", "schedules",
 }
 
 // TestEveryRegistryIsTornDownAndReset pins the structural invariant the
