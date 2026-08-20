@@ -465,6 +465,39 @@ var ErrDependencyNotEnabled = errors.New("a dependency is not enabled")
 // plugin depends on.
 var ErrDependencyInUse = errors.New("another enabled plugin depends on this one")
 
+// ErrLoadInProgress is returned when a disable could not act because an enable
+// of the same plugin is still in flight. A sentinel for the same reason
+// ErrEnableInProgress is one: the caller must tell "I did not act" apart from
+// "it was not enabled", and the loaded state cannot — a plugin mid-load is in
+// neither pm.plugins nor, for the length of its header read, pm.loading, which
+// looks exactly like a plugin that was never enabled. Answering that refusal
+// with an idempotent success leaves the durable row saying off while the load
+// publishes and the plugin runs on.
+var ErrLoadInProgress = errors.New("an enable of this plugin is still in flight")
+
+// enableHandoffWait bounds the window between EnablePlugin claiming a name and
+// that load announcing itself in pm.loading. What sits between them is the
+// header read, which builds a throwaway LState and runs the plugin's entire
+// top-level chunk — short, but not instant, and bounded by pluginHeaderTimeout,
+// which is therefore the honest bound here too.
+const enableHandoffWait = pluginHeaderTimeout
+
+// enableHandoffPoll is how often that window is re-checked. Polling two markers
+// that already exist rather than adding a third: the pm.loading comment records
+// what happened the last time this seam was given its own state to keep in sync
+// across four call sites, and one mechanism that answers late beats three that
+// disagree.
+const enableHandoffPoll = 5 * time.Millisecond
+
+// ErrEnableInProgress is returned to the loser of two concurrent enables of one
+// plugin. It is a sentinel rather than a message because the caller has to tell
+// this refusal apart from every other one: the winner has already written the
+// same durable state this caller wrote, and owns undoing it if its load fails.
+// A loser that reverted would switch off a plugin that is about to start — and
+// it cannot detect the case by asking whether the plugin is loaded, because
+// during that window it is not yet.
+var ErrEnableInProgress = errors.New("an enable of this plugin is already in flight")
+
 // checkDependencies enforces the only honest semantic available without a Lua
 // module loader: the named plugin must be enabled right now.
 func (pm *PluginManager) checkDependencies(dp DiscoveredPlugin) error {
@@ -1711,7 +1744,7 @@ func (pm *PluginManager) EnablePlugin(name string) error {
 
 	// Prevent concurrent enable attempts for the same plugin.
 	if _, loaded := pm.enabling.LoadOrStore(name, struct{}{}); loaded {
-		return fmt.Errorf("plugin %q is already being enabled", name)
+		return fmt.Errorf("plugin %q: %w", name, ErrEnableInProgress)
 	}
 	defer pm.enabling.Delete(name)
 
@@ -1764,7 +1797,59 @@ func (pm *PluginManager) DisablePlugin(name string) error {
 		return fmt.Errorf("%w: %s still depends on %q; disable %s first",
 			ErrDependencyInUse, strings.Join(dependents, ", "), name, strings.Join(dependents, " and "))
 	}
+	// Let an enable that has claimed this name become visible before deciding.
+	// disablePlugin can wait for a load it can see in pm.loading, but that entry
+	// only appears on the far side of the header read; before it, the plugin is
+	// in no map at all and the honest-looking answer is "not enabled" about
+	// something that is about to be running.
+	if !pm.awaitEnableVisible(name, enableHandoffWait) {
+		return fmt.Errorf("%w: plugin %q has been claimed by an enable that has not "+
+			"started loading yet", ErrLoadInProgress, name)
+	}
 	return pm.disablePlugin(name, false)
+}
+
+// EnableInFlight reports whether an enable of this plugin is somewhere between
+// claiming the name and publishing the loaded plugin.
+//
+// It exists because IsEnabled cannot answer during that window: mid-load the
+// plugin is in none of the manager's maps, so "loading" and "never loaded" are
+// the same answer. A caller settling durable state against what is loaded must
+// not act while this is true — the operation running the load will settle it
+// when it finishes, and it will know the outcome.
+func (pm *PluginManager) EnableInFlight(name string) bool {
+	if _, enabling := pm.enabling.Load(name); enabling {
+		return true
+	}
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	_, loading := pm.loading[name]
+	return loading
+}
+
+// awaitEnableVisible waits until an in-flight enable of name is something
+// disablePlugin can reason about — either its load has registered in pm.loading,
+// or the enable has ended and the ordinary path can see the result. It reports
+// false only when the claim outlived the wait, which is the one case a caller
+// must not read as "not enabled".
+func (pm *PluginManager) awaitEnableVisible(name string, wait time.Duration) bool {
+	deadline := time.Now().Add(wait)
+	for {
+		if _, enabling := pm.enabling.Load(name); !enabling {
+			// Published or failed; either way the truth is now readable.
+			return true
+		}
+		pm.mu.RLock()
+		_, loading := pm.loading[name]
+		pm.mu.RUnlock()
+		if loading {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(enableHandoffPoll)
+	}
 }
 
 // disablePlugin is DisablePlugin, with waited recording whether it has already
@@ -1801,8 +1886,9 @@ func (pm *PluginManager) disablePlugin(name string, waited bool) error {
 				// enable started, which is a new decision, not this one.
 				return pm.disablePlugin(name, true)
 			case <-time.After(retireDrainTimeout):
-				return fmt.Errorf("plugin %q is still loading after %s and cannot be disabled yet; "+
-					"its init() has not returned", name, retireDrainTimeout)
+				return fmt.Errorf("%w: plugin %q is still loading after %s and cannot be "+
+					"disabled yet; its init() has not returned",
+					ErrLoadInProgress, name, retireDrainTimeout)
 			}
 		}
 		pm.mu.Unlock()

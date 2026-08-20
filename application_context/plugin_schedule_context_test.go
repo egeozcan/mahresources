@@ -277,10 +277,29 @@ func TestScheduleClaimTTLExceedsTheLongestPossibleRun(t *testing.T) {
 	longest := ScheduleDispatchWait + plugin_system.MaxAsyncJobDuration
 	if ScheduleClaimTTL <= longest {
 		t.Fatalf("ScheduleClaimTTL is %s, but a run can legitimately take %s "+
-			"(%s waiting for a job slot + %s executing). A claim that expires mid-run is a "+
+			"(%s waiting to start + %s executing). A claim that expires mid-run is a "+
 			"cross-process double-fire.", ScheduleClaimTTL, longest, ScheduleDispatchWait,
 			plugin_system.MaxAsyncJobDuration)
 	}
+
+	// The inequality is only as good as the enumeration, and the enumeration was
+	// wrong once: RunSchedule waited for the job slot within the dispatch wait
+	// and then waited for the plugin's VM lock through LockVM, which is
+	// unbounded. That third wait is in neither term, so a schedule queued behind
+	// a hook's mah.http call or another async job outlived its own claim and the
+	// next tick fired it again — in one process, not merely across two.
+	// RunSchedule now spends a single deadline on both, which is what makes
+	// ScheduleDispatchWait an honest bound on "waiting to start"; see
+	// TestRunScheduleGivesUpWhenTheVMStaysBusy. Anything new that waits before
+	// the handler runs belongs inside that deadline or inside this sum.
+	//
+	// The bound applies only while a claim is held, which is overlap="skip".
+	// Under "allow" the dispatcher advances the row and releases the claim
+	// before the run, so there is no claim for a wait to outlive and the VM is
+	// waited for indefinitely — that policy's whole promise is that an
+	// overrunning run does not cause the next to be skipped. This inequality
+	// therefore says nothing about "allow", and does not need to; see
+	// TestOverlapAllowWaitsOutABusyVM.
 }
 
 // The sync is what turns a plugin's declaration into the durable row. It runs on

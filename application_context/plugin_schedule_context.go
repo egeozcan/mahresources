@@ -288,13 +288,16 @@ func (ctx *MahresourcesContext) RecordPluginScheduleOutcome(id uint, status, run
 		}).Error
 }
 
-// PluginSchedulesFor lists a plugin's stored schedules, newest-due first, for
-// the manage page.
+// PluginSchedulesFor lists a plugin's stored schedules by id, for the manage
+// page.
 //
 // No visibility predicate: /plugins/manage is admin-only (isSystemPath), and an
 // operator managing plugins is looking at the deployment rather than at their
-// own work. The owner is rendered so they can see whose identity each one runs
-// as, which is the question the page exists to answer.
+// own work. What the surfaces render is whether a row still *has* an owner — an
+// unowned row shows as stopped, because nothing claims it — not who that owner
+// is. A row can be unowned either because the operator's account was deleted or
+// because it was created by a principal-less sync, so the badge deliberately
+// does not name a cause.
 func (ctx *MahresourcesContext) PluginSchedulesFor(pluginName string) ([]models.PluginSchedule, error) {
 	var rows []models.PluginSchedule
 	err := ctx.db.Where("plugin_name = ?", pluginName).Order("schedule_id asc").Find(&rows).Error

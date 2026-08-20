@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -227,6 +228,18 @@ func (pm *PluginManager) executeAsyncJob(job *ActionJob, logLabel string, work f
 // notification, no work. That is what lets a caller holding a resource treat a
 // full budget as "not now" and give the resource back, rather than parking on
 // the semaphore while it holds it.
+// errJobDidNotStart is a work function's way of saying it never began.
+//
+// executeAsyncJobWithin's contract is "ran means the job entered its work", and
+// a work function that spends its own bounded wait on something it could not get
+// — today, a schedule waiting on the plugin's VM lock — has not. Without this it
+// looked identical to a job that ran and failed: the panel announced "Action
+// failed" to a screen reader, kept a failed row for a handler that was never
+// entered, and the application log blamed the plugin for it. The alternative was
+// to correct the status afterwards from the caller, and that was tried first: it
+// left two mechanisms for one condition and still emitted the failure event.
+var errJobDidNotStart = errors.New("the job never entered its work")
+
 func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, wait time.Duration, work func() error) (ran bool) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -256,6 +269,13 @@ func (pm *PluginManager) executeAsyncJobWithin(job *ActionJob, logLabel string, 
 	pm.notifyActionJobSubscribers("updated", job)
 
 	err := work()
+
+	if errors.Is(err, errJobDidNotStart) {
+		// Nothing was entered, so there is no outcome to record and nothing to
+		// tell subscribers: the caller removes the job entry, and a status
+		// written here would be the last word the panel retained about it.
+		return false
+	}
 
 	if err != nil {
 		// Check if the Lua code already set the job to completed/failed via mah.job_complete/mah.job_fail.

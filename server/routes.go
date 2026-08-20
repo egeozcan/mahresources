@@ -859,7 +859,14 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 
 	// Plugin management API
 	router.Methods(http.MethodGet).Path("/v1/plugins/manage").HandlerFunc(api_handlers.GetPluginsManageHandler(appContext))
-	router.Methods(http.MethodPost).Path("/v1/plugin/enable").HandlerFunc(api_handlers.GetPluginEnableHandler(appContext))
+	// Request-scoped, because enabling is where the operator's identity is
+	// recorded onto the plugin's schedule rows: it is the only moment both
+	// exist, since init() runs with its Lua context removed and EnablePlugin
+	// takes no actor. On the unscoped singleton the sync asks who is acting and
+	// is told nobody, which under -auth resolves to NULL by design — and an
+	// unowned schedule row is never claimed. See
+	// TestPluginEnableThroughTheRouterRecordsTheOperator.
+	router.Methods(http.MethodPost).Path("/v1/plugin/enable").HandlerFunc(scopedAPI(appContext, api_handlers.GetPluginEnableHandler))
 	router.Methods(http.MethodPost).Path("/v1/plugin/scopedAccess").HandlerFunc(api_handlers.GetPluginScopedAccessHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/plugin/schedules").HandlerFunc(api_handlers.GetPluginSchedulesHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/plugin/disable").HandlerFunc(api_handlers.GetPluginDisableHandler(appContext))

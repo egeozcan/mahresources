@@ -201,7 +201,7 @@ func TestRunScheduleGivesUpRatherThanWaitingForeverForAJobSlot(t *testing.T) {
 	}
 	results := make(chan outcome, 1)
 	go func() {
-		jobID, ran, err := pm.RunSchedule(regs[0], 1, 50*time.Millisecond)
+		jobID, ran, err := pm.RunSchedule(regs[0], 1, 50*time.Millisecond, true)
 		results <- outcome{jobID, ran, err}
 	}()
 

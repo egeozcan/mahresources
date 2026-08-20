@@ -2,7 +2,10 @@ package application_context
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sync"
+	"time"
 	"strings"
 
 	"mahresources/models"
@@ -80,6 +83,123 @@ func (ctx *MahresourcesContext) GetPluginState(pluginName string) (*models.Plugi
 }
 
 // SetPluginEnabled enables or disables a plugin and updates the database.
+// pluginStateMu serializes settle-time reconciliation of the enabled column.
+//
+// Package-level rather than a field, because a context is cloned per call —
+// WithPrincipal and WithTransaction both hand back a copy — so a per-context
+// mutex would let two clones reconcile the same plugin at the same moment,
+// which is the one thing it exists to prevent. There is one plugin manager per
+// process, so one mutex per process is the matching scope.
+// settleAttempts and settleRetryDelay bound reconcileEnabledState's retry of a
+// failed settling write. Small on purpose: the mutex is held across them, and a
+// failure that outlives a few tens of milliseconds is not the transient kind
+// this is for.
+const (
+	settleAttempts   = 3
+	settleRetryDelay = 25 * time.Millisecond
+)
+
+var pluginStateMu sync.Mutex
+
+// reconcileEnabledState settles the enabled column against what this process
+// actually did, and is how both lifecycle branches finish.
+//
+// It replaces an undo per branch. Undoing looks right and is not: each branch
+// writes the column before acting so a crash mid-load leaves the operator's
+// intent on disk, and then has to take that write back if the act fails — which
+// is a check-then-act with room for another whole operation in between. Every
+// local rule for whether to take it back has failed on a real interleaving. An
+// unconditional undo discards a decision made later (a failed enable overwriting
+// a successful one). A conditional undo keyed on the writer's own value fails
+// the opposite way: rollback ownership has to *transfer* between operations —
+// the loser of two enables defers to the winner, so it is the winner's failure
+// that must undo the loser's write — and no per-writer token can express that.
+// The receipt tried and moved the defect from a microsecond window into a
+// seconds-wide one. ClaimDownloadHistoryRetry's shape does not carry over here,
+// because there the claim's owner and its undoer are the same operation.
+//
+// So nobody undoes. Whoever finishes last writes what is true. "Loaded" is a
+// property of this process's memory, and IsEnabled answers it exactly — except
+// during a load, when the plugin is in none of the manager's maps. That single
+// blind spot is what EnableInFlight excludes, and an operation that finds one in
+// flight writes nothing because the operation running it will settle the row
+// when it is done.
+//
+// The mutex is process-local on purpose, and is not the kind of lock this tree
+// avoids: the question being answered — "is this plugin loaded *here*" — is
+// per-process in-memory state, and two processes are entitled to differ on it.
+// It is taken before pm.mu (via EnableInFlight and IsEnabled) and never the
+// reverse; the manager never calls up into the context.
+//
+// It does span the settling UPDATE, which is the shape that deadlocked the
+// scoped-access cache once — a caller inside a transaction holding a connection
+// while the lock-holder needs one is, on SQLite, a deadlock. It is safe here for
+// a reason worth keeping true: the only callers are SetPluginEnabled's two
+// branches, reached from the enable/disable handlers with no transaction open
+// and no connection held, and nothing else waits on this mutex. Calling
+// SetPluginEnabled from inside a transaction would break that, so do not.
+func (ctx *MahresourcesContext) reconcileEnabledState(pluginName string) {
+	if ctx.pluginManager == nil {
+		return
+	}
+
+	// The scoped-access snapshot keys on the enabled column, and by the time this
+	// runs the caller has already written it optimistically — so the snapshot is
+	// suspect whatever is decided below, including on the paths that settle
+	// nothing. Keying this on the settling UPDATE's own RowsAffected was wrong
+	// for exactly that reason: a disable of a plugin that was not loaded moves
+	// the row true->false in the caller's write, leaves the reconcile with
+	// nothing to change, and would have left the snapshot serving "allowed"
+	// until its TTL expired. Registered first so it runs after the unlock: it is
+	// a store on an atomic, and there is no reason to do it under the mutex.
+	defer ctx.InvalidateScopedPluginAccess()
+
+	pluginStateMu.Lock()
+	defer pluginStateMu.Unlock()
+
+	// A failed statement here is the one remaining way the row can be left
+	// disagreeing with the process, and one direction of it is the failure this
+	// whole area exists to prevent: a disable whose plugin is still loaded leaves
+	// the row saying off, and the next restart drops the plugin and its
+	// schedules. A transient lock or connection error is exactly the kind that
+	// succeeds on a second attempt, so try again rather than logging once and
+	// calling it settled.
+	//
+	// Each attempt re-establishes its own precondition instead of reusing the
+	// first answer. No other reconcile can be running — that is what the mutex
+	// buys — but a load can still start and finish underneath this one, and
+	// writing a "loaded" read from before it would settle the row against a
+	// process state that no longer exists. Mid-load IsEnabled reads false for a
+	// plugin about to publish, which is precisely the answer that must never be
+	// written down.
+	var err error
+	for attempt := 0; attempt < settleAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(settleRetryDelay)
+		}
+		if ctx.pluginManager.EnableInFlight(pluginName) {
+			return
+		}
+		loaded := ctx.pluginManager.IsEnabled(pluginName)
+		err = ctx.db.Model(&models.PluginState{}).
+			Where("plugin_name = ? AND enabled <> ?", pluginName, loaded).
+			Update("enabled", loaded).Error
+		if err == nil {
+			return
+		}
+	}
+
+	// Where an operator actually looks, not only on stdout. Until someone enables
+	// or disables this plugin again — which reconciles it, so the state does
+	// self-heal — the row cannot be trusted to describe the process.
+	ctx.Logger().Warning("system", "plugin", nil, pluginName,
+		"could not settle the plugin's enabled state; the stored value may not match "+
+			"whether the plugin is actually running", map[string]interface{}{
+			"error":    err.Error(),
+			"attempts": settleAttempts,
+		})
+}
+
 func (ctx *MahresourcesContext) SetPluginEnabled(pluginName string, enabled bool) error {
 	if ctx.pluginManager == nil {
 		return fmt.Errorf("plugin manager not initialized")
@@ -110,22 +230,30 @@ func (ctx *MahresourcesContext) SetPluginEnabled(pluginName string, enabled bool
 			return err
 		}
 
-		// Persist DB state first, then enable in memory. If the in-memory
-		// step fails we revert the DB so the two stay consistent.
+		// Persist DB state first, then enable in memory: a crash mid-load leaves
+		// the operator's intent on disk, and the next boot retries it — except in
+		// the one window reconcileEnabledState documents, where a second,
+		// concurrent operation can settle over this write before the manager has
+		// registered the load. Nothing
+		// takes this write back — reconcileEnabledState settles the column
+		// against what the process actually ended up with, whatever happened in
+		// between and whoever else was doing it at the same time.
 		if err := ctx.db.Model(&models.PluginState{}).
 			Where("plugin_name = ?", pluginName).
 			Update("enabled", true).Error; err != nil {
 			return err
 		}
+		defer ctx.reconcileEnabledState(pluginName)
 
 		// Load settings into plugin manager memory
 		ctx.pluginManager.SetPluginSettings(pluginName, settings)
 
 		if err := ctx.pluginManager.EnablePlugin(pluginName); err != nil {
-			// Revert DB state on failure
-			_ = ctx.db.Model(&models.PluginState{}).
-				Where("plugin_name = ?", pluginName).
-				Update("enabled", false).Error
+			// Report the refusal and let the deferred reconcile decide the row.
+			// Both sentinels that used to steer that decision — "already
+			// enabled" and ErrEnableInProgress — asked the same question the
+			// reconcile answers directly and later: is this plugin running now?
+			// They remain what the *caller* is told, which is a separate thing.
 			return err
 		}
 
@@ -137,33 +265,40 @@ func (ctx *MahresourcesContext) SetPluginEnabled(pluginName string, enabled bool
 		// bookkeeping error would be the worse outcome.
 		ctx.syncSchedulesFor(pluginName)
 	} else {
-		// Persist DB state first, then disable in memory.
+		// Persist DB state first, then disable in memory. As above, nothing
+		// takes this write back; the deferred reconcile settles it.
 		if err := ctx.db.Model(&models.PluginState{}).
 			Where("plugin_name = ?", pluginName).
 			Update("enabled", false).Error; err != nil {
 			return err
 		}
+		defer ctx.reconcileEnabledState(pluginName)
 
 		if err := ctx.pluginManager.DisablePlugin(pluginName); err != nil {
-			// If the plugin wasn't loaded in memory, the desired state
-			// (disabled) is already achieved — don't revert the DB.
+			// What the caller is told, only — the row is the reconcile's.
+			//
+			// "I could not act" must not be reported as success, and it is the
+			// one refusal the loaded state cannot identify: an enable is in
+			// flight, so the plugin is not in the manager's map yet, which is
+			// indistinguishable from a plugin that was never loaded. Answering
+			// it with the idempotent branch below reported {"ok":true} while the
+			// load went on to publish.
+			if errors.Is(err, plugin_system.ErrLoadInProgress) {
+				return err
+			}
+			// Not loaded and no load in flight: the caller asked for a state the
+			// process is already in, which is success rather than a failure to
+			// report.
 			if !ctx.pluginManager.IsEnabled(pluginName) {
-				// The scoped-access snapshot keys on the enabled column too, so a plugin
-				// disabled while allowed must stop reading as reachable.
-				ctx.InvalidateScopedPluginAccess()
 				return nil
 			}
-			// Revert DB state on unexpected failure
-			_ = ctx.db.Model(&models.PluginState{}).
-				Where("plugin_name = ?", pluginName).
-				Update("enabled", true).Error
 			return err
 		}
 	}
 
-	// The scoped-access snapshot keys on the enabled column too, so a plugin
-	// disabled while allowed must stop reading as reachable.
-	ctx.InvalidateScopedPluginAccess()
+	// No invalidation here: every path that reaches it has written the column and
+	// therefore has a reconcile deferred, which is the one place that drops the
+	// snapshot. Two call sites for one rule is how the early-return path lost it.
 	return nil
 }
 

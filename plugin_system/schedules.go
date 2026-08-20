@@ -174,6 +174,16 @@ func (pm *PluginManager) ScheduleIsRegistered(pluginName, scheduleID string) boo
 	return false
 }
 
+// errScheduleVMBusy is internal: it wraps errJobDidNotStart, so the job runner
+// returns ran=false without recording a failure, and RunSchedule's existing
+// !ran path removes the job entry. It never reaches a caller, because a schedule
+// whose VM stayed busy did not run at all, and the dispatcher must treat that as
+// "not this tick" rather than as a failed run to record.
+//
+// It can only be returned when the caller holds a claim; see acquireScheduleVM.
+var errScheduleVMBusy = fmt.Errorf(
+	"the plugin's VM stayed busy for the whole dispatch budget: %w", errJobDidNotStart)
+
 // RunSchedule executes one due schedule and blocks until it has finished.
 //
 // Blocking is the point. The caller is holding a database claim on the schedule
@@ -181,11 +191,46 @@ func (pm *PluginManager) ScheduleIsRegistered(pluginName, scheduleID string) boo
 // tick starting a second copy — so it needs to know when the run is over, and
 // nothing else can tell it: an ActionJob lives in this process's memory only.
 //
-// The wait bounds how long this will sit behind a full job budget before giving
-// up, and giving up is reported as ran=false with no error. That is not a
-// failure of the schedule; it is a tick that could not get a slot, and the
-// caller's correct response is to release the claim and leave the row due.
-func (pm *PluginManager) RunSchedule(reg ScheduleRegistration, actorUserID uint, wait time.Duration) (jobID string, ran bool, err error) {
+// The wait bounds everything before the handler is entered — the job slot and,
+// when holdClaim is set, the plugin's VM lock, sharing one deadline — and
+// running out of it is reported as ran=false with no error. That is not a
+// failure of the schedule; it is a tick that could not get started, and the
+// caller's correct response is to release the claim and leave the row due. The
+// bound is not a nicety: the caller's claim expires after ScheduleClaimTTL,
+// which is derived as this wait plus the run, so an unbounded wait would let the
+// claim lapse mid-dispatch and the next tick would fire the same schedule again.
+//
+// holdClaim is that condition rather than an option. A caller that has already
+// released the row must not have its VM wait bounded — see acquireScheduleVM.
+// acquireScheduleVM takes the plugin's VM lock for a run that is about to start.
+//
+// Whether that wait is bounded is decided by the single thing a bound protects:
+// a database claim held across it. Under "skip" the dispatcher holds the row for
+// the whole run, and ScheduleClaimTTL is derived as the dispatch wait plus the
+// run — so an unbounded wait here is a term that formula does not have, the
+// claim lapses mid-dispatch, and the next tick of this same process fires a
+// second copy of a schedule that has not begun its first.
+//
+// Under "allow" the dispatcher has already advanced next_due_at and released the
+// claim before this is reached, so there is nothing left to lose — and bounding
+// the wait there costs the policy its meaning. "allow" buys queueing: a run that
+// finds the VM held by the previous one is supposed to wait for it, and CLAUDE.md
+// says so ("an overrunning run does not cause the next to be skipped"). Giving up
+// instead does not defer that interval, it drops it, because the row has moved on
+// and no later tick will find it due.
+//
+// The busy report is therefore only ever true for a bounded wait. An unbounded
+// one that comes back empty-handed means the plugin is gone, which is the same
+// answer LockVM has always given and every caller already handles.
+func (pm *PluginManager) acquireScheduleVM(state *lua.LState, holdClaim bool, deadline time.Time) (*vmMutex, bool) {
+	if holdClaim {
+		return pm.TryLockVMWithin(context.Background(), state, time.Until(deadline))
+	}
+	mu, _ := pm.LockVMWithContext(context.Background(), state)
+	return mu, false
+}
+
+func (pm *PluginManager) RunSchedule(reg ScheduleRegistration, actorUserID uint, wait time.Duration, holdClaim bool) (jobID string, ran bool, err error) {
 	pm.mu.RLock()
 	live := pm.schedules[reg.PluginName]
 	var current *ScheduleRegistration
@@ -238,10 +283,28 @@ func (pm *PluginManager) RunSchedule(reg ScheduleRegistration, actorUserID uint,
 	wg.Add(1)
 	defer wg.Done()
 
+	// One budget covers everything before the handler runs, rather than one wait
+	// per queue. ScheduleClaimTTL is derived as this wait plus the run, so any
+	// unbounded wait in between is a term the formula does not have — and LockVM
+	// is exactly that ("Background never ends, so this is the same unbounded wait
+	// it always was"). Whatever else holds this plugin's VM is what would be
+	// waited on: a hook inside mah.http, another async job, a remote fetch. Past
+	// the TTL the row reads as unclaimed again and the next tick starts a second
+	// run of a schedule that has not begun its first.
+	deadline := time.Now().Add(wait)
+
 	ran = pm.executeAsyncJobWithin(job, fmt.Sprintf("schedule %q/%q", reg.PluginName, reg.ScheduleID), wait, func() error {
-		mu := pm.LockVM(state)
+		mu, busy := pm.acquireScheduleVM(state, holdClaim, deadline)
 		if mu == nil {
-			return fmt.Errorf("plugin %q is no longer available", reg.PluginName)
+			if !busy {
+				return fmt.Errorf("plugin %q is no longer available", reg.PluginName)
+			}
+			// Busy, and the budget is spent. The handler was never called, so
+			// this is "not this tick" rather than a failed run — the same answer
+			// a full job budget gives, and the dispatcher already knows how to
+			// hand the claim back for it. errJobDidNotStart is what keeps the
+			// job runner from recording it as a failure on the way out.
+			return errScheduleVMBusy
 		}
 		defer mu.Unlock()
 
@@ -261,8 +324,9 @@ func (pm *PluginManager) RunSchedule(reg ScheduleRegistration, actorUserID uint,
 	})
 
 	if !ran {
-		// Nothing was executed and no status was written, so the job entry would
-		// sit in the panel forever claiming to be pending.
+		// Nothing was executed, so the job entry would sit in the panel claiming
+		// to be pending or, for a VM that stayed busy, blaming the plugin for a
+		// run it never started.
 		pm.actionJobsMu.Lock()
 		delete(pm.actionJobs, jobID)
 		pm.actionJobsMu.Unlock()

@@ -179,14 +179,20 @@ func GetPluginScopedAccessHandler(ctx PluginAPIContext) func(http.ResponseWriter
 
 // GetPluginSchedulesHandler lists a plugin's recurring work.
 //
-// Read-only, and admin-only by virtue of the /v1/plugin/ prefix's place in
-// isSystemPath — the same door every other plugin management endpoint uses.
+// Read-only, and admin-only because the path is named in isSystemPath. There is
+// no /v1/plugin/ prefix rule — that list matches exactly, and this endpoint was
+// missing from it, which made every stored schedule readable by any
+// authenticated principal including a guest.
 //
 // `registered` is the field worth reading: it is false when the row exists but
 // the plugin no longer declares that id, which is what a disabled plugin, a
 // renamed schedule and a removed mah.schedule call all look like. `owned` is
-// false when the operator who enabled the plugin has since been deleted, at
-// which point the schedule has stopped rather than merely lost its label.
+// false when the row carries no created_by_user_id, at which point the schedule
+// has stopped rather than merely lost its label. Two causes reach that state and
+// the field deliberately does not distinguish them: the operator who enabled the
+// plugin has since been deleted, which NULLs the column through stampedModels(),
+// or the row was created by a sync with no principal — a schedule id added to a
+// plugin.lua that was already enabled, first seen at a boot under -auth.
 func GetPluginSchedulesHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimSpace(r.FormValue("name"))

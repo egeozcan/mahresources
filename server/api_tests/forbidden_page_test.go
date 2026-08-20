@@ -81,3 +81,56 @@ func TestAdminUserEditPage_IsAdminOnly(t *testing.T) {
 		t.Fatalf("admin GET /admin/users/edit should be 200, got %d — this test measured nothing", ok.Code)
 	}
 }
+
+// Every plugin management endpoint is admin-only, and isSystemPath is where that
+// is decided — by exact string match, with no `/v1/plugin/` prefix rule. So an
+// endpoint added to that route block and forgotten here falls through to the
+// default branch, where a GET is `safe` and yields capRead, which
+// principalSatisfies grants to every authenticated principal including a guest.
+// It works perfectly for the admin who built it, and nothing fails.
+//
+// That is exactly what happened to /v1/plugin/schedules: its own doc comment
+// claimed it was "admin-only by virtue of the /v1/plugin/ prefix's place in
+// isSystemPath", and there is no such prefix. A guest could read every stored
+// schedule for any plugin — interval, next due time, run count, and lastError,
+// which is arbitrary text from plugin code — and enumerate which plugins exist,
+// which the render seams are built to prevent.
+//
+// The table is the point: it is cheaper to extend than to remember.
+func TestPluginManagementEndpoints_AreAdminOnly(t *testing.T) {
+	tc := setupAuthEnv(t)
+
+	endpoints := []struct{ method, path string }{
+		{http.MethodGet, "/v1/plugins/manage"},
+		{http.MethodGet, "/v1/plugin/schedules?name=whatever"},
+		{http.MethodPost, "/v1/plugin/enable"},
+		{http.MethodPost, "/v1/plugin/disable"},
+		{http.MethodPost, "/v1/plugin/settings?name=whatever"},
+		{http.MethodPost, "/v1/plugin/scopedAccess"},
+		{http.MethodPost, "/v1/plugin/purge-data"},
+	}
+
+	for _, role := range []models.Role{models.RoleEditor, models.RoleUser, models.RoleGuest} {
+		bearer := roleBearer(t, tc, role)
+		for _, e := range endpoints {
+			res := doReq(tc, e.method, e.path,
+				map[string]string{"Accept": "application/json", "Authorization": bearer}, nil, nil)
+			if res.Code != http.StatusForbidden {
+				t.Errorf("%s %s %s should be 403, got %d — add the path to isSystemPath in server/authz_policy.go",
+					role, e.method, e.path, res.Code)
+			}
+		}
+	}
+
+	// The control: an admin is not refused. A 403 here would mean the assertions
+	// above pass because the route does not exist, which measures nothing.
+	admin := roleBearer(t, tc, models.RoleAdmin)
+	for _, e := range endpoints {
+		res := doReq(tc, e.method, e.path,
+			map[string]string{"Accept": "application/json", "Authorization": admin}, nil, nil)
+		if res.Code == http.StatusForbidden {
+			t.Errorf("admin %s %s got 403; this endpoint is unreachable and the assertions above are vacuous",
+				e.method, e.path)
+		}
+	}
+}

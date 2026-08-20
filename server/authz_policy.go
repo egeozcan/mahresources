@@ -137,7 +137,17 @@ func isSystemPath(path string) bool {
 	case "/admin/overview", "/admin/settings", "/plugins/manage",
 		"/admin/users", "/admin/users/edit", "/logs", "/log":
 		return true
-	case "/v1/plugin/enable", "/v1/plugin/disable", "/v1/plugin/scopedAccess", "/v1/plugin/settings", "/v1/plugin/purge-data", "/v1/plugins/manage":
+	// Exact matches, deliberately not a "/v1/plugin/" prefix rule: /v1/plugin/actions
+	// and /v1/plugin/displayTypes live under the same prefix and are meant to stay
+	// capRead. What that means differs between the two, and neither is a
+	// containment boundary: /v1/plugin/actions filters per plugin through
+	// auth.PluginActionAccessFor, so a caller is not offered a button whose only
+	// outcome is a 403, while /v1/plugin/displayTypes filters nothing — it reads no
+	// principal at all, because every role's edit UI needs the display-type
+	// registry. The cost of matching exactly is that a new management endpoint must
+	// be added here by hand, which /v1/plugin/schedules was not — see
+	// TestPluginManagementEndpoints_AreAdminOnly.
+	case "/v1/plugin/enable", "/v1/plugin/disable", "/v1/plugin/scopedAccess", "/v1/plugin/settings", "/v1/plugin/purge-data", "/v1/plugin/schedules", "/v1/plugins/manage":
 		return true
 	}
 	switch {

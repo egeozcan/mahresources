@@ -195,14 +195,17 @@ func (s *PluginScheduler) dispatch(row models.PluginSchedule, token string) {
 		}
 	}
 
-	_, ran, runErr := pm.RunSchedule(reg, actor, s.dispatchWait)
+	_, ran, runErr := pm.RunSchedule(reg, actor, s.dispatchWait, !overlapAllows)
 
 	if !ran {
-		// The job budget was full. Nothing executed and nothing was recorded, so
-		// the honest outcome is "not this tick": hand the claim back and leave the
-		// row due. Under "allow" the schedule has already been advanced, so that
-		// interval is simply missed — a tick that could not get a slot, which the
-		// next one will.
+		// Nothing executed and nothing was recorded, so the honest outcome is
+		// "not this tick": hand the claim back and leave the row due. Under
+		// "skip" that is a full job budget or a VM that stayed busy for the
+		// dispatch wait. Under "allow" it is only ever a full job budget — the
+		// VM is waited for indefinitely there, because the schedule has already
+		// been advanced and an interval dropped under "allow" is not deferred to
+		// the next tick, it is gone. A full budget still drops one, which is
+		// this dispatcher's own pre-existing behaviour rather than the VM wait's.
 		if !overlapAllows {
 			_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
 		}
