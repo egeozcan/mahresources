@@ -1013,6 +1013,19 @@ func (ctx *MahresourcesContext) SetPluginScheduler(scheduler *PluginScheduler) {
 	ctx.pluginScheduler = scheduler
 }
 
+// SetJobEventSink installs the terminal-job observer on the download manager.
+//
+// Built in main and installed here for the same reason the scheduler is: it owns
+// a goroutine, so the place that can defer its Stop is the place that starts it.
+// A deployment that never calls this has no sink, and every emit in the queue is
+// a nil check — which is what the CLI's and the tests' bare managers get.
+func (ctx *MahresourcesContext) SetJobEventSink(sink download_queue.JobEventSink) {
+	if ctx == nil || ctx.downloadManager == nil {
+		return
+	}
+	ctx.downloadManager.SetJobEventSink(sink)
+}
+
 // QueueForThumbnailing queues a resource ID for async thumbnail generation.
 // Returns true if queued, false if queue is nil or full.
 func (ctx *MahresourcesContext) QueueForThumbnailing(resourceID uint) bool {

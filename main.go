@@ -683,6 +683,14 @@ func main() {
 	// construction; it is the same shape as the two worker queues above.
 	context.SetPluginScheduler(scheduler)
 
+	// Terminal job events for mah.on. Started here rather than in the context
+	// for the same reason the scheduler is: it owns a goroutine, so the place
+	// that can defer its Stop is the place that starts it. Stop is bounded, so a
+	// plugin handler that ignores its context cannot hold the exit open.
+	jobEvents := application_context.NewJobEventDispatcher(context)
+	defer jobEvents.Stop()
+	context.SetJobEventSink(jobEvents)
+
 	// Start share server if configured.
 	//
 	// Finding 51: Start binds synchronously now, so this log.Fatalf is reachable

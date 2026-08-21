@@ -1074,6 +1074,18 @@ func (pm *PluginManager) registerMahModule(L *lua.LState, pluginNamePtr *string,
 			return 0
 		}
 
+		// The job events are in the catalogue but behind their own capability:
+		// they fire for every background job in the deployment, whoever started
+		// it, which is unattended observation of other people's work rather than
+		// a reaction to a write the caller just made. Refused here rather than by
+		// withholding mah.on, because a plugin may legitimately hold "hooks" and
+		// not this, and the message has to say which name is missing.
+		if IsJobHookEvent(eventName) && !grants.Has(CapJobEvents) {
+			L.ArgError(1, fmt.Sprintf("event %q needs the %q capability, which this plugin does not declare; %q grants the entity events only",
+				eventName, CapJobEvents, CapHooks))
+			return 0
+		}
+
 		// mainState, not L: a registration made from inside a coroutine would
 		// otherwise be stamped with the coroutine's state, which no dispatch
 		// and no teardown ever matches — so it could never fire and could never

@@ -8970,3 +8970,54 @@ left last deliberately: its events dispatch through `RunAfterHooks`, and the
 after-hook bound changed that path from waiting indefinitely to spending one
 dispatch budget, so specifying 4.2's delivery semantics earlier would have
 documented a guarantee that was about to change underneath it.
+
+## 4.2 — terminal job events
+
+Built as decided, and the seam is why it was M rather than L. The card priced the
+feature off two feeds it named; the exactly-once terminal edge is neither of
+them, and it is already shared by every job kind. `emitJobEvent` sits beside
+`recordTerminal` at the same four sites, under the same two rules: never under
+`dm.mu` or `j.mu`, and from the snapshot the stamping transition took under the
+job's own lock rather than a fresh read, because by then a Retry could have
+landed. Three of the card's four costs disappear at that seam — `after_job_*`
+already matches the drift scan's regex, `IsHookEvent` already serves as the
+predicate, `AllHookEvents` stays one catalogue — and the fourth, a bounded-drain
+dispatcher, had shipped as `PluginScheduler`.
+
+It fires for **every** job kind, which is the one deliberate divergence from its
+neighbour: `recordTerminal` returns early for generic jobs because a history row
+for an export could do nothing useful, its Retry button having no URL. But "the
+export you asked for has finished" is exactly what a plugin wants to hear.
+
+`CapJobEvents` is its own capability, on the `CapSchedule` precedent. An entity
+hook fires on a write the caller just made; a job event fires when any job in the
+deployment finishes, whoever started it. Gated inside `mah.on` rather than by
+withholding the function, because a plugin may legitimately hold `hooks` and not
+this, and the error must name the missing capability rather than report an
+unknown event.
+
+Dispatch is asynchronous, unlike the entity hooks, and that is a decision rather
+than a convenience. An entity after-hook runs inline because its caller is a
+request that can afford to wait and ordering against the write matters. Here the
+caller is a download worker, so blocking it would serialise the queue behind
+plugin VMs. One goroutine and a bounded buffer: `RecordJobEvent` never blocks, a
+full buffer drops and logs, and one worker means events arrive in the order the
+queue finished them.
+
+`plugin_system`'s own ActionJob feed is deliberately not unified in. It has no
+single terminal transition to hang a sink on, and a handler for
+`after_job_completed` calling `mah.start_job` would fire the same event
+recursively. Scoped to the download queue, no Lua surface enqueues one of its
+jobs, so that cycle cannot form.
+
+**Two tests were vacuous and are not any more.** The non-blocking test flooded a
+live dispatcher and proved nothing: the worker drained as fast as the test could
+send, so the buffer never filled and the branch under test never ran. Built
+without its goroutine, the 257th send hits the real condition. And the E2E
+legacy-capability count failed, which is that assertion working as designed — its
+own comment says a new capability silently widening what a manifest-less plugin
+holds is exactly what it exists to catch. A legacy plugin now also holds
+`job_events`, which is the legacy bargain as written rather than a hole this
+opened.
+
+With this, every one of the eight gated decisions is implemented.

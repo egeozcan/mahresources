@@ -66,10 +66,13 @@ An ungranted module is **absent**, not stubbed, so `if mah.kv then` works and a 
 | `actions` | `mah.action`, and the `job_*` reporters |
 | `jobs` | `mah.start_job`, and the `job_*` reporters |
 | `schedule` | `mah.schedule` |
+| `job_events` | `mah.on` for the `after_job_*` events |
 
 Always installed, no capability required: `mah.json`, `mah.util`, `mah.log`, `mah.html_escape`, `mah.sleep`, `mah.abort`, `mah.doc`, `mah.get_setting`. None reads or writes anything outside the plugin itself.
 
 **`db:write` implies `db:read`.** The writers return the entity they wrote — `patch_note(id, {})` changes nothing and hands back the whole note — so a write-only grant was already a read of anything by id. The implication is made explicit so the label an operator consents to is what they actually grant. The reverse never holds.
+
+**`job_events` is separate from `hooks`** for the same reason `schedule` is separate from `jobs`. An entity hook fires on a write the caller just made, so a plugin holding `hooks` observes what its own users are doing. A job event fires when *any* background job in the deployment finishes, whoever submitted it, including work the plugin had nothing to do with. That is unattended observation of other people's activity, so it gets its own name and `CompareGrants` reports the widening. A plugin holding only `hooks` that registers `mah.on("after_job_completed", ...)` is refused at load, and the error names the capability it needs rather than reporting an unknown event.
 
 **`schedule` is separate from `jobs`** for the same kind of reason. `jobs` runs work a user just asked for; `schedule` runs work nobody asked for, on a timer, including while nobody is logged in. Folding it into `jobs` would have silently widened every plugin an operator had already consented to. Because it is its own name, a plugin adding `mah.schedule` refuses to load until the operator re-enables it and sees the new line.
 

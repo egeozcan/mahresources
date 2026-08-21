@@ -119,6 +119,48 @@ The hooks, organized by entity type:
 | Tag | `before_tag_create` | `after_tag_create` | `before_tag_update` | `after_tag_update` | `before_tag_delete` | `after_tag_delete` |
 | Category | `before_category_create` | `after_category_create` | `before_category_update` | `after_category_update` | `before_category_delete` | `after_category_delete` |
 
+### Job lifecycle events
+
+Three events fire when a background job reaches a terminal state — a download, a
+group export or import, or a plugin action run:
+
+| Event | When |
+|-------|------|
+| `after_job_completed` | the job finished successfully |
+| `after_job_failed` | the job ended with an error |
+| `after_job_cancelled` | the job was cancelled |
+
+```lua
+plugin = {
+    api_version = 1,
+    capabilities = { "hooks", "job_events" },
+    name = "job-watcher", version = "1.0", description = "",
+}
+
+function init()
+    mah.on("after_job_completed", function(data)
+        mah.log("job " .. data.job_id .. " (" .. data.source .. ") finished")
+        return data
+    end)
+end
+```
+
+The handler receives `job_id`, `source`, `status`, `name`, `url`, `error`, and
+`resource_id` when the job produced one.
+
+:::note These need the `job_events` capability, not `hooks`
+
+An entity hook fires on a write the caller just made. A job event fires when
+*any* job in the deployment finishes, whoever started it — so it is its own
+capability. A plugin holding only `hooks` is refused at load, with an error
+naming the capability it needs.
+:::
+
+They are **after-only**: a job that has already finished cannot be vetoed, and
+returning a modified table changes nothing. Delivery is best-effort — the queue
+hands the event to a dispatcher and never waits, so under sustained load an
+event can be dropped rather than delay a download. A dropped event is logged.
+
 ## Injections
 
 Injections render HTML into named slots on existing pages. Register them during `init()` using `mah.inject(slot_name, render_function)`.

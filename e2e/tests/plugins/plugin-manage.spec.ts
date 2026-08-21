@@ -166,8 +166,11 @@ test.describe('Plugin Management - Access panel', () => {
   // whenever plugin_system.AllCapabilities grows, and this failing is the
   // intended way to find out: a new capability silently widening what a
   // manifest-less plugin holds is exactly what the legacy warning exists to
-  // make visible. Last moved for `schedule`.
-  const ALL_CAPABILITY_COUNT = 13;
+  // make visible. Last moved for `job_events`, which a manifest-less plugin now
+  // also holds — it can observe every background job in the deployment without
+  // ever having declared anything, which is the legacy bargain working as
+  // written rather than a hole this opened.
+  const ALL_CAPABILITY_COUNT = 14;
 
   test('legacy plugin is flagged and holds every capability', async ({ page }) => {
     await page.goto('/plugins/manage');

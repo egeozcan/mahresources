@@ -43,6 +43,13 @@ var AllHookEvents = []string{
 	"before_category_create", "after_category_create",
 	"before_category_update", "after_category_update",
 	"before_category_delete", "after_category_delete",
+	// Job lifecycle. Not entity lifecycle, which is what the rest of this list
+	// is -- these fire from the download queue's terminal edge, for every job
+	// kind it runs. They are after-only by construction: a job that has finished
+	// cannot be vetoed. Behind CapJobEvents rather than CapHooks, because
+	// observing every job in the deployment is a different power from reacting
+	// to a write the caller just made.
+	"after_job_completed", "after_job_failed", "after_job_cancelled",
 }
 
 // AllInjectionSlots is every slot a template declares with {% plugin_slot %},
@@ -108,4 +115,22 @@ func (pm *PluginManager) reportUnknownDispatch(kind, name string) {
 	}
 	log.Printf("[plugin] warning: %s %q is not one this host knows, so no plugin can be registered "+
 		"for it and it will never do anything", kind, name)
+}
+
+// jobHookEvents is the subset of AllHookEvents that CapJobEvents gates.
+var jobHookEvents = map[string]struct{}{
+	"after_job_completed": {},
+	"after_job_failed":    {},
+	"after_job_cancelled": {},
+}
+
+// IsJobHookEvent reports whether an event is one of the job-lifecycle events.
+//
+// They live in AllHookEvents like every other event, so mah.on accepts the name
+// and the drift scan covers it — but registering for one needs CapJobEvents
+// rather than CapHooks, because it observes every job in the deployment rather
+// than a write the caller just made.
+func IsJobHookEvent(event string) bool {
+	_, ok := jobHookEvents[event]
+	return ok
 }

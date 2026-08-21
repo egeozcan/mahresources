@@ -44,6 +44,14 @@ const (
 	// widening and refuse the load until an operator re-enables, which is the
 	// entire point of storing consent.
 	CapSchedule = "schedule" // mah.schedule
+	// CapJobEvents is separate from CapHooks for the reason CapSchedule is
+	// separate from CapJobs. The entity hooks fire on a write the caller just
+	// made, so a plugin holding "hooks" observes what its own users are doing.
+	// A job event fires for every background job in the deployment, whoever
+	// submitted it, including work the plugin had nothing to do with — that is
+	// unattended observation of other people's activity, which is a different
+	// power and gets its own name so CompareGrants reports the widening.
+	CapJobEvents = "job_events" // mah.on for the after_job_* events
 )
 
 // AllCapabilities is every grantable capability, in the order the manage UI
@@ -51,43 +59,46 @@ const (
 var AllCapabilities = []string{
 	CapDBRead, CapDBWrite, CapHTTP, CapKV, CapImage,
 	CapHooks, CapInject, CapRender, CapPages, CapAPI, CapActions, CapJobs, CapSchedule,
+	CapJobEvents,
 }
 
 // CapabilityLabels are the human sentences the manage UI renders instead of
 // slugs, so consent is given to a described power rather than to a name.
 var CapabilityLabels = map[string]string{
-	CapDBRead:   "Read your library (resources, notes, groups, tags)",
-	CapDBWrite:  "Create, change and delete library content, read it, and fetch a URL of its choosing into it",
-	CapHTTP:     "Make outbound network requests",
-	CapKV:       "Store its own key-value data",
-	CapImage:    "Transform images",
-	CapHooks:    "React to entity changes, and veto them",
-	CapInject:   "Inject HTML and scripts into every page",
-	CapRender:   "Render shortcodes, note blocks and metadata displays",
-	CapPages:    "Serve its own pages and add menu entries (every plugin also has an auto-generated docs page)",
-	CapAPI:      "Serve its own JSON endpoints",
-	CapActions:  "Add actions to resources, notes and groups",
-	CapJobs:     "Run background jobs",
-	CapSchedule: "Run its own work on a repeating schedule, without anyone asking",
+	CapDBRead:    "Read your library (resources, notes, groups, tags)",
+	CapDBWrite:   "Create, change and delete library content, read it, and fetch a URL of its choosing into it",
+	CapHTTP:      "Make outbound network requests",
+	CapKV:        "Store its own key-value data",
+	CapImage:     "Transform images",
+	CapHooks:     "React to entity changes, and veto them",
+	CapInject:    "Inject HTML and scripts into every page",
+	CapRender:    "Render shortcodes, note blocks and metadata displays",
+	CapPages:     "Serve its own pages and add menu entries (every plugin also has an auto-generated docs page)",
+	CapAPI:       "Serve its own JSON endpoints",
+	CapActions:   "Add actions to resources, notes and groups",
+	CapJobs:      "Run background jobs",
+	CapSchedule:  "Run its own work on a repeating schedule, without anyone asking",
+	CapJobEvents: "See every background job in this deployment finish, whoever started it",
 }
 
 // CapabilitySurfaces names what each capability installs, for the one log line
 // emitted per withheld module at load. Without it, an ungranted capability
 // surfaces only as "attempt to index a nil value" somewhere inside init().
 var CapabilitySurfaces = map[string]string{
-	CapDBRead:   "mah.db readers",
-	CapDBWrite:  "mah.db writers",
-	CapHTTP:     "mah.http",
-	CapKV:       "mah.kv",
-	CapImage:    "mah.image",
-	CapHooks:    "mah.on",
-	CapInject:   "mah.inject",
-	CapRender:   "mah.shortcode, mah.block_type, mah.display_type",
-	CapPages:    "mah.page, mah.menu",
-	CapAPI:      "mah.api",
-	CapActions:  "mah.action, and the job_* reporters an async action needs",
-	CapJobs:     "mah.start_job, and the job_* reporters",
-	CapSchedule: "mah.schedule",
+	CapDBRead:    "mah.db readers",
+	CapDBWrite:   "mah.db writers",
+	CapHTTP:      "mah.http",
+	CapKV:        "mah.kv",
+	CapImage:     "mah.image",
+	CapHooks:     "mah.on",
+	CapInject:    "mah.inject",
+	CapRender:    "mah.shortcode, mah.block_type, mah.display_type",
+	CapPages:     "mah.page, mah.menu",
+	CapAPI:       "mah.api",
+	CapActions:   "mah.action, and the job_* reporters an async action needs",
+	CapJobs:      "mah.start_job, and the job_* reporters",
+	CapSchedule:  "mah.schedule",
+	CapJobEvents: "mah.on for the after_job_* events",
 }
 
 // CapabilitySurfacesWithoutReporters is what to say about actions or jobs when

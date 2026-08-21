@@ -155,6 +155,10 @@ type DownloadManager struct {
 	history        HistoryRecorder
 	historyLog     HistoryLogger
 	historySweepFn func() // called by cleanupOldJobs to delete expired history rows
+	// jobEventState carries the optional terminal-job observer (see
+	// job_events.go). Nil sink means every emit is a nil check, which is what a
+	// deployment with no plugin listening gets.
+	jobEventState
 }
 
 // NewDownloadManagerWithConfig constructs a DownloadManager with the given
@@ -448,6 +452,7 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 			// press Retry on — leaving it out made the queue's own eviction the only
 			// record of it, which is what history exists to outlive.
 			dm.recordTerminal(job, snap)
+			dm.emitJobEvent(job, snap)
 		}
 		return
 	}
@@ -495,6 +500,7 @@ func (dm *DownloadManager) processJob(job *DownloadJob) {
 	// cancelled-while-queued branch above, and Cancel's paused branch) record the
 	// same way.
 	dm.recordTerminal(job, snap)
+	dm.emitJobEvent(job, snap)
 }
 
 // createHTTPClient creates an HTTP client with context support.
@@ -727,6 +733,7 @@ func (dm *DownloadManager) Cancel(jobID string) error {
 		// claimCancel stamped the terminal state itself, so this is the write the
 		// worker would otherwise have recorded — there is no worker left to do it.
 		dm.recordTerminal(job, snap)
+		dm.emitJobEvent(job, snap)
 	}
 	return nil
 }
@@ -1027,6 +1034,7 @@ func (dm *DownloadManager) Shutdown() {
 		if prev, snap, ok := job.claimCancel(time.Now()); ok && prev == JobStatusPaused {
 			dm.notifyJob("updated", job)
 			dm.recordTerminal(job, snap)
+			dm.emitJobEvent(job, snap)
 		}
 	}
 
