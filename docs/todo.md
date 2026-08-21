@@ -8790,3 +8790,128 @@ plugin node cache on every parent re-render and undone what the node-cache work
 bought. `_pluginErrors` was equally sticky and is cleared on the same edges,
 which is the half a user could hit with no morph at all: one transient fetch
 failure pinned "Render error" on a field until a full page reload.
+
+## The eight gated items, decided
+
+All eight were re-derived against source before any decision was taken, because
+the four cards re-checked earlier in this run had each been carrying a stale
+claim. Seven of the eight turned out to be stale too, and in five the staleness
+pointed the decision the wrong way. What follows is the decision and the fact
+that settled it. The four live defects the re-derivation exposed are the entry
+above; these are the decisions proper.
+
+**4.1 — spare on category change, accept the delete cascade.** Implemented here.
+The card treated one question as two halves of the same one. For group *delete*
+sparing is not on the table at all: SQLite re-cascades via the FK, and Postgres
+runs with `DisableForeignKeyConstraintWhenMigrating: true` and therefore no FK
+constraints, so a spared row dangles against a deleted group — worse than the
+bug. Refusing instead was rejected as an existence oracle that its victim cannot
+resolve. See the corrected CLAUDE.md paragraph; the card's proposed fix shape
+(appended subtree `IN (...)` predicates) is the one `visibleGroupIDs` rejects.
+
+**4.2 — build terminal job events, download-queue only.** Not built yet. The
+card priced the feature off the wrong seam: the exactly-once edge is
+`finishSnapshot`/`claimCancel`, already shared by every job kind, not either feed
+it cited. That removes three of its four stated costs — `after_job_*` already
+matches the drift scan's regex and `IsHookEvent` already serves as the predicate
+— and the fourth, a bounded-drain dispatcher, shipped as `PluginScheduler`.
+`AllHookEvents` stays one catalogue. Unifying `plugin_system`'s ActionJob feed
+was declined: it has no single terminal transition to hang a sink on, and a
+handler calling `mah.start_job` would fire the same event recursively.
+
+**4.3 — closed, no async delivery.** The question ("must delivery survive a
+crash?") was unanswerable as posed: it already does not, six ways over. The
+defect it was hiding is fixed above.
+
+**4.4 — do not build PluginRecord.** Zero consumers: bundled plugins reference
+`mah.kv` exactly once, in a commented-out line. The two technical arguments for a
+record store were already paid for elsewhere — `KVCompareAndSet` covers
+consistency, `mah.db.transaction` covers atomicity. The card's stated cost for
+the "new capability" branch was imaginary: `CompareGrants` diffs one plugin's
+consent against that same plugin's manifest, legacy consent short-circuits, and
+an undeclared manifest auto-receives every capability, so a new name forces
+re-consent on nobody. **"It would force re-consent" must not be used as a reason
+to decline anything again.** What was shipped instead is the documentation fix:
+`plugin-lua-api.md` called `mah.kv` "scoped to the calling plugin" while *scoped*
+is this tree's word for subtree confinement, and `plugin_kvs` has no owner column
+and is not in `scopeColumn`. It is partitioned per plugin, not per principal, and
+now says so.
+
+**4.5 — decline Shape A, the LState pool, on the record.** Everything the bet was
+bundled with has been collected without it (Shape C shipped whole), and
+everything that made it expensive has grown: the scheduler added a sixth
+state-keyed registry and a third pinning path after the card was written. The
+residual it named is fixed above. **Reopen tripwires**, so this is not
+re-litigated from scratch a fourth time: a specific plugin's single-threadedness
+demonstrably hurting a real deployment; or a second in-process consumer needing
+true parallelism inside one plugin. Neither is "a plugin held its VM too long" —
+that is a bounding bug, and both known instances are now closed.
+
+**4.6 — serve plugin static assets, no new capability.** Not built yet. Mount
+`<pluginDir>/public` at `/plugins/<name>/public/*`, for enabled plugins only.
+The path is the design: `pluginCodePathName` reads the plugin name out of the
+first segment, so the per-plugin `AllowScopedPrincipals` deny governs the asset
+with no second copy of the predicate, and `requiredCapability` classifies it
+`capRead`, the same class as the render seams — so the `<script>` tag and the
+file it names are gated by one rule. No capability, because a capability names a
+power the plugin gains, and the Lua VM cannot read those files at all (no `io`,
+no `os`, `loadfile` removed); a same-origin file is strictly narrower than the
+remote `<script src>` that `CapInject` already permits.
+
+Two implementation constraints established during the derivation, recorded
+because both are easy to get wrong and one is invisible until it fails:
+- **Do not mount under `/public/`.** It is auth-exempt (`isPublicPath`) and
+  CORS-wildcarded, so plugin assets would be world-readable and unauthenticated,
+  escaping the scoped-access toggle entirely.
+- **Emit assets as classic non-defer `<script src>`.** `main.js` is
+  `type="module"` and therefore deferred, and the head slot sits after it, so an
+  external deferred or module script runs *after* `Alpine.start()` — meaning
+  `alpine:init` has already fired and the plugin silently never initializes. The
+  card carried the inline-script version of this fact, which inverts for
+  external assets.
+
+**B2 — full mirror of the meta-shortcode treatment.** Fixed above.
+
+**B3 — filename on hover.** Fixed above. The caption's "binding constraint" (do
+not disturb the visual design) did not exist: the rule shipped in the original
+contact-sheet commit, so the caption had never rendered and there was no design
+to preserve.
+
+## Review round on the defect batch: one real bug in a fix, one vacuous test
+
+An independent reviewer read the batch above. Two findings were worth more than
+they looked, and both are the same shape this run keeps producing — a change that
+passes its own gate while failing at something the gate cannot see.
+
+**The after-hook bound was per hook, and fixing that exposed a real defect.**
+Bounding each hook separately bounds nothing a user feels: N plugins observing
+one event stack N waits onto a single committed write. This tree already learned
+that for schedules -- `RunSchedule` spends one deadline across its job-slot wait
+and its VM wait -- and the fix here had not applied it. Moving to one dispatch
+budget then surfaced a genuine bug in the new parameter: a *spent* budget is a
+non-positive duration, and so is "no bound", so `topLevelWait > 0` sent the
+second hook of an exhausted dispatch into the **unbounded** branch, blocking
+forever. Exactly backwards. `boundTopLevel` is now its own flag, and
+`TestRunAfterHooksSpendsOneBudgetAcrossEveryHook` shows two busy hooks costing
+5s between them rather than 10.
+
+**The 4.5 regression test passed for the wrong reason.** It asserted only that
+the call errored. Asked to assert `context.DeadlineExceeded` specifically, it
+failed -- the fetch had never reached the server at all. It was refused at dial
+time, because `allowsPrivateAddress` requires `AllowPrivate` **and** a matching
+address rule, and the test set `Unrestricted: true, AllowPrivate: true` by hand
+with no rules. The test proved nothing about the bound it was named for. It
+builds its policy through `HostFetchPolicy` now, and ends at the caller's 750ms
+deadline with the right error.
+
+Also taken: `refreshFromMorph` awaits `updateComplete` rather than a single
+`queueMicrotask`, since the attribute patch may queue a Lit update and only
+`updateComplete` promises it has run; and the B3 spec locates its card by href,
+because the suite creates resources in parallel and `.first()` is not reliably
+its own.
+
+**Rejected, with evidence:** that 4.5's bound is not guaranteed because
+`luaContext(L)` may carry no deadline. Every site that runs plugin Lua sets a
+timeout context first -- `action_executor.go`, `action_jobs.go` (both),
+`api_endpoints.go`, `block_render.go`, `display_render.go`, `hooks.go` (both) and
+`http_api.go`. There is no unbounded invocation class for it to be true of.

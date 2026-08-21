@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 
@@ -40,9 +41,16 @@ func TestAddResourceVersionFromURL_HonoursTheCallersDeadline(t *testing.T) {
 	defer server.Close()
 
 	adapter := &pluginDBAdapter{ctx: ctx}
-	// Unrestricted, so the test exercises the deadline rather than the egress
-	// deny that would otherwise refuse a loopback httptest server.
-	policy := plugin_system.NetworkPolicy{Unrestricted: true, AllowPrivate: true}
+	// The egress deny refuses loopback unless the address is named explicitly:
+	// allowsPrivateAddress requires AllowPrivate *and* a matching rule, so
+	// Unrestricted alone is not enough. Building it through HostFetchPolicy is
+	// what makes this test about the deadline -- the first version set
+	// Unrestricted+AllowPrivate by hand, was refused at dial time, and passed on
+	// a non-nil error that had nothing to do with the bound.
+	policy, policyErr := plugin_system.HostFetchPolicy([]string{"127.0.0.1", "::1"})
+	if policyErr != nil {
+		t.Fatalf("build egress policy: %v", policyErr)
+	}
 	ctx.pluginEgress = &policy
 
 	reqCtx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
@@ -55,7 +63,16 @@ func TestAddResourceVersionFromURL_HonoursTheCallersDeadline(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the fetch to fail at the caller's deadline")
 	}
-	if elapsed > 20*time.Second {
+	// The deadline specifically, not any error: a refusal for some other reason
+	// (egress, scheme, a dead server) would pass a bare non-nil check while
+	// proving nothing about the bound.
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("error = %v, want context.DeadlineExceeded: the fetch did not end at the caller's deadline", err)
+	}
+	// Generous against a loaded machine, but far below the 30-minute host budget
+	// and far below the server's own 60s hold, so it can only pass if the
+	// caller's 750ms deadline is what ended it.
+	if elapsed > 5*time.Second {
 		t.Errorf("fetch took %s: it ignored the caller's deadline and used the host's remote timeout", elapsed)
 	}
 }

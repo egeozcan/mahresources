@@ -273,35 +273,58 @@ func (ctx *MahresourcesContext) UpdateGroup(groupQuery *query_models.GroupEditor
 		// Clean up GroupRelation records that become invalid after category change.
 		// A relation is invalid if the group's new category doesn't match what
 		// the relation type requires for that position (from or to).
+		//
+		// Item 4.1. These four DELETEs were keyed only on group.ID, and
+		// group_relations is not in scopeColumn, so no callback confined the far
+		// endpoint: a group-limited caller re-categorising a group inside its own
+		// subtree destroyed edges reaching groups it cannot see, created by an
+		// operator it cannot be. The edge is spared now. What is left behind is a
+		// row whose category no longer matches its relation type -- a create-time
+		// constraint only, never enforced at read time, and one that MergeGroups
+		// already produces routinely by copying edges with no revalidation. A
+		// spared inconsistent row is repairable by an editor; a deleted edge is
+		// not.
+		//
+		// The caller's own view does not change either way: scopeRelationQuery
+		// and GetGroup's relCond already hide out-of-subtree edges from it, so it
+		// never saw these and still cannot.
+		//
+		// Deliberately not the shape the roadmap card proposed. Appending an
+		// `IN (<subtree ids>)` predicate is the construction visibleGroupIDs'
+		// own comment rejects -- it can trip SQLITE_MAX_VARIABLE_NUMBER and
+		// Postgres's parameter ceiling, and subtreeScopeIDs re-runs the recursive
+		// group-tree CTE per call. Selecting the handful of edges incident to one
+		// group and filtering them in Go bounds the id list by the group's own
+		// degree instead, and reads an allow-list that is already materialised.
 		newCategoryId := groupQuery.CategoryId
 		if newCategoryId == 0 {
 			// Category cleared: delete all relations where this group occupies a position
 			// that has a non-NULL category constraint on the relation type.
-			if err := tx.Where(
+			if err := ctx.deleteRelationsSparingUnseen(tx, group.ID,
 				"from_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE from_category_id IS NOT NULL)",
 				group.ID,
-			).Delete(&models.GroupRelation{}).Error; err != nil {
+			); err != nil {
 				return err
 			}
-			if err := tx.Where(
+			if err := ctx.deleteRelationsSparingUnseen(tx, group.ID,
 				"to_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE to_category_id IS NOT NULL)",
 				group.ID,
-			).Delete(&models.GroupRelation{}).Error; err != nil {
+			); err != nil {
 				return err
 			}
 		} else {
 			// Category changed to a specific value: delete relations where the relation
 			// type's category constraint for this group's position doesn't match.
-			if err := tx.Where(
+			if err := ctx.deleteRelationsSparingUnseen(tx, group.ID,
 				"from_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE from_category_id IS NOT NULL AND from_category_id != ?)",
 				group.ID, newCategoryId,
-			).Delete(&models.GroupRelation{}).Error; err != nil {
+			); err != nil {
 				return err
 			}
-			if err := tx.Where(
+			if err := ctx.deleteRelationsSparingUnseen(tx, group.ID,
 				"to_group_id = ? AND relation_type_id IN (SELECT id FROM group_relation_types WHERE to_category_id IS NOT NULL AND to_category_id != ?)",
 				group.ID, newCategoryId,
-			).Delete(&models.GroupRelation{}).Error; err != nil {
+			); err != nil {
 				return err
 			}
 		}
@@ -546,4 +569,53 @@ func (ctx *MahresourcesContext) DeleteGroup(groupID uint) error {
 	}
 	ctx.emitGroupDeleteEffects([]groupDeleteEffect{event})
 	return nil
+}
+
+// deleteRelationsSparingUnseen deletes the edges `query` selects, except any
+// whose far endpoint the caller cannot see.
+//
+// nearGroupID is the endpoint the caller is acting on; the other column is the
+// far one. For an unscoped principal visibleGroupIDs reports every id visible,
+// so every selected edge is deleted and behaviour is unchanged.
+//
+// Selecting first and deleting by id, rather than appending a subtree predicate
+// to the DELETE, keeps the bound parameter list the size of one group's edge
+// degree instead of the size of its subtree.
+func (ctx *MahresourcesContext) deleteRelationsSparingUnseen(tx *gorm.DB, nearGroupID uint, query string, args ...any) error {
+	var edges []models.GroupRelation
+	if err := tx.Where(query, args...).Find(&edges).Error; err != nil {
+		return err
+	}
+	if len(edges) == 0 {
+		return nil
+	}
+
+	endpoints := make([]uint, 0, len(edges)*2)
+	for _, edge := range edges {
+		if edge.FromGroupId != nil {
+			endpoints = append(endpoints, *edge.FromGroupId)
+		}
+		if edge.ToGroupId != nil {
+			endpoints = append(endpoints, *edge.ToGroupId)
+		}
+	}
+	visible := ctx.visibleGroupIDs(endpoints)
+
+	deletable := make([]uint, 0, len(edges))
+	for _, edge := range edges {
+		far := edge.ToGroupId
+		if far != nil && *far == nearGroupID {
+			far = edge.FromGroupId
+		}
+		// A dangling endpoint is not a group the caller is being protected
+		// from; treat it as deletable so cleanup still collects the row.
+		if far == nil || visible[*far] {
+			deletable = append(deletable, edge.ID)
+		}
+	}
+	if len(deletable) == 0 {
+		return nil
+	}
+
+	return tx.Where("id IN ?", deletable).Delete(&models.GroupRelation{}).Error
 }

@@ -22,11 +22,17 @@ test.describe('B3 — the contact sheet caption and the headings the same rule b
   const resourceName = `contact-sheet-${Date.now()}.txt`;
 
   test.beforeAll(async ({ request }) => {
-    const form = new FormData();
-    form.append('resource', new Blob([`b3 caption body ${Date.now()}`]), resourceName);
-    form.append('Name', resourceName);
-    form.append('Meta', '{}');
-    const res = await request.post('/v1/resource', { multipart: { resource: { name: resourceName, mimeType: 'text/plain', buffer: Buffer.from(`b3 caption body ${Date.now()}`) }, Name: resourceName, Meta: '{}' } });
+    const res = await request.post('/v1/resource', {
+      multipart: {
+        resource: {
+          name: resourceName,
+          mimeType: 'text/plain',
+          buffer: Buffer.from(`b3 caption body ${Date.now()}`),
+        },
+        Name: resourceName,
+        Meta: '{}',
+      },
+    });
     expect(res.ok()).toBeTruthy();
     const body = await res.json();
     resourceId = Array.isArray(body) ? body[0].ID : body.ID;
@@ -39,7 +45,9 @@ test.describe('B3 — the contact sheet caption and the headings the same rule b
   test('the hover caption carries the resource name, as a link', async ({ page }) => {
     await page.goto('/resources/simple');
 
-    const title = page.locator('.simple .card-title').first();
+    // By href, not .first(): the suite runs in parallel and other specs create
+    // resources, so the first tile on the contact sheet is not reliably ours.
+    const title = page.locator(`.simple .card-title:has(a[href="/resource?id=${resourceId}"])`);
     await expect(title).toHaveCount(1);
 
     // display:none would make this 0x0 and the text unreadable. The caption is

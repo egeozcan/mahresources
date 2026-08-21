@@ -648,7 +648,20 @@ local ok, err = mah.db.remove_resources_from_note(10, {42})
 
 ## mah.kv -- Key-Value Storage
 
-Persistent key-value storage scoped to the calling plugin. Values are JSON-serialized before storage and JSON-deserialized on read, so Lua tables, strings, numbers, and booleans are all supported.
+Persistent key-value storage, partitioned by plugin name. Values are JSON-serialized before storage and JSON-deserialized on read, so Lua tables, strings, numbers, and booleans are all supported.
+
+:::caution `mah.kv` is not scoped to the acting user
+
+"Scoped" elsewhere in this application means confined to a group subtree, and
+`mah.kv` is not. `plugin_kvs` carries no owner column and is not in the scoping
+map, so when a group-limited user triggers your plugin, its `mah.kv` reads and
+writes reach **every** key the plugin owns -- including keys written on behalf of
+users in other subtrees. The partition is per plugin, not per principal.
+
+Do not put per-user or per-subtree data in `mah.kv` if a group-limited account
+can reach the code that reads it. Entity data belongs in `mah.db`, which *is*
+bound to the acting principal's subtree.
+:::
 
 | Function | Returns | Description |
 |----------|---------|-------------|

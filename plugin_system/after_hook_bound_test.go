@@ -112,3 +112,69 @@ end
 		t.Errorf("the after-hook did not run on a free VM (ran = %s)", ran.String())
 	}
 }
+
+// The bound is per dispatch, not per hook. Two plugins both observing the same
+// event, both with busy VMs, must cost the caller one budget between them --
+// not one each. Bounding per hook bounds nothing a user can feel: N observers
+// would stack N waits onto a single already-committed write.
+func TestRunAfterHooksSpendsOneBudgetAcrossEveryHook(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"watcher-a", "watcher-b"} {
+		writePlugin(t, dir, name, `
+plugin = { name = "`+name+`", version = "1.0", description = "observes" }
+function init()
+    mah.on("after_note_delete", function(data) return data end)
+end
+`)
+	}
+
+	pm, err := NewPluginManager(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pm.Close)
+	for _, name := range []string{"watcher-a", "watcher-b"} {
+		if err := pm.EnablePlugin(name); err != nil {
+			t.Fatalf("EnablePlugin(%s): %v", name, err)
+		}
+	}
+
+	hooks := pm.GetHooks("after_note_delete")
+	if len(hooks) != 2 {
+		t.Fatalf("expected 2 hooks, got %d", len(hooks))
+	}
+
+	// Both VMs busy, so neither can be acquired without waiting.
+	var held []*vmMutex
+	for _, hook := range hooks {
+		mu := pm.LockVM(hook.state)
+		if mu == nil {
+			t.Fatal("could not hold a watcher VM")
+		}
+		held = append(held, mu)
+	}
+	defer func() {
+		for _, mu := range held {
+			mu.Unlock()
+		}
+	}()
+
+	done := make(chan time.Duration, 1)
+	go func() {
+		start := time.Now()
+		pm.RunAfterHooks(NewInvocation(0), "after_note_delete", map[string]any{"id": float64(1)})
+		done <- time.Since(start)
+	}()
+
+	select {
+	case waited := <-done:
+		// Two busy hooks, one budget. Anything approaching 2x means the bound is
+		// per hook and does not bound the dispatch.
+		if waited >= 2*hookLockWait {
+			t.Errorf("two busy hooks cost %s, which is per-hook bounding; want about %s for the whole dispatch",
+				waited, hookLockWait)
+		}
+	case <-time.After(2*hookLockWait + 20*time.Second):
+		t.Fatal("RunAfterHooks never returned")
+	}
+}

@@ -274,16 +274,27 @@ var ErrHookVMBusy = errors.New("plugin hook could not run: its VM was busy")
 // is honest; for a *before* hook it is a veto that never got to run, and
 // skipping it would mean an unrelated plugin being busy silently disables a
 // protection hook. RunBeforeHooks therefore fails the operation instead.
-// topLevelWait bounds the top-level branch. Zero means "as long as the caller
-// waits", which is right for a before-hook: its reqCtx carries the request's own
-// deadline and the hook may be the one that would veto, so giving up early would
-// bypass a guard. An after-hook has neither property — it describes a write that
-// already committed, and RunAfterHooks deliberately passes context.Background()
-// because the request that opened a plugin transaction may be gone by the time
-// the drain runs. Unbounded plus deadline-less meant a committed write could
-// park a user's request on another goroutine's busy VM for as long as that VM
-// stayed busy, which mah.http's sync path alone can make minutes.
-func (pm *PluginManager) lockVMForHook(reqCtx context.Context, inv *Invocation, hook hookEntry, event string, topLevelWait time.Duration) (*vmMutex, bool) {
+// boundTopLevel says whether the top-level branch is bounded, and topLevelWait
+// is what is left of that bound. The two cannot be one parameter, which an
+// earlier version of this got wrong: a *spent* budget is a non-positive
+// duration, and so is "no bound", so collapsing them made the second hook of a
+// dispatch whose budget had run out fall into the unbounded branch and block
+// forever — the opposite of the fix.
+//
+// Unbounded is right for a before-hook: its reqCtx carries the request's own
+// deadline, and the hook may be the one that would veto, so giving up early
+// would bypass a guard. An after-hook has neither property. It describes a write
+// that already committed, and RunAfterHooks deliberately passes
+// context.Background(), because the request that opened a plugin transaction may
+// be gone by the time the drain runs. Unbounded plus deadline-less meant a
+// committed write could park a user's request on another goroutine's busy VM for
+// as long as that VM stayed busy, which mah.http's sync path alone can make
+// minutes.
+//
+// When bounded, a non-positive remainder is passed through as-is:
+// TryLockVMWithin reads that as one non-blocking attempt, so a hook whose VM is
+// free still runs after the budget is gone.
+func (pm *PluginManager) lockVMForHook(reqCtx context.Context, inv *Invocation, hook hookEntry, event string, boundTopLevel bool, topLevelWait time.Duration) (*vmMutex, bool) {
 	var (
 		mu   *vmMutex
 		busy bool
@@ -291,7 +302,7 @@ func (pm *PluginManager) lockVMForHook(reqCtx context.Context, inv *Invocation, 
 	if inv == nil || len(inv.states) == 0 {
 		// Top-level dispatch: holds no VM lock, so it cannot deadlock against
 		// another goroutine's hook dispatch.
-		if topLevelWait > 0 {
+		if boundTopLevel {
 			mu, busy = pm.TryLockVMWithin(reqCtx, hook.state, topLevelWait)
 		} else {
 			var err error
@@ -393,7 +404,7 @@ func (pm *PluginManager) RunBeforeHooks(reqCtx context.Context, inv *Invocation,
 		if pm.skipReentrantHook(inv, hook, event) {
 			continue
 		}
-		mu, busy := pm.lockVMForHook(reqCtx, inv, hook, event, 0)
+		mu, busy := pm.lockVMForHook(reqCtx, inv, hook, event, false, 0)
 		if mu == nil {
 			if busy {
 				// Fail closed. This hook may be the one that would have vetoed,
@@ -467,19 +478,32 @@ func (pm *PluginManager) RunAfterHooks(inv *Invocation, event string, data map[s
 		return
 	}
 
+	// ONE deadline for the whole dispatch, not one per hook. Bounding each hook
+	// separately bounds nothing a user can feel: N plugins observing the same
+	// event would stack N waits onto a single committed write. This is the
+	// scheduler's lesson applied here -- RunSchedule spends one deadline across
+	// its job-slot wait and its VM wait for exactly this reason.
+	//
+	// A spent budget is not the same as a skip: TryLockVMWithin treats a
+	// non-positive wait as a single non-blocking attempt, so once the budget is
+	// gone a hook whose VM is *free* still runs instantly, and only the ones
+	// that would have to wait are dropped.
+	deadline := time.Now().Add(hookLockWait)
+
 	for _, hook := range hooks {
 		L := hook.state
 		if pm.skipReentrantHook(inv, hook, event) {
 			continue
 		}
-		mu, busy := pm.lockVMForHook(context.Background(), inv, hook, event, hookLockWait)
+		mu, busy := pm.lockVMForHook(context.Background(), inv, hook, event, true, time.Until(deadline))
 		if mu == nil {
 			if busy {
 				// Safe to skip: the change is already committed, so this is a
 				// missed notification rather than a bypassed guard.
 				pm.warnHookSkipped(inv, hook.pluginName, event, fmt.Sprintf(
-					"its VM was busy for %s while this call already held another plugin's VM; "+
-						"skipped rather than risking a lock cycle", hookLockWait))
+					"its VM was still busy when this dispatch's %s budget ran out; skipped, "+
+						"because the write it describes is already committed and waiting "+
+						"longer would hold the caller", hookLockWait))
 			}
 			continue
 		}

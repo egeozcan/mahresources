@@ -969,7 +969,7 @@ end
 	}
 	got := make(chan result, 1)
 	go func() {
-		mu, busy := pm.lockVMForHook(context.Background(), nested, hook, "before_note_delete", 0)
+		mu, busy := pm.lockVMForHook(context.Background(), nested, hook, "before_note_delete", false, 0)
 		got <- result{mu, busy}
 	}()
 
@@ -1050,7 +1050,7 @@ end
 		{"nested dispatch", NewInvocation(0).with(hook.state)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			mu, busy := pm.lockVMForHook(context.Background(), tc.inv, hook, "before_note_delete", 0)
+			mu, busy := pm.lockVMForHook(context.Background(), tc.inv, hook, "before_note_delete", false, 0)
 			if mu != nil {
 				mu.Unlock()
 				t.Error("an unregistered hook was handed a lock and would have run: a disabled " +
@@ -1071,7 +1071,7 @@ end
 	if len(live) != 1 {
 		t.Fatalf("expected the control hook to be registered, got %d", len(live))
 	}
-	mu, busy := pm.lockVMForHook(context.Background(), NewInvocation(0), live[0], "after_note_delete", hookLockWait)
+	mu, busy := pm.lockVMForHook(context.Background(), NewInvocation(0), live[0], "after_note_delete", true, hookLockWait)
 	if mu == nil {
 		t.Errorf("a registered hook was skipped (busy=%v): the guard rejects everything", busy)
 	} else {

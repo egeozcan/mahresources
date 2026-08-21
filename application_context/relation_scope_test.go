@@ -470,3 +470,63 @@ func TestUpdateGroup_ConfinedPrincipalCannotCascadeIntoAGroupItCannotSee(t *test
 		t.Error("the update cascaded into an edge between two groups the principal cannot see")
 	}
 }
+
+// Item 4.1. Re-categorising a group inside your own subtree used to delete every
+// edge the new category invalidates, including one whose far endpoint is outside
+// that subtree — a group the caller cannot see, on an edge only an admin or
+// editor could have created, since a scope-limited user cannot write edges at
+// all. The near edge still goes; the far one is spared.
+//
+// The residue is a row whose category no longer matches its relation type. That
+// is a create-time check (AddRelation), never enforced at read time, and
+// MergeGroups already produces such rows routinely by copying edges with no
+// revalidation. An inconsistent row an editor can repair beats a deleted edge
+// nobody can restore.
+func TestUpdateGroup_CategoryChangeSparesAnEdgeReachingOutsideTheSubtree(t *testing.T) {
+	ctx := createTestContextWithPlugins(t, t.TempDir())
+	principal, _, inside, mixed := relationScopeFixture(t, ctx)
+
+	// insideA is the from-endpoint of both edges, and is inside the subtree.
+	insideA := *inside.FromGroupId
+
+	scoped := ctx.WithPrincipal(principal)
+	// Clearing the category invalidates every constrained edge incident to it.
+	if _, err := scoped.UpdateGroup(&query_models.GroupEditor{
+		GroupCreator: query_models.GroupCreator{Name: "inside-a", Meta: "{}"},
+		ID:           insideA,
+	}); err != nil {
+		t.Fatalf("UpdateGroup by a principal that owns the group: %v", err)
+	}
+
+	if _, alive := relationName(t, ctx, inside.ID); alive {
+		t.Error("the edge with both endpoints inside the subtree should have been cleaned up")
+	}
+
+	if _, alive := relationName(t, ctx, mixed.ID); !alive {
+		t.Error("a confined caller's own category change destroyed an edge reaching a group it cannot see")
+	}
+}
+
+// The control, and the half that must not regress: an unscoped caller still
+// cleans up both. visibleGroupIDs reports every id visible when no scope filter
+// is installed, so the sparing branch is inert for admins and editors.
+func TestUpdateGroup_CategoryChangeStillCleansUpEverythingWhenUnscoped(t *testing.T) {
+	ctx := createTestContextWithPlugins(t, t.TempDir())
+	_, _, inside, mixed := relationScopeFixture(t, ctx)
+
+	insideA := *inside.FromGroupId
+
+	if _, err := ctx.UpdateGroup(&query_models.GroupEditor{
+		GroupCreator: query_models.GroupCreator{Name: "inside-a", Meta: "{}"},
+		ID:           insideA,
+	}); err != nil {
+		t.Fatalf("UpdateGroup unscoped: %v", err)
+	}
+
+	if _, alive := relationName(t, ctx, inside.ID); alive {
+		t.Error("unscoped cleanup left the inside edge behind")
+	}
+	if _, alive := relationName(t, ctx, mixed.ID); alive {
+		t.Error("unscoped cleanup left the cross-subtree edge behind: the sparing branch is not inert for an unscoped caller")
+	}
+}

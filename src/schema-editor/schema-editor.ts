@@ -86,12 +86,15 @@ export class SchemaEditor extends LitElement {
    * Alpine morph patched this element's attributes. Its children were skipped
    * (SCHEMA-EDITOR is client-owned), so the rendered subtree survives -- but the
    * plugin markup inside it was fetched for whatever entity the old attributes
-   * named, so the display child has to drop it. Deferred by a microtask because
-   * morph calls updated() before it finishes patching, so reading the subtree
-   * synchronously can see the pre-patch children.
+   * named, so the display child has to drop it.
+   *
+   * Awaited on updateComplete rather than deferred by a microtask. The attribute
+   * patch may have queued a Lit update of our own, and the display child we want
+   * is rendered by it; a single microtask is not a guarantee that update has
+   * run, whereas updateComplete is exactly that promise.
    */
   refreshFromMorph(_toEl?: Element) {
-    queueMicrotask(() => {
+    void this.updateComplete.then(() => {
       const display = this.querySelector('schema-display-mode') as
         | (Element & { refreshFromMorph?: () => void })
         | null;
