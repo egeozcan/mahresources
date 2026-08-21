@@ -8597,3 +8597,81 @@ Only the general case — a confined caller performing any admin-only taxonomy
 write — needs role capability below `server/`, which does not exist: `CanWrite`,
 `CanEditorWrite` and `CanManageTaxonomy` are consulted only in `server/`, and
 `CanManageTaxonomy` has no production call site at all. That remains the open item.
+
+## B1 — `mr resource from-local`, and what fixing it exposed
+
+From the open-work board's off-board section: the last item anywhere on that
+page that needed no decision from anybody.
+
+The card said an empty `--path-name` resolved `altFileSystems[""]` and failed
+with `alt fs '' is not attached`. Two of its sentences were wrong. There is no
+`--path-name` flag — `from-local` builds its body from six fields and
+`PathName` is not among them — so every invocation sent the empty key and the
+command was broken outright rather than in an edge case. And the branch to copy
+belongs to `AddResource`, not `AddRemoteResource`, which turns out not to have
+it at all (recorded as B4 below).
+
+Three coupled parts, because normalizing storage without the dedup is a second
+bug in place of the first: the filesystem lookup takes a nil pointer for an
+empty key, persistence stores NULL rather than a pointer to `""`, and the
+"already exists, skipping" lookup asks `storage_location IS NULL` instead of
+comparing with `=`, which never matches NULL.
+
+**The fix then exposed the next break, which is the entry worth keeping.** With
+the empty key no longer fatal, the request the CLI actually sends — a path and
+nothing else — reached persistence for the first time. `Meta ""` becomes
+`[]byte("")` on the model, an invalid `json.RawMessage`, so encoding failed
+*after* the row committed and *after* 200 had gone out: `from-local --json`
+printed nothing while the resource quietly existed, and the row had no name.
+`AddResource` (:891), `CreateGroup` (`group_crud_context.go:26`) and the note
+path (`note_context.go:33`) all default meta to `{}` and validate it; this was
+the one create path that did neither. Both normalizations shipped with the fix,
+or "B1 is closed" would have been true of the line the card named and false of
+the command the card is about.
+
+`-alt-fs=:/path` was also accepted, building a storage key nothing can address:
+uploads never consult it, export coalesces it away, import treats it as the
+default. The env-var branch already required a name; the flag branch does now
+too, so the empty key means one thing everywhere and no row can hold `''`.
+
+Deliberately **not** done: normalizing `""` inside `GetFsForStorageLocation`.
+A reviewer argued for it as defence in depth. It is the wrong direction — under
+the only configuration where `''` rows could exist (`-alt-fs=:/path`), the
+current resolver reads them *correctly*, and normalizing would silently send
+those reads to the main filesystem instead. Refusing the empty key at startup
+removes the question instead of papering over it.
+
+Pinned by mutation, six parts reverted one at a time, each turning a test red,
+under `-count=2`. The `-count=2` is itself a correction: the first version of
+these tests used fixed paths, and `createTestContext` opens
+`file::memory:?cache=shared`, so the second iteration was answered by the first
+one's row and asserted nothing. Cleanup is armed before the create. The CLI
+end-to-end block was a skipped placeholder carrying the same misdiagnosis as
+the card — "not testable in ephemeral mode" — which is how a command broken
+everywhere passed as a command broken only in tests.
+
+The API reference had documented `PathName` as **Required** and `LocalPath` as
+a path "within an alternative filesystem", encoding the bug as the design. Both
+help surfaces also used host-absolute example paths, which cannot resolve: the
+storage filesystem is a `BasePathFs` rooted at `-file-save-path`.
+
+### Still open: B4 — a remote download ignores the storage location you picked
+
+Confirmed against a running server, not just read: one server, one alt
+filesystem named `archive`, the same `PathName=archive` on both requests. The
+upload stored `StorageLocation: "archive"` and the bytes appeared under the alt
+directory; the remote URL stored `null` and the alt directory stayed empty.
+
+Both remote paths build a `ResourceCreator` from a `ResourceFromRemoteCreator`
+field by field and both copy every field *except* `PathName` —
+`AddRemoteResource` (`resource_upload_context.go:343`) and the download queue
+(`download_queue/manager.go:668`). The field carries the comment "optional
+alt-fs key" and nothing reads it.
+
+The create-resource form renders its Storage select only when alt filesystems
+exist, so it is offered exactly to the deployments that have somewhere else to
+put things, and choosing one while pasting a URL fails silently.
+
+Recorded rather than folded in: different command, different path, and the
+queue's payload is persisted and replayed on retry, so a half-fix would make a
+retried download land somewhere other than the original. Its own TDD pass.
