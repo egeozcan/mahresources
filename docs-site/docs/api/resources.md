@@ -219,6 +219,11 @@ Pass `background=true` (query or form field) to queue the download instead of bl
 
 Add a file that already exists on the server's filesystem.
 
+`LocalPath` is resolved inside the selected filesystem, not on the host: the
+main filesystem is rooted at `-file-save-path`, and an alternative one at the
+path its `-alt-fs` entry names. A file staged at `<root>/incoming/photo.jpg` is
+therefore `/incoming/photo.jpg` here.
+
 ```
 POST /v1/resource/local
 ```
@@ -227,10 +232,11 @@ POST /v1/resource/local
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `LocalPath` | string | **Required.** Path within an alternative filesystem |
-| `PathName` | string | **Required.** Storage location key configured via `-alt-fs` or `FILE_ALT_NAME_N` |
-| `Name` | string | Display name |
+| `LocalPath` | string | **Required.** Path to the file, relative to the root of the selected filesystem |
+| `PathName` | string | Storage location key configured via `-alt-fs` or `FILE_ALT_NAME_N`. Omit it, or send an empty string, to read from the main filesystem |
+| `Name` | string | Display name. Defaults to the file's base name |
 | `Description` | string | Description text |
+| `Meta` | string | JSON object. Defaults to `{}` |
 | `OwnerId` | integer | Owner group ID |
 | `Groups` | integer[] | Associated group IDs |
 | `Tags` | integer[] | Tag IDs |
@@ -242,10 +248,21 @@ curl -X POST http://localhost:8181/v1/resource/local \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -d '{
-    "PathName": "archive",
-    "LocalPath": "/data/existing-file.pdf",
+    "LocalPath": "/incoming/existing-file.pdf",
     "Name": "Imported Document",
     "OwnerId": 5
+  }'
+```
+
+To read from an alternative filesystem instead, name it with `PathName`:
+
+```bash
+curl -X POST http://localhost:8181/v1/resource/local \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d '{
+    "PathName": "archive",
+    "LocalPath": "/existing-file.pdf"
   }'
 ```
 

@@ -27,7 +27,7 @@ type ResourceCreator struct {
 type ResourceFromLocalCreator struct {
 	ResourceQueryBase
 	LocalPath string
-	PathName  string
+	PathName  string // BH-023: optional alt-fs key; empty = default filesystem
 }
 
 type ResourceFromRemoteCreator struct {

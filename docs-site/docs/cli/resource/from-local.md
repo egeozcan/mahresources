@@ -8,9 +8,13 @@ sidebar_label: from-local
 
 Create a Resource from a file already present on the server's filesystem.
 Differs from `upload` (which streams bytes over HTTP) in that the server
-reads the file in place. The `--path` flag is required and must resolve
-on the target server. Useful for bulk-importing existing files or
+reads the file in place. Useful for bulk-importing existing files or
 deploying pre-staged assets.
+
+`--path` is required and is resolved inside the server's storage root, not
+on the host: a file staged at `$FILE_SAVE_PATH/incoming/photo.jpg` is
+`--path /incoming/photo.jpg` here. The name defaults to the file's base
+name.
 
 ## Usage
 
@@ -20,16 +24,16 @@ mr resource from-local
 
 ## Examples
 
-**Create from a server-local path**
+**Create from a path under the server's storage root**
 
 ```bash
-mr resource from-local --path /var/mahresources/incoming/photo.jpg
+mr resource from-local --path /incoming/photo.jpg
 ```
 
 **With metadata**
 
 ```bash
-mr resource from-local --path /srv/imports/doc.pdf --name "Doc" --tags 3,7
+mr resource from-local --path /imports/doc.pdf --name "Doc" --tags 3,7
 ```
 
 

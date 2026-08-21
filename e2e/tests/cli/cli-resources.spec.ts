@@ -267,13 +267,49 @@ test.describe('Resource from-url', () => {
   });
 });
 
-test.describe('Resource from-local (skipped)', () => {
-  // from-local requires the file to exist on the server's filesystem,
-  // which is not testable in ephemeral mode.
-  test.skip();
+test.describe('Resource from-local', () => {
+  // `from-local` has no --path-name flag, so every invocation sends an empty
+  // PathName. That resolved altFileSystems[""] and failed with
+  // "alt fs '' is not attached" before the command ever looked at the path --
+  // on every deployment, not only ephemeral ones. Both tests below are about
+  // the empty key, which is the only key this command can send.
+  //
+  // The file still has to exist on the server's own filesystem, which in
+  // ephemeral mode is in memory and holds nothing the harness can stage from
+  // outside the process. Both tests work with what the server already has:
+  // one asserts the failure mode for a path that does not exist, the other
+  // uses a path the server itself wrote.
 
-  test('from-local is not testable in ephemeral mode', async ({ cli }) => {
-    // placeholder
+  test('from-local reaches the default filesystem instead of looking for an alt fs', async ({ cli }) => {
+    const result = cli.runExpectError('resource', 'from-local', '--path', '/tmp/definitely-not-here.jpg');
+
+    const combined = result.stdout + result.stderr;
+    // The signature of the bug: it never got as far as opening the file.
+    expect(combined).not.toMatch(/alt fs/i);
+    // What a missing path is supposed to look like.
+    expect(combined).toMatch(/does not exist|no such file/i);
+  });
+
+  test('from-local finds a file on the default filesystem and dedupes against it', async ({ cli }) => {
+    // Upload writes to the default filesystem and stores StorageLocation NULL,
+    // so the resource's own Location is a server-local path that exists.
+    const uploaded = cli.runJson<(Resource & { Location: string }) | (Resource & { Location: string })[]>(
+      'resource', 'upload', SAMPLE_DOC, '--name', `from-local-src-${Date.now()}`,
+    );
+    const src = Array.isArray(uploaded) ? uploaded[0] : uploaded;
+    expect(src.Location).toBeTruthy();
+
+    try {
+      // Reaching the dedup at all proves the default filesystem was selected;
+      // matching a NULL storage_location proves the lookup asks for NULL
+      // rather than comparing it with = ''.
+      const found = cli.runJson<Resource & { Location: string }>(
+        'resource', 'from-local', '--path', src.Location, '--name', 'from-local-dedupe',
+      );
+      expect(found.ID).toBe(src.ID);
+    } finally {
+      cli.run('resource', 'delete', String(src.ID));
+    }
   });
 });
 

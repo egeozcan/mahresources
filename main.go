@@ -242,6 +242,15 @@ func main() {
 		for _, fs := range altFSFlags {
 			parts := strings.SplitN(fs, ":", 2)
 			if len(parts) == 2 {
+				// The empty key is not a name, it is how every create path
+				// spells "the main filesystem" (BH-023). Accepting it built a
+				// map entry nothing could address: uploads never consult it,
+				// export coalesces it away, and group import treats it as the
+				// default. The env-var branch below already requires a name;
+				// this one silently did not.
+				if parts[0] == "" {
+					log.Fatalf("Invalid -alt-fs entry %q: the key may not be empty (an empty storage key means the main filesystem)", fs)
+				}
 				altFileSystems[parts[0]] = parts[1]
 			} else {
 				log.Fatalf("Invalid -alt-fs format: %s (expected key:path)", fs)

@@ -379,7 +379,17 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery *query_models.ResourceFromLocalCreator) (*models.Resource, error) {
 	var existingResource models.Resource
 
-	query := ctx.db.Where("location = ? AND storage_location = ?", resourceQuery.LocalPath, resourceQuery.PathName).First(&existingResource)
+	// BH-023: an empty PathName means the default filesystem, which is stored
+	// as NULL rather than ''. SQL equality never matches NULL, so dedup has to
+	// ask for it by name or this create path stops being idempotent.
+	dedupe := ctx.db.Where("location = ?", resourceQuery.LocalPath)
+	if resourceQuery.PathName == "" {
+		dedupe = dedupe.Where("storage_location IS NULL")
+	} else {
+		dedupe = dedupe.Where("storage_location = ?", resourceQuery.PathName)
+	}
+
+	query := dedupe.First(&existingResource)
 	if err := query.Error; err == nil && existingResource.ID != 0 {
 		ctx.Logger().Info(models.LogActionCreate, "resource", &existingResource.ID, existingResource.Name, "Resource already exists, skipping", nil)
 		// this resource is already saved, return it instead
@@ -390,7 +400,18 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		return nil, err
 	}
 
-	fs, err := ctx.GetFsForStorageLocation(&resourceQuery.PathName)
+	// BH-023: select the source filesystem the way AddResource does at :903.
+	// The pointer is never nil, so passing it unconditionally resolved
+	// altFileSystems with an empty key and failed with "alt fs is not
+	// attached" for every caller that named no alt filesystem -- which is the
+	// ordinary case, and the only one `mr resource from-local` can produce,
+	// since that command has no --path-name flag to set.
+	var storageLocation *string
+	if resourceQuery.PathName != "" {
+		storageLocation = &resourceQuery.PathName
+	}
+
+	fs, err := ctx.GetFsForStorageLocation(storageLocation)
 
 	if err != nil {
 		return nil, err
@@ -437,6 +458,19 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		}
 	}
 
+	// The handler calls this as AddLocalResource(creator.Name, &creator), so a
+	// request naming nothing arrives with both empty. AddResource is handed a
+	// real filename by the upload; here the local path is the only name there
+	// is. Set before the hook, so a plugin sees the same kind of name the
+	// upload path shows it rather than an empty string.
+	if fileName == "" {
+		fileName = path.Base(resourceQuery.LocalPath)
+	}
+
+	if resourceQuery.OriginalName == "" {
+		resourceQuery.OriginalName = fileName
+	}
+
 	hookData := map[string]any{
 		"id":          float64(0),
 		"name":        fileName,
@@ -457,6 +491,21 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		resourceQuery.Meta = hMeta
 	}
 
+	// Every sibling create path does this and this one did not: AddResource at
+	// :891, CreateGroup at group_crud_context.go:26, the note path at
+	// note_context.go:33. Empty Meta becomes []byte("") on the model, an
+	// invalid json.RawMessage, so encoding the created resource fails after the
+	// row has committed and the status line has gone out -- the caller gets
+	// HTTP 200 with a zero-byte body. It runs after the hook, as AddResource
+	// does, so a hook that clears meta is defaulted too.
+	if resourceQuery.Meta == "" {
+		resourceQuery.Meta = "{}"
+	}
+
+	if err := ValidateMeta(resourceQuery.Meta); err != nil {
+		return nil, err
+	}
+
 	res := &models.Resource{
 		Name:               fileName,
 		Hash:               hash,
@@ -470,7 +519,7 @@ func (ctx *MahresourcesContext) AddLocalResource(fileName string, resourceQuery 
 		ResourceCategoryId: ctx.resolveResourceCategory(resourceQuery.ResourceCategoryId, fileMime.String(), uint(width), uint(height), int64(len(fileBytes))),
 		FileSize:           int64(len(fileBytes)),
 		OwnerId:            uintPtrOrNil(resourceQuery.OwnerId),
-		StorageLocation:    &resourceQuery.PathName,
+		StorageLocation:    storageLocation,
 		Description:        resourceQuery.Description,
 		OriginalLocation:   resourceQuery.OriginalLocation,
 		OriginalName:       resourceQuery.OriginalName,
