@@ -8721,3 +8721,72 @@ independently turns tests red when reverted.
   upload has the bytes already, so it has no such asymmetry. Checking at the
   two submit doors would make it immediate; `AddResource`'s check has to stay
   regardless, since config can change between submit and retry.
+
+## Four live defects the gated cards were hiding
+
+Re-deriving the eight decision-gated items against source before deciding any of
+them turned up four bugs nobody had filed. Each sat behind a card that asked a
+different question, and in two cases the card's own symptom was unobservable
+because a worse bug sat in front of it. They are fixed here as one batch; the
+decisions themselves are recorded separately.
+
+**B3 — one CSS rule blanked seven overlay headings.**
+`.simple :is(.description, h2, h4) { display: none }` carried the comment "hide
+page-level chrome". `.simple` is set on `<body>`, so it was not page-level.
+Rendered, the contact sheet carries eight matching elements and none of them is
+that chrome: seven are headings of overlays in the base layout — the jobs
+cockpit, the lightbox's Edit Tags / Info / Crop panels, paste upload, the entity
+picker and the confirm dialog — four of which are `aria-labelledby` targets, so a
+sighted user saw a titleless dialog while a screen reader still announced its
+name. The eighth is `.card-title`, the caption the mode exists to overlay, styled
+for exactly that in the following rule and never once rendered since the feature
+shipped. The rule is deleted, not narrowed: it had no remaining legitimate
+target, since `.simple .title` hides the page title section and the card's own
+description, tags, meta and badges have their own rule. The caption is now
+revealed on `:focus-within` as well as `:hover`, because it carries a link and
+revealing it on hover alone left that link keyboard-reachable and invisible —
+the same defect the `.simple .title` comment rejects one rule above.
+
+**4.3 — a committed write could park a request on a busy plugin VM.**
+`lockVMForHook`'s top-level branch used `LockVMWithContext`, whose comment reads
+"wait as long as its caller waits". Right for a before-hook, whose reqCtx carries
+the request deadline and which may be the hook that would veto. `RunAfterHooks`
+has neither property: it passes `context.Background()` by design, because the
+request that opened a plugin transaction may be gone when the drain runs.
+Unbounded plus deadline-less meant an already-committed write waited on another
+goroutine's VM for as long as that VM stayed busy. It now takes `hookLockWait`
+and skips, which the dispatcher already called "a missed notification rather than
+a bypassed guard" — delivery is best-effort in five other ways already, including
+silently at shutdown. That is also the answer to the question 4.3 posed, recorded
+below.
+
+**4.5's residual — a 30-minute VM hold behind a comment saying it was closed.**
+`create_resource_from_url` carried "this is the last mah.db call that could hold
+the plugin's VM lock for the host's full remote timeout". It was not.
+`add_resource_version_from_url`, seventy lines below, took no context and ran its
+own `client.Get`, so a plugin fetching a slow URL held its VM for up to
+`RemoteResourceOverallTimeout` — 30 minutes by default — and every other plugin
+call and every hook on every entity that plugin observes waited behind it. It now
+takes the invocation's context, exactly as its sibling does. The false comment is
+corrected rather than deleted, so the next reader learns the shape of the mistake.
+
+**B2 — paste-upload destroyed the metadata panel.**
+`SCHEMA-EDITOR` was absent from `CLIENT_OWNED_CHILDREN_TAGS`, whose own comment
+describes this exact failure: the server sends the element empty and the client
+renders its children, so morph walking in replaces live content with the
+placeholder. In every mode but `edit`, `schema-editor` renders into light DOM.
+`pasteUpload._refreshPage()` morphs the whole `.main`, and `displayGroup.tpl` and
+`displayNote.tpl` carry both `data-paste-context` and the panel — so pasting an
+upload on a group or note detail page removed the panel outright.
+
+Shipped whole, because the parts are not separable. Protection alone would have
+converted a masked bug into a visible one: B2's own reported symptom (stale
+plugin HTML on a direct property change) is unobservable today only because the
+panel is destroyed before it can serve anything stale. The guard alone would have
+been dead code behind the destruction. And the memoized parsed value is not
+polish — `schema-editor.render()` parsed `value` on every render, producing a
+fresh object each time, so a reference-compared guard would have dropped the
+plugin node cache on every parent re-render and undone what the node-cache work
+bought. `_pluginErrors` was equally sticky and is cleared on the same edges,
+which is the half a user could hit with no morph at all: one transient fetch
+failure pinned "Render error" on a field until a full page reload.

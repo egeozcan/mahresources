@@ -32,7 +32,7 @@ func (r *recordingFetcher) CreateResourceFromURL(_ context.Context, url string, 
 	return map[string]any{"id": float64(1)}, nil
 }
 
-func (r *recordingFetcher) AddResourceVersionFromURL(_ uint, url string, _ string) (map[string]any, error) {
+func (r *recordingFetcher) AddResourceVersionFromURL(_ context.Context, _ uint, url string, _ string) (map[string]any, error) {
 	r.record(url)
 	return map[string]any{"id": float64(1)}, nil
 }
@@ -248,7 +248,7 @@ func (b *blockingFetcher) CreateResourceFromURL(context.Context, string, map[str
 	return nil, b.blocked()
 }
 
-func (b *blockingFetcher) AddResourceVersionFromURL(uint, string, string) (map[string]any, error) {
+func (b *blockingFetcher) AddResourceVersionFromURL(context.Context, uint, string, string) (map[string]any, error) {
 	return nil, b.blocked()
 }
 

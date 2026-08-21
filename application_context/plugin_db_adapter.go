@@ -14,6 +14,7 @@ import (
 	"mahresources/plugin_system"
 	"math"
 	"mime/multipart"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -658,7 +659,7 @@ func (a *pluginDBAdapter) CreateResourceFromData(base64Data string, options map[
 	return resourceToMap(resource), nil
 }
 
-func (a *pluginDBAdapter) AddResourceVersionFromURL(resourceID uint, rawURL string, comment string) (map[string]any, error) {
+func (a *pluginDBAdapter) AddResourceVersionFromURL(reqCtx context.Context, resourceID uint, rawURL string, comment string) (map[string]any, error) {
 	lower := strings.ToLower(rawURL)
 	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
 		return nil, fmt.Errorf("unsupported URL scheme (only http and https are allowed)")
@@ -679,7 +680,14 @@ func (a *pluginDBAdapter) AddResourceVersionFromURL(resourceID uint, rawURL stri
 	}
 	client = plugin_system.ApplyEgressPolicy(client, *a.ctx.pluginEgress, connectTimeout)
 
-	resp, err := client.Get(rawURL)
+	// Bounded by the caller's own budget rather than only by the host's remote
+	// timeout, which is up to 30 minutes and is held with the plugin's VM lock.
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download: %w", err)
 	}

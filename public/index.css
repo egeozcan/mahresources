@@ -427,10 +427,22 @@ html {
    Simple View: Contact Sheet Gallery
    ======================================== */
 
-/* Hide page-level chrome (keep card-header for overlay) */
-.simple :is(.description, h2, h4) {
-    display: none;
-}
+/* There was a `.simple :is(.description, h2, h4) { display: none }` here, to
+   "hide page-level chrome (keep card-header for overlay)". `.simple` sits on
+   <body>, so it was not page-level at all: rendered, this page carries eight
+   matching elements and not one of them is the chrome the rule meant. Seven are
+   headings of overlays that live in the base layout -- the jobs cockpit, the
+   lightbox's Edit Tags / Info / Crop, paste upload, the entity picker and the
+   confirm dialog, four of which are `aria-labelledby` targets, so a sighted user
+   got a titleless dialog while a screen reader still announced the name. The
+   eighth is `.card-title`, the caption this mode exists to overlay: the rule
+   below it styles that caption for the overlay (white, 12px, two-line clamp,
+   amber on hover) and none of it had ever rendered, because the hammer declared
+   `display` and the styling rule does not.
+
+   Nothing replaces it. The page title section is hidden by `.simple .title`
+   below, the card's own description, tags, meta and badges by their own rule,
+   and no page-level h2, h4 or .description survives on this template. */
 
 /* The whole title section goes, not just its paint. It was visually hidden for
    one release, to keep the page's only <h1> exposed after `display: none` made
@@ -510,7 +522,13 @@ html {
     z-index: 1;
 }
 
-.simple .card:hover .card-header {
+/* :focus-within as well as :hover. The caption carries a link, and revealing it
+   on hover alone left that link reachable by keyboard and invisible while
+   focused -- the same "focusable but invisible" defect the `.simple .title`
+   comment above rejects, and the reason that rule hides its section outright
+   rather than merely un-painting it. */
+.simple .card:hover .card-header,
+.simple .card:focus-within .card-header {
     opacity: 1;
 }
 

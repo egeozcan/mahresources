@@ -47,7 +47,7 @@ type EntityQuerier interface {
 	CreateResourceFromURL(reqCtx context.Context, url string, options map[string]any) (map[string]any, error)
 	CreateResourceFromData(base64Data string, options map[string]any) (map[string]any, error)
 	// Resource versioning
-	AddResourceVersionFromURL(resourceID uint, url string, comment string) (map[string]any, error)
+	AddResourceVersionFromURL(reqCtx context.Context, resourceID uint, url string, comment string) (map[string]any, error)
 }
 
 // EntityWriter provides write access to entities for plugins.
@@ -789,9 +789,13 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 			opts = luaTableToGoMap(optTbl)
 		}
 		// The invocation's context, so the fetch is bounded by whatever budget
-		// the caller already has. This is the last mah.db call that could hold
-		// the plugin's VM lock for the host's full remote timeout; mah.http's
-		// sync path was capped the same way (effectiveSyncTimeout).
+		// the caller already has, as mah.http's sync path is
+		// (effectiveSyncTimeout). This comment used to claim it was "the last
+		// mah.db call that could hold the plugin's VM lock for the host's full
+		// remote timeout". It was not: add_resource_version_from_url, seventy
+		// lines below, took no context and ran its own client.Get, so it could
+		// hold the VM for the whole 30-minute remote timeout while a comment
+		// three screens up asserted that hole was closed. Both are bounded now.
 		result, err := db.CreateResourceFromURL(pm.luaContext(L), url, opts)
 		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
@@ -861,7 +865,7 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 			return 2
 		}
 		comment := L.OptString(3, "")
-		result, err := db.AddResourceVersionFromURL(resourceID, url, comment)
+		result, err := db.AddResourceVersionFromURL(pm.luaContext(L), resourceID, url, comment)
 		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
 			logEgressRefusal(err, pm.pluginNameFor(L), "GET", url)

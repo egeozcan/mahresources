@@ -51,11 +51,52 @@ export class SchemaEditor extends LitElement {
   @property({ type: String, attribute: 'field-name' }) fieldName = 'MetaQuery';
 
   @state() private _parsedSchema: JSONSchema | null = null;
+  // Memoized for the same reason _parsedSchema is, and load-bearing now that
+  // the display child invalidates on `value` identity: parsing in render()
+  // produced a fresh object every render, so every parent re-render looked like
+  // a new value and would drop the plugin node cache that fb2a6f19 added.
+  @state() private _parsedValue: unknown = {};
 
   override willUpdate(changed: Map<string, unknown>) {
     if (changed.has('schema')) {
       this._parseSchema();
     }
+    if (changed.has('value')) {
+      this._parseValue();
+    }
+  }
+
+  private _parseValue() {
+    if (!this.value) {
+      this._parsedValue = {};
+      return;
+    }
+    if (typeof this.value === 'object') {
+      this._parsedValue = this.value;
+      return;
+    }
+    try {
+      this._parsedValue = JSON.parse(this.value);
+    } catch {
+      this._parsedValue = {};
+    }
+  }
+
+  /**
+   * Alpine morph patched this element's attributes. Its children were skipped
+   * (SCHEMA-EDITOR is client-owned), so the rendered subtree survives -- but the
+   * plugin markup inside it was fetched for whatever entity the old attributes
+   * named, so the display child has to drop it. Deferred by a microtask because
+   * morph calls updated() before it finishes patching, so reading the subtree
+   * synchronously can see the pre-patch children.
+   */
+  refreshFromMorph(_toEl?: Element) {
+    queueMicrotask(() => {
+      const display = this.querySelector('schema-display-mode') as
+        | (Element & { refreshFromMorph?: () => void })
+        | null;
+      display?.refreshFromMorph?.();
+    });
   }
 
   private _parseSchema() {
@@ -140,11 +181,9 @@ export class SchemaEditor extends LitElement {
           .fieldName=${this.fieldName}
         ></schema-search-mode>`;
       case 'display': {
-        let parsedValue = {};
-        try { parsedValue = this.value ? JSON.parse(this.value) : {}; } catch { /* invalid JSON */ }
         return html`<schema-display-mode
           .schema=${this._parsedSchema}
-          .value=${parsedValue}
+          .value=${this._parsedValue}
           .name=${this.name}
           .entityType=${this.entityType}
           .entityId=${this.entityId}

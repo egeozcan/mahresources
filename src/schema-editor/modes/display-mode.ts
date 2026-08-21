@@ -1,4 +1,4 @@
-import { LitElement, html, nothing, type TemplateResult } from 'lit';
+import { LitElement, html, nothing, type TemplateResult, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { JSONSchema } from '../schema-core';
 import {
@@ -179,15 +179,57 @@ export class SchemaDisplayMode extends LitElement {
     if (meta != null) {
       this.value = meta;
       // Clear plugin display cache and advance all per-key versions so
-      // in-flight responses from before the update are discarded.
-      this._pluginHtml = {};
-      this._pluginErrors = {};
-      this._pluginNodes.clear();
-      for (const key in this._pluginFetchVersions) {
-        this._pluginFetchVersions[key]++;
-      }
+      // in-flight responses from before the update are discarded. Assigning
+      // this.value also trips the identity guard, which does the same thing;
+      // both call one method so the two edges cannot drift apart.
+      this._invalidatePluginState();
     }
   };
+
+  /**
+   * The document event was the only thing that invalidated the plugin caches,
+   * so setting value, schema, entityType or entityId directly left the previous
+   * entity's plugin markup on screen. Those four are exactly what the fetch body
+   * is built from (see _fetchPluginDisplay), which is what makes them the right
+   * invalidation edge -- the same rule <meta-shortcode> already follows.
+   *
+   * `value` is compared by reference, which is only meaningful because
+   * schema-editor memoizes the parsed object; parsing it per render would make
+   * every parent re-render look like a change and drop the node cache.
+   */
+  override willUpdate(changed: PropertyValues) {
+    if (
+      changed.has('value') ||
+      changed.has('schema') ||
+      changed.has('entityType') ||
+      changed.has('entityId')
+    ) {
+      this._invalidatePluginState();
+    }
+  }
+
+  /**
+   * Alpine morph re-pointed this panel at different attributes. Same clearing as
+   * the identity guard, reached from the morph seam rather than from a property
+   * change, because morph can patch the host's attributes without Lit seeing a
+   * property transition it recognises.
+   */
+  refreshFromMorph(_toEl?: Element) {
+    this._invalidatePluginState();
+    this.requestUpdate();
+  }
+
+  private _invalidatePluginState() {
+    this._pluginHtml = {};
+    // Sticky in exactly the same way, and the half a user can hit with no morph
+    // at all: one transient fetch failure pinned "Render error" on that field
+    // until a full page reload.
+    this._pluginErrors = {};
+    this._pluginNodes.clear();
+    for (const key in this._pluginFetchVersions) {
+      this._pluginFetchVersions[key]++;
+    }
+  }
 
   override connectedCallback() {
     super.connectedCallback();

@@ -5,6 +5,13 @@ const CLIENT_OWNED_CHILDREN_TAGS = new Set([
   'LAZY-SHORTCODE',
   'DETAILS-SHORTCODE',
   'META-SHORTCODE',
+  // <schema-editor> is the metadata panel on every group, note and resource
+  // detail page. In every mode but `edit` it renders into light DOM, and the
+  // server sends the element empty -- exactly the condition described above.
+  // Without this, paste-upload's whole-`.main` morph swapped Lit's part markers
+  // for the server's whitespace and removed the rendered subtree, so the panel
+  // vanished on any detail page that also carries data-paste-context.
+  'SCHEMA-EDITOR',
 ]);
 
 // Elements that want to re-derive state once morph has finished patching them.

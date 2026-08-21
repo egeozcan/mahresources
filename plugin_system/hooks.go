@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -273,17 +274,30 @@ var ErrHookVMBusy = errors.New("plugin hook could not run: its VM was busy")
 // is honest; for a *before* hook it is a veto that never got to run, and
 // skipping it would mean an unrelated plugin being busy silently disables a
 // protection hook. RunBeforeHooks therefore fails the operation instead.
-func (pm *PluginManager) lockVMForHook(reqCtx context.Context, inv *Invocation, hook hookEntry, event string) (*vmMutex, bool) {
+// topLevelWait bounds the top-level branch. Zero means "as long as the caller
+// waits", which is right for a before-hook: its reqCtx carries the request's own
+// deadline and the hook may be the one that would veto, so giving up early would
+// bypass a guard. An after-hook has neither property — it describes a write that
+// already committed, and RunAfterHooks deliberately passes context.Background()
+// because the request that opened a plugin transaction may be gone by the time
+// the drain runs. Unbounded plus deadline-less meant a committed write could
+// park a user's request on another goroutine's busy VM for as long as that VM
+// stayed busy, which mah.http's sync path alone can make minutes.
+func (pm *PluginManager) lockVMForHook(reqCtx context.Context, inv *Invocation, hook hookEntry, event string, topLevelWait time.Duration) (*vmMutex, bool) {
 	var (
 		mu   *vmMutex
 		busy bool
 	)
 	if inv == nil || len(inv.states) == 0 {
 		// Top-level dispatch: holds no VM lock, so it cannot deadlock against
-		// another goroutine's hook dispatch. Wait as long as its caller waits.
-		var err error
-		mu, err = pm.LockVMWithContext(reqCtx, hook.state)
-		busy = err != nil
+		// another goroutine's hook dispatch.
+		if topLevelWait > 0 {
+			mu, busy = pm.TryLockVMWithin(reqCtx, hook.state, topLevelWait)
+		} else {
+			var err error
+			mu, err = pm.LockVMWithContext(reqCtx, hook.state)
+			busy = err != nil
+		}
 	} else {
 		mu, busy = pm.TryLockVMWithin(reqCtx, hook.state, hookLockWait)
 	}
@@ -379,7 +393,7 @@ func (pm *PluginManager) RunBeforeHooks(reqCtx context.Context, inv *Invocation,
 		if pm.skipReentrantHook(inv, hook, event) {
 			continue
 		}
-		mu, busy := pm.lockVMForHook(reqCtx, inv, hook, event)
+		mu, busy := pm.lockVMForHook(reqCtx, inv, hook, event, 0)
 		if mu == nil {
 			if busy {
 				// Fail closed. This hook may be the one that would have vetoed,
@@ -458,7 +472,7 @@ func (pm *PluginManager) RunAfterHooks(inv *Invocation, event string, data map[s
 		if pm.skipReentrantHook(inv, hook, event) {
 			continue
 		}
-		mu, busy := pm.lockVMForHook(context.Background(), inv, hook, event)
+		mu, busy := pm.lockVMForHook(context.Background(), inv, hook, event, hookLockWait)
 		if mu == nil {
 			if busy {
 				// Safe to skip: the change is already committed, so this is a

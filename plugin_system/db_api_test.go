@@ -134,7 +134,7 @@ func (m *mockQuerier) CreateResourceFromURL(_ context.Context, url string, optio
 	}, nil
 }
 
-func (m *mockQuerier) AddResourceVersionFromURL(resourceID uint, url string, comment string) (map[string]any, error) {
+func (m *mockQuerier) AddResourceVersionFromURL(_ context.Context, resourceID uint, url string, comment string) (map[string]any, error) {
 	if resourceID == 0 {
 		return nil, fmt.Errorf("resource not found")
 	}

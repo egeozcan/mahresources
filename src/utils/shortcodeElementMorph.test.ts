@@ -9,7 +9,7 @@ function el(tagName: string, extra: Record<string, unknown> = {}) {
 }
 
 describe('morphOptionsWithShortcodeElements', () => {
-  it.each(['LAZY-SHORTCODE', 'DETAILS-SHORTCODE', 'META-SHORTCODE'])(
+  it.each(['LAZY-SHORTCODE', 'DETAILS-SHORTCODE', 'META-SHORTCODE', 'SCHEMA-EDITOR'])(
     'keeps %s attributes patchable by skipping only children',
     (tagName) => {
       const skip = vi.fn();
@@ -23,7 +23,7 @@ describe('morphOptionsWithShortcodeElements', () => {
     },
   );
 
-  it.each(['LAZY-SHORTCODE', 'DETAILS-SHORTCODE', 'META-SHORTCODE', 'RELOAD-SHORTCODE'])(
+  it.each(['LAZY-SHORTCODE', 'DETAILS-SHORTCODE', 'META-SHORTCODE', 'SCHEMA-EDITOR', 'RELOAD-SHORTCODE'])(
     'refreshes %s after attributes have been patched',
     (tagName) => {
       const refreshFromMorph = vi.fn();
@@ -78,5 +78,36 @@ describe('morphOptionsWithShortcodeElements', () => {
 
   it('keeps the old deferred-shortcode export as a compatibility alias', () => {
     expect(morphOptionsWithDeferredShortcodes).toBe(morphOptionsWithShortcodeElements);
+  });
+});
+
+// B2. <schema-editor> is the metadata panel on every group, note and resource
+// detail page. In every mode but `edit` it renders into light DOM, and the
+// server sends the element empty — so morph walking into it swapped Lit's part
+// markers for the server's whitespace and removed the rendered subtree. The
+// panel disappeared on any detail page that also carries data-paste-context,
+// which is exactly displayGroup and displayNote, on every paste-upload refresh.
+describe('schema-editor is treated as client-owned', () => {
+  it('never lets morph walk into a schema-editor subtree', () => {
+    const skip = vi.fn();
+    const skipChildren = vi.fn();
+    const options = morphOptionsWithShortcodeElements();
+
+    options.updating(el('SCHEMA-EDITOR'), el('SCHEMA-EDITOR'), false, skip, skipChildren);
+
+    expect(skipChildren).toHaveBeenCalledOnce();
+    // skip() would stop the attributes being patched too, which is the thing
+    // that must still happen: a morph is how the panel learns the entity's meta
+    // changed underneath it.
+    expect(skip).not.toHaveBeenCalled();
+  });
+
+  it('falls back to skipping the whole element when the morph build has no skipChildren', () => {
+    const skip = vi.fn();
+    const options = morphOptionsWithShortcodeElements();
+
+    options.updating(el('SCHEMA-EDITOR'), el('SCHEMA-EDITOR'), false, skip, undefined);
+
+    expect(skip).toHaveBeenCalledOnce();
   });
 });
