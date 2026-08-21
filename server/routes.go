@@ -894,6 +894,11 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodGet).Path("/plugins/manage").
 		HandlerFunc(template_handlers.RenderTemplate("managePlugins.tpl", manageCtxFn))
 
+	// Plugin static assets. Registered BEFORE the page catch-all below, which
+	// matches every path under /plugins/ — so "public" is a reserved first
+	// segment of a plugin page path. See registerPluginAssetRoute.
+	registerPluginAssetRoute(router, appContext)
+
 	// Plugin pages
 	pm := appContext.PluginManager()
 	if pm != nil {

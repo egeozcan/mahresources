@@ -8915,3 +8915,58 @@ its own.
 timeout context first -- `action_executor.go`, `action_jobs.go` (both),
 `api_endpoints.go`, `block_render.go`, `display_render.go`, `hooks.go` (both) and
 `http_api.go`. There is no unbounded invocation class for it to be true of.
+
+## 4.6 — plugin static assets
+
+Built as decided. A plugin's own `public/` directory is served at
+`/plugins/<name>/public/*` while that plugin is enabled. Nothing is declared;
+create the directory and the files are reachable.
+
+**No capability**, for the reason recorded with the decision: serving a file
+grants the plugin nothing it does not already have. The Lua VM has no filesystem
+reach at all, so the plugin cannot read those files — the host does, out of a
+directory whoever installed the plugin already wrote — and the power that
+matters, script in the app's origin, is `inject`, which is also what a plugin
+needs to put the tag on the page at all. A plugin with no `inject` can have a
+`public/` directory served and nothing will ever point at it.
+
+**The mount point is the design.** `pluginCodePathName` reads the plugin name out
+of the first segment after `/plugins/`, so the per-plugin `AllowScopedPrincipals`
+deny governs these files with no second copy of the predicate, and
+`requiredCapability` classifies the GET as `capRead`, the same class as the
+render seams that emit the `<script>` tag. Both properties are pinned by
+`TestPluginAssetPathIsGovernedByThePerPluginDeny`, because the argument for
+skipping a capability rests on them holding. Any other mount point throws that
+away, and `/public/` — the one that looks most natural — is auth-exempt and
+CORS-wildcarded, so it would publish plugin assets unauthenticated and
+cross-origin, escaping the toggle entirely.
+
+Registered before the `/plugins/` page catch-all, so `public` is a reserved first
+segment of a plugin page path. Enablement is checked per request, since routes
+register once at boot and a plugin can be disabled at any time after.
+
+**Containment is the feature's real cost and is paid with `os.OpenRoot`.** This is
+the only filesystem surface a plugin's own directory has ever had, and a plugin
+folder is third-party content that can contain a symlink pointing anywhere. A
+test proves the point by mutation: replace the root with `filepath.Join` and a
+symlink inside `public/` serves a file from outside the plugin directory. No
+directory listings, and nothing from a disabled plugin.
+
+Verified end to end against a running server as well as in unit tests: `app.js`
+comes back `text/javascript`, `app.css` comes back `text/css`, a plugin page path
+still reaches the page handler, and a traversal attempt never reaches the file.
+
+**The trap, documented for plugin authors:** assets must be referenced with a
+classic non-defer `<script src>`. `main.js` is `type="module"` and therefore
+deferred, and the head slot sits after it, so an external deferred or module
+script runs *after* `Alpine.start()` — `alpine:init` has already fired and the
+plugin silently never initializes. The card carried the inline-script version of
+this fact, which inverts for external assets.
+
+### Still to build
+
+**4.2**, terminal job events, is the one decided item not yet implemented. It was
+left last deliberately: its events dispatch through `RunAfterHooks`, and the
+after-hook bound changed that path from waiting indefinitely to spending one
+dispatch budget, so specifying 4.2's delivery semantics earlier would have
+documented a guarantee that was about to change underneath it.

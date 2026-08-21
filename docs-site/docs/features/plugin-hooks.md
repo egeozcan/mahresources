@@ -241,6 +241,71 @@ mah.page("search", function(ctx)
 end)
 ```
 
+## Static Assets
+
+Files in a plugin's own `public/` directory are served at
+`/plugins/<name>/public/<path>` while that plugin is **enabled**. Nothing needs
+to be declared: create the directory and the files are reachable.
+
+```
+plugins/
+  my-plugin/
+    plugin.lua
+    public/
+      app.js
+      app.css
+```
+
+```lua
+mah.inject("head", [[
+  <link rel="stylesheet" href="/plugins/my-plugin/public/app.css">
+  <script src="/plugins/my-plugin/public/app.js"></script>
+]])
+```
+
+This is what replaces embedding browser code in Lua long strings, where every
+page render re-sends the same bytes through the VM lock.
+
+:::caution Do not add `defer` or `type="module"`
+
+`main.js` is a module and therefore deferred, and the `head` slot is emitted
+after it. Two deferred scripts run in document order, so a deferred or module
+plugin script runs **after** `Alpine.start()` — `alpine:init` has already fired
+and your plugin silently does nothing.
+
+A classic `<script src>` runs before Alpine starts, which is early enough to
+register an `alpine:init` listener:
+
+```html
+<script src="/plugins/my-plugin/public/app.js"></script>
+```
+```js
+document.addEventListener('alpine:init', () => {
+  Alpine.data('myWidget', () => ({ /* ... */ }));
+});
+```
+:::
+
+**No capability is required.** Serving a file grants the plugin nothing — the Lua
+VM has no filesystem access at all, so your plugin cannot read these files; the
+host reads them, from a directory whoever installed the plugin already wrote.
+The power that matters, running script in the application's origin, is `inject`,
+and you need it to put the `<script>` tag on the page in the first place. A
+plugin with no `inject` can have a `public/` directory served and nothing will
+ever point at it.
+
+**Access follows the plugin.** The URL carries the plugin's name in its first
+segment, so these files are governed by the same per-plugin "allow group-limited
+users" toggle as its pages and shortcodes. A confined account that may not use
+the plugin is refused both the `<script>` tag and the file it names.
+
+**Containment.** The directory is opened as a root, so `..` and symlinks pointing
+outside `public/` are refused. Directory listings are not served, and neither is
+anything from a disabled plugin.
+
+**`public` is reserved.** A plugin page registered at the path `public` is
+shadowed by this route.
+
 ## Menus
 
 Add navigation menu items that link to plugin pages. Register them during `init()` using `mah.menu(label, path)`.
