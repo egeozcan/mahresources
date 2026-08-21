@@ -50,10 +50,16 @@ func newTokenListCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  # As raw JSON",
 			"  mr token list --json",
 			"",
+			// The trailing revoke is cleanup: the block runs against a server that may
+			// be long-lived and the account has a -max-user-tokens ceiling, so a
+			// doctest that only mints walks toward it. The id comes from create rather
+			// than a second list lookup -- one call, and it is the id of exactly the
+			// token this run made.
 			"  # mr-doctest: the list carries the token just minted, found by name, skip-on=ephemeral",
 			"  N=\"doctest-list-$$-$RANDOM\"",
-			"  mr token create --name \"$N\" > /dev/null",
+			"  ID=$(mr token create --name \"$N\" --json | jq -r '.id')",
 			"  mr token list --json | jq -e --arg n \"$N\" 'map(select(.name == $n)) | length == 1' > /dev/null",
+			"  mr token revoke $ID",
 		}, "\n"),
 		Annotations: tokenExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -86,8 +92,13 @@ func newTokenCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  # Create a token that expires in 30 days",
 			"  mr token create --name temp --expires-in 720h",
 			"",
+			// The response is captured once so the secret can be asserted and the id
+			// reused to revoke it. Without that, every pass leaves a live token behind
+			// on a long-lived server and the account walks toward -max-user-tokens.
 			"  # mr-doctest: create returns a token whose secret is shown once, skip-on=ephemeral",
-			"  mr token create --name \"doctest-create-$$-$RANDOM\" --json | jq -e '.token | length > 0' > /dev/null",
+			"  OUT=$(mr token create --name \"doctest-create-$$-$RANDOM\" --json)",
+			"  echo \"$OUT\" | jq -e '.token | length > 0' > /dev/null",
+			"  mr token revoke \"$(echo \"$OUT\" | jq -r '.id')\"",
 		}, "\n"),
 		Annotations: tokenExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {

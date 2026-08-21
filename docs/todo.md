@@ -1,3 +1,121 @@
+# The review round on the axe and docs-lint batch (2026-08-21)
+
+Five findings from an independent review of `408ed441..8560c40c`. All five were
+real; none was refuted. One is a regression the batch itself introduced.
+
+## The a11y fix had traded one defect for a worse one
+
+Turning `best-practice` on required `/resources/simple` to stop hiding its only
+`<h1>`, and the fix visually hid the whole `.title` section instead of removing
+it. **That section is not only a heading.** It carries the page action link, and
+on other pages a secondary action, a delete button, breadcrumb links and an
+`<inline-edit>`. Visually hiding it left all of them keyboard-focusable and
+invisible: tabbing on the contact sheet landed on a `Create` link measuring
+84x38 inside a section clipped to 1x1, with no visible focus indicator. That is
+worse than the missing heading it fixed, and it is the kind of defect axe cannot
+see, because every rule it broke was already passing.
+
+`.simple .title` is `display: none` again, and `listResourcesSimple.tpl` reissues
+its own `sr-only` `<h1>` inside `<main>` -- which satisfies `region` as well as
+`page-has-heading-one`, and carries no `id`, since `page-title` still belongs to
+the hidden heading and a second element answering to it would fail
+`duplicate-id-aria`. Hiding only the focusable descendants was the alternative
+and was rejected: it would have to enumerate what is focusable forever, and any
+control added to `partials/title.tpl` later would silently reappear here
+invisible.
+
+## The empty-body lint caught the shape but not the class
+
+The previous entry added a lint failure for a doctest with an empty body, after
+a stray `#` split a block and left the doctest half empty. **The same accident
+one line later still passed.** A comment after the first command splits the
+block the same way, but the doctest half is then non-empty:
+
+```
+  # mr-doctest: verifies behaviour
+  true
+  # assert the result
+  false          <- never runs, lint green
+```
+
+The rule that covers the class rather than the instance is positional: doctests
+come last by convention, so a **non-doctest example appearing after a doctest**
+within one command is now a failure too. Both rules are mutation-tested in both
+directions, with a green control.
+
+`buildProductionRoot` in the lint test genuinely omitted the `auth`, `token` and
+`user` groups -- the three the previous entry had just added doctests to, so the
+production-tree test was blind to exactly the new work. Widened, and
+`TestProductionRootMirrorsMain` now diffs it against `main.go`'s own
+`AddCommand` calls so it cannot drift again.
+
+## A doctest that runs in no environment is not covered
+
+`resource from-url` and `resource from-local` carried `skip-on=ephemeral|auth`,
+and those are the only two passes. Not a regression -- they skipped the sole
+pass before the auth pass existed -- but the previous entry called exactly this
+shape laundering, and it applied to two of its own labels.
+
+`from-url` **now runs in both passes**. It fetches an asset the server serves
+itself (`/public/favicon/...`, which `isPublicPath` allows even under `-auth`,
+and which `-allow-private-fetch=127.0.0.1,::1` permits). It deletes the resource
+it creates, because `/v1/resource/remote` refuses a duplicate content hash with
+400 -- without that the block passes once and fails on every repeat against a
+long-lived server. `from-local` stays skipped: both doctest servers are
+`-ephemeral`, so the storage filesystem is in memory and no host path exists in
+it. The label now says that instead of the two half-reasons it carried.
+
+## Flaky runs were invisible
+
+Both Playwright jobs run `--retries=2` and uploaded a report only on failure, so
+a genuine intermittent regression that passed on retry left CI green with no
+artifact. `--fail-on-flaky-tests` was deliberately **not** used: this suite has a
+documented load-induced flake class, and making CI red on those would be worse
+than the problem. Instead `e2e/scripts/report-flakes.js` emits a `::warning::`
+naming the flaky specs, and the report uploads when there were flakes as well as
+on failure. The parser is written against the real `results.json` and exits 0 on
+every malformed input, so the annotation step can never itself fail a job. The
+`cli-doctest` job gained both, since it runs at the CI default of four retries
+and uploaded nothing at all.
+
+## The auth doctests leaked what they created
+
+`auth login` left its minted token and its `mktemp` credentials file behind;
+both `token` doctests left a token each. Against a long-lived server that walks
+toward `-max-user-tokens` (default 100). Each now revokes what it creates and
+removes its file.
+
+## Two confirmed bugs found and deliberately not fixed
+
+**`mr resource from-local` is broken on every deployment, not only ephemeral.**
+`AddLocalResource` passes `&resourceQuery.PathName`, which is never nil, so an
+empty `--path-name` looks up `altFileSystems[""]` and fails with
+`alt fs '' is not attached`. `AddRemoteResource` special-cases the empty string
+as "the default filesystem" (BH-023); the local path never got that branch, and
+its only test always sets a real key. Not fixed here because it is not a
+one-liner -- the empty value has to normalize at persistence too, or the row
+stores a pointer to `""` and the ten read sites calling
+`GetFsForStorageLocation` fail the same way, and the dedup query's `''`-vs-NULL
+semantics need their own test. That is a TDD-shaped change to a create path, and
+this batch stays attributable to the five findings.
+
+**`.simple .card-title` is hidden by the `h2` rule** that claims to keep the
+card header. Equal specificity, and the earlier rule is the one that declares
+`display`, so the contact sheet's hover caption renders with no title in it.
+Pre-existing and purely visual; fixing it changes the contact sheet's
+appearance, which the fix above explicitly forbade.
+
+## Verified
+
+`mr docs lint` 0 warnings 0 failures, plus mutation of both new rules in both
+directions · full Go suite, 37 packages · `gofmt` clean · `cli-doctest` 3/3,
+with `from-url` observed PASS in both passes · a11y suite 199 passed · **axe
+best-practice + WCAG over all 38 static pages: 0 violation nodes**, re-run
+independently · `/resources/simple` re-checked in the browser: `.title` computed
+`display: none`, 0 rendered focusable elements inside it, no horizontal scroll ·
+`report-flakes.js` exercised over six input shapes including truncated JSON,
+exit 0 in every one · css-scan · `docs-gen`/`skills-gen` no diff.
+
 # Axe best-practice on, and the last four docs-lint warnings (2026-08-21)
 
 Items 5.3 and the remainder of 5.1. Both were sized against figures that no

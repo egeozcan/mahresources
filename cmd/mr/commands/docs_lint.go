@@ -107,6 +107,17 @@ func lintCommand(c *cobra.Command) (failures, warnings []string) {
 		hasDoctest := false
 		for _, ex := range exs {
 			if !ex.Doctest {
+				// The doctest block comes LAST in every command's Example, so a
+				// plain example AFTER one is almost always the tail of a split
+				// block rather than a deliberate ordering. The empty-body rule
+				// below catches only the case where the stray '#' is the FIRST
+				// line of the body; put it anywhere later and the doctest keeps
+				// a non-empty body while everything under the comment -- the
+				// assertions, usually -- becomes a separate, non-doctest example
+				// that no pass ever executes.
+				if hasDoctest {
+					failures = append(failures, fmt.Sprintf("%s: example %q follows a doctest (a stray '#' line inside a doctest block splits it; the tail never runs and is never published as a doctest -- put the doctest last, and keep '#' lines out of its body)", path, ex.Label))
+				}
 				continue
 			}
 			hasDoctest = true

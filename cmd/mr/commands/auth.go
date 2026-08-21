@@ -52,10 +52,20 @@ func newAuthLoginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			// No `#` lines inside the block: the example parser treats every one as a
 			// new label, which silently splits the block and leaves the doctest half
 			// of it empty -- and an empty block exits 0, so it passes without running.
+			//
+			// The last two lines are cleanup, not assertions. Every pass of this block
+			// mints a real token against a server that may be long-lived, and the
+			// account has a -max-user-tokens ceiling (100 by default), so a doctest
+			// that only creates walks toward it. The revoke authenticates with the very
+			// token it is revoking, which is fine: the request is authenticated before
+			// the handler deletes the row.
 			"  # mr-doctest: login mints a token and stores it, skip-on=ephemeral",
 			"  export MR_TOKEN_FILE=$(mktemp)",
-			"  mr auth login --username \"$MR_DOCTEST_USERNAME\" --password \"$MR_DOCTEST_PASSWORD\" --name \"doctest-login-$$-$RANDOM\"",
+			"  N=\"doctest-login-$$-$RANDOM\"",
+			"  mr auth login --username \"$MR_DOCTEST_USERNAME\" --password \"$MR_DOCTEST_PASSWORD\" --name \"$N\"",
 			"  mr auth whoami --json | jq -e '.isAdmin' > /dev/null",
+			"  mr token revoke \"$(mr token list --json | jq -r --arg n \"$N\" 'map(select(.name == $n)) | .[0].ID')\"",
+			"  rm -f \"$MR_TOKEN_FILE\"",
 		}, "\n"),
 		Annotations: authExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {

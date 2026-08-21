@@ -20,5 +20,5 @@ deploying pre-staged assets.
   # With metadata
   mr resource from-local --path /srv/imports/doc.pdf --name "Doc" --tags 3,7
 
-  # mr-doctest: path only valid on the real target server, skip-on=ephemeral|auth
+  # mr-doctest: both doctest servers run -ephemeral so the storage filesystem is in memory and no path exists in it, skip-on=ephemeral|auth
   mr resource from-local --path /tmp/sample.jpg --name "from-local-test"

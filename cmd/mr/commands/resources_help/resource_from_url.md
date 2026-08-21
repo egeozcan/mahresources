@@ -20,5 +20,7 @@ creation.
   # With metadata and groups
   mr resource from-url --url https://example.com/doc.pdf --name "Paper" --meta '{"source":"arxiv"}' --groups 5
 
-  # mr-doctest: ephemeral server has no outbound access, skip-on=ephemeral|auth
-  mr resource from-url --url https://example.com/tiny.jpg --name "from-url-test"
+  # mr-doctest: the server fetches an asset it serves itself
+  ID=$(mr resource from-url --url "$MAHRESOURCES_URL/public/favicon/favicon-32x32.png" --name "from-url-test-$$-$RANDOM" --json | jq -r '.ID')
+  mr resource get $ID --json | jq -e '.ID > 0 and .ContentType == "image/png"' > /dev/null
+  mr resource delete $ID

@@ -432,21 +432,23 @@ html {
     display: none;
 }
 
-/* The title is hidden visually rather than removed. `display: none` took the
-   page's only <h1> with it, which is why /resources/simple was the one page
-   failing `page-has-heading-one` -- a chrome-free contact sheet is a visual
-   decision, and it should not cost a screen reader the page heading. Absolute
-   with no offsets keeps it at its static position, so it adds no scroll width. */
+/* The whole title section goes, not just its paint. It was visually hidden for
+   one release, to keep the page's only <h1> exposed after `display: none` made
+   /resources/simple the one page failing `page-has-heading-one` -- but this
+   section is not only a heading. It also carries the page action link
+   ("Create"), and on other pages a secondary action, a delete button,
+   breadcrumb links and an <inline-edit>. Visually hiding it left every one of
+   those keyboard-focusable and invisible, so tabbing here landed on a control
+   with no visible focus indicator: a worse defect than the one it fixed.
+
+   The heading is not lost, because it is not this section's to give on this
+   page: listResourcesSimple.tpl renders its own `sr-only` <h1> inside <main>,
+   which keeps `page-has-heading-one` satisfied and `region` with it. Hiding
+   only the focusable descendants was the other candidate and was rejected --
+   it would have to enumerate what is focusable, forever, and any control added
+   to partials/title.tpl later would silently reappear here invisible. */
 .simple .title {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
+    display: none;
 }
 
 /* Grid: uniform square cells, tight contact-sheet gaps */

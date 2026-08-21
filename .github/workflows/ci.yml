@@ -117,6 +117,30 @@ jobs:
         working-directory: e2e
         run: npm run test:with-server:cli-doctest
 
+      # A flake passes on retry, so CI stays green and -- because the upload below
+      # was `if: failure()` -- kept no artifact either: a genuine intermittent
+      # regression left no trace anywhere in the run. This annotates them instead.
+      # Not `--fail-on-flaky-tests`: this suite has a documented load-induced flake
+      # class (`page.goto` timeouts), and reddening those trades an invisible
+      # signal for a false one. The step is advisory and cannot fail the job --
+      # `if: always()` plus a script that exits 0 on every parse or shape error.
+      - name: Annotate flaky tests
+        id: flakes-doctest
+        if: always()
+        working-directory: e2e
+        run: node scripts/report-flakes.js test-results/results.json "cli-doctest project"
+
+      - name: Upload Playwright report
+        if: failure() || steps.flakes-doctest.outputs.flaky == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-cli-doctest
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
   # The browser suite in CI. It began as two directories whose entire purpose is
   # "this must not come back", because until this job existed every Playwright
   # guard in the repo gated nothing — focus, computed style, and which Alpine
@@ -193,8 +217,21 @@ jobs:
         working-directory: e2e
         run: node scripts/run-tests.js test --project=default --workers=2 --retries=2
 
+      # A flake passes on retry, so CI stays green and -- because the upload below
+      # was `if: failure()` -- kept no artifact either: a genuine intermittent
+      # regression left no trace anywhere in the run. This annotates them instead.
+      # Not `--fail-on-flaky-tests`: this suite has a documented load-induced flake
+      # class (`page.goto` timeouts), and reddening those trades an invisible
+      # signal for a false one. The step is advisory and cannot fail the job --
+      # `if: always()` plus a script that exits 0 on every parse or shape error.
+      - name: Annotate flaky tests
+        id: flakes-default
+        if: always()
+        working-directory: e2e
+        run: node scripts/report-flakes.js test-results/results.json "default project"
+
       - name: Upload Playwright report
-        if: failure()
+        if: failure() || steps.flakes-default.outputs.flaky == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-default
@@ -265,8 +302,21 @@ jobs:
         working-directory: e2e
         run: node scripts/run-tests.js test --project=auth --project=cli --workers=2 --retries=2
 
+      # A flake passes on retry, so CI stays green and -- because the upload below
+      # was `if: failure()` -- kept no artifact either: a genuine intermittent
+      # regression left no trace anywhere in the run. This annotates them instead.
+      # Not `--fail-on-flaky-tests`: this suite has a documented load-induced flake
+      # class (`page.goto` timeouts), and reddening those trades an invisible
+      # signal for a false one. The step is advisory and cannot fail the job --
+      # `if: always()` plus a script that exits 0 on every parse or shape error.
+      - name: Annotate flaky tests
+        id: flakes-auth-cli
+        if: always()
+        working-directory: e2e
+        run: node scripts/report-flakes.js test-results/results.json "auth + cli projects"
+
       - name: Upload Playwright report
-        if: failure()
+        if: failure() || steps.flakes-auth-cli.outputs.flaky == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-auth-cli

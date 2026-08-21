@@ -207,7 +207,10 @@ func TestLintPassesOnValidAllowlistedCommand(t *testing.T) {
 		Annotations: map[string]string{
 			"exitCodes": "0: success\n1: error",
 		},
-		Example: "  # mr-doctest: basic usage\n  mr demo\n  # Another example\n  mr demo --bar baz\n",
+		// The doctest comes LAST, which is both the repo's convention and what
+		// lintCommand now enforces: a plain example after a doctest is the
+		// signature of a block split by a stray '#' line.
+		Example: "  # Another example\n  mr demo --bar baz\n  # mr-doctest: basic usage\n  mr demo\n",
 	}
 	leaf.Flags().StringVar(&v, "bar", "", "the bar value")
 	root.AddCommand(leaf)
@@ -240,5 +243,107 @@ func TestSentenceCount(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("sentenceCount(%q) = %d, want %d", tt.input, got, tt.want)
 		}
+	}
+}
+
+// TestLintFailsDoctestWithEmptyBody pins the failure that catches a stray '#'
+// line placed as the FIRST line of a doctest body: everything below it becomes
+// a separate example and the doctest is left with nothing to run. The runner
+// hands an empty body to `bash -c`, which exits 0, so without this rule the
+// block reports PASS having executed nothing.
+func TestLintFailsDoctestWithEmptyBody(t *testing.T) {
+	restore := SetLintAllowlistForTest(map[string]bool{"demo": true})
+	defer restore()
+
+	root := buildTestRoot("mr")
+	root.AddCommand(&cobra.Command{
+		Use:   "demo",
+		Short: "Demo short description.",
+		Long:  "First sentence about the demo command. Second sentence with more detail.",
+		Annotations: map[string]string{
+			"exitCodes": "0: success\n1: error",
+		},
+		// The doctest label is immediately followed by another '#' line, so the
+		// doctest's own body is empty and `mr demo` belongs to "assert it".
+		Example: "  # Plain example\n  mr demo --bar baz\n  # mr-doctest: verifies behaviour\n  # assert it\n  mr demo\n",
+	})
+
+	var stdout, stderr bytes.Buffer
+	err := lintCommandTreeTo(root, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected lint error for a doctest with an empty body, got nil")
+	}
+	if !strings.Contains(stderr.String(), "has an empty body") {
+		t.Errorf("expected stderr to mention 'has an empty body', got: %s", stderr.String())
+	}
+}
+
+// TestLintFailsNonDoctestAfterDoctest pins the failure that catches the same
+// stray '#' line placed ANYWHERE ELSE in a doctest body. The doctest keeps a
+// non-empty body -- so the empty-body rule above stays silent -- while the
+// assertions below the comment become a separate, non-doctest example that no
+// pass ever executes:
+//
+//	# mr-doctest: verifies behaviour
+//	true
+//	# assert the result
+//	false          <-- never runs
+//
+// The repo's convention is that the doctest block comes last, so a non-doctest
+// example after one is the signature of exactly this accident.
+func TestLintFailsNonDoctestAfterDoctest(t *testing.T) {
+	restore := SetLintAllowlistForTest(map[string]bool{"demo": true})
+	defer restore()
+
+	root := buildTestRoot("mr")
+	root.AddCommand(&cobra.Command{
+		Use:   "demo",
+		Short: "Demo short description.",
+		Long:  "First sentence about the demo command. Second sentence with more detail.",
+		Annotations: map[string]string{
+			"exitCodes": "0: success\n1: error",
+		},
+		Example: "  # mr-doctest: verifies behaviour\n  true\n  # assert the result\n  false\n",
+	})
+
+	var stdout, stderr bytes.Buffer
+	err := lintCommandTreeTo(root, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected lint error for a non-doctest example after a doctest, got nil")
+	}
+	if !strings.Contains(stderr.String(), `example "assert the result" follows a doctest`) {
+		t.Errorf("expected stderr to name the stray example, got: %s", stderr.String())
+	}
+	// The body is non-empty on both halves, so the empty-body rule is silent
+	// here -- which is the whole reason this second rule has to exist.
+	if strings.Contains(stderr.String(), "has an empty body") {
+		t.Errorf("empty-body rule should not fire on a split with a non-empty doctest half, got: %s", stderr.String())
+	}
+}
+
+// TestLintPassesDoctestLast is the green half of the two tests above: the same
+// command with the doctest last and no '#' line inside its body lints clean.
+func TestLintPassesDoctestLast(t *testing.T) {
+	restore := SetLintAllowlistForTest(map[string]bool{"demo": true})
+	defer restore()
+
+	root := buildTestRoot("mr")
+	root.AddCommand(&cobra.Command{
+		Use:   "demo",
+		Short: "Demo short description.",
+		Long:  "First sentence about the demo command. Second sentence with more detail.",
+		Annotations: map[string]string{
+			"exitCodes": "0: success\n1: error",
+		},
+		Example: "  # Plain example\n  mr demo --bar baz\n  # mr-doctest: verifies behaviour\n  true\n  false || true\n",
+	})
+
+	var stdout, stderr bytes.Buffer
+	err := lintCommandTreeTo(root, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("expected nil error for a doctest-last command, got: %v\nstderr: %s", err, stderr.String())
+	}
+	if stderr.Len() > 0 {
+		t.Errorf("expected empty stderr, got: %s", stderr.String())
 	}
 }
