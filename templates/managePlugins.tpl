@@ -12,6 +12,15 @@
     </p>
     {% endif %}
 
+    {# A manual run is asynchronous, so the table below still says "never run" #}
+    {# when this page comes back. Without this the button looks inert. #}
+    {# role=status rather than alert: it is a confirmation, not a problem. #}
+    {% if scheduleStarted %}
+    <p role="status" class="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900" data-testid="plugin-schedule-started">
+        Started <span class="font-mono">{{ scheduleStarted }}</span>. It runs in the background &mdash; watch the jobs panel for progress, and reload this page to see the outcome recorded.
+    </p>
+    {% endif %}
+
     {% if not plugins %}
     <p class="text-stone-500 italic">No plugins discovered. Place plugin directories in the plugins folder.</p>
     {% endif %}
@@ -289,6 +298,7 @@
                             <th class="py-1 pr-4 font-medium" scope="col">Next due</th>
                             <th class="py-1 pr-4 font-medium" scope="col">Runs</th>
                             <th class="py-1 pr-4 font-medium" scope="col">Last outcome</th>
+                            <th class="py-1 pr-4 font-medium" scope="col">Run</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -314,6 +324,55 @@
                                 {% endif %}
                                 {% else %}
                                 <span class="text-stone-500 italic">never run</span>
+                                {% endif %}
+                            </td>
+                            <td class="py-1 pr-4">
+                                {# Offered only where it would work. A stopped or undeclared #}
+                                {# schedule refuses with 409, and a button whose only outcome #}
+                                {# is a refusal is a dead control -- the same rule the action #}
+                                {# lists follow, applied to the one predicate the row already #}
+                                {# renders in the Next due column. #}
+                                {% if schedule.Owned and schedule.Registered %}
+                                {# Keeps method and action so the native POST is the no-JS path; #}
+                                {# @submit.prevent takes over when Alpine is present, because a #}
+                                {# navigation here would return a byte-identical row, turn an #}
+                                {# ordinary refusal into a full-page error, and tear down the #}
+                                {# jobs panel's EventSource before it could announce the run. #}
+                                {# Interpolating both values into x-data is safe only because #}
+                                {# each has an enforced grammar with no apostrophe: see #}
+                                {# validPluginName and validScheduleID. #}
+                                <form method="POST" action="/v1/plugin/schedule/run"
+                                      x-data="pluginScheduleRun('{{ plugin.Name }}', '{{ schedule.ScheduleID }}')"
+                                      @submit.prevent="run">
+                                    <input type="hidden" name="name" value="{{ plugin.Name }}">
+                                    <input type="hidden" name="scheduleId" value="{{ schedule.ScheduleID }}">
+                                    {# aria-label rather than an sr-only span: this table sits #}
+                                    {# inside overflow-x-auto, which an absolutely positioned #}
+                                    {# .sr-only escapes and then widens the document. #}
+                                    {# The visible text leads the accessible name, so "Run now" #}
+                                    {# stays a contiguous substring of it — WCAG 2.5.3. #}
+                                    <button type="submit"
+                                            class="inline-flex justify-center py-1 px-3 border border-stone-300 shadow-sm text-xs font-medium font-mono rounded-md text-stone-700 bg-white hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-600 disabled:opacity-50"
+                                            aria-label="Run now: {{ schedule.ScheduleID }}"
+                                            :disabled="busy"
+                                            data-testid="plugin-schedule-run-{{ plugin.Name }}-{{ schedule.ScheduleID }}">
+                                        Run now
+                                    </button>
+                                    {# Both regions stay in the tree and only their text changes. #}
+                                    {# A role="status" that is display:none until it has something #}
+                                    {# to say is not reliably announced — the same Finding 4 the #}
+                                    {# settings form above records. #}
+                                    <span role="status"
+                                          class="block text-amber-700 text-xs mt-1"
+                                          data-testid="plugin-schedule-run-status-{{ plugin.Name }}-{{ schedule.ScheduleID }}"
+                                          x-text="started ? 'Started. Reload for the outcome.' : ''"></span>
+                                    <span role="alert"
+                                          class="block text-red-700 text-xs mt-1"
+                                          data-testid="plugin-schedule-run-error-{{ plugin.Name }}-{{ schedule.ScheduleID }}"
+                                          x-text="error"></span>
+                                </form>
+                                {% else %}
+                                <span class="text-stone-500 italic">&mdash;</span>
                                 {% endif %}
                             </td>
                         </tr>

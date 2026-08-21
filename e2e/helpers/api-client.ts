@@ -912,6 +912,26 @@ export class ApiClient {
     });
   }
 
+  /**
+   * A plugin's stored schedules. `runs`, `lastStatus` and `nextDueAt` are what a
+   * run-now spec asserts on: the first two say a run happened, and the third
+   * says the manual run did not re-phase the cadence.
+   */
+  async getPluginSchedules(name: string): Promise<any[]> {
+    const response = await this.withRetry(() =>
+      this.request.get(`${this.baseUrl}/v1/plugin/schedules?name=${encodeURIComponent(name)}`)
+    );
+    return response.json();
+  }
+
+  async runPluginScheduleNow(name: string, scheduleId: string): Promise<any> {
+    const response = await this.request.post(`${this.baseUrl}/v1/plugin/schedule/run`, {
+      form: { name, scheduleId },
+      headers: { Accept: 'application/json' },
+    });
+    return response;
+  }
+
   async savePluginSettings(name: string, values: Record<string, any>): Promise<any> {
     const response = await this.withRetry(() =>
       this.request.post(`${this.baseUrl}/v1/plugin/settings?name=${encodeURIComponent(name)}`, {

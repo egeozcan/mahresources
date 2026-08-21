@@ -2831,6 +2831,20 @@ func registerPluginRoutes(r *openapi.Registry) {
 
 	r.Register(openapi.RouteInfo{
 		Method:      http.MethodPost,
+		Path:        "/v1/plugin/schedule/run",
+		OperationID: "runPluginScheduleNow",
+		Summary:     "Run a plugin schedule now",
+		Description: "Starts one schedule outside its own cadence, and returns as soon as the run has started rather than when it has finished -- a handler may run for the full async job allowance, and progress is reported through the same job events every other plugin job uses. The run executes as the operator who enabled the plugin, exactly as a scheduled run does, and `nextDueAt` is not moved: this is an extra run, not a re-phasing of the cadence. Refused with 404 when no such schedule is stored, and with 409 when the plugin no longer declares it, when the row has no owner and has therefore stopped, or when a run is already in flight -- the last being `overlap = \"skip\"` doing what it promises.",
+		Tags:        []string{"plugins"},
+		ExtraQueryParams: []openapi.QueryParam{
+			{Name: "name", Type: "string", Required: true, Description: "Plugin name"},
+			{Name: "scheduleId", Type: "string", Required: true, Description: "The schedule's own id, as the plugin declared it"},
+		},
+		ResponseContentTypes: []openapi.ContentType{openapi.ContentTypeJSON},
+	})
+
+	r.Register(openapi.RouteInfo{
+		Method:      http.MethodPost,
 		Path:        "/v1/plugin/purge-data",
 		OperationID: "purgePluginData",
 		Summary:     "Purge all data for a plugin",

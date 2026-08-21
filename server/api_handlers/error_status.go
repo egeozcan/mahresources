@@ -43,6 +43,23 @@ func statusCodeForError(err error, fallback int) int {
 		return http.StatusForbidden
 	}
 
+	// A manual schedule run that was refused. Typed for the same reason the two
+	// above are: "no such plugin schedule" contains no "not found", and "already
+	// running" matches nothing in the scan below, so both would fall through to
+	// 500 — an outage's status for an answer that is simply no.
+	//
+	// The last three are 409 rather than 400: the request is well formed and the
+	// operator asked for something reasonable, and what refuses is the state of
+	// the row. That is the status ErrLastAdmin already uses for the same shape.
+	if errors.Is(err, application_context.ErrScheduleNotFound) {
+		return http.StatusNotFound
+	}
+	if errors.Is(err, application_context.ErrScheduleNotDeclared) ||
+		errors.Is(err, application_context.ErrScheduleUnowned) ||
+		errors.Is(err, application_context.ErrScheduleBusy) {
+		return http.StatusConflict
+	}
+
 	// A plugin veto from a before-hook. The status used to come from the scan
 	// below, over the message "plugin aborted: <the plugin author's own
 	// words>" — so a reason phrased "this cannot be deleted" produced 400 and

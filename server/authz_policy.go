@@ -147,7 +147,7 @@ func isSystemPath(path string) bool {
 	// registry. The cost of matching exactly is that a new management endpoint must
 	// be added here by hand, which /v1/plugin/schedules was not — see
 	// TestPluginManagementEndpoints_AreAdminOnly.
-	case "/v1/plugin/enable", "/v1/plugin/disable", "/v1/plugin/scopedAccess", "/v1/plugin/settings", "/v1/plugin/purge-data", "/v1/plugin/schedules", "/v1/plugins/manage":
+	case "/v1/plugin/enable", "/v1/plugin/disable", "/v1/plugin/scopedAccess", "/v1/plugin/settings", "/v1/plugin/purge-data", "/v1/plugin/schedules", "/v1/plugin/schedule/run", "/v1/plugins/manage":
 		return true
 	}
 	switch {

@@ -25,3 +25,6 @@ user-facing and are excluded from the documented contract.
 
   # Regenerate docs-site pages
   mr docs dump --format markdown --output docs-site/docs/cli/
+
+  # mr-doctest: the JSON dump carries a non-empty command tree
+  mr docs dump --format json | jq -e '.commands | length > 0' > /dev/null

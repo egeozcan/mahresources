@@ -39,3 +39,9 @@ a silent pass, since zero examples look exactly like success.
 
   # Run the agent skill's markdown examples instead of the command tree's
   mr docs check-examples --files skills/mahresources-mrql/SKILL.md --environment=ephemeral
+
+  # mr-doctest: --files runs a scratch markdown file's block instead of the command tree
+  TMP=$(mktemp -d)
+  printf '```bash\nmr admin settings list --json | jq -e "length > 0" > /dev/null\n```\n' > "$TMP/probe.md"
+  mr docs check-examples --files "$TMP/probe.md"
+  rm -rf "$TMP"

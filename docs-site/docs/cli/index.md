@@ -118,6 +118,7 @@ sidebar_label: CLI
 | `mr plugin disable` | Disable a plugin | [Details](./plugin/disable.md) |
 | `mr plugin enable` | Enable a plugin | [Details](./plugin/enable.md) |
 | `mr plugin purge-data` | Purge all data for a plugin | [Details](./plugin/purge-data.md) |
+| `mr plugin schedule-run` | Run one of a plugin's schedules immediately | [Details](./plugin/schedule-run.md) |
 | `mr plugin schedules` | List a plugin's recurring schedules | [Details](./plugin/schedules.md) |
 | `mr plugin scoped-access` | Open or close a plugin to group-limited accounts | [Details](./plugin/scoped-access.md) |
 | `mr plugin settings` | Update plugin settings (pass JSON via --data) | [Details](./plugin/settings.md) |

@@ -15,3 +15,6 @@ Reset image_hashes rows that were marked failed (undecodable file at hash time) 
 
   # Print the raw JSON result
   mr admin similarity retry-failed --json
+
+  # mr-doctest: retrying failed hashes reports a non-negative reset count
+  mr admin similarity retry-failed --json | jq -e '.reset >= 0' > /dev/null

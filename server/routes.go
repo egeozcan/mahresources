@@ -869,6 +869,7 @@ func registerRoutes(router *mux.Router, appContext *application_context.Mahresou
 	router.Methods(http.MethodPost).Path("/v1/plugin/enable").HandlerFunc(scopedAPI(appContext, api_handlers.GetPluginEnableHandler))
 	router.Methods(http.MethodPost).Path("/v1/plugin/scopedAccess").HandlerFunc(api_handlers.GetPluginScopedAccessHandler(appContext))
 	router.Methods(http.MethodGet).Path("/v1/plugin/schedules").HandlerFunc(api_handlers.GetPluginSchedulesHandler(appContext))
+	router.Methods(http.MethodPost).Path("/v1/plugin/schedule/run").HandlerFunc(api_handlers.GetPluginScheduleRunHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/plugin/disable").HandlerFunc(api_handlers.GetPluginDisableHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/plugin/settings").HandlerFunc(api_handlers.GetPluginSettingsHandler(appContext))
 	router.Methods(http.MethodPost).Path("/v1/plugin/purge-data").HandlerFunc(api_handlers.GetPluginPurgeDataHandler(appContext))

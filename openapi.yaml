@@ -5266,6 +5266,31 @@ paths:
             summary: Purge all data for a plugin
             tags:
                 - plugins
+    /v1/plugin/schedule/run:
+        post:
+            description: 'Starts one schedule outside its own cadence, and returns as soon as the run has started rather than when it has finished -- a handler may run for the full async job allowance, and progress is reported through the same job events every other plugin job uses. The run executes as the operator who enabled the plugin, exactly as a scheduled run does, and `nextDueAt` is not moved: this is an extra run, not a re-phasing of the cadence. Refused with 404 when no such schedule is stored, and with 409 when the plugin no longer declares it, when the row has no owner and has therefore stopped, or when a run is already in flight -- the last being `overlap = "skip"` doing what it promises.'
+            operationId: runPluginScheduleNow
+            parameters:
+                - description: Plugin name
+                  in: query
+                  name: name
+                  required: true
+                  schema:
+                    type: string
+                - description: The schedule's own id, as the plugin declared it
+                  in: query
+                  name: scheduleId
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json: {}
+                    description: Successful response
+            summary: Run a plugin schedule now
+            tags:
+                - plugins
     /v1/plugin/schedules:
         get:
             description: The stored schedules for one plugin, as recorded when it was enabled. `registered` is false when the row exists but the plugin no longer declares that id -- a disabled plugin, a renamed schedule, or a removed mah.schedule call all look like this, and none of them run. `owned` is false when the operator who enabled the plugin has since been deleted, at which point the schedule has stopped rather than merely lost its attribution.

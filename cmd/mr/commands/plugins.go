@@ -31,6 +31,7 @@ func NewPluginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	pluginCmd.AddCommand(newPluginDisableCmd(c, opts))
 	pluginCmd.AddCommand(newPluginScopedAccessCmd(c, opts))
 	pluginCmd.AddCommand(newPluginSchedulesCmd(c, opts))
+	pluginCmd.AddCommand(newPluginScheduleRunCmd(c, opts))
 	pluginCmd.AddCommand(newPluginSettingsCmd(c, opts))
 	pluginCmd.AddCommand(newPluginPurgeDataCmd(c, opts))
 
@@ -200,6 +201,46 @@ func newPluginSchedulesCmd(c *client.Client, opts *output.Options) *cobra.Comman
 				})
 			}
 			output.Print(*opts, []string{"ID", "EVERY", "OVERLAP", "STATE", "NEXT DUE", "RUNS", "LAST"}, rows, raw)
+			return nil
+		},
+	}
+}
+
+func newPluginScheduleRunCmd(c *client.Client, opts *output.Options) *cobra.Command {
+	help := helptext.Load(pluginsHelpFS, "plugins_help/plugin_schedule_run.md")
+
+	// Both inputs are positionals rather than flags. The sibling scoped-access
+	// command makes --allowed a required flag, but that doctrine is about a flag
+	// whose *default value is itself a decision* — a bare invocation there would
+	// read as a silent revocation. Neither the plugin name nor the schedule id
+	// has a meaningful default, so a flag would be a redundant second way to say
+	// a required thing, and it would lose the positional-args rendering in the
+	// generated docs page.
+	return &cobra.Command{
+		Use:         "schedule-run <name> <schedule-id>",
+		Short:       "Run one of a plugin's schedules immediately",
+		Long:        help.Long,
+		Example:     help.Example,
+		Annotations: help.Annotations,
+		Args:        cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			formData := url.Values{}
+			formData.Set("name", args[0])
+			formData.Set("scheduleId", args[1])
+
+			var raw json.RawMessage
+			if err := c.PostForm("/v1/plugin/schedule/run", nil, formData, &raw); err != nil {
+				return err
+			}
+
+			if opts.JSON {
+				output.PrintSingle(*opts, nil, raw)
+			} else {
+				// "Started", not "ran": the server answers once the run has begun,
+				// because a handler may take the full async job allowance and the
+				// request is not held open for it.
+				output.PrintMessage("Schedule started. Watch the jobs panel, or re-read `mr plugin schedules` for the recorded outcome.")
+			}
 			return nil
 		},
 	}

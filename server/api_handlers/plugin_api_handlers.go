@@ -9,6 +9,7 @@ import (
 	"mahresources/plugin_system"
 	"mahresources/server/http_utils"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/gorilla/mux"
@@ -230,6 +231,64 @@ func GetPluginSchedulesHandler(ctx PluginAPIContext) func(http.ResponseWriter, *
 
 		w.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(w).Encode(out)
+	}
+}
+
+// GetPluginScheduleRunHandler starts one schedule outside its own cadence.
+//
+// Admin-only, because the path is named in isSystemPath — the same list that
+// GET /v1/plugin/schedules was missing from, which made every stored schedule
+// readable by any authenticated principal. A POST that runs plugin code is the
+// version of that omission worth being careful about, so
+// TestPluginSchedulesForbiddenToNonAdmins covers this path beside the read.
+//
+// It answers as soon as the run has *started*, not when it has finished. A
+// schedule handler may run for the full MaxAsyncJobDuration, and holding a
+// request open for that would be its own defect; what the operator needs back is
+// whether it started, and from there the run reports itself through the same
+// action_* job events every other plugin job uses.
+//
+// The refusals are the interesting part and each is a distinct answer: no such
+// row (404), the plugin no longer declares it (409), the row has no owner so the
+// schedule has stopped (409), and someone already holds the claim (409). That
+// last one is not a failure — it is overlap = "skip" doing what it promises, and
+// the message says so.
+func GetPluginScheduleRunHandler(ctx PluginAPIContext) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimSpace(r.FormValue("name"))
+		if name == "" {
+			http_utils.HandleError(fmt.Errorf("missing plugin name"), w, r, http.StatusBadRequest)
+			return
+		}
+		scheduleID := strings.TrimSpace(r.FormValue("scheduleId"))
+		if scheduleID == "" {
+			http_utils.HandleError(fmt.Errorf("missing schedule id"), w, r, http.StatusBadRequest)
+			return
+		}
+
+		if err := ctx.RunPluginScheduleNow(name, scheduleID); err != nil {
+			http_utils.HandleError(err, w, r, statusCodeForError(err, http.StatusInternalServerError))
+			return
+		}
+
+		// The run is asynchronous, so the page it redirects back to cannot show
+		// the outcome yet — the row still reads "never run" for as long as the
+		// handler takes. Carrying what was started lets the page say so in a live
+		// region, which is the only confirmation an operator gets on this page;
+		// the run itself then reports through the jobs panel like every other
+		// plugin job. Escaped on render, and only ever echoed back.
+		started := "/plugins/manage?started=" + url.QueryEscape(name+"/"+scheduleID)
+		if http_utils.RedirectIfHTMLAccepted(w, r, started) {
+			return
+		}
+
+		w.Header().Set("Content-Type", constants.JSON)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":         true,
+			"name":       name,
+			"scheduleId": scheduleID,
+			"started":    true,
+		})
 	}
 }
 

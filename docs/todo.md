@@ -1,3 +1,174 @@
+# Run a plugin schedule now, and five docs-lint examples (2026-08-21)
+
+Items 2.1 and 5.1 from the re-derived open-work audit. 2.1 was picked because
+it was the only item whose case had *changed* since the audit was written: the
+schedule coverage that shipped on the 20th declares `every = "1h"` so that
+nothing fires during a run, which means the browser suite asserted a row existed
+and said, in as many words, "never run, and never going to be within a test
+run". A run-now control is what turns that into a real assertion.
+
+## Done
+
+1. **A schedule can be run outside its cadence.** `POST /v1/plugin/schedule/run`,
+   a "Run now" button on each row of `/plugins/manage`, and
+   `mr plugin schedule-run <name> <schedule-id>`. Before this the only ways to
+   fire a schedule early were editing `next_due_at` in the database or a plugin
+   author re-exposing the handler as an action.
+2. **Five `mr docs lint` warnings closed** (`docs lint`, `docs dump`,
+   `docs check-examples`, `admin similarity recompute`,
+   `admin similarity retry-failed`). 16 warnings to 11. The remaining eleven are
+   the auth, token and user families, which need an auth-enabled doctest server
+   that does not exist — the same prerequisite blocking item 5.4.
+
+## The claim is the whole of it
+
+Everything difficult about 2.1 is that a manual run must not become a second way
+to violate what the scheduler already guarantees.
+
+**The claim variant drops one predicate and keeps two.**
+`ClaimPluginScheduleNow` is `ClaimPluginSchedule` without `next_due_at <= ?`,
+which is the entire difference: "run it now" is a request to ignore the due
+time and nothing else about the row. Both go through one
+`claimPluginSchedule(..., requireDue bool)`, so the two predicates that are
+*safety* rather than intent cannot drift apart. Ownership stays because a manual
+run executes as the operator who enabled the plugin, and falling back to
+whoever clicked would make the button a way to run plugin code as yourself.
+The live-claim check stays because a manual run that ignored it would start a
+second copy beside a tick already running, which is the one thing
+`overlap = "skip"` promises cannot happen.
+
+Reusing `ClaimPluginSchedule` unchanged is the obvious mistake and it is silent:
+the claim only succeeds when the row is already due, which is exactly when the
+ticker would have fired it anyway. The button would report "started" and do
+nothing, for every schedule the control exists for.
+
+**A manual run takes the skip-shaped path for every row, whatever its stored
+overlap.** `CompletePluginScheduleRun` is forbidden because it re-bases the
+cadence — the audit names it. `AdvancePluginScheduleAtDispatch` is forbidden for
+the same reason and the audit does not name it, which makes it the more likely
+mistake: an implementer reads `dispatch`, sees that the `"allow"` branch avoids
+the forbidden call, and copies it. It writes the identical
+`next_due_at = now + every`, and it releases the claim *before* the run, which
+flips `acquireScheduleVM` to its unbounded wait. `dispatchManual` calls neither.
+
+**`holdClaim` is hard-coded true and the wait is `ScheduleDispatchWait`.** Not
+derived from the row's overlap, and not exposed on the exported signature.
+`ScheduleClaimTTL` is `ScheduleDispatchWait + MaxAsyncJobDuration + 2m`, so a
+run-now that waited differently would leave
+`TestScheduleClaimTTLExceedsTheLongestPossibleRun` asserting an inequality about
+a path it does not cover. `wait = 0` is the trap worth naming: in
+`executeAsyncJobWithin` it means *unbounded*, not "do not wait".
+
+**Record, then release.** `RecordPluginScheduleOutcome` carries no claim
+predicate, so releasing first opens a window in which a tick claims the row and
+starts a fresh run before this one's write lands — the row would then describe
+this run while a different one is in flight, with `runs` double-counted. While
+the claim is held nothing else can run the schedule, so the order is the whole
+guarantee.
+
+**"Did not start" is still not "failed".** A full job budget or a VM that stays
+busy for the dispatch wait returns `ran == false` with a nil error; the claim
+goes back and no outcome is recorded. It *is* logged here, unlike on the ticked
+path, and the difference is who is waiting: a tick that gives up is retried
+seconds later by the next tick, whereas here an operator has already been told
+the run started, the job card appears and vanishes, and nothing will retry it.
+
+## The route
+
+`isSystemPath` matches exactly and has no `/v1/plugin/` prefix rule, so the new
+path is listed there by hand. Its own comment records that
+`/v1/plugin/schedules` was omitted once, which made every stored schedule
+readable by any authenticated principal including a guest; a POST that runs
+plugin Lua is the version of that omission worth being careful about, so
+`TestPluginManagementEndpoints_AreAdminOnly` gained the row.
+
+The route is mounted on the bare `appContext`, not through `scopedAPI`. The
+actor is `row.CreatedByUserId`, never the caller, and a request-scoped clone
+would additionally hand a principal-bound `*gorm.DB` to a goroutine that
+outlives the request.
+
+Refusals are sentinels (`ErrScheduleNotFound`, `ErrScheduleNotDeclared`,
+`ErrScheduleUnowned`, `ErrScheduleBusy`) classified by type in
+`statusCodeForError`: 404 for the first, 409 for the rest. By wording they would
+all have fallen to 500, because "no such plugin schedule" contains no "not
+found" and "already running" matches nothing in the substring scan — an
+outage's status for an answer that is simply no.
+
+## The control answers "started", not "succeeded"
+
+`RunSchedule` blocks for the whole run, up to the full async job allowance, so
+the handler claims synchronously and dispatches on a goroutine joined to the
+scheduler's existing WaitGroup — a manual run is drained at shutdown exactly
+like a ticked one. What the API can confirm is dispatch; execution is confirmed
+by a `runs` and `lastStatus` delta on `GET /v1/plugin/schedules`.
+
+The button fetches rather than letting the form navigate, and that is not a
+style preference. A POST-and-redirect here loses three things it does not lose
+on the enable/disable forms beside it: the row comes back byte-identical
+(`runs` and `lastStatus` move only at completion, and `nextDueAt` deliberately
+never), an ordinary refusal replaces the manage page with a full-page error
+document, and the navigation tears down the jobs panel's `EventSource` so the
+"Action started" announcement is never delivered. The form keeps its `method`
+and `action`, so the native POST is still the no-JS path and the server's
+redirect carries a `started` banner instead.
+
+Two accessibility details, both with prior art in this tree. The button is named
+with `aria-label="Run now: <id>"` rather than a `.sr-only` span, because the
+table sits inside `overflow-x-auto` and Tailwind's absolutely-positioned
+`.sr-only` escapes the scroll container and widens the document — measured on
+`/admin/users`. The visible text *leads* the accessible name so "Run now" stays
+a contiguous substring of it (WCAG 2.5.3). And both status regions stay in the
+tree with empty text rather than being conditionally rendered, which is Finding
+4 on this very page: a `role="status"` that is `display:none` until it has
+something to say is not reliably announced.
+
+**Offered only where it would work.** A stopped or undeclared schedule refuses
+with 409, so no button is drawn for one — the same "what is offered follows what
+is allowed" rule the action lists carry, applied to the predicate the row
+already renders.
+
+## Tests, with their mutations
+
+- `ClaimPluginScheduleNow` takes a row that is not due — mutation: pass
+  `requireDue = true`. Fails. The ticked claim refusing the same row is the
+  positive control, so the test cannot pass for the wrong reason.
+- It refuses an unowned row — mutation: drop `created_by_user_id IS NOT NULL`.
+  Fails.
+- It refuses a row someone is already running, and reclaims one whose claim has
+  outlived the TTL.
+- A manual run records its outcome without re-phasing — mutation: use
+  `CompletePluginScheduleRun`. Fails on `next_due_at`.
+- The refusals are typed, and the manual dispatch uses the same bounded wait.
+- Browser: `plugin-schedule-run-now.spec.ts` fires the 1h fixture on demand and
+  asserts `runs`, `lastStatus`, an unchanged `nextDueAt`, and that the control
+  is not offered once the plugin is disabled. This is the coverage the 1h
+  fixture sidestepped.
+- CLI: three specs, plus two doctests — one of which enables the fixture, runs
+  it, polls `runs` and asserts `nextDueAt` is byte-identical.
+
+## Two notes
+
+**`--schedule-id` became a positional.** It was written as a required flag by
+analogy with `scoped-access --allowed`, but that doctrine is about a flag whose
+*default is itself a decision* — a bare `scoped-access my-plugin` would read as
+a silent revocation. Neither of `schedule-run`'s inputs has a meaningful
+default, so both are positionals and the command carries no local flags.
+
+**Doctest labels must be comma-free.** `applyExampleMetadata` splits the label
+on top-level commas and parses the tail as metadata, so free text after a comma
+is silently dropped and a fragment shaped like `expect-exit=0` would change the
+block's expected exit. The one comma in the new labels is a real
+`timeout=60s`.
+
+## Gates
+
+`go build`, `staticcheck` (two pre-existing U1000 hits in
+`plugin_kv_race_harness_test.go`, untouched), the full Go suite,
+`./scripts/css-scan-test.sh`, `mr docs lint` (11 warnings, from 16),
+`mr docs check-examples` (all seven new blocks confirmed PASS by name),
+`openapi.yaml` regenerated, `docs-site/docs/cli/` and `skills/` regenerated,
+browser plugin specs (140 passed), and the CLI doctest project.
+
 # The eight quick wins from the open-work audit (2026-08-20)
 
 The first group of `docs/todo.md`'s re-derived open items. Two of them were not

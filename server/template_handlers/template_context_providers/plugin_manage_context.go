@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/flosch/pongo2/v4"
@@ -133,6 +134,18 @@ func PluginManageContextProvider(appCtx PluginManagePageContext) func(request *h
 	return func(request *http.Request) pongo2.Context {
 		ctx := StaticTemplateCtx(request)
 		ctx["pageTitle"] = "Manage Plugins"
+
+		// What a manual run just started, if the operator arrived here from the
+		// run-now button. The run is asynchronous, so the row below still reads
+		// "never run" at this point and the page would otherwise look as though
+		// the button did nothing. Bounded and echoed through pongo2's escaping;
+		// it is only ever displayed.
+		if started := strings.TrimSpace(request.URL.Query().Get("started")); started != "" {
+			if len(started) > 420 {
+				started = started[:420]
+			}
+			ctx["scheduleStarted"] = started
+		}
 
 		pm := appCtx.PluginManager()
 		if pm == nil {

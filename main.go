@@ -669,6 +669,10 @@ func main() {
 	scheduler := application_context.NewPluginScheduler(context, cfg.PluginScheduleTick)
 	scheduler.Start()
 	defer scheduler.Stop()
+	// Installed on the context so an operator can ask for a run outside the
+	// cadence. The scheduler is built from the context, so this cannot be done at
+	// construction; it is the same shape as the two worker queues above.
+	context.SetPluginScheduler(scheduler)
 
 	// Start share server if configured.
 	//

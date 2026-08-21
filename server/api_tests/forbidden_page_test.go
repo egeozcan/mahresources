@@ -108,6 +108,9 @@ func TestPluginManagementEndpoints_AreAdminOnly(t *testing.T) {
 		{http.MethodPost, "/v1/plugin/settings?name=whatever"},
 		{http.MethodPost, "/v1/plugin/scopedAccess"},
 		{http.MethodPost, "/v1/plugin/purge-data"},
+		// The one that runs plugin code rather than reading about it, which makes
+		// it the worst of these to leave off the list.
+		{http.MethodPost, "/v1/plugin/schedule/run"},
 	}
 
 	for _, role := range []models.Role{models.RoleEditor, models.RoleUser, models.RoleGuest} {

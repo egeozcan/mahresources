@@ -135,6 +135,7 @@ type PluginAPIContext interface {
 	SavePluginSettings(pluginName string, values map[string]any) ([]plugin_system.ValidationError, error)
 	PluginKVPurge(pluginName string) error
 	PluginSchedulesFor(pluginName string) ([]models.PluginSchedule, error)
+	RunPluginScheduleNow(pluginName, scheduleID string) error
 	GetNote(id uint) (*models.Note, error)
 	GetBlock(id uint) (*models.NoteBlock, error)
 }

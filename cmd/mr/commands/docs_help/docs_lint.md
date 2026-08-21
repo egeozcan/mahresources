@@ -21,3 +21,6 @@ block CI.
 
   # Use in CI (non-zero exit fails the build)
   mr docs lint || exit 1
+
+  # mr-doctest: the committed help text passes its own lint
+  mr docs lint

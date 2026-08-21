@@ -427,6 +427,17 @@ type MahresourcesContext struct {
 	icsCache *ICSCache
 	// pluginManager manages Lua plugin loading and hook execution
 	pluginManager *plugin_system.PluginManager
+	// pluginScheduler owns the clock that fires plugin schedules, and is the only
+	// thing that can run one on demand. It is installed by main after the
+	// scheduler is constructed, the way the two worker queues above are, because
+	// the scheduler is built *from* this context and cannot exist before it.
+	//
+	// Process-lifetime state, so a derived context (WithPrincipal, WithTransaction)
+	// carries the same pointer. That is deliberate and is the whole reason a run
+	// started from a request does not inherit that request: the scheduler holds
+	// the singleton handle, so every run — ticked or manual — executes as the
+	// schedule's own owner against an unscoped handle, and never as the caller.
+	pluginScheduler *PluginScheduler
 	// Narrow internal seams used to coordinate scope-integrity concurrency tests
 	// and to record post-commit group-delete effects. Derived contexts share them.
 	scopeLockBarrier      func(operation string, groupID uint)
@@ -994,6 +1005,12 @@ func (ctx *MahresourcesContext) QueueForHashing(resourceID uint) bool {
 // SetThumbnailQueue sets the channel for queueing resources for thumbnail generation.
 func (ctx *MahresourcesContext) SetThumbnailQueue(queue chan<- uint) {
 	ctx.thumbnailQueue = queue
+}
+
+// SetPluginScheduler installs the running scheduler, so an operator can ask for
+// a run outside the schedule's own cadence.
+func (ctx *MahresourcesContext) SetPluginScheduler(scheduler *PluginScheduler) {
+	ctx.pluginScheduler = scheduler
 }
 
 // QueueForThumbnailing queues a resource ID for async thumbnail generation.

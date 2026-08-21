@@ -17,3 +17,6 @@ Progress is visible in the background jobs list and on the admin overview page.
 
   # Start a recompute and print the raw job JSON
   mr admin similarity recompute --json
+
+  # mr-doctest: submitting a recompute returns a job id
+  mr admin similarity recompute --json | jq -e '.jobId | length > 0' > /dev/null

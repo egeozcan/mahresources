@@ -39,6 +39,33 @@ const ScheduleDispatchWait = 10 * time.Second
 // a literal.
 const ScheduleClaimTTL = ScheduleDispatchWait + plugin_system.MaxAsyncJobDuration + 2*time.Minute
 
+// The four ways a manual run is refused.
+//
+// They are sentinels rather than messages because api_handlers classifies by
+// type: TestStatusCodeForError_AuthorizationRefusalsAre403 exists precisely
+// because a status derived from wording changes the day someone rewrites a
+// sentence. Each says something different to an operator, and the difference is
+// what the manage page and the CLI report:
+//
+//   - NotFound:    no such row. The plugin has never declared that id.
+//   - NotDeclared: the row is there, but nothing live answers to it — the plugin
+//     is disabled, or was downgraded, or renamed the id.
+//   - Unowned:     the row has no operator to run as, so it has stopped. This is
+//     the deliberate resolution of "the owner was deleted", and running it as the
+//     admin who clicked would be exactly the fallback the model refuses.
+//   - Busy:        someone already holds the claim. A tick is running it, or
+//     another operator clicked first.
+//
+// Busy is not an error in the sense of something being wrong; it is the correct
+// answer to "run a second copy of this", and overlap = "skip" is the promise it
+// keeps.
+var (
+	ErrScheduleNotFound    = errors.New("no such plugin schedule")
+	ErrScheduleNotDeclared = errors.New("the plugin does not currently declare this schedule")
+	ErrScheduleUnowned     = errors.New("this schedule has stopped because it has no owner")
+	ErrScheduleBusy        = errors.New("this schedule is already running")
+)
+
 // ClaimPluginSchedule takes a due schedule's run slot, and reports whether it
 // got it.
 //
@@ -62,12 +89,50 @@ const ScheduleClaimTTL = ScheduleDispatchWait + plugin_system.MaxAsyncJobDuratio
 //     be running, so it is treated as abandoned rather than wedging the schedule
 //     forever.
 func (ctx *MahresourcesContext) ClaimPluginSchedule(id uint, claimToken string, now time.Time) (bool, error) {
+	return ctx.claimPluginSchedule(id, claimToken, now, true)
+}
+
+// ClaimPluginScheduleNow takes the run slot for a run an operator asked for.
+//
+// The same statement as ClaimPluginSchedule minus the due predicate, because
+// "run it now" is a request to ignore next_due_at and nothing else about the
+// row. It keeps the other two, and each for a reason that a manual run makes
+// sharper rather than weaker:
+//
+//   - owned, because a manual run executes as the operator who enabled the
+//     plugin, exactly as a scheduled one does. Falling back to whoever clicked
+//     the button would turn this control into a way to run plugin code as
+//     yourself on a schedule whose owner never granted that — and an unowned row
+//     is stopped, which is a state an operator can see on the page before
+//     clicking.
+//   - unheld, because a manual run that ignored a live claim would start a
+//     second copy alongside a tick already running, which is the one thing
+//     overlap = "skip" promises cannot happen. The claim is the only thing that
+//     knows: ActionJob is per-process and in-memory.
+//
+// It also does not advance next_due_at, here or when the run finishes. A manual
+// run is an extra run, not a re-phasing of the cadence, so the schedule stays on
+// whatever clock it was already on.
+func (ctx *MahresourcesContext) ClaimPluginScheduleNow(id uint, claimToken string, now time.Time) (bool, error) {
+	return ctx.claimPluginSchedule(id, claimToken, now, false)
+}
+
+// claimPluginSchedule is the compare-and-set both claim paths share.
+//
+// requireDue is a parameter rather than a second copy of the statement because
+// the other two predicates are the safety ones. A claim that stopped checking
+// ownership, or stopped checking for a live claim, would be wrong on both paths
+// — and a rule written twice is a rule that drifts. Only the due check is
+// actually a difference of intent between a tick and an operator.
+func (ctx *MahresourcesContext) claimPluginSchedule(id uint, claimToken string, now time.Time, requireDue bool) (bool, error) {
 	if claimToken == "" {
 		return false, errors.New("a schedule claim needs a token nobody else can produce")
 	}
-	res := ctx.db.Model(&models.PluginSchedule{}).
-		Where("id = ?", id).
-		Where("next_due_at <= ?", now).
+	q := ctx.db.Model(&models.PluginSchedule{}).Where("id = ?", id)
+	if requireDue {
+		q = q.Where("next_due_at <= ?", now)
+	}
+	res := q.
 		Where("created_by_user_id IS NOT NULL").
 		Where("COALESCE(claim_token, '') = '' OR claimed_at IS NULL OR claimed_at < ?",
 			now.Add(-ScheduleClaimTTL)).
@@ -302,4 +367,39 @@ func (ctx *MahresourcesContext) PluginSchedulesFor(pluginName string) ([]models.
 	var rows []models.PluginSchedule
 	err := ctx.db.Where("plugin_name = ?", pluginName).Order("schedule_id asc").Find(&rows).Error
 	return rows, err
+}
+
+// RunPluginScheduleNow starts one schedule outside its own cadence.
+//
+// It is a method on the context rather than a call into the scheduler because
+// the scheduler is not reachable from the HTTP layer: it is built from this
+// context, started in main, and held nowhere else. Routing through here keeps
+// the seam the rest of the tree uses — handlers depend on a contracts interface
+// this context satisfies — instead of threading a second object down beside it.
+//
+// It returns as soon as the run has started; see PluginScheduler.RunNow.
+func (ctx *MahresourcesContext) RunPluginScheduleNow(pluginName, scheduleID string) error {
+	if ctx.pluginScheduler == nil {
+		// Every deployment that loads plugins starts one, so this is the test
+		// harness and the -skip case rather than a state an operator can reach.
+		return fmt.Errorf("%w: the plugin scheduler is not running", ErrScheduleNotDeclared)
+	}
+	return ctx.pluginScheduler.RunNow(pluginName, scheduleID)
+}
+
+// PluginScheduleByKey reads one row by the pairing the two halves meet on.
+//
+// It returns ErrScheduleNotFound rather than gorm.ErrRecordNotFound so the
+// refusal survives the trip up to the HTTP layer as a type, which is how
+// statusCodeForError is required to classify: by type, never by wording.
+func (ctx *MahresourcesContext) PluginScheduleByKey(pluginName, scheduleID string) (*models.PluginSchedule, error) {
+	var row models.PluginSchedule
+	err := ctx.db.Where("plugin_name = ? AND schedule_id = ?", pluginName, scheduleID).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("%w: %s/%s", ErrScheduleNotFound, pluginName, scheduleID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
 }

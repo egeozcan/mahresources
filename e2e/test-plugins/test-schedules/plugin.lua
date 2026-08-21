@@ -5,11 +5,17 @@ plugin = {
 }
 
 function init()
-    -- One hour, deliberately. What this fixture exists to cover is the stored
-    -- row and the table that renders it; a schedule that actually fired during
-    -- a run would put a background job into every other spec's jobs panel, and
-    -- MinScheduleInterval (30s) makes "fires quickly" and "does not disturb
-    -- anything" mutually exclusive anyway. The firing path has Go coverage.
+    -- One hour, deliberately: MinScheduleInterval (30s) makes "fires quickly"
+    -- and "does not disturb anything" mutually exclusive, and a schedule firing
+    -- on its own during a run would put a background job into every other
+    -- spec's jobs panel.
+    --
+    -- It no longer means the firing path is untested from the browser. The
+    -- run-now control fires this schedule on demand, so
+    -- plugin-schedule-run-now.spec.ts asserts an actual run — an outcome
+    -- recorded, `runs` moved, and `nextDueAt` deliberately not moved. A
+    -- not-yet-due row is exactly what that control exists for, so the hour is
+    -- now part of what is under test rather than a way of avoiding it.
     mah.schedule({
         id = "nightly-rollup",
         every = "1h",

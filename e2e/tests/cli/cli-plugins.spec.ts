@@ -118,3 +118,58 @@ test.describe('Plugin schedules', () => {
     cli.runExpectError('plugin', 'schedules');
   });
 });
+
+/**
+ * `mr plugin schedule-run`.
+ *
+ * The describe above can only assert that a row exists, because the fixture's
+ * one-hour interval means nothing fires during a run. This one makes it fire,
+ * which is the whole point of the control, and then checks the two properties a
+ * manual run has to have: it records an outcome, and it does not re-phase the
+ * cadence.
+ */
+test.describe('Plugin schedule run now', () => {
+  const SCHEDULE_PLUGIN = 'test-schedules';
+  const SCHEDULE_ID = 'nightly-rollup';
+
+  const scheduleJSON = (cli: any) => {
+    const out = cli.run('plugin', 'schedules', SCHEDULE_PLUGIN, '--json');
+    const rows = JSON.parse(out.stdout);
+    const row = rows.find((r: any) => r.scheduleId === SCHEDULE_ID);
+    expect(row, `no stored schedule ${SCHEDULE_PLUGIN}/${SCHEDULE_ID}`).toBeTruthy();
+    return row;
+  };
+
+  test('schedule-run fires a schedule that is not due, without moving next due', async ({ cli }) => {
+    cli.run('plugin', 'enable', SCHEDULE_PLUGIN);
+    try {
+      const before = scheduleJSON(cli);
+      expect(before.runs).toBe(0);
+
+      const result = cli.run('plugin', 'schedule-run', SCHEDULE_PLUGIN, SCHEDULE_ID, '--json');
+      expect(JSON.parse(result.stdout).started).toBe(true);
+
+      let after = before;
+      for (let i = 0; i < 40 && after.runs < 1; i++) {
+        await new Promise((r) => setTimeout(r, 250));
+        after = scheduleJSON(cli);
+      }
+
+      expect(after.runs, 'the schedule never ran, so the control did nothing').toBeGreaterThanOrEqual(1);
+      expect(after.lastStatus).toBe('completed');
+      // An extra run is not a re-phasing. This fails if the run path reaches for
+      // CompletePluginScheduleRun or AdvancePluginScheduleAtDispatch.
+      expect(after.nextDueAt, 'a manual run re-phased the cadence').toBe(before.nextDueAt);
+    } finally {
+      cli.run('plugin', 'disable', SCHEDULE_PLUGIN);
+    }
+  });
+
+  test('schedule-run refuses a schedule the server does not have', async ({ cli }) => {
+    cli.runExpectError('plugin', 'schedule-run', 'no-such-plugin', 'no-such-schedule');
+  });
+
+  test('schedule-run needs both the plugin name and the schedule id', async ({ cli }) => {
+    cli.runExpectError('plugin', 'schedule-run', SCHEDULE_PLUGIN);
+  });
+});
