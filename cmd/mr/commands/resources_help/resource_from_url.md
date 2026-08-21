@@ -21,7 +21,12 @@ block then fails on that duplicate however unique its `--name` is. Hence the
 `trap` rather than a trailing `delete`, which `bash -e` would skip.
 
 The trap is armed *before* the create and resolves the resource by its unique
-`--name` at exit time, never from an id the create handed back. Arming it after
+name at exit time, never from an id the create handed back. It looks the name up
+through `--mrql` rather than `--name`: the latter is a LIKE filter, so it matches
+any name *containing* the generated one and returns at most a page of them, and
+deleting `.[0]` of that could remove a different row while leaking its own. MRQL
+`name = "..."` is an equality, which is what "resolves by its unique name"
+requires to be true. Arming it after
 an `ID=$(... | jq ...)` capture would leave the one window that matters: the
 create has committed on the server, the pipeline that reads its id fails, and
 `bash -e` exits with no trap installed. The name is generated before the create
@@ -39,7 +44,7 @@ whether the row is cleaned up.
   # mr-doctest: the server fetches an asset it serves itself, cleanup on every exit path
   N="from-url-test-$$-$RANDOM"
   cleanup() {
-    LEFTOVER=$(mr resources list --name "$N" --json | jq -r '.[0].ID // empty') || LEFTOVER=""
+    LEFTOVER=$(mr resources list --mrql "name = \"$N\"" --json | jq -r '.[0].ID // empty') || LEFTOVER=""
     [ -n "$LEFTOVER" ] && mr resource delete "$LEFTOVER" > /dev/null 2>&1 || true
     return 0
   }

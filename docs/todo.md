@@ -1,3 +1,39 @@
+# Fourth review round: the by-name lookup was not by name (2026-08-21)
+
+No majors for the third round running. One minor, and it falsifies a sentence
+the previous entry wrote.
+
+## "Resolves by its unique name" was not true
+
+The trap resolved the resource with `mr resources list --name "$N"`. That flag
+is a **LIKE filter** (`database_scopes/resource_scope.go` builds it through
+`LikePattern`), so it matches any name *containing* the generated one and
+returns at most a page of them — and the cleanup then deleted `.[0]` of that.
+Two consequences: a concurrent row whose name contains `$N` could be deleted
+instead, and with enough matches the block's own row is not on the page at all.
+Neither is reachable in practice, because the names carry delimited PIDs and
+nothing else in the suite creates resources. But the claim was false, and the
+whole point of the previous round was that cleanup which only works on the happy
+path is not cleanup.
+
+The lookup is now `--mrql "name = \"$N\""`, which is an equality. Verified
+against a live server: the exact name returns exactly the row, a strict
+superstring returns **0**, and a name that matches nothing returns empty
+cleanly. The token and user lookups were already exact (`jq` equality over an
+unpaginated list) and are unchanged.
+
+Also trimmed a trailing blank line `git diff --check` flagged in
+`listResourcesSimple.tpl`.
+
+## Verified
+
+The from-url block, four times against one long-lived server: normal, normal
+again (which is what proves the first run's cleanup freed the content hash), a
+run with a failure injected after the create (**exit 1** — the trap does not
+mask a real failure), and normal once more (which proves that run left nothing
+behind). **Zero resources surviving.** Plus `mr docs lint` 0 warnings,
+`cli-doctest` 3/3, and `git diff --check` clean.
+
 # Third review round: closing the trap window (2026-08-21)
 
 A third independent pass found **no major issues** again. Two minor ones, both

@@ -31,4 +31,3 @@
         {% include "/partials/listEmpty.tpl" with label="resources" createUrl="/resource/new" %}
     {% endfor %}
 {% endblock %}
-
