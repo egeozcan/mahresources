@@ -36,7 +36,7 @@ func checkExamples(root *cobra.Command, serverURL, environment string) error {
 			if !ex.Doctest {
 				continue
 			}
-			if ex.SkipOn != "" && ex.SkipOn == environment {
+			if skipsEnvironment(ex.SkipOn, environment) {
 				fmt.Printf("SKIP  %s: %s (skip-on=%s)\n", c.CommandPath(), ex.Label, ex.SkipOn)
 				continue
 			}
@@ -60,6 +60,24 @@ func checkExamples(root *cobra.Command, serverURL, environment string) error {
 // runDoctest runs one example. cwd is where the block executes; fixtureRoot is
 // where `stdin=<name>` resolves from, which is not always the same directory —
 // markdown examples run in a scratch dir but still read cmd/mr/testdata.
+// skipsEnvironment reports whether an example opts out of the environment being
+// run. skip-on is a `|`-separated list rather than a single value because an
+// example can be wrong for more than one reason at once: the two resource
+// examples below need a real target server AND fail under auth, and with a
+// single value they could only say one of those. A bare value still means what
+// it always did, so every existing label is unaffected.
+func skipsEnvironment(skipOn, environment string) bool {
+	if skipOn == "" || environment == "" {
+		return false
+	}
+	for _, want := range strings.Split(skipOn, "|") {
+		if strings.TrimSpace(want) == environment {
+			return true
+		}
+	}
+	return false
+}
+
 func runDoctest(ex dumpExample, cwd, fixtureRoot string, env []string) error {
 	timeout := 30 * time.Second
 	if ex.TimeoutSec > 0 {

@@ -23,7 +23,7 @@ are not re-entrant. Pause is intended for long URL fetches.
   # Pause every job currently downloading
   mr jobs list --json | jq -r '.jobs[] | select(.status == "downloading") | .id' | xargs -I {} mr job pause {}
 
-  # mr-doctest: submit, pause, verify the reported status
+  # mr-doctest: submit, pause, verify the reported status, skip-on=auth
   JID=$(mr job submit --urls "$MAHRESOURCES_URL/v1/jobs/events" --json | jq -r '.jobs[0].id')
   sleep 0.3
   mr job pause $JID --json | jq -e '.status == "paused"'

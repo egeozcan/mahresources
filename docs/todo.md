@@ -1,3 +1,88 @@
+# Axe best-practice on, and the last four docs-lint warnings (2026-08-21)
+
+Items 5.3 and the remainder of 5.1. Both were sized against figures that no
+longer held, and re-measuring first is what made them a sitting's work rather
+than the two large items the board carried.
+
+## 5.3: the standing figure was 69 violations. It was 38, and 37 were one node.
+
+The handoff note sequenced `best-practice` after the browser CI job went green,
+which it now is, so the gate was open. Measured across the 38 static pages in
+`a11y-config.ts` before touching anything, the whole widening was **two rules**:
+
+- `region`, 37 nodes, one per page that sets a `pageTitle` — and every one of
+  them the *same* node. `partials/title.tpl` renders the breadcrumb, the `h1`
+  and the page actions between `</header>` and the content grid, and an unnamed
+  `<section>` is not a landmark, so all of it sat in no landmark at all.
+- `page-has-heading-one`, 1 node, on `/resources/simple`.
+
+WCAG-only was already at zero and stayed there.
+
+**The `region` fix is a label.** `aria-labelledby` pointing at the `h1`, which
+promotes the section to a `region` landmark named by the page's own title. The
+alternative — moving the title inside `<main>` — is a layout change: the title
+spans the full width above the sidebar grid and `<main>` is one cell of it, and
+the two flex findings recorded in that template are what it would be risking.
+
+**`/resources/simple` was hiding its own `<h1>`.** `.simple :is(..., .title)`
+carried `display: none`, which took the page's only heading with it. The title
+is now hidden *visually* — absolute, 1px, clipped — so the contact sheet looks
+exactly as it did and a screen reader still gets the heading. The handoff note
+framed this as a choice between un-hiding it and adding a visible heading; it is
+neither, and the third option costs the design nothing.
+
+Both at zero, so `best-practice` is now in `WCAG_AA_TAGS`.
+
+## 5.1's remainder: 4 to 0, and the obvious route was the wrong one
+
+The plan of record was to flip the doctest server to auth-on, since the four
+commands left (`auth login`, `token create|list|revoke`) die on the super-user
+guard that auth-off hands every caller. Measured before writing it: **188 of 192
+examples pass under auth-on, and the four that fail are not the four you would
+guess.** Three are `mr job cancel|pause|resume`, which submit a download of a URL
+*on the server itself* — which answers 401 under auth, so the job fails before
+it can be cancelled. Flipping would have cost those three and retired auth-off
+coverage of every other documented example.
+
+**So the tree is walked twice.** `skip-on` becomes a `|`-separated list, which is
+three lines and backward compatible, because an example can be wrong for more
+than one reason at once: the two resource examples need a real target server
+*and* fail under auth, and a single value could only say one of those. The
+auth-off pass is unchanged. The auth pass (`--environment auth`) starts its own
+`-auth` server, logs in as the bootstrapped admin, and skips the five examples
+that cannot hold there. The auth-only doctests carry `skip-on=ephemeral` — which
+is not the warning-laundering the previous entry refused, because they now
+genuinely run, in the other pass.
+
+The new spec asserts the four PASS **by name**, which is the assertion that
+stops a mislabelled `skip-on` from turning the second pass into a slower copy of
+the first.
+
+## The bug this found in its own work, and the guard that now catches it
+
+`git diff` on the regenerated CLI docs is what caught it: `auth/login.md` grew
+two examples it should not have had. **Every line beginning with `#` starts a new
+example.** Two bash comments written inside the login doctest split the block in
+three, leaving the doctest half **empty** — and an empty body is handed to
+`bash -c`, exits 0, and reports `PASS` having run nothing. The spec's
+assert-by-name passed on it.
+
+That is the one defect the harness could not catch about itself, so `mr docs
+lint` now **fails** (not warns) on a doctest with an empty body, naming the
+stray-`#` cause. Verified by mutation: adding one comment line inside a block
+turns the linter red, and removing it turns it green.
+
+## Verified
+
+Static-page re-measurement before and after (38 pages: 38 nodes to 0, WCAG-only
+0 throughout) · a11y suite, 199 passed · full `default` project with
+`best-practice` on, 1642 passed / 5 skipped / 6.6m at `--workers=2` · both
+doctest passes, 3 tests · `mr docs lint` at 0 warnings and 0 failures, plus the
+mutation that turns the new guard red · `auth` + `cli`, 364 passed · full Go
+suite · staticcheck · css-scan · Postgres · `docs-gen`/`skills-gen`, whose only
+remaining diff is the regenerated `check-examples` page documenting the
+`skip-on` list.
+
 # CI runs what the repo already has, and three stale claims (2026-08-21)
 
 Items 5.2, 5.4 and the rest of 5.1 from the re-derived open-work audit, plus the

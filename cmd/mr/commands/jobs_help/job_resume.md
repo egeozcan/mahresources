@@ -23,7 +23,7 @@ effectively restarts the download from the beginning.
   # Resume every paused job in one pass
   mr jobs list --json | jq -r '.jobs[] | select(.status == "paused") | .id' | xargs -I {} mr job resume {}
 
-  # mr-doctest: submit, pause, resume, verify each transition succeeds
+  # mr-doctest: submit, pause, resume, verify each transition succeeds, skip-on=auth
   JID=$(mr job submit --urls "$MAHRESOURCES_URL/v1/jobs/events" --json | jq -r '.jobs[0].id')
   sleep 0.3
   mr job pause $JID --json | jq -e '.status == "paused"'

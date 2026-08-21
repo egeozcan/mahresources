@@ -42,6 +42,20 @@ func newAuthLoginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"",
 			"  # Log in to a specific server and name the token",
 			"  mr --server https://mr.example.com auth login --username alice --password password1 --name laptop",
+			"",
+			// The doctest runs only in the auth pass: an auth-off server answers the
+			// mint step with 400, because it makes every caller a super-user and the
+			// own-token handlers refuse those. It redirects MR_TOKEN_FILE first, since
+			// `auth login` writes to whatever that points at and the rest of the pass
+			// authenticates with the file the harness put there.
+			//
+			// No `#` lines inside the block: the example parser treats every one as a
+			// new label, which silently splits the block and leaves the doctest half
+			// of it empty -- and an empty block exits 0, so it passes without running.
+			"  # mr-doctest: login mints a token and stores it, skip-on=ephemeral",
+			"  export MR_TOKEN_FILE=$(mktemp)",
+			"  mr auth login --username \"$MR_DOCTEST_USERNAME\" --password \"$MR_DOCTEST_PASSWORD\" --name \"doctest-login-$$-$RANDOM\"",
+			"  mr auth whoami --json | jq -e '.isAdmin' > /dev/null",
 		}, "\n"),
 		Annotations: authExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -103,8 +117,8 @@ func newAuthWhoamiCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  # As raw JSON",
 			"  mr auth whoami --json",
 			"",
-			"  # mr-doctest: whoami reports the acting identity - the root admin when auth is off",
-			"  mr auth whoami --json | jq -e '.authEnabled == false and .isAdmin and .superUser' > /dev/null",
+			"  # mr-doctest: whoami reports an administrator in either auth mode",
+			"  mr auth whoami --json | jq -e '.isAdmin and .canWrite and (.username | length > 0)' > /dev/null",
 		}, "\n"),
 		Annotations: authExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -1,5 +1,13 @@
 {% if pageTitle != nil %}
-<section class="title border-b-2 border-light-blue-400 pb-3">
+{# The breadcrumb, the h1 and the page actions sit between </header> and the    #}
+{# content grid, so before this label they were in no landmark at all and axe's #}
+{# `region` rule failed on every page that sets a pageTitle -- 37 of the 38      #}
+{# static pages, and the single largest blocker to turning best-practice on.     #}
+{# Naming the section promotes it to a `region` landmark, so a screen reader     #}
+{# lists it by the page's own title. The alternative, moving this inside <main>, #}
+{# is a layout change: the title spans the full width above the sidebar grid,    #}
+{# and <main> is one cell of it.                                                 #}
+<section class="title border-b-2 border-light-blue-400 pb-3" aria-labelledby="page-title">
     {% if breadcrumb && breadcrumb.HomeUrl %}
         {% include "/partials/breadcrumb.tpl" with HomeName=breadcrumb.HomeName HomeUrl=breadcrumb.HomeUrl Entries=breadcrumb.Entries %}
     {% endif %}
@@ -17,7 +25,7 @@
         {# the whole row; sm:basis-0 restores flex-1's basis at desktop.           #}
         {# 141 is downstream of this: the inline-edit input is width:100% of its   #}
         {# host, and the host can be no wider than this heading.                   #}
-        <h1 class="flex flex-col items-start gap-1 flex-1 min-w-0 basis-full sm:basis-0 text-2xl font-bold leading-7 text-stone-900 sm:text-3xl">
+        <h1 id="page-title" class="flex flex-col items-start gap-1 flex-1 min-w-0 basis-full sm:basis-0 text-2xl font-bold leading-7 text-stone-900 sm:text-3xl">
             {% if prefix %}<small class="break-words px-2 text-xs leading-5 font-semibold font-mono rounded-full bg-amber-100 text-amber-700">{{ prefix }}</small>{% endif %}
             {% if mainEntityType && mainEntity %}
                 {# Finding 64/59: an entity whose Name is empty — a relation, because #}

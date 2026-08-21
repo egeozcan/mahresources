@@ -8,7 +8,9 @@ relatedCmds: docs lint, docs dump
 Walks the command tree, extracts every example tagged `# mr-doctest:`, and
 evaluates each block against the connected server. Per-example metadata on the
 label line controls behavior: `expect-exit=N`, `tolerate=/regex/`,
-`skip-on=ephemeral`, `timeout=Ns`, and `stdin=<fixture>`.
+`skip-on=<env>`, `timeout=Ns`, and `stdin=<fixture>`. `skip-on` takes one
+environment or a `|`-separated list of them (`skip-on=ephemeral|auth`), so an
+example that cannot run in more than one environment can say so.
 
 The runner pipes each block through `bash -e -o pipefail -c`, with cwd set to
 `cmd/mr/` so examples can reference `./testdata/*` fixtures. Requires

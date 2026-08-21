@@ -13,8 +13,16 @@ import type { Result, NodeResult } from 'axe-core';
  * the viewport bottom and painted it over the field. Fixing that cleared it, so the
  * widened set is at zero.
  *
- * `best-practice` is deliberately still out. It is a larger, separate piece of work
- * (see docs/deferred-work.md item 4).
+ * `best-practice` was added on 2026-08-21, after the browser CI job went green --
+ * the sequencing the handoff note asked for. The standing figure for it was 69
+ * violations, which was stale by an order of magnitude: re-measured across the 38
+ * static pages here, the whole widening was two rules and 38 nodes. `region` was 37
+ * of them, one per page that sets a pageTitle, all the same node -- the breadcrumb,
+ * h1 and page actions sit between </header> and the content grid, so they were in no
+ * landmark at all. Naming that section (partials/title.tpl) cleared all 37. The last
+ * one was `page-has-heading-one` on /resources/simple, whose contact-sheet CSS hid
+ * the page's only <h1> with `display: none`; it is now hidden visually instead, so
+ * the design is unchanged and the heading survives. Both are at zero.
  */
 export const WCAG_AA_TAGS = [
   'wcag2a',
@@ -23,6 +31,7 @@ export const WCAG_AA_TAGS = [
   'wcag21aa',
   'wcag22a',
   'wcag22aa',
+  'best-practice',
 ];
 
 /**

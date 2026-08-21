@@ -106,9 +106,18 @@ func lintCommand(c *cobra.Command) (failures, warnings []string) {
 		}
 		hasDoctest := false
 		for _, ex := range exs {
-			if ex.Doctest {
-				hasDoctest = true
-				break
+			if !ex.Doctest {
+				continue
+			}
+			hasDoctest = true
+			// A doctest with no commands is the one defect this whole harness
+			// cannot catch on its own: the runner hands the body to `bash -c`,
+			// an empty body exits 0, and it reports PASS having executed
+			// nothing. It is easy to produce by accident, because every line
+			// beginning with `#` starts a NEW example -- so one bash comment
+			// inside a block splits it and leaves the doctest half empty.
+			if strings.TrimSpace(ex.Command) == "" {
+				failures = append(failures, fmt.Sprintf("%s: doctest %q has an empty body (a stray '#' line splits a block; an empty block passes without running)", path, ex.Label))
 			}
 		}
 		if !hasDoctest {

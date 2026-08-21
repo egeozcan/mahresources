@@ -24,7 +24,7 @@ cancelled.
   # Pipe through jq to cancel every active job
   mr jobs list --json | jq -r '.jobs[] | select(.status == "downloading" or .status == "pending") | .id' | xargs -I {} mr job cancel {}
 
-  # mr-doctest: submit a long-running job against the live server, cancel it, assert status flips
+  # mr-doctest: submit a long-running job against the live server, cancel it, assert status flips, skip-on=auth
   JID=$(mr job submit --urls "$MAHRESOURCES_URL/v1/jobs/events" --json | jq -r '.jobs[0].id')
   sleep 0.3
   mr job cancel $JID --json | jq -e '.status == "cancelled"'

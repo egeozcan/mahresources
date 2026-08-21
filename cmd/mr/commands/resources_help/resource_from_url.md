@@ -20,5 +20,5 @@ creation.
   # With metadata and groups
   mr resource from-url --url https://example.com/doc.pdf --name "Paper" --meta '{"source":"arxiv"}' --groups 5
 
-  # mr-doctest: ephemeral server has no outbound access, skip-on=ephemeral
+  # mr-doctest: ephemeral server has no outbound access, skip-on=ephemeral|auth
   mr resource from-url --url https://example.com/tiny.jpg --name "from-url-test"
