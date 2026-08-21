@@ -188,7 +188,7 @@ func GetResourceUploadHandler(ctx contracts.ResourceCreator, maxUploadSize func(
 		}
 
 		if remoteCreator.URL != "" {
-			res, err := effectiveCtx.AddRemoteResource(&remoteCreator)
+			res, err := effectiveCtx.AddRemoteResource(request.Context(), &remoteCreator)
 
 			if err != nil {
 				http_utils.HandleFormError(writer, request, "/resource/new", err, request.PostForm)
@@ -438,7 +438,7 @@ func GetResourceAddRemoteHandler(ctx contracts.ResourceCreator) func(writer http
 			}
 		}
 
-		res, err := effectiveCtx.AddRemoteResource(&creator)
+		res, err := effectiveCtx.AddRemoteResource(request.Context(), &creator)
 
 		if err != nil {
 			http_utils.HandleFormError(writer, request, "/resource/new", err, request.PostForm)

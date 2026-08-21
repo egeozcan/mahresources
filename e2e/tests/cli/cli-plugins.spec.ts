@@ -94,3 +94,27 @@ test.describe('Plugin commands without name argument fail', () => {
     cli.runExpectError('plugin', 'purge-data');
   });
 });
+
+/**
+ * `mr plugin schedules` had no CLI coverage at all. The fixture plugin declares
+ * a one-hour schedule, so the row exists as soon as the plugin is enabled and
+ * never fires during the run.
+ */
+test.describe('Plugin schedules', () => {
+  const SCHEDULE_PLUGIN = 'test-schedules';
+
+  test('plugin schedules lists a declared schedule', async ({ cli }) => {
+    cli.run('plugin', 'enable', SCHEDULE_PLUGIN);
+    try {
+      const result = cli.run('plugin', 'schedules', SCHEDULE_PLUGIN);
+      expect(result.stdout).toContain('nightly-rollup');
+      expect(result.stdout).toContain('1h');
+    } finally {
+      cli.run('plugin', 'disable', SCHEDULE_PLUGIN);
+    }
+  });
+
+  test('plugin schedules without name fails', async ({ cli }) => {
+    cli.runExpectError('plugin', 'schedules');
+  });
+});

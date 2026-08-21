@@ -246,16 +246,39 @@ func (ctx *MahresourcesContext) AddRelationType(query *query_models.Relationship
 				ToCategoryId:   &query.FromCategory,
 			}
 
-			if err := tx.Where(&backRelationType).First(&backRelationType).Error; err == nil {
-				if backRelationType.BackRelationId != nil {
+			// Adopting an existing reverse type is deliberate: it is how a pair
+			// created separately gets linked, and inserting a duplicate instead
+			// would be worse. But only "not found" may fall through to the insert.
+			// Treating every error as "not found" turned a transient read failure
+			// into a second, unlinked reverse type — and left the caller with no
+			// sign that the lookup had failed at all.
+			lookupErr := tx.Where(&backRelationType).First(&backRelationType).Error
+			switch {
+			case lookupErr == nil:
+				// Claim the existing row conditionally rather than Save()-ing over
+				// it. The read below and the write after it are two statements, so
+				// two concurrent creates both saw back_relation_id NULL and both
+				// wrote: the second silently won, leaving the first's forward type
+				// pointing at a reverse type that points at somebody else. Making
+				// the claim the predicate is the shape ClaimDownloadHistoryRetry
+				// already uses, and RowsAffected is the answer.
+				claim := tx.Model(&models.GroupRelationType{}).
+					Where("id = ? AND back_relation_id IS NULL", backRelationType.ID).
+					Update("back_relation_id", relationType.ID)
+				if claim.Error != nil {
+					return claim.Error
+				}
+				if claim.RowsAffected == 0 {
 					return errors.New("back relation is already associated with something else")
 				}
-			}
-
-			backRelationType.BackRelationId = &relationType.ID
-
-			if err := tx.Save(&backRelationType).Error; err != nil {
-				return err
+				backRelationType.BackRelationId = &relationType.ID
+			case errors.Is(lookupErr, gorm.ErrRecordNotFound):
+				backRelationType.BackRelationId = &relationType.ID
+				if err := tx.Save(&backRelationType).Error; err != nil {
+					return err
+				}
+			default:
+				return lookupErr
 			}
 
 			relationType.BackRelationId = &backRelationType.ID

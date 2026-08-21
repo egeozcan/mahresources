@@ -44,7 +44,7 @@ type EntityQuerier interface {
 	// Resource file data — returns base64 content and MIME type
 	GetResourceFileData(id uint) (string, string, error)
 	// Resource creation
-	CreateResourceFromURL(url string, options map[string]any) (map[string]any, error)
+	CreateResourceFromURL(reqCtx context.Context, url string, options map[string]any) (map[string]any, error)
 	CreateResourceFromData(base64Data string, options map[string]any) (map[string]any, error)
 	// Resource versioning
 	AddResourceVersionFromURL(resourceID uint, url string, comment string) (map[string]any, error)
@@ -788,7 +788,11 @@ func (pm *PluginManager) registerDbModule(L *lua.LState, mahMod *lua.LTable, gra
 			checkEntityIDOpts(L, 2, optTbl)
 			opts = luaTableToGoMap(optTbl)
 		}
-		result, err := db.CreateResourceFromURL(url, opts)
+		// The invocation's context, so the fetch is bounded by whatever budget
+		// the caller already has. This is the last mah.db call that could hold
+		// the plugin's VM lock for the host's full remote timeout; mah.http's
+		// sync path was capped the same way (effectiveSyncTimeout).
+		result, err := db.CreateResourceFromURL(pm.luaContext(L), url, opts)
 		InvalidateMRQLCache(pm.luaContext(L))
 		if err != nil {
 			logEgressRefusal(err, pm.pluginNameFor(L), "GET", url)

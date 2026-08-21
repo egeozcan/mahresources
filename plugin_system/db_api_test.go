@@ -122,7 +122,7 @@ func (m *mockQuerier) GetResourceFileData(id uint) (string, string, error) {
 	return "", "", fmt.Errorf("not found")
 }
 
-func (m *mockQuerier) CreateResourceFromURL(url string, options map[string]any) (map[string]any, error) {
+func (m *mockQuerier) CreateResourceFromURL(_ context.Context, url string, options map[string]any) (map[string]any, error) {
 	name := "downloaded.jpg"
 	if n, ok := options["name"].(string); ok {
 		name = n

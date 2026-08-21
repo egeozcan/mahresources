@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -84,7 +85,7 @@ func TestAddRemoteResource_RefusesAPrivateAddress(t *testing.T) {
 	ctx := newHostFetchContext(t)
 	srv := internalService(t)
 
-	_, err := ctx.AddRemoteResource(&query_models.ResourceFromRemoteCreator{URL: srv.URL})
+	_, err := ctx.AddRemoteResource(context.Background(), &query_models.ResourceFromRemoteCreator{URL: srv.URL})
 	if err == nil {
 		t.Fatal("fetched from a private address with no -allow-private-fetch entry permitting it")
 	}
@@ -95,7 +96,7 @@ func TestAddRemoteResource_ReachesAPrivateAddressTheOperatorNamed(t *testing.T) 
 	ctx := newHostFetchContext(t, "127.0.0.1", "::1")
 	srv := internalService(t)
 
-	resource, err := ctx.AddRemoteResource(&query_models.ResourceFromRemoteCreator{URL: srv.URL})
+	resource, err := ctx.AddRemoteResource(context.Background(), &query_models.ResourceFromRemoteCreator{URL: srv.URL})
 	if err != nil {
 		t.Fatalf("a named private address must stay reachable, or the opt-in is not one: %v", err)
 	}
@@ -283,7 +284,7 @@ func TestHostFetch_RefusalIsLoggedWithTheResolvedAddress(t *testing.T) {
 		{
 			name: "add resource from URL",
 			run: func(t *testing.T, ctx *MahresourcesContext, url string) {
-				_, _ = ctx.AddRemoteResource(&query_models.ResourceFromRemoteCreator{URL: url})
+				_, _ = ctx.AddRemoteResource(context.Background(), &query_models.ResourceFromRemoteCreator{URL: url})
 			},
 		},
 		{

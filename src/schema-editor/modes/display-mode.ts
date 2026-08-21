@@ -10,6 +10,7 @@ import {
   titleCase,
 } from '../schema-core';
 import { detectShape, getBuiltinRenderer } from '../display-renderers';
+import { PluginNodeCache } from '../../utils/pluginNodeCache';
 
 interface DisplayField {
   path: string;
@@ -169,6 +170,9 @@ export class SchemaDisplayMode extends LitElement {
   @state() private _pluginHtml: Record<string, string> = {};
   @state() private _pluginErrors: Record<string, boolean> = {};
   private _pluginFetchVersions: Record<string, number> = {};
+  // Built wrappers, keyed by field path, held so a re-render reuses the node
+  // rather than replacing it. See PluginNodeCache.
+  private _pluginNodes = new PluginNodeCache();
 
   private _metaUpdateHandler = (e: Event) => {
     const meta = (e as CustomEvent).detail?.meta;
@@ -178,6 +182,7 @@ export class SchemaDisplayMode extends LitElement {
       // in-flight responses from before the update are discarded.
       this._pluginHtml = {};
       this._pluginErrors = {};
+      this._pluginNodes.clear();
       for (const key in this._pluginFetchVersions) {
         this._pluginFetchVersions[key]++;
       }
@@ -456,10 +461,9 @@ export class SchemaDisplayMode extends LitElement {
   private _renderPluginDisplay(field: DisplayField): TemplateResult {
     const key = field.path;
 
-    if (this._pluginHtml[key] !== undefined) {
-      const wrapper = document.createElement('div');
-      wrapper.innerHTML = this._pluginHtml[key];
-      return html`${wrapper}`;
+    const rendered = this._pluginHtml[key];
+    if (rendered !== undefined) {
+      return html`${this._pluginNodes.nodeFor(key, rendered)}`;
     }
 
     if (this._pluginErrors[key]) {

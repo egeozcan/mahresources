@@ -280,8 +280,21 @@ func (ctx *MahresourcesContext) MergeGroups(winnerId uint, loserIds []uint) erro
 			}
 		}
 
-		// Clean up any self-referential group relations created during the merge
-		if err := altCtx.db.Exec(`DELETE FROM group_relations WHERE to_group_id = from_group_id`).Error; err != nil {
+		// Clean up any self-referential group relations created during the merge.
+		//
+		// Scoped like every other raw-SQL statement in this closure, and for the
+		// same reason: without the filter this is a database-wide DELETE issued on
+		// behalf of a principal that may see one subtree. AddRelation refuses to
+		// create a self-edge, so the rows actually reachable here are legacy or
+		// imported ones, and one of those outside the subtree is not this caller's
+		// to remove. Filtering either column is equivalent under the equality.
+		selfEdgeFilter := ""
+		selfEdgeArgs := []any{}
+		if scopedMerge {
+			selfEdgeFilter = " AND from_group_id IN ?"
+			selfEdgeArgs = append(selfEdgeArgs, subtreeIDs)
+		}
+		if err := altCtx.db.Exec(`DELETE FROM group_relations WHERE to_group_id = from_group_id`+selfEdgeFilter, selfEdgeArgs...).Error; err != nil {
 			return err
 		}
 

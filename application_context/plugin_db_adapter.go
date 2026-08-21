@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -610,7 +611,7 @@ func (a *pluginDBAdapter) GetResourceFileData(id uint) (string, string, error) {
 	return base64.StdEncoding.EncodeToString(data), resource.ContentType, nil
 }
 
-func (a *pluginDBAdapter) CreateResourceFromURL(url string, options map[string]any) (map[string]any, error) {
+func (a *pluginDBAdapter) CreateResourceFromURL(reqCtx context.Context, url string, options map[string]any) (map[string]any, error) {
 	lower := strings.ToLower(url)
 	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
 		return nil, fmt.Errorf("unsupported URL scheme (only http and https are allowed)")
@@ -628,7 +629,7 @@ func (a *pluginDBAdapter) CreateResourceFromURL(url string, options map[string]a
 		creator.FileName = name
 	}
 
-	resource, err := a.ctx.AddRemoteResource(creator)
+	resource, err := a.ctx.AddRemoteResource(reqCtx, creator)
 	if err != nil {
 		return nil, err
 	}

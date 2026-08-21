@@ -18,7 +18,7 @@ type File interface {
 type ResourceCreator interface {
 	AddResource(file File, fileName string, resourceQuery *query_models.ResourceCreator) (*models.Resource, error)
 	AddLocalResource(fileName string, resourceQuery *query_models.ResourceFromLocalCreator) (*models.Resource, error)
-	AddRemoteResource(resourceQuery *query_models.ResourceFromRemoteCreator) (*models.Resource, error)
+	AddRemoteResource(reqCtx context.Context, resourceQuery *query_models.ResourceFromRemoteCreator) (*models.Resource, error)
 }
 
 // ResourceEditor handles resource editing operations

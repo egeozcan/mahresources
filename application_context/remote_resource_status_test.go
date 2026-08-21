@@ -1,6 +1,7 @@
 package application_context
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -34,7 +35,7 @@ func TestAddRemoteResource_404_ReturnsError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	res, err := ctx.AddRemoteResource(&query_models.ResourceFromRemoteCreator{
+	res, err := ctx.AddRemoteResource(context.Background(), &query_models.ResourceFromRemoteCreator{
 		ResourceQueryBase: query_models.ResourceQueryBase{
 			Name: "should-not-be-saved",
 		},
@@ -62,7 +63,7 @@ func TestAddRemoteResource_500_ReturnsError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	res, err := ctx.AddRemoteResource(&query_models.ResourceFromRemoteCreator{
+	res, err := ctx.AddRemoteResource(context.Background(), &query_models.ResourceFromRemoteCreator{
 		ResourceQueryBase: query_models.ResourceQueryBase{
 			Name: "should-not-be-saved",
 		},
@@ -91,7 +92,7 @@ func TestAddRemoteResource_200_Succeeds(t *testing.T) {
 	}))
 	defer server.Close()
 
-	res, err := ctx.AddRemoteResource(&query_models.ResourceFromRemoteCreator{
+	res, err := ctx.AddRemoteResource(context.Background(), &query_models.ResourceFromRemoteCreator{
 		ResourceQueryBase: query_models.ResourceQueryBase{
 			Name: "valid-resource",
 		},

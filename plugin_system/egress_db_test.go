@@ -1,6 +1,7 @@
 package plugin_system
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/url"
@@ -26,7 +27,7 @@ func (r *recordingFetcher) BindInvocation(inv *Invocation) (EntityQuerier, Entit
 	return r, r
 }
 
-func (r *recordingFetcher) CreateResourceFromURL(url string, _ map[string]any) (map[string]any, error) {
+func (r *recordingFetcher) CreateResourceFromURL(_ context.Context, url string, _ map[string]any) (map[string]any, error) {
 	r.record(url)
 	return map[string]any{"id": float64(1)}, nil
 }
@@ -243,7 +244,7 @@ func (b *blockingFetcher) blocked() error {
 	return fmt.Errorf("failed to download: %w", urlErr)
 }
 
-func (b *blockingFetcher) CreateResourceFromURL(string, map[string]any) (map[string]any, error) {
+func (b *blockingFetcher) CreateResourceFromURL(context.Context, string, map[string]any) (map[string]any, error) {
 	return nil, b.blocked()
 }
 

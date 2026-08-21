@@ -4,6 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { detectShape, getBuiltinRenderer } from '../schema-editor/display-renderers';
 import type { JSONSchema } from '../schema-editor/schema-core';
 import { titleCase, getDefaultValue, isLabeledEnum, getLabeledEnumEntries, resolveSchema } from '../schema-editor/schema-core';
+import { PluginNodeCache } from '../utils/pluginNodeCache';
 
 @customElement('meta-shortcode')
 export class MetaShortcode extends LitElement {
@@ -23,6 +24,10 @@ export class MetaShortcode extends LitElement {
   @state() private _pluginHtml: string | null = null;
   @state() private _pluginError = false;
   private _pluginFetchVersion = 0;
+  // The built wrapper, held so a re-render reuses the node rather than
+  // replacing it. See PluginNodeCache. One shortcode renders one plugin value,
+  // so the cache holds a single entry under a fixed key.
+  private _pluginNodes = new PluginNodeCache();
 
   private _metaUpdateHandler = (e: Event) => {
     const detail = (e as CustomEvent).detail;
@@ -40,6 +45,7 @@ export class MetaShortcode extends LitElement {
       // in-flight request from before this update is discarded.
       this._pluginHtml = null;
       this._pluginError = false;
+      this._pluginNodes.clear();
       this._pluginFetchVersion++;
     }
   };
@@ -72,10 +78,15 @@ export class MetaShortcode extends LitElement {
       this._editValue = undefined;
     }
 
+    // identityChanged is included, not just recomputed above it: entityType and
+    // entityId are part of what a plugin display is rendered *for*, and they
+    // were missing here. Rebinding an element from one entity to another while
+    // path, value and schema happened to match kept the first entity's rendered
+    // plugin markup and never refetched for the second.
     if (
+      identityChanged ||
       changedProperties.has('valueStr') ||
       changedProperties.has('schemaStr') ||
-      changedProperties.has('path') ||
       changedProperties.has('defaultValue') ||
       changedProperties.has('editable') ||
       changedProperties.has('hideEmpty')
@@ -83,6 +94,7 @@ export class MetaShortcode extends LitElement {
       this._currentValue = undefined;
       this._pluginHtml = null;
       this._pluginError = false;
+      this._pluginNodes.clear();
       this._pluginFetchVersion++;
     }
   }
@@ -91,6 +103,7 @@ export class MetaShortcode extends LitElement {
     this._currentValue = undefined;
     this._pluginHtml = null;
     this._pluginError = false;
+    this._pluginNodes.clear();
     this._pluginFetchVersion++;
     this.requestUpdate();
   }
@@ -248,9 +261,7 @@ export class MetaShortcode extends LitElement {
 
   private _renderPluginDisplay(value: any, xDisplay: string, resolvedSchema?: JSONSchema | null): TemplateResult {
     if (this._pluginHtml !== null) {
-      const wrapper = document.createElement('span');
-      wrapper.innerHTML = this._pluginHtml;
-      return html`${wrapper}`;
+      return html`${this._pluginNodes.nodeFor('value', this._pluginHtml, 'span')}`;
     }
     if (this._pluginError) {
       return html`<span class="text-stone-400 text-xs italic">Render error</span>`;

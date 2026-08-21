@@ -1,3 +1,119 @@
+# The eight quick wins from the open-work audit (2026-08-20)
+
+The first group of `docs/todo.md`'s re-derived open items. Two of them were not
+what the menu said they were, and both are recorded below rather than quietly
+reinterpreted.
+
+Every backend fix here carries a recorded mutation that makes its test fail. The
+two frontend ones did not have a test at all until the review said so.
+
+## Done
+
+1. **The group-merge self-edge sweep is scoped** (`group_bulk_context.go`). Its
+   seven sibling statements all carried the subtree filter; this one did not, so
+   a group-limited principal merging two groups inside its own subtree issued a
+   database-wide `DELETE FROM group_relations`. `AddRelation` refuses to create a
+   self-edge, so the reachable rows are legacy or imported ones.
+2. **`window.mahBlock` is installed before the awaits** (`blockEditor.js`). It
+   was assigned after two awaited fetches, so the only bridge a plugin block's
+   script has back into the editor was `undefined` for the first two round-trips
+   of every note page — which is exactly when a freshly inserted block runs.
+3. **Plugin display nodes keep their identity** (`utils/pluginNodeCache.ts`).
+   Both renderers rebuilt a wrapper and handed the detached node to Lit on every
+   render, so Lit replaced the live node and any state inside a plugin display
+   died with it. The cache was duplicated in two files until the review asked for
+   a test; extracting it is what made one possible.
+4. **The group-import shell-group scope guard has a refusal test**
+   (`groupio/shell_group_scope_test.go`). Deleting the guard left the suite
+   green. Both directions are covered, and removing the guard now fails by
+   assertion rather than by the nil-collector panic its sibling documents.
+5. **`create_resource_from_url` is bounded by its caller** (`AddRemoteResource`
+   now takes a `context.Context`). See the scope note below: it bounds the
+   transfer, not the whole creation.
+6. **Plugin schedules have browser and CLI coverage** (`plugin-schedules.spec.ts`,
+   `cli-plugins.spec.ts`, fixture plugin `test-schedules`). Nothing referenced
+   the two testids `managePlugins.tpl` emits. The fixture declares `every = "1h"`
+   so the row exists without a run landing in another spec's jobs panel.
+7. **`CRUDWriter.Delete` no longer cascades into children** (`generic_crud.go`).
+8. **`AddRelationType`'s reverse lookup reports its errors** (`relation_context.go`).
+
+## Two divergences from what the audit proposed
+
+**Item 7 refuses rather than narrows.** The proposal was to restrict
+`Select(clause.Associations)` to many-to-many. That alone turns "deletes the
+children" into "orphans their foreign keys", which is quieter and no more
+correct — FK constraints are not enforced on every deployment, so nothing
+downstream catches it. The writer now refuses any model that owns rows and names
+the association. Tag and Query, the only two whose `Delete` is routed, are
+unaffected (m2m and none respectively) and are both pinned by tests.
+
+The first version of that refusal also covered **belongs-to**, which was wrong
+and the second review caught it: a belongs-to's foreign key is on the row being
+deleted, so deleting it neither removes nor orphans the parent. Refusing there
+would have blocked a safe delete for no reason, and *selecting* it would delete
+the parent. No model the writer serves has one, so
+`TestAssociationShapes_BelongsToIsNeitherClearedNorRefused` is the only thing
+that says so.
+
+**Item 8 keeps the adoption.** The audit framed the fix as making "creating
+touches no existing row" true, which means refusing to adopt an existing reverse
+relation type. That adoption is how a pair created separately gets linked, and
+refusing it would be a regression, so it stays and the doctrine sentence stays
+false by design (`CLAUDE.md` already records it accurately). The real defect was
+`if err == nil`, which read every error as "not found" and turned a transient
+read failure into a second, unlinked reverse type. The adoption is now also a
+conditional claim on `RowsAffected` rather than a `Save()` over the row — two
+concurrent creates both saw `back_relation_id` NULL and the second silently won.
+
+## Recorded rather than fixed
+
+- **Item 5 bounds the transfer, not the creation.** What follows a completed
+  download — hooks, hashing, the content-hash lock, the writes — is not
+  cancellable and is not meant to be, since an after-hook describes a committed
+  write. So the deadline bounds waiting on a remote server, which was the
+  unbounded-by-design part, and is not a guarantee that the call returns within
+  it. The 30-minute VM hold is gone; a slow local step is not.
+- **`display-mode.ts` still serves stale plugin HTML when its properties change
+  directly.** Only the document event invalidates; `value`, `schema`,
+  `entityType` and `entityId` do not. Pre-existing, and the node cache follows
+  `_pluginHtml` rather than outliving it, so this is neither introduced nor
+  worsened here. `meta-shortcode.ts`'s equivalent WAS fixed, because the guard
+  already existed there and merely omitted the identity properties it computes
+  one line above; display-mode has no such guard and adding one is a decision
+  about refetch behaviour.
+- **The lost-claim message says "already associated" even when the reverse row
+  was concurrently deleted** between the lookup and the claim. Atomicity is
+  correct; the wording is imprecise in a case nothing can currently produce.
+
+## Review
+
+Two adversarial rounds against `pi` (`openai-codex/gpt-5.6-sol:high`), each on a
+worktree pinned to the same HEAD as the working tree.
+
+Round 1 found five, four actioned: the adoption race, the missing identity
+properties in `meta-shortcode`'s reset condition, a merge test with no positive
+control (a filter matching *nothing* would have passed it), and the absent
+frontend tests. It was wrong on one point — it believed the Series and category
+deletes were routed through the generic writer; only Tag and Query are.
+
+Round 2 found the belongs-to misclassification above, and correctly identified
+that item 5 does not bound the whole creation. It also confirmed the request
+context threaded into the HTTP handlers cannot cancel a background download,
+which was the regression most worth worrying about: that branch returns after
+queue submission.
+
+## Gates
+
+| gate | result |
+|---|---|
+| `go test --tags 'json1 fts5' ./...` | pass |
+| `staticcheck ./...` | clean |
+| `npm run test:unit` | 974 passed (was 966) |
+| `npm run build` | clean |
+| `cd e2e && npm run test:with-server:all` | 2005 passed |
+| `go test --tags 'json1 fts5 postgres' ./mrql/... ./server/api_tests/...` | pass |
+| `cd e2e && npm run test:with-server:postgres` | 2006 passed |
+
 # Item B: a durable scheduler for the plugin system (2026-08-19)
 
 The first of the six platform items, taken on the tree's own recommendation over

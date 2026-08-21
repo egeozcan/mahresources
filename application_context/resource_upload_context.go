@@ -2,6 +2,7 @@ package application_context
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
@@ -200,7 +201,22 @@ func createRemoteResourceHTTPClient(connectTimeout, overallTimeout time.Duration
 	}
 }
 
-func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.ResourceFromRemoteCreator) (*models.Resource, error) {
+// reqCtx bounds the transfer. The plugin path passes its invocation's context,
+// so a plugin's create_resource_from_url can no longer hold that plugin's VM
+// lock for the full -remote-overall-timeout (30m by default) while every other
+// surface of the plugin waits; the HTTP path passes the request's. A context
+// with no deadline leaves the previous behaviour exactly as it was.
+//
+// It bounds the transfer, not the whole creation: what follows a completed
+// download (hooks, hashing, the content-hash lock, the writes) is not
+// cancellable here and is not meant to be — an after-hook describes a committed
+// write, and abandoning it half way is worse than finishing it. So the deadline
+// is a bound on waiting for a remote server, which is the unbounded-by-design
+// part, and not a guarantee that the call returns within it.
+func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resourceQuery *query_models.ResourceFromRemoteCreator) (*models.Resource, error) {
+	if reqCtx == nil {
+		reqCtx = context.Background()
+	}
 	urls := strings.Split(resourceQuery.URL, "\n")
 	var firstResource *models.Resource
 	var firstError error
@@ -258,7 +274,15 @@ func (ctx *MahresourcesContext) AddRemoteResource(resourceQuery *query_models.Re
 
 	for _, url := range urls {
 		(func(url string) {
-			resp, err := httpClient.Get(url)
+			// NewRequestWithContext rather than Get: the client's own Timeout
+			// bounds the transfer, but only the context can end it early when
+			// the caller's budget runs out first.
+			req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+			if err != nil {
+				setError(err)
+				return
+			}
+			resp, err := httpClient.Do(req)
 
 			if err != nil {
 				setError(err)

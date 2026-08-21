@@ -123,6 +123,29 @@ export function blockEditor(noteId, initialBlocks = []) {
       // Same trap as descriptionEditor.js and adminExport.js in docs/lessons.md.
       this._root = this.$el;
 
+      // Set up the JS bridge for plugin blocks BEFORE the awaits below.
+      //
+      // This used to sit after them, so window.mahBlock was undefined for the
+      // two round-trips loadBlockTypes() and loadBlocks() take. A plugin block's
+      // own script runs as soon as its markup is inserted, and the markup can be
+      // on the page before either fetch resolves, so the bridge a plugin reaches
+      // for first was reliably missing exactly when a plugin would use it.
+      //
+      // Nothing here touches the awaited state: every method closes over `self`
+      // and reads this.blocks at call time.
+      const self = this;
+      window.mahBlock = {
+        saveContent(blockId, content) {
+          return self.updateBlockContent(blockId, content);
+        },
+        updateState(blockId, state) {
+          return self.updateBlockState(blockId, state);
+        },
+        getBlock(blockId) {
+          return self.blocks.find(b => b.id === blockId) || null;
+        }
+      };
+
       // Load block types from API if not already loaded
       if (!this._blockTypesLoaded) {
         await this.loadBlockTypes();
@@ -154,20 +177,6 @@ export function blockEditor(noteId, initialBlocks = []) {
           });
         }
       });
-
-      // Set up JS bridge for plugin blocks
-      const self = this;
-      window.mahBlock = {
-        saveContent(blockId, content) {
-          return self.updateBlockContent(blockId, content);
-        },
-        updateState(blockId, state) {
-          return self.updateBlockState(blockId, state);
-        },
-        getBlock(blockId) {
-          return self.blocks.find(b => b.id === blockId) || null;
-        }
-      };
 
       // Flush pending debounced edits before the page is hidden/unloaded so a
       // fast navigation does not drop the last few seconds of typing. pagehide +
