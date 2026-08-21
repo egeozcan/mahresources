@@ -72,6 +72,18 @@ lint` now **fails** (not warns) on a doctest with an empty body, naming the
 stray-`#` cause. Verified by mutation: adding one comment line inside a block
 turns the linter red, and removing it turns it green.
 
+## Two follow-ups, same day
+
+`docs_doctest_files.go` carried its own copy of the skip-on comparison, so
+`--files` mode would have kept single-value semantics while the help promised
+the list form for the key generally. Both paths now share `skipsEnvironment`,
+and a table test pins the bare form, the list form, whitespace around the
+separator, and the two empty cases. One documented key, one predicate.
+
+`docs_help/docs_lint.md` gained the empty-body failure. The repo convention is
+that a behavior change reaches the help markdown, and this is a new *failure*
+class, not a new warning.
+
 ## Verified
 
 Static-page re-measurement before and after (38 pages: 38 nodes to 0, WCAG-only

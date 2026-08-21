@@ -217,3 +217,32 @@ func TestDoctestCwdLocatesTestdata(t *testing.T) {
 		t.Errorf("doctestCwd() returned %q but testdata not found there: %v", got, statErr)
 	}
 }
+
+// TestSkipsEnvironmentAcceptsAList pins the `|` form. skip-on carries a list
+// because an example can be wrong for more than one reason at once: the two
+// resource examples need a real target server AND fail under auth, and a single
+// value could only say one of those. The bare form must keep working unchanged,
+// and the predicate is shared with files mode (docs_doctest_files.go) so the two
+// cannot drift into different semantics for one documented key.
+func TestSkipsEnvironmentAcceptsAList(t *testing.T) {
+	cases := []struct {
+		skipOn      string
+		environment string
+		want        bool
+	}{
+		{"", "ephemeral", false},
+		{"ephemeral", "", false},
+		{"ephemeral", "ephemeral", true},
+		{"ephemeral", "auth", false},
+		{"ephemeral|auth", "ephemeral", true},
+		{"ephemeral|auth", "auth", true},
+		{"ephemeral|auth", "staging", false},
+		{"ephemeral | auth", "auth", true},
+		{"auth", "ephemeral", false},
+	}
+	for _, c := range cases {
+		if got := skipsEnvironment(c.skipOn, c.environment); got != c.want {
+			t.Errorf("skipsEnvironment(%q, %q) = %v, want %v", c.skipOn, c.environment, got, c.want)
+		}
+	}
+}

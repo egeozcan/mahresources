@@ -209,7 +209,11 @@ func checkMarkdownExamples(paths []string, serverURL, environment string) error 
 			return fmt.Errorf("%s: no runnable shell blocks found; tag the fence ```bash, or drop the file from --files", file)
 		}
 		for _, ex := range examples {
-			if ex.SkipOn != "" && ex.SkipOn == environment {
+			// Same predicate as the command-tree walk. It has to be, because
+			// `skip-on` is documented as one metadata key rather than two: a
+			// second comparison here would keep single-value semantics in files
+			// mode while the help promised the list form generally.
+			if skipsEnvironment(ex.SkipOn, environment) {
 				skipped++
 				fmt.Printf("SKIP  %s (skip-on=%s)\n", ex.Label, ex.SkipOn)
 				continue
