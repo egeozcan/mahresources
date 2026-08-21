@@ -53,19 +53,26 @@ func newAuthLoginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			// new label, which silently splits the block and leaves the doctest half
 			// of it empty -- and an empty block exits 0, so it passes without running.
 			//
-			// The last two lines are cleanup, not assertions. Every pass of this block
-			// mints a real token against a server that may be long-lived, and the
-			// account has a -max-user-tokens ceiling (100 by default), so a doctest
-			// that only creates walks toward it. The revoke authenticates with the very
-			// token it is revoking, which is fine: the request is authenticated before
-			// the handler deletes the row.
+			// The trap is cleanup, not an assertion. Every pass of this block mints a
+			// real token against a server that may be long-lived, and the account has
+			// a -max-user-tokens ceiling (100 by default), so a doctest that only
+			// creates walks toward it. The revoke authenticates with the very token it
+			// is revoking, which is fine: the request is authenticated before the
+			// handler deletes the row.
+			//
+			// It is a trap rather than two trailing lines because the block runs under
+			// `bash -eo pipefail`: a transient failure in the assertion would skip
+			// them, leaking a live token and the temp credential file. The trap is
+			// armed before the login and reads $ID at exit time, so the only window in
+			// which a token exists and nothing would revoke it is the single
+			// assignment that names it.
 			"  # mr-doctest: login mints a token and stores it, skip-on=ephemeral",
 			"  export MR_TOKEN_FILE=$(mktemp)",
 			"  N=\"doctest-login-$$-$RANDOM\"",
+			"  trap '[ -n \"$ID\" ] && mr token revoke \"$ID\" > /dev/null 2>&1 || true; rm -f \"$MR_TOKEN_FILE\"' EXIT",
 			"  mr auth login --username \"$MR_DOCTEST_USERNAME\" --password \"$MR_DOCTEST_PASSWORD\" --name \"$N\"",
+			"  ID=$(mr token list --json | jq -r --arg n \"$N\" 'map(select(.name == $n)) | .[0].ID')",
 			"  mr auth whoami --json | jq -e '.isAdmin' > /dev/null",
-			"  mr token revoke \"$(mr token list --json | jq -r --arg n \"$N\" 'map(select(.name == $n)) | .[0].ID')\"",
-			"  rm -f \"$MR_TOKEN_FILE\"",
 		}, "\n"),
 		Annotations: authExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {

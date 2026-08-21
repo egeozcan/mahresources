@@ -27,6 +27,47 @@ const path = require('path');
 const reportPath = process.argv[2] || path.join('test-results', 'results.json');
 const label = process.argv[3] || '';
 
+// A GitHub `::warning file=...::` path is resolved against the repository root,
+// but Playwright reports `spec.file` relative to `config.rootDir` -- which is
+// `e2e/tests` here, and this script runs with `e2e` as its working directory.
+// Annotating the reporter's value verbatim points at `cli/foo.spec.ts`, which
+// exists nowhere in the repo, so GitHub silently drops the link.
+const repoRoot = path.resolve(process.env.GITHUB_WORKSPACE || path.join(__dirname, '..', '..'));
+
+/**
+ * Absolute directory that `spec.file` is relative to. `config.rootDir` is the
+ * reporter's own answer and is preferred; when a report shape omits it, it is
+ * derived from where the report itself sits (`e2e/test-results/results.json` ->
+ * `e2e/tests`) rather than from a prefix hardcoded here.
+ */
+function resolveSpecRoot(report) {
+  const fromConfig = report && report.config && report.config.rootDir;
+  if (typeof fromConfig === 'string' && fromConfig) {
+    return path.resolve(fromConfig);
+  }
+  return path.resolve(path.dirname(path.resolve(reportPath)), '..', 'tests');
+}
+
+/**
+ * Rewrite one reported spec path to repository-root-relative, in POSIX form.
+ * Anything it cannot place inside the repo -- an absolute path from another
+ * checkout, a rootDir that does not match this tree -- falls back to the raw
+ * value: a wrong link is no worse than the one this replaces, and an exception
+ * here would cost the whole annotation.
+ */
+function repoRelative(file, specRoot) {
+  const raw = String(file || '');
+  if (!raw) return '';
+  try {
+    const abs = path.isAbsolute(raw) ? raw : path.resolve(specRoot, raw);
+    const rel = path.relative(repoRoot, abs);
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return raw;
+    return rel.split(path.sep).join('/');
+  } catch (err) {
+    return raw;
+  }
+}
+
 /** GitHub's annotation format is line-oriented; these three characters break it. */
 function escapeAnnotation(s) {
   return String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
@@ -92,8 +133,10 @@ function main() {
   }
 
   const where = label ? ` [${label}]` : '';
+  const specRoot = resolveSpecRoot(report);
   for (const f of flaky) {
-    const loc = [f.file ? `file=${f.file}` : '', f.line ? `line=${f.line}` : '']
+    const file = repoRelative(f.file, specRoot);
+    const loc = [file ? `file=${file}` : '', f.line ? `line=${f.line}` : '']
       .filter(Boolean)
       .join(',');
     const head = loc ? `::warning ${loc},title=Flaky test::` : '::warning title=Flaky test::';

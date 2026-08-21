@@ -50,16 +50,21 @@ func newTokenListCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  # As raw JSON",
 			"  mr token list --json",
 			"",
-			// The trailing revoke is cleanup: the block runs against a server that may
-			// be long-lived and the account has a -max-user-tokens ceiling, so a
-			// doctest that only mints walks toward it. The id comes from create rather
-			// than a second list lookup -- one call, and it is the id of exactly the
-			// token this run made.
+			// The revoke is cleanup: the block runs against a server that may be
+			// long-lived and the account has a -max-user-tokens ceiling, so a doctest
+			// that only mints walks toward it. The id comes from create rather than a
+			// second list lookup -- one call, and it is the id of exactly the token
+			// this run made.
+			//
+			// It runs from a trap rather than a trailing line because the block runs
+			// under `bash -eo pipefail`: a transient failure in the assertion would
+			// skip the line and leak the token. The trap is armed on the statement
+			// after the one that captures the id.
 			"  # mr-doctest: the list carries the token just minted, found by name, skip-on=ephemeral",
 			"  N=\"doctest-list-$$-$RANDOM\"",
 			"  ID=$(mr token create --name \"$N\" --json | jq -r '.id')",
+			"  trap 'mr token revoke \"$ID\" > /dev/null 2>&1 || true' EXIT",
 			"  mr token list --json | jq -e --arg n \"$N\" 'map(select(.name == $n)) | length == 1' > /dev/null",
-			"  mr token revoke $ID",
 		}, "\n"),
 		Annotations: tokenExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -95,10 +100,14 @@ func newTokenCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			// The response is captured once so the secret can be asserted and the id
 			// reused to revoke it. Without that, every pass leaves a live token behind
 			// on a long-lived server and the account walks toward -max-user-tokens.
+			// The revoke runs from a trap, so `bash -eo pipefail` cannot skip it when
+			// the assertion fails; the id is read out of the captured response first
+			// so the trap has something to name.
 			"  # mr-doctest: create returns a token whose secret is shown once, skip-on=ephemeral",
 			"  OUT=$(mr token create --name \"doctest-create-$$-$RANDOM\" --json)",
+			"  ID=$(echo \"$OUT\" | jq -r '.id')",
+			"  trap 'mr token revoke \"$ID\" > /dev/null 2>&1 || true' EXIT",
 			"  echo \"$OUT\" | jq -e '.token | length > 0' > /dev/null",
-			"  mr token revoke \"$(echo \"$OUT\" | jq -r '.id')\"",
 		}, "\n"),
 		Annotations: tokenExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -141,9 +150,14 @@ func newTokenRevokeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  # Revoke after listing",
 			"  mr token revoke 5",
 			"",
+			// Here the revoke IS the assertion, so it stays inline; the trap is the
+			// backstop for the gap between minting the token and looking its id up by
+			// name, where a failed lookup would otherwise leak it. Revoking twice is
+			// harmless -- the second call is swallowed.
 			"  # mr-doctest: revoke removes the token it names, skip-on=ephemeral",
 			"  N=\"doctest-revoke-$$-$RANDOM\"",
-			"  mr token create --name \"$N\" > /dev/null",
+			"  CREATED=$(mr token create --name \"$N\" --json | jq -r '.id')",
+			"  trap 'mr token revoke \"$CREATED\" > /dev/null 2>&1 || true' EXIT",
 			"  ID=$(mr token list --json | jq -r --arg n \"$N\" 'map(select(.name == $n)) | .[0].ID')",
 			"  mr token revoke $ID",
 			"  mr token list --json | jq -e --arg n \"$N\" 'map(select(.name == $n)) | length == 0' > /dev/null",

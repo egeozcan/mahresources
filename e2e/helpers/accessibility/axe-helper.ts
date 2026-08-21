@@ -21,8 +21,12 @@ import type { Result, NodeResult } from 'axe-core';
  * h1 and page actions sit between </header> and the content grid, so they were in no
  * landmark at all. Naming that section (partials/title.tpl) cleared all 37. The last
  * one was `page-has-heading-one` on /resources/simple, whose contact-sheet CSS hid
- * the page's only <h1> with `display: none`; it is now hidden visually instead, so
- * the design is unchanged and the heading survives. Both are at zero.
+ * the page's only <h1> with `display: none`. That section stays hidden outright --
+ * it also carries focusable controls, which visually-hidden left focusable and
+ * invisible -- and the page reissues the <h1> itself as `sr-only` inside <main>.
+ * The contact-sheet body class is server-rendered, so the heading that is hidden
+ * and the heading that replaces it are decided in the same render rather than one
+ * of them depending on script. Both rules are at zero.
  */
 export const WCAG_AA_TAGS = [
   'wcag2a',

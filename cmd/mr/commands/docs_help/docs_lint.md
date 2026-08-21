@@ -14,6 +14,14 @@ hands the body to `bash -c`, an empty one exits 0, and it reports PASS having
 executed nothing. The usual cause is a stray `#` line inside a block, since
 every line beginning with `#` starts a new example and so splits the block.
 
+Example *order* is checked for the same reason: a non-doctest example that
+follows a doctest is an error. When the stray `#` is not the first line of a
+block, the doctest keeps a non-empty body and everything below the comment,
+usually the assertions, becomes a separate example that no pass ever runs, so
+the block silently stops half way. Doctests therefore come last in every
+command's Example, and an illustrative example that is deliberately not
+runnable has to be moved above the doctest rather than left at the end.
+
 Lint is allowlist-gated during migration: only command groups explicitly added
 to the allowlist are subject to the strict rules, so partial migrations do not
 block CI.

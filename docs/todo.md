@@ -1,3 +1,78 @@
+# Second review round: five minor findings, no majors left (2026-08-21)
+
+A second independent pass over `408ed441..e127ce73` found **no major issues**.
+Five minor ones, all real, all fixed. Two are the same silent-failure class the
+whole batch is about, so they were worth closing rather than recording.
+
+## The contact-sheet mode existed only after JavaScript ran
+
+The previous entry reissued an `sr-only` `<h1>` on `/resources/simple` because
+`.simple .title` hides the original. **`.simple` was added by an inline script.**
+With scripts blocked the rule never applied, so the original heading stayed in
+the accessibility tree next to the reissued one and the page announced two.
+
+`<body>` now takes a `{% block bodyClass %}`, and the page sets it server-side;
+the inline script is gone. A page mode that only exists once JS has run is a page
+whose CSS is wrong for every reader with scripts blocked, which is the general
+form of the defect. Measured with `getByRole('heading', {level: 1})`: two exposed
+h1s before with JS off, one after, one with JS on. Removing the `sidebar` block
+override is inert -- it contained nothing but that script, and the base layout's
+default is empty.
+
+## Cleanup that only runs on the happy path is not cleanup
+
+Every doctest that creates something ran its cleanup as a trailing line. The
+blocks run under `bash -eo pipefail`, so **any failure above that line skips it**
+-- and the thing skipped is what makes the block repeatable.
+
+For `resource from-url` the composition is what bites. The review claimed a
+second run fails against a long-lived server; **that is refuted as stated** --
+three consecutive runs pass, because the trailing delete frees the content hash.
+It is true in composed form: one run that dies after the create leaves the row,
+and then *every* later run fails with
+`a resource with identical content already exists`. So the fragile cleanup is
+the cause of the state dependence, not a separate problem. Cleanup is now a
+`trap ... EXIT` armed on the line after the id is captured, in `from-url` and in
+all four `auth`/`token` blocks. Proven by forcing a mid-block failure: the next
+run passes where it previously 400ed, the minted token is revoked, and the temp
+credentials file is removed.
+
+Per-run-unique content was considered and rejected: the server can only fetch
+itself, `/public/` is static, and a query string does not change the bytes. The
+trap makes repeats idempotent, which is the property that was actually wanted.
+
+## The flake annotation pointed at a path that exists nowhere
+
+`report-flakes.js` emitted `spec.file` straight into `::warning file=...::`.
+Playwright reports that **relative to `config.rootDir`**, which is `e2e/tests`,
+while a GitHub annotation path is repository-root relative -- so the warning
+named `cli/cli-resources.spec.ts`, which resolves to nothing. It now derives the
+repo-relative path from `config.rootDir`, falls back to deriving it from the
+report's own location, and passes the raw value through if the result escapes
+the repo. Re-exercised over ten input shapes including truncated JSON, an
+absolute `spec.file`, a missing `rootDir` and a foreign checkout: **exit 0 in
+every one**, which is the property that keeps the annotation step from failing a
+job it is only meant to describe.
+
+## And the lint rule now documents its own invariant
+
+`docs lint` gained "a non-doctest example may not follow a doctest" last entry,
+but `docs_lint.md` described only the empty-body failure. A reader hitting the
+new error had no way to know the ordering rule existed. Documented, with the
+reason: a stray `#` that is not the first body line leaves the doctest non-empty
+while the assertions below it become an example that no pass runs.
+
+## Verified
+
+`mr docs lint` 0 warnings 0 failures · `go test ./cmd/mr/...`,
+`./internal/arch/...`, `./server/...` green · `gofmt` clean · `cli-doctest` 3/3,
+with `from-url` PASS in both passes and three consecutive runs against one
+server in each · a11y suite 199 passed · axe best-practice over all 38 static
+pages, 0 violations · one exposed h1 on `/resources/simple` with JS both on and
+off · css-scan · `docs-gen`/`skills-gen` regenerated (`lint.md`,
+`from-url.md`; `skills/` unchanged, as it is generated from the MRQL page and
+the Cobra tree).
+
 # The review round on the axe and docs-lint batch (2026-08-21)
 
 Five findings from an independent review of `408ed441..8560c40c`. All five were
