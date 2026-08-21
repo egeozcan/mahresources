@@ -20,6 +20,14 @@ that dies after the create leaves the row behind, and every later run of the
 block then fails on that duplicate however unique its `--name` is. Hence the
 `trap` rather than a trailing `delete`, which `bash -e` would skip.
 
+The trap is armed *before* the create and resolves the resource by its unique
+`--name` at exit time, never from an id the create handed back. Arming it after
+an `ID=$(... | jq ...)` capture would leave the one window that matters: the
+create has committed on the server, the pipeline that reads its id fails, and
+`bash -e` exits with no trap installed. The name is generated before the create
+and is all the trap needs, so nothing about the create's output can decide
+whether the row is cleaned up.
+
 # Example
 
   # Create from a URL
@@ -29,6 +37,12 @@ block then fails on that duplicate however unique its `--name` is. Hence the
   mr resource from-url --url https://example.com/doc.pdf --name "Paper" --meta '{"source":"arxiv"}' --groups 5
 
   # mr-doctest: the server fetches an asset it serves itself, cleanup on every exit path
-  ID=$(mr resource from-url --url "$MAHRESOURCES_URL/public/favicon/favicon-32x32.png" --name "from-url-test-$$-$RANDOM" --json | jq -r '.ID')
-  trap '[ -n "$ID" ] && mr resource delete "$ID" > /dev/null 2>&1 || true' EXIT
+  N="from-url-test-$$-$RANDOM"
+  cleanup() {
+    LEFTOVER=$(mr resources list --name "$N" --json | jq -r '.[0].ID // empty') || LEFTOVER=""
+    [ -n "$LEFTOVER" ] && mr resource delete "$LEFTOVER" > /dev/null 2>&1 || true
+    return 0
+  }
+  trap cleanup EXIT
+  ID=$(mr resource from-url --url "$MAHRESOURCES_URL/public/favicon/favicon-32x32.png" --name "$N" --json | jq -r '.ID')
   mr resource get $ID --json | jq -e '.ID > 0 and .ContentType == "image/png"' > /dev/null

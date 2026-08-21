@@ -20,6 +20,14 @@ that dies after the create leaves the row behind, and every later run of the
 block then fails on that duplicate however unique its `--name` is. Hence the
 `trap` rather than a trailing `delete`, which `bash -e` would skip.
 
+The trap is armed *before* the create and resolves the resource by its unique
+`--name` at exit time, never from an id the create handed back. Arming it after
+an `ID=$(... | jq ...)` capture would leave the one window that matters: the
+create has committed on the server, the pipeline that reads its id fails, and
+`bash -e` exits with no trap installed. The name is generated before the create
+and is all the trap needs, so nothing about the create's output can decide
+whether the row is cleaned up.
+
 ## Usage
 
 ```bash

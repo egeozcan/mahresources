@@ -64,11 +64,32 @@ func newUserListCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  # As raw JSON",
 			"  mr user list --json",
 			"",
+			// The delete is cleanup, and it runs from a trap because the block runs
+			// under `bash -eo pipefail`: as a trailing line it was skipped by any
+			// earlier failure, and a durable account survived the run. The trap is
+			// armed *before* the create and resolves the account by its unique
+			// username at exit time, never from an id captured afterwards -- armed
+			// after `ID=$(create | jq ...)` it would still miss the interleaving that
+			// matters, where the account has committed but the pipeline reading its id
+			// fails and `bash -e` exits with no trap installed. The username is chosen
+			// before the create, so the trap needs nothing the create returns, and
+			// this block no longer captures an id at all.
+			//
+			// Every statement inside the trap is guarded and the body ends in
+			// `return 0`. `set -e` is still in force inside an EXIT trap, so an
+			// unguarded failure there truncates the rest of the cleanup and also
+			// overwrites the block's own exit status, which would report a passing
+			// block as a failure. The other four blocks here follow the same shape.
 			"  # mr-doctest: the list carries the account just created - found by name rather than by position",
 			"  U=\"doctest-list-$$-$RANDOM\"",
-			"  ID=$(mr user create --username \"$U\" --password doctestpw1 --role editor --json | jq -r '.ID')",
+			"  cleanup() {",
+			"    LEFTOVER=$(mr user list --json | jq -r --arg u \"$U\" 'map(select(.username == $u)) | .[0].ID // empty') || LEFTOVER=\"\"",
+			"    [ -n \"$LEFTOVER\" ] && mr user delete \"$LEFTOVER\" > /dev/null 2>&1 || true",
+			"    return 0",
+			"  }",
+			"  trap cleanup EXIT",
+			"  mr user create --username \"$U\" --password doctestpw1 --role editor --json > /dev/null",
 			"  mr user list --json | jq -e --arg u \"$U\" 'map(select(.username == $u)) | length == 1' > /dev/null",
-			"  mr user delete $ID",
 		}, "\n"),
 		Annotations: userExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -113,11 +134,19 @@ func newUserGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  # As raw JSON",
 			"  mr user get 4 --json",
 			"",
+			// The block still needs the id, but the trap does not: it is armed before
+			// the create and finds the account by username, so a failure in the
+			// capture pipeline cannot leak the account. See `user list` above.
 			"  # mr-doctest: get returns the account the id names",
 			"  U=\"doctest-get-$$-$RANDOM\"",
+			"  cleanup() {",
+			"    LEFTOVER=$(mr user list --json | jq -r --arg u \"$U\" 'map(select(.username == $u)) | .[0].ID // empty') || LEFTOVER=\"\"",
+			"    [ -n \"$LEFTOVER\" ] && mr user delete \"$LEFTOVER\" > /dev/null 2>&1 || true",
+			"    return 0",
+			"  }",
+			"  trap cleanup EXIT",
 			"  ID=$(mr user create --username \"$U\" --password doctestpw1 --role editor --json | jq -r '.ID')",
 			"  mr user get $ID --json | jq -e --arg u \"$U\" '.username == $u and .role == \"editor\"' > /dev/null",
-			"  mr user delete $ID",
 		}, "\n"),
 		Annotations: userExitCodes,
 		Args:        cobra.ExactArgs(1),
@@ -160,10 +189,20 @@ func newUserCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  # Create a guest confined to group 7",
 			"  mr user create --username bob --password password1 --role guest --scope-group 7",
 			"",
+			// The username moves into $U so the trap can name it. It was inline before,
+			// which meant the only handle on the created account was the id the very
+			// next pipeline had to parse -- and a failure there leaked the account.
+			// See `user list` above.
 			"  # mr-doctest: create an editor and assert the returned id is real",
-			"  ID=$(mr user create --username \"doctest-create-$$-$RANDOM\" --password doctestpw1 --role editor --json | jq -r '.ID')",
+			"  U=\"doctest-create-$$-$RANDOM\"",
+			"  cleanup() {",
+			"    LEFTOVER=$(mr user list --json | jq -r --arg u \"$U\" 'map(select(.username == $u)) | .[0].ID // empty') || LEFTOVER=\"\"",
+			"    [ -n \"$LEFTOVER\" ] && mr user delete \"$LEFTOVER\" > /dev/null 2>&1 || true",
+			"    return 0",
+			"  }",
+			"  trap cleanup EXIT",
+			"  ID=$(mr user create --username \"$U\" --password doctestpw1 --role editor --json | jq -r '.ID')",
 			"  test \"$ID\" -gt 0",
-			"  mr user delete $ID",
 		}, "\n"),
 		Annotations: userExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -219,11 +258,19 @@ func newUserUpdateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  # Disable an account and reset its password",
 			"  mr user update 4 --disabled --password password2",
 			"",
+			// The update leaves the username alone, so the trap's by-name lookup still
+			// finds the account after it. See `user list` above.
 			"  # mr-doctest: update changes only the field it names",
-			"  ID=$(mr user create --username \"doctest-update-$$-$RANDOM\" --password doctestpw1 --role editor --json | jq -r '.ID')",
+			"  U=\"doctest-update-$$-$RANDOM\"",
+			"  cleanup() {",
+			"    LEFTOVER=$(mr user list --json | jq -r --arg u \"$U\" 'map(select(.username == $u)) | .[0].ID // empty') || LEFTOVER=\"\"",
+			"    [ -n \"$LEFTOVER\" ] && mr user delete \"$LEFTOVER\" > /dev/null 2>&1 || true",
+			"    return 0",
+			"  }",
+			"  trap cleanup EXIT",
+			"  ID=$(mr user create --username \"$U\" --password doctestpw1 --role editor --json | jq -r '.ID')",
 			"  mr user update $ID --role user",
 			"  mr user get $ID --json | jq -e '.role == \"user\"' > /dev/null",
-			"  mr user delete $ID",
 		}, "\n"),
 		Annotations: userExitCodes,
 		Args:        cobra.ExactArgs(1),
@@ -297,8 +344,19 @@ func newUserDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  # Delete after listing",
 			"  mr user delete 9",
 			"",
+			// Here the delete IS the assertion, so it stays inline and the trap is only
+			// the backstop, covering the create and the id capture that follows it.
+			// After the inline delete succeeds the trap's lookup finds nothing and it
+			// does nothing, so the two never collide. See `user list` above.
 			"  # mr-doctest: delete removes the account so a follow-up get fails",
-			"  ID=$(mr user create --username \"doctest-delete-$$-$RANDOM\" --password doctestpw1 --role editor --json | jq -r '.ID')",
+			"  U=\"doctest-delete-$$-$RANDOM\"",
+			"  cleanup() {",
+			"    LEFTOVER=$(mr user list --json | jq -r --arg u \"$U\" 'map(select(.username == $u)) | .[0].ID // empty') || LEFTOVER=\"\"",
+			"    [ -n \"$LEFTOVER\" ] && mr user delete \"$LEFTOVER\" > /dev/null 2>&1 || true",
+			"    return 0",
+			"  }",
+			"  trap cleanup EXIT",
+			"  ID=$(mr user create --username \"$U\" --password doctestpw1 --role editor --json | jq -r '.ID')",
 			"  mr user delete $ID",
 			"  ! mr user get $ID 2>/dev/null",
 		}, "\n"),

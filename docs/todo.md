@@ -1,3 +1,72 @@
+# Third review round: closing the trap window (2026-08-21)
+
+A third independent pass found **no major issues** again. Two minor ones, both
+the same defect, and the defect is the one the previous round thought it had
+fixed.
+
+## A trap armed after the create is not cleanup
+
+The previous entry replaced trailing cleanup lines with `trap ... EXIT`, armed
+on the line *after* the id was captured:
+
+```
+ID=$(mr token create --name "$N" --json | jq -r '.id')
+trap 'mr token revoke "$ID" ...' EXIT
+```
+
+**The window it leaves is the one that matters.** The create commits on the
+server, the pipeline reading its id fails, and `bash -e` exits with no trap
+installed. For `resource from-url` that is not untidy, it is terminal: the
+leaked row's content hash makes *every later run* of the block fail on the
+duplicate, however unique its `--name` is. Measured, old shape, failure injected
+into the id capture: the row survives, and the next ordinary run reports
+`HTTP 400: a resource with identical content already exists`.
+
+Every block now arms the trap **before** the creating command and resolves the
+target **by its unique name** at exit time, so nothing the create returns can
+decide whether cleanup happens. The name is chosen first and is all the trap
+needs. By-name lookup turned out to be available for all three entity kinds, so
+no block needed a weaker fallback.
+
+Two mechanics underneath it were established empirically rather than assumed:
+
+**`set -e` is still in force inside an EXIT trap.** An unguarded failure there
+truncates the rest of the cleanup *and overwrites the block's exit status* — so
+a passing block gets reported as a failure. Every statement in the trap is
+guarded and the body ends in `return 0`. `[ -n "$X" ] && cmd` on its own is not
+enough: with `$X` empty the list returns 1 and flips a passing block to 1, which
+is why the `|| true` is load-bearing rather than decorative.
+
+**A cleanup function, not an inline trap string.** It keeps the jq program in
+ordinary single quotes with an ordinary `--arg`, so there is no nested-quote
+escaping inside a Go string literal inside a shell trap.
+
+## The five `mr user` doctests had never been converted at all
+
+They still cleaned up with a trailing `mr user delete`. Same defect, same fix.
+Measured, old shape: an injected capture failure leaves the account behind.
+
+## Verified
+
+The proof is the pair, not the pass. Old shape with a failure injected into the
+id capture: the entity survives (`from-url` 1 row, `token list` 1 token,
+`user create` 1 account) and the next ordinary `from-url` run 400s. New shape,
+same injection: **exit non-zero and 0 survivors**, in every case. Exit status is
+preserved in both directions — a failing assertion still exits 1, a passing
+block still exits 0.
+
+Beyond that: `mr docs lint` 0 warnings 0 failures · `gofmt` clean ·
+`go test ./cmd/mr/...` · `cli-doctest` 3/3, with the auth pass's by-name PASS
+assertions confirming the four `skip-on=ephemeral` blocks still run there · and
+the full `check-examples` suite **three times consecutively against one
+long-lived server** in each environment — ephemeral 193 PASS / 0 FAIL,
+auth 194 PASS / 0 FAIL — with **zero leftover doctest tokens, users or
+resources** after all six runs. That last one is the real regression test for
+this entry: it is exactly what the old shape could not survive.
+
+`docs-gen` moves only `from-url.md`, because doctest blocks are not published;
+the token, user and auth pages are unchanged by design.
+
 # Second review round: five minor findings, no majors left (2026-08-21)
 
 A second independent pass over `408ed441..e127ce73` found **no major issues**.

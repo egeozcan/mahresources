@@ -52,18 +52,32 @@ func newTokenListCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"",
 			// The revoke is cleanup: the block runs against a server that may be
 			// long-lived and the account has a -max-user-tokens ceiling, so a doctest
-			// that only mints walks toward it. The id comes from create rather than a
-			// second list lookup -- one call, and it is the id of exactly the token
-			// this run made.
+			// that only mints walks toward it.
 			//
 			// It runs from a trap rather than a trailing line because the block runs
 			// under `bash -eo pipefail`: a transient failure in the assertion would
-			// skip the line and leak the token. The trap is armed on the statement
-			// after the one that captures the id.
+			// skip the line and leak the token. And the trap is armed *before* the
+			// create, resolving the token by its unique name at exit time rather than
+			// from an id captured afterwards. Armed after an `ID=$(create | jq ...)`
+			// the trap would miss the one interleaving that matters: the create has
+			// committed, the pipeline reading its id fails, and `bash -e` exits with
+			// no trap installed. The name is chosen before the create, so the trap
+			// needs nothing the create returns.
+			//
+			// Every statement in the trap is failure-proofed and the body ends in
+			// `return 0`. `set -e` is still in force inside an EXIT trap, so an
+			// unguarded failure there both truncates the remaining cleanup and
+			// overwrites the block's own exit status -- turning a passing block into
+			// a reported failure, and a failing one into a different failure.
 			"  # mr-doctest: the list carries the token just minted, found by name, skip-on=ephemeral",
 			"  N=\"doctest-list-$$-$RANDOM\"",
-			"  ID=$(mr token create --name \"$N\" --json | jq -r '.id')",
-			"  trap 'mr token revoke \"$ID\" > /dev/null 2>&1 || true' EXIT",
+			"  cleanup() {",
+			"    LEFTOVER=$(mr token list --json | jq -r --arg n \"$N\" 'map(select(.name == $n)) | .[0].ID // empty') || LEFTOVER=\"\"",
+			"    [ -n \"$LEFTOVER\" ] && mr token revoke \"$LEFTOVER\" > /dev/null 2>&1 || true",
+			"    return 0",
+			"  }",
+			"  trap cleanup EXIT",
+			"  mr token create --name \"$N\" --json > /dev/null",
 			"  mr token list --json | jq -e --arg n \"$N\" 'map(select(.name == $n)) | length == 1' > /dev/null",
 		}, "\n"),
 		Annotations: tokenExitCodes,
@@ -97,17 +111,22 @@ func newTokenCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  # Create a token that expires in 30 days",
 			"  mr token create --name temp --expires-in 720h",
 			"",
-			// The response is captured once so the secret can be asserted and the id
-			// reused to revoke it. Without that, every pass leaves a live token behind
-			// on a long-lived server and the account walks toward -max-user-tokens.
-			// The revoke runs from a trap, so `bash -eo pipefail` cannot skip it when
-			// the assertion fails; the id is read out of the captured response first
-			// so the trap has something to name.
+			// Without a revoke, every pass leaves a live token behind on a long-lived
+			// server and the account walks toward -max-user-tokens. It runs from a
+			// trap armed before the create and resolving the token by name, for the
+			// reasons spelled out on `token list` above. Naming the token up front
+			// also removes the response capture the block used to need: the secret is
+			// asserted straight out of the create's own pipe, because nothing later
+			// has to read an id back out of it.
 			"  # mr-doctest: create returns a token whose secret is shown once, skip-on=ephemeral",
-			"  OUT=$(mr token create --name \"doctest-create-$$-$RANDOM\" --json)",
-			"  ID=$(echo \"$OUT\" | jq -r '.id')",
-			"  trap 'mr token revoke \"$ID\" > /dev/null 2>&1 || true' EXIT",
-			"  echo \"$OUT\" | jq -e '.token | length > 0' > /dev/null",
+			"  N=\"doctest-create-$$-$RANDOM\"",
+			"  cleanup() {",
+			"    LEFTOVER=$(mr token list --json | jq -r --arg n \"$N\" 'map(select(.name == $n)) | .[0].ID // empty') || LEFTOVER=\"\"",
+			"    [ -n \"$LEFTOVER\" ] && mr token revoke \"$LEFTOVER\" > /dev/null 2>&1 || true",
+			"    return 0",
+			"  }",
+			"  trap cleanup EXIT",
+			"  mr token create --name \"$N\" --json | jq -e '.token | length > 0' > /dev/null",
 		}, "\n"),
 		Annotations: tokenExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -150,14 +169,20 @@ func newTokenRevokeCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"  # Revoke after listing",
 			"  mr token revoke 5",
 			"",
-			// Here the revoke IS the assertion, so it stays inline; the trap is the
-			// backstop for the gap between minting the token and looking its id up by
-			// name, where a failed lookup would otherwise leak it. Revoking twice is
-			// harmless -- the second call is swallowed.
+			// Here the revoke IS the assertion, so it stays inline and the trap is only
+			// the backstop: it covers the create itself, and the id lookup between it
+			// and the inline revoke. Once the inline revoke succeeds the trap's own
+			// lookup finds nothing and it does nothing, so the two never collide; and
+			// if it did revoke twice the second call is a swallowed 404.
 			"  # mr-doctest: revoke removes the token it names, skip-on=ephemeral",
 			"  N=\"doctest-revoke-$$-$RANDOM\"",
-			"  CREATED=$(mr token create --name \"$N\" --json | jq -r '.id')",
-			"  trap 'mr token revoke \"$CREATED\" > /dev/null 2>&1 || true' EXIT",
+			"  cleanup() {",
+			"    LEFTOVER=$(mr token list --json | jq -r --arg n \"$N\" 'map(select(.name == $n)) | .[0].ID // empty') || LEFTOVER=\"\"",
+			"    [ -n \"$LEFTOVER\" ] && mr token revoke \"$LEFTOVER\" > /dev/null 2>&1 || true",
+			"    return 0",
+			"  }",
+			"  trap cleanup EXIT",
+			"  mr token create --name \"$N\" --json > /dev/null",
 			"  ID=$(mr token list --json | jq -r --arg n \"$N\" 'map(select(.name == $n)) | .[0].ID')",
 			"  mr token revoke $ID",
 			"  mr token list --json | jq -e --arg n \"$N\" 'map(select(.name == $n)) | length == 0' > /dev/null",

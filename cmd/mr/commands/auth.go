@@ -63,15 +63,28 @@ func newAuthLoginCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			// It is a trap rather than two trailing lines because the block runs under
 			// `bash -eo pipefail`: a transient failure in the assertion would skip
 			// them, leaking a live token and the temp credential file. The trap is
-			// armed before the login and reads $ID at exit time, so the only window in
-			// which a token exists and nothing would revoke it is the single
-			// assignment that names it.
+			// armed before the login and resolves the token by the name it was minted
+			// under, so no window exists in which a token is on the server and nothing
+			// would revoke it. Reading an id captured after the login instead left
+			// exactly one: `login` succeeds, the lookup that names the id fails, and
+			// `bash -e` exits with $ID still empty.
+			//
+			// The lookup comes first and the file is removed after it, because the
+			// lookup authenticates with that file. Every statement is guarded and the
+			// body ends in `return 0`: `set -e` applies inside an EXIT trap too, so an
+			// unguarded failure in the lookup would skip the `rm` and would also
+			// overwrite the block's own exit status.
 			"  # mr-doctest: login mints a token and stores it, skip-on=ephemeral",
 			"  export MR_TOKEN_FILE=$(mktemp)",
 			"  N=\"doctest-login-$$-$RANDOM\"",
-			"  trap '[ -n \"$ID\" ] && mr token revoke \"$ID\" > /dev/null 2>&1 || true; rm -f \"$MR_TOKEN_FILE\"' EXIT",
+			"  cleanup() {",
+			"    LEFTOVER=$(mr token list --json | jq -r --arg n \"$N\" 'map(select(.name == $n)) | .[0].ID // empty') || LEFTOVER=\"\"",
+			"    [ -n \"$LEFTOVER\" ] && mr token revoke \"$LEFTOVER\" > /dev/null 2>&1 || true",
+			"    rm -f \"$MR_TOKEN_FILE\" || true",
+			"    return 0",
+			"  }",
+			"  trap cleanup EXIT",
 			"  mr auth login --username \"$MR_DOCTEST_USERNAME\" --password \"$MR_DOCTEST_PASSWORD\" --name \"$N\"",
-			"  ID=$(mr token list --json | jq -r --arg n \"$N\" 'map(select(.name == $n)) | .[0].ID')",
 			"  mr auth whoami --json | jq -e '.isAdmin' > /dev/null",
 		}, "\n"),
 		Annotations: authExitCodes,
