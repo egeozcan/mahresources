@@ -17,7 +17,11 @@ import { test, expect } from '../../fixtures/base.fixture';
  */
 test.describe('Plugin schedule run now', () => {
   const PLUGIN = 'test-schedules';
-  const SCHEDULE = 'nightly-rollup';
+  // Deliberately not 'nightly-rollup': that row is what plugin-schedules.spec.ts
+  // asserts still reads "never run", and schedule rows survive disable/enable by
+  // design, so a run against it would outlive this file and fail that one. The
+  // full suite reproduced exactly that as a flake before this split.
+  const SCHEDULE = 'manual-only';
 
   const runButton = (page: any) =>
     page.getByTestId(`plugin-schedule-run-${PLUGIN}-${SCHEDULE}`);
@@ -45,15 +49,15 @@ test.describe('Plugin schedule run now', () => {
     await page.goto('/plugins/manage');
     await page.waitForLoadState('load');
 
-    // The row starts where plugin-schedules.spec.ts leaves it.
-    await expect(scheduleRow(page)).toContainText('never run');
-
+    // Baselines rather than absolutes. The row is never deleted on disable, so
+    // "runs is 0" holds only on the very first run of a fresh server — a retry
+    // after any partial failure could then never go green.
+    const before = await scheduleState(apiClient, PLUGIN, SCHEDULE);
     // Captured from the API rather than the rendered cell: the cell is formatted
     // to the minute, which is coarse enough to hide a re-base of a 1h schedule
-    // only if the test happened to run in the same minute. The stored value is
-    // what the assertion is actually about.
-    const dueBefore = await scheduleNextDue(apiClient, PLUGIN, SCHEDULE);
-    expect(dueBefore, 'the fixture schedule has no stored next-due time').toBeTruthy();
+    // unless the test happens to straddle one. The stored value is what the
+    // assertion is actually about.
+    expect(before.nextDueAt, 'the fixture schedule has no stored next-due time').toBeTruthy();
 
     const button = runButton(page);
     await expect(button).toBeVisible();
@@ -72,7 +76,7 @@ test.describe('Plugin schedule run now', () => {
     // for the dispatch hop, not for a slow plugin.
     await expect(async () => {
       const row = await scheduleState(apiClient, PLUGIN, SCHEDULE);
-      expect(row.runs).toBeGreaterThanOrEqual(1);
+      expect(row.runs).toBeGreaterThan(before.runs);
       expect(row.lastStatus).toBe('completed');
     }).toPass({ timeout: 15_000 });
 
@@ -83,13 +87,12 @@ test.describe('Plugin schedule run now', () => {
     expect(
       dueAfter,
       'a manual run re-phased the schedule; an extra run is not a re-phasing',
-    ).toBe(dueBefore);
+    ).toBe(before.nextDueAt);
 
     // And the page now shows the run it just made.
     await page.reload();
     await page.waitForLoadState('load');
     await expect(scheduleRow(page)).toContainText('completed');
-    await expect(scheduleRow(page)).not.toContainText('never run');
   });
 
   test('the control is not offered for a schedule that is no longer declared', async ({ page, apiClient }) => {

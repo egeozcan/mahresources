@@ -50,10 +50,10 @@ apart: a run that happened moves `runs`.
   # mr-doctest: a manual run executes the handler without re-phasing the cadence, timeout=60s
   mr plugin disable test-schedules --json > /dev/null
   mr plugin enable test-schedules --json > /dev/null
-  DUE() { mr plugin schedules test-schedules --json | jq -r '.[] | select(.scheduleId=="nightly-rollup") | .nextDueAt'; }
-  RUNS() { mr plugin schedules test-schedules --json | jq -r '.[] | select(.scheduleId=="nightly-rollup") | .runs'; }
+  DUE() { mr plugin schedules test-schedules --json | jq -r '.[] | select(.scheduleId=="manual-only") | .nextDueAt'; }
+  RUNS() { mr plugin schedules test-schedules --json | jq -r '.[] | select(.scheduleId=="manual-only") | .runs'; }
   BEFORE=$(DUE)
-  mr plugin schedule-run test-schedules nightly-rollup --json | jq -e '.started == true' > /dev/null
+  mr plugin schedule-run test-schedules manual-only --json | jq -e '.started == true' > /dev/null
   N=0
   for _ in $(seq 1 20); do
     N=$(RUNS); N=${N:-0}

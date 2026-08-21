@@ -130,7 +130,9 @@ test.describe('Plugin schedules', () => {
  */
 test.describe('Plugin schedule run now', () => {
   const SCHEDULE_PLUGIN = 'test-schedules';
-  const SCHEDULE_ID = 'nightly-rollup';
+  // Not 'nightly-rollup': that row is the one the describe above asserts still
+  // reads "never run", and rows survive disable/enable by design.
+  const SCHEDULE_ID = 'manual-only';
 
   const scheduleJSON = (cli: any) => {
     const out = cli.run('plugin', 'schedules', SCHEDULE_PLUGIN, '--json');
@@ -143,19 +145,20 @@ test.describe('Plugin schedule run now', () => {
   test('schedule-run fires a schedule that is not due, without moving next due', async ({ cli }) => {
     cli.run('plugin', 'enable', SCHEDULE_PLUGIN);
     try {
+      // A baseline, not an absolute: the row outlives disable/enable, so
+      // "runs is 0" would make a retry after any partial failure unpassable.
       const before = scheduleJSON(cli);
-      expect(before.runs).toBe(0);
 
       const result = cli.run('plugin', 'schedule-run', SCHEDULE_PLUGIN, SCHEDULE_ID, '--json');
       expect(JSON.parse(result.stdout).started).toBe(true);
 
       let after = before;
-      for (let i = 0; i < 40 && after.runs < 1; i++) {
+      for (let i = 0; i < 40 && after.runs <= before.runs; i++) {
         await new Promise((r) => setTimeout(r, 250));
         after = scheduleJSON(cli);
       }
 
-      expect(after.runs, 'the schedule never ran, so the control did nothing').toBeGreaterThanOrEqual(1);
+      expect(after.runs, 'the schedule never ran, so the control did nothing').toBeGreaterThan(before.runs);
       expect(after.lastStatus).toBe('completed');
       // An extra run is not a re-phasing. This fails if the run path reaches for
       // CompletePluginScheduleRun or AdvancePluginScheduleAtDispatch.

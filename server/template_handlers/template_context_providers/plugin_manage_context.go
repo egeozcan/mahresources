@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -56,6 +57,11 @@ type pluginDisplay struct {
 	// is disabled is inert but still there, and a row with no owner never runs.
 	Schedules []scheduleDisplay
 }
+
+// scheduleRefRE is `<plugin>/<schedule>` in the grammars the two halves are
+// actually validated against at registration: a plugin name, and a schedule id.
+// Anything else is not a schedule reference and is dropped rather than shown.
+var scheduleRefRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,49}/[A-Za-z0-9_-]{1,100}$`)
 
 // scheduleDisplay is one PluginSchedule row, flattened for the template.
 type scheduleDisplay struct {
@@ -136,14 +142,16 @@ func PluginManageContextProvider(appCtx PluginManagePageContext) func(request *h
 		ctx["pageTitle"] = "Manage Plugins"
 
 		// What a manual run just started, if the operator arrived here from the
-		// run-now button. The run is asynchronous, so the row below still reads
-		// "never run" at this point and the page would otherwise look as though
-		// the button did nothing. Bounded and echoed through pongo2's escaping;
-		// it is only ever displayed.
-		if started := strings.TrimSpace(request.URL.Query().Get("started")); started != "" {
-			if len(started) > 420 {
-				started = started[:420]
-			}
+		// run-now button without JavaScript. The run is asynchronous, so the row
+		// below still reads "never run" at this point and the page would
+		// otherwise look as though the button did nothing.
+		//
+		// Matched against the grammar the two halves actually have rather than
+		// echoed and escaped. Escaping alone would be enough to make it safe, but
+		// this is a URL parameter rendered on an admin page, and "safe because
+		// the template escapes it" is a property of every template that renders
+		// it — a narrower promise than "it cannot be anything but a name".
+		if started := strings.TrimSpace(request.URL.Query().Get("started")); scheduleRefRE.MatchString(started) {
 			ctx["scheduleStarted"] = started
 		}
 

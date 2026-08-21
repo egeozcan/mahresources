@@ -156,3 +156,86 @@ func TestCompletePluginScheduleRunPG_AdvancesReleasesAndCounts(t *testing.T) {
 		t.Errorf("NextDueAt = %s, want about %s (re-base, not catch-up)", after.NextDueAt, want)
 	}
 }
+
+// The run-now claim on Postgres.
+//
+// It is the same conditional UPDATE with one predicate removed, so it rests on
+// the same RowsAffected semantics the tests above exist for — and it is the
+// variant an operator can fire repeatedly from a button, which makes "exactly
+// one winner" the property that matters most here.
+func TestClaimPluginScheduleNowPG_TakesNotDueButKeepsTheOtherTwo(t *testing.T) {
+	ctx := newPostgresScheduleContext(t)
+	owner := uint(7)
+
+	// The whole difference: a row an hour away, which the ticked claim refuses.
+	notDue := seedPGSchedule(t, ctx, "later", time.Now().Add(time.Hour), &owner)
+	if claimed, err := ctx.ClaimPluginSchedule(notDue.ID, "tick", time.Now()); err != nil {
+		t.Fatalf("ticked claim: %v", err)
+	} else if claimed {
+		t.Fatal("the ticker claimed a row due in an hour, so this proves nothing about the run-now variant")
+	}
+	if claimed, err := ctx.ClaimPluginScheduleNow(notDue.ID, "manual", time.Now()); err != nil {
+		t.Fatalf("run-now claim: %v", err)
+	} else if !claimed {
+		t.Fatal("a manual run could not claim a row that is not yet due, which is every row the control is for")
+	}
+
+	// A NULL owner against a NULL claimed_at, the two-nullable-column row.
+	unowned := seedPGSchedule(t, ctx, "orphan", time.Now().Add(time.Hour), nil)
+	if claimed, err := ctx.ClaimPluginScheduleNow(unowned.ID, "manual", time.Now()); err != nil {
+		t.Fatalf("unowned run-now claim: %v", err)
+	} else if claimed {
+		t.Error("a manual run claimed a schedule whose owner has been deleted")
+	}
+
+	held := seedPGSchedule(t, ctx, "busy", time.Now().Add(time.Hour), &owner)
+	if claimed, err := ctx.ClaimPluginSchedule(held.ID, "tick", time.Now().Add(2*time.Hour)); err != nil || !claimed {
+		t.Fatalf("seeding a live claim: claimed=%v err=%v", claimed, err)
+	}
+	if claimed, err := ctx.ClaimPluginScheduleNow(held.ID, "manual", time.Now()); err != nil {
+		t.Fatalf("held run-now claim: %v", err)
+	} else if claimed {
+		t.Error("a manual run claimed a schedule a tick was already running; overlap=skip promises this cannot happen")
+	}
+}
+
+// Two operators clicking "Run now" in the same instant is the reachable version
+// of the multi-process race, and it is easier to reach than the ticked one: the
+// button is not rate-limited and there is no clock spacing the attempts.
+func TestClaimPluginScheduleNowPG_AdmitsOneWinner(t *testing.T) {
+	ctx := newPostgresScheduleContext(t)
+	owner := uint(7)
+	row := seedPGSchedule(t, ctx, "feed", time.Now().Add(time.Hour), &owner)
+
+	const racers = 8
+	var start sync.WaitGroup
+	var done sync.WaitGroup
+	start.Add(1)
+	done.Add(racers)
+
+	var mu sync.Mutex
+	wins := 0
+	for i := 0; i < racers; i++ {
+		go func(i int) {
+			defer done.Done()
+			start.Wait()
+			claimed, err := ctx.ClaimPluginScheduleNow(row.ID, fmt.Sprintf("manual-%d", i), time.Now())
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				t.Errorf("run-now claim: %v", err)
+				return
+			}
+			if claimed {
+				wins++
+			}
+		}(i)
+	}
+	start.Done()
+	done.Wait()
+
+	if wins != 1 {
+		t.Fatalf("%d of %d concurrent run-now requests claimed one schedule; exactly one may, "+
+			"or two copies of the handler run at once", wins, racers)
+	}
+}

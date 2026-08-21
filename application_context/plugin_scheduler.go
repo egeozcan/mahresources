@@ -302,7 +302,11 @@ func (s *PluginScheduler) dispatchManual(row models.PluginSchedule, token string
 	}
 	reg, found := s.scheduleRegistration(row)
 	if !found {
-		// Disabled between RunNow's check and here.
+		// Disabled between RunNow's check and here. Logged for the same reason
+		// the !ran branch below is: an operator has already been told this
+		// started, and nothing will retry it.
+		log.Printf("[plugin] schedule %s/%s was asked to run now but the plugin stopped "+
+			"declaring it before the run began", row.PluginName, row.ScheduleID)
 		_ = s.ctx.ReleasePluginScheduleClaim(row.ID, token)
 		return
 	}

@@ -146,6 +146,30 @@ already renders.
 - CLI: three specs, plus two doctests — one of which enables the fixture, runs
   it, polls `runs` and asserts `nextDueAt` is byte-identical.
 
+## The fixture had to be split, and the full suite proved it
+
+The first version of the browser spec fired `nightly-rollup` — the same row
+`plugin-schedules.spec.ts` asserts still reads "never run". Schedule rows are
+deliberately never deleted on disable, so that run outlived the spec that made
+it and left the other file asserting against history it did not create. The
+targeted run passed; the full suite reported it as the run's one flaky test,
+which is exactly the shape it is: a race that resolves on timing, on two
+workers against one shared server.
+
+The fixture now declares a second schedule, `manual-only`, and the run-now specs
+use it. The two files stop sharing state, and the existing assertions are all
+row-scoped so a second row breaks nothing. Both specs also moved from absolute
+preconditions (`runs == 0`, "never run") to captured baselines, because on a row
+that outlives disable/enable an absolute precondition makes a retry after any
+partial failure permanently unpassable.
+
+`plugin_schedule_pg_test.go` gained the run-now claim, for the reason that file
+exists: the claim is one conditional UPDATE whose `RowsAffected` is the whole
+answer, and `RowsAffected` is precisely where two dialects can differ. Eight
+concurrent run-now requests against one row must produce exactly one winner —
+an easier race to reach than the ticked one, since a button has no clock spacing
+its attempts.
+
 ## Two notes
 
 **`--schedule-id` became a positional.** It was written as a required flag by
