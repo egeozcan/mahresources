@@ -154,10 +154,11 @@ func (ctx *MahresourcesContext) principalForPluginActor(actorID uint) *auth.Prin
 //
 // Still reachable, recorded rather than claimed closed: a group's own category
 // change and its deletion both remove incident edges whose far endpoint is
-// outside the subtree, and merge's degenerate self-edge sweep is database-wide.
-// The first three are closable with subtree predicates; only the general case —
-// a confined caller performing any admin-only taxonomy write — needs role
-// capability below server/, which does not exist. See CLAUDE.md.
+// outside the subtree. Both are closable with subtree predicates on those
+// specific statements. Merge's degenerate self-edge sweep was the third and now
+// carries the filter when the merge is scoped. The general case — a confined
+// caller performing any admin-only taxonomy write — is closed by the role
+// capability guard in role_capability.go. See CLAUDE.md.
 func deniedPluginPrincipal(actorID uint) *auth.Principal {
 	return &auth.Principal{UserID: actorID, Role: models.RoleGuest}
 }

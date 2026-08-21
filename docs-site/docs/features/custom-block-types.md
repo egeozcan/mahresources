@@ -57,6 +57,45 @@ curl "http://localhost:8181/v1/plugins/my-plugin/block/render?blockId=42&mode=vi
 curl "http://localhost:8181/v1/plugins/my-plugin/block/render?blockId=42&mode=edit"
 ```
 
+### Calling Back from Plugin Block HTML
+
+The HTML a plugin returns is inert on its own. `window.mahBlock` is how it writes
+back -- a bridge the block editor installs on the page, and the only supported way
+for plugin-rendered markup to change the block it belongs to.
+
+| Method | Signature | Effect |
+|--------|-----------|--------|
+| `saveContent` | `(blockId, content) => Promise` | `PUT /v1/note/block?id={blockId}` with `{ content }` |
+| `updateState` | `(blockId, state) => Promise` | `PATCH /v1/note/block/state?id={blockId}` with `{ state }` |
+| `getBlock` | `(blockId) => object \| null` | The loaded block, from the editor's own in-memory list |
+
+```html
+<!-- Returned from render_edit: the handler runs when the user changes the field -->
+<input value="Untitled"
+       onchange="mahBlock.saveContent(42, {label: this.value})">
+```
+
+Four properties of the bridge decide how a plugin should use it:
+
+**Both mutators replace, they do not merge.** The request body is exactly the object
+passed in, so `saveContent(id, {label: x})` drops every other key the block's content
+had. Read the current value with `getBlock` and spread it if you mean to change one
+field.
+
+**Failure is silent.** Both methods catch their own errors, put the message on the
+editor's error banner, and do not rethrow -- so the returned promise resolves
+`undefined` whether the write succeeded or failed. A plugin cannot detect a failed
+write by awaiting it.
+
+**`getBlock` can return `null` for a block that is on the page.** The bridge is
+installed before the editor loads its blocks, deliberately: plugin markup can be in
+the DOM before either fetch resolves, and a bridge installed after them would be
+missing exactly when a plugin first reaches for it. The cost is that `getBlock`
+answers from an empty list until the load completes.
+
+**It is a page-level singleton and is never torn down.** On a page mounting more than
+one editor, the last one to initialize owns `window.mahBlock`.
+
 ## Architecture
 
 A complete block type implementation requires:

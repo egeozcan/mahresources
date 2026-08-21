@@ -117,20 +117,24 @@ jobs:
         working-directory: e2e
         run: npm run test:with-server:cli-doctest
 
-  # Stage 1 of putting the browser suite in CI: the two directories whose entire
-  # purpose is "this must not come back". Until this job existed, every Playwright
+  # The browser suite in CI. It began as two directories whose entire purpose is
+  # "this must not come back", because until this job existed every Playwright
   # guard in the repo gated nothing — focus, computed style, and which Alpine
   # `<template x-if>` branch actually instantiated are runtime properties no Go
   # test can assert, and they were verified only when someone ran the suite locally.
   #
-  # Staged deliberately. Stage 2 is the whole `default` project (drop the two path
-  # arguments below), stage 3 is `--project=auth` and `--project=cli`. Widening
-  # WCAG_AA_TAGS (docs/deferred-work.md item 4) is sequenced after this job is
-  # green, so the first red run here is never ambiguous.
+  # Stage 2 (this job, whole `default` project) and stage 3 (`e2e-auth-cli` below)
+  # have both landed. Widening WCAG_AA_TAGS (docs/deferred-work.md item 4) was
+  # sequenced after this job is green, and is the remaining step.
   e2e-browser:
-    name: E2E browser (accessibility + regressions)
+    name: E2E browser (default project)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Raised from 30 with stage 2. The scope went from 707 tests to 1647, and the
+    # only wall-clock evidence is local (7.1-7.7 min at 4 workers on a loaded dev
+    # machine), not a runner at --workers=2. A ceiling set too tight makes a slow
+    # run read as a regression; this one is deliberately loose enough that a
+    # timeout here means something is actually wrong.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -170,30 +174,128 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       # Builds public/tailwind.css and public/dist/main.js from src/, then the
-      # ./mahresources binary. This must run before the suite: the E2E harness
-      # never builds the server itself — e2e/fixtures/server-manager.ts only spawns
-      # <repo>/mahresources, and e2e/scripts/run-tests.js rebuilds it only when the
-      # file is absent. Building the frontend here also means the suite exercises
-      # this PR's src/, not the bundle committed under public/dist/.
+      # ./mahresources binary, so the suite exercises this PR's src/ rather than
+      # the bundle committed under public/dist/. e2e/fixtures/server-manager.ts
+      # only ever spawns <repo>/mahresources; it never builds it. This step is
+      # redundant with e2e/scripts/run-tests.js, which rebuilds unconditionally
+      # (an earlier version of this comment claimed it rebuilt only when the file
+      # was absent, which was never true) — kept because a build failure here is
+      # attributable to a build step rather than to the test runner.
       - name: Build frontend assets and server binary
         run: npm run build
 
       # --workers=2 on a 4-vCPU runner, because each Playwright worker also spawns
       # its own mahresources process. playwright.config.ts's CI branch defaults to
-      # 1 worker (too slow for ~677 tests) and 4 retries (which masks a flake and
+      # 1 worker (too slow for 1647 tests) and 4 retries (which masks a flake and
       # stretches a genuine failure to five runs); both are overridden here rather
       # than edited, so local runs stay byte-identical to today.
-      - name: Run accessibility + regression suites
+      - name: Run the default project
         working-directory: e2e
-        run: node scripts/run-tests.js test tests/accessibility/ tests/regressions/ --project=default --workers=2 --retries=2
+        run: node scripts/run-tests.js test --project=default --workers=2 --retries=2
 
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-a11y-regressions
+          name: playwright-report-default
           path: |
             e2e/playwright-report/
             e2e/test-results/
           retention-days: 7
           if-no-files-found: ignore
+
+  # Stage 3: the two projects the `default` project deliberately excludes.
+  # Both in one job, because under CI each caps itself at one worker
+  # (playwright.config.ts), so --workers=2 runs them concurrently with two
+  # servers -- the same resource shape --workers=2 was chosen for above. Each
+  # worker takes its own port pair and its own ephemeral SQLite file, and
+  # neither project declares dependencies, so there is nothing to serialize.
+  #
+  # `cli` excludes cli-doctest.spec.ts via the project's own testIgnore: the
+  # spec lives under tests/cli/, so before that exclusion it belonged to both
+  # this project and the dedicated cli-doctest job, and ran twice per push.
+  e2e-auth-cli:
+    name: E2E auth + CLI projects
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            e2e/package-lock.json
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc libsqlite3-dev
+
+      # Mandatory even though this job runs no browser test of its own:
+      # e2e/scripts/run-tests.js shells out to the ROOT `npm run build`, which
+      # fails with "tailwindcss: not found" without it.
+      - name: Install frontend deps
+        run: npm ci
+        env:
+          HUSKY: 0
+
+      - name: Install E2E deps
+        working-directory: e2e
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('e2e/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      # The auth project drives a real browser against an -auth server; the cli
+      # project drives the mr binary. run-tests.js builds both binaries.
+      - name: Run the auth and cli projects
+        working-directory: e2e
+        run: node scripts/run-tests.js test --project=auth --project=cli --workers=2 --retries=2
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-auth-cli
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # The JavaScript unit suite. It existed long before this job -- 63 spec files
+  # under src/, a vitest config in vite.config.js, an npm script -- and nothing
+  # ran it on a push, including the one that group one's own review demanded
+  # (src/utils/pluginNodeCache.test.ts). No Go, no browsers, no server.
+  unit-js:
+    name: JS unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install frontend deps
+        run: npm ci
+        env:
+          HUSKY: 0
+
+      - name: Run vitest
+        run: npm run test:unit

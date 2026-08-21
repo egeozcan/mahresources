@@ -1,3 +1,128 @@
+# CI runs what the repo already has, and three stale claims (2026-08-21)
+
+Items 5.2, 5.4 and the rest of 5.1 from the re-derived open-work audit, plus the
+1.2 and 1.8 leftovers group one recorded rather than fixed. All three CI items
+were mis-sized on the board, and re-deriving them against source is what made
+this a batch rather than a quarter.
+
+## The board was wrong about all three, in the same direction
+
+**5.2 was sized L on a number the tree itself calls an outlier.** The card's
+reasoning was "a local full-suite baseline near 45 minutes with a known 16-flaky
+load class", so the widening would need sharding or a raised budget.
+`docs/deferred-work-next-session.md:107` says the opposite about that very run:
+45.2m/16-flaky was a loaded machine "against a 7.7m baseline", and
+`docs/todo.md` sizes the full `default` project at ~7.7 minutes at 4 workers.
+Measured here before touching anything: **1642 passed, 5 skipped, 3.3 minutes,
+zero flaky.** The change is deleting two path arguments from a step whose own
+comment already called it "Stage 2".
+
+**5.4 was marked blocked on a server that already exists.**
+`e2e/fixtures/server-manager.ts` has taken `{auth: true}` since the auth work
+landed, and `auth.fixture.ts` passes it; the `auth`, `cli` and `cli-doctest`
+projects and their npm scripts all exist. Nothing was missing but the CI steps.
+
+**The "auth-enabled doctest server" blocks 4 warnings, not 11.** `auth logout`
+makes no HTTP request at all; `auth whoami` answers for any non-nil principal,
+which under auth-off is the root admin; and all five `mr user` commands are
+reachable on that identical server -- `cli-users.spec.ts` opens by saying so and
+then exercises the whole lifecycle. Only `token create|list|revoke` and
+`auth login` genuinely die, on the `p.SuperUser` guard in the own-token
+handlers. So the two items the audit said shared a prerequisite do not.
+
+## Done
+
+1. **CI runs the whole `default` browser project.** 707 tests to 1647. The
+   timeout goes 30 to 45 minutes in the same commit and *before* the first
+   widened run: a ceiling set too tight makes a slow run read as a regression.
+   Measured at CI's own `--workers=2`, after these changes: **8.9 minutes, 1642
+   passed, 5 skipped, zero flaky.** A runner is slower than this machine, and 45
+   absorbs a wide margin of that.
+2. **CI runs the `auth` and `cli` projects.** One job, because under CI each
+   project caps itself at one worker, so `--workers=2` runs them concurrently
+   with two servers -- the shape `--workers=2` was already chosen for. Verified
+   at the exact CI invocation: 364 passed, 1 skipped, 35.4s.
+3. **CI runs the JavaScript unit suite.** Not on the board at all, and the
+   larger gap of the three: 63 spec files and 974 tests under `src/`, a vitest
+   block in `vite.config.js`, an npm script -- and no job ran any of it. That
+   includes `pluginNodeCache.test.ts`, which group one's own review demanded
+   eight days ago and which has gated nothing since.
+4. **`--project=cli` no longer double-runs the doctest.** `cli-doctest.spec.ts`
+   lives under `tests/cli/`, and the `cli` project had no `testIgnore`, so the
+   spec belonged to two projects and ran twice in any run selecting both --
+   including `test:with-server:all`, where it has always run twice. Pre-existing;
+   stage 3 is what would have put it in CI.
+5. **Seven more `mr docs lint` warnings closed.** 11 to 4. Each is a real
+   runnable example confirmed by name in a live `check-examples` run, not by the
+   suite going green: the spec prints per-example output only on failure, so a
+   block that never ran looks exactly like one that passed.
+6. **The lost-claim message names both its causes** (item 1.8's leftover), and
+   **`window.mahBlock` is documented** (item 1.2's).
+
+## What the doctests had to avoid
+
+Each example is one `bash -eo pipefail -c` process and **pass/fail is the exit
+code only** -- stdout is never compared -- so every assertion is `jq -e` or a
+negated command. Three traps, none of which announce themselves:
+
+**Never touch the root admin.** `EnsureRootAdmin` runs on every boot, so the
+ephemeral server always has one, and `.[0]` of `mr user list` *is* it. A
+`user delete` doctest written the obvious way either 409s on `ErrLastAdmin` or
+succeeds and shifts `refreshRootAdmin`'s cached actor, changing creator
+attribution for every later write on that worker. Every example creates its own
+`--role editor` account and deletes that.
+
+**No count or position assertions.** Under `--project=cli` the doctest shares a
+worker DB with `cli-users.spec.ts`, which creates and deletes users of its own.
+The `user list` example filters for its own unique name rather than asserting a
+length.
+
+**`mr auth logout` deletes the real credentials file.** The doctest env is
+`os.Environ()`, and `ClearToken` removes the file outright when the map empties.
+The example runs under `MR_TOKEN_FILE=$(mktemp)`.
+
+Also: a label is split on commas before metadata parsing, so a comma truncates
+what the PASS line displays. Four labels were rewritten without commas. The
+existing `category_delete.md` doctest has the same truncation and is left alone.
+
+`mr auth login` and `mr token *` stay warned. `skip-on=ephemeral` would clear
+the warning while the doctest ran nowhere, which is laundering the number rather
+than covering the command. **4 is the honest count.**
+
+## Three claims the tree contradicted
+
+`CLAUDE.md` said "**Four paths remain open and are known, not closed**" about
+relation cascades crossing a subtree. `fb2a6f19` closed the third -- the group
+merge self-edge sweep now carries the filter when the merge is scoped -- so it
+is three, and "the first three could be closed with subtree predicates" is the
+first two, the remaining one being an UPDATE. The same staleness sat in a source
+comment in `plugin_db_adapter.go`, which additionally still said role capability
+below `server/` "does not exist"; `role_capability.go` has existed since the
+role-guard work and is called from `AddRelationType` twenty lines from the
+comment asserting its absence.
+
+**The historical entries in this file were left alone**, including the one at
+the merge sweep's own bullet and the one calling 1.8's second cause "a case
+nothing can currently produce". This log is chronological and a later entry
+closing an earlier item does not edit the earlier text -- which is exactly why
+its two "Still open" blocks read stale, and why they are not evidence of
+anything. For the record, that second cause is producible on both counts: the
+already-linked one through the public API, because the reverse-type lookup
+constrains only `(Name, FromCategoryId, ToCategoryId)` and not
+`back_relation_id`; the concurrent-delete one on Postgres only, since on SQLite
+the transaction already holds the write lock from its own insert.
+
+## Verified
+
+Full `default` project twice -- at HEAD before any edit (1642 passed / 5
+skipped / 3.3m at 4 workers) and again after them at CI's `--workers=2`
+(identical counts, 8.9m, zero flaky) · `auth` + `cli` at the CI invocation (364 passed / 1 skipped) ·
+`cli-doctest` spec · a direct `check-examples` run naming all seven new blocks
+PASS, 0 failures · vitest (63 files, 974 tests) · full Go suite (37 packages) ·
+staticcheck · css-scan · docs-site build (the broken-anchor gate) ·
+`docs-gen`/`skills-gen` with no diff, which is the claim that doctest blocks are
+filtered out of published markdown · Postgres.
+
 # Run a plugin schedule now, and five docs-lint examples (2026-08-21)
 
 Items 2.1 and 5.1 from the re-derived open-work audit. 2.1 was picked because

@@ -76,6 +76,9 @@ func newAuthLogoutCmd(c *client.Client) *cobra.Command {
 			"",
 			"  # Logout is safe to run even when not logged in",
 			"  mr auth logout",
+			"",
+			"  # mr-doctest: clearing this server's credential is safe when none is stored",
+			"  MR_TOKEN_FILE=$(mktemp) mr auth logout",
 		}, "\n"),
 		Annotations: authExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -99,6 +102,9 @@ func newAuthWhoamiCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			"",
 			"  # As raw JSON",
 			"  mr auth whoami --json",
+			"",
+			"  # mr-doctest: whoami reports the acting identity - the root admin when auth is off",
+			"  mr auth whoami --json | jq -e '.authEnabled == false and .isAdmin and .superUser' > /dev/null",
 		}, "\n"),
 		Annotations: authExitCodes,
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -46,6 +46,12 @@ export default defineConfig({
     {
       name: 'cli',
       testDir: './tests/cli',
+      // cli-doctest.spec.ts lives in this directory, so without the exclusion it
+      // belongs to this project AND to the cli-doctest project below, and runs
+      // twice in any run that selects both. It is the expensive one to double:
+      // two check-examples passes over the whole CLI docs tree. Same idiom the
+      // default project uses above, for the same reason.
+      testIgnore: ['**/cli-doctest.spec.ts'],
       fullyParallel: false,
       use: {},
       workers: process.env.CI ? 1 : 2,

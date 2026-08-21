@@ -268,8 +268,14 @@ func (ctx *MahresourcesContext) AddRelationType(query *query_models.Relationship
 				if claim.Error != nil {
 					return claim.Error
 				}
+				// Two conjuncts, so two causes: the row is already linked, or it
+				// was deleted between the lookup above and this claim. The message
+				// names both. It used to name only the first, because it was
+				// inherited verbatim from a guard that literally tested
+				// BackRelationId != nil -- broadening the predicate to a claim
+				// left the wording describing the narrower thing it replaced.
 				if claim.RowsAffected == 0 {
-					return errors.New("back relation is already associated with something else")
+					return errors.New("back relation is already linked to another relation type or was removed concurrently")
 				}
 				backRelationType.BackRelationId = &relationType.ID
 			case errors.Is(lookupErr, gorm.ErrRecordNotFound):
