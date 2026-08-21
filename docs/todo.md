@@ -8675,3 +8675,49 @@ put things, and choosing one while pasting a URL fails silently.
 Recorded rather than folded in: different command, different path, and the
 queue's payload is persisted and replayed on retry, so a half-fix would make a
 retried download land somewhere other than the original. Its own TDD pass.
+
+## B4 — a remote download ignored the storage location you picked
+
+The mirror of B1, found while shipping it, and confirmed against a running
+server before a line was written: one server, one alt filesystem named
+`archive`, the same `PathName=archive` on both requests. The upload stored
+`StorageLocation: "archive"` and the bytes appeared under the alt directory;
+the remote URL stored `null` and the alt directory stayed empty.
+
+Both remote paths convert a `ResourceFromRemoteCreator` into a
+`ResourceCreator` field by field, and both copied every field *except*
+`PathName` — `AddRemoteResource` and the download queue's worker. `PathName`
+sits beside the embedded `ResourceQueryBase` rather than inside it, which is
+exactly how a field-by-field copy loses one.
+
+**An unread key is also an unvalidated one.** Beyond writing to the wrong
+filesystem, an *unknown* key was accepted silently as well, because
+`AddResource`'s "unknown filesystem" check never saw a value. Both are closed
+by the same two lines.
+
+Fixed in both paths in one batch, deliberately. The submitted creator is
+persisted as the download-history payload and replayed on retry, so fixing only
+the foreground call would have made a retried download land somewhere other
+than the original. `DownloadHistoryPayload` decodes the whole creator rather
+than rebuilding it field by field, so the retry carries `PathName` for free —
+and `TestDownloadHistoryPayloadPreservesPathName` is what keeps that true
+(mutation-checked by tagging the field `json:"-"`).
+
+Pinned at three levels: `AddRemoteResource` (binding *and* bytes on the alt
+filesystem), the queue worker (what actually reaches `AddResource`), and the
+HTTP handler with a real temp-dir alt filesystem. Each of the two lines
+independently turns tests red when reverted.
+
+### Recorded, not fixed
+
+- **No CLI command can target an alt filesystem at all.** `resource upload`,
+  `from-url`, `from-local` and the job-submit commands have no `--path-name`
+  flag, and the plugin API cannot set it either (`applyResourceOptions` fills
+  `ResourceQueryBase`, and `PathName` is not in it). One coherent feature gap,
+  not three bugs. The web form is the only surface that can choose storage.
+- **The key is validated after the transfer, for remote only.** A typo'd key
+  now fails loudly rather than silently, but for a download that means after
+  the bytes are fetched, and in the queue it lands as a failed download. An
+  upload has the bytes already, so it has no such asymmetry. Checking at the
+  two submit doors would make it immediate; `AddResource`'s check has to stay
+  regardless, since config can change between submit and retry.

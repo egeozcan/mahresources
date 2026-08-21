@@ -356,6 +356,11 @@ func (ctx *MahresourcesContext) AddRemoteResource(reqCtx context.Context, resour
 					OriginalLocation:   url,
 					SeriesSlug:         resourceQuery.SeriesSlug,
 				},
+				// BH-023: PathName sits beside the embedded base rather than in
+				// it, and this conversion copied the base field by field, so the
+				// storage location the caller chose was dropped here -- silently,
+				// since an unread key is also an unvalidated one.
+				PathName: resourceQuery.PathName,
 			})
 
 			if err != nil {

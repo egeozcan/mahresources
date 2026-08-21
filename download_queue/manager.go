@@ -684,6 +684,11 @@ func (dm *DownloadManager) downloadWithProgress(ctx context.Context, runID uint6
 			SeriesSlug:         job.creator.SeriesSlug,
 			SeriesId:           job.creator.SeriesId,
 		},
+		// BH-023: same omission as the foreground path. It matters more here,
+		// because the submitted creator is persisted as the history payload and
+		// replayed on retry -- dropping it only here would have made a retried
+		// download land somewhere other than the original.
+		PathName: job.creator.PathName,
 	})
 }
 
