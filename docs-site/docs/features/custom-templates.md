@@ -245,7 +245,7 @@ It occupies roughly the same place as the `group_detail_after` / `resource_detai
 <footer class="entity-footer">
   <p>Catalogued [property path="CreatedAt" format="date"] &middot; last touched [property path="UpdatedAt" format="date"]</p>
   [conditional path="source.url" not-empty="true"]
-    <p>Source: [link href-meta="source.url" text-meta="source.title" default="original"]</p>
+    <p>Source: <a :href="entity.Meta.source.url" x-text="entity.Meta.source.title || 'original'"></a></p>
   [/conditional]
 </footer>
 ```
