@@ -548,3 +548,62 @@ func TestLintManyInlineMetasStayLinear(t *testing.T) {
 		}
 	}
 }
+
+// Round-4 findings, all of which came from the scanner trying to find tag
+// boundaries itself. Tag finding is now golang.org/x/net/html's job.
+func TestLintScannerHandlesTheCasesOnlyAParserGets(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+	must := func(t *testing.T, src, want string) {
+		t.Helper()
+		if !warns(src, want) {
+			t.Errorf("no warning containing %q for %s", want, src)
+		}
+	}
+	quiet := func(t *testing.T, src, notWant string) {
+		t.Helper()
+		if warns(src, notWant) {
+			t.Errorf("unexpected %q warning for %s", notWant, src)
+		}
+	}
+
+	t.Run("a comment ends at --> not at the first >", func(t *testing.T) {
+		must(t, `<!-- > <x a=" --> <button onclick="[meta path='x' inline='true']">go</button>`, "event handler")
+	})
+	t.Run("</scripture> does not close a script", func(t *testing.T) {
+		must(t, `<script>const x='</scripture><x a="';</script><button onclick="[meta path='x' inline='true']">go</button>`, "event handler")
+	})
+	t.Run("an unquoted value ends at >", func(t *testing.T) {
+		must(t, `<div data-x=y> a=" </div><button onclick="[meta path='x' inline='true']">go</button>`, "event handler")
+	})
+	t.Run("an executable scheme is not a safe prefix", func(t *testing.T) {
+		must(t, `<a href="javascript:[meta path='x' inline='true']">go</a>`, "executes rather than fetches")
+		must(t, `<a href="data:text/html,[meta path='x' inline='true']">go</a>`, "executes rather than fetches")
+	})
+	t.Run("a character reference is decoded before the scheme is judged", func(t *testing.T) {
+		must(t, `<a href="java&#x73;cript[meta path='x' inline='true']">go</a>`, "choose the scheme")
+	})
+	t.Run(`"on" alone is not an event handler`, func(t *testing.T) {
+		quiet(t, `<div on="[meta path='x' inline='true']"></div>`, "event handler")
+	})
+	t.Run("a shortcode inside a comment is not in an attribute", func(t *testing.T) {
+		quiet(t, `<!-- <a href="[meta path='x' inline='true']"> -->`, "[meta inline")
+	})
+	t.Run("uppercase tags and attributes", func(t *testing.T) {
+		must(t, `<A HREF="[meta path='x' inline='true']">go</A>`, "choose the scheme")
+	})
+	t.Run("inside a textarea body", func(t *testing.T) {
+		quiet(t, `<textarea>[meta path='x' inline='true']</textarea>`, "[meta inline")
+	})
+	t.Run("two shortcodes in one tag", func(t *testing.T) {
+		src := `<a href="/x/[meta path='a' inline='true']" onclick="f('[meta path='b' inline='true']')">go</a>`
+		must(t, src, "event handler")
+		quiet(t, src, "choose the scheme")
+	})
+}
