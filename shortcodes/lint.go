@@ -154,6 +154,18 @@ func Lint(input string, opts LintOptions) []LintIssue {
 		}
 	}
 
+	// One markup scan for every inline [meta] in the template, rather than one
+	// per shortcode: the scan is forward-only from the start of the document, so
+	// doing it per token made a template with many of them quadratic.
+	var inlineMetaPositions []int
+	for _, tk := range tokens {
+		if !tk.closing && tk.name == "meta" && tk.attrs["inline"] == "true" {
+			inlineMetaPositions = append(inlineMetaPositions, tk.start)
+		}
+	}
+	sort.Ints(inlineMetaPositions)
+	inlineMetaContexts := attributeContextsAt(input, inlineMetaPositions)
+
 	// --- Attribute and semantic checks over opener tokens ---
 	for _, tk := range tokens {
 		if tk.closing {
@@ -197,7 +209,7 @@ func Lint(input string, opts LintOptions) []LintIssue {
 		// authored by admins/editors, but the Meta values they interpolate are
 		// written by ordinary users.
 		if tk.name == "meta" && tk.attrs["inline"] == "true" {
-			for _, msg := range unsafeAttributeContexts(input, tk.start, tk.attrs["raw"] == "true") {
+			for _, msg := range unsafeAttributeContexts(inlineMetaContexts[tk.start], tk.attrs["raw"] == "true") {
 				add(tk.start, tk.end, SeverityWarning, msg)
 			}
 		}
@@ -549,6 +561,14 @@ func countTopLevelElse(content string) int {
 	return count
 }
 
+// attrContext is where one position falls in the markup around it.
+type attrContext struct {
+	attr       string // lowercased attribute name; "" when not in a value
+	quote      byte   // the quote that opened the value, 0 when unquoted
+	valueSoFar string // the value text before the position
+	inValue    bool
+}
+
 // unsafeAttributeContexts reports the ways an inline [meta] value is still
 // dangerous where it is being placed.
 //
@@ -559,17 +579,17 @@ func countTopLevelElse(content string) int {
 // whoever can edit the entity, which includes the plain user role.
 //
 // raw disables even that much, so with it every attribute position is unsafe.
-func unsafeAttributeContexts(input string, pos int, raw bool) []string {
-	attr, quote, valueSoFar, inValue := attributeContextAt(input, pos)
-	if !inValue || attr == "" {
+func unsafeAttributeContexts(ctx attrContext, raw bool) []string {
+	if !ctx.inValue || ctx.attr == "" {
 		return nil
 	}
+	attr := ctx.attr
 
 	var out []string
 	if raw {
 		out = append(out, `[meta inline raw] is not escaped at all, so placing it in the "`+attr+`" attribute lets the value close the attribute and add its own. Drop raw= here.`)
 	}
-	if quote == 0 {
+	if ctx.quote == 0 {
 		out = append(out, `[meta inline] sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`)
 	}
 	if strings.HasPrefix(attr, "on") {
@@ -583,47 +603,89 @@ func unsafeAttributeContexts(input string, pos int, raw bool) []string {
 		// buys nothing wherever in the value the interpolation lands.
 		out = append(out, `[meta inline] sits in a "`+attr+`" attribute, whose value the browser decodes and parses as HTML, so escaping does not prevent script injection anywhere in it.`)
 	}
-	// Only a value that starts the attribute can choose the URL scheme.
-	if urlBearingAttrs[attr] && strings.TrimSpace(valueSoFar) == "" {
-		out = append(out, `[meta inline] supplies the whole "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a known scheme or path in front of it, e.g. href="/x/[meta ...]".`)
+	if urlBearingAttrs[attr] && !urlSchemeAlreadyFixed(ctx.valueSoFar) {
+		out = append(out, `[meta inline] can still choose the scheme of the "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a path or a complete scheme in front of it, e.g. href="/x/[meta ...]".`)
 	}
 	return out
 }
 
-// attributeContextAt reports the attribute position pos falls inside: the
-// lowercased attribute name, the quote that opened its value (0 when unquoted),
-// the value text before pos, and whether pos is inside a value at all.
+// urlSchemeAlreadyFixed reports whether the text before the interpolation has
+// already decided what kind of URL this is. A ":" means a scheme is chosen, and
+// "/", "?" or "#" mean the URL is relative and can no longer become one.
 //
-// It scans forward from the start of the document rather than backwards from
-// pos, because neither tag nor attribute boundaries can be found by searching
-// backwards for a character: onclick="if (x > 0) [meta …]" contains a ">" that
-// is not the end of the tag, and onclick="if (x < 1) [meta …]" contains a "<"
-// that is not the start of one. A backwards search mistakes both and goes quiet
-// on exactly the placement that matters most.
-func attributeContextAt(input string, pos int) (attr string, quote byte, valueSoFar string, inValue bool) {
-	if pos <= 0 || pos > len(input) {
-		return "", 0, "", false
+// Emptiness is the wrong test: href="java[meta ...]" has a non-empty prefix and
+// a Meta value of "script:alert(1)" still completes a javascript: URL.
+func urlSchemeAlreadyFixed(prefix string) bool {
+	return strings.ContainsAny(prefix, ":/?#")
+}
+
+// rawTextElements have bodies the HTML parser does not read as markup, so a "<"
+// inside them opens nothing. Scanning into them desynchronizes everything after:
+// a <script> containing the text `'<x a="'` would otherwise open an attribute
+// value that swallows the next real tag.
+var rawTextElements = map[string]bool{
+	"script": true, "style": true, "textarea": true, "title": true, "xmp": true,
+}
+
+// attributeContextsAt answers, in one forward pass, where each of the given
+// positions falls. positions must be ascending, which the caller has because
+// shortcode tokens come out of the parser in source order.
+//
+// It scans forward rather than backwards from each position, because no single
+// character marks a boundary reliably: onclick="if (x > 0) [meta …]" contains a
+// ">" that does not end the tag, and onclick="if (x < 1) [meta …]" contains a
+// "<" that does not start one. A backwards search mistakes both and goes quiet
+// on exactly the placement that matters most. One pass for all positions also
+// keeps a template with many shortcodes from being quadratic.
+func attributeContextsAt(input string, positions []int) map[int]attrContext {
+	out := make(map[int]attrContext, len(positions))
+	if len(positions) == 0 {
+		return out
 	}
+	next := 0
+	// record consumes every position up to end, attributing ctx to those inside
+	// [start, end] and "not in a value" to the rest.
+	record := func(start, end int, ctx func(pos int) attrContext) {
+		for next < len(positions) && positions[next] <= end {
+			p := positions[next]
+			if p >= start {
+				out[p] = ctx(p)
+			} else {
+				out[p] = attrContext{}
+			}
+			next++
+		}
+	}
+
 	i := 0
-	for i < pos {
-		// Outside any tag: advance to the next "<" that opens one.
+	for i < len(input) && next < len(positions) {
 		if input[i] != '<' {
 			i++
 			continue
 		}
+		// "<" only opens a tag when a name, a slash, or a markup declaration
+		// follows it; "a < b" is text.
+		if i+1 >= len(input) || !isTagNameStart(input[i+1]) {
+			i++
+			continue
+		}
 		i++ // past '<'
-		if i < len(input) && (input[i] == '/' || input[i] == '!' || input[i] == '?') {
-			// Closing tag, comment or declaration: skip to its end. A quoted ">"
-			// cannot appear in a closing tag, and a comment has no attributes.
+		if input[i] == '!' || input[i] == '?' {
 			for i < len(input) && input[i] != '>' {
 				i++
 			}
 			continue
 		}
-		// Element name.
+		closing := input[i] == '/'
+		if closing {
+			i++
+		}
+		nameStart := i
 		for i < len(input) && !isASCIISpace(input[i]) && input[i] != '>' && input[i] != '/' {
 			i++
 		}
+		element := strings.ToLower(input[nameStart:i])
+
 		// Attributes.
 		for i < len(input) {
 			for i < len(input) && (isASCIISpace(input[i]) || input[i] == '/') {
@@ -632,14 +694,12 @@ func attributeContextAt(input string, pos int) (attr string, quote byte, valueSo
 			if i >= len(input) || input[i] == '>' {
 				break
 			}
-			if i >= pos {
-				return "", 0, "", false // pos is between attributes, not in a value
-			}
-			nameStart := i
+			attrStart := i
 			for i < len(input) && input[i] != '=' && !isASCIISpace(input[i]) && input[i] != '>' {
 				i++
 			}
-			name := strings.ToLower(input[nameStart:i])
+			name := strings.ToLower(input[attrStart:i])
+			record(0, attrStart-1, func(int) attrContext { return attrContext{} })
 			for i < len(input) && isASCIISpace(input[i]) {
 				i++
 			}
@@ -665,9 +725,10 @@ func attributeContextAt(input string, pos int) (attr string, quote byte, valueSo
 				}
 				i++
 			}
-			if valStart <= pos && pos <= i {
-				return name, q, input[valStart:pos], true
-			}
+			valEnd := i
+			record(valStart, valEnd, func(pos int) attrContext {
+				return attrContext{attr: name, quote: q, valueSoFar: input[valStart:pos], inValue: true}
+			})
 			if i < len(input) {
 				i++ // past the closing quote or delimiter
 			}
@@ -675,8 +736,27 @@ func attributeContextAt(input string, pos int) (attr string, quote byte, valueSo
 		if i < len(input) && input[i] == '>' {
 			i++
 		}
+		// A raw-text element's body is text, not markup: skip to its end tag so
+		// a "<" in a string literal cannot open an attribute value.
+		if !closing && rawTextElements[element] {
+			if end := strings.Index(strings.ToLower(input[i:]), "</"+element); end >= 0 {
+				record(0, i+end-1, func(int) attrContext { return attrContext{} })
+				i += end
+			} else {
+				record(0, len(input), func(int) attrContext { return attrContext{} })
+				i = len(input)
+			}
+		}
 	}
-	return "", 0, "", false
+	for ; next < len(positions); next++ {
+		out[positions[next]] = attrContext{}
+	}
+	return out
+}
+
+func isTagNameStart(c byte) bool {
+	return c == '/' || c == '!' || c == '?' ||
+		(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 func isASCIISpace(c byte) bool {
@@ -688,7 +768,7 @@ func isASCIISpace(c byte) bool {
 var alwaysUnsafeAttrs = map[string]bool{"srcdoc": true}
 
 // urlBearingAttrs are the attributes whose value the browser resolves as a URL,
-// so a value that begins one gets to choose its scheme.
+// so a value in one can choose the scheme until a path or scheme fixes it.
 var urlBearingAttrs = map[string]bool{
 	"href": true, "src": true, "action": true, "formaction": true,
 	"data": true, "poster": true, "xlink:href": true, "ping": true,

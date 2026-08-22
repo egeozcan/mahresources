@@ -389,8 +389,8 @@ func TestLintWarnsOnUnsafeInlineMetaContexts(t *testing.T) {
 		{"unquoted attribute", `<a href=/x/[meta path='s' inline='true']>x</a>`, "unquoted attribute value"},
 		{"event handler", `<a onclick="f('[meta path='s' inline='true']')">x</a>`, "event handler"},
 		{"style attribute", `<div style="color:[meta path='s' inline='true']">x</div>`, "style"},
-		{"whole href", `<a href="[meta path='s' inline='true']">x</a>`, `whole "href" URL`},
-		{"whole src", `<img src="[meta path='s' inline='true']">`, `whole "src" URL`},
+		{"whole href", `<a href="[meta path='s' inline='true']">x</a>`, `choose the scheme of the "href" URL`},
+		{"whole src", `<img src="[meta path='s' inline='true']">`, `choose the scheme of the "src" URL`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -459,7 +459,7 @@ func TestLintCatchesTheHardUnsafeContexts(t *testing.T) {
 		{
 			"tabs and newlines between attributes",
 			"<a\n\tclass=\"c\"\n\thref=\"[meta path='x' inline='true']\">x</a>",
-			`whole "href" URL`,
+			`choose the scheme of the "href" URL`,
 		},
 	}
 	for _, tc := range cases {
@@ -491,6 +491,60 @@ func TestLintIsQuietOutsideAttributeValues(t *testing.T) {
 			if strings.Contains(issue.Message, "[meta inline") {
 				t.Errorf("unexpected warning for %s: %s", src, issue.Message)
 			}
+		}
+	}
+}
+
+// Round-3 findings: a raw-text element body is not markup, a non-empty URL
+// prefix does not necessarily fix the scheme, and "<" followed by a space is
+// text rather than a tag.
+func TestLintScannerHandlesRawTextAndPartialSchemes(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// A "<" inside a <script> body must not open an attribute value that
+	// swallows the next real tag.
+	src := `<script>const x = '<x a="';</script><button onclick="[meta path='x' inline='true']">x</button>`
+	if !warns(src, "event handler") {
+		t.Error("a fake tag inside <script> desynchronized the scan and hid a real handler")
+	}
+
+	// A prefix that has not yet decided the scheme still lets the value pick it.
+	if !warns(`<a href="java[meta path='x' inline='true']">x</a>`, "choose the scheme") {
+		t.Error(`href="java[meta ...]" completes to javascript: and must warn`)
+	}
+	// A prefix that has decided it must stay quiet.
+	for _, quiet := range []string{
+		`<a href="/x/[meta path='s' inline='true']">x</a>`,
+		`<a href="https://example.com/[meta path='s' inline='true']">x</a>`,
+		`<a href="?q=[meta path='s' inline='true']">x</a>`,
+		`<a href="#[meta path='s' inline='true']">x</a>`,
+	} {
+		if warns(quiet, "choose the scheme") {
+			t.Errorf("scheme already fixed, should be quiet: %s", quiet)
+		}
+	}
+
+	// "< " is text in HTML, not a tag.
+	if warns(`plain < onclick="[meta path='x' inline='true']" text`, "event handler") {
+		t.Error(`"< " is text; the scanner treated it as a tag`)
+	}
+}
+
+// One scan serves every inline [meta] in a template, so many of them stay linear.
+func TestLintManyInlineMetasStayLinear(t *testing.T) {
+	body := strings.Repeat(`[meta path='x' inline='true']`, 2000)
+	src := `<a title="` + body + `">x</a>`
+	// Correctness is the assertion; the shape of the fix is what keeps it quick.
+	for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+		if strings.Contains(issue.Message, "[meta inline") {
+			t.Fatalf("title= is a safe context, got: %s", issue.Message)
 		}
 	}
 }
