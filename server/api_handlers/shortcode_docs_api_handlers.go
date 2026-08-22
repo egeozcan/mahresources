@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"mahresources/constants"
 	"mahresources/models"
@@ -131,6 +132,10 @@ func convertPluginExamples(examples []plugin_system.ShortcodeDocExample) []short
 
 type shortcodeLintRequest struct {
 	Content string `json:"content" schema:"content"`
+	// Mode is the editor's language for this slot ("html", "css", "json"). A
+	// CustomCSS slot is a stylesheet with no <style> wrapper of its own, so
+	// nothing in its text says so and the linter has to be told.
+	Mode string `json:"mode" schema:"mode"`
 }
 
 type shortcodeLintResponse struct {
@@ -159,6 +164,7 @@ func GetShortcodeLintHandler(ctx ShortcodeLintContext) func(http.ResponseWriter,
 			Known:         known,
 			ValidateMRQL:  validateMRQL,
 			PartialExists: partialExistsFn(ctx),
+			CSSMode:       strings.EqualFold(req.Mode, "css"),
 		})
 		if issues == nil {
 			issues = []shortcodes.LintIssue{}

@@ -120,7 +120,7 @@ Note the single quotes on the inner attributes: shortcode attributes accept `key
 
 **Inline output is HTML-escaped**, quotes included, so a Meta value containing a `"` cannot break out of a **quoted** attribute. `raw="true"` turns escaping off for the cases where the value really is markup -- never use it inside an attribute.
 
-That guarantee stops where the browser re-parses the value. Escaping covers `&`, `<`, `>`, `'` and `"` and nothing else, so all four of these remain unsafe and the editor warns on each:
+That guarantee stops where the browser re-parses the value. Escaping covers `&`, `<`, `>`, `'` and `"` and nothing else, so every shape below remains unsafe and the editor warns on each:
 
 | Shape | Why escaping does not help |
 |---|---|
@@ -129,7 +129,8 @@ That guarantee stops where the browser re-parses the value. Escaping covers `&`,
 | `<button onclick="f('[meta path='u' inline='true']')">` | The HTML parser decodes `&#39;` back to `'` before the script is parsed, so a quote in the value escapes the JS string. Do not interpolate Meta into a handler |
 | `<div style="color:[meta path='u' inline='true']">` | CSS injection; escaping does not apply to CSS syntax |
 | `<iframe srcdoc="… [meta path='u' inline='true']">` | The browser decodes `srcdoc` and parses it as a document, so escaping buys nothing anywhere in the value |
-| anything with `raw="true"` | Nothing is escaped at all, so the value can close the attribute and add its own |
+| anything with `raw="true"` | Nothing is escaped at all — in an attribute the value can close it, and in ordinary text a value like `<img src=x onerror=…>` becomes a real element |
+| a Custom CSS slot | The whole slot is a stylesheet, so `;` and `}` in a value start new declarations. The editor knows because it sends the slot's language along with the content |
 | `<script>… [meta path='u' inline='true'] …</script>` | A script body decodes no entities, so the value reaches JavaScript verbatim — `${…}` in a template literal is not escaped at all. Pass it in through a `data-` attribute instead |
 | `<style>… [meta path='u' inline='true'] …</style>` | Likewise for CSS: `;` and `}` are untouched |
 | `<div @click="f('[meta path='u' inline='true']')">` | Alpine evaluates a directive's value as JavaScript after the parser has decoded the escaping, exactly as `on*` does. `x-*`, `@*` and a leading `:` are all directives |

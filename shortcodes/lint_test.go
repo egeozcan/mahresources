@@ -767,3 +767,56 @@ func TestLintAttributeContextRoundSeven(t *testing.T) {
 		}
 	})
 }
+
+// Round-8 findings. Both majors are about context the earlier rounds never
+// looked at: raw= outside an attribute, and a slot that is CSS with nothing in
+// its own text to say so.
+func TestLintAttributeContextRoundEight(t *testing.T) {
+	warnsWith := func(src string, opts LintOptions, want string) bool {
+		opts.Known = KnownFromBuiltins()
+		for _, issue := range Lint(src, opts) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+	warns := func(src, want string) bool { return warnsWith(src, LintOptions{}, want) }
+
+	t.Run("raw in plain text injects markup", func(t *testing.T) {
+		src := `<div class="bio">[meta path="bio" inline="true" raw="true"]</div>`
+		if !warns(src, "becomes real elements") {
+			t.Error("raw= is unescaped wherever it lands, text included")
+		}
+		// Without raw, plain text is genuinely safe.
+		if warns(`<div class="bio">[meta path="bio" inline="true"]</div>`, "[meta inline") {
+			t.Error("escaped text is safe and must stay quiet")
+		}
+	})
+
+	t.Run("a CSS slot lands in a stylesheet", func(t *testing.T) {
+		src := `.badge{color:[meta path="colour" inline="true"]}`
+		if !warnsWith(src, LintOptions{CSSMode: true}, "CSS slot") {
+			t.Error("a CustomCSS slot has no <style> wrapper; the mode has to say so")
+		}
+		// The same text in an HTML slot is ordinary text.
+		if warns(src, "[meta inline") {
+			t.Error("without CSS mode this is plain text")
+		}
+	})
+
+	t.Run("a less-than in prose is not an unclosed tag", func(t *testing.T) {
+		if warns(`Score < [meta path="limit" inline="true"]`, "never closed") {
+			t.Error(`"< " is text`)
+		}
+	})
+
+	t.Run("Alpine transition modifiers take literals", func(t *testing.T) {
+		for _, attr := range []string{"x-transition:enter", "x-transition.opacity", "x-ref"} {
+			src := `<div ` + attr + `="[meta path='c' inline='true']"></div>`
+			if warns(src, "Alpine directive") {
+				t.Errorf("%s takes a literal: %s", attr, src)
+			}
+		}
+	})
+}

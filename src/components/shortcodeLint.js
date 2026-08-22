@@ -41,7 +41,10 @@ function toCmSeverity(severity) {
 // markup against the server-side linter (/v1/shortcodes/lint). The linter is
 // debounced by CodeMirror (delay) and fails open — a network or server error
 // yields no diagnostics rather than blocking editing.
-export function shortcodeLintExtensions() {
+// mode is the editor's language for the slot being edited. A CustomCSS slot is
+// a stylesheet with no <style> wrapper of its own, so nothing in its text tells
+// the linter that an inline [meta] there lands in CSS — this does.
+export function shortcodeLintExtensions(mode = 'html') {
   const source = async (view) => {
     const doc = view.state.doc.toString();
     if (!doc.trim()) return [];
@@ -51,7 +54,7 @@ export function shortcodeLintExtensions() {
       const resp = await fetch('/v1/shortcodes/lint', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: doc }),
+        body: JSON.stringify({ content: doc, mode }),
       });
       if (!resp.ok) return [];
       const data = await resp.json();

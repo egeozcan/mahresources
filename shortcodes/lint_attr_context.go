@@ -157,6 +157,11 @@ func insideUnterminatedTag(substituted, sentinel string) bool {
 	if open < 0 {
 		return false
 	}
+	// "<" only opens a tag when a name or a markup declaration follows it;
+	// "Score < [meta ...]" is text and closes nothing.
+	if open+1 >= len(substituted) || !isTagNameStart(substituted[open+1]) {
+		return false
+	}
 	// The terminator has to be found quote-aware: <div title="before > [meta …]
 	// contains a ">" that closes nothing.
 	var q byte
@@ -305,7 +310,15 @@ func isASCIISpace(c byte) bool {
 // whoever can edit the entity, which includes the plain user role.
 //
 // raw disables even that much, so with it every attribute position is unsafe.
-func unsafeAttributeContexts(ctx attrContext, raw bool) []string {
+func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool) []string {
+	if cssMode && !ctx.inValue && !ctx.inName {
+		// A CustomCSS slot is a stylesheet with no <style> wrapper of its own,
+		// so nothing in the markup says so — the editor has to.
+		if raw {
+			return []string{`[meta inline raw] in a CSS slot is not escaped and lands in the stylesheet verbatim. Drop raw= here.`}
+		}
+		return []string{`[meta inline] is in a CSS slot, where the value lands in a stylesheet verbatim: a ";" or "}" in it starts new declarations, and escaping touches neither.`}
+	}
 	if ctx.unterminated {
 		return []string{`[meta inline] is inside a tag that is never closed, so where it lands cannot be determined. Close the tag; until then treat the value as unsafe.`}
 	}
@@ -316,6 +329,12 @@ func unsafeAttributeContexts(ctx attrContext, raw bool) []string {
 		return []string{`[meta inline] is interpolated into a tag or attribute NAME, which nothing delimits: a value containing a space or "=" simply adds attributes of its own, and escaping does not touch either character. Build the name in the template instead.`}
 	}
 	if !ctx.inValue || ctx.attr == "" {
+		if raw {
+			// raw= disables escaping outright, so it is unsafe wherever it
+			// lands, including ordinary text: a Meta value of
+			// "<img src=x onerror=...>" becomes a real element.
+			return []string{`[meta inline raw] is not escaped, so a Meta value containing markup becomes real elements on the page. Anyone who can edit the entity can then inject script. Drop raw= unless the value is authored by someone you would trust with the template itself.`}
+		}
 		return nil
 	}
 	attr := ctx.attr
@@ -326,6 +345,9 @@ func unsafeAttributeContexts(ctx attrContext, raw bool) []string {
 	}
 	if !ctx.quoted {
 		out = append(out, `[meta inline] sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`)
+	}
+	if cssMode {
+		out = append(out, `[meta inline] is in a CSS slot, where the value lands in a stylesheet verbatim: a ";" or "}" in it starts new declarations, and escaping touches neither.`)
 	}
 	if kind := expressionAttributeKind(attr); kind != "" {
 		out = append(out, `[meta inline] sits in the "`+attr+`" `+kind+`, whose value is evaluated as script after the HTML parser has undone the escaping, so a value containing a quote can execute. Do not interpolate Meta into it.`)
@@ -422,7 +444,7 @@ func expressionAttributeKind(attr string) string {
 	}
 	// x-on:click / x-bind:href / x-init / x-text / x-show / ... but not the
 	// handful whose value Alpine reads as a literal rather than evaluating.
-	if strings.HasPrefix(attr, "x-") && !inertAlpineDirectives[attr] {
+	if strings.HasPrefix(attr, "x-") && !isInertAlpineDirective(attr) {
 		return "Alpine directive"
 	}
 	// @click and :href are the shorthands for x-on: and x-bind:. Only a leading
@@ -446,4 +468,20 @@ var scriptLikeLanguage = map[string]string{"script": "JavaScript", "style": "CSS
 var inertAlpineDirectives = map[string]bool{
 	"x-ref": true, "x-cloak": true, "x-ignore": true, "x-transition": true,
 	"x-teleport": true, "x-id": true,
+}
+
+// isTagNameStart reports whether c can follow "<" to open a tag.
+func isTagNameStart(c byte) bool {
+	return c == '/' || c == '!' || c == '?' ||
+		(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// isInertAlpineDirective covers the modifier forms too: x-transition:enter and
+// x-transition.opacity take class lists and durations, not expressions.
+func isInertAlpineDirective(attr string) bool {
+	base := attr
+	if i := strings.IndexAny(base, ":."); i > 0 {
+		base = base[:i]
+	}
+	return inertAlpineDirectives[base]
 }

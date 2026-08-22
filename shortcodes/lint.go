@@ -49,6 +49,11 @@ type LintOptions struct {
 	// being linted. A [partial name="<PartialName>"] reference inside it is a
 	// direct self-reference and is flagged as a warning.
 	PartialName string
+	// CSSMode marks content that is a stylesheet rather than markup, which is
+	// what a CustomCSS slot holds. Nothing in the text says so — it carries no
+	// <style> wrapper of its own — so an inline [meta] there has to be judged as
+	// landing in CSS rather than as ordinary text.
+	CSSMode bool
 	// PartialExists, when non-nil, reports whether a template partial with that
 	// name exists. A [partial] reference to a name it rejects is flagged
 	// (finding 155: a reference to a partial that does not exist rendered nothing
@@ -208,7 +213,7 @@ func Lint(input string, opts LintOptions) []LintIssue {
 		// authored by admins/editors, but the Meta values they interpolate are
 		// written by ordinary users.
 		if tk.name == "meta" && tk.attrs["inline"] == "true" {
-			for _, msg := range unsafeAttributeContexts(inlineMetaContexts[tk.start], tk.attrs["raw"] == "true") {
+			for _, msg := range unsafeAttributeContexts(inlineMetaContexts[tk.start], tk.attrs["raw"] == "true", opts.CSSMode) {
 				add(tk.start, tk.end, SeverityWarning, msg)
 			}
 		}
