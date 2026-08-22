@@ -425,3 +425,72 @@ func TestLintIsQuietOnSafeInlineMetaContexts(t *testing.T) {
 		}
 	}
 }
+
+// The three placements a backwards, quote-unaware scan missed, plus raw=.
+// Each is a real way to get script or markup out of a Meta value that an
+// ordinary user wrote into an entity an admin's template renders.
+func TestLintCatchesTheHardUnsafeContexts(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{
+			"a > inside a handler is not the end of the tag",
+			`<button onclick="if (x > 0) [meta path='x' inline='true']">x</button>`,
+			"event handler",
+		},
+		{
+			"a < inside a handler is not the start of one",
+			`<button onclick="if (x < 1) [meta path='x' inline='true']">x</button>`,
+			"event handler",
+		},
+		{
+			"srcdoc is parsed as a document, prefix or not",
+			`<iframe srcdoc="prefix [meta path='x' inline='true']"></iframe>`,
+			"parses as HTML",
+		},
+		{
+			"raw= is unescaped, so any attribute is unsafe",
+			`<span title="[meta path='x' inline='true' raw='true']">x</span>`,
+			"not escaped at all",
+		},
+		{
+			"a valueless attribute before the target does not hide it",
+			`<input disabled href=[meta path='x' inline='true']>`,
+			"unquoted attribute value",
+		},
+		{
+			"tabs and newlines between attributes",
+			"<a\n\tclass=\"c\"\n\thref=\"[meta path='x' inline='true']\">x</a>",
+			`whole "href" URL`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var found bool
+			for _, issue := range Lint(tc.src, LintOptions{Known: KnownFromBuiltins()}) {
+				if strings.Contains(issue.Message, tc.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("no warning containing %q for %s", tc.want, tc.src)
+			}
+		})
+	}
+}
+
+// Text outside any tag, and a value that merely follows a tag, must stay quiet.
+func TestLintIsQuietOutsideAttributeValues(t *testing.T) {
+	for _, src := range []string{
+		`<p>[meta path="x" inline="true"]</p>`,
+		`<div class="c">before [meta path="x" inline="true"] after</div>`,
+		`plain text [meta path="x" inline="true"] more text`,
+		`<img src="/a.png"> [meta path="x" inline="true"]`,
+		`<!-- <a href=x> --> [meta path="x" inline="true"]`,
+		`</div>[meta path="x" inline="true"]`,
+	} {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, "[meta inline") {
+				t.Errorf("unexpected warning for %s: %s", src, issue.Message)
+			}
+		}
+	}
+}

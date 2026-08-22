@@ -197,7 +197,7 @@ func Lint(input string, opts LintOptions) []LintIssue {
 		// authored by admins/editors, but the Meta values they interpolate are
 		// written by ordinary users.
 		if tk.name == "meta" && tk.attrs["inline"] == "true" {
-			for _, msg := range unsafeAttributeContexts(input, tk.start) {
+			for _, msg := range unsafeAttributeContexts(input, tk.start, tk.attrs["raw"] == "true") {
 				add(tk.start, tk.end, SeverityWarning, msg)
 			}
 		}
@@ -549,34 +549,26 @@ func countTopLevelElse(content string) int {
 	return count
 }
 
-// unsafeAttributeContexts reports the ways an escaped value is still dangerous
-// where it is being placed, by scanning forward through the tag the shortcode
-// sits in and reporting which attribute it landed in.
+// unsafeAttributeContexts reports the ways an inline [meta] value is still
+// dangerous where it is being placed.
 //
-// html.EscapeString covers & < > ' " and nothing else — exactly enough to stay
-// inside a quoted attribute value, and not enough anywhere the browser re-parses
-// that value afterwards. The distinction matters because the two halves have
-// different authors: an admin or editor writes the template, but the Meta value
-// it interpolates is written by whoever can edit the entity, which includes the
-// plain user role.
+// html.EscapeString covers & < > ' " and nothing else — exactly enough to keep a
+// value inside a quoted attribute, and nothing at all once the browser re-parses
+// that value. The distinction has a privilege boundary behind it: an admin or
+// editor writes the template, but the Meta value it interpolates is written by
+// whoever can edit the entity, which includes the plain user role.
 //
-// The scan is a small state machine rather than a regex because the case that
-// matters most is onclick="f('…')", where the value legitimately contains both
-// quote characters and a backwards regex cannot tell which one opened it.
-func unsafeAttributeContexts(input string, pos int) []string {
-	if pos <= 0 || pos > len(input) {
-		return nil
-	}
-	tagStart := strings.LastIndex(input[:pos], "<")
-	if tagStart < 0 || strings.Contains(input[tagStart:pos], ">") {
-		return nil
-	}
-	attr, quote, valueSoFar, inValue := scanAttributeContext(input[tagStart:pos])
+// raw disables even that much, so with it every attribute position is unsafe.
+func unsafeAttributeContexts(input string, pos int, raw bool) []string {
+	attr, quote, valueSoFar, inValue := attributeContextAt(input, pos)
 	if !inValue || attr == "" {
 		return nil
 	}
 
 	var out []string
+	if raw {
+		out = append(out, `[meta inline raw] is not escaped at all, so placing it in the "`+attr+`" attribute lets the value close the attribute and add its own. Drop raw= here.`)
+	}
 	if quote == 0 {
 		out = append(out, `[meta inline] sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`)
 	}
@@ -586,6 +578,11 @@ func unsafeAttributeContexts(input string, pos int) []string {
 	if attr == "style" {
 		out = append(out, `[meta inline] sits in a "style" attribute, where escaping does not prevent CSS injection.`)
 	}
+	if alwaysUnsafeAttrs[attr] {
+		// srcdoc is decoded and then parsed as a whole document, so escaping
+		// buys nothing wherever in the value the interpolation lands.
+		out = append(out, `[meta inline] sits in a "`+attr+`" attribute, whose value the browser decodes and parses as HTML, so escaping does not prevent script injection anywhere in it.`)
+	}
 	// Only a value that starts the attribute can choose the URL scheme.
 	if urlBearingAttrs[attr] && strings.TrimSpace(valueSoFar) == "" {
 		out = append(out, `[meta inline] supplies the whole "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a known scheme or path in front of it, e.g. href="/x/[meta ...]".`)
@@ -593,63 +590,91 @@ func unsafeAttributeContexts(input string, pos int) []string {
 	return out
 }
 
-// scanAttributeContext walks a partial tag ("<a onclick=\"f('") and reports the
-// attribute the end of it falls inside: its lowercased name, the quote that
-// opened the value (0 when unquoted), the value text so far, and whether the
-// scan ended inside a value at all.
-func scanAttributeContext(tag string) (attr string, quote byte, valueSoFar string, inValue bool) {
+// attributeContextAt reports the attribute position pos falls inside: the
+// lowercased attribute name, the quote that opened its value (0 when unquoted),
+// the value text before pos, and whether pos is inside a value at all.
+//
+// It scans forward from the start of the document rather than backwards from
+// pos, because neither tag nor attribute boundaries can be found by searching
+// backwards for a character: onclick="if (x > 0) [meta …]" contains a ">" that
+// is not the end of the tag, and onclick="if (x < 1) [meta …]" contains a "<"
+// that is not the start of one. A backwards search mistakes both and goes quiet
+// on exactly the placement that matters most.
+func attributeContextAt(input string, pos int) (attr string, quote byte, valueSoFar string, inValue bool) {
+	if pos <= 0 || pos > len(input) {
+		return "", 0, "", false
+	}
 	i := 0
-	// Skip "<" and the element name.
-	if i < len(tag) && tag[i] == '<' {
-		i++
-	}
-	for i < len(tag) && !isASCIISpace(tag[i]) {
-		i++
-	}
-	for i < len(tag) {
-		for i < len(tag) && isASCIISpace(tag[i]) {
+	for i < pos {
+		// Outside any tag: advance to the next "<" that opens one.
+		if input[i] != '<' {
+			i++
+			continue
+		}
+		i++ // past '<'
+		if i < len(input) && (input[i] == '/' || input[i] == '!' || input[i] == '?') {
+			// Closing tag, comment or declaration: skip to its end. A quoted ">"
+			// cannot appear in a closing tag, and a comment has no attributes.
+			for i < len(input) && input[i] != '>' {
+				i++
+			}
+			continue
+		}
+		// Element name.
+		for i < len(input) && !isASCIISpace(input[i]) && input[i] != '>' && input[i] != '/' {
 			i++
 		}
-		nameStart := i
-		for i < len(tag) && tag[i] != '=' && !isASCIISpace(tag[i]) {
-			i++
-		}
-		name := strings.ToLower(tag[nameStart:i])
-		if i >= len(tag) {
-			return "", 0, "", false // ran out inside a bare attribute name
-		}
-		for i < len(tag) && isASCIISpace(tag[i]) {
-			i++
-		}
-		if i >= len(tag) || tag[i] != '=' {
-			continue // valueless attribute; keep scanning
-		}
-		i++ // past '='
-		for i < len(tag) && isASCIISpace(tag[i]) {
-			i++
-		}
-		if i >= len(tag) {
-			return name, 0, "", true // "attr=" and then our shortcode
-		}
-		var q byte
-		if tag[i] == '"' || tag[i] == '\'' {
-			q = tag[i]
-			i++
-		}
-		valStart := i
-		for i < len(tag) {
-			if q != 0 && tag[i] == q {
+		// Attributes.
+		for i < len(input) {
+			for i < len(input) && (isASCIISpace(input[i]) || input[i] == '/') {
+				i++
+			}
+			if i >= len(input) || input[i] == '>' {
 				break
 			}
-			if q == 0 && isASCIISpace(tag[i]) {
-				break
+			if i >= pos {
+				return "", 0, "", false // pos is between attributes, not in a value
 			}
+			nameStart := i
+			for i < len(input) && input[i] != '=' && !isASCIISpace(input[i]) && input[i] != '>' {
+				i++
+			}
+			name := strings.ToLower(input[nameStart:i])
+			for i < len(input) && isASCIISpace(input[i]) {
+				i++
+			}
+			if i >= len(input) || input[i] != '=' {
+				continue // valueless attribute
+			}
+			i++ // past '='
+			for i < len(input) && isASCIISpace(input[i]) {
+				i++
+			}
+			var q byte
+			if i < len(input) && (input[i] == '"' || input[i] == '\'') {
+				q = input[i]
+				i++
+			}
+			valStart := i
+			for i < len(input) {
+				if q != 0 && input[i] == q {
+					break
+				}
+				if q == 0 && (isASCIISpace(input[i]) || input[i] == '>') {
+					break
+				}
+				i++
+			}
+			if valStart <= pos && pos <= i {
+				return name, q, input[valStart:pos], true
+			}
+			if i < len(input) {
+				i++ // past the closing quote or delimiter
+			}
+		}
+		if i < len(input) && input[i] == '>' {
 			i++
 		}
-		if i >= len(tag) {
-			return name, q, tag[valStart:], true // the value runs to our shortcode
-		}
-		i++ // past the closing quote or the space
 	}
 	return "", 0, "", false
 }
@@ -658,9 +683,14 @@ func isASCIISpace(c byte) bool {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f'
 }
 
+// alwaysUnsafeAttrs have values the browser decodes and then parses as markup,
+// so escaping protects nothing wherever the interpolation lands in them.
+var alwaysUnsafeAttrs = map[string]bool{"srcdoc": true}
+
 // urlBearingAttrs are the attributes whose value the browser resolves as a URL,
 // so a value that begins one gets to choose its scheme.
 var urlBearingAttrs = map[string]bool{
 	"href": true, "src": true, "action": true, "formaction": true,
-	"data": true, "poster": true, "srcdoc": true, "xlink:href": true,
+	"data": true, "poster": true, "xlink:href": true, "ping": true,
+	"background": true, "cite": true, "longdesc": true, "manifest": true,
 }

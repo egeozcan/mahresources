@@ -128,6 +128,8 @@ That guarantee stops where the browser re-parses the value. Escaping covers `&`,
 | `<a href=/x/[meta path='u' inline='true']>` | Unquoted: a value containing a space adds attributes of its own (`x onfocus=alert(1)`). Quote it |
 | `<button onclick="f('[meta path='u' inline='true']')">` | The HTML parser decodes `&#39;` back to `'` before the script is parsed, so a quote in the value escapes the JS string. Do not interpolate Meta into a handler |
 | `<div style="color:[meta path='u' inline='true']">` | CSS injection; escaping does not apply to CSS syntax |
+| `<iframe srcdoc="… [meta path='u' inline='true']">` | The browser decodes `srcdoc` and parses it as a document, so escaping buys nothing anywhere in the value |
+| anything with `raw="true"` | Nothing is escaped at all, so the value can close the attribute and add its own |
 
 This matters because the two halves have different authors: an admin or editor writes the template, but the Meta value it interpolates is written by anyone who can edit the entity -- which includes the plain `user` role.
 
