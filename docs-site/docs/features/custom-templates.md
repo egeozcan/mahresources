@@ -51,6 +51,10 @@ Every slot above holds HTML markup except `CustomCSS`, which holds raw CSS and e
 
 Leaving a slot empty keeps the built-in appearance. Three slots additionally **fall back** rather than rendering nothing: `CustomHoverCard` falls back to `CustomSummary`, `CustomLightbox` falls back to `CustomSidebar`, and `CustomOwnEntities` falls back to the built-in card grids. Setting one of those is only worthwhile when that surface should differ from the slot it borrows from.
 
+"Empty" means **unset** for the hover card and the Own Entities body, which are chosen server-side from the stored template. It means **renders nothing** for the lightbox, whose content arrives pre-rendered in the JSON detail response, where an unset slot and a slot whose shortcodes produced no output are the same empty string. The two only diverge for a slot that is set to something which renders nothing -- `[conditional]` with no matching branch, an `[mrql]` with no results, `[meta … inline="true" hide-empty="true"]` on an absent value. In that case the lightbox shows `CustomSidebar` and the hover card shows nothing.
+
+For the same reason, the Own Entities section auto-opens whenever `CustomOwnEntities` is *set*, not when it renders something: a slot that resolves to nothing still opens the section (and still suppresses the Related Entities auto-open that would otherwise take its place).
+
 ## How Custom Templates Are Rendered
 
 Custom template content is processed in two ways:

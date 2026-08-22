@@ -268,3 +268,56 @@ test.describe('[meta inline] in HTML attributes', () => {
     await apiClient.deleteCategory(cat.ID);
   });
 });
+
+// The hover card and the lightbox both "fall back when empty" and mean
+// different things by it. The hover card is chosen server-side from the stored
+// template, so a slot that is set but renders nothing shows nothing. The
+// lightbox is handed pre-rendered HTML in the JSON detail response, where an
+// unset slot and one that resolved to nothing are the same empty string, so it
+// falls back in both cases. This pins the divergence: if either surface moves,
+// this test says which one.
+test.describe('Fallback semantics', () => {
+  const rendersNothing = `[meta path="absent" inline="true" hide-empty="true"]`;
+
+  test('hover card selects on the stored template, not on what it renders', async ({ apiClient, page }) => {
+    const stamp = Date.now();
+    const cat = await apiClient.createCategory(`EmptyRender Cat ${stamp}`, 'empty render', {
+      CustomSummary: '<span class="er-summary">SUMMARY</span>',
+      CustomHoverCard: rendersNothing,
+    });
+    const group = await apiClient.createGroup({ name: `EmptyRender Group ${stamp}`, categoryId: cat.ID });
+
+    const html = await (await page.request.get(`/hovercard?type=group&id=${group.ID}`)).text();
+    const region = html.match(/<div class="hovercard-summary[^"]*">([\s\S]*?)<\/div>/);
+    expect(region).not.toBeNull();
+    // The slot is set, so CustomSummary is not consulted even though the slot
+    // produced no output.
+    expect(region![1]).not.toContain('SUMMARY');
+
+    await apiClient.deleteGroup(group.ID);
+    await apiClient.deleteCategory(cat.ID);
+  });
+
+  test('lightbox falls back whenever the delivered HTML is empty', async ({ apiClient, page }) => {
+    const stamp = Date.now();
+    const rc = await apiClient.createResourceCategory(`EmptyRender RC ${stamp}`, 'empty render', {
+      CustomSidebar: '<span class="er-sidebar">SIDEBAR</span>',
+      CustomLightbox: rendersNothing,
+    });
+    const resource = await apiClient.createResource({
+      filePath: ASSET('sample-image-21.png'),
+      name: `EmptyRender Res ${stamp}`,
+      resourceCategoryId: rc.ID,
+    });
+
+    const details = await (await page.request.get(`/resource.json?id=${resource.ID}`)).json();
+    const cat = details.resource?.resourceCategory ?? details.resourceCategory;
+    // The slot is set, but it rendered nothing, and the JSON cannot say which —
+    // so the client's `CustomLightbox || CustomSidebar` picks the sidebar.
+    expect(cat.CustomLightbox).toBe('');
+    expect(cat.CustomSidebar).toContain('SIDEBAR');
+
+    await apiClient.deleteResource(resource.ID);
+    await apiClient.deleteResourceCategory(rc.ID);
+  });
+});

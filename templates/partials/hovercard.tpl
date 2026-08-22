@@ -24,7 +24,7 @@
     </div>
 
     <div class="hovercard-summary mt-2 text-sm text-stone-700">
-        {# CustomHoverCard wins when set, otherwise the list card CustomSummary renders, so a carrier that never opts in keeps the hover card it had. #}
+        {# CustomHoverCard wins when set, otherwise the list card CustomSummary renders, so a carrier that never opts in keeps the hover card it had. "Set" here means the stored template is non-empty, not that it renders something: a slot set to markup that resolves to nothing shows nothing rather than falling through. The lightbox's equivalent fallback cannot make that distinction -- its content arrives pre-rendered in JSON, where the two cases are the same empty string -- and the difference is documented rather than papered over. #}
         {% if hoverType == "group" %}{% if hoverEntity.Category.CustomHoverCard %}{% process_shortcodes hoverEntity.Category.CustomHoverCard hoverEntity %}{% else %}{% process_shortcodes hoverEntity.Category.CustomSummary hoverEntity %}{% endif %}{% endif %}
         {% if hoverType == "note" %}{% if hoverEntity.NoteType.CustomHoverCard %}{% process_shortcodes hoverEntity.NoteType.CustomHoverCard hoverEntity %}{% else %}{% process_shortcodes hoverEntity.NoteType.CustomSummary hoverEntity %}{% endif %}{% endif %}
         {% if hoverType == "resource" %}{% if hoverEntity.ResourceCategory.CustomHoverCard %}{% process_shortcodes hoverEntity.ResourceCategory.CustomHoverCard hoverEntity %}{% else %}{% process_shortcodes hoverEntity.ResourceCategory.CustomSummary hoverEntity %}{% endif %}{% endif %}
