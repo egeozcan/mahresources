@@ -11,7 +11,7 @@ import (
 
 // MetaShortcodeContext holds the entity context needed to render [meta] shortcodes.
 type MetaShortcodeContext struct {
-	EntityType    string          // "group", "resource", "note"
+	EntityType    string // "group", "resource", "note"
 	EntityID      uint
 	Meta          json.RawMessage // entity's full Meta JSON
 	MetaSchema    string          // category's MetaSchema JSON string (may be empty)
@@ -25,11 +25,16 @@ type MetaShortcodeContext struct {
 	ForceReadOnly bool
 }
 
-// RenderMetaShortcode expands a [meta] shortcode into a <meta-shortcode> custom element.
+// RenderMetaShortcode expands a [meta] shortcode into a <meta-shortcode> custom
+// element, or — with inline="true" — into the bare value.
 func RenderMetaShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 	path := sc.Attrs["path"]
 	if path == "" {
 		return ""
+	}
+
+	if sc.Attrs["inline"] == "true" {
+		return renderInlineMetaValue(sc, ctx)
 	}
 
 	editable := sc.Attrs["editable"] == "true"
@@ -53,6 +58,44 @@ func RenderMetaShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 		html.EscapeString(schemaSlice),
 		html.EscapeString(valueJSON),
 	)
+}
+
+// renderInlineMetaValue renders [meta inline="true"]: the value itself rather
+// than the editing widget, formatted with the same format=/layout=/default=
+// helpers as [property] and [item], and HTML-escaped unless raw="true".
+//
+// It exists because the widget cannot be used where only text is legal. A
+// <meta-shortcode> element inside an attribute value is broken markup twice
+// over: an element cannot nest in an attribute at all, and the element's own
+// quotes close the attribute early. Escaping is therefore the default here and
+// covers quotes (html.EscapeString escapes &<>'"), so a Meta value carrying a
+// quote cannot break out of the attribute it was pasted into.
+//
+// editable= is ignored: inline output is text, so there is nothing to edit, and
+// honouring it would put an edit affordance inside whatever attribute the author
+// was building. hide-empty= is honoured here rather than client-side, because
+// inline mode emits no element for a client to act on.
+func renderInlineMetaValue(sc Shortcode, ctx MetaShortcodeContext) string {
+	var decoded any
+	if len(ctx.Meta) > 0 {
+		// A malformed Meta leaves decoded nil, which navigates to nothing and
+		// falls through to default= — the same answer as a missing path.
+		_ = json.Unmarshal(ctx.Meta, &decoded)
+	}
+
+	text := formatItemValue(navigateJSONValue(decoded, sc.Attrs["path"]), sc.Attrs["format"], sc.Attrs["layout"])
+
+	if text == "" {
+		if sc.Attrs["hide-empty"] == "true" {
+			return ""
+		}
+		text = sc.Attrs["default"]
+	}
+
+	if sc.Attrs["raw"] == "true" {
+		return text
+	}
+	return html.EscapeString(text)
 }
 
 // extractValueAtPath navigates a JSON object by dot-notation path

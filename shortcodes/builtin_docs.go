@@ -17,11 +17,11 @@ const (
 // DocAttr describes a single shortcode attribute for documentation, linting,
 // and autocomplete.
 type DocAttr struct {
-	Name        string   `json:"name"`
-	Type        string   `json:"type"`
-	Required    bool     `json:"required"`
-	Default     string   `json:"default,omitempty"`
-	Description string   `json:"description"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Required    bool   `json:"required"`
+	Default     string `json:"default,omitempty"`
+	Description string `json:"description"`
 	// Enum lists the closed set of valid values, when the attribute accepts a
 	// fixed vocabulary (used for attr-value autocomplete). Empty means open.
 	Enum []string `json:"enum,omitempty"`
@@ -56,11 +56,15 @@ func BuiltinDocs() []BuiltinDoc {
 		{
 			Name:        "meta",
 			Syntax:      `[meta path="..."]`,
-			Description: "Renders a value from the entity's Meta JSON at a dot-notation path. Optionally editable inline.",
+			Description: "Renders a value from the entity's Meta JSON at a dot-notation path. Optionally editable inline. By default it renders a <meta-shortcode> element, which cannot go inside an HTML attribute — use inline=\"true\" there to emit the bare value instead.",
 			IsBlock:     BlockNo,
 			Attrs: []DocAttr{
 				{Name: "path", Type: "string", Required: true, Description: "Dot-notation path into the entity Meta, e.g. cooking.time."},
-				{Name: "editable", Type: "boolean", Default: "false", Description: "When true, renders an inline editor for the value.", Enum: []string{"true", "false"}},
+				{Name: "inline", Type: "boolean", Default: "false", Description: "When true, renders the bare value instead of the element — the only form usable inside an HTML attribute. Output is HTML-escaped (so a value containing a quote cannot break out of the attribute) unless raw is set, and format/layout/default/hide-empty apply as they do on [item]. editable is ignored: there is no widget to edit.", Enum: []string{"true", "false"}},
+				{Name: "editable", Type: "boolean", Default: "false", Description: "When true, renders an inline editor for the value. Ignored when inline is set.", Enum: []string{"true", "false"}},
+				{Name: "raw", Type: "boolean", Default: "false", Description: "With inline, skips HTML escaping — same meaning as on [property] and [item]. Do not use inside an attribute: an unescaped quote closes it early. No effect without inline.", Enum: []string{"true", "false"}},
+				{Name: "format", Type: "enum", Required: false, Description: "With inline, post-processes the value like [property]: date/datetime/time for timestamps (including RFC3339 strings, which is how a time lands in Meta), filesize for byte counts. No effect without inline.", Enum: []string{"date", "datetime", "time", "filesize"}},
+				{Name: "layout", Type: "string", Required: false, Description: "With inline, a custom Go time layout (e.g. Jan 2, 2006). Wins over format. No effect without inline."},
 				{Name: "hide-empty", Type: "boolean", Default: "false", Description: "When true, renders nothing if the value is empty.", Enum: []string{"true", "false"}},
 				{Name: "default", Type: "string", Required: false, Description: "Text rendered in place of the empty state when the value is missing. Ignored when hide-empty is set (hide wins)."},
 			},
@@ -68,6 +72,8 @@ func BuiltinDocs() []BuiltinDoc {
 				{Title: "Show a meta value", Code: `[meta path="cooking.time"]`},
 				{Title: "Editable field", Code: `[meta path="rating" editable="true"]`},
 				{Title: "Fallback for missing value", Code: `[meta path="rating" default="Unrated"]`},
+				{Title: "Inside an HTML attribute", Code: `<a href="/x/[meta path='slug' inline='true']" title="[meta path='blurb' inline='true']">Open</a>`},
+				{Title: "Formatted inline value", Code: `[meta path="published" inline="true" format="date"]`},
 			},
 		},
 		{

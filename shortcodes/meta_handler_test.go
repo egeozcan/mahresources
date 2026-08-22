@@ -752,3 +752,86 @@ func TestExtractSchemaSliceEmptySchema(t *testing.T) {
 	slice := extractSchemaSlice("", "a.b", nil)
 	assert.Equal(t, "", slice)
 }
+
+// [meta] renders a <meta-shortcode> custom element, which cannot sit inside an
+// HTML attribute — an element nested in an attribute value is broken markup, and
+// the element's own quotes close the attribute early. inline="true" is the way
+// out: a bare value, formatted through the same helpers as [property]/[item].
+
+func inlineMetaCtx() MetaShortcodeContext {
+	metaJSON, _ := json.Marshal(map[string]any{
+		"slug":  "hello-world",
+		"quote": `a "quoted" & <tagged> value`,
+		"blurb": "<em>emphasis</em>",
+		"when":  "2026-08-22T10:30:00Z",
+		"size":  float64(2048),
+		"nest":  map[string]any{"deep": "found"},
+	})
+	return MetaShortcodeContext{EntityType: "group", EntityID: 7, Meta: metaJSON}
+}
+
+func renderInlineMeta(attrs map[string]string) string {
+	return RenderMetaShortcode(Shortcode{Name: "meta", Attrs: attrs}, inlineMetaCtx())
+}
+
+func TestRenderMetaInlineRendersBareValue(t *testing.T) {
+	got := renderInlineMeta(map[string]string{"path": "slug", "inline": "true"})
+	assert.Equal(t, "hello-world", got)
+	assert.NotContains(t, got, "meta-shortcode")
+}
+
+func TestRenderMetaInlineFollowsDotPaths(t *testing.T) {
+	assert.Equal(t, "found", renderInlineMeta(map[string]string{"path": "nest.deep", "inline": "true"}))
+}
+
+// The whole point of the mode: the output has to survive being pasted into an
+// attribute value, so every quote must come back escaped.
+func TestRenderMetaInlineIsAttributeSafe(t *testing.T) {
+	got := renderInlineMeta(map[string]string{"path": "quote", "inline": "true"})
+	assert.NotContains(t, got, `"`)
+	assert.NotContains(t, got, "<")
+	assert.Contains(t, got, "&#34;")
+	assert.Contains(t, got, "&amp;")
+	assert.Contains(t, got, "&lt;")
+}
+
+// raw= keeps the meaning it already has on [property] and [item]: skip escaping.
+func TestRenderMetaInlineRawSkipsEscaping(t *testing.T) {
+	assert.Equal(t, "<em>emphasis</em>",
+		renderInlineMeta(map[string]string{"path": "blurb", "inline": "true", "raw": "true"}))
+}
+
+func TestRenderMetaInlineFormatsLikeProperty(t *testing.T) {
+	assert.Equal(t, "2026-08-22",
+		renderInlineMeta(map[string]string{"path": "when", "inline": "true", "format": "date"}))
+	assert.Equal(t, "Aug 22, 2026",
+		renderInlineMeta(map[string]string{"path": "when", "inline": "true", "layout": "Jan 2, 2006"}))
+	assert.Equal(t, "2.0 KB",
+		renderInlineMeta(map[string]string{"path": "size", "inline": "true", "format": "filesize"}))
+}
+
+func TestRenderMetaInlineDefaultAndHideEmpty(t *testing.T) {
+	assert.Equal(t, "n/a",
+		renderInlineMeta(map[string]string{"path": "missing", "inline": "true", "default": "n/a"}))
+	// hide-empty is a client-side concern for the widget; inline mode has no
+	// client, so it has to be honoured here.
+	assert.Equal(t, "",
+		renderInlineMeta(map[string]string{"path": "missing", "inline": "true", "hide-empty": "true"}))
+	assert.Equal(t, "",
+		renderInlineMeta(map[string]string{"path": "missing", "inline": "true"}))
+}
+
+// An inline value is text, so there is nothing to edit. Emitting the widget
+// because editable was also passed would put an edit affordance inside whatever
+// attribute the author was building.
+func TestRenderMetaInlineIgnoresEditable(t *testing.T) {
+	got := renderInlineMeta(map[string]string{"path": "slug", "inline": "true", "editable": "true"})
+	assert.Equal(t, "hello-world", got)
+	assert.NotContains(t, got, "meta-shortcode")
+}
+
+func TestRenderMetaWidgetModeUnchangedWithoutInline(t *testing.T) {
+	got := renderInlineMeta(map[string]string{"path": "slug"})
+	assert.Contains(t, got, "<meta-shortcode")
+	assert.Contains(t, got, `data-path="slug"`)
+}

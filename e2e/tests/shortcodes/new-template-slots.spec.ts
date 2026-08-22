@@ -224,3 +224,47 @@ test.describe('Resource-only slots', () => {
     await apiClient.deleteResourceCategory(rc.ID);
   });
 });
+
+test.describe('[meta inline] in HTML attributes', () => {
+  test('renders a bare, escaped value where the element cannot go', async ({ apiClient, page }) => {
+    const stamp = Date.now();
+    const cat = await apiClient.createCategory(`Inline Cat ${stamp}`, 'inline meta', {
+      CustomHeader: [
+        `<a class="inl-link" href="/archive/[meta path='slug' inline='true']"`,
+        `   title="[meta path='quote' inline='true']">open</a>`,
+        `<span class="inl-date">[meta path="published" inline="true" format="date"]</span>`,
+        `<span class="inl-size">[meta path="bytes" inline="true" format="filesize"]</span>`,
+        `<span class="inl-default">[meta path="absent" inline="true" default="n/a"]</span>`,
+        `<span class="inl-widget">[meta path="slug"]</span>`,
+      ].join('\n'),
+    });
+    const group = await apiClient.createGroup({
+      name: `Inline Group ${stamp}`,
+      categoryId: cat.ID,
+      meta: JSON.stringify({
+        slug: 'hello-world',
+        quote: 'a "quoted" & <tagged> value',
+        published: '2026-08-22T10:30:00Z',
+        bytes: 2048,
+      }),
+    });
+
+    await page.goto(`/group?id=${group.ID}`);
+    await page.waitForLoadState('load');
+
+    // The value reached the attribute intact...
+    await expect(page.locator('a.inl-link')).toHaveAttribute('href', '/archive/hello-world');
+    // ...and a value full of quotes and angle brackets did not break out of it.
+    await expect(page.locator('a.inl-link')).toHaveAttribute('title', 'a "quoted" & <tagged> value');
+
+    await expect(page.locator('.inl-date')).toHaveText('2026-08-22');
+    await expect(page.locator('.inl-size')).toHaveText('2.0 KB');
+    await expect(page.locator('.inl-default')).toHaveText('n/a');
+
+    // Without inline, the same path still renders the editable element.
+    await expect(page.locator('.inl-widget meta-shortcode')).toHaveCount(1);
+
+    await apiClient.deleteGroup(group.ID);
+    await apiClient.deleteCategory(cat.ID);
+  });
+});

@@ -49,8 +49,10 @@ Use for metadata fields stored under `Meta`.
 Common attrs:
 
 - `path` -- required dot path like `status`, `timeline.start`, `address.city`
-- `editable=true` -- inline edit button
+- `inline=true` -- render the bare value instead of the element
+- `editable=true` -- inline edit button (ignored with `inline`)
 - `hide-empty=true` -- remove empty output entirely
+- with `inline`: `format=date|datetime|time|filesize`, `layout="Jan 2, 2006"`, `raw=true` (skip escaping), `default="…"`
 
 Behavior:
 
@@ -60,6 +62,19 @@ Behavior:
 - If no schema exists, falls back to plain formatted JSON value display.
 
 Use `[meta]` when you want the category schema to stay the source of truth for display and editing.
+
+**Inside an HTML attribute, `inline=true` is mandatory.** The default form expands
+to a `<meta-shortcode>` element, and an element cannot nest inside an attribute
+value -- its own quotes close the attribute early. Inline output is HTML-escaped
+(quotes included), so a Meta value carrying a `"` cannot break out:
+
+```html
+<a href="/archive/[meta path='slug' inline='true']" title="[meta path='blurb' inline='true']">Open</a>
+```
+
+Use single quotes for the inner shortcode attributes. `raw=true` disables escaping
+and must never be used inside an attribute. Inline mode is also the form that works
+on share pages and in `CustomMRQLResult`, where the widget does not hydrate.
 
 ### `[property]`
 

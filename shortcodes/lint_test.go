@@ -350,3 +350,29 @@ func TestLintDeferredBlockInsideReloadFace(t *testing.T) {
 		t.Errorf("[lazy] wrapping a [reload] flagged: %+v", issue)
 	}
 }
+
+// The linter's known-attribute table is built from BuiltinDocs, so an attribute
+// implemented in the handler but never documented is reported as unknown and the
+// editor neither completes nor explains it. These pin the [meta] inline family.
+func TestLintAcceptsInlineMetaAttributes(t *testing.T) {
+	known := KnownFromBuiltins()
+	src := `<a href="/x/[meta path='slug' inline='true' format='date' layout='Jan 2, 2006' raw='true' default='n/a' hide-empty='true']">go</a>`
+	for _, issue := range Lint(src, LintOptions{Known: known}) {
+		if strings.Contains(issue.Message, "unknown attribute") {
+			t.Errorf("lint rejected a documented [meta] attribute: %s", issue.Message)
+		}
+	}
+}
+
+func TestLintStillRejectsAnUndocumentedMetaAttribute(t *testing.T) {
+	known := KnownFromBuiltins()
+	var found bool
+	for _, issue := range Lint(`[meta path="x" inlien="true"]`, LintOptions{Known: known}) {
+		if strings.Contains(issue.Message, `unknown attribute "inlien"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("a typo'd attribute should still be reported as unknown")
+	}
+}

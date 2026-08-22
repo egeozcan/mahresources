@@ -117,3 +117,40 @@ func TestEachThroughProcessWithNestedShortcodes(t *testing.T) {
 	assert.Contains(t, got, `<li>one</li><li>two</li>`)
 	assert.Contains(t, got, `data-path="title"`)
 }
+
+// [item] only ever sees JSON-decoded values — strings and float64s, never a
+// time.Time or an int — so its documented format=/layout=/filesize helpers were
+// inert for every value it could possibly be given. These pin the fix.
+func TestItemFormatsJSONDecodedValues(t *testing.T) {
+	elem := map[string]any{"when": "2026-08-22T10:30:00Z", "day": "2026-08-22", "size": float64(2048), "name": "report"}
+	render := func(attrs map[string]string) string {
+		return renderItemValue(Shortcode{Name: "item", Attrs: attrs}, elem, 1)
+	}
+
+	if got := render(map[string]string{"path": "when", "format": "date"}); got != "2026-08-22" {
+		t.Errorf(`format="date" on an RFC3339 string = %q, want "2026-08-22"`, got)
+	}
+	if got := render(map[string]string{"path": "when", "format": "time"}); got != "10:30" {
+		t.Errorf(`format="time" = %q, want "10:30"`, got)
+	}
+	if got := render(map[string]string{"path": "day", "layout": "Jan 2, 2006"}); got != "Aug 22, 2026" {
+		t.Errorf(`layout on a date-only string = %q, want "Aug 22, 2026"`, got)
+	}
+	if got := render(map[string]string{"path": "size", "format": "filesize"}); got != "2.0 KB" {
+		t.Errorf(`format="filesize" on a JSON number = %q, want "2.0 KB"`, got)
+	}
+
+	// A string that is not a time passes through untouched even when a time
+	// format was asked for, and a value with no format asked for is never parsed.
+	if got := render(map[string]string{"path": "name", "format": "date"}); got != "report" {
+		t.Errorf("non-date string with format=date = %q, want it unchanged", got)
+	}
+	if got := render(map[string]string{"path": "when"}); got != "2026-08-22T10:30:00Z" {
+		t.Errorf("no format asked for = %q, want the raw string", got)
+	}
+	// Fractional numbers are not byte counts.
+	frac := map[string]any{"n": 2.5}
+	if got := renderItemValue(Shortcode{Name: "item", Attrs: map[string]string{"path": "n", "format": "filesize"}}, frac, 1); got != "2.5" {
+		t.Errorf("filesize on 2.5 = %q, want it unchanged", got)
+	}
+}

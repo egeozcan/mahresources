@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -111,18 +112,18 @@ func formatPropertyValue(v reflect.Value, format, layout string) string {
 
 	if concrete.IsValid() && concrete.CanInterface() {
 		if t, ok := concrete.Interface().(time.Time); ok {
-			if layout != "" {
-				return t.Format(layout)
-			}
-			switch format {
-			case "date":
-				return t.Format("2006-01-02")
-			case "datetime":
-				return t.Format("2006-01-02 15:04")
-			case "time":
-				return t.Format("15:04")
-			default:
-				return t.Format(time.RFC3339)
+			return formatTimeValue(t, format, layout)
+		}
+		// A value that came out of JSON is never a time.Time — [item] and
+		// [meta inline] only ever see strings and float64s — so a timestamp in
+		// Meta reached here as a string and format=/layout= did nothing at all,
+		// though both are documented on [item]. Parse it, but only when the
+		// author actually asked for a time format: a string that merely looks
+		// like a date must keep passing through untouched otherwise.
+		if (format == "date" || format == "datetime" || format == "time" || layout != "") &&
+			concrete.Kind() == reflect.String {
+			if t, ok := parseTimeString(concrete.String()); ok {
+				return formatTimeValue(t, format, layout)
 			}
 		}
 	}
@@ -159,9 +160,49 @@ func asInt64(v reflect.Value) (int64, bool) {
 		return v.Int(), true
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return int64(v.Uint()), true
+	case reflect.Float32, reflect.Float64:
+		// JSON decodes every number to float64, so without this branch
+		// format="filesize" was inert on [item] and [meta inline] — the only
+		// two shortcodes whose values always come from JSON. Only whole numbers
+		// convert: "2.5 bytes" is not a byte count.
+		f := v.Float()
+		if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) ||
+			f > math.MaxInt64 || f < math.MinInt64 {
+			return 0, false
+		}
+		return int64(f), true
 	default:
 		return 0, false
 	}
+}
+
+// formatTimeValue applies layout (wins) or format to a time.
+func formatTimeValue(t time.Time, format, layout string) string {
+	if layout != "" {
+		return t.Format(layout)
+	}
+	switch format {
+	case "date":
+		return t.Format("2006-01-02")
+	case "datetime":
+		return t.Format("2006-01-02 15:04")
+	case "time":
+		return t.Format("15:04")
+	default:
+		return t.Format(time.RFC3339)
+	}
+}
+
+// parseTimeString accepts the shapes a JSON timestamp realistically arrives in.
+// RFC3339 is what encoding/json writes for a time.Time, so it covers anything
+// this app produced; the other two cover hand-authored Meta.
+func parseTimeString(s string) (time.Time, bool) {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05", "2006-01-02"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // formatFieldValue converts a reflect.Value to its string representation.

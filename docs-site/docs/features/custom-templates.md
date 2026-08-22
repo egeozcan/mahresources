@@ -64,6 +64,19 @@ Custom template content is **not** evaluated as a Pongo2 template. Expressions l
 
 :::
 
+## Values inside HTML attributes
+
+`[meta path="…"]` expands to a `<meta-shortcode>` element, so it cannot be used inside an HTML attribute. Add `inline="true"` there and it renders the bare value instead, HTML-escaped so a quote in the data cannot break out of the attribute:
+
+```html
+<a href="/archive/[meta path='slug' inline='true']"
+   title="[meta path='blurb' inline='true']">Open</a>
+```
+
+Use single quotes for the inner shortcode attributes so the outer HTML attribute stays intact. `[property]` and `[item]` are attribute-safe the same way. See [Inline values inside HTML attributes](./shortcodes.md#inline-values-inside-html-attributes) for `format`, `layout` and `raw`.
+
+Alpine is the other route, for anything that should react in the browser: every entity-bound slot is wrapped in `x-data="{ entity: … }"`, so `:class`, `:href` and `:title` can read `entity.Meta.*` directly.
+
 ## Accessing Entity Data
 
 The entity is already available as `entity` in the Alpine.js scope. You do not need to add an `x-data` wrapper -- the outer template provides it.
@@ -245,7 +258,7 @@ It occupies roughly the same place as the `group_detail_after` / `resource_detai
 <footer class="entity-footer">
   <p>Catalogued [property path="CreatedAt" format="date"] &middot; last touched [property path="UpdatedAt" format="date"]</p>
   [conditional path="source.url" not-empty="true"]
-    <p>Source: <a :href="entity.Meta.source.url" x-text="entity.Meta.source.title || 'original'"></a></p>
+    <p>Source: <a href="[meta path='source.url' inline='true']">[meta path="source.title" default="original"]</a></p>
   [/conditional]
 </footer>
 ```

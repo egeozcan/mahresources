@@ -105,12 +105,18 @@
                 <div class="mt-1 space-y-3 text-xs">
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[meta path="dotted.path"]</code>
-                        &mdash; render a metadata field value inline. Schema-aware when a Meta JSON Schema is defined.
+                        &mdash; render a metadata field value. Renders an element by default (schema-aware, optionally editable); add <code class="bg-stone-100 px-1 rounded">inline="true"</code> for the bare value, which is what an HTML attribute needs.
                         <br><span class="text-stone-400 ml-4">
                             <b class="text-stone-500">path</b> (required) dot-notation into Meta JSON
-                            &middot; <b class="text-stone-500">editable</b>="true" show edit button
+                            &middot; <b class="text-stone-500">inline</b>="true" render the bare value instead of the element &mdash; the only form usable inside an HTML attribute
+                            &middot; <b class="text-stone-500">editable</b>="true" show edit button (ignored with inline)
                             &middot; <b class="text-stone-500">hide-empty</b>="true" hide when absent
                             &middot; <b class="text-stone-500">default</b>="text" fallback when the value is missing
+                        </span>
+                        <br><span class="text-stone-400 ml-4">
+                            With <b class="text-stone-500">inline</b>: <b class="text-stone-500">format</b>="date|datetime|time|filesize"
+                            &middot; <b class="text-stone-500">layout</b>="Jan 2, 2006"
+                            &middot; <b class="text-stone-500">raw</b>="true" skip HTML escaping (never inside an attribute &mdash; an unescaped quote closes it early)
                         </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[meta path="status"]
 [meta path="contact.email" editable="true"]
@@ -119,7 +125,9 @@
 &lt;div class="flex gap-4"&gt;
   &lt;strong&gt;Priority:&lt;/strong&gt; [meta path="priority" editable="true"]
   &lt;strong&gt;Due:&lt;/strong&gt; [meta path="due_date" hide-empty="true"]
-&lt;/div&gt;</code></pre>
+&lt;/div&gt;
+&lt;a href="/x/[meta path='slug' inline='true']"&gt;attribute-safe&lt;/a&gt;
+[meta path="published" inline="true" format="date"]</code></pre>
                     </div>
                     <div>
                         <code class="bg-stone-100 px-1 rounded">[property path="FieldName"]</code>

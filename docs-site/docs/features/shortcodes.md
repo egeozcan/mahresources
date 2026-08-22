@@ -71,9 +71,13 @@ Renders a metadata field from the entity's `meta` JSON, using the category's Met
 | Attribute | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `path` | Yes | -- | Dot-notation path into the entity's Meta JSON (e.g., `cooking.time`, `address.city`) |
-| `editable` | No | `false` | Shows a pencil edit button; clicking opens a schema-aware inline form |
+| `inline` | No | `false` | Renders the bare value instead of the `<meta-shortcode>` element. The only form usable inside an HTML attribute (see [Inline values](#inline-values-inside-html-attributes)) |
+| `editable` | No | `false` | Shows a pencil edit button; clicking opens a schema-aware inline form. Ignored when `inline` is set |
 | `hide-empty` | No | `false` | Hides the shortcode entirely when the value is absent or null |
 | `default` | No | -- | Text rendered in place of the empty state when the value is missing. Ignored when `hide-empty` is set (hide wins) |
+| `raw` | No | `false` | With `inline`, skips HTML escaping -- the same meaning `raw` has on `[property]` and `[item]`. No effect without `inline` |
+| `format` | No | -- | With `inline`, formats the value like `[property]`: `date` / `datetime` / `time` for timestamps, `filesize` for byte counts. No effect without `inline` |
+| `layout` | No | -- | With `inline`, a custom Go time layout (e.g. `Jan 2, 2006`). Wins over `format`. No effect without `inline` |
 
 ### How It Works
 
@@ -100,6 +104,35 @@ Mixed with HTML:
   <strong>Difficulty:</strong> [meta path="cooking.difficulty"]
 </div>
 ```
+
+### Inline values inside HTML attributes
+
+The default form expands to a `<meta-shortcode>` **element**, which cannot go inside an HTML attribute: an element nested in an attribute value is broken markup, and the element's own quotes close the attribute early. `inline="true"` renders the bare value instead, which is what an attribute needs.
+
+```html
+<a href="/archive/[meta path='slug' inline='true']"
+   title="[meta path='blurb' inline='true']">Open</a>
+
+<div class="card" data-status="[meta path='status' inline='true' default='none']">…</div>
+```
+
+Note the single quotes on the inner attributes: shortcode attributes accept `key='value'` as well as `key="value"`, so single quotes keep the outer HTML attribute intact.
+
+**Inline output is HTML-escaped**, quotes included, so a Meta value containing a `"` cannot break out of the attribute it was pasted into. `raw="true"` turns escaping off for the cases where the value really is markup -- never use it inside an attribute.
+
+`format` and `layout` work here as they do on `[property]` and `[item]`, including on the string form a timestamp takes in JSON:
+
+```html
+[meta path="published" inline="true" format="date"]     <!-- 2026-08-22 -->
+[meta path="published" inline="true" layout="Jan 2, 2006"]
+[meta path="filesize" inline="true" format="filesize"]  <!-- 2.0 KB -->
+```
+
+`editable` is ignored under `inline`: the output is text, so there is nothing to edit, and honouring it would put an edit affordance inside whatever attribute you were building.
+
+Inline mode also works where the widget does not hydrate -- public share pages and `CustomMRQLResult` cards -- because it is plain server-rendered text.
+
+The alternative, for a slot that runs in a browser with the entity in scope, is Alpine: every entity-bound slot is wrapped in `x-data="{ entity: … }"`, so `:href="'/archive/' + entity.Meta.slug"` reads the same value client-side.
 
 ## `[property]` -- Entity Field Access
 
