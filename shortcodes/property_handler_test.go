@@ -3,7 +3,9 @@ package shortcodes
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/url"
+	"reflect"
 	"testing"
 	"time"
 
@@ -268,4 +270,32 @@ func TestPropertyShortcodeProcessRealGroupURL(t *testing.T) {
 	)
 
 	assert.Equal(t, `<a href="https://example.com/profile?tab=social#links">https://example.com/profile?tab=social#links</a>`, result)
+}
+
+// float64 cannot represent math.MaxInt64: it rounds up to 2^63. A `>` guard is
+// therefore false at exactly 2^63 and int64(f) saturates, reporting a byte count
+// one less than it was given rather than declining to format.
+func TestAsInt64RejectsOutOfRangeFloats(t *testing.T) {
+	cases := []struct {
+		name string
+		in   float64
+		want bool
+	}{
+		{"2^63 is out of range", math.Pow(2, 63), false},
+		{"just under 2^63 is in range", math.Pow(2, 63) - 1024, true},
+		{"-2^63 is representable", -math.Pow(2, 63), true},
+		{"below -2^63 is out of range", -math.Pow(2, 64), false},
+		{"fractions are not counts", 2.5, false},
+		{"NaN", math.NaN(), false},
+		{"+Inf", math.Inf(1), false},
+		{"-Inf", math.Inf(-1), false},
+		{"an ordinary count", 2048, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, ok := asInt64(reflect.ValueOf(tc.in)); ok != tc.want {
+				t.Errorf("asInt64(%v) ok = %v, want %v", tc.in, ok, tc.want)
+			}
+		})
+	}
 }

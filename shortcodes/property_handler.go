@@ -166,8 +166,12 @@ func asInt64(v reflect.Value) (int64, bool) {
 		// two shortcodes whose values always come from JSON. Only whole numbers
 		// convert: "2.5 bytes" is not a byte count.
 		f := v.Float()
+		// >= on the high end, not >: float64(math.MaxInt64) rounds up to 2^63, so
+		// f > math.MaxInt64 is false for f == 2^63 and the conversion below would
+		// silently saturate. The low end needs no such care -- math.MinInt64 is
+		// -2^63, which float64 represents exactly.
 		if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) ||
-			f > math.MaxInt64 || f < math.MinInt64 {
+			f >= math.MaxInt64 || f < math.MinInt64 {
 			return 0, false
 		}
 		return int64(f), true
