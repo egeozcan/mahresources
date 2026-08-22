@@ -1,3 +1,68 @@
+# Ten rounds of adversarial review on the [meta inline] safety warning (2026-08-22)
+
+`[meta inline="true"]` was added so a Meta value could be placed in an HTML
+attribute, and it came with a linter warning for the placements where escaping
+does not protect the value. Ten review rounds against that warning found
+nineteen defects. The record is worth keeping because of what it says about the
+shape of the problem, not the count.
+
+## What the rounds found
+
+Rounds 2-3 were about the safety claim itself: "HTML-escaped" was documented as
+attribute safety, which it is not. `html.EscapeString` covers `& < > ' "`, which
+keeps a value inside a *quoted* attribute and does nothing once the browser
+re-parses that value — a `javascript:` URL, an `on*` handler, an unquoted
+attribute, `style`. Round 2 also caught the time-string parsing being added to
+`formatPropertyValue`, which is `[property]`'s: a group named "2026-08-22" under
+`format="time"` had started rendering "00:00".
+
+Rounds 3-5 were nine consecutive defects in one hand-written scanner that
+located a shortcode in its surrounding markup: a `>` inside a handler is not a
+tag end, a `<` inside one is not a tag start, a `<script>` body is not markup,
+`</scripture>` does not close a script, a comment ends at `-->`, `java&#x73;cript`
+is a scheme, `javascript:` is a fixed scheme that is still unsafe.
+
+**That was the signal to stop patching.** Tag finding went to
+`golang.org/x/net/html`, already a dependency: each occurrence is replaced by an
+inert sentinel, the result is tokenized, and the sentinels are found in the tags
+that come back. What is left hand-written is a flat walk over one already
+delimited tag, which was never where the defects were.
+
+Rounds 6-9 were about coverage rather than parsing, and each was a context the
+earlier rounds had not thought to look at:
+
+- **Alpine directives** (`x-*`, `@*`, leading `:`) evaluate their value as
+  script exactly as `on*` does — and this app wraps every entity-bound slot in an
+  `x-data` scope and its own docs recommend them, so this was the most plausible
+  injection of the lot.
+- **Tag and attribute NAMES** have no delimiter at all, so a space or `=` in the
+  value adds attributes.
+- **`<script>` and `<style>` bodies** invert the intuition the parsing rounds
+  built: raw text decodes no entities, so escaping helps *least* there. A
+  `${...}` in a template literal contains nothing `EscapeString` touches.
+- **`raw="true"` outside an attribute**, which the rule had never considered.
+- **A CustomCSS slot**, which is a stylesheet with nothing in its own text to say
+  so — the editor now sends the slot's language.
+- **Every bare-value shortcode**, not just `[meta inline]`. `[property]`,
+  `[item]` and `[mrql value=]` write values into the same places, and
+  `[property path="Description" raw="true"]` was in this repo's own reference
+  panel, unwarned.
+
+Round 10 approved with no majors.
+
+## The two things worth carrying forward
+
+**A hand-written HTML scanner is wrong on the next case, every time.** Three
+rounds of correct individual fixes did not converge; delegating to a real
+tokenizer did, immediately.
+
+**The privilege boundary is what makes any of this matter.** The template is
+written by an admin or editor; the Meta value interpolated into it is written by
+anyone who can edit the entity, which under `-auth` includes the plain `user`
+role. Without that asymmetry these would all be an author's own foot.
+
+---
+
 # Seven new category template slots (2026-08-22)
 
 The tree had seven `Custom*` slots. This adds seven more names across the three
