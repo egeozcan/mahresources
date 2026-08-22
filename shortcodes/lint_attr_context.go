@@ -33,6 +33,10 @@ type attrContext struct {
 	quoted     bool
 	valueSoFar string // the attribute text before the occurrence, entity-decoded
 	inValue    bool
+	// unterminated marks an occurrence inside a tag that is never closed, which
+	// the tokenizer cannot place. Treated as unsafe rather than as "not in an
+	// attribute", so a broken template fails closed.
+	unterminated bool
 }
 
 const lintSentinelPrefix = "\x00mahlint"
@@ -49,6 +53,13 @@ func attributeContextsFor(input string, spans []inlineMetaSpan) map[int]attrCont
 	}
 	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
 
+	// A template that already contains the sentinel bytes could otherwise remap
+	// one occurrence onto another's context. NUL carries no meaning in a
+	// template, and replacing it byte-for-byte keeps every span offset valid.
+	if strings.IndexByte(input, 0) >= 0 {
+		input = strings.ReplaceAll(input, "\x00", " ")
+	}
+
 	var b strings.Builder
 	last := 0
 	for i, sp := range spans {
@@ -63,11 +74,13 @@ func attributeContextsFor(input string, spans []inlineMetaSpan) map[int]attrCont
 	}
 	b.WriteString(input[last:])
 
-	z := html.NewTokenizer(strings.NewReader(b.String()))
+	substituted := b.String()
+	z := html.NewTokenizer(strings.NewReader(substituted))
+tokenize:
 	for {
 		switch z.Next() {
 		case html.ErrorToken:
-			return out
+			break tokenize
 		case html.StartTagToken, html.SelfClosingTagToken:
 			for _, hit := range sentinelsInTag(string(z.Raw())) {
 				if hit.index >= 0 && hit.index < len(spans) {
@@ -76,6 +89,35 @@ func attributeContextsFor(input string, spans []inlineMetaSpan) map[int]attrCont
 			}
 		}
 	}
+
+	// An unterminated tag never reaches the tokenizer as a tag, so its
+	// occurrences come back unresolved. Reporting those as "not in an
+	// attribute" would fail open on exactly the template that is most broken:
+	// <div title="[meta ... raw="true"] with no ">" is still an attribute an
+	// author is interpolating into. Mark them unknown so the caller warns.
+	for i, sp := range spans {
+		if ctx, ok := out[sp.start]; ok && ctx.inValue {
+			continue
+		}
+		if insideUnterminatedTag(substituted, lintSentinel(i)) {
+			out[sp.start] = attrContext{unterminated: true}
+		}
+	}
+	return out
+}
+
+// insideUnterminatedTag reports whether the sentinel sits after a "<" that is
+// never closed, which is the one case the tokenizer cannot describe.
+func insideUnterminatedTag(substituted, sentinel string) bool {
+	at := strings.Index(substituted, sentinel)
+	if at < 0 {
+		return false
+	}
+	open := strings.LastIndexByte(substituted[:at], '<')
+	if open < 0 {
+		return false
+	}
+	return !strings.ContainsRune(substituted[open:], '>')
 }
 
 type sentinelHit struct {
@@ -96,6 +138,7 @@ func sentinelsInTag(tag string) []sentinelHit {
 	for i < len(tag) && !isASCIISpace(tag[i]) && tag[i] != '>' && tag[i] != '/' {
 		i++
 	}
+	seen := map[string]bool{}
 	for i < len(tag) {
 		for i < len(tag) && (isASCIISpace(tag[i]) || tag[i] == '/') {
 			i++
@@ -104,10 +147,16 @@ func sentinelsInTag(tag string) []sentinelHit {
 			break
 		}
 		nameStart := i
-		for i < len(tag) && tag[i] != '=' && !isASCIISpace(tag[i]) && tag[i] != '>' {
+		// "/" separates names as well: <div x/onclick="..."> is two attributes
+		// to the tokenizer, and reading it as one hid the handler.
+		for i < len(tag) && tag[i] != '=' && tag[i] != '/' && !isASCIISpace(tag[i]) && tag[i] != '>' {
 			i++
 		}
 		name := strings.ToLower(tag[nameStart:i])
+		// A repeated attribute is dropped by the parser, so an occurrence in one
+		// never reaches the page.
+		duplicate := seen[name]
+		seen[name] = true
 		for i < len(tag) && isASCIISpace(tag[i]) {
 			i++
 		}
@@ -135,14 +184,15 @@ func sentinelsInTag(tag string) []sentinelHit {
 		}
 		value := tag[valStart:i]
 		for _, idx := range sentinelIndexes(value) {
-			hits = append(hits, sentinelHit{index: idx.index, ctx: attrContext{
-				attr: name,
+			ctx := attrContext{attr: name, quoted: q != 0, inValue: !duplicate}
+			// Only the URL rules read the prefix, and unescaping a growing
+			// prefix once per occurrence is quadratic in a value holding many.
+			if urlBearingAttrs[name] {
 				// html.UnescapeString so a prefix written as "java&#x73;cript"
 				// is judged as the "javascript" the browser will see.
-				quoted:     q != 0,
-				valueSoFar: html.UnescapeString(value[:idx.at]),
-				inValue:    true,
-			}})
+				ctx.valueSoFar = html.UnescapeString(value[:idx.at])
+			}
+			hits = append(hits, sentinelHit{index: idx.index, ctx: ctx})
 		}
 		if i < len(tag) {
 			i++
@@ -188,6 +238,9 @@ func isASCIISpace(c byte) bool {
 //
 // raw disables even that much, so with it every attribute position is unsafe.
 func unsafeAttributeContexts(ctx attrContext, raw bool) []string {
+	if ctx.unterminated {
+		return []string{`[meta inline] is inside a tag that is never closed, so where it lands cannot be determined. Close the tag; until then treat the value as unsafe.`}
+	}
 	if !ctx.inValue || ctx.attr == "" {
 		return nil
 	}
@@ -211,10 +264,12 @@ func unsafeAttributeContexts(ctx attrContext, raw bool) []string {
 		out = append(out, `[meta inline] sits in a "`+attr+`" attribute, whose value the browser decodes and parses as HTML, so escaping does not prevent script injection anywhere in it.`)
 	}
 	if urlBearingAttrs[attr] {
-		if scheme, fixed := urlSchemeBefore(ctx.valueSoFar); !fixed {
-			out = append(out, `[meta inline] can still choose the scheme of the "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a path or a complete scheme in front of it, e.g. href="/x/[meta ...]".`)
-		} else if executableURLSchemes[scheme] {
+		scheme, fixed := urlSchemeBefore(ctx.valueSoFar)
+		switch {
+		case fixed && executableURLSchemes[scheme]:
 			out = append(out, `[meta inline] continues a "`+scheme+`:" URL in "`+attr+`", which the browser executes rather than fetches.`)
+		case !fixed && couldStillBecomeExecutable(scheme):
+			out = append(out, `[meta inline] can still choose the scheme of the "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a path or a complete scheme in front of it, e.g. href="/x/[meta ...]".`)
 		}
 	}
 	return out
@@ -228,6 +283,15 @@ func unsafeAttributeContexts(ctx attrContext, raw bool) []string {
 // Emptiness is the wrong test on its own: href="java[meta ...]" has a non-empty
 // prefix and a Meta value of "script:alert(1)" still completes javascript:.
 func urlSchemeBefore(prefix string) (scheme string, fixed bool) {
+	// Browsers strip tab, newline and carriage return from a URL before
+	// resolving it, so "java&#9;script:" is javascript: to them. Comparing the
+	// bytes as written let that through.
+	prefix = strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' || r == 0 {
+			return -1
+		}
+		return r
+	}, prefix)
 	for i := 0; i < len(prefix); i++ {
 		switch prefix[i] {
 		case ':':
@@ -236,7 +300,20 @@ func urlSchemeBefore(prefix string) (scheme string, fixed bool) {
 			return "", true
 		}
 	}
-	return "", false
+	return strings.ToLower(strings.TrimSpace(prefix)), false
+}
+
+// couldStillBecomeExecutable reports whether a value appended to this prefix
+// could complete an executable scheme. href="java[meta ...]" can, because
+// "javascript" starts with "java"; href="https[meta ...]" cannot, because no
+// executable scheme does.
+func couldStillBecomeExecutable(prefix string) bool {
+	for scheme := range executableURLSchemes {
+		if strings.HasPrefix(scheme, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // executableURLSchemes run rather than fetch, so continuing one is unsafe even

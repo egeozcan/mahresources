@@ -607,3 +607,59 @@ func TestLintScannerHandlesTheCasesOnlyAParserGets(t *testing.T) {
 		quiet(t, src, "choose the scheme")
 	})
 }
+
+// Round-5 findings. Four were ways the warning went quiet; three were noise.
+func TestLintAttributeContextRoundFive(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("an unterminated tag fails closed", func(t *testing.T) {
+		// The tokenizer never sees a tag here, so the occurrence is unresolved.
+		// Reporting "not in an attribute" would be silence on the most broken
+		// template there is.
+		if !warns(`<div title="[meta path='x' inline='true' raw='true']`, "never closed") {
+			t.Error("an occurrence in an unclosed tag must warn, not fail open")
+		}
+	})
+
+	t.Run("literal sentinel bytes cannot remap an occurrence", func(t *testing.T) {
+		src := "<button onclick=\"[meta path='x' inline='true']\"></button>" +
+			"<i title=\"[meta path='\x00mahlint0\x00' inline='true']\"></i>"
+		if !warns(src, "event handler") {
+			t.Error("a template carrying the sentinel bytes stole the first occurrence's context")
+		}
+	})
+
+	t.Run("a slash separates attribute names", func(t *testing.T) {
+		if !warns(`<div x/onclick="[meta path='x' inline='true']">`, "event handler") {
+			t.Error(`x/onclick is two attributes; the handler was missed`)
+		}
+	})
+
+	t.Run("control characters do not hide an executable scheme", func(t *testing.T) {
+		if !warns(`<a href="java&#9;script:[meta path='x' inline='true']">go</a>`, "executes rather than fetches") {
+			t.Error("browsers strip tab from a URL; the scheme is javascript:")
+		}
+	})
+
+	t.Run("a prefix no executable scheme starts with is quiet", func(t *testing.T) {
+		if warns(`<a href="https[meta path='x' inline='true']">go</a>`, "choose the scheme") {
+			t.Error(`nothing appended to "https" makes an executable scheme`)
+		}
+		if !warns(`<a href="java[meta path='x' inline='true']">go</a>`, "choose the scheme") {
+			t.Error(`"java" still completes to javascript:`)
+		}
+	})
+
+	t.Run("a duplicate attribute never reaches the page", func(t *testing.T) {
+		if warns(`<a href="/safe" href="[meta path='x' inline='true']">go</a>`, "[meta inline") {
+			t.Error("the parser keeps the first href and drops the second")
+		}
+	})
+}
