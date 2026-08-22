@@ -114,18 +114,6 @@ func formatPropertyValue(v reflect.Value, format, layout string) string {
 		if t, ok := concrete.Interface().(time.Time); ok {
 			return formatTimeValue(t, format, layout)
 		}
-		// A value that came out of JSON is never a time.Time — [item] and
-		// [meta inline] only ever see strings and float64s — so a timestamp in
-		// Meta reached here as a string and format=/layout= did nothing at all,
-		// though both are documented on [item]. Parse it, but only when the
-		// author actually asked for a time format: a string that merely looks
-		// like a date must keep passing through untouched otherwise.
-		if (format == "date" || format == "datetime" || format == "time" || layout != "") &&
-			concrete.Kind() == reflect.String {
-			if t, ok := parseTimeString(concrete.String()); ok {
-				return formatTimeValue(t, format, layout)
-			}
-		}
 	}
 
 	if format == "filesize" {
@@ -178,6 +166,33 @@ func asInt64(v reflect.Value) (int64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// formatJSONScalar formats a value decoded from JSON, where a timestamp is a
+// string and every number is a float64. It is the entry point for [item] and
+// [meta inline], whose values can only ever have come from a Meta blob.
+//
+// It exists as a separate function rather than a branch inside
+// formatPropertyValue because that one is also [property]'s, and [property]
+// reads Go struct fields: there a string field is genuinely a string, and
+// parsing it would change what an existing template renders. A Group named
+// "2026-08-22" under [property path="Name" format="time"] rendered its name and
+// would start rendering "00:00".
+//
+// The parse is attempted only when a time format was actually asked for, so a
+// date-shaped value with no format= still passes through verbatim. A zone-less
+// string is read as UTC, so formatting one with a zone-bearing layout appends Z;
+// there is no zone in the data to do better with.
+func formatJSONScalar(v any, format, layout string) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok && (format == "date" || format == "datetime" || format == "time" || layout != "") {
+		if t, ok := parseTimeString(s); ok {
+			return formatTimeValue(t, format, layout)
+		}
+	}
+	return formatPropertyValue(reflect.ValueOf(v), format, layout)
 }
 
 // formatTimeValue applies layout (wins) or format to a time.

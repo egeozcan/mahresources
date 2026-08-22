@@ -1,6 +1,7 @@
 package shortcodes
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -834,4 +835,48 @@ func TestRenderMetaWidgetModeUnchangedWithoutInline(t *testing.T) {
 	got := renderInlineMeta(map[string]string{"path": "slug"})
 	assert.Contains(t, got, "<meta-shortcode")
 	assert.Contains(t, got, `data-path="slug"`)
+}
+
+// The widget's client side treats a whitespace-only value as empty. Inline mode
+// has no client, so it has to make the same call server-side or one Meta value
+// renders three spaces in a template and the default in the widget beside it.
+func TestRenderMetaInlineTreatsWhitespaceAsEmpty(t *testing.T) {
+	metaJSON, _ := json.Marshal(map[string]any{"blank": "   "})
+	ctx := MetaShortcodeContext{EntityType: "group", EntityID: 1, Meta: metaJSON}
+	render := func(attrs map[string]string) string {
+		return RenderMetaShortcode(Shortcode{Name: "meta", Attrs: attrs}, ctx)
+	}
+	assert.Equal(t, "n/a", render(map[string]string{"path": "blank", "inline": "true", "default": "n/a"}))
+	assert.Equal(t, "", render(map[string]string{"path": "blank", "inline": "true", "hide-empty": "true"}))
+	// A value that is not blank is still emitted with its own spacing intact.
+	padded, _ := json.Marshal(map[string]any{"v": " x "})
+	assert.Equal(t, " x ", RenderMetaShortcode(
+		Shortcode{Name: "meta", Attrs: map[string]string{"path": "v", "inline": "true"}},
+		MetaShortcodeContext{Meta: padded}))
+}
+
+// The memo must be shared by the by-value copies of the context (so one render
+// decodes once) and must never outlive the entity: a context built fresh — as
+// the MRQL handler does per result item — carries its own.
+func TestInlineMetaDecodeIsMemoizedPerEntity(t *testing.T) {
+	a, _ := json.Marshal(map[string]any{"v": "first"})
+	b, _ := json.Marshal(map[string]any{"v": "second"})
+
+	tpl := `[meta path="v" inline="true"]|[meta path="v" inline="true"]`
+	got := Process(context.Background(), tpl, MetaShortcodeContext{Meta: a}, nil, nil)
+	assert.Equal(t, "first|first", got)
+
+	// A different entity, a different context value: no bleed from the first.
+	assert.Equal(t, "second|second",
+		Process(context.Background(), tpl, MetaShortcodeContext{Meta: b}, nil, nil))
+
+	// Called directly with no cache at all, it still decodes correctly.
+	assert.Equal(t, "first", RenderMetaShortcode(
+		Shortcode{Name: "meta", Attrs: map[string]string{"path": "v", "inline": "true"}},
+		MetaShortcodeContext{Meta: a}))
+
+	// A malformed blob is treated as missing, exactly like an absent path.
+	assert.Equal(t, "n/a", RenderMetaShortcode(
+		Shortcode{Name: "meta", Attrs: map[string]string{"path": "v", "inline": "true", "default": "n/a"}},
+		MetaShortcodeContext{Meta: []byte("{not json")}))
 }

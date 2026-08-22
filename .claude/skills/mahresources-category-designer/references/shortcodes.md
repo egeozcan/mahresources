@@ -66,7 +66,8 @@ Use `[meta]` when you want the category schema to stay the source of truth for d
 **Inside an HTML attribute, `inline=true` is mandatory.** The default form expands
 to a `<meta-shortcode>` element, and an element cannot nest inside an attribute
 value -- its own quotes close the attribute early. Inline output is HTML-escaped
-(quotes included), so a Meta value carrying a `"` cannot break out:
+(quotes included), so a Meta value carrying a `"` cannot break out of a *quoted*
+attribute:
 
 ```html
 <a href="/archive/[meta path='slug' inline='true']" title="[meta path='blurb' inline='true']">Open</a>
@@ -75,6 +76,13 @@ value -- its own quotes close the attribute early. Inline output is HTML-escaped
 Use single quotes for the inner shortcode attributes. `raw=true` disables escaping
 and must never be used inside an attribute. Inline mode is also the form that works
 on share pages and in `CustomMRQLResult`, where the widget does not hydrate.
+
+**Escaping is not general attribute safety**, and the linter warns on the four
+shapes where it fails: an unquoted attribute (a value with a space adds
+attributes), a whole `href`/`src` (a `javascript:` value runs), an `on*` handler
+(the HTML parser undoes the escaping before the JS parser reads it), and `style`
+(CSS injection). Never place `[meta inline]` in any of them. Templates are
+authored by admins/editors; Meta is written by anyone who can edit the entity.
 
 ### `[property]`
 

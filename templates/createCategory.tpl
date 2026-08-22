@@ -122,11 +122,19 @@
                             &middot; <b class="text-stone-500">layout</b>="Jan 2, 2006"
                             &middot; <b class="text-stone-500">raw</b>="true" skip HTML escaping (never inside an attribute &mdash; an unescaped quote closes it early)
                         </span>
+                        <br><span class="text-stone-400 ml-4">
+                            Escaping keeps the value inside a <i>quoted</i> attribute and no further. It does not make a
+                            <code class="bg-stone-100 px-1 rounded">javascript:</code> value safe as a whole
+                            <code class="bg-stone-100 px-1 rounded">href</code>, survive an
+                            <code class="bg-stone-100 px-1 rounded">on*</code> handler, contain a value in an unquoted
+                            attribute, or stop CSS injection in <code class="bg-stone-100 px-1 rounded">style</code>.
+                            The editor warns on those four. Metadata is written by anyone who can edit the entity.
+                        </span>
                         <pre class="mt-1 bg-stone-50 border border-stone-200 rounded p-2 text-[11px] leading-relaxed overflow-x-auto"><code>[meta path="status"]
 [meta path="contact.email" editable="true"]
 [meta path="address.city" hide-empty="true"]
 [meta path="review.score" default="Unrated"]
-&lt;a href="/x/[meta path='slug' inline='true']"&gt;attribute-safe&lt;/a&gt;
+&lt;a href="/x/[meta path='slug' inline='true']" title="[meta path='blurb' inline='true']"&gt;in an attribute&lt;/a&gt;
 [meta path="published" inline="true" format="date"]
 &lt;div class="flex gap-4"&gt;
   &lt;strong&gt;Rating:&lt;/strong&gt; [meta path="review.score" editable="true"]

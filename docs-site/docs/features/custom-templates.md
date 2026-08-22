@@ -66,14 +66,20 @@ Custom template content is **not** evaluated as a Pongo2 template. Expressions l
 
 ## Values inside HTML attributes
 
-`[meta path="…"]` expands to a `<meta-shortcode>` element, so it cannot be used inside an HTML attribute. Add `inline="true"` there and it renders the bare value instead, HTML-escaped so a quote in the data cannot break out of the attribute:
+`[meta path="…"]` expands to a `<meta-shortcode>` element, so it cannot be used inside an HTML attribute. Add `inline="true"` there and it renders the bare value instead, HTML-escaped so a quote in the data cannot break out of a **quoted** attribute:
 
 ```html
 <a href="/archive/[meta path='slug' inline='true']"
    title="[meta path='blurb' inline='true']">Open</a>
 ```
 
-Use single quotes for the inner shortcode attributes so the outer HTML attribute stays intact. `[property]` and `[item]` are attribute-safe the same way. See [Inline values inside HTML attributes](./shortcodes.md#inline-values-inside-html-attributes) for `format`, `layout` and `raw`.
+Use single quotes for the inner shortcode attributes so the outer HTML attribute stays intact. `[property]` and `[item]` escape the same way.
+
+:::warning Escaping is not general attribute safety
+
+It keeps the value inside a quoted attribute. It does **not** make a `javascript:` value safe as a whole `href`, survive an `on*` handler, contain a value in an unquoted attribute, or prevent CSS injection in `style`. The editor warns on those four shapes. Meta is written by anyone who can edit the entity, including the plain `user` role, while the template is written by an admin or editor -- so a careless interpolation crosses a privilege boundary. See [Inline values inside HTML attributes](./shortcodes.md#inline-values-inside-html-attributes).
+
+:::
 
 Alpine is the other route, for anything that should react in the browser: every entity-bound slot is wrapped in `x-data="{ entity: … }"`, so `:class`, `:href` and `:title` can read `entity.Meta.*` directly.
 

@@ -156,6 +156,13 @@ func processWithDepth(reqCtx context.Context, input string, ctx MetaShortcodeCon
 		return input
 	}
 
+	// One decode of this entity's Meta for the whole render, shared with every
+	// nested processWithDepth through the by-value copies of ctx. A context
+	// built fresh per MRQL result item arrives with this nil and gets its own.
+	if ctx.decodedMeta == nil && len(ctx.Meta) > 0 {
+		ctx.decodedMeta = &decodedMetaCache{}
+	}
+
 	var b strings.Builder
 	b.Grow(len(input) * 2)
 	lastEnd := 0

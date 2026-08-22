@@ -3,7 +3,6 @@ package shortcodes
 import (
 	"context"
 	"html"
-	"reflect"
 	"strconv"
 	"strings"
 )
@@ -117,11 +116,9 @@ func navigateJSONValue(current any, path string) any {
 	return current
 }
 
-// formatItemValue formats a decoded JSON value using the property handler's
-// format/layout helpers so [item] and [property] format uniformly.
+// formatItemValue formats a decoded JSON element. [item] only ever sees values
+// that came out of a Meta blob, so it uses the JSON-aware entry point: a
+// timestamp there is a string and a number is a float64.
 func formatItemValue(v any, format, layout string) string {
-	if v == nil {
-		return ""
-	}
-	return formatPropertyValue(reflect.ValueOf(v), format, layout)
+	return formatJSONScalar(v, format, layout)
 }

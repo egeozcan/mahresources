@@ -376,3 +376,52 @@ func TestLintStillRejectsAnUndocumentedMetaAttribute(t *testing.T) {
 		t.Error("a typo'd attribute should still be reported as unknown")
 	}
 }
+
+// Escaping keeps a value inside a quoted attribute and does nothing beyond that.
+// These are the three contexts where the browser re-parses the value afterwards,
+// plus the unquoted case where it never had a boundary to begin with. The
+// template author is an admin or editor; the Meta value is written by anyone who
+// can edit the entity, so the warning sits across a real privilege boundary.
+func TestLintWarnsOnUnsafeInlineMetaContexts(t *testing.T) {
+	cases := []struct {
+		name, src, want string
+	}{
+		{"unquoted attribute", `<a href=/x/[meta path='s' inline='true']>x</a>`, "unquoted attribute value"},
+		{"event handler", `<a onclick="f('[meta path='s' inline='true']')">x</a>`, "event handler"},
+		{"style attribute", `<div style="color:[meta path='s' inline='true']">x</div>`, "style"},
+		{"whole href", `<a href="[meta path='s' inline='true']">x</a>`, `whole "href" URL`},
+		{"whole src", `<img src="[meta path='s' inline='true']">`, `whole "src" URL`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var found bool
+			for _, issue := range Lint(tc.src, LintOptions{Known: KnownFromBuiltins()}) {
+				if strings.Contains(issue.Message, tc.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("no warning containing %q for %s", tc.want, tc.src)
+			}
+		})
+	}
+}
+
+// The safe shapes must stay quiet, or the warning is noise and gets ignored.
+func TestLintIsQuietOnSafeInlineMetaContexts(t *testing.T) {
+	for _, src := range []string{
+		`<a href="/x/[meta path='s' inline='true']">x</a>`,
+		`<a href='/x/[meta path="s" inline="true"]'>x</a>`,
+		`<span title="[meta path='s' inline='true']">x</span>`,
+		`<div data-status="[meta path='s' inline='true']"></div>`,
+		`<p>[meta path="s" inline="true"]</p>`,
+		// Not inline: the widget is an element, never an attribute value.
+		`<p>[meta path="s"]</p>`,
+	} {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, "[meta inline]") {
+				t.Errorf("unexpected warning for %s: %s", src, issue.Message)
+			}
+		}
+	}
+}

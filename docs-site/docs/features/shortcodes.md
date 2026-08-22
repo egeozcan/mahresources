@@ -118,7 +118,18 @@ The default form expands to a `<meta-shortcode>` **element**, which cannot go in
 
 Note the single quotes on the inner attributes: shortcode attributes accept `key='value'` as well as `key="value"`, so single quotes keep the outer HTML attribute intact.
 
-**Inline output is HTML-escaped**, quotes included, so a Meta value containing a `"` cannot break out of the attribute it was pasted into. `raw="true"` turns escaping off for the cases where the value really is markup -- never use it inside an attribute.
+**Inline output is HTML-escaped**, quotes included, so a Meta value containing a `"` cannot break out of a **quoted** attribute. `raw="true"` turns escaping off for the cases where the value really is markup -- never use it inside an attribute.
+
+That guarantee stops where the browser re-parses the value. Escaping covers `&`, `<`, `>`, `'` and `"` and nothing else, so all four of these remain unsafe and the editor warns on each:
+
+| Shape | Why escaping does not help |
+|---|---|
+| `<a href="[meta path='u' inline='true']">` | A value of `javascript:alert(1)` runs on click. Put a scheme or path in front: `href="/x/[meta …]"` |
+| `<a href=/x/[meta path='u' inline='true']>` | Unquoted: a value containing a space adds attributes of its own (`x onfocus=alert(1)`). Quote it |
+| `<button onclick="f('[meta path='u' inline='true']')">` | The HTML parser decodes `&#39;` back to `'` before the script is parsed, so a quote in the value escapes the JS string. Do not interpolate Meta into a handler |
+| `<div style="color:[meta path='u' inline='true']">` | CSS injection; escaping does not apply to CSS syntax |
+
+This matters because the two halves have different authors: an admin or editor writes the template, but the Meta value it interpolates is written by anyone who can edit the entity -- which includes the plain `user` role.
 
 `format` and `layout` work here as they do on `[property]` and `[item]`, including on the string form a timestamp takes in JSON:
 

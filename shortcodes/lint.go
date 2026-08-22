@@ -191,6 +191,17 @@ func Lint(input string, opts LintOptions) []LintIssue {
 				"unknown attribute \""+attrName+"\" on ["+tk.name+"]")
 		}
 
+		// Escaping the value keeps it from breaking out of a quoted attribute,
+		// and nothing more. Three surrounding contexts defeat it entirely, and
+		// they matter because the boundary is real: category templates are
+		// authored by admins/editors, but the Meta values they interpolate are
+		// written by ordinary users.
+		if tk.name == "meta" && tk.attrs["inline"] == "true" {
+			for _, msg := range unsafeAttributeContexts(input, tk.start) {
+				add(tk.start, tk.end, SeverityWarning, msg)
+			}
+		}
+
 		// Name-specific semantic checks.
 		switch tk.name {
 		case "item":
@@ -536,4 +547,120 @@ func countTopLevelElse(content string) int {
 		i++
 	}
 	return count
+}
+
+// unsafeAttributeContexts reports the ways an escaped value is still dangerous
+// where it is being placed, by scanning forward through the tag the shortcode
+// sits in and reporting which attribute it landed in.
+//
+// html.EscapeString covers & < > ' " and nothing else — exactly enough to stay
+// inside a quoted attribute value, and not enough anywhere the browser re-parses
+// that value afterwards. The distinction matters because the two halves have
+// different authors: an admin or editor writes the template, but the Meta value
+// it interpolates is written by whoever can edit the entity, which includes the
+// plain user role.
+//
+// The scan is a small state machine rather than a regex because the case that
+// matters most is onclick="f('…')", where the value legitimately contains both
+// quote characters and a backwards regex cannot tell which one opened it.
+func unsafeAttributeContexts(input string, pos int) []string {
+	if pos <= 0 || pos > len(input) {
+		return nil
+	}
+	tagStart := strings.LastIndex(input[:pos], "<")
+	if tagStart < 0 || strings.Contains(input[tagStart:pos], ">") {
+		return nil
+	}
+	attr, quote, valueSoFar, inValue := scanAttributeContext(input[tagStart:pos])
+	if !inValue || attr == "" {
+		return nil
+	}
+
+	var out []string
+	if quote == 0 {
+		out = append(out, `[meta inline] sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`)
+	}
+	if strings.HasPrefix(attr, "on") {
+		out = append(out, `[meta inline] sits in the "`+attr+`" event handler, where the HTML parser undoes the escaping before the script is parsed, so a value containing a quote can execute. Do not interpolate Meta into a handler.`)
+	}
+	if attr == "style" {
+		out = append(out, `[meta inline] sits in a "style" attribute, where escaping does not prevent CSS injection.`)
+	}
+	// Only a value that starts the attribute can choose the URL scheme.
+	if urlBearingAttrs[attr] && strings.TrimSpace(valueSoFar) == "" {
+		out = append(out, `[meta inline] supplies the whole "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a known scheme or path in front of it, e.g. href="/x/[meta ...]".`)
+	}
+	return out
+}
+
+// scanAttributeContext walks a partial tag ("<a onclick=\"f('") and reports the
+// attribute the end of it falls inside: its lowercased name, the quote that
+// opened the value (0 when unquoted), the value text so far, and whether the
+// scan ended inside a value at all.
+func scanAttributeContext(tag string) (attr string, quote byte, valueSoFar string, inValue bool) {
+	i := 0
+	// Skip "<" and the element name.
+	if i < len(tag) && tag[i] == '<' {
+		i++
+	}
+	for i < len(tag) && !isASCIISpace(tag[i]) {
+		i++
+	}
+	for i < len(tag) {
+		for i < len(tag) && isASCIISpace(tag[i]) {
+			i++
+		}
+		nameStart := i
+		for i < len(tag) && tag[i] != '=' && !isASCIISpace(tag[i]) {
+			i++
+		}
+		name := strings.ToLower(tag[nameStart:i])
+		if i >= len(tag) {
+			return "", 0, "", false // ran out inside a bare attribute name
+		}
+		for i < len(tag) && isASCIISpace(tag[i]) {
+			i++
+		}
+		if i >= len(tag) || tag[i] != '=' {
+			continue // valueless attribute; keep scanning
+		}
+		i++ // past '='
+		for i < len(tag) && isASCIISpace(tag[i]) {
+			i++
+		}
+		if i >= len(tag) {
+			return name, 0, "", true // "attr=" and then our shortcode
+		}
+		var q byte
+		if tag[i] == '"' || tag[i] == '\'' {
+			q = tag[i]
+			i++
+		}
+		valStart := i
+		for i < len(tag) {
+			if q != 0 && tag[i] == q {
+				break
+			}
+			if q == 0 && isASCIISpace(tag[i]) {
+				break
+			}
+			i++
+		}
+		if i >= len(tag) {
+			return name, q, tag[valStart:], true // the value runs to our shortcode
+		}
+		i++ // past the closing quote or the space
+	}
+	return "", 0, "", false
+}
+
+func isASCIISpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f'
+}
+
+// urlBearingAttrs are the attributes whose value the browser resolves as a URL,
+// so a value that begins one gets to choose its scheme.
+var urlBearingAttrs = map[string]bool{
+	"href": true, "src": true, "action": true, "formaction": true,
+	"data": true, "poster": true, "srcdoc": true, "xlink:href": true,
 }

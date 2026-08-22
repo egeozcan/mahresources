@@ -7,6 +7,7 @@ import (
 	"math"
 	"reflect"
 	"strings"
+	"sync"
 )
 
 // MetaShortcodeContext holds the entity context needed to render [meta] shortcodes.
@@ -19,6 +20,15 @@ type MetaShortcodeContext struct {
 	ScopeGroupID  uint            // resolved "entity" scope (owning group or sentinel for ownerless)
 	ParentGroupID uint            // resolved "parent" scope (owner's owner)
 	RootGroupID   uint            // resolved "root" scope (top of chain)
+	// decodedMeta memoizes the parsed Meta for the inline [meta] path. It is a
+	// pointer because this struct travels by value through every handler, so all
+	// the copies share one decode: a slot carrying N inline values, rendered on a
+	// list of M cards, would otherwise unmarshal each card's blob N times.
+	// processWithDepth populates it per render; a zero value simply decodes
+	// locally, which is what a handler called directly (a test, another entry
+	// point) gets. mrql_handler builds a fresh context per result item, so the
+	// memo never outlives the entity it belongs to.
+	decodedMeta *decodedMetaCache
 	// ForceReadOnly forces every [meta] to render non-editable regardless of the
 	// shortcode's editable attr. Set by the share renderer: the public /s/<token>
 	// page must never emit an edit affordance that would POST to the primary server.
@@ -67,25 +77,31 @@ func RenderMetaShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 // It exists because the widget cannot be used where only text is legal. A
 // <meta-shortcode> element inside an attribute value is broken markup twice
 // over: an element cannot nest in an attribute at all, and the element's own
-// quotes close the attribute early. Escaping is therefore the default here and
-// covers quotes (html.EscapeString escapes &<>'"), so a Meta value carrying a
-// quote cannot break out of the attribute it was pasted into.
+// quotes close the attribute early.
+//
+// Escaping is therefore the default, and its guarantee is narrow: it covers
+// & < > ' " and nothing else, which keeps a value inside a QUOTED attribute and
+// stops nothing that happens after the browser parses that value back out. A
+// javascript: URL in href still runs, an unquoted attribute still gains
+// neighbours from a value containing a space, an on* handler still executes a
+// value containing a quote (the HTML parser undoes the escaping before the JS
+// parser sees it), and style still takes CSS. Those four shapes are what
+// unsafeAttributeContexts in lint.go warns about, because the boundary is real:
+// the template is written by an admin or editor, the Meta value in it by anyone
+// who can edit the entity.
 //
 // editable= is ignored: inline output is text, so there is nothing to edit, and
 // honouring it would put an edit affordance inside whatever attribute the author
 // was building. hide-empty= is honoured here rather than client-side, because
 // inline mode emits no element for a client to act on.
 func renderInlineMetaValue(sc Shortcode, ctx MetaShortcodeContext) string {
-	var decoded any
-	if len(ctx.Meta) > 0 {
-		// A malformed Meta leaves decoded nil, which navigates to nothing and
-		// falls through to default= — the same answer as a missing path.
-		_ = json.Unmarshal(ctx.Meta, &decoded)
-	}
+	text := formatJSONScalar(navigateJSONValue(ctx.decodeMeta(), sc.Attrs["path"]), sc.Attrs["format"], sc.Attrs["layout"])
 
-	text := formatItemValue(navigateJSONValue(decoded, sc.Attrs["path"]), sc.Attrs["format"], sc.Attrs["layout"])
-
-	if text == "" {
+	// Trimmed for the emptiness decision only — the widget's client side treats
+	// a whitespace-only value as empty (meta-shortcode.ts), and inline mode must
+	// agree or the same Meta renders three spaces here and the default there.
+	// The value itself is emitted untrimmed when it is not empty.
+	if strings.TrimSpace(text) == "" {
 		if sc.Attrs["hide-empty"] == "true" {
 			return ""
 		}
@@ -656,4 +672,31 @@ func shallowMergeSchema(dst, src map[string]any) map[string]any {
 		}
 	}
 	return result
+}
+
+// decodedMetaCache holds one parse of an entity's Meta, shared by every by-value
+// copy of the context that carries it.
+type decodedMetaCache struct {
+	once  sync.Once
+	value any
+}
+
+// decodeMeta returns the parsed Meta, decoding at most once when the context
+// carries a cache and every call when it does not. A malformed blob decodes to
+// nil, which navigates to nothing and falls through to default= — the same
+// answer as a missing path, and what the widget's client side also does.
+func (ctx MetaShortcodeContext) decodeMeta() any {
+	if len(ctx.Meta) == 0 {
+		return nil
+	}
+	decode := func() any {
+		var v any
+		_ = json.Unmarshal(ctx.Meta, &v)
+		return v
+	}
+	if ctx.decodedMeta == nil {
+		return decode()
+	}
+	ctx.decodedMeta.once.Do(func() { ctx.decodedMeta.value = decode() })
+	return ctx.decodedMeta.value
 }

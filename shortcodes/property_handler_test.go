@@ -299,3 +299,42 @@ func TestAsInt64RejectsOutOfRangeFloats(t *testing.T) {
 		})
 	}
 }
+
+// [property] reads Go struct fields, where a string is genuinely a string. The
+// JSON-aware time parsing that [item] and [meta inline] need must not reach it:
+// a group named "2026-08-22" under format="time" rendered its name and would
+// otherwise start rendering "00:00".
+func TestPropertyDoesNotParseStringsAsTimes(t *testing.T) {
+	type ent struct{ Name string }
+	e := &ent{Name: "2026-08-22"}
+	for _, attrs := range []map[string]string{
+		{"path": "Name", "format": "time"},
+		{"path": "Name", "format": "date"},
+		{"path": "Name", "format": "datetime"},
+		{"path": "Name", "layout": "Jan 2, 2006"},
+	} {
+		got := RenderPropertyShortcode(Shortcode{Name: "property", Attrs: attrs}, MetaShortcodeContext{Entity: e})
+		if got != "2026-08-22" {
+			t.Errorf("[property %v] = %q, want the field verbatim", attrs, got)
+		}
+	}
+}
+
+// The JSON entry point is the one that parses, and only when a time format was
+// actually requested.
+func TestFormatJSONScalarParsesOnlyOnRequest(t *testing.T) {
+	if got := formatJSONScalar("2026-08-22T10:30:00Z", "date", ""); got != "2026-08-22" {
+		t.Errorf(`format="date" = %q, want "2026-08-22"`, got)
+	}
+	if got := formatJSONScalar("2026-08-22T10:30:00Z", "", ""); got != "2026-08-22T10:30:00Z" {
+		t.Errorf("no format asked for = %q, want the string verbatim", got)
+	}
+	if got := formatJSONScalar("release-2026-08-22", "date", ""); got != "release-2026-08-22" {
+		t.Errorf("unparseable string = %q, want it verbatim", got)
+	}
+	// A zone-less string is read as UTC; there is no zone in the data to do
+	// better with, so a zone-bearing layout appends Z.
+	if got := formatJSONScalar("2026-08-22 10:30:00", "", "2006-01-02T15:04:05Z07:00"); got != "2026-08-22T10:30:00Z" {
+		t.Errorf("zone-less input = %q", got)
+	}
+}
