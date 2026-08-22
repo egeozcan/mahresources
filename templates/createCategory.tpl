@@ -146,7 +146,7 @@
                         &mdash; render a struct field of the group. Output is HTML-escaped by default.
                         <br><span class="text-stone-400 ml-4">
                             <b class="text-stone-500">path</b> (required) field name or dot path (e.g. <span class="font-mono">Owner.Name</span>)
-                            &middot; <b class="text-stone-500">raw</b>="true" skip HTML escaping
+                            &middot; <b class="text-stone-500">raw</b>="true" skip HTML escaping &mdash; the value then becomes real markup, and whoever can edit the entity chooses it, so use it only where the field is authored by someone you would trust with this template
                             &middot; <b class="text-stone-500">format</b>="date|datetime|time|filesize"
                             &middot; <b class="text-stone-500">layout</b>="Jan 2, 2006" custom time layout
                             &middot; <b class="text-stone-500">default</b>="text" fallback when empty

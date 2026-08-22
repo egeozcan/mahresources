@@ -310,30 +310,30 @@ func isASCIISpace(c byte) bool {
 // whoever can edit the entity, which includes the plain user role.
 //
 // raw disables even that much, so with it every attribute position is unsafe.
-func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool) []string {
+func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) []string {
 	if cssMode && !ctx.inValue && !ctx.inName {
 		// A CustomCSS slot is a stylesheet with no <style> wrapper of its own,
 		// so nothing in the markup says so — the editor has to.
 		if raw {
-			return []string{`[meta inline raw] in a CSS slot is not escaped and lands in the stylesheet verbatim. Drop raw= here.`}
+			return []string{label + ` with raw= in a CSS slot is not escaped and lands in the stylesheet verbatim. Drop raw= here.`}
 		}
-		return []string{`[meta inline] is in a CSS slot, where the value lands in a stylesheet verbatim: a ";" or "}" in it starts new declarations, and escaping touches neither.`}
+		return []string{label + ` is in a CSS slot, where the value lands in a stylesheet verbatim: a ";" or "}" in it starts new declarations, and escaping touches neither.`}
 	}
 	if ctx.unterminated {
-		return []string{`[meta inline] is inside a tag that is never closed, so where it lands cannot be determined. Close the tag; until then treat the value as unsafe.`}
+		return []string{label + ` is inside a tag that is never closed, so where it lands cannot be determined. Close the tag; until then treat the value as unsafe.`}
 	}
 	if ctx.rawTextElement != "" {
-		return []string{`[meta inline] sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + scriptLikeLanguage[ctx.rawTextElement] + ` exactly as written. Escaping stops nothing here — a "${...}" in a template literal or a ";" in a declaration is not escaped at all. Pass the value in through a data- attribute instead.`}
+		return []string{label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + scriptLikeLanguage[ctx.rawTextElement] + ` exactly as written. Escaping stops nothing here — a "${...}" in a template literal or a ";" in a declaration is not escaped at all. Pass the value in through a data- attribute instead.`}
 	}
 	if ctx.inName {
-		return []string{`[meta inline] is interpolated into a tag or attribute NAME, which nothing delimits: a value containing a space or "=" simply adds attributes of its own, and escaping does not touch either character. Build the name in the template instead.`}
+		return []string{label + ` is interpolated into a tag or attribute NAME, which nothing delimits: a value containing a space or "=" simply adds attributes of its own, and escaping does not touch either character. Build the name in the template instead.`}
 	}
 	if !ctx.inValue || ctx.attr == "" {
 		if raw {
 			// raw= disables escaping outright, so it is unsafe wherever it
 			// lands, including ordinary text: a Meta value of
 			// "<img src=x onerror=...>" becomes a real element.
-			return []string{`[meta inline raw] is not escaped, so a Meta value containing markup becomes real elements on the page. Anyone who can edit the entity can then inject script. Drop raw= unless the value is authored by someone you would trust with the template itself.`}
+			return []string{label + ` with raw= is not escaped, so a value containing markup becomes real elements on the page. Anyone who can edit the entity can then inject script. Drop raw= unless the value is authored by someone you would trust with the template itself.`}
 		}
 		return nil
 	}
@@ -341,30 +341,30 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool) []string {
 
 	var out []string
 	if raw {
-		out = append(out, `[meta inline raw] is not escaped at all, so placing it in the "`+attr+`" attribute lets the value close the attribute and add its own. Drop raw= here.`)
+		out = append(out, label+` with raw= is not escaped at all, so placing it in the "`+attr+`" attribute lets the value close the attribute and add its own. Drop raw= here.`)
 	}
 	if !ctx.quoted {
-		out = append(out, `[meta inline] sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`)
+		out = append(out, label+` sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`)
 	}
 	if cssMode {
-		out = append(out, `[meta inline] is in a CSS slot, where the value lands in a stylesheet verbatim: a ";" or "}" in it starts new declarations, and escaping touches neither.`)
+		out = append(out, label+` is in a CSS slot, where the value lands in a stylesheet verbatim: a ";" or "}" in it starts new declarations, and escaping touches neither.`)
 	}
 	if kind := expressionAttributeKind(attr); kind != "" {
-		out = append(out, `[meta inline] sits in the "`+attr+`" `+kind+`, whose value is evaluated as script after the HTML parser has undone the escaping, so a value containing a quote can execute. Do not interpolate Meta into it.`)
+		out = append(out, label+` sits in the "`+attr+`" `+kind+`, whose value is evaluated as script after the HTML parser has undone the escaping, so a value containing a quote can execute. Do not interpolate Meta into it.`)
 	}
 	if attr == "style" {
-		out = append(out, `[meta inline] sits in a "style" attribute, where escaping does not prevent CSS injection.`)
+		out = append(out, label+` sits in a "style" attribute, where escaping does not prevent CSS injection.`)
 	}
 	if alwaysUnsafeAttrs[attr] {
-		out = append(out, `[meta inline] sits in a "`+attr+`" attribute, whose value the browser decodes and parses as HTML, so escaping does not prevent script injection anywhere in it.`)
+		out = append(out, label+` sits in a "`+attr+`" attribute, whose value the browser decodes and parses as HTML, so escaping does not prevent script injection anywhere in it.`)
 	}
 	if urlBearingAttrs[attr] {
 		scheme, fixed := urlSchemeBefore(ctx.valueSoFar)
 		switch {
 		case fixed && executableURLSchemes[scheme]:
-			out = append(out, `[meta inline] continues a "`+scheme+`:" URL in "`+attr+`", which the browser executes rather than fetches.`)
+			out = append(out, label+` continues a "`+scheme+`:" URL in "`+attr+`", which the browser executes rather than fetches.`)
 		case !fixed && couldStillBecomeExecutable(scheme):
-			out = append(out, `[meta inline] can still choose the scheme of the "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a path or a complete scheme in front of it, e.g. href="/x/[meta ...]".`)
+			out = append(out, label+` can still choose the scheme of the "`+attr+`" URL, and escaping does not stop a "javascript:" value. Put a path or a complete scheme in front of it, e.g. href="/x/[meta ...]".`)
 		}
 	}
 	return out
@@ -466,8 +466,10 @@ var scriptLikeLanguage = map[string]string{"script": "JavaScript", "style": "CSS
 // inertAlpineDirectives take a literal value rather than an expression, so
 // interpolating into one is no more dangerous than any other text attribute.
 var inertAlpineDirectives = map[string]bool{
+	// x-id is deliberately absent: its value is an array expression, which
+	// Alpine evaluates.
 	"x-ref": true, "x-cloak": true, "x-ignore": true, "x-transition": true,
-	"x-teleport": true, "x-id": true,
+	"x-teleport": true,
 }
 
 // isTagNameStart reports whether c can follow "<" to open a tag.
@@ -484,4 +486,19 @@ func isInertAlpineDirective(attr string) bool {
 		base = base[:i]
 	}
 	return inertAlpineDirectives[base]
+}
+
+// emitsBareValue reports whether a shortcode writes a value straight into the
+// surrounding markup, which is what makes where it sits matter. [meta] only does
+// so with inline=, and [mrql] only with value=; [property] and [item] always do.
+func emitsBareValue(name string, attrs map[string]string) bool {
+	switch name {
+	case "meta":
+		return attrs["inline"] == "true"
+	case "property", "item":
+		return true
+	case "mrql":
+		return attrs["value"] != ""
+	}
+	return false
 }

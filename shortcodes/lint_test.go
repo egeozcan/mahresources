@@ -820,3 +820,64 @@ func TestLintAttributeContextRoundEight(t *testing.T) {
 		}
 	})
 }
+
+// Round-9 findings. The rule was never really about [meta inline]: it is about
+// a shortcode writing a value straight into the surrounding markup, and
+// [property], [item] and [mrql value=] do exactly that.
+func TestLintCoversEveryBareValueShortcode(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("property with raw injects markup", func(t *testing.T) {
+		// This shape is in the project's own reference panel.
+		if !warns(`<div>[property path="Description" raw="true"]</div>`, "becomes real elements") {
+			t.Error(`[property raw="true"] in text must warn`)
+		}
+	})
+
+	t.Run("item with raw injects markup", func(t *testing.T) {
+		src := `[each path="credits"]<span>[item path="name" raw="true"]</span>[/each]`
+		if !warns(src, "becomes real elements") {
+			t.Error(`[item raw="true"] must warn`)
+		}
+	})
+
+	t.Run("the placement rules apply to every bare-value shortcode", func(t *testing.T) {
+		for _, src := range []string{
+			`<button onclick="f('[property path='Name']')">go</button>`,
+			`<a href="[property path='URL']">go</a>`,
+			`<script>var s = "[property path='Name']";</script>`,
+		} {
+			if !warns(src, "[property]") {
+				t.Errorf("no placement warning for %s", src)
+			}
+		}
+		if !warns(`<button onclick="f('[mrql query="type = group" value="count"]')">go</button>`, "[mrql]") {
+			t.Error("[mrql value=] emits a bare value too")
+		}
+	})
+
+	t.Run("escaped output in plain text stays quiet", func(t *testing.T) {
+		for _, src := range []string{
+			`<div>[property path="Name"]</div>`,
+			`[each path="c"]<span>[item path="n"]</span>[/each]`,
+			`<div>[meta path="x" inline="true"]</div>`,
+		} {
+			if warns(src, "real elements") {
+				t.Errorf("escaped text is safe: %s", src)
+			}
+		}
+	})
+
+	t.Run("x-id evaluates its value", func(t *testing.T) {
+		if !warns(`<div x-id="['panel-[meta path='slug' inline='true']']"></div>`, "Alpine directive") {
+			t.Error("x-id takes an array expression, not a literal")
+		}
+	})
+}

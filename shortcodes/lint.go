@@ -162,13 +162,18 @@ func Lint(input string, opts LintOptions) []LintIssue {
 	// One markup scan for every inline [meta] in the template, rather than one
 	// per shortcode: the scan is forward-only from the start of the document, so
 	// doing it per token made a template with many of them quadratic.
-	var inlineMetaSpans []inlineMetaSpan
+	// Every shortcode that emits a bare value gets the placement analysis, not
+	// just [meta inline]: the danger is the value landing where escaping does
+	// not reach, and [property], [item] and [mrql value=] put values in exactly
+	// the same places. [property path="Description" raw="true"] is in this
+	// repo's own reference panel.
+	var valueSpans []inlineMetaSpan
 	for _, tk := range tokens {
-		if !tk.closing && tk.name == "meta" && tk.attrs["inline"] == "true" {
-			inlineMetaSpans = append(inlineMetaSpans, inlineMetaSpan{start: tk.start, end: tk.end})
+		if !tk.closing && emitsBareValue(tk.name, tk.attrs) {
+			valueSpans = append(valueSpans, inlineMetaSpan{start: tk.start, end: tk.end})
 		}
 	}
-	inlineMetaContexts := attributeContextsFor(input, inlineMetaSpans)
+	valueContexts := attributeContextsFor(input, valueSpans)
 
 	// --- Attribute and semantic checks over opener tokens ---
 	for _, tk := range tokens {
@@ -212,8 +217,12 @@ func Lint(input string, opts LintOptions) []LintIssue {
 		// they matter because the boundary is real: category templates are
 		// authored by admins/editors, but the Meta values they interpolate are
 		// written by ordinary users.
-		if tk.name == "meta" && tk.attrs["inline"] == "true" {
-			for _, msg := range unsafeAttributeContexts(inlineMetaContexts[tk.start], tk.attrs["raw"] == "true", opts.CSSMode) {
+		if emitsBareValue(tk.name, tk.attrs) {
+			label := "[" + tk.name + "]"
+			if tk.name == "meta" {
+				label = "[meta inline]"
+			}
+			for _, msg := range unsafeAttributeContexts(valueContexts[tk.start], tk.attrs["raw"] == "true", opts.CSSMode, label) {
 				add(tk.start, tk.end, SeverityWarning, msg)
 			}
 		}
