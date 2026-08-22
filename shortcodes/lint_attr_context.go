@@ -33,6 +33,9 @@ type attrContext struct {
 	quoted     bool
 	valueSoFar string // the attribute text before the occurrence, entity-decoded
 	inValue    bool
+	// inName marks an occurrence in a tag or attribute NAME, where nothing
+	// delimits the value at all.
+	inName bool
 	// unterminated marks an occurrence inside a tag that is never closed, which
 	// the tokenizer cannot place. Treated as unsafe rather than as "not in an
 	// attribute", so a broken template fails closed.
@@ -96,10 +99,25 @@ tokenize:
 	// <div title="[meta ... raw="true"] with no ">" is still an attribute an
 	// author is interpolating into. Mark them unknown so the caller warns.
 	for i, sp := range spans {
-		if ctx, ok := out[sp.start]; ok && ctx.inValue {
+		if ctx, ok := out[sp.start]; ok && (ctx.inValue || ctx.inName) {
 			continue
 		}
-		if insideUnterminatedTag(substituted, lintSentinel(i)) {
+		sentinel := lintSentinel(i)
+		// An interpolated ELEMENT name never reaches the tokenizer as a tag:
+		// "<" followed by anything that is not a name character is text, and the
+		// sentinel is deliberately not a name character. The "<" immediately
+		// before it is the whole proof, so no tokenizer is needed.
+		if at := strings.Index(substituted, sentinel); at > 0 {
+			j := at - 1
+			if j > 0 && substituted[j] == '/' {
+				j--
+			}
+			if substituted[j] == '<' {
+				out[sp.start] = attrContext{inName: true}
+				continue
+			}
+		}
+		if insideUnterminatedTag(substituted, sentinel) {
 			out[sp.start] = attrContext{unterminated: true}
 		}
 	}
@@ -117,7 +135,23 @@ func insideUnterminatedTag(substituted, sentinel string) bool {
 	if open < 0 {
 		return false
 	}
-	return !strings.ContainsRune(substituted[open:], '>')
+	// The terminator has to be found quote-aware: <div title="before > [meta …]
+	// contains a ">" that closes nothing.
+	var q byte
+	for i := open; i < len(substituted); i++ {
+		c := substituted[i]
+		switch {
+		case q != 0:
+			if c == q {
+				q = 0
+			}
+		case c == '"' || c == '\'':
+			q = c
+		case c == '>':
+			return false
+		}
+	}
+	return true
 }
 
 type sentinelHit struct {
@@ -131,12 +165,18 @@ type sentinelHit struct {
 func sentinelsInTag(tag string) []sentinelHit {
 	var hits []sentinelHit
 	i := 0
-	// Skip "<" and the element name.
+	// Skip "<" and the element name — but not before checking it, since an
+	// interpolated element name is undelimited in the same way a bare
+	// attribute name is.
 	if i < len(tag) && tag[i] == '<' {
 		i++
 	}
+	elemStart := i
 	for i < len(tag) && !isASCIISpace(tag[i]) && tag[i] != '>' && tag[i] != '/' {
 		i++
+	}
+	for _, idx := range sentinelIndexes(tag[elemStart:i]) {
+		hits = append(hits, sentinelHit{index: idx.index, ctx: attrContext{inName: true}})
 	}
 	seen := map[string]bool{}
 	for i < len(tag) {
@@ -153,6 +193,12 @@ func sentinelsInTag(tag string) []sentinelHit {
 			i++
 		}
 		name := strings.ToLower(tag[nameStart:i])
+		// An interpolation in the NAME is worse than one in a value: nothing
+		// delimits it, so a Meta value containing a space simply adds
+		// attributes. <div data-[meta ...]="x"> is the realistic shape.
+		for _, idx := range sentinelIndexes(name) {
+			hits = append(hits, sentinelHit{index: idx.index, ctx: attrContext{inName: true}})
+		}
 		// A repeated attribute is dropped by the parser, so an occurrence in one
 		// never reaches the page.
 		duplicate := seen[name]
@@ -241,6 +287,9 @@ func unsafeAttributeContexts(ctx attrContext, raw bool) []string {
 	if ctx.unterminated {
 		return []string{`[meta inline] is inside a tag that is never closed, so where it lands cannot be determined. Close the tag; until then treat the value as unsafe.`}
 	}
+	if ctx.inName {
+		return []string{`[meta inline] is interpolated into a tag or attribute NAME, which nothing delimits: a value containing a space or "=" simply adds attributes of its own, and escaping does not touch either character. Build the name in the template instead.`}
+	}
 	if !ctx.inValue || ctx.attr == "" {
 		return nil
 	}
@@ -253,9 +302,8 @@ func unsafeAttributeContexts(ctx attrContext, raw bool) []string {
 	if !ctx.quoted {
 		out = append(out, `[meta inline] sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`)
 	}
-	// "on" alone is not an event handler; "onclick" is.
-	if len(attr) > 2 && strings.HasPrefix(attr, "on") {
-		out = append(out, `[meta inline] sits in the "`+attr+`" event handler, where the HTML parser undoes the escaping before the script is parsed, so a value containing a quote can execute. Do not interpolate Meta into a handler.`)
+	if kind := expressionAttributeKind(attr); kind != "" {
+		out = append(out, `[meta inline] sits in the "`+attr+`" `+kind+`, whose value is evaluated as script after the HTML parser has undone the escaping, so a value containing a quote can execute. Do not interpolate Meta into it.`)
 	}
 	if attr == "style" {
 		out = append(out, `[meta inline] sits in a "style" attribute, where escaping does not prevent CSS injection.`)
@@ -331,4 +379,30 @@ var urlBearingAttrs = map[string]bool{
 	"href": true, "src": true, "action": true, "formaction": true,
 	"data": true, "poster": true, "xlink:href": true, "ping": true,
 	"background": true, "cite": true, "longdesc": true, "manifest": true,
+}
+
+// expressionAttributeKind names the kind of attribute whose value a browser or
+// Alpine evaluates as script, or "" when the value is inert text.
+//
+// Alpine is the reason this is not just "on*": this app wraps every entity-bound
+// slot in an x-data scope and its own documentation recommends directives like
+// :href for reading Meta client-side, so @click="f('...')" is a template an
+// author here would plausibly write. Alpine evaluates the attribute's value as a
+// JavaScript expression after the HTML parser has already decoded the escaping,
+// which is the same sequence that makes onclick unsafe.
+func expressionAttributeKind(attr string) string {
+	// "on" alone is not an event handler; "onclick" is.
+	if len(attr) > 2 && strings.HasPrefix(attr, "on") {
+		return "event handler"
+	}
+	// x-on:click / x-bind:href / x-init / x-text / x-show / ...
+	if strings.HasPrefix(attr, "x-") {
+		return "Alpine directive"
+	}
+	// @click and :href are the shorthands for x-on: and x-bind:. Only a leading
+	// colon is Alpine — xlink:href has one in the middle and is a URL.
+	if strings.HasPrefix(attr, "@") || strings.HasPrefix(attr, ":") {
+		return "Alpine directive"
+	}
+	return ""
 }

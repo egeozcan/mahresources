@@ -663,3 +663,53 @@ func TestLintAttributeContextRoundFive(t *testing.T) {
 		}
 	})
 }
+
+// Round-6 findings. Both are realistic in this app specifically: it wraps every
+// entity-bound slot in an Alpine x-data scope and its own docs recommend
+// directives for reading Meta client-side.
+func TestLintAttributeContextRoundSix(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("Alpine directives evaluate their value as script", func(t *testing.T) {
+		for _, src := range []string{
+			`<button x-on:click="f('[meta path='x' inline='true']')">go</button>`,
+			`<button @click="f('[meta path='x' inline='true']')">go</button>`,
+			`<div x-init="s = '[meta path='x' inline='true']'"></div>`,
+			`<a :href="'/x/' + '[meta path='x' inline='true']'">go</a>`,
+			`<div x-text="'[meta path='x' inline='true']'"></div>`,
+		} {
+			if !warns(src, "Alpine directive") {
+				t.Errorf("no Alpine warning for %s", src)
+			}
+		}
+	})
+
+	t.Run("a colon inside a name is not an Alpine shorthand", func(t *testing.T) {
+		// xlink:href is a URL attribute, not a directive.
+		if warns(`<a xlink:href="/x/[meta path='x' inline='true']">go</a>`, "Alpine directive") {
+			t.Error("xlink:href was read as an Alpine binding")
+		}
+	})
+
+	t.Run("interpolating a name is undelimited", func(t *testing.T) {
+		if !warns(`<div data-[meta path='k' inline='true']="safe"></div>`, "attribute NAME") {
+			t.Error("an interpolated attribute name must warn")
+		}
+		if !warns(`<[meta path='k' inline='true'] class="c">x</div>`, "attribute NAME") {
+			t.Error("an interpolated element name must warn")
+		}
+	})
+
+	t.Run("a > inside a quoted value does not close the tag", func(t *testing.T) {
+		if !warns(`<div title="before > [meta path='x' inline='true' raw='true']`, "never closed") {
+			t.Error("the tag is still unterminated; the > is inside the value")
+		}
+	})
+}
