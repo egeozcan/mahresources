@@ -30,6 +30,8 @@
                     <th scope="col">Updated</th>
                     <th scope="col">Original Name</th>
                     <th scope="col">Original Location</th>
+                    {# CustomCell adds one trailing column, and only when the list is filtered to exactly one category (listHeaderCarrier) -- a mixed list has no single template to run, and a column present for some rows and absent for others is not a table. Header and cell read the same field, so the two can never disagree on the column count. #}
+                    {% if listHeaderCarrier && listHeaderCarrier.CustomCell %}<th scope="col">Custom</th>{% endif %}
                 </tr>
             </thead>
             <tbody>
@@ -64,6 +66,7 @@
                         <td class="detail-table-secondary">{{ entity.UpdatedAt|date:"2006-01-02 15:04" }}</td>
                         <td class="detail-table-secondary detail-table-truncate">{{ entity.OriginalName }}</td>
                         <td class="detail-table-secondary detail-table-truncate">{{ entity.OriginalLocation }}</td>
+                        {% if listHeaderCarrier && listHeaderCarrier.CustomCell %}<td class="detail-table-custom">{% process_shortcodes listHeaderCarrier.CustomCell entity %}</td>{% endif %}
                     </tr>
                 {% empty %}
                     {# The empty state has to live inside a row here, not beside #}
@@ -71,7 +74,7 @@
                     {# hoisted out of the table by the HTML parser and lands     #}
                     {# above it, detached from the header it belongs under.      #}
                     <tr>
-                        <td colspan="9">
+                        <td colspan="{% if listHeaderCarrier && listHeaderCarrier.CustomCell %}10{% else %}9{% endif %}">
                             {% include "/partials/listEmpty.tpl" with label="resources" createUrl="/resource/new" %}
                         </td>
                     </tr>
@@ -79,6 +82,7 @@
             </tbody>
         </table>
     </div>
+    {% include "/partials/customListFooter.tpl" %}
 {% endblock %}
 
 {% block sidebar %}

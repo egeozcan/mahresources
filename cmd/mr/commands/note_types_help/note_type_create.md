@@ -10,12 +10,14 @@ Create a new note type. `--name` is required; all other fields are
 optional. Pass a JSON Schema string to `--meta-schema` to constrain the
 metadata shape of Notes of this type, and a JSON object to
 `--section-config` to control which sections render on note detail
-pages. The Custom* flags (`--custom-header`, `--custom-css`,
-`--custom-sidebar`, `--custom-summary`, `--custom-avatar`,
-`--custom-mrql-result`) accept raw HTML or Pongo2 template strings that
-the server injects into note pages and MRQL result cards;
-`--custom-css` is injected as a `<style>` block on detail and list
-pages.
+pages. There is a `--custom-*` flag for every note type template slot --
+the detail page header, sidebar and footer, the list card summary, avatar
+and hover card, the list page header and footer, and MRQL result cards.
+Each accepts raw HTML or a template string that the server injects into
+note pages and MRQL result cards; `--custom-css` is injected as a
+`<style>` block on detail and list pages. Run
+`mr note-type create --help` for the full list with a one-line
+description of where each renders.
 
 On success prints a confirmation line with the new ID; pass the global
 `--json` flag to emit the full created record for scripting.

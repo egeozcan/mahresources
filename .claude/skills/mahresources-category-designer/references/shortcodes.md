@@ -114,7 +114,7 @@ Both are block shortcodes that **defer server-side rendering** of their body to 
 - `[lazy]...[/lazy]` -- renders when the block scrolls into view. Reach for it in `CustomSummary` (per-card slots on list pages) so an entity-scoped `[mrql]` runs only for cards the user actually sees.
 - `[details summary="..." open="true|false"]...[/details]` -- a keyboard/screen-reader-accessible disclosure that renders its body the first time it is opened.
 
-Deferral applies only on the main display pages; on share pages, the live preview, and `CustomListHeader` the body renders inline (and `[details]` stays a plain collapsible `<details>`). Requires JavaScript; the deferred body renders against the entity, so an `[item]` from an enclosing `[each]` is not visible inside it.
+Deferral applies only on the main display pages; on share pages, the live preview, and the carrier slots (`CustomListHeader`, `CustomListFooter`) the body renders inline (and `[details]` stays a plain collapsible `<details>`). Requires JavaScript; the deferred body renders against the entity, so an `[item]` from an enclosing `[each]` is not visible inside it.
 
 ```
 [lazy][mrql query='type = "resource"' format="list"][/lazy]
@@ -132,7 +132,7 @@ What gets reloaded is resolved in the browser at click time by walking up from t
 
 1. the innermost enclosing `[lazy]` or `[details]` block, if there is one -- only that block re-renders;
 2. otherwise the whole custom-content slot being rendered (`CustomHeader`, `CustomSidebar`, `CustomSummary`, `CustomAvatar`, or a description). A `[reload]` inside a `CustomMRQLResult` card reloads the slot holding the `[mrql]`, not the card;
-3. otherwise the page -- share pages, the live preview iframe, `CustomListHeader`, JSON-rendered slots, and `/mrql` result cards.
+3. otherwise the page -- share pages, the live preview iframe, the carrier slots (`CustomListHeader`, `CustomListFooter`), JSON-rendered slots, and `/mrql` result cards.
 
 So pair `[reload]` with `[lazy]` to scope the refresh to that one block, and place it outside any deferred block to refresh the entire slot. Prefer the paired form in `CustomSummary`: a bare `[reload]` makes every card on a list page carry a sealed copy of the slot's source (about 1.34x the slot's own size, per card), while one inside a `[lazy]` reuses the token that block seals anyway. Steps 1 and 2 go through the same deferred-render fetch `[lazy]` and `[details]` use; the current content stays on screen dimmed while the request is in flight, and is left exactly as it was if the request fails. Requires JavaScript.
 

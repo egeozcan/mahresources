@@ -279,6 +279,15 @@ func GetAddNoteTypeHandler(ctx contracts.NoteTypeWriter) func(writer http.Respon
 					if _, sent := raw["CustomListHeader"]; !sent {
 						editor.CustomListHeader = existing.CustomListHeader
 					}
+					if _, sent := raw["CustomDetailFooter"]; !sent {
+						editor.CustomDetailFooter = existing.CustomDetailFooter
+					}
+					if _, sent := raw["CustomListFooter"]; !sent {
+						editor.CustomListFooter = existing.CustomListFooter
+					}
+					if _, sent := raw["CustomHoverCard"]; !sent {
+						editor.CustomHoverCard = existing.CustomHoverCard
+					}
 					if _, sent := raw["ApplyTemplatesToShares"]; !sent {
 						editor.ApplyTemplatesToShares = existing.ApplyTemplatesToShares
 					}
@@ -323,6 +332,15 @@ func GetAddNoteTypeHandler(ctx contracts.NoteTypeWriter) func(writer http.Respon
 					}
 					if editor.CustomListHeader == "" && !formHasField(request, "CustomListHeader") {
 						editor.CustomListHeader = existing.CustomListHeader
+					}
+					if editor.CustomDetailFooter == "" && !formHasField(request, "CustomDetailFooter") {
+						editor.CustomDetailFooter = existing.CustomDetailFooter
+					}
+					if editor.CustomListFooter == "" && !formHasField(request, "CustomListFooter") {
+						editor.CustomListFooter = existing.CustomListFooter
+					}
+					if editor.CustomHoverCard == "" && !formHasField(request, "CustomHoverCard") {
+						editor.CustomHoverCard = existing.CustomHoverCard
 					}
 					// ApplyTemplatesToShares is a bool, so absence can't be detected by
 					// a zero-value check (unchecked and omitted both decode to false).

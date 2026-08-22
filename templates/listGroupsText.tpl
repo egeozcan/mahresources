@@ -17,6 +17,7 @@
             {% include "/partials/listEmpty.tpl" with label="groups" createUrl="/group/new" %}
         {% endfor %}
     </div>
+    {% include "/partials/customListFooter.tpl" %}
 {% endblock %}
 
 

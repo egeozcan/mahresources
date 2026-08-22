@@ -44,34 +44,58 @@
              class="text-sm text-stone-600 bg-white border border-stone-200 rounded-md p-4 space-y-3 font-sans">
             <div>
                 <h2 class="font-semibold text-stone-700">Slot Locations</h2>
+                <p class="text-xs text-stone-400 mt-1">Each slot below renders against one <b>note</b>, so <code class="bg-stone-100 px-1 rounded">[meta]</code> and <code class="bg-stone-100 px-1 rounded">[property]</code> read that note — except the two list slots, which render against the note type itself. Leave a slot empty to keep the built-in appearance.</p>
+                <h3 class="font-medium text-stone-600 mt-3 first:mt-1">Detail page</h3>
                 <dl class="mt-1 space-y-1 text-xs">
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Header</dt>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Header</dt>
                         <dd>Top of the note detail page, above the description</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom CSS</dt>
-                        <dd>CSS injected as a <code class="bg-stone-100 px-1 rounded">&lt;style&gt;</code> block on the note detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Sidebar</dt>
+                        <dd>The note detail page sidebar</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Sidebar</dt>
-                        <dd>Note detail page sidebar (both default and wide layouts)</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Detail Footer</dt>
+                        <dd>Bottom of the note detail page, below every built-in section</dd>
+                    </div>
+                </dl>
+                <h3 class="font-medium text-stone-600 mt-3 first:mt-1">Cards and previews</h3>
+                <dl class="mt-1 space-y-1 text-xs">
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Summary</dt>
+                        <dd>On note cards in list views, below the title</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Summary</dt>
-                        <dd>Note cards in list views, below the title</dd>
-                    </div>
-                    <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Avatar</dt>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Avatar</dt>
                         <dd>Replaces the default initials avatar on note cards</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom List Header</dt>
-                        <dd>Top of note list pages filtered to exactly this note type, rendered against the note type itself (<code class="bg-stone-100 px-1 rounded">[meta]</code> is empty, <code class="bg-stone-100 px-1 rounded">[mrql]</code> runs at global scope)</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Hover Card</dt>
+                        <dd>The small card shown when a note link is hovered. <b>Falls back to Custom Summary when empty</b>, so set it only when hover should differ from the list card</dd>
+                    </div>
+                </dl>
+                <h3 class="font-medium text-stone-600 mt-3 first:mt-1">List pages</h3>
+                <p class="text-xs text-stone-400">Rendered against the note type itself, not a note: <code class="bg-stone-100 px-1 rounded">[property path="Name"]</code> is the note type name, <code class="bg-stone-100 px-1 rounded">[meta]</code> is empty, and <code class="bg-stone-100 px-1 rounded">[mrql]</code> runs at global scope.</p>
+                <dl class="mt-1 space-y-1 text-xs">
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom List Header</dt>
+                        <dd>Above the results on note list pages filtered to exactly this note type</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom MRQL Result</dt>
-                        <dd>Server-rendered template in <code class="bg-stone-100 px-1 rounded">[mrql]</code> results; Alpine directives not available</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom List Footer</dt>
+                        <dd>Below the results on the same pages, above the pager</dd>
+                    </div>
+                </dl>
+                <h3 class="font-medium text-stone-600 mt-3 first:mt-1">Query results and styling</h3>
+                <dl class="mt-1 space-y-1 text-xs">
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom MRQL Result</dt>
+                        <dd>Server-rendered template for a note of this note type in <code class="bg-stone-100 px-1 rounded">[mrql]</code> results; Alpine directives are not available</dd>
+                    </div>
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom CSS</dt>
+                        <dd>CSS injected as a <code class="bg-stone-100 px-1 rounded">&lt;style&gt;</code> block on the note detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template. Styles every slot above</dd>
                     </div>
                 </dl>
             </div>
@@ -219,13 +243,16 @@
             </div>
         </div>
 
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=noteType.CustomHeader mode="html" description="Rendered at the top of the note detail page, above the description." shortcodes=true generate=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=noteType.CustomCSS mode="css" description="Injected as a <style> block on the note detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template." shortcodes=true generate=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=noteType.CustomSidebar mode="html" description="Rendered in the note detail page sidebar (both default and wide layouts)." shortcodes=true generate=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=noteType.CustomSummary mode="html" description="Rendered on note cards in list views, below the title." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=noteType.CustomHeader mode="html" description="Top of the note detail page, above the description." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Detail Footer" name="CustomDetailFooter" value=noteType.CustomDetailFooter mode="html" description="Bottom of the note detail page, below every built-in section." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=noteType.CustomSidebar mode="html" description="The note detail page sidebar." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=noteType.CustomSummary mode="html" description="On note cards in list views, below the title." shortcodes=true generate=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=noteType.CustomAvatar mode="html" description="Replaces the default initials avatar on note cards." shortcodes=true generate=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header" name="CustomListHeader" value=noteType.CustomListHeader mode="html" description="Rendered at the top of note list pages filtered to exactly this note type. Processed against the note type itself: [property path=&quot;Name&quot;] is the type name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Hover Card" name="CustomHoverCard" value=noteType.CustomHoverCard mode="html" description="The hover card shown when a note link is hovered. Falls back to Custom Summary when empty, so set it only when hover should differ from the card." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header" name="CustomListHeader" value=noteType.CustomListHeader mode="html" description="Top of note list pages filtered to exactly this note type. Rendered against the note type itself, not a note: [property path=&quot;Name&quot;] is the note type name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Footer" name="CustomListFooter" value=noteType.CustomListFooter mode="html" description="Bottom of note list pages filtered to exactly this note type, below the results. Rendered against the note type itself, not a note: [property path=&quot;Name&quot;] is the note type name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=noteType.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=noteType.CustomCSS mode="css" description="Injected as a &lt;style&gt; block on the note detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template. Styles every slot above." shortcodes=true generate=true %}
 
         <div class="mt-4 border-t border-stone-200 pt-4">
             <label class="flex items-start gap-2 text-sm cursor-pointer">

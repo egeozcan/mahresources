@@ -1045,10 +1045,11 @@
                         information management application designed to run on private/internal networks
                         with no authentication layer. All users are trusted, and CustomSidebar is an
                         intentional extension point for admin-authored HTML templates.{% endcomment %}
-                        <template x-if="$store.lightbox.displayDetails()?.resourceCategory?.CustomSidebar">
+                        {# CustomLightbox wins when set, otherwise CustomSidebar renders, so a category that never opts in keeps the panel it had. Both arrive already expanded: processShortcodesForJSON runs them server-side before this response is serialized, which is why x-html on the raw field is not shortcode text. #}
+                        <template x-if="$store.lightbox.displayDetails()?.resourceCategory?.CustomLightbox || $store.lightbox.displayDetails()?.resourceCategory?.CustomSidebar">
                             <div
                                 x-data="{ entity: $store.lightbox.displayDetails() }"
-                                x-html="$store.lightbox.displayDetails()?.resourceCategory?.CustomSidebar"
+                                x-html="$store.lightbox.displayDetails()?.resourceCategory?.CustomLightbox || $store.lightbox.displayDetails()?.resourceCategory?.CustomSidebar"
                                 class="mt-3 text-sm text-stone-300 font-sans"
                             ></div>
                         </template>

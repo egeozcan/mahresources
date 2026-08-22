@@ -42,6 +42,10 @@
     {% if sc.Resources %}
     {% include "/partials/seeAll.tpl" with entities=note.Resources subtitle="Resources" formAction="/resources" addAction="/resource/new" addFormSecondParamName="ownerId" addFormSecondParamValue=note.OwnerId formID=note.ID formParamName="notes" templateName="resource" %}
     {% endif %}
+    {# CustomDetailFooter: the per-note counterpart of the note_detail_after plugin slot below it. Entity-bound, so [meta]/[property] resolve against this note. #}
+    <div x-data="{ entity: {{ note|json }} }">
+        {% process_shortcodes note.NoteType.CustomDetailFooter note %}
+    </div>
     {% plugin_slot "note_detail_after" %}
 {% endblock %}
 

@@ -7,11 +7,14 @@ relatedCmds: category get, category edit-name, categories list
 # Long
 
 Create a new Category. `--name` is required; `--description` is optional
-free-form text. The optional `--custom-header`, `--custom-css`,
-`--custom-sidebar`, `--custom-summary`, `--custom-avatar`, and
-`--custom-mrql-result` flags accept template or HTML strings applied to
-Groups assigned to this category. `--custom-css` is injected as a
-`<style>` block on detail and list pages. `--meta-schema` and
+free-form text. A `--custom-*` flag exists for every category template
+slot -- the detail page header, sidebar and footer, the list card summary,
+avatar and hover card, the list page header and footer, the Own Entities
+section body, MRQL result cards, and the CSS that styles them. Each takes
+an HTML or template string applied to Groups in this category, except
+`--custom-css`, which is injected as a `<style>` block on detail and list
+pages. Run `mr category create --help` for the full list with a one-line
+description of where each renders. `--meta-schema` and
 `--section-config` take JSON strings
 controlling structured metadata and which sections render on group
 detail pages. On success prints a confirmation line with the new ID;

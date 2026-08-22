@@ -18,16 +18,40 @@ import (
 	"mahresources/shortcodes"
 )
 
-// templateGenerateBundleSlots are the slot fields a whole-template ("bundle")
-// generation fills, in a stable order.
-var templateGenerateBundleSlots = []string{
-	"CustomHeader", "CustomSidebar", "CustomSummary", "CustomAvatar", "CustomListHeader", "CustomMRQLResult", "CustomCSS",
+// templateGenerateSharedSlots are the slot fields every carrier has, in a stable
+// order. templateGenerateCarrierSlots adds the ones whose render surface exists
+// for a single carrier only: there is no group table view and no note lightbox,
+// so those fields are not on the other two models and generating one would
+// produce markup with nowhere to go.
+var templateGenerateSharedSlots = []string{
+	"CustomHeader", "CustomDetailFooter", "CustomSidebar", "CustomSummary", "CustomAvatar",
+	"CustomHoverCard", "CustomListHeader", "CustomListFooter", "CustomMRQLResult", "CustomCSS",
 }
 
-// templateGenerateAllowedSlots is the set a single-slot generation may target.
-var templateGenerateAllowedSlots = map[string]bool{
-	"CustomHeader": true, "CustomSidebar": true, "CustomSummary": true, "CustomAvatar": true,
-	"CustomListHeader": true, "CustomMRQLResult": true, "CustomCSS": true,
+var templateGenerateCarrierSlots = map[string][]string{
+	"group":    {"CustomOwnEntities"},
+	"resource": {"CustomPreview", "CustomLightbox", "CustomCell"},
+	"note":     nil,
+}
+
+// templateGenerateBundleSlots is the ordered slot list a whole-template
+// ("bundle") generation fills for one carrier.
+func templateGenerateBundleSlots(entityType string) []string {
+	extra := templateGenerateCarrierSlots[entityType]
+	slots := make([]string, 0, len(templateGenerateSharedSlots)+len(extra))
+	slots = append(slots, templateGenerateSharedSlots...)
+	return append(slots, extra...)
+}
+
+// templateGenerateSlotAllowed reports whether a single-slot generation may
+// target this slot on this carrier.
+func templateGenerateSlotAllowed(entityType, slot string) bool {
+	for _, s := range templateGenerateBundleSlots(entityType) {
+		if s == slot {
+			return true
+		}
+	}
+	return false
 }
 
 // maxTemplatePartialsForPrompt caps how many partial names are injected into the
@@ -70,7 +94,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 		}
 		switch target {
 		case application_context.TemplateTargetSlot:
-			if !templateGenerateAllowedSlots[req.Slot] {
+			if !templateGenerateSlotAllowed(entityType, req.Slot) {
 				http_utils.HandleError(errors.New("unknown template slot"), writer, request, http.StatusBadRequest)
 				return
 			}
@@ -114,7 +138,7 @@ func GetGenerateTemplateHandler(ctx TemplateGenerationContext, entityType string
 			ValidateMRQL:   func(q string) error { _, e := mrql.Parse(q); return e },
 		}
 		if target == application_context.TemplateTargetBundle {
-			input.BundleSlots = templateGenerateBundleSlots
+			input.BundleSlots = templateGenerateBundleSlots(entityType)
 		}
 
 		result, err := generator.GenerateTemplate(request.Context(), input, req.Prompt)

@@ -8,6 +8,7 @@
     {% include "/partials/customListHeader.tpl" %}
     {% include "/partials/mrqlBar.tpl" with entity="note" %}
     {% include "/partials/timeline.tpl" with entityApiUrl="/v1/notes" entityType="notes" entityDefaultView="/notes" %}
+    {% include "/partials/customListFooter.tpl" %}
 {% endblock %}
 
 {% block sidebar %}

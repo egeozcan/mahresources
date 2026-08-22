@@ -38,17 +38,44 @@ These are stored on the category/type record itself:
 
 - `CustomHeader`
 - `CustomSidebar`
+- `CustomDetailFooter`
 - `CustomSummary`
 - `CustomAvatar`
+- `CustomHoverCard`
+- `CustomListHeader`
+- `CustomListFooter`
 - `CustomMRQLResult`
+- `CustomCSS`
+- `CustomOwnEntities` (`Category` only)
+- `CustomPreview`, `CustomLightbox`, `CustomCell` (`ResourceCategory` only)
 
 ### Current render wiring
 
-| Definition | `CustomHeader` | `CustomSidebar` | `CustomSummary` | `CustomAvatar` | `CustomMRQLResult` |
-| --- | --- | --- | --- | --- | --- |
-| `Category` | group detail page body top | group detail sidebar | group list cards | group cards (with fallback to initials avatar) | used by `[mrql]` |
-| `ResourceCategory` | resource detail page body top | resource detail sidebar | resource list cards | resource cards | used by `[mrql]` |
-| `NoteType` | note detail page body top | note detail sidebar | note list cards | note cards | used by `[mrql]` |
+Slots present on all three carriers:
+
+| Definition | `CustomHeader` | `CustomSidebar` | `CustomDetailFooter` | `CustomSummary` | `CustomAvatar` | `CustomHoverCard` | `CustomMRQLResult` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `Category` | group detail page body top | group detail sidebar | group detail page bottom, below every section | group list cards | group cards (with fallback to initials avatar) | group hover card (falls back to `CustomSummary`) | used by `[mrql]` |
+| `ResourceCategory` | resource detail page body top | resource detail sidebar, and the lightbox panel unless `CustomLightbox` is set | resource detail page bottom | resource list cards | resource cards | resource hover card (falls back to `CustomSummary`) | used by `[mrql]` |
+| `NoteType` | note detail page body top | note detail sidebar | note detail page bottom | note list cards | note cards | note hover card (falls back to `CustomSummary`) | used by `[mrql]` |
+
+List slots, on all three carriers, but bound to the **carrier** rather than a member entity, and rendered only when the list is filtered to exactly that one carrier:
+
+| Slot | Location |
+| --- | --- |
+| `CustomListHeader` | above the results |
+| `CustomListFooter` | below the results, above the pager |
+
+Carrier-specific slots:
+
+| Slot | Carrier | Location |
+| --- | --- | --- |
+| `CustomOwnEntities` | `Category` | replaces the body of the group detail page's Own Entities section; still gated by that section's `SectionConfig` state, and it counts as own content for the section's auto-open |
+| `CustomPreview` | `ResourceCategory` | resource detail sidebar, above the built-in preview image; adds to it rather than replacing it |
+| `CustomLightbox` | `ResourceCategory` | the lightbox details panel; falls back to `CustomSidebar` |
+| `CustomCell` | `ResourceCategory` | one extra cell per row in the resources details table (`/resources/details`), only on a list filtered to exactly that category. Emit the cell body, not a `<td>` |
+
+`CustomCSS` holds raw CSS rather than markup and is emitted as a page-level `<style>` block on every page that renders any of the slots above.
 
 ### Alpine `entity` availability
 
@@ -56,8 +83,15 @@ For the standard rendered custom fields:
 
 - `CustomHeader` -- yes
 - `CustomSidebar` -- yes
+- `CustomPreview` -- yes (`ResourceCategory`)
+- `CustomOwnEntities` -- yes (`Category`)
+- `CustomDetailFooter` -- yes
 - `CustomSummary` -- yes
 - `CustomAvatar` -- yes (all three entity types)
+- `CustomHoverCard` -- yes; the fragment is initialised with `Alpine.initTree` after injection
+- `CustomLightbox` -- yes (`ResourceCategory`)
+- `CustomListHeader`, `CustomListFooter` -- no member entity at all; they bind the carrier
+- `CustomCell` -- no automatic Alpine `entity` wrapper
 - `CustomMRQLResult` -- no automatic Alpine `entity` wrapper
 
 Therefore:

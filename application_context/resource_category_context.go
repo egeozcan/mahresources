@@ -69,17 +69,23 @@ func (ctx *MahresourcesContext) CreateResourceCategory(query *query_models.Resou
 	}
 
 	resourceCategory := models.ResourceCategory{
-		Name:             query.Name,
-		Description:      query.Description,
-		CustomHeader:     query.CustomHeader,
-		CustomSidebar:    query.CustomSidebar,
-		CustomSummary:    query.CustomSummary,
-		CustomAvatar:     query.CustomAvatar,
-		CustomListHeader: query.CustomListHeader,
-		CustomMRQLResult: query.CustomMRQLResult,
-		CustomCSS:        query.CustomCSS,
-		MetaSchema:       query.MetaSchema,
-		AutoDetectRules:  query.AutoDetectRules,
+		Name:               query.Name,
+		Description:        query.Description,
+		CustomHeader:       query.CustomHeader,
+		CustomSidebar:      query.CustomSidebar,
+		CustomSummary:      query.CustomSummary,
+		CustomAvatar:       query.CustomAvatar,
+		CustomListHeader:   query.CustomListHeader,
+		CustomDetailFooter: query.CustomDetailFooter,
+		CustomListFooter:   query.CustomListFooter,
+		CustomHoverCard:    query.CustomHoverCard,
+		CustomPreview:      query.CustomPreview,
+		CustomLightbox:     query.CustomLightbox,
+		CustomCell:         query.CustomCell,
+		CustomMRQLResult:   query.CustomMRQLResult,
+		CustomCSS:          query.CustomCSS,
+		MetaSchema:         query.MetaSchema,
+		AutoDetectRules:    query.AutoDetectRules,
 	}
 	if query.SectionConfig != "" {
 		resourceCategory.SectionConfig = types.JSON(query.SectionConfig)
@@ -122,6 +128,12 @@ func (ctx *MahresourcesContext) UpdateResourceCategory(query *query_models.Resou
 	resourceCategory.CustomSummary = query.CustomSummary
 	resourceCategory.CustomAvatar = query.CustomAvatar
 	resourceCategory.CustomListHeader = query.CustomListHeader
+	resourceCategory.CustomDetailFooter = query.CustomDetailFooter
+	resourceCategory.CustomListFooter = query.CustomListFooter
+	resourceCategory.CustomHoverCard = query.CustomHoverCard
+	resourceCategory.CustomPreview = query.CustomPreview
+	resourceCategory.CustomLightbox = query.CustomLightbox
+	resourceCategory.CustomCell = query.CustomCell
 	resourceCategory.CustomMRQLResult = query.CustomMRQLResult
 	resourceCategory.CustomCSS = query.CustomCSS
 	resourceCategory.MetaSchema = query.MetaSchema

@@ -4,16 +4,22 @@ type ResourceCategoryCreator struct {
 	Name        string
 	Description string
 
-	CustomHeader     string
-	CustomSidebar    string
-	CustomSummary    string
-	CustomAvatar     string
-	CustomListHeader string
-	CustomMRQLResult string
-	CustomCSS        string
-	MetaSchema       string
-	AutoDetectRules  string
-	SectionConfig    string
+	CustomHeader       string
+	CustomSidebar      string
+	CustomSummary      string
+	CustomAvatar       string
+	CustomListHeader   string
+	CustomDetailFooter string
+	CustomListFooter   string
+	CustomHoverCard    string
+	CustomPreview      string
+	CustomLightbox     string
+	CustomCell         string
+	CustomMRQLResult   string
+	CustomCSS          string
+	MetaSchema         string
+	AutoDetectRules    string
+	SectionConfig      string
 }
 
 type ResourceCategoryEditor struct {

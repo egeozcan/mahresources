@@ -19,6 +19,7 @@
         {% endfor %}
     </div>
     {% plugin_slot "group_list_after" %}
+    {% include "/partials/customListFooter.tpl" %}
 {% endblock %}
 
 

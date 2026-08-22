@@ -5,4 +5,5 @@
     <section class="list-container">
         {% block gallery %}{% endblock %}
     </section>
+    {% block bottom %}{% endblock %}
 {% endblock %}

@@ -98,8 +98,22 @@ func slotRoleLine(slot, entityType string) string {
 			return "CustomAvatar replaces the small avatar/thumbnail area for a resource; keep it compact. A resource usually already has a preview image."
 		}
 		return "CustomAvatar replaces the small avatar/thumbnail area for the entity; keep it compact."
+	case "CustomDetailFooter":
+		return "CustomDetailFooter renders at the very bottom of the entity's detail page, below every built-in section, against the entity itself."
+	case "CustomHoverCard":
+		return "CustomHoverCard renders inside the small hover card shown when a link to the entity is hovered. Keep it to a couple of lines; when empty the hover card falls back to CustomSummary."
+	case "CustomPreview":
+		return "CustomPreview renders in the resource detail sidebar directly above the built-in preview image, for file types that image cannot show: a PDF or model viewer, an audio player, an embed. It does not replace the preview image."
+	case "CustomLightbox":
+		return "CustomLightbox renders in the lightbox details panel, which is dark-themed and narrow — light text on a dark ground, no wide tables. When empty the panel falls back to CustomSidebar."
+	case "CustomCell":
+		return "CustomCell renders as one extra table cell per row in the resources details table. Output the cell body only, no <td> wrapper, and keep it to a few characters or a short link — it shares a horizontally scrolling table."
+	case "CustomOwnEntities":
+		return "CustomOwnEntities replaces the body of the group detail page's \"Own Entities\" section, which otherwise lists owned notes, sub-groups and resources as card grids. An [mrql] table of the group's children is the usual reason to set it."
 	case "CustomListHeader":
 		return "CustomListHeader renders once at the top of the category's LIST page, against the category itself: [meta] and [property] have no entity here, and [mrql] runs at global scope."
+	case "CustomListFooter":
+		return "CustomListFooter renders once at the bottom of the category's LIST page, below the results, against the category itself — same binding as CustomListHeader: [meta] and [property] have no entity here, and [mrql] runs at global scope."
 	case "CustomMRQLResult":
 		return "CustomMRQLResult renders once per item in MRQL result cards; Alpine directives are unavailable, so keep it self-contained HTML plus shortcodes."
 	case "CustomCSS":

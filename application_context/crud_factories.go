@@ -83,16 +83,20 @@ func buildCategory(creator *query_models.CategoryCreator) (models.Category, erro
 		return models.Category{}, err
 	}
 	return models.Category{
-		Name:             creator.Name,
-		Description:      creator.Description,
-		CustomHeader:     creator.CustomHeader,
-		CustomSidebar:    creator.CustomSidebar,
-		CustomSummary:    creator.CustomSummary,
-		CustomAvatar:     creator.CustomAvatar,
-		CustomListHeader: creator.CustomListHeader,
-		CustomMRQLResult: creator.CustomMRQLResult,
-		CustomCSS:        creator.CustomCSS,
-		MetaSchema:       creator.MetaSchema,
+		Name:               creator.Name,
+		Description:        creator.Description,
+		CustomHeader:       creator.CustomHeader,
+		CustomSidebar:      creator.CustomSidebar,
+		CustomSummary:      creator.CustomSummary,
+		CustomAvatar:       creator.CustomAvatar,
+		CustomListHeader:   creator.CustomListHeader,
+		CustomDetailFooter: creator.CustomDetailFooter,
+		CustomListFooter:   creator.CustomListFooter,
+		CustomHoverCard:    creator.CustomHoverCard,
+		CustomOwnEntities:  creator.CustomOwnEntities,
+		CustomMRQLResult:   creator.CustomMRQLResult,
+		CustomCSS:          creator.CustomCSS,
+		MetaSchema:         creator.MetaSchema,
 	}, nil
 }
 
@@ -124,17 +128,23 @@ func buildResourceCategory(creator *query_models.ResourceCategoryCreator) (model
 		return models.ResourceCategory{}, err
 	}
 	return models.ResourceCategory{
-		Name:             creator.Name,
-		Description:      creator.Description,
-		CustomHeader:     creator.CustomHeader,
-		CustomSidebar:    creator.CustomSidebar,
-		CustomSummary:    creator.CustomSummary,
-		CustomAvatar:     creator.CustomAvatar,
-		CustomListHeader: creator.CustomListHeader,
-		CustomMRQLResult: creator.CustomMRQLResult,
-		CustomCSS:        creator.CustomCSS,
-		MetaSchema:       creator.MetaSchema,
-		AutoDetectRules:  creator.AutoDetectRules,
+		Name:               creator.Name,
+		Description:        creator.Description,
+		CustomHeader:       creator.CustomHeader,
+		CustomSidebar:      creator.CustomSidebar,
+		CustomSummary:      creator.CustomSummary,
+		CustomAvatar:       creator.CustomAvatar,
+		CustomListHeader:   creator.CustomListHeader,
+		CustomDetailFooter: creator.CustomDetailFooter,
+		CustomListFooter:   creator.CustomListFooter,
+		CustomHoverCard:    creator.CustomHoverCard,
+		CustomPreview:      creator.CustomPreview,
+		CustomLightbox:     creator.CustomLightbox,
+		CustomCell:         creator.CustomCell,
+		CustomMRQLResult:   creator.CustomMRQLResult,
+		CustomCSS:          creator.CustomCSS,
+		MetaSchema:         creator.MetaSchema,
+		AutoDetectRules:    creator.AutoDetectRules,
 	}, nil
 }
 
@@ -201,6 +211,10 @@ func buildNoteType(editor *query_models.NoteTypeEditor) (models.NoteType, error)
 		CustomSummary:          editor.CustomSummary,
 		CustomAvatar:           editor.CustomAvatar,
 		CustomListHeader:       editor.CustomListHeader,
+		CustomDetailFooter:     editor.CustomDetailFooter,
+		CustomListFooter:       editor.CustomListFooter,
+		CustomHoverCard:        editor.CustomHoverCard,
+		CustomMRQLResult:       editor.CustomMRQLResult,
 		ApplyTemplatesToShares: editor.ApplyTemplatesToShares,
 		CustomCSS:              editor.CustomCSS,
 	}, nil

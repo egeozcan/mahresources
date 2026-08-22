@@ -24,12 +24,19 @@
     {% endif %}
     {% endif %}
 
-    {% with hasOwn=(group.OwnNotes || group.OwnGroups || group.OwnResources) %}
+    {# CustomOwnEntities counts as own content: it is what the section will render, so it drives the auto-open here and suppresses Related Entities' auto-open below, exactly as real owned entities do. #}
+    {% with hasOwn=(group.OwnNotes || group.OwnGroups || group.OwnResources || group.Category.CustomOwnEntities) %}
 
     {% if sc.OwnEntities.State != "off" %}
     <details class="detail-collapsible mb-6" {% if sc.OwnEntities.State == "open" %}open{% elif sc.OwnEntities.State == "collapsed" %}{% elif hasOwn %}open{% endif %}>
         <summary>Own Entities</summary>
         <div class="detail-panel-body">
+            {# CustomOwnEntities replaces the built-in card grids wholesale when set; the per-collection SectionConfig toggles below only govern the built-in body. #}
+            {% if group.Category.CustomOwnEntities %}
+            <div x-data="{ entity: {{ group|json }} }">
+                {% process_shortcodes group.Category.CustomOwnEntities group %}
+            </div>
+            {% else %}
             {% if sc.OwnEntities.OwnNotes %}
             {% include "/partials/seeAll.tpl" with entities=group.OwnNotes subtitle="Notes" formAction="/notes" addAction="/note/new" formID=group.ID formParamName="ownerId" templateName="note" %}
             {% endif %}
@@ -38,6 +45,7 @@
             {% endif %}
             {% if sc.OwnEntities.OwnResources %}
             {% include "/partials/seeAll.tpl" with entities=group.OwnResources subtitle="Resources" formAction="/resources" addAction="/resource/new" formID=group.ID formParamName="ownerId" templateName="resource" showUntaggedLink=true %}
+            {% endif %}
             {% endif %}
         </div>
     </details>
@@ -75,6 +83,10 @@
         </div>
     </details>
     {% endif %}
+    {# CustomDetailFooter: the per-group counterpart of the group_detail_after plugin slot below it. Entity-bound, so [meta]/[property] resolve against this group. #}
+    <div x-data="{ entity: {{ group|json }} }">
+        {% process_shortcodes group.Category.CustomDetailFooter group %}
+    </div>
     {% plugin_slot "group_detail_after" %}
 {% endblock %}
 

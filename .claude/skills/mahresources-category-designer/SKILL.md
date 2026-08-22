@@ -1,6 +1,6 @@
 ---
 name: mahresources-category-designer
-description: Design Mahresources Categories, Resource Categories, and Note Types from a data model. Use when asked to create or update MetaSchema JSON Schema, SectionConfig, or CustomHeader/CustomSidebar/CustomSummary/CustomAvatar/CustomMRQLResult layouts, or when you need to understand built-in shortcodes, built-in plugin shortcodes, category template slots, or x-display behavior.
+description: Design Mahresources Categories, Resource Categories, and Note Types from a data model. Use when asked to create or update MetaSchema JSON Schema, SectionConfig, or any Custom* template slot (Header, Sidebar, Preview, DetailFooter, Summary, Avatar, HoverCard, Lightbox, Cell, OwnEntities, ListHeader, ListFooter, MRQLResult, CSS), or when you need to understand built-in shortcodes, built-in plugin shortcodes, category template slots, or x-display behavior.
 ---
 
 # Mahresources Category Designer
@@ -17,9 +17,20 @@ That package usually includes some or all of:
 - `SectionConfig`
 - `CustomHeader`
 - `CustomSidebar`
+- `CustomDetailFooter`
 - `CustomSummary`
 - `CustomAvatar`
+- `CustomHoverCard`
+- `CustomListHeader`
+- `CustomListFooter`
 - `CustomMRQLResult`
+- `CustomCSS`
+
+Carrier-specific slots, available on one carrier only because the surface they
+render on exists on one carrier only:
+
+- `CustomOwnEntities` -- `Category` only
+- `CustomPreview`, `CustomLightbox`, `CustomCell` -- `ResourceCategory` only
 
 ## Canonical Behavior
 
@@ -30,8 +41,10 @@ Especially important:
 - Category templates are stored as raw HTML strings.
 - The current implementation expands shortcodes inside those strings, then writes the resulting HTML.
 - Do **not** assume nested Pongo2 expressions like `{{ group.Name }}` inside a stored `CustomHeader` are re-evaluated as a second template pass.
-- For `CustomHeader`, `CustomSidebar`, `CustomSummary`, and the rendered avatar slots, the surrounding page template already provides Alpine `x-data` with `entity` JSON, so stored markup can use Alpine directives such as `x-text="entity.Name"`.
-- `CustomMRQLResult` is different: it is processed by the shortcode engine, not by Pongo2, and it is not automatically wrapped in an Alpine `entity` context. Build it with static HTML plus shortcodes.
+- For every detail-page and card slot -- `CustomHeader`, `CustomSidebar`, `CustomPreview`, `CustomOwnEntities`, `CustomDetailFooter`, `CustomSummary`, `CustomAvatar`, `CustomHoverCard`, `CustomLightbox` -- the surrounding page template already provides Alpine `x-data` with `entity` JSON, so stored markup can use Alpine directives such as `x-text="entity.Name"`.
+- `CustomMRQLResult` and `CustomCell` are different: both are processed by the shortcode engine, not by Pongo2, and neither is wrapped in an Alpine `entity` context. Build them with static HTML plus shortcodes.
+- Three slots fall back rather than rendering nothing when empty: `CustomHoverCard` falls back to `CustomSummary`, `CustomLightbox` falls back to `CustomSidebar`, and `CustomOwnEntities` falls back to the built-in card grids. Only set one when that surface should differ.
+- `CustomListHeader` and `CustomListFooter` bind the **carrier**, not a member entity: `[property path="Name"]` is the category name, `[meta]` is empty, and `[mrql]` runs at global scope. They render only on a list filtered to exactly that one carrier.
 - Detail-page descriptions also process shortcodes. Truncated list previews do not.
 - Group `CustomAvatar` exists in the model and forms, but the default group list card template does not currently render it. Do not rely on it unless you also change templates.
 - Plugin injection slots such as `page_bottom` or `group_detail_before` are a separate mechanism from category custom fields. Category templates do not register into those slots; plugins do.

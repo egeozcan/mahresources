@@ -90,11 +90,19 @@ components:
                     type: string
                 CustomCSS:
                     type: string
+                CustomDetailFooter:
+                    type: string
                 CustomHeader:
+                    type: string
+                CustomHoverCard:
+                    type: string
+                CustomListFooter:
                     type: string
                 CustomListHeader:
                     type: string
                 CustomMRQLResult:
+                    type: string
+                CustomOwnEntities:
                     type: string
                 CustomSidebar:
                     type: string
@@ -134,11 +142,19 @@ components:
                     type: string
                 CustomCSS:
                     type: string
+                CustomDetailFooter:
+                    type: string
                 CustomHeader:
+                    type: string
+                CustomHoverCard:
+                    type: string
+                CustomListFooter:
                     type: string
                 CustomListHeader:
                     type: string
                 CustomMRQLResult:
+                    type: string
+                CustomOwnEntities:
                     type: string
                 CustomSidebar:
                     type: string
@@ -998,7 +1014,13 @@ components:
                     type: string
                 CustomCSS:
                     type: string
+                CustomDetailFooter:
+                    type: string
                 CustomHeader:
+                    type: string
+                CustomHoverCard:
+                    type: string
+                CustomListFooter:
                     type: string
                 CustomListHeader:
                     type: string
@@ -1044,7 +1066,13 @@ components:
                     type: string
                 CustomCSS:
                     type: string
+                CustomDetailFooter:
+                    type: string
                 CustomHeader:
+                    type: string
+                CustomHoverCard:
+                    type: string
+                CustomListFooter:
                     type: string
                 CustomListHeader:
                     type: string
@@ -1314,11 +1342,23 @@ components:
                     type: string
                 CustomCSS:
                     type: string
+                CustomCell:
+                    type: string
+                CustomDetailFooter:
+                    type: string
                 CustomHeader:
+                    type: string
+                CustomHoverCard:
+                    type: string
+                CustomLightbox:
+                    type: string
+                CustomListFooter:
                     type: string
                 CustomListHeader:
                     type: string
                 CustomMRQLResult:
+                    type: string
+                CustomPreview:
                     type: string
                 CustomSidebar:
                     type: string
@@ -1360,11 +1400,23 @@ components:
                     type: string
                 CustomCSS:
                     type: string
+                CustomCell:
+                    type: string
+                CustomDetailFooter:
+                    type: string
                 CustomHeader:
+                    type: string
+                CustomHoverCard:
+                    type: string
+                CustomLightbox:
+                    type: string
+                CustomListFooter:
                     type: string
                 CustomListHeader:
                     type: string
                 CustomMRQLResult:
+                    type: string
+                CustomPreview:
                     type: string
                 CustomSidebar:
                     type: string
@@ -2631,8 +2683,13 @@ paths:
 
                 Request body fields:
                   - target     (string) — "slot" (default), "metaschema", or "bundle" (whole template)
-                  - slot       (string) — the slot field for target=slot (CustomHeader, CustomSidebar,
-                    CustomSummary, CustomAvatar, CustomListHeader, CustomMRQLResult, CustomCSS)
+                  - slot       (string) — the slot field for target=slot. Accepts any Custom* field the
+                    carrier declares, which is CustomHeader, CustomDetailFooter, CustomSidebar,
+                    CustomSummary, CustomAvatar, CustomHoverCard, CustomListHeader, CustomListFooter,
+                    CustomMRQLResult and CustomCSS on all three carriers, plus CustomOwnEntities on a
+                    category and CustomPreview, CustomLightbox and CustomCell on a resource category.
+                    A slot the carrier does not declare is rejected with 400 "unknown template slot",
+                    so the accepted set differs per endpoint.
                   - mode       (string) — "html", "css", or "json" (hints the output format)
                   - content    (string) — current slot content to refine/extend
                   - metaSchema (string) — the (possibly unsaved) MetaSchema being authored
@@ -4770,8 +4827,13 @@ paths:
 
                 Request body fields:
                   - target     (string) — "slot" (default), "metaschema", or "bundle" (whole template)
-                  - slot       (string) — the slot field for target=slot (CustomHeader, CustomSidebar,
-                    CustomSummary, CustomAvatar, CustomListHeader, CustomMRQLResult, CustomCSS)
+                  - slot       (string) — the slot field for target=slot. Accepts any Custom* field the
+                    carrier declares, which is CustomHeader, CustomDetailFooter, CustomSidebar,
+                    CustomSummary, CustomAvatar, CustomHoverCard, CustomListHeader, CustomListFooter,
+                    CustomMRQLResult and CustomCSS on all three carriers, plus CustomOwnEntities on a
+                    category and CustomPreview, CustomLightbox and CustomCell on a resource category.
+                    A slot the carrier does not declare is rejected with 400 "unknown template slot",
+                    so the accepted set differs per endpoint.
                   - mode       (string) — "html", "css", or "json" (hints the output format)
                   - content    (string) — current slot content to refine/extend
                   - metaSchema (string) — the (possibly unsaved) MetaSchema being authored
@@ -6572,8 +6634,13 @@ paths:
 
                 Request body fields:
                   - target     (string) — "slot" (default), "metaschema", or "bundle" (whole template)
-                  - slot       (string) — the slot field for target=slot (CustomHeader, CustomSidebar,
-                    CustomSummary, CustomAvatar, CustomListHeader, CustomMRQLResult, CustomCSS)
+                  - slot       (string) — the slot field for target=slot. Accepts any Custom* field the
+                    carrier declares, which is CustomHeader, CustomDetailFooter, CustomSidebar,
+                    CustomSummary, CustomAvatar, CustomHoverCard, CustomListHeader, CustomListFooter,
+                    CustomMRQLResult and CustomCSS on all three carriers, plus CustomOwnEntities on a
+                    category and CustomPreview, CustomLightbox and CustomCell on a resource category.
+                    A slot the carrier does not declare is rejected with 400 "unknown template slot",
+                    so the accepted set differs per endpoint.
                   - mode       (string) — "html", "css", or "json" (hints the output format)
                   - content    (string) — current slot content to refine/extend
                   - metaSchema (string) — the (possibly unsaved) MetaSchema being authored

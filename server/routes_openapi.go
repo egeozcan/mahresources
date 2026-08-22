@@ -2267,8 +2267,13 @@ configured DeepSeek provider. Requires DEEPSEEK_API_KEY (503 when unset).
 
 Request body fields:
   - target     (string) — "slot" (default), "metaschema", or "bundle" (whole template)
-  - slot       (string) — the slot field for target=slot (CustomHeader, CustomSidebar,
-    CustomSummary, CustomAvatar, CustomListHeader, CustomMRQLResult, CustomCSS)
+  - slot       (string) — the slot field for target=slot. Accepts any Custom* field the
+    carrier declares, which is CustomHeader, CustomDetailFooter, CustomSidebar,
+    CustomSummary, CustomAvatar, CustomHoverCard, CustomListHeader, CustomListFooter,
+    CustomMRQLResult and CustomCSS on all three carriers, plus CustomOwnEntities on a
+    category and CustomPreview, CustomLightbox and CustomCell on a resource category.
+    A slot the carrier does not declare is rejected with 400 "unknown template slot",
+    so the accepted set differs per endpoint.
   - mode       (string) — "html", "css", or "json" (hints the output format)
   - content    (string) — current slot content to refine/extend
   - metaSchema (string) — the (possibly unsaved) MetaSchema being authored

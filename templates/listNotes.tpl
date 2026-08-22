@@ -19,6 +19,7 @@
     {% endfor %}
     </section>
     {% plugin_slot "note_list_after" %}
+    {% include "/partials/customListFooter.tpl" %}
 {% endblock %}
 
 {% block sidebar %}

@@ -19,6 +19,11 @@ type NoteType struct {
 	// CustomHeader is rendered at the top of the note detail page body, above the description.
 	// Shortcodes are processed server-side; an Alpine entity variable is available.
 	CustomHeader string `gorm:"type:text"`
+	// CustomDetailFooter is rendered at the bottom of the note detail page body, below
+	// every built-in section and above the note_detail_after plugin slot. Unlike that
+	// plugin slot it is per-note. Shortcodes are processed server-side; an Alpine entity
+	// variable is available.
+	CustomDetailFooter string `gorm:"type:text"`
 	// CustomSidebar is rendered in the note detail page sidebar (both default and wide layouts).
 	// Shortcodes are processed server-side; an Alpine entity variable is available.
 	CustomSidebar string `gorm:"type:text"`
@@ -28,11 +33,23 @@ type NoteType struct {
 	// CustomAvatar replaces the default initials avatar on note cards in list views.
 	// Shortcodes are processed server-side; an Alpine entity variable is available.
 	CustomAvatar string `gorm:"type:text"`
+	// CustomHoverCard replaces CustomSummary in the hover card shown when a note link is
+	// hovered. When empty the hover card falls back to CustomSummary, so setting it is only
+	// needed when the hover card should differ from the list card. The hover card is
+	// injected via innerHTML and Alpine.initTree runs on it, so entity-scoped directives
+	// hydrate. Shortcodes are processed server-side.
+	CustomHoverCard string `gorm:"type:text"`
 	// CustomListHeader is rendered at the top of note list pages when the list is
 	// filtered to exactly this one note type. It is processed with the note type itself
 	// as the entity: [property path="Name"] yields the type name, [meta] renders its
 	// empty state (the type carries no meta), and [mrql] resolves against global scope.
 	CustomListHeader string `gorm:"type:text"`
+	// CustomListFooter is rendered at the bottom of note list pages when the list is
+	// filtered to exactly this one note type, below the results and the pager. Like
+	// CustomListHeader it is processed with the note type itself as the entity:
+	// [property path="Name"] yields the note type name, [meta] renders its empty state, and
+	// [mrql] resolves against global scope.
+	CustomListFooter string `gorm:"type:text"`
 	// ApplyTemplatesToShares opts this note type's CustomHeader and CustomCSS into the
 	// public /s/<token> share page. Default false: existing shares keep their appearance
 	// until an author explicitly enables it. On share pages templates run in a restricted

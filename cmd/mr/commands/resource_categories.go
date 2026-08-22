@@ -92,7 +92,8 @@ func newResourceCategoryGetCmd(c *client.Client, opts *output.Options) *cobra.Co
 }
 
 func newResourceCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	var name, description, customHeader, customCSS, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
+	var name, description, metaSchema, sectionConfig string
+	var slots *customSlotFlags
 
 	help := helptext.Load(resourceCategoriesHelpFS, "resource_categories_help/resource_category_create.md")
 	cmd := &cobra.Command{
@@ -106,30 +107,13 @@ func newResourceCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra
 			if description != "" {
 				body["Description"] = description
 			}
-			if customHeader != "" {
-				body["CustomHeader"] = customHeader
-			}
-			if customCSS != "" {
-				body["CustomCSS"] = customCSS
-			}
-			if customSidebar != "" {
-				body["CustomSidebar"] = customSidebar
-			}
-			if customSummary != "" {
-				body["CustomSummary"] = customSummary
-			}
-			if customAvatar != "" {
-				body["CustomAvatar"] = customAvatar
-			}
 			if metaSchema != "" {
 				body["MetaSchema"] = metaSchema
 			}
 			if sectionConfig != "" {
 				body["SectionConfig"] = sectionConfig
 			}
-			if customMRQLResult != "" {
-				body["CustomMRQLResult"] = customMRQLResult
-			}
+			slots.applySet(body)
 
 			var raw json.RawMessage
 			if err := c.Post("/v1/resourceCategory", nil, body, &raw); err != nil {
@@ -153,14 +137,10 @@ func newResourceCategoryCreateCmd(c *client.Client, opts *output.Options) *cobra
 	cmd.Flags().StringVar(&name, "name", "", "Resource category name (required)")
 	cmd.MarkFlagRequired("name")
 	cmd.Flags().StringVar(&description, "description", "", "Resource category description")
-	cmd.Flags().StringVar(&customHeader, "custom-header", "", "Custom header HTML")
-	cmd.Flags().StringVar(&customCSS, "custom-css", "", "Custom CSS injected as a <style> block on detail/list pages")
-	cmd.Flags().StringVar(&customSidebar, "custom-sidebar", "", "Custom sidebar HTML")
-	cmd.Flags().StringVar(&customSummary, "custom-summary", "", "Custom summary HTML")
-	cmd.Flags().StringVar(&customAvatar, "custom-avatar", "", "Custom avatar HTML")
 	cmd.Flags().StringVar(&metaSchema, "meta-schema", "", "Meta schema JSON")
 	cmd.Flags().StringVar(&sectionConfig, "section-config", "", "JSON controlling which sections are visible on resource detail pages for this category")
-	cmd.Flags().StringVar(&customMRQLResult, "custom-mrql-result", "", "Pongo2 template for rendering resources of this category in MRQL results")
+
+	slots = registerCustomSlotFlags(cmd, "resource")
 
 	return cmd
 }

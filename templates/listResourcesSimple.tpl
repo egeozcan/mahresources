@@ -24,6 +24,10 @@
     {% include "/partials/customListHeader.tpl" %}
     {% include "/partials/mrqlBar.tpl" with entity="resource" %}
 {% endblock %}
+{% block bottom %}
+    {% include "/partials/customListFooter.tpl" %}
+{% endblock %}
+
 {% block gallery %}
     {% for entity in resources %}
         {% include "/partials/resource.tpl" %}

@@ -339,6 +339,11 @@ func resolveEntityScope(appCtx *application_context.MahresourcesContext, entityT
 	return scopeID, parentID, rootID
 }
 
+// CustomListHeader, CustomListFooter and CustomCell are deliberately not
+// processed here. The first two bind the carrier rather than the entity; the
+// third is processed per table row against the carrier's field, not the entity's
+// category. This hook only ever has a single entity in hand, so any of the three
+// would be bound differently here than at the surface that renders it.
 // processShortcodesForJSON processes shortcode markup in Custom* fields of
 // entity categories/types so that JSON API consumers (e.g., the lightbox)
 // receive expanded HTML instead of raw [meta ...] shortcode text.
@@ -388,6 +393,10 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			r.ResourceCategory.CustomSidebar = shortcodes.Process(reqCtx, r.ResourceCategory.CustomSidebar, metaCtx, pluginRenderer, executor)
 			r.ResourceCategory.CustomSummary = shortcodes.Process(reqCtx, r.ResourceCategory.CustomSummary, metaCtx, pluginRenderer, executor)
 			r.ResourceCategory.CustomAvatar = shortcodes.Process(reqCtx, r.ResourceCategory.CustomAvatar, metaCtx, pluginRenderer, executor)
+			r.ResourceCategory.CustomDetailFooter = shortcodes.Process(reqCtx, r.ResourceCategory.CustomDetailFooter, metaCtx, pluginRenderer, executor)
+			r.ResourceCategory.CustomHoverCard = shortcodes.Process(reqCtx, r.ResourceCategory.CustomHoverCard, metaCtx, pluginRenderer, executor)
+			r.ResourceCategory.CustomPreview = shortcodes.Process(reqCtx, r.ResourceCategory.CustomPreview, metaCtx, pluginRenderer, executor)
+			r.ResourceCategory.CustomLightbox = shortcodes.Process(reqCtx, r.ResourceCategory.CustomLightbox, metaCtx, pluginRenderer, executor)
 			r.ResourceCategory.CustomCSS = shortcodes.Process(reqCtx, r.ResourceCategory.CustomCSS, metaCtx, pluginRenderer, executor)
 		}
 	case "group":
@@ -407,6 +416,9 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			g.Category.CustomSidebar = shortcodes.Process(reqCtx, g.Category.CustomSidebar, metaCtx, pluginRenderer, executor)
 			g.Category.CustomSummary = shortcodes.Process(reqCtx, g.Category.CustomSummary, metaCtx, pluginRenderer, executor)
 			g.Category.CustomAvatar = shortcodes.Process(reqCtx, g.Category.CustomAvatar, metaCtx, pluginRenderer, executor)
+			g.Category.CustomDetailFooter = shortcodes.Process(reqCtx, g.Category.CustomDetailFooter, metaCtx, pluginRenderer, executor)
+			g.Category.CustomHoverCard = shortcodes.Process(reqCtx, g.Category.CustomHoverCard, metaCtx, pluginRenderer, executor)
+			g.Category.CustomOwnEntities = shortcodes.Process(reqCtx, g.Category.CustomOwnEntities, metaCtx, pluginRenderer, executor)
 			g.Category.CustomCSS = shortcodes.Process(reqCtx, g.Category.CustomCSS, metaCtx, pluginRenderer, executor)
 		}
 	case "note":
@@ -425,6 +437,8 @@ func processShortcodesForJSON(ctx pongo2.Context, pm *plugin_system.PluginManage
 			n.NoteType.CustomSidebar = shortcodes.Process(reqCtx, n.NoteType.CustomSidebar, metaCtx, pluginRenderer, executor)
 			n.NoteType.CustomSummary = shortcodes.Process(reqCtx, n.NoteType.CustomSummary, metaCtx, pluginRenderer, executor)
 			n.NoteType.CustomAvatar = shortcodes.Process(reqCtx, n.NoteType.CustomAvatar, metaCtx, pluginRenderer, executor)
+			n.NoteType.CustomDetailFooter = shortcodes.Process(reqCtx, n.NoteType.CustomDetailFooter, metaCtx, pluginRenderer, executor)
+			n.NoteType.CustomHoverCard = shortcodes.Process(reqCtx, n.NoteType.CustomHoverCard, metaCtx, pluginRenderer, executor)
 			n.NoteType.CustomCSS = shortcodes.Process(reqCtx, n.NoteType.CustomCSS, metaCtx, pluginRenderer, executor)
 		}
 	}

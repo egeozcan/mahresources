@@ -16,25 +16,47 @@ Do not allow untrusted users to create or edit Categories, Resource Categories, 
 
 ## Template Locations
 
-Each Category (for Groups), Resource Category (for Resources), and Note Type (for Notes) can define five custom HTML templates plus a raw CSS slot:
+Each Category (for Groups), Resource Category (for Resources), and Note Type (for Notes) defines a set of HTML template slots plus a raw CSS slot. Most slots exist on all three carriers; four exist on one carrier only, because the surface they render on exists for one carrier only.
+
+**Detail page**
 
 | Slot | Display Location |
 |----------|-----------------|
-| **CustomHeader** | Top of the entity detail page (body area) |
+| **CustomHeader** | Top of the entity detail page, above the description |
 | **CustomSidebar** | Sidebar of the entity detail page |
-| **CustomSummary** | Entity cards in list views |
+| **CustomPreview** | *Resource Categories only.* Sidebar, above the built-in preview image (see [CustomPreview](#custompreview)) |
+| **CustomOwnEntities** | *Categories only.* Replaces the body of the group detail page's Own Entities section (see [CustomOwnEntities](#customownentities)) |
+| **CustomDetailFooter** | Bottom of the entity detail page, below every built-in section |
+
+**Cards and previews**
+
+| Slot | Display Location |
+|----------|-----------------|
+| **CustomSummary** | Entity cards in list views, below the title |
 | **CustomAvatar** | Avatar/icon when linking to the entity |
-| **CustomListHeader** | Top of a list page, only when it is filtered to exactly this one category/type (see [CustomListHeader](#customlistheader)) |
+| **CustomHoverCard** | The hover card for a link to the entity. Falls back to `CustomSummary` when empty (see [CustomHoverCard](#customhovercard)) |
+| **CustomLightbox** | *Resource Categories only.* The lightbox details panel. Falls back to `CustomSidebar` when empty (see [CustomLightbox](#customlightbox)) |
+| **CustomCell** | *Resource Categories only.* One extra cell per row in the resources details table (see [CustomCell](#customcell)) |
+
+**List pages, query results, styling**
+
+| Slot | Display Location |
+|----------|-----------------|
+| **CustomListHeader** | Above the results on a list page, only when it is filtered to exactly this one category/type (see [List page slots](#list-page-slots)) |
+| **CustomListFooter** | Below the results on the same pages, above the pager |
+| **CustomMRQLResult** | Result cards in `[mrql]` queries (see [Custom MRQL Result](#custom-mrql-result-templates)) |
 | **CustomCSS** | Raw CSS injected as a page-level `<style>` block (see [CustomCSS](#customcss)) |
 
-The five `Custom*` slots above hold HTML markup. `CustomCSS` is different -- it holds raw CSS rather than markup, and exists so the other slots can be styled globally without inlining `<style>` tags in each.
+Every slot above holds HTML markup except `CustomCSS`, which holds raw CSS and exists so the others can be styled globally without inlining `<style>` tags in each.
+
+Leaving a slot empty keeps the built-in appearance. Three slots additionally **fall back** rather than rendering nothing: `CustomHoverCard` falls back to `CustomSummary`, `CustomLightbox` falls back to `CustomSidebar`, and `CustomOwnEntities` falls back to the built-in card grids. Setting one of those is only worthwhile when that surface should differ from the slot it borrows from.
 
 ## How Custom Templates Are Rendered
 
 Custom template content is processed in two ways:
 
 - **Shortcodes** (`[meta]`, `[property]`, `[mrql]`, `[conditional]`, `[link]`, `[each]`, `[partial]`, and plugin shortcodes) are expanded server-side.
-- **Alpine.js directives** (`x-text`, `x-if`, `:class`, `@click`, etc.) work in CustomHeader, CustomSidebar, CustomSummary, and CustomAvatar because the outer page template wraps custom content in an `x-data` scope with the full entity available as `entity`. Alpine directives do **not** work in `customMRQLResult` templates, which are rendered server-side by the shortcode engine -- use shortcodes (`[meta]`, `[property]`, `[conditional]`) instead.
+- **Alpine.js directives** (`x-text`, `x-if`, `:class`, `@click`, etc.) work in the slots the outer page template wraps in an `x-data` scope, which is every detail-page and card slot: CustomHeader, CustomSidebar, CustomPreview, CustomOwnEntities, CustomDetailFooter, CustomSummary, CustomAvatar, CustomHoverCard and CustomLightbox. The full entity is available there as `entity`. Alpine directives do **not** work in `CustomMRQLResult` or `CustomCell`, which the shortcode engine renders server-side into a table cell or card -- use shortcodes (`[meta]`, `[property]`, `[conditional]`) instead.
 
 :::caution Pongo2 expressions do not work
 
@@ -213,11 +235,97 @@ This is intentional, not an inconsistency; avatar-replacement on resource cards 
 </template>
 ```
 
-## CustomListHeader
+## CustomDetailFooter
 
-`CustomListHeader` renders a banner at the **top of a list page**, but only when the list is filtered to **exactly one** category/type — a group list at `/groups?categories=42`, a resource list at `/resources?resourceCategoryId=7`, or a note list at `/notes?noteTypeId=3`. Unfiltered lists, and lists filtered to more than one category, show no header. It is the natural home for a category "dashboard": a title, a description, and a few `[mrql]` counts.
+`CustomDetailFooter` renders at the very bottom of the entity detail page, below every built-in section and below the `CustomOwnEntities`/Related Entities/Relations panels. It is the counterpart of `CustomHeader`: same entity binding, same Alpine scope, opposite end of the page.
 
-Unlike the other slots, `CustomListHeader` is processed with **the category/type itself as the entity**, not a member group/resource/note. This has four consequences:
+It occupies roughly the same place as the `group_detail_after` / `resource_detail_after` / `note_detail_after` plugin slots, and the difference is who controls it. A plugin slot is global -- it renders on every entity of that kind, for whatever plugin is installed. `CustomDetailFooter` is per category, so one category can carry a citation block or a set of cross-links that another does not.
+
+```html
+<footer class="entity-footer">
+  <p>Catalogued [property path="CreatedAt" format="date"] &middot; last touched [property path="UpdatedAt" format="date"]</p>
+  [conditional path="source.url" not-empty="true"]
+    <p>Source: [link href-meta="source.url" text-meta="source.title" default="original"]</p>
+  [/conditional]
+</footer>
+```
+
+## CustomHoverCard
+
+Hovering a link to a group, resource or note shows a small preview card. By default that card shows the entity's `CustomAvatar` and `CustomSummary` -- the same markup as its list card. `CustomHoverCard` replaces the summary half of it.
+
+**When empty, the hover card falls back to `CustomSummary`**, so a category that never sets this slot keeps exactly the hover card it had. Set it when the hover card should differ: the card in a list has the width of a grid cell, while the hover card is narrow and transient, so a three-column summary that reads well in a list is usually too much on hover.
+
+```html
+<span class="hover-line">[meta path="status" default="—"] &middot; [meta path="owner.name" hide-empty="true"]</span>
+```
+
+The hover card is delivered as an HTML fragment and initialised with `Alpine.initTree`, so entity-scoped Alpine directives work here as they do on the detail page.
+
+## CustomOwnEntities
+
+*Categories only.* The group detail page has an **Own Entities** section listing the notes, sub-groups and resources the group owns, as three card grids. `CustomOwnEntities` replaces the body of that section.
+
+The usual reason to set it is to present children as data rather than as cards -- an `[mrql]` table sorted by a metadata field, say, instead of three grids ordered by creation date.
+
+```html
+[mrql query='type = resource AND owner = entity' format="table" limit="50"]
+```
+
+Two rules to keep in mind:
+
+- **The section's visibility is still governed by Section Config.** Setting this slot while Own Entities is switched off renders nothing -- the slot replaces the section body, it does not re-enable the section.
+- **The section auto-opens when it has content**, and a `CustomOwnEntities` body counts as content. A group that owns nothing but whose category sets this slot still opens the section, and Related Entities no longer auto-opens in its place.
+
+## CustomPreview
+
+*Resource Categories only.* `CustomPreview` renders in the resource detail sidebar, directly **above** the built-in preview image. It exists for file types the built-in preview cannot show: a PDF or 3D model viewer, an audio waveform, an embed for a resource whose real content lives elsewhere.
+
+It **adds to** the preview image rather than replacing it. The image has its own Section Config toggle (`PreviewImage`); switch that off if the category's own preview should stand alone.
+
+```html
+[conditional field="ContentType" eq="application/pdf"]
+  <object data="/v1/resource/view?id=[property path=&quot;ID&quot;]" type="application/pdf" width="100%" height="420"></object>
+[/conditional]
+```
+
+## CustomLightbox
+
+*Resource Categories only.* Clicking a resource thumbnail opens the lightbox, whose details panel shows the resource's metadata. That panel renders `CustomSidebar` by default; `CustomLightbox` replaces it.
+
+**When empty, the panel falls back to `CustomSidebar`**, so a category that never sets this slot keeps the panel it had. Set it because the two surfaces do not look alike: the detail page sidebar is a light column on a white page, while the lightbox panel is a narrow dark column over the image. Markup tuned for one usually reads badly in the other.
+
+```html
+<dl class="lightbox-meta">
+  <dt>Shot</dt><dd>[meta path="exif.taken" default="unknown"]</dd>
+  <dt>Camera</dt><dd>[meta path="exif.camera" default="—"]</dd>
+</dl>
+```
+
+Both slots are expanded **server-side before the JSON response is serialized**, so shortcodes resolve normally even though the lightbox is rendered in the browser.
+
+## CustomCell
+
+*Resource Categories only.* The resources list has a table view (`/resources/details`) with fixed columns: ID, Name, Preview, Size, Created, Updated, Original Name, Original Location. `CustomCell` adds one more column, headed **Custom**, rendered once per row.
+
+The column appears **only when the list is filtered to exactly this one category** -- the same rule the list header and footer use. A mixed list has no single template to run, and a column present for some rows and absent for others is not a table.
+
+Two constraints:
+
+- **Output the cell body, not a `<td>`.** The table supplies the cell.
+- **Keep it short.** The table already scrolls horizontally at typical widths; a long value pushes the built-in columns out of view.
+
+```html
+[meta path="status" default="—"]
+```
+
+Shortcodes are processed against **the row's resource**, so `[meta]` and `[property]` read that resource. Alpine directives do not apply.
+
+## List page slots
+
+`CustomListHeader` and `CustomListFooter` render a banner **above** and **below the results** of a list page, but only when the list is filtered to **exactly one** category/type -- a group list at `/groups?categories=42`, a resource list at `/resources?resourceCategoryId=7`, or a note list at `/notes?noteTypeId=3`. Unfiltered lists, and lists filtered to more than one category, show neither. They are the natural home for a category "dashboard": a title and a few `[mrql]` counts above, totals or a legend below.
+
+Unlike the other slots, both are processed with **the category/type itself as the entity**, not a member group/resource/note. This has four consequences:
 
 - `[property path="Name"]` yields the category's own name (and `path="Description"` its description). Other `[property]` paths that expect a member entity's fields will be empty.
 - `[meta]` renders its empty state — a category carries no `Meta`, so a `[meta path="..." default="—"]` shows the default.
@@ -232,11 +340,13 @@ Unlike the other slots, `CustomListHeader` is processed with **the category/type
 </div>
 ```
 
-Style it from the same `CustomCSS` field (the header markup ships inside a `custom-list-header` wrapper). The live preview pane on the edit form previews this slot against the category itself; it is only available once the category has been saved.
+Style them from the same `CustomCSS` field: the markup ships inside a `custom-list-header` or `custom-list-footer` wrapper. The live preview pane on the edit form previews both against the category itself; it is only available once the category has been saved.
+
+The footer sits below the results and above the pager, so it reads as the end of the content rather than as page chrome.
 
 ## CustomCSS
 
-Categories, Resource Categories, and Note Types each have a `CustomCSS` field. Unlike the four `Custom*` template slots, it holds raw CSS, not HTML. The content is injected verbatim into a page-level `<style>` block, so you can style the other slots (header, sidebar, summary, avatar, and Custom MRQL Result cards) from one place instead of inlining `<style>` in each template.
+Categories, Resource Categories, and Note Types each have a `CustomCSS` field. Unlike every other `Custom*` slot, it holds raw CSS, not HTML. The content is injected verbatim into a page-level `<style>` block, so you can style all the other slots from one place instead of inlining `<style>` in each template.
 
 ```css
 /* Style the CustomHeader and CustomSummary markup for this category */
@@ -271,12 +381,19 @@ Shortcodes (`[meta]`, `[property]`, `[mrql]`) inside `CustomCSS` are processed s
 2. Click **Create**
 3. Fill in the Name and Description
 4. Add your templates in the appropriate fields:
-   - **Custom Header** - HTML for the detail page header
-   - **Custom Sidebar** - HTML for the detail page sidebar
-   - **Custom Summary** - HTML for list view cards
-   - **Custom Avatar** - HTML for link avatars
-   - **Custom List Header** - HTML shown atop a list filtered to this category/type
+   - **Custom Header** - top of the group detail page
+   - **Custom Sidebar** - the group detail page sidebar
+   - **Custom Detail Footer** - bottom of the detail page, below every built-in section
+   - **Custom Summary** - group cards in list views
+   - **Custom Avatar** - replaces the initials avatar on group cards
+   - **Custom Hover Card** - the hover card for a group link; falls back to Custom Summary
+   - **Custom Own Entities** - replaces the body of the Own Entities section
+   - **Custom List Header** / **Custom List Footer** - above and below a list filtered to exactly this category
+   - **Custom MRQL Result** - result cards in `[mrql]` queries
+   - **Custom CSS** - one CSS block styling all of the above
 5. Click **Submit**
+
+Every field has a **Generate** button (natural-language drafting) and a live **Preview** pane; see [Editor authoring tools](#editor-authoring-tools).
 
 ## Creating Resource Categories with Templates
 
@@ -284,11 +401,18 @@ Shortcodes (`[meta]`, `[property]`, `[mrql]`) inside `CustomCSS` are processed s
 2. Click **Create**
 3. Fill in the Name and Description
 4. Add your templates in the appropriate fields:
-   - **Custom Header** - HTML for the resource detail page header
-   - **Custom Sidebar** - HTML for the resource detail page sidebar
-   - **Custom Summary** - HTML for list view cards
-   - **Custom Avatar** - HTML for link avatars
-   - **Custom List Header** - HTML shown atop a list filtered to this category/type
+   - **Custom Header** - top of the resource detail page
+   - **Custom Sidebar** - the resource detail page sidebar, and the lightbox panel unless Custom Lightbox is set
+   - **Custom Preview** - sidebar, above the built-in preview image
+   - **Custom Detail Footer** - bottom of the detail page, below every built-in section
+   - **Custom Summary** - resource cards in list views
+   - **Custom Avatar** - shown next to the category name on resource cards
+   - **Custom Hover Card** - the hover card for a resource link; falls back to Custom Summary
+   - **Custom Lightbox** - the lightbox details panel; falls back to Custom Sidebar
+   - **Custom Table Cell** - one extra column in the resources details table
+   - **Custom List Header** / **Custom List Footer** - above and below a list filtered to exactly this category
+   - **Custom MRQL Result** - result cards in `[mrql]` queries
+   - **Custom CSS** - one CSS block styling all of the above
 5. Optionally define a **MetaSchema** (JSON Schema for metadata validation)
 6. Click **Submit**
 
@@ -297,8 +421,19 @@ Shortcodes (`[meta]`, `[property]`, `[mrql]`) inside `CustomCSS` are processed s
 1. Navigate to **Note Types**
 2. Click **Create**
 3. Fill in the Name and Description
-4. Add your templates in the appropriate fields
+4. Add your templates in the appropriate fields:
+   - **Custom Header** - top of the note detail page
+   - **Custom Sidebar** - the note detail page sidebar (both default and wide layouts)
+   - **Custom Detail Footer** - bottom of the detail page, below every built-in section
+   - **Custom Summary** - note cards in list views
+   - **Custom Avatar** - replaces the initials avatar on note cards
+   - **Custom Hover Card** - the hover card for a note link; falls back to Custom Summary
+   - **Custom List Header** / **Custom List Footer** - above and below a list filtered to exactly this note type
+   - **Custom MRQL Result** - result cards in `[mrql]` queries
+   - **Custom CSS** - one CSS block styling all of the above
 5. Click **Submit**
+
+Note Types carry the shared slots only. The four carrier-specific slots (Custom Preview, Custom Lightbox, Custom Table Cell, Custom Own Entities) have no surface on a note.
 
 ## Shortcodes
 

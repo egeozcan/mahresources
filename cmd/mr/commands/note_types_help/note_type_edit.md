@@ -9,12 +9,16 @@ relatedCmds: note-type edit-name, note-type edit-description, note-type get
 Edit a note type. `--id` is required; every other flag is optional and
 only fields explicitly passed are modified (server-side PATCH
 semantics). Use this command when you need to change the `MetaSchema`,
-`SectionConfig`, or any of the Custom* rendering fields
-(`--custom-header`, `--custom-css`, `--custom-sidebar`,
-`--custom-summary`, `--custom-avatar`, `--custom-mrql-result`); the
+`SectionConfig`, or any of the Custom* rendering fields -- there is a
+`--custom-*` flag for each template slot, listed with a one-line
+description of where it renders under `mr note-type edit --help`. The
 dedicated `edit-name` / `edit-description` commands only touch those two
 scoped fields. `--custom-css` is injected as a `<style>` block on detail
 and list pages.
+
+Because only explicitly-passed flags are sent, passing a `--custom-*`
+flag with an empty string is how a slot is cleared; omitting it leaves
+the stored value alone.
 
 # Example
 

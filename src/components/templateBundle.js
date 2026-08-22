@@ -7,19 +7,33 @@
 // Bundle shape (schemaVersion 1), shared with server/template_presets/*.json and
 // the export download:
 //   { schemaVersion, carrier, name, description,
-//     slots: { header, sidebar, summary, avatar, listHeader, mrqlResult, css },
+//     slots: { <every key of SLOT_FIELDS below> },
 //     metaSchema, sectionConfig }
-
-// Slot key -> hidden-input field name on the form. listHeader is additive to the
-// schemaVersion-1 bundle: older bundles simply omit it and import leaves it empty.
+//
+// Slot key -> hidden-input field name on the form.
 import { askToConfirm } from './confirmDialog.js';
 
+// One map for all three carriers, not three. Carrier-specific slots (preview,
+// lightbox and cell are resource-only; ownEntities is group-only) are listed
+// here too because both accessors tolerate a field with no editor on the current
+// form: getEditor returns '' and setEditor returns early. That is what makes a
+// cross-carrier copy degrade instead of erroring -- a resource bundle applied to
+// a category form drops the three slots a category has no surface for.
+// Additive, so schemaVersion stays 1: an older bundle omits the new keys and
+// reads as empty, and an older reader ignores keys it does not know.
 const SLOT_FIELDS = {
   header: 'CustomHeader',
+  detailFooter: 'CustomDetailFooter',
   sidebar: 'CustomSidebar',
+  preview: 'CustomPreview',
+  lightbox: 'CustomLightbox',
   summary: 'CustomSummary',
   avatar: 'CustomAvatar',
+  hoverCard: 'CustomHoverCard',
+  cell: 'CustomCell',
+  ownEntities: 'CustomOwnEntities',
   listHeader: 'CustomListHeader',
+  listFooter: 'CustomListFooter',
   mrqlResult: 'CustomMRQLResult',
   css: 'CustomCSS',
 };

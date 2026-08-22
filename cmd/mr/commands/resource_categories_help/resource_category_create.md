@@ -7,10 +7,14 @@ relatedCmds: resource-category get, resource-category edit-name, resource-catego
 # Long
 
 Create a new resource category. `--name` is required; all other flags
-are optional, including a plain `--description`, presentation
-fields (`--custom-header`, `--custom-css`, `--custom-sidebar`,
-`--custom-summary`, `--custom-avatar`, `--custom-mrql-result`) and
-structural fields (`--meta-schema`, `--section-config`). `--custom-css`
+are optional, including a plain `--description`, a `--custom-*` flag for
+every template slot, and structural fields (`--meta-schema`,
+`--section-config`). Resource categories carry four slots the other
+carriers do not: `--custom-preview` (above the built-in preview image),
+`--custom-lightbox` (the lightbox details panel), and `--custom-cell`
+(an extra column in the resources details table). Run
+`mr resource-category create --help` for the full list with a one-line
+description of where each renders. `--custom-css`
 is injected as a `<style>` block on detail and list pages. On success
 prints a confirmation line with the new ID; pass the global `--json`
 flag to emit the full record for scripting.

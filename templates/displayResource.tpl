@@ -269,6 +269,10 @@
     {% if sc.Versions %}
     {% include "/partials/versionPanel.tpl" with versions=versions currentVersionId=resource.CurrentVersionID resourceId=resource.ID %}
     {% endif %}
+    {# CustomDetailFooter: the per-resource counterpart of the resource_detail_after plugin slot below it. Entity-bound, so [meta]/[property] resolve against this resource. #}
+    <div x-data="{ entity: {{ resource|json }} }">
+        {% process_shortcodes resource.ResourceCategory.CustomDetailFooter resource %}
+    </div>
     {% plugin_slot "resource_detail_after" %}
 {% endblock %}
 
@@ -288,6 +292,13 @@
         <p>{{ resource.FileSize | humanReadableSize }}</p>
         {% endif %}
     </div>
+
+    {# CustomPreview: for file types the built-in preview cannot show (PDF, 3D, audio, an embed for a link resource). It sits above the preview image rather than replacing it, so sc.PreviewImage still governs that independently. #}
+    {% if resource.ResourceCategory.CustomPreview %}
+    <div class="sidebar-group custom-preview" x-data="{ entity: {{ resource|json }} }">
+        {% process_shortcodes resource.ResourceCategory.CustomPreview resource %}
+    </div>
+    {% endif %}
 
     {% if sc.PreviewImage %}
     {# Product decision 145. Two identical-looking images used to behave           #}

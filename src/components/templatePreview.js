@@ -6,19 +6,33 @@
 
 import * as userSettings from '../userSettings.js';
 
+// `only` restricts a slot to one carrier: the surface it renders on exists for
+// that carrier alone (there is no group table view, no note lightbox), so the
+// field is not on the other two models and offering it would preview nothing.
 const SLOTS = [
   { name: 'CustomHeader', label: 'Header' },
+  { name: 'CustomDetailFooter', label: 'Detail Footer' },
   { name: 'CustomSidebar', label: 'Sidebar' },
+  { name: 'CustomPreview', label: 'Preview', only: 'resource' },
+  { name: 'CustomLightbox', label: 'Lightbox', only: 'resource' },
   { name: 'CustomSummary', label: 'Summary' },
   { name: 'CustomAvatar', label: 'Avatar' },
+  { name: 'CustomHoverCard', label: 'Hover Card' },
+  { name: 'CustomCell', label: 'Table Cell', only: 'resource' },
+  { name: 'CustomOwnEntities', label: 'Own Entities', only: 'group' },
   { name: 'CustomListHeader', label: 'List Header' },
+  { name: 'CustomListFooter', label: 'List Footer' },
   { name: 'CustomMRQLResult', label: 'MRQL Result' },
   { name: 'CustomCSS', label: 'CSS' },
 ];
 
+export function slotsForEntityType(entityType) {
+  return SLOTS.filter((s) => !s.only || s.only === entityType);
+}
+
 // Carrier slots render against the category/type itself (not a member entity),
 // so the preview uses carrier mode: no member entity picked, categoryId required.
-const CARRIER_SLOTS = new Set(['CustomListHeader']);
+const CARRIER_SLOTS = new Set(['CustomListHeader', 'CustomListFooter']);
 
 const LIST_ENDPOINTS = {
   group: '/v1/groups',
@@ -54,7 +68,7 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
     previewPath,
     generatePath,
     categoryId: categoryId || null,
-    slots: SLOTS,
+    slots: slotsForEntityType(entityType),
     slot: 'CustomHeader',
     entityId: null,
     entityLabel: '',

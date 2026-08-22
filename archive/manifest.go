@@ -284,20 +284,28 @@ type SeriesPayload struct {
 // CategoryDef / NoteTypeDef / ResourceCategoryDef share the same shape — all
 // the Custom HTML fields plus MetaSchema and SectionConfig.
 type CategoryDef struct {
-	ExportID         string         `json:"export_id"`
-	SourceID         uint           `json:"source_id"`
-	GUID             string         `json:"guid,omitempty"`
-	Name             string         `json:"name"`
-	Description      string         `json:"description"`
-	CustomHeader     string         `json:"custom_header"`
-	CustomSidebar    string         `json:"custom_sidebar"`
-	CustomSummary    string         `json:"custom_summary"`
-	CustomAvatar     string         `json:"custom_avatar"`
-	CustomListHeader string         `json:"custom_list_header,omitempty"`
-	CustomMRQLResult string         `json:"custom_mrql_result"`
-	CustomCSS        string         `json:"custom_css"`
-	MetaSchema       string         `json:"meta_schema"`
-	SectionConfig    map[string]any `json:"section_config"`
+	ExportID         string `json:"export_id"`
+	SourceID         uint   `json:"source_id"`
+	GUID             string `json:"guid,omitempty"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	CustomHeader     string `json:"custom_header"`
+	CustomSidebar    string `json:"custom_sidebar"`
+	CustomSummary    string `json:"custom_summary"`
+	CustomAvatar     string `json:"custom_avatar"`
+	CustomListHeader string `json:"custom_list_header,omitempty"`
+	// The slots below are additive (schema_version stays 1): omitempty keeps them
+	// out of archives that do not use them, and older readers ignore unknown keys.
+	// CustomOwnEntities is group-category-only; NoteTypeDef and ResourceCategoryDef
+	// embed this struct and never set it, so omitempty keeps it out of their JSON.
+	CustomDetailFooter string         `json:"custom_detail_footer,omitempty"`
+	CustomListFooter   string         `json:"custom_list_footer,omitempty"`
+	CustomHoverCard    string         `json:"custom_hover_card,omitempty"`
+	CustomOwnEntities  string         `json:"custom_own_entities,omitempty"`
+	CustomMRQLResult   string         `json:"custom_mrql_result"`
+	CustomCSS          string         `json:"custom_css"`
+	MetaSchema         string         `json:"meta_schema"`
+	SectionConfig      map[string]any `json:"section_config"`
 }
 
 // NoteTypeDef is CategoryDef plus the note-type-only ApplyTemplatesToShares
@@ -313,6 +321,10 @@ type NoteTypeDef struct {
 type ResourceCategoryDef struct {
 	CategoryDef
 	AutoDetectRules string `json:"auto_detect_rules"`
+	// Resource-only slots; additive, same rules as the CategoryDef additions.
+	CustomPreview  string `json:"custom_preview,omitempty"`
+	CustomLightbox string `json:"custom_lightbox,omitempty"`
+	CustomCell     string `json:"custom_cell,omitempty"`
 }
 
 type TagDef struct {

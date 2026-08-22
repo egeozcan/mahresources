@@ -381,6 +381,18 @@ func CreateCategoryHandler(ctx contracts.CategoryCRUDReader) http.HandlerFunc {
 				if !fieldWasSent("CustomListHeader") {
 					editor.CustomListHeader = existing.CustomListHeader
 				}
+				if !fieldWasSent("CustomDetailFooter") {
+					editor.CustomDetailFooter = existing.CustomDetailFooter
+				}
+				if !fieldWasSent("CustomListFooter") {
+					editor.CustomListFooter = existing.CustomListFooter
+				}
+				if !fieldWasSent("CustomHoverCard") {
+					editor.CustomHoverCard = existing.CustomHoverCard
+				}
+				if !fieldWasSent("CustomOwnEntities") {
+					editor.CustomOwnEntities = existing.CustomOwnEntities
+				}
 				if !fieldWasSent("CustomMRQLResult") {
 					editor.CustomMRQLResult = existing.CustomMRQLResult
 				}
@@ -489,6 +501,24 @@ func CreateResourceCategoryHandler(writer contracts.ResourceCategoryWriter) http
 				}
 				if !fieldWasSent("CustomListHeader") {
 					editor.CustomListHeader = existing.CustomListHeader
+				}
+				if !fieldWasSent("CustomDetailFooter") {
+					editor.CustomDetailFooter = existing.CustomDetailFooter
+				}
+				if !fieldWasSent("CustomListFooter") {
+					editor.CustomListFooter = existing.CustomListFooter
+				}
+				if !fieldWasSent("CustomHoverCard") {
+					editor.CustomHoverCard = existing.CustomHoverCard
+				}
+				if !fieldWasSent("CustomPreview") {
+					editor.CustomPreview = existing.CustomPreview
+				}
+				if !fieldWasSent("CustomLightbox") {
+					editor.CustomLightbox = existing.CustomLightbox
+				}
+				if !fieldWasSent("CustomCell") {
+					editor.CustomCell = existing.CustomCell
 				}
 				if !fieldWasSent("CustomMRQLResult") {
 					editor.CustomMRQLResult = existing.CustomMRQLResult

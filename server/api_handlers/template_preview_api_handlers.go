@@ -24,9 +24,9 @@ type templatePreviewRequest struct {
 	CSS        string `json:"css" schema:"css"`
 	CategoryID uint   `json:"categoryId" schema:"categoryId"` // optional: the category being edited, for a mismatch warning
 	// Carrier previews the slot against the carrier (Category/ResourceCategory/
-	// NoteType) itself rather than a member entity — used for CustomListHeader,
-	// which renders against the category, not a group/resource/note. CategoryID is
-	// then required and EntityID is ignored.
+	// NoteType) itself rather than a member entity — used for CustomListHeader and
+	// CustomListFooter, which render against the category, not a group/resource/note.
+	// CategoryID is then required and EntityID is ignored.
 	Carrier bool `json:"carrier" schema:"carrier"`
 }
 
@@ -173,7 +173,7 @@ func loadPreviewEntity(ctx TemplatePreviewContext, entityType string, id uint) (
 }
 
 // loadPreviewCarrier fetches the carrier itself (Category / ResourceCategory /
-// NoteType) for a carrier-mode preview (CustomListHeader). entityType is the
+// NoteType) for a carrier-mode preview (CustomListHeader/CustomListFooter). entityType is the
 // member entity type the carrier governs ("group"/"resource"/"note").
 func loadPreviewCarrier(ctx TemplatePreviewContext, entityType string, id uint) (any, error) {
 	switch entityType {

@@ -82,16 +82,20 @@ func (ctx *MahresourcesContext) CreateCategory(categoryQuery *query_models.Categ
 	}
 
 	category := models.Category{
-		Name:             categoryQuery.Name,
-		Description:      categoryQuery.Description,
-		CustomHeader:     categoryQuery.CustomHeader,
-		CustomSidebar:    categoryQuery.CustomSidebar,
-		CustomSummary:    categoryQuery.CustomSummary,
-		CustomAvatar:     categoryQuery.CustomAvatar,
-		CustomListHeader: categoryQuery.CustomListHeader,
-		CustomMRQLResult: categoryQuery.CustomMRQLResult,
-		CustomCSS:        categoryQuery.CustomCSS,
-		MetaSchema:       categoryQuery.MetaSchema,
+		Name:               categoryQuery.Name,
+		Description:        categoryQuery.Description,
+		CustomHeader:       categoryQuery.CustomHeader,
+		CustomSidebar:      categoryQuery.CustomSidebar,
+		CustomSummary:      categoryQuery.CustomSummary,
+		CustomAvatar:       categoryQuery.CustomAvatar,
+		CustomListHeader:   categoryQuery.CustomListHeader,
+		CustomDetailFooter: categoryQuery.CustomDetailFooter,
+		CustomListFooter:   categoryQuery.CustomListFooter,
+		CustomHoverCard:    categoryQuery.CustomHoverCard,
+		CustomOwnEntities:  categoryQuery.CustomOwnEntities,
+		CustomMRQLResult:   categoryQuery.CustomMRQLResult,
+		CustomCSS:          categoryQuery.CustomCSS,
+		MetaSchema:         categoryQuery.MetaSchema,
 	}
 	if categoryQuery.SectionConfig != "" {
 		category.SectionConfig = types.JSON(categoryQuery.SectionConfig)
@@ -156,6 +160,10 @@ func (ctx *MahresourcesContext) UpdateCategory(categoryQuery *query_models.Categ
 	category.CustomSummary = categoryQuery.CustomSummary
 	category.CustomAvatar = categoryQuery.CustomAvatar
 	category.CustomListHeader = categoryQuery.CustomListHeader
+	category.CustomDetailFooter = categoryQuery.CustomDetailFooter
+	category.CustomListFooter = categoryQuery.CustomListFooter
+	category.CustomHoverCard = categoryQuery.CustomHoverCard
+	category.CustomOwnEntities = categoryQuery.CustomOwnEntities
 	category.CustomMRQLResult = categoryQuery.CustomMRQLResult
 	category.CustomCSS = categoryQuery.CustomCSS
 	category.MetaSchema = categoryQuery.MetaSchema

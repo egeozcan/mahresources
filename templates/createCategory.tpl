@@ -44,34 +44,62 @@
              class="text-sm text-stone-600 bg-white border border-stone-200 rounded-md p-4 space-y-3 font-sans">
             <div>
                 <h2 class="font-semibold text-stone-700">Slot Locations</h2>
+                <p class="text-xs text-stone-400 mt-1">Each slot below renders against one <b>group</b>, so <code class="bg-stone-100 px-1 rounded">[meta]</code> and <code class="bg-stone-100 px-1 rounded">[property]</code> read that group — except the two list slots, which render against the category itself. Leave a slot empty to keep the built-in appearance.</p>
+                <h3 class="font-medium text-stone-600 mt-3 first:mt-1">Detail page</h3>
                 <dl class="mt-1 space-y-1 text-xs">
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Header</dt>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Header</dt>
                         <dd>Top of the group detail page, above the description</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom CSS</dt>
-                        <dd>CSS injected as a <code class="bg-stone-100 px-1 rounded">&lt;style&gt;</code> block on the group detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Sidebar</dt>
+                        <dd>The group detail page sidebar</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Sidebar</dt>
-                        <dd>Right sidebar on the group detail page</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Own Entities</dt>
+                        <dd>Replaces the body of the Own Entities section, which otherwise lists owned notes, sub-groups and resources as card grids. The section's own visibility is still governed by Section Config</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Summary</dt>
-                        <dd>Group cards in list views, below the title</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Detail Footer</dt>
+                        <dd>Bottom of the group detail page, below every built-in section</dd>
+                    </div>
+                </dl>
+                <h3 class="font-medium text-stone-600 mt-3 first:mt-1">Cards and previews</h3>
+                <dl class="mt-1 space-y-1 text-xs">
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Summary</dt>
+                        <dd>On group cards in list views, below the title</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Avatar</dt>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Avatar</dt>
                         <dd>Replaces the default initials avatar on group cards</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom List Header</dt>
-                        <dd>Top of group list pages filtered to exactly this category, rendered against the category itself (<code class="bg-stone-100 px-1 rounded">[meta]</code> is empty, <code class="bg-stone-100 px-1 rounded">[mrql]</code> runs at global scope)</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Hover Card</dt>
+                        <dd>The small card shown when a group link is hovered. <b>Falls back to Custom Summary when empty</b>, so set it only when hover should differ from the list card</dd>
+                    </div>
+                </dl>
+                <h3 class="font-medium text-stone-600 mt-3 first:mt-1">List pages</h3>
+                <p class="text-xs text-stone-400">Rendered against the category itself, not a group: <code class="bg-stone-100 px-1 rounded">[property path="Name"]</code> is the category name, <code class="bg-stone-100 px-1 rounded">[meta]</code> is empty, and <code class="bg-stone-100 px-1 rounded">[mrql]</code> runs at global scope.</p>
+                <dl class="mt-1 space-y-1 text-xs">
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom List Header</dt>
+                        <dd>Above the results on group list pages filtered to exactly this category</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom MRQL Result</dt>
-                        <dd>Server-rendered template in <code class="bg-stone-100 px-1 rounded">[mrql]</code> results; Alpine directives not available</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom List Footer</dt>
+                        <dd>Below the results on the same pages, above the pager</dd>
+                    </div>
+                </dl>
+                <h3 class="font-medium text-stone-600 mt-3 first:mt-1">Query results and styling</h3>
+                <dl class="mt-1 space-y-1 text-xs">
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom MRQL Result</dt>
+                        <dd>Server-rendered template for a group of this category in <code class="bg-stone-100 px-1 rounded">[mrql]</code> results; Alpine directives are not available</dd>
+                    </div>
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom CSS</dt>
+                        <dd>CSS injected as a <code class="bg-stone-100 px-1 rounded">&lt;style&gt;</code> block on the group detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template. Styles every slot above</dd>
                     </div>
                 </dl>
             </div>
@@ -219,13 +247,17 @@
             </div>
         </div>
 
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=category.CustomHeader mode="html" description="Rendered at the top of the group detail page, above the description." shortcodes=true generate=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=category.CustomCSS mode="css" description="Injected as a <style> block on the group detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template." shortcodes=true generate=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=category.CustomSidebar mode="html" description="Rendered in the group detail page sidebar." shortcodes=true generate=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=category.CustomSummary mode="html" description="Rendered on group cards in list views, below the title." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=category.CustomHeader mode="html" description="Top of the group detail page, above the description." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Detail Footer" name="CustomDetailFooter" value=category.CustomDetailFooter mode="html" description="Bottom of the group detail page, below every built-in section." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=category.CustomSidebar mode="html" description="The group detail page sidebar." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=category.CustomSummary mode="html" description="On group cards in list views, below the title." shortcodes=true generate=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=category.CustomAvatar mode="html" description="Replaces the default initials avatar on group cards." shortcodes=true generate=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header" name="CustomListHeader" value=category.CustomListHeader mode="html" description="Rendered at the top of group list pages filtered to exactly this category. Processed against the category itself: [property path=&quot;Name&quot;] is the category name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Hover Card" name="CustomHoverCard" value=category.CustomHoverCard mode="html" description="The hover card shown when a group link is hovered. Falls back to Custom Summary when empty, so set it only when hover should differ from the card." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Own Entities" name="CustomOwnEntities" value=category.CustomOwnEntities mode="html" description="Replaces the body of the group detail page's Own Entities section, which otherwise lists owned notes, sub-groups and resources as card grids." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header" name="CustomListHeader" value=category.CustomListHeader mode="html" description="Top of group list pages filtered to exactly this category. Rendered against the category itself, not a group: [property path=&quot;Name&quot;] is the category name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Footer" name="CustomListFooter" value=category.CustomListFooter mode="html" description="Bottom of group list pages filtered to exactly this category, below the results. Rendered against the category itself, not a group: [property path=&quot;Name&quot;] is the category name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=category.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=category.CustomCSS mode="css" description="Injected as a &lt;style&gt; block on the group detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template. Styles every slot above." shortcodes=true generate=true %}
     </fieldset>
 
     {% include "/partials/form/templatePreviewPane.tpl" with entityType="group" previewPath="/v1/category/previewTemplate" generatePath="/v1/category/generateTemplate" categoryId=category.ID %}

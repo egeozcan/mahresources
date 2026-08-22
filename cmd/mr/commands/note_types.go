@@ -98,7 +98,8 @@ func newNoteTypeGetCmd(c *client.Client, opts *output.Options) *cobra.Command {
 }
 
 func newNoteTypeCreateCmd(c *client.Client, opts *output.Options) *cobra.Command {
-	var name, description, customHeader, customCSS, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
+	var name, description, metaSchema, sectionConfig string
+	var slots *customSlotFlags
 
 	help := helptext.Load(noteTypesHelpFS, "note_types_help/note_type_create.md")
 	cmd := &cobra.Command{
@@ -112,30 +113,13 @@ func newNoteTypeCreateCmd(c *client.Client, opts *output.Options) *cobra.Command
 			if description != "" {
 				body["Description"] = description
 			}
-			if customHeader != "" {
-				body["CustomHeader"] = customHeader
-			}
-			if customCSS != "" {
-				body["CustomCSS"] = customCSS
-			}
-			if customSidebar != "" {
-				body["CustomSidebar"] = customSidebar
-			}
-			if customSummary != "" {
-				body["CustomSummary"] = customSummary
-			}
-			if customAvatar != "" {
-				body["CustomAvatar"] = customAvatar
-			}
 			if metaSchema != "" {
 				body["MetaSchema"] = metaSchema
 			}
 			if sectionConfig != "" {
 				body["SectionConfig"] = sectionConfig
 			}
-			if customMRQLResult != "" {
-				body["CustomMRQLResult"] = customMRQLResult
-			}
+			slots.applySet(body)
 
 			var raw json.RawMessage
 			if err := c.Post("/v1/note/noteType", nil, body, &raw); err != nil {
@@ -159,21 +143,18 @@ func newNoteTypeCreateCmd(c *client.Client, opts *output.Options) *cobra.Command
 	cmd.Flags().StringVar(&name, "name", "", "Note type name (required)")
 	cmd.MarkFlagRequired("name")
 	cmd.Flags().StringVar(&description, "description", "", "Note type description")
-	cmd.Flags().StringVar(&customHeader, "custom-header", "", "Custom header HTML")
-	cmd.Flags().StringVar(&customCSS, "custom-css", "", "Custom CSS injected as a <style> block on detail/list pages")
-	cmd.Flags().StringVar(&customSidebar, "custom-sidebar", "", "Custom sidebar HTML")
-	cmd.Flags().StringVar(&customSummary, "custom-summary", "", "Custom summary HTML")
-	cmd.Flags().StringVar(&customAvatar, "custom-avatar", "", "Custom avatar HTML")
 	cmd.Flags().StringVar(&metaSchema, "meta-schema", "", "JSON Schema defining the metadata structure for notes of this type")
 	cmd.Flags().StringVar(&sectionConfig, "section-config", "", "JSON controlling which sections are visible on note detail pages")
-	cmd.Flags().StringVar(&customMRQLResult, "custom-mrql-result", "", "Pongo2 template for rendering notes of this type in MRQL results")
+
+	slots = registerCustomSlotFlags(cmd, "note")
 
 	return cmd
 }
 
 func newNoteTypeEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var id uint
-	var name, description, customHeader, customCSS, customSidebar, customSummary, customAvatar, metaSchema, sectionConfig, customMRQLResult string
+	var name, description, metaSchema, sectionConfig string
+	var slots *customSlotFlags
 
 	help := helptext.Load(noteTypesHelpFS, "note_types_help/note_type_edit.md")
 	cmd := &cobra.Command{
@@ -190,30 +171,13 @@ func newNoteTypeEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 			if cmd.Flags().Changed("description") {
 				body["Description"] = description
 			}
-			if cmd.Flags().Changed("custom-header") {
-				body["CustomHeader"] = customHeader
-			}
-			if cmd.Flags().Changed("custom-css") {
-				body["CustomCSS"] = customCSS
-			}
-			if cmd.Flags().Changed("custom-sidebar") {
-				body["CustomSidebar"] = customSidebar
-			}
-			if cmd.Flags().Changed("custom-summary") {
-				body["CustomSummary"] = customSummary
-			}
-			if cmd.Flags().Changed("custom-avatar") {
-				body["CustomAvatar"] = customAvatar
-			}
 			if cmd.Flags().Changed("meta-schema") {
 				body["MetaSchema"] = metaSchema
 			}
 			if cmd.Flags().Changed("section-config") {
 				body["SectionConfig"] = sectionConfig
 			}
-			if cmd.Flags().Changed("custom-mrql-result") {
-				body["CustomMRQLResult"] = customMRQLResult
-			}
+			slots.applyChangedAny(body)
 
 			var raw json.RawMessage
 			if err := c.Post("/v1/note/noteType/edit", nil, body, &raw); err != nil {
@@ -233,14 +197,10 @@ func newNoteTypeEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	cmd.MarkFlagRequired("id")
 	cmd.Flags().StringVar(&name, "name", "", "Note type name")
 	cmd.Flags().StringVar(&description, "description", "", "Note type description")
-	cmd.Flags().StringVar(&customHeader, "custom-header", "", "Custom header HTML")
-	cmd.Flags().StringVar(&customCSS, "custom-css", "", "Custom CSS injected as a <style> block on detail/list pages")
-	cmd.Flags().StringVar(&customSidebar, "custom-sidebar", "", "Custom sidebar HTML")
-	cmd.Flags().StringVar(&customSummary, "custom-summary", "", "Custom summary HTML")
-	cmd.Flags().StringVar(&customAvatar, "custom-avatar", "", "Custom avatar HTML")
 	cmd.Flags().StringVar(&metaSchema, "meta-schema", "", "JSON Schema defining the metadata structure for notes of this type")
 	cmd.Flags().StringVar(&sectionConfig, "section-config", "", "JSON controlling which sections are visible on note detail pages")
-	cmd.Flags().StringVar(&customMRQLResult, "custom-mrql-result", "", "Pongo2 template for rendering notes of this type in MRQL results")
+
+	slots = registerCustomSlotFlags(cmd, "note")
 
 	return cmd
 }

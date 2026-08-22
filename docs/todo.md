@@ -1,3 +1,113 @@
+# Seven new category template slots (2026-08-22)
+
+The tree had seven `Custom*` slots. This adds seven more names across the three
+carriers — thirteen model fields — and rewrites the reference documentation that
+sits beside them on the create forms.
+
+## What is being added
+
+| Slot | Category | ResourceCategory | NoteType | Surface |
+|---|---|---|---|---|
+| `CustomDetailFooter` | yes | yes | yes | Bottom of the detail page body, above the `*_detail_after` plugin slot. Entity-bound. |
+| `CustomListFooter` | yes | yes | yes | Bottom of a list page filtered to exactly one carrier. **Carrier-bound**, same rule as `CustomListHeader`. |
+| `CustomHoverCard` | yes | yes | yes | The hover card body. Falls back to `CustomSummary` when unset, so no existing hover card changes. |
+| `CustomOwnEntities` | yes | — | — | Replaces the body of the group detail "Own Entities" section when set. |
+| `CustomPreview` | — | yes | — | Above the sidebar preview image on resource detail (PDF/3D/audio embeds). |
+| `CustomLightbox` | — | yes | — | The lightbox details panel. Falls back to `CustomSidebar` when unset. |
+| `CustomCell` | — | yes | — | An extra trailing `<td>` in the resources details table. |
+
+Decisions taken with the user: the three carrier-agnostic slots mirror to
+NoteType so the carriers stay symmetric; `CustomCell` is ResourceCategory-only
+because no group or note table view exists to render it.
+
+## Correction to the survey that produced this list
+
+"The alternate list views render zero `Custom*`" was wrong — a per-file grep
+missed the includes. `listGroupsText.tpl:15` and `listResourcesSimple.tpl:29`
+include the card partials, and the timeline views fetch `/{entities}.body`,
+which is the same server-rendered card markup. The genuine gaps were the
+resources details table (hence `CustomCell`) and a real bug: the three timeline
+templates never emit `custom_css`, so their cards render custom summaries
+unstyled.
+
+## Tasks
+
+- [x] Fix the `custom_css` gap on `list{Resources,Groups,Notes}Timeline.tpl`
+- [x] Model fields + doc comments on the three carriers
+- [x] `query_models` Creator structs
+- [x] `crud_factories.go` build/edit copies
+- [x] `{category,resource_category,note}_context.go` create + update
+- [x] `plugin_db_adapter.go` read/create/update maps
+- [x] `archive/manifest.go` + `groupio` export/import
+- [x] `handler_factory.go` / `note_api_handlers.go` partial-update preservation
+- [x] Render sites in the templates
+- [x] `processShortcodesForJSON` for the client-rendered slots
+- [x] Carrier-slot plumbing for `CustomListFooter` (context providers, lazy handler, shortcode_tag)
+- [x] NL generation: `slotRoleLine`, bundle + allowed slot sets
+- [x] Template preview machinery
+- [x] Frontend: `templateBundle.js`, `templatePreview.js`, bundle tools panel
+- [x] `mr` CLI flags + `*_help/*.md`
+- [x] Create-form editor includes
+- [x] **Rewrite the reference panel documentation** on all three create forms
+- [x] docs-site `custom-templates.md`, category-designer skill reference, OpenAPI
+- [x] Tests: Go unit, E2E, Postgres
+
+## Review
+
+All fourteen slot names now exist across the three carriers (thirteen new model
+fields), every one of them wired from the model through save, export, CLI, the
+edit form, the natural-language generator, the live preview and a render site.
+
+**Four things worth remembering, each of which was a defect first or nearly one.**
+
+*The survey that produced the slot list was partly wrong.* "The alternate list
+views render zero `Custom*`" came from a per-file grep that missed the `include`
+statements; `listGroupsText.tpl` and `listResourcesSimple.tpl` pull in the card
+partials, and the timeline views fetch `/{entities}.body`, which is that same
+markup. What was actually uncovered was the resources details table, hence
+`CustomCell` being resource-only rather than a third inert field on two carriers.
+
+*The `.body` fragment dropped its own stylesheet.* `bodyOnly.tpl` rendered only
+the body block, so the timeline preview grid injected cards whose
+`CustomSummary` markup had no `custom_css` to match, on a page that renders no
+cards itself and therefore carries none in its head. Fixed at the layout, not at
+the three timeline pages: a page-level `custom_css` there would have been inert.
+The bulk-refresh path reads the same fragment but lifts only
+`[data-list-container]` out of it, so the added `<style>` is neither morphed in
+nor accumulated.
+
+*`CustomOwnEntities` broke the `<details>` auto-open heuristic.* `hasOwn` decided
+both whether Own Entities opens and whether Related Entities opens in its place.
+A category that replaces the section body for a group owning nothing rendered it
+collapsed and apparently empty. Folding the slot into `hasOwn` fixes both, and
+is correct on its own terms: the slot *is* what the section will render.
+
+*`CustomCell` must not be in `processShortcodesForJSON`.* It was, briefly. The
+table processes it against the row's resource via the carrier's field; the JSON
+hook binds `mainEntity`. Two different bindings for one field is an invitation to
+render the wrong one, so it sits with `CustomListHeader`/`CustomListFooter` in
+the excluded set.
+
+**Two pre-existing defects fixed in passing:** `buildNoteType` (the generic CRUD
+writer) silently dropped `CustomMRQLResult`, and `e2e/helpers/api-client.ts` had
+a duplicate `CustomListHeader` declaration. The CLI had also fallen a slot
+behind — no carrier offered `--custom-list-header` — which is why the flags now
+come from one shared table (`cmd/mr/commands/template_slot_flags.go`) instead of
+being listed by hand three times.
+
+**Drift guards.** Six tests fail the build if a future `Custom*` field is
+half-wired: generatable (`server/api_handlers`), has a CLI flag
+(`cmd/mr/commands`), has an editor, is in both front-end slot maps, is rendered
+somewhere, and survives export/import (`internal/arch`). Each was verified to
+fail by adding a bogus field to a model.
+
+**Gates, all green:** Go unit suite; Go Postgres (`mrql` + `api_tests`); E2E
+browser + CLI on SQLite (2021 tests) and on Postgres (2022); `mr docs lint`;
+`scripts/css-scan-test.sh`; `npm run skills-gen` (no drift); OpenAPI regenerated
+and fresh. 8 new E2E tests in `e2e/tests/shortcodes/new-template-slots.spec.ts`.
+
+---
+
 # Fourth review round: the by-name lookup was not by name (2026-08-21)
 
 No majors for the third round running. One minor, and it falsifies a sentence

@@ -1703,8 +1703,8 @@
   .min-w-48 {
     min-width: calc(var(--spacing) * 48);
   }
-  .min-w-\[7rem\] {
-    min-width: 7rem;
+  .min-w-\[8\.5rem\] {
+    min-width: 8.5rem;
   }
   .min-w-\[12rem\] {
     min-width: 12rem;
@@ -3353,6 +3353,11 @@
       @supports (color: color-mix(in lab, red, red)) {
         background-color: color-mix(in oklab, var(--color-stone-900) 60%, transparent);
       }
+    }
+  }
+  .first\:mt-1 {
+    &:first-child {
+      margin-top: var(--spacing);
     }
   }
   .first\:ml-0 {

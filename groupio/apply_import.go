@@ -548,6 +548,10 @@ func (s *applyState) applySchemaDefDecisions() error {
 				cat.CustomSummary = def.CustomSummary
 				cat.CustomAvatar = def.CustomAvatar
 				cat.CustomListHeader = def.CustomListHeader
+				cat.CustomDetailFooter = def.CustomDetailFooter
+				cat.CustomListFooter = def.CustomListFooter
+				cat.CustomHoverCard = def.CustomHoverCard
+				cat.CustomOwnEntities = def.CustomOwnEntities
 				cat.CustomMRQLResult = def.CustomMRQLResult
 				cat.CustomCSS = def.CustomCSS
 				cat.MetaSchema = def.MetaSchema
@@ -627,6 +631,9 @@ func (s *applyState) applySchemaDefDecisions() error {
 				nt.CustomSummary = def.CustomSummary
 				nt.CustomAvatar = def.CustomAvatar
 				nt.CustomListHeader = def.CustomListHeader
+				nt.CustomDetailFooter = def.CustomDetailFooter
+				nt.CustomListFooter = def.CustomListFooter
+				nt.CustomHoverCard = def.CustomHoverCard
 				nt.ApplyTemplatesToShares = def.ApplyTemplatesToShares
 				nt.CustomMRQLResult = def.CustomMRQLResult
 				nt.CustomCSS = def.CustomCSS
@@ -703,10 +710,16 @@ func (s *applyState) applySchemaDefDecisions() error {
 				rc.CustomSummary = def.CustomSummary
 				rc.CustomAvatar = def.CustomAvatar
 				rc.CustomListHeader = def.CustomListHeader
+				rc.CustomDetailFooter = def.CustomDetailFooter
+				rc.CustomListFooter = def.CustomListFooter
+				rc.CustomHoverCard = def.CustomHoverCard
 				rc.CustomMRQLResult = def.CustomMRQLResult
 				rc.CustomCSS = def.CustomCSS
 				rc.MetaSchema = def.MetaSchema
 				rc.AutoDetectRules = def.AutoDetectRules
+				rc.CustomPreview = def.CustomPreview
+				rc.CustomLightbox = def.CustomLightbox
+				rc.CustomCell = def.CustomCell
 				if def.GUID != "" {
 					guid := def.GUID
 					rc.GUID = &guid

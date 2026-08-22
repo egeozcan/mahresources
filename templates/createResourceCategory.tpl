@@ -39,34 +39,70 @@
              class="text-sm text-stone-600 bg-white border border-stone-200 rounded-md p-4 space-y-3 font-sans">
             <div>
                 <h2 class="font-semibold text-stone-700">Slot Locations</h2>
+                <p class="text-xs text-stone-400 mt-1">Each slot below renders against one <b>resource</b>, so <code class="bg-stone-100 px-1 rounded">[meta]</code> and <code class="bg-stone-100 px-1 rounded">[property]</code> read that resource — except the two list slots, which render against the category itself. Leave a slot empty to keep the built-in appearance.</p>
+                <h3 class="font-medium text-stone-600 mt-3 first:mt-1">Detail page</h3>
                 <dl class="mt-1 space-y-1 text-xs">
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Header</dt>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Header</dt>
                         <dd>Top of the resource detail page, above the description</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom CSS</dt>
-                        <dd>CSS injected as a <code class="bg-stone-100 px-1 rounded">&lt;style&gt;</code> block on the resource detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Sidebar</dt>
+                        <dd>The resource detail page sidebar, and the lightbox panel unless Custom Lightbox is set</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Sidebar</dt>
-                        <dd>Resource detail page sidebar and lightbox panel</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Preview</dt>
+                        <dd>Sidebar, directly above the built-in preview image — for file types it cannot show (PDF, 3D, audio, an embed). Adds to that image rather than replacing it; the Preview Image section toggle still governs the image itself</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Summary</dt>
-                        <dd>Resource cards in list views, below the title</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Detail Footer</dt>
+                        <dd>Bottom of the resource detail page, below every built-in section</dd>
+                    </div>
+                </dl>
+                <h3 class="font-medium text-stone-600 mt-3 first:mt-1">Cards and previews</h3>
+                <dl class="mt-1 space-y-1 text-xs">
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Summary</dt>
+                        <dd>On resource cards in list views, below the title</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom Avatar</dt>
-                        <dd>Shown next to the category name on resource cards — resources keep their thumbnail (unlike groups/notes, there is no initials avatar to replace)</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Avatar</dt>
+                        <dd>Shown next to the category name on resource cards — a resource keeps its thumbnail, so there is no initials avatar to replace</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom List Header</dt>
-                        <dd>Top of resource list pages filtered to exactly this category, rendered against the category itself (<code class="bg-stone-100 px-1 rounded">[meta]</code> is empty, <code class="bg-stone-100 px-1 rounded">[mrql]</code> runs at global scope)</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Hover Card</dt>
+                        <dd>The small card shown when a resource link is hovered. <b>Falls back to Custom Summary when empty</b>, so set it only when hover should differ from the list card</dd>
                     </div>
                     <div class="flex gap-2">
-                        <dt class="font-medium text-stone-700 min-w-[7rem]">Custom MRQL Result</dt>
-                        <dd>Server-rendered template in <code class="bg-stone-100 px-1 rounded">[mrql]</code> results; Alpine directives not available</dd>
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Lightbox</dt>
+                        <dd>The lightbox details panel, which is dark and narrow. <b>Falls back to Custom Sidebar when empty</b></dd>
+                    </div>
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom Table Cell</dt>
+                        <dd>One extra cell per row in the resources details table, added only when the list is filtered to exactly this category. Output the cell body, not a <code class="bg-stone-100 px-1 rounded">&lt;td&gt;</code></dd>
+                    </div>
+                </dl>
+                <h3 class="font-medium text-stone-600 mt-3 first:mt-1">List pages</h3>
+                <p class="text-xs text-stone-400">Rendered against the category itself, not a resource: <code class="bg-stone-100 px-1 rounded">[property path="Name"]</code> is the category name, <code class="bg-stone-100 px-1 rounded">[meta]</code> is empty, and <code class="bg-stone-100 px-1 rounded">[mrql]</code> runs at global scope.</p>
+                <dl class="mt-1 space-y-1 text-xs">
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom List Header</dt>
+                        <dd>Above the results on resource list pages filtered to exactly this category</dd>
+                    </div>
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom List Footer</dt>
+                        <dd>Below the results on the same pages, above the pager</dd>
+                    </div>
+                </dl>
+                <h3 class="font-medium text-stone-600 mt-3 first:mt-1">Query results and styling</h3>
+                <dl class="mt-1 space-y-1 text-xs">
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom MRQL Result</dt>
+                        <dd>Server-rendered template for a resource of this category in <code class="bg-stone-100 px-1 rounded">[mrql]</code> results; Alpine directives are not available</dd>
+                    </div>
+                    <div class="flex gap-2">
+                        <dt class="font-medium text-stone-700 min-w-[8.5rem]">Custom CSS</dt>
+                        <dd>CSS injected as a <code class="bg-stone-100 px-1 rounded">&lt;style&gt;</code> block on the resource detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template. Styles every slot above</dd>
                     </div>
                 </dl>
             </div>
@@ -214,13 +250,19 @@
             </div>
         </div>
 
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=resourceCategory.CustomHeader mode="html" description="Rendered at the top of the resource detail page, above the description." shortcodes=true generate=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=resourceCategory.CustomCSS mode="css" description="Injected as a <style> block on the resource detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template." shortcodes=true generate=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=resourceCategory.CustomSidebar mode="html" description="Rendered in the resource detail page sidebar and lightbox panel." shortcodes=true generate=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=resourceCategory.CustomSummary mode="html" description="Rendered on resource cards in list views, below the title." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Header" name="CustomHeader" value=resourceCategory.CustomHeader mode="html" description="Top of the resource detail page, above the description." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Detail Footer" name="CustomDetailFooter" value=resourceCategory.CustomDetailFooter mode="html" description="Bottom of the resource detail page, below every built-in section." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Sidebar" name="CustomSidebar" value=resourceCategory.CustomSidebar mode="html" description="The resource detail page sidebar. Also the lightbox panel, unless Custom Lightbox is set." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Preview" name="CustomPreview" value=resourceCategory.CustomPreview mode="html" description="Sidebar, directly above the built-in preview image — for file types it cannot show (PDF, 3D, audio, an embed). It adds to the preview image rather than replacing it." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Lightbox" name="CustomLightbox" value=resourceCategory.CustomLightbox mode="html" description="The lightbox details panel, which is dark and narrow. Falls back to Custom Sidebar when empty." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Summary" name="CustomSummary" value=resourceCategory.CustomSummary mode="html" description="On resource cards in list views, below the title." shortcodes=true generate=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Avatar" name="CustomAvatar" value=resourceCategory.CustomAvatar mode="html" description="Shown next to the category name on resource cards. Resources keep their thumbnail — there is no initials avatar to replace." shortcodes=true generate=true %}
-        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header" name="CustomListHeader" value=resourceCategory.CustomListHeader mode="html" description="Rendered at the top of resource list pages filtered to exactly this category. Processed against the category itself: [property path=&quot;Name&quot;] is the category name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Hover Card" name="CustomHoverCard" value=resourceCategory.CustomHoverCard mode="html" description="The hover card shown when a resource link is hovered. Falls back to Custom Summary when empty, so set it only when hover should differ from the card." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom Table Cell" name="CustomCell" value=resourceCategory.CustomCell mode="html" description="One extra cell per row in the resources details table, and only when the list is filtered to exactly this category. Output the cell body, not a &lt;td&gt;." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Header" name="CustomListHeader" value=resourceCategory.CustomListHeader mode="html" description="Top of resource list pages filtered to exactly this category. Rendered against the category itself, not a resource: [property path=&quot;Name&quot;] is the category name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom List Footer" name="CustomListFooter" value=resourceCategory.CustomListFooter mode="html" description="Bottom of resource list pages filtered to exactly this category, below the results. Rendered against the category itself, not a resource: [property path=&quot;Name&quot;] is the category name, [meta] is empty, and [mrql] runs at global scope." shortcodes=true generate=true %}
         {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom MRQL Result" name="CustomMRQLResult" value=resourceCategory.CustomMRQLResult mode="html" description="Server-rendered in [mrql] results. Shortcodes work; Alpine directives do not." shortcodes=true generate=true %}
+        {% include "/partials/form/createFormCodeEditorInput.tpl" with title="Custom CSS" name="CustomCSS" value=resourceCategory.CustomCSS mode="css" description="Injected as a &lt;style&gt; block on the resource detail page, its list pages, and MRQL result cards that use a Custom MRQL Result template. Styles every slot above." shortcodes=true generate=true %}
     </fieldset>
 
     {% include "/partials/form/templatePreviewPane.tpl" with entityType="resource" previewPath="/v1/resourceCategory/previewTemplate" generatePath="/v1/resourceCategory/generateTemplate" categoryId=resourceCategory.ID %}

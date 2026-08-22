@@ -19,6 +19,7 @@
         {% endfor %}
     </section>
     {% plugin_slot "resource_list_after" %}
+    {% include "/partials/customListFooter.tpl" %}
 {% endblock %}
 
 {% block sidebar %}

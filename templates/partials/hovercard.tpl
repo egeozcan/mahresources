@@ -24,9 +24,10 @@
     </div>
 
     <div class="hovercard-summary mt-2 text-sm text-stone-700">
-        {% if hoverType == "group" %}{% process_shortcodes hoverEntity.Category.CustomSummary hoverEntity %}{% endif %}
-        {% if hoverType == "note" %}{% process_shortcodes hoverEntity.NoteType.CustomSummary hoverEntity %}{% endif %}
-        {% if hoverType == "resource" %}{% process_shortcodes hoverEntity.ResourceCategory.CustomSummary hoverEntity %}{% endif %}
+        {# CustomHoverCard wins when set, otherwise the list card CustomSummary renders, so a carrier that never opts in keeps the hover card it had. #}
+        {% if hoverType == "group" %}{% if hoverEntity.Category.CustomHoverCard %}{% process_shortcodes hoverEntity.Category.CustomHoverCard hoverEntity %}{% else %}{% process_shortcodes hoverEntity.Category.CustomSummary hoverEntity %}{% endif %}{% endif %}
+        {% if hoverType == "note" %}{% if hoverEntity.NoteType.CustomHoverCard %}{% process_shortcodes hoverEntity.NoteType.CustomHoverCard hoverEntity %}{% else %}{% process_shortcodes hoverEntity.NoteType.CustomSummary hoverEntity %}{% endif %}{% endif %}
+        {% if hoverType == "resource" %}{% if hoverEntity.ResourceCategory.CustomHoverCard %}{% process_shortcodes hoverEntity.ResourceCategory.CustomHoverCard hoverEntity %}{% else %}{% process_shortcodes hoverEntity.ResourceCategory.CustomSummary hoverEntity %}{% endif %}{% endif %}
     </div>
 
     {% if hoverEntity.Description %}
