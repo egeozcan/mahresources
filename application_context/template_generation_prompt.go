@@ -111,9 +111,9 @@ func slotRoleLine(slot, entityType string) string {
 	case "CustomOwnEntities":
 		return "CustomOwnEntities replaces the body of the group detail page's \"Own Entities\" section, which otherwise lists owned notes, sub-groups and resources as card grids. An [mrql] table of the group's children is the usual reason to set it."
 	case "CustomListHeader":
-		return "CustomListHeader renders once at the top of the category's LIST page, against the category itself: [meta] and [property] have no entity here, and [mrql] runs at global scope."
+		return "CustomListHeader renders once at the top of the category's LIST page, against the category itself: [property path=\"Name\"] is the category's own name, [meta] renders its empty state because a category carries no Meta, and [mrql] runs at global scope."
 	case "CustomListFooter":
-		return "CustomListFooter renders once at the bottom of the category's LIST page, below the results, against the category itself — same binding as CustomListHeader: [meta] and [property] have no entity here, and [mrql] runs at global scope."
+		return "CustomListFooter renders once at the bottom of the category's LIST page, below the results, against the category itself — same binding as CustomListHeader: [property path=\"Name\"] is the category's own name, [meta] renders its empty state, and [mrql] runs at global scope."
 	case "CustomMRQLResult":
 		return "CustomMRQLResult renders once per item in MRQL result cards; Alpine directives are unavailable, so keep it self-contained HTML plus shortcodes."
 	case "CustomCSS":

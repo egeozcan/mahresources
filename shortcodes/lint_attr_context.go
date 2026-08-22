@@ -36,6 +36,9 @@ type attrContext struct {
 	// inName marks an occurrence in a tag or attribute NAME, where nothing
 	// delimits the value at all.
 	inName bool
+	// rawTextElement names the script- or style-like element whose body the
+	// occurrence sits in, where escaping buys nothing at all.
+	rawTextElement string
 	// unterminated marks an occurrence inside a tag that is never closed, which
 	// the tokenizer cannot place. Treated as unsafe rather than as "not in an
 	// attribute", so a broken template fails closed.
@@ -79,6 +82,7 @@ func attributeContextsFor(input string, spans []inlineMetaSpan) map[int]attrCont
 
 	substituted := b.String()
 	z := html.NewTokenizer(strings.NewReader(substituted))
+	var openRawText string
 tokenize:
 	for {
 		switch z.Next() {
@@ -88,6 +92,24 @@ tokenize:
 			for _, hit := range sentinelsInTag(string(z.Raw())) {
 				if hit.index >= 0 && hit.index < len(spans) {
 					out[spans[hit.index].start] = hit.ctx
+				}
+			}
+			name, _ := z.TagName()
+			openRawText = ""
+			if scriptLikeElements[string(name)] {
+				openRawText = string(name)
+			}
+		case html.EndTagToken:
+			openRawText = ""
+		case html.TextToken:
+			// A script or style body is where escaping helps least, not most:
+			// the parser decodes no entities there, so the value lands in
+			// JavaScript or CSS exactly as written.
+			if openRawText != "" {
+				for _, idx := range sentinelIndexes(string(z.Raw())) {
+					if idx.index >= 0 && idx.index < len(spans) {
+						out[spans[idx.index].start] = attrContext{rawTextElement: openRawText}
+					}
 				}
 			}
 		}
@@ -287,6 +309,9 @@ func unsafeAttributeContexts(ctx attrContext, raw bool) []string {
 	if ctx.unterminated {
 		return []string{`[meta inline] is inside a tag that is never closed, so where it lands cannot be determined. Close the tag; until then treat the value as unsafe.`}
 	}
+	if ctx.rawTextElement != "" {
+		return []string{`[meta inline] sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + scriptLikeLanguage[ctx.rawTextElement] + ` exactly as written. Escaping stops nothing here — a "${...}" in a template literal or a ";" in a declaration is not escaped at all. Pass the value in through a data- attribute instead.`}
+	}
 	if ctx.inName {
 		return []string{`[meta inline] is interpolated into a tag or attribute NAME, which nothing delimits: a value containing a space or "=" simply adds attributes of its own, and escaping does not touch either character. Build the name in the template instead.`}
 	}
@@ -395,8 +420,9 @@ func expressionAttributeKind(attr string) string {
 	if len(attr) > 2 && strings.HasPrefix(attr, "on") {
 		return "event handler"
 	}
-	// x-on:click / x-bind:href / x-init / x-text / x-show / ...
-	if strings.HasPrefix(attr, "x-") {
+	// x-on:click / x-bind:href / x-init / x-text / x-show / ... but not the
+	// handful whose value Alpine reads as a literal rather than evaluating.
+	if strings.HasPrefix(attr, "x-") && !inertAlpineDirectives[attr] {
 		return "Alpine directive"
 	}
 	// @click and :href are the shorthands for x-on: and x-bind:. Only a leading
@@ -405,4 +431,19 @@ func expressionAttributeKind(attr string) string {
 		return "Alpine directive"
 	}
 	return ""
+}
+
+// scriptLikeElements have bodies in which the parser decodes no entities, so
+// escaping a value placed there accomplishes nothing. textarea and title are
+// deliberately absent: their bodies are RCDATA, where entities *are* decoded, so
+// escaping works exactly as it does in an attribute.
+var scriptLikeElements = map[string]bool{"script": true, "style": true}
+
+var scriptLikeLanguage = map[string]string{"script": "JavaScript", "style": "CSS"}
+
+// inertAlpineDirectives take a literal value rather than an expression, so
+// interpolating into one is no more dangerous than any other text attribute.
+var inertAlpineDirectives = map[string]bool{
+	"x-ref": true, "x-cloak": true, "x-ignore": true, "x-transition": true,
+	"x-teleport": true, "x-id": true,
 }

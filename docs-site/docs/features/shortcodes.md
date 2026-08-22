@@ -130,6 +130,10 @@ That guarantee stops where the browser re-parses the value. Escaping covers `&`,
 | `<div style="color:[meta path='u' inline='true']">` | CSS injection; escaping does not apply to CSS syntax |
 | `<iframe srcdoc="… [meta path='u' inline='true']">` | The browser decodes `srcdoc` and parses it as a document, so escaping buys nothing anywhere in the value |
 | anything with `raw="true"` | Nothing is escaped at all, so the value can close the attribute and add its own |
+| `<script>… [meta path='u' inline='true'] …</script>` | A script body decodes no entities, so the value reaches JavaScript verbatim — `${…}` in a template literal is not escaped at all. Pass it in through a `data-` attribute instead |
+| `<style>… [meta path='u' inline='true'] …</style>` | Likewise for CSS: `;` and `}` are untouched |
+| `<div @click="f('[meta path='u' inline='true']')">` | Alpine evaluates a directive's value as JavaScript after the parser has decoded the escaping, exactly as `on*` does. `x-*`, `@*` and a leading `:` are all directives |
+| `<div data-[meta path='u' inline='true']="x">` | Interpolating a *name* — nothing delimits it, so a space or `=` in the value adds attributes |
 
 This matters because the two halves have different authors: an admin or editor writes the template, but the Meta value it interpolates is written by anyone who can edit the entity -- which includes the plain `user` role.
 

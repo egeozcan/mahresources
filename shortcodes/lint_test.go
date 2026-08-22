@@ -713,3 +713,57 @@ func TestLintAttributeContextRoundSix(t *testing.T) {
 		}
 	})
 }
+
+// Round-7 findings. The script-body case inverts the intuition the earlier
+// rounds built: a raw-text body is where escaping helps *least*, because the
+// parser decodes no entities there at all.
+func TestLintAttributeContextRoundSeven(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("a script body reaches JavaScript verbatim", func(t *testing.T) {
+		// A template literal makes this concrete: "${...}" contains not one
+		// character html.EscapeString touches.
+		src := "<script>const label = `[meta path=\"label\" inline=\"true\"]`;</script>"
+		if !warns(src, "<script> body") {
+			t.Error("an inline value in a script body must warn")
+		}
+	})
+
+	t.Run("a style body reaches CSS verbatim", func(t *testing.T) {
+		src := `<style>.card{color:[meta path="colour" inline="true"]}</style>`
+		if !warns(src, "<style> body") {
+			t.Error("an inline value in a style body must warn")
+		}
+	})
+
+	t.Run("textarea and title decode entities, so escaping works there", func(t *testing.T) {
+		for _, src := range []string{
+			`<textarea>[meta path="x" inline="true"]</textarea>`,
+			`<title>[meta path="x" inline="true"]</title>`,
+		} {
+			if warns(src, "body") {
+				t.Errorf("RCDATA body is safe, should be quiet: %s", src)
+			}
+		}
+	})
+
+	t.Run("Alpine directives that take a literal are not expressions", func(t *testing.T) {
+		for _, attr := range []string{"x-ref", "x-cloak", "x-ignore", "x-teleport"} {
+			src := `<div ` + attr + `="[meta path='k' inline='true']"></div>`
+			if warns(src, "Alpine directive") {
+				t.Errorf("%s takes a literal, not an expression: %s", attr, src)
+			}
+		}
+		// The evaluating ones still warn.
+		if !warns(`<div x-text="[meta path='k' inline='true']"></div>`, "Alpine directive") {
+			t.Error("x-text evaluates its value")
+		}
+	})
+}
