@@ -257,6 +257,76 @@ func TestPreviewTemplate_CSSPlacementIssues(t *testing.T) {
 			t.Fatalf("expected the css buffer's placement issue alone, got %d: %+v", n, resp.Issues)
 		}
 	})
+
+	// An older client with the CustomCSS slot selected names no slot and sends
+	// one buffer as both content and css. Nothing else sends the same string
+	// twice, so it is one document: linting it twice would report every
+	// mode-independent issue twice, and judging it as markup would lose the
+	// placement warning entirely.
+	t.Run("an unnamed slot sending one buffer twice is one CSS document", func(t *testing.T) {
+		tc := SetupTestEnv(t)
+		g := &models.Group{Name: "Legacy CSS Client Group"}
+		if err := tc.DB.Create(g).Error; err != nil {
+			t.Fatalf("create group: %v", err)
+		}
+
+		// [meta] with no path is an error whatever the mode, so it counts the
+		// passes; the placement warning counts the mode.
+		const buffer = `.badge{color:[meta inline="true"]}`
+		rr := tc.MakeRequest(http.MethodPost, "/v1/category/previewTemplate", map[string]any{
+			"entityId": g.ID,
+			"content":  buffer,
+			"css":      buffer,
+		})
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (body: %s)", rr.Code, rr.Body.String())
+		}
+		var resp previewResponse
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 1 {
+			t.Fatalf("expected one CSS-placement issue, got %d: %+v", n, resp.Issues)
+		}
+		if n := countPreviewIssues(resp.Issues, `required attribute "path"`); n != 1 {
+			t.Fatalf("one buffer must be linted once, got %d copies of the mode-independent issue: %+v", n, resp.Issues)
+		}
+	})
+
+	// The converse, and the reason the dedupe may not be plain text equality:
+	// with a markup slot selected the two buffers are two documents even when
+	// they read the same, and the passes are entitled to disagree.
+	t.Run("a markup slot and an identical css buffer are two documents", func(t *testing.T) {
+		tc := SetupTestEnv(t)
+		g := &models.Group{Name: "Identical Buffers Group"}
+		if err := tc.DB.Create(g).Error; err != nil {
+			t.Fatalf("create group: %v", err)
+		}
+
+		const buffer = `.badge{color:[meta inline="true"]}`
+		rr := tc.MakeRequest(http.MethodPost, "/v1/category/previewTemplate", map[string]any{
+			"entityId": g.ID,
+			"slot":     "CustomHeader",
+			"content":  buffer,
+			"css":      buffer,
+		})
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (body: %s)", rr.Code, rr.Body.String())
+		}
+		var resp previewResponse
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		// Only the css pass runs in CSS mode...
+		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 1 {
+			t.Fatalf("expected the css buffer's placement issue alone, got %d: %+v", n, resp.Issues)
+		}
+		// ...but both documents are linted, so a blanket equality dedupe would
+		// silently drop the header's own diagnostics.
+		if n := countPreviewIssues(resp.Issues, `required attribute "path"`); n != 2 {
+			t.Fatalf("two documents must each be linted, got %d: %+v", n, resp.Issues)
+		}
+	})
 }
 
 // TestPreviewTemplate_RoleMatrix verifies the preview endpoints are gated at the

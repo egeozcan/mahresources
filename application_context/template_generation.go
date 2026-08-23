@@ -152,7 +152,7 @@ func finishSingle(in TemplateGenerationInput, target, raw string) (*TemplateGene
 		return nil, fmt.Errorf("%w: provider returned an invalid draft shape", ErrTemplateGenerationProvider)
 	}
 
-	issues := validateTemplateContent(target, in, content, strings.EqualFold(in.Mode, "css"))
+	issues := validateTemplateContent(target, in, content, singleSlotIsCSS(in))
 	return &TemplateGenerationResult{
 		Target:      target,
 		Content:     content,
@@ -224,6 +224,19 @@ func finishBundle(in TemplateGenerationInput, raw string) (*TemplateGenerationRe
 	}
 	result.Valid = !hasErrorIssue(result.Issues)
 	return result, nil
+}
+
+// singleSlotIsCSS reports whether a slot-target draft is a stylesheet.
+//
+// The slot name is the authoritative half and the only one the handler
+// validates (templateGenerateSlotAllowed): a CustomCSS draft is CSS however the
+// request labelled its mode, so a client that names the slot and mislabels — or
+// omits — the mode still gets the placement warnings. Mode remains a signal in
+// its own right rather than a tiebreak, for a caller that names no slot at all;
+// the disagreement it can produce costs nothing, because every CSS-placement
+// issue is a warning and warnings do not invalidate a draft.
+func singleSlotIsCSS(in TemplateGenerationInput) bool {
+	return in.Slot == "CustomCSS" || strings.EqualFold(in.Mode, "css")
 }
 
 // validateTemplateContent lints slot/bundle content as shortcodes and validates

@@ -242,25 +242,40 @@ func countIssuesContaining(issues []shortcodes.LintIssue, want string) int {
 // of its own, so nothing in its text says so and the caller has to say it;
 // without that the draft is reported clean while the editor gutter warns on the
 // identical buffer.
+// It takes either signal on its own. The slot name is the half the handler
+// validates, so a client that names CustomCSS and mislabels the mode still gets
+// the warning; a client that names no slot is taken at its word about the mode.
 func TestTemplateGeneratorCSSSlotIsLintedAsAStylesheet(t *testing.T) {
-	in := slotInput()
-	in.Mode = "css"
-	in.Slot = "CustomCSS"
-	provider := &fakeTemplateDraftProvider{
-		response: `{"content":".badge{color:[meta path=\"colour\" inline=\"true\"]}","explanation":"Colours the badge."}`,
+	cases := map[string]struct{ mode, slot string }{
+		"both signals agree":     {mode: "css", slot: "CustomCSS"},
+		"slot alone":             {mode: "html", slot: "CustomCSS"},
+		"slot alone, no mode":    {mode: "", slot: "CustomCSS"},
+		"mode alone, no slot":    {mode: "css", slot: ""},
+		"mode alone, mixed case": {mode: "CSS", slot: ""},
 	}
-	gen := NewTemplateGenerator(provider, templateGenConfig())
 
-	got, err := gen.GenerateTemplate(context.Background(), in, "colour the badge from meta")
-	if err != nil {
-		t.Fatalf("GenerateTemplate: %v", err)
-	}
-	if n := countIssuesContaining(got.Issues, "CSS slot"); n != 1 {
-		t.Fatalf("expected exactly one CSS-placement issue, got %d: %#v", n, got.Issues)
-	}
-	// Placement is a warning, not an error — the draft stays applicable.
-	if !got.Valid {
-		t.Errorf("a placement warning must not invalidate the draft: %#v", got.Issues)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			in := slotInput()
+			in.Mode = tc.mode
+			in.Slot = tc.slot
+			provider := &fakeTemplateDraftProvider{
+				response: `{"content":".badge{color:[meta path=\"colour\" inline=\"true\"]}","explanation":"Colours the badge."}`,
+			}
+			gen := NewTemplateGenerator(provider, templateGenConfig())
+
+			got, err := gen.GenerateTemplate(context.Background(), in, "colour the badge from meta")
+			if err != nil {
+				t.Fatalf("GenerateTemplate: %v", err)
+			}
+			if n := countIssuesContaining(got.Issues, "CSS slot"); n != 1 {
+				t.Fatalf("expected exactly one CSS-placement issue, got %d: %#v", n, got.Issues)
+			}
+			// Placement is a warning, not an error — the draft stays applicable.
+			if !got.Valid {
+				t.Errorf("a placement warning must not invalidate the draft: %#v", got.Issues)
+			}
+		})
 	}
 }
 

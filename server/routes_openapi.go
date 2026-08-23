@@ -2232,6 +2232,11 @@ Request body fields:
   - entityId   (integer, required unless carrier) — the entity to render against
   - content    (string) — the template slot markup to render
   - css        (string) — CustomCSS to process alongside
+  - slot       (string) — which Custom* field content came from. It decides how
+    content is linted: "CustomCSS" is a stylesheet, which carries no <style>
+    wrapper of its own to say so, and is then the same document as css rather
+    than a second one. Omitting it judges content as markup, except that one
+    buffer sent as both content and css is read as the CustomCSS slot.
   - categoryId (integer) — the category being edited (for a mismatch warning;
     required when carrier is set)
   - carrier    (boolean) — render against the category/type itself rather than a

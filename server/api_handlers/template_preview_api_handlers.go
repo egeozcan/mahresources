@@ -124,17 +124,17 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 			// reading the editor gutter or the preview.
 			PartialExists: partialExistsFn(ctx),
 		}
-		contentIsCSS := req.Slot == "CustomCSS"
+		contentIsCSS := previewContentIsCSS(req)
 		lintOpts.CSSMode = contentIsCSS
 		issues := shortcodes.Lint(req.Content, lintOpts)
 		// The css buffer is a second document and needs its own pass, judged as
-		// a stylesheet whatever slot is selected. Skip it only when it is the
-		// very same lint — the CustomCSS slot is sent as both Content and CSS,
-		// and linting both would print every issue twice. Equal text alone is
-		// not enough to skip: under any other slot the two passes run in
-		// different modes and legitimately disagree. Offsets on the appended
-		// issues index the css buffer, not Content; the pane renders severity
-		// and message only.
+		// a stylesheet whatever slot is selected — unless it is the document
+		// just linted, in which case linting it again would print every issue
+		// twice. Equal text alone is not enough to skip: with a markup slot
+		// selected the two passes run in different modes and are entitled to
+		// disagree, so both must run. Offsets on the appended issues index the
+		// css buffer rather than Content; the pane renders severity and message
+		// only.
 		if req.CSS != "" && !(contentIsCSS && req.CSS == req.Content) {
 			lintOpts.CSSMode = true
 			issues = append(issues, shortcodes.Lint(req.CSS, lintOpts)...)
@@ -159,6 +159,23 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		writer.Header().Set("Content-Type", constants.JSON)
 		_ = json.NewEncoder(writer).Encode(templatePreviewResponse{HTML: html, CSS: css, Entity: entityJSON, Issues: issues})
 	}
+}
+
+// previewContentIsCSS reports whether Content is the CustomCSS buffer rather
+// than markup, which decides both how Content is linted and whether the css
+// buffer is a second document or the same one.
+//
+// The slot says so outright. A client that names none is older than the field,
+// and there one buffer arriving as both Content and CSS is the tell: that is
+// what the editor sends with the CustomCSS slot selected, and nothing else
+// sends the same string twice. Reading it as one CSS document is what keeps
+// such a client from being told every mode-independent issue twice — and gets
+// it the placement warnings it could not ask for.
+func previewContentIsCSS(req templatePreviewRequest) bool {
+	if req.Slot != "" {
+		return req.Slot == "CustomCSS"
+	}
+	return req.CSS != "" && req.CSS == req.Content
 }
 
 // loadPreviewEntity fetches the carrier entity with its category relation
