@@ -25,6 +25,14 @@ import (
 // already-delimited tag a byte offset falls in, and whether that attribute was
 // quoted — is a bounded scan over a single tag's source with no nesting and no
 // escapes to resolve, and that part was never the problem.
+//
+// The tokenizer is not a parser, and in two places its reading is not a
+// browser's: it raw-texts ten element names wherever they appear, while a
+// browser only does so in the HTML namespace, and it raw-texts <noscript>
+// whatever the scripting mode. Both are handled by reading the region the
+// tokenizer handed back as one text token again, as markup, in scanMarkup —
+// rather than by moving off the tokenizer, which would cost the byte offsets
+// every diagnostic here is anchored to.
 
 // bareValueSpan is one bare-value shortcode occurrence in the template source.
 type bareValueSpan struct{ start, end int }
@@ -44,6 +52,15 @@ type attrContext struct {
 	// occurrence sits in, where escaping contains the value without making the
 	// placement safe.
 	rawTextElement string
+	// foreignRoot names the <svg> or <math> that rawTextElement sits inside, or
+	// "" for the HTML namespace. It inverts the rationale rather than adding to
+	// it: foreign content DOES decode entities, so there the escaping is undone
+	// before the language sees the value instead of arriving intact.
+	foreignRoot string
+	// noscript marks an occurrence inside a <noscript> body, which is markup
+	// only when scripting is disabled. Nothing there can execute under either
+	// reading, so the rules that describe execution are withheld.
+	noscript bool
 	// unterminated marks an occurrence inside a tag that is never closed, which
 	// the tokenizer cannot place. Treated as unsafe rather than as "not in an
 	// attribute", so a broken template fails closed.
@@ -94,41 +111,11 @@ func attributeContextsFor(input string, spans []bareValueSpan) map[int]attrConte
 	b.WriteString(input[last:])
 
 	substituted := b.String()
-	z := html.NewTokenizer(strings.NewReader(substituted))
-	var openRawText string
-tokenize:
-	for {
-		switch z.Next() {
-		case html.ErrorToken:
-			break tokenize
-		case html.StartTagToken, html.SelfClosingTagToken:
-			for _, hit := range sentinelsInTag(string(z.Raw())) {
-				if hit.index >= 0 && hit.index < len(spans) {
-					out[spans[hit.index].start] = hit.ctx
-				}
-			}
-			name, _ := z.TagName()
-			openRawText = ""
-			if scriptLikeElements[string(name)] {
-				openRawText = string(name)
-			}
-		case html.EndTagToken:
-			openRawText = ""
-		case html.TextToken:
-			// A script or style body is where escaping helps least, not most:
-			// the parser decodes no entities there, so the value lands in
-			// JavaScript or CSS with its escaping still in it. Contained
-			// against a quote or a "<", and no help at all against a backtick,
-			// a "${...}", a ";" or a brace, none of which it touches.
-			if openRawText != "" {
-				for _, idx := range sentinelIndexes(string(z.Raw())) {
-					if idx.index >= 0 && idx.index < len(spans) {
-						out[spans[idx.index].start] = attrContext{rawTextElement: openRawText}
-					}
-				}
-			}
+	scanMarkup(substituted, scanMode{}, 0, func(index int, ctx attrContext) {
+		if index >= 0 && index < len(spans) {
+			out[spans[index].start] = ctx
 		}
-	}
+	})
 
 	// An unterminated tag never reaches the tokenizer as a tag, so its
 	// occurrences come back unresolved. Reporting those as "not in an
@@ -174,6 +161,264 @@ tokenize:
 		}
 	}
 	return out
+}
+
+// scanMode is how a browser would read the source being scanned. Neither half
+// of it is anything the tokenizer knows: it reads one namespace and one
+// scripting mode, and both of those are decided by the markup around the region
+// rather than by the region itself.
+type scanMode struct {
+	// foreign is "" for HTML, or the name of the <svg>/<math> whose content
+	// this is. Inside one, the ten names in rawTextElements are ordinary
+	// element names and entities are decoded everywhere.
+	foreign string
+	// noscript marks a <noscript> body. It is real markup with scripting
+	// disabled and inert raw text with scripting enabled, so the placements
+	// reachable there are the ones that need no script to hurt.
+	noscript bool
+}
+
+// maxMarkupScanDepth bounds the recursion in scanMarkup. Each level builds a
+// tokenizer over a copy of the region it reads, so a document that nests these
+// regions without limit — "<svg><iframe><svg><iframe>…" — would cost
+// O(len × depth) in both time and memory. Real markup does not nest them at
+// all; past the bound a region is left unanalysed, which is what happened to
+// every one of them before this existed.
+const maxMarkupScanDepth = 8
+
+// markupFrame is one open element, carrying the only thing this scan wants from
+// it: how its children are read.
+type markupFrame struct {
+	name string
+	// childForeign is "" when this element's children are read with HTML rules,
+	// and the foreign root's name otherwise.
+	childForeign string
+}
+
+// scanMarkup tokenizes src, records the attribute context of every sentinel it
+// can place, and calls itself on the regions the tokenizer cannot describe.
+//
+// Those regions exist because the tokenizer is namespace-unaware: it raw-texts
+// the ten names in rawTextElements wherever they appear, and a browser only
+// does so in the HTML namespace. Inside <svg> or <math> an <iframe> is an inert
+// foreign element whose children are real, so the markup the tokenizer handed
+// back as one text token has to be read again — as markup this time. The same
+// shape answers <noscript>, whose body the tokenizer raw-texts unconditionally
+// while a browser does so only when scripting is enabled.
+//
+// depth is the recursion depth, bounded by maxMarkupScanDepth.
+func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx attrContext)) {
+	z := html.NewTokenizer(strings.NewReader(src))
+	var stack []markupFrame
+	// base is how content directly at the top of this scan is read. A breakout
+	// tag can clear it: past one a browser has left foreign content for good,
+	// and so has everything this scan has left to read.
+	base := mode.foreign
+	current := func() string {
+		if n := len(stack); n > 0 {
+			return stack[n-1].childForeign
+		}
+		return base
+	}
+
+	// pending describes the raw-text body the tokenizer is about to hand back
+	// as a single text token, and what this scan makes of it.
+	var pending struct {
+		language string   // script or style, whose body is a program
+		foreign  string   // the foreign root that program sits in, "" for HTML
+		reread   bool     // read the body as markup instead
+		mode     scanMode // ... in this mode
+	}
+	forget := func() { pending.language, pending.foreign, pending.reread = "", "", false }
+
+	for {
+		tt := z.Next()
+		switch tt {
+		case html.ErrorToken:
+			return
+		case html.StartTagToken, html.SelfClosingTagToken:
+			raw := string(z.Raw())
+			nameBytes, hasAttr := z.TagName()
+			name := string(nameBytes)
+			for _, hit := range sentinelsInTag(raw) {
+				ctx := hit.ctx
+				ctx.noscript = mode.noscript
+				record(hit.index, ctx)
+			}
+
+			foreign := current()
+			if foreign != "" && breaksOutOfForeignContent(name, z, hasAttr) {
+				// Every frame above the nearest HTML element or integration
+				// point is discarded, which is the parser's own rule (x/net's
+				// parseForeignContent) written against these frames: a frame
+				// whose children are foreign is exactly one that is neither.
+				for len(stack) > 0 && stack[len(stack)-1].childForeign != "" {
+					stack = stack[:len(stack)-1]
+				}
+				if len(stack) == 0 {
+					base = ""
+				}
+				foreign = current()
+			}
+			childForeign := foreign
+			switch {
+			case foreign == "" && (name == "svg" || name == "math"):
+				childForeign = name
+			case foreign != "" && isIntegrationPoint(foreign, name, z, hasAttr):
+				childForeign = ""
+			}
+
+			forget()
+			if rawTextElements[name] {
+				switch {
+				case foreign == "":
+					// HTML: the tokenizer's reading is a browser's, except for
+					// <noscript>, whose body is markup with scripting off.
+					if scriptLikeElements[name] {
+						pending.language = name
+					} else if name == "noscript" {
+						pending.reread = true
+						pending.mode = scanMode{noscript: true}
+					}
+				case tt == html.SelfClosingTagToken:
+					// "/>" really closes in foreign content, so what the
+					// tokenizer offers as this element's body is its siblings.
+					pending.reread = true
+					pending.mode = scanMode{foreign: foreign, noscript: mode.noscript}
+				case scriptLikeElements[name]:
+					// Still a program, and still worth naming its language —
+					// but foreign content decodes entities, which inverts what
+					// the escaping does to it.
+					pending.language, pending.foreign = name, foreign
+				default:
+					pending.reread = true
+					pending.mode = scanMode{foreign: childForeign, noscript: mode.noscript}
+				}
+			}
+			if tt != html.SelfClosingTagToken {
+				stack = append(stack, markupFrame{name: name, childForeign: childForeign})
+			}
+		case html.EndTagToken:
+			forget()
+			nameBytes, _ := z.TagName()
+			name := string(nameBytes)
+			for i := len(stack) - 1; i >= 0; i-- {
+				if stack[i].name == name {
+					stack = stack[:i]
+					break
+				}
+			}
+		case html.TextToken:
+			switch {
+			case pending.reread:
+				if depth < maxMarkupScanDepth {
+					scanMarkup(string(z.Raw()), pending.mode, depth+1, record)
+				}
+			case pending.language != "":
+				// A script or style body in the HTML namespace is where
+				// escaping helps least, not most: the parser decodes no
+				// entities there, so the value lands in JavaScript or CSS with
+				// its escaping still in it. Contained against a quote or a "<",
+				// and no help at all against a backtick, a "${...}", a ";" or a
+				// brace, none of which it touches. In foreign content the
+				// decoding does happen, and unsafeAttributeContexts says so.
+				for _, idx := range sentinelIndexes(string(z.Raw())) {
+					record(idx.index, attrContext{
+						rawTextElement: pending.language,
+						foreignRoot:    pending.foreign,
+						noscript:       mode.noscript,
+					})
+				}
+			}
+		}
+	}
+}
+
+// breaksOutOfForeignContent reports whether this start tag takes a browser back
+// out of <svg>/<math> and into HTML rules.
+//
+// It is not a refinement: without it an <svg> the author forgot to close would
+// make every later <textarea> and <iframe> foreign content, and this file would
+// warn about a link written inside one when a browser reads it as text. A
+// template typo is the last input that should draw a warning.
+//
+// The names are the HTML parser's own list (section 12.2.6.5, and x/net/html's
+// "breakout" map in foreign.go), copied rather than reasoned out. The end-tag
+// half of the same rule — "</br>" and "</p>" also break out — is not
+// implemented, and costs a warning rather than producing a false one.
+func breaksOutOfForeignContent(name string, z *html.Tokenizer, hasAttr bool) bool {
+	if foreignBreakoutTags[name] {
+		return true
+	}
+	// <font> is one of them only when it carries a presentational attribute.
+	if name != "font" {
+		return false
+	}
+	for hasAttr {
+		var key []byte
+		key, _, hasAttr = z.TagAttr()
+		switch string(key) {
+		case "color", "face", "size":
+			return true
+		}
+	}
+	return false
+}
+
+// isIntegrationPoint reports whether this element's children are read with HTML
+// rules again despite sitting inside <svg> or <math>. <svg><title> is the one
+// that earns its keep: it is the accessible name of an inline icon, so it is
+// ordinary in a category template, and its content is HTML rather than SVG.
+func isIntegrationPoint(foreign, name string, z *html.Tokenizer, hasAttr bool) bool {
+	switch foreign {
+	case "svg":
+		return name == "desc" || name == "foreignobject" || name == "title"
+	case "math":
+		switch name {
+		case "mi", "mo", "mn", "ms", "mtext":
+			return true
+		case "annotation-xml":
+			// Only with an HTML encoding; with any other one, or none, the
+			// children are still MathML.
+			for hasAttr {
+				var key, val []byte
+				key, val, hasAttr = z.TagAttr()
+				if string(key) != "encoding" {
+					continue
+				}
+				switch strings.ToLower(strings.TrimSpace(string(val))) {
+				case "text/html", "application/xhtml+xml":
+					return true
+				}
+				return false
+			}
+		}
+	}
+	return false
+}
+
+// rawTextElements are the ten names golang.org/x/net/html's tokenizer reads as
+// raw text or RCDATA. It does so by name and wherever the name appears, which
+// is the whole of the foreign-content problem: a browser only reads them that
+// way in the HTML namespace.
+var rawTextElements = map[string]bool{
+	"iframe": true, "noembed": true, "noframes": true, "noscript": true,
+	"plaintext": true, "script": true, "style": true, "textarea": true,
+	"title": true, "xmp": true,
+}
+
+// foreignBreakoutTags are the HTML start tag names that end foreign content,
+// copied from section 12.2.6.5 by way of x/net/html's own "breakout" map.
+// <font> is conditional and is handled in breaksOutOfForeignContent.
+var foreignBreakoutTags = map[string]bool{
+	"b": true, "big": true, "blockquote": true, "body": true, "br": true,
+	"center": true, "code": true, "dd": true, "div": true, "dl": true,
+	"dt": true, "em": true, "embed": true, "h1": true, "h2": true, "h3": true,
+	"h4": true, "h5": true, "h6": true, "head": true, "hr": true, "i": true,
+	"img": true, "li": true, "listing": true, "menu": true, "meta": true,
+	"nobr": true, "ol": true, "p": true, "pre": true, "ruby": true, "s": true,
+	"small": true, "span": true, "strong": true, "strike": true, "sub": true,
+	"sup": true, "table": true, "tt": true, "u": true, "ul": true, "var": true,
 }
 
 // insideUnterminatedTags reports, for each offset in at (ascending), whether it
@@ -401,7 +646,36 @@ func isASCIISpace(c byte) bool {
 // whoever can edit the entity, which includes the plain user role.
 //
 // raw disables even that much, so with it every attribute position is unsafe.
+//
+// A <noscript> body is the one placement whose danger depends on a mode this
+// file cannot see, so every reason reported from one names that mode. The
+// reasons that need a script to reach are withheld there entirely — see
+// noscriptQualifier.
 func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) []string {
+	out := unsafePlacementReasons(ctx, raw, cssMode, label)
+	if ctx.noscript {
+		for i := range out {
+			out[i] += noscriptQualifier
+		}
+	}
+	return out
+}
+
+// noscriptQualifier is appended to every reason reported from inside a
+// <noscript> body. The body is markup only with scripting disabled, so a reason
+// that describes an attribute or a name describes something that exists only in
+// that mode, and saying which mode is the difference between a warning an author
+// can act on and one that looks wrong.
+//
+// It deliberately does not say the value is harmless with scripting enabled.
+// For raw= it is not: an unescaped value can write "</noscript>" and continue in
+// markup whichever way the body was read, which is the same argument the raw=
+// rule already makes about "</xmp>".
+const noscriptQualifier = ` This is inside a <noscript>, whose body is markup only when scripting is disabled — which is the mode that element exists for.`
+
+// unsafePlacementReasons is the rule set itself, split out so the <noscript>
+// caveat is appended in one place rather than at every return.
+func unsafePlacementReasons(ctx attrContext, raw, cssMode bool, label string) []string {
 	if cssMode && !ctx.inValue && !ctx.inName {
 		// A CustomCSS slot is a stylesheet with no <style> wrapper of its own,
 		// so nothing in the markup says so — the editor has to.
@@ -415,6 +689,20 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 	}
 	if ctx.rawTextElement != "" {
 		// Only script and style ever set this, so the language is never empty.
+		switch {
+		case ctx.noscript:
+			// Neither reading of a <noscript> body reaches this. With scripting
+			// enabled the body is inert raw text; with it disabled the <script>
+			// is a real element that does not run, and a <style> is the residue
+			// named in scriptLikeElements' comment.
+			return nil
+		case ctx.foreignRoot != "":
+			return []string{label + ` sits inside a <` + ctx.rawTextElement + `> that is inside <` + ctx.foreignRoot +
+				`>, which is foreign content, where the parser decodes entities — unlike an HTML <` + ctx.rawTextElement +
+				`> body. The escaping is therefore undone before ` + scriptLikeLanguage[ctx.rawTextElement] +
+				` sees the value: an escaped quote arrives as a real quote and can ` + foreignEscapeConsequence[ctx.rawTextElement] +
+				`. Escaping makes this placement worse than the HTML one rather than safer. Pass the value in through a data- attribute instead.`}
+		}
 		return []string{label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + scriptLikeLanguage[ctx.rawTextElement] + ` with its escaping still in it rather than as the text you wrote. Escaping does not make the placement safe either — a "${...}" in a template literal or a ";" in a declaration contains nothing it touches. Pass the value in through a data- attribute instead.`}
 	}
 	if ctx.inName {
@@ -441,7 +729,13 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 	if cssMode {
 		out = append(out, label+` is in a CSS slot, where the value lands in a stylesheet with nothing to re-parse it as HTML: a ";" in it can start another declaration and a "}" can escape the rule, and escaping touches neither.`)
 	}
-	if kind := expressionAttributeKind(attr); kind != "" {
+	// The two rules below are the execution set, and a <noscript> body reaches
+	// neither: with scripting enabled the body is inert raw text, and with it
+	// disabled the handler and the "javascript:" link are real and do nothing.
+	// Reporting them there is the false positive that had an earlier attempt at
+	// reading these bodies withdrawn.
+	scriptCanRun := !ctx.noscript
+	if kind := expressionAttributeKind(attr); kind != "" && scriptCanRun {
 		out = append(out, label+` sits in the "`+attr+`" `+kind+`, whose value is evaluated as script after the HTML parser has undone the escaping, so a value containing a quote can execute. Do not interpolate Meta into it.`)
 	}
 	if attr == "style" {
@@ -450,7 +744,7 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 	if alwaysUnsafeAttrs[attr] {
 		out = append(out, label+` sits in a "`+attr+`" attribute, whose value the browser decodes and parses as HTML, so escaping does not prevent script injection anywhere in it.`)
 	}
-	if urlBearingAttrs[attr] {
+	if urlBearingAttrs[attr] && scriptCanRun {
 		scheme, fixed := urlSchemeBefore(ctx.valueSoFar)
 		switch {
 		case fixed && executableURLSchemes[scheme]:
@@ -547,19 +841,22 @@ func expressionAttributeKind(attr string) string {
 	return ""
 }
 
-// scriptLikeElements have bodies in which the parser decodes no entities, so a
-// value placed there arrives with its escaping still in it and escaping is not
-// what decides whether the placement is safe. It is not nothing — an escaped
-// value carries no "<" and no bare quote, so it can neither close the element
-// nor end a JavaScript string — but a backtick, a "${...}" or a ";" is not
-// escaped at all, and those are the characters that matter in a language.
+// scriptLikeElements are the two whose body is a program rather than markup, so
+// a value placed in one is judged as landing in a language. In the HTML
+// namespace the parser decodes no entities there, so the value arrives with its
+// escaping still in it and escaping is not what decides whether the placement is
+// safe. It is not nothing — an escaped value carries no "<" and no bare quote,
+// so it can neither close the element nor end a JavaScript string — but a
+// backtick, a "${...}" or a ";" is not escaped at all, and those are the
+// characters that matter in a language. In foreign content the sentence inverts;
+// see below.
 //
-// The tokenizer raw-texts ten elements, and no tag inside any of them is ever
-// emitted as a tag, so a value in one is analysed as ordinary prose. That reads
-// like a hole and mostly is not; the argument is written out because it has
-// been got wrong twice, once by warning on all eight of the other bodies and
-// once by re-reading a <noscript> body as markup. All of it is about the HTML
-// namespace — see the last paragraph.
+// The tokenizer raw-texts ten names (rawTextElements), and no tag inside any of
+// them is emitted as a tag. Two of the ten are here. In the HTML namespace the
+// other eight are read as ordinary prose, which is a decision rather than an
+// oversight: it has been got wrong twice, once by warning on all eight bodies
+// and once by re-reading a <noscript> body as markup and reporting placements
+// in it that cannot execute under either reading.
 //
 // textarea and title are RCDATA: entities *are* decoded there, so escaping
 // works exactly as it does in an attribute — and a tag written inside one is
@@ -575,59 +872,74 @@ func expressionAttributeKind(attr string) string {
 // unsafeAttributeContexts, which is the message that case wants. plaintext runs
 // to EOF and cannot be closed at all.
 //
-// noscript is the only one where the tokenizer's reading and a browser's can
-// differ — its body is raw text when scripting is enabled and ordinary markup
-// when it is not — and it is still not here, because the difference does not
-// reach this rule. With scripting on the body is inert raw text; with scripting
-// off the tags are real but no script in them can execute, so every
-// script-execution rule here (an on* handler, an Alpine directive, a
-// javascript: URL, a <script> body) is inapplicable to it. What still applies
-// in that mode is everything that is not script — CSS, links, forms — which is
-// the residue listed further down, not an exception to this. Warning on the body as a whole is a
-// false positive on its ordinary use, and reading the body as markup — which
-// was tried — reports those same executable placements as dangerous when they
-// cannot execute in either reading.
+// An UNCLOSED one of those seven swallows the rest of the document rather than
+// a body, and that is not a fail-open either: a browser's tokenizer runs to EOF
+// in raw text (or RCDATA, or PLAINTEXT) too, so the href further down that this
+// file then says nothing about is not a link there either.
 //
-// An UNCLOSED one of the other seven swallows the rest of the document rather
-// than a body, and that is not a fail-open either: a browser's tokenizer runs
-// to EOF in raw text (or RCDATA, or PLAINTEXT) too, so the href further down
-// that this file then says nothing about is not a link there either.
+// Both of the places where the tokenizer's reading is not a browser's — the
+// <noscript> body and foreign content — are handled by re-reading the region in
+// scanMarkup rather than by being listed here.
 //
-// An unclosed <noscript> is not that, and it is the widest form of the residue
-// rather than a case of the rule above: with scripting disabled it is an
-// ordinary open element, so everything after it is live markup that this file
-// reads as one raw-text run and says nothing about at all.
+// NOSCRIPT is raw text to the tokenizer whatever the scripting flag says, and
+// markup to a browser only when scripting is disabled — which is the mode the
+// element exists for, so the placements live in that mode are worth reporting.
+// The set that is reported is exactly the one that needs no script: srcdoc, an
+// unquoted attribute, style=, an interpolated attribute name, and raw=. Every
+// script-execution rule (an on* handler, an Alpine directive, a javascript: URL,
+// a <script> body) is withheld, because it is inapplicable under BOTH readings —
+// with scripting on the body is inert raw text, with it off the handler is real
+// and does nothing — and reporting it is the false positive that had the earlier
+// attempt withdrawn. Every message from a body carries noscriptQualifier, which
+// names the mode it applies in. An unclosed <noscript> is the same case at its
+// widest and is read the same way, since with scripting disabled everything
+// after it is live markup.
 //
-// The residue, known and accepted: with scripting disabled, a value inside a
-// <noscript> — or after an unclosed one — can land in an unquoted attribute, a
-// style= attribute, an interpolated attribute name, a <style> element, any
-// URL-bearing attribute (a stylesheet href, a <base href> that re-points every
-// relative URL on the page, a form action), or a srcdoc=, whose value is parsed
-// as a whole document so even an escaped value becomes real markup inside the
-// frame. None of them execute script in that mode and all of them are
-// unwarned. Buying them means carrying a scripting-mode axis through every rule
-// below, for an element that has to be nested inside a category template first.
-// A raw= value in a <noscript> body already warns, through the raw= rule, which
-// is the one that matters most.
+// Two members of the non-execution set stay unreported and are residue. A
+// <style> ELEMENT inside a <noscript> is a real stylesheet in that mode, and is
+// left out because it is the language rule above rather than a placement rule,
+// and the language rule reports a <script> in the same breath. And every
+// URL-bearing attribute other than an executable scheme — a stylesheet href, a
+// <base href> that re-points every relative URL on the page, a form action — is
+// out because the two URL rules only ever describe an executable scheme, which
+// is exactly what that mode cannot reach.
 //
-// One of those is not a <noscript> matter at all and is unwarned everywhere: a
+// One thing here is not a <noscript> matter at all and is unwarned everywhere: a
 // refresh <meta content="0;url=…"> chooses a navigation target, and "content"
 // is not in urlBearingAttrs — recognising it needs the sibling http-equiv,
 // since the same attribute on <meta name="description"> is prose.
 //
-// FOREIGN CONTENT is a wider and older gap that none of this closes and none of
-// it depends on. The tokenizer is namespace-unaware, so it raw-texts these
-// names inside <svg> and <math> as well, where a browser does not.
-// <svg><script> does warn, but on a rationale that is namespace-wrong and
-// therefore understated: foreign content DOES decode entities, so an escaped
-// quote is a quote there and can end a JavaScript string, which the message
-// says cannot happen. <svg><iframe><a href="javascript:…"> is silent outright,
-// and it is a live SVG link. Both were so before any of this. Closing it means
-// tracking foreign content and its integration points, which is the parser's
-// job rather than the tokenizer's.
+// FOREIGN CONTENT is where the tokenizer is simply wrong rather than
+// conservative, because it is namespace-unaware and raw-texts all ten names
+// inside <svg> and <math> as well. Two consequences, both closed by scanMarkup:
+//
+//   - A <script> or <style> there still holds a program, but foreign content
+//     DOES decode entities, so the escaping is undone before the language sees
+//     the value and an escaped quote arrives as a real quote. The placement is
+//     worse than the HTML one, not better, and unsafeAttributeContexts says so
+//     through foreignRoot. The old message claimed the opposite.
+//   - The other eight are inert foreign elements whose children are real, so the
+//     region is read again as markup. <svg><iframe><a href="javascript:…"> is a
+//     live SVG link and was silent; <svg><title> is an HTML integration point, so
+//     the anchor in it is a real HTML anchor.
+//
+// What keeps that from becoming a third false-positive machine is
+// breaksOutOfForeignContent: ~40 HTML tag names end foreign content, so an <svg>
+// the author forgot to close does not turn every later <textarea> into a live
+// region. isIntegrationPoint is the other half — inside <svg><desc>,
+// <svg><foreignObject>, <svg><title>, the MathML text points and an
+// <annotation-xml> with an HTML encoding, HTML rules are back and the HTML
+// rationale is the right one again.
 var scriptLikeElements = map[string]bool{"script": true, "style": true}
 
 var scriptLikeLanguage = map[string]string{"script": "JavaScript", "style": "CSS"}
+
+// foreignEscapeConsequence names what a decoded quote does to each language,
+// which is the part of the foreign-content message that is not shared.
+var foreignEscapeConsequence = map[string]string{
+	"script": "close a string literal and run whatever follows it",
+	"style":  "close a string and end the declaration",
+}
 
 // inertAlpineDirectives take a literal value rather than an expression, so
 // interpolating into one is no more dangerous than any other text attribute.

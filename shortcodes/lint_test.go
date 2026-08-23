@@ -1086,13 +1086,18 @@ func TestLintMetaAttributesThatOnlyInlineReads(t *testing.T) {
 	})
 }
 
-// The tokenizer raw-texts ten elements and this file lists two, so a tag
-// written inside any of the other eight is never emitted as a tag and the value
-// in it is analysed as ordinary prose. That reads like a hole, and twice it was
-// treated as one — first by labelling all eight bodies unreadable, then by
-// re-reading a <noscript> body as markup. Both were wrong, and the argument for
-// leaving the eight alone is in scriptLikeElements' comment. These pin it, so
-// the next reader finds tests rather than only prose.
+// The tokenizer raw-texts ten elements and scriptLikeElements lists two, so a
+// tag written inside one of the other eight is never emitted as a tag. For six
+// of them, in the HTML namespace, the value in the body is analysed as ordinary
+// prose and that is the right answer rather than a hole — twice it was treated
+// as one, first by labelling all eight bodies unreadable and then by re-reading
+// a <noscript> body as markup and reporting placements in it that cannot
+// execute. The argument is in scriptLikeElements' comment; these pin it, so the
+// next reader finds tests rather than only prose.
+//
+// The two that are re-read — <noscript>, and any of the ten inside <svg> or
+// <math> — have their own tests in TestLintNoscriptBodyPlacement and
+// TestLintForeignContentPlacement.
 func TestLintRawTextElementBodies(t *testing.T) {
 	warns := func(src, want string) bool {
 		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
@@ -1173,10 +1178,10 @@ func TestLintRawTextElementBodies(t *testing.T) {
 		// either. <script> is the one that still speaks, because it is listed
 		// and its message keeps applying to every value after it.
 		//
-		// <noscript> is deliberately not in this list. With scripting disabled
-		// an unclosed one is an ordinary open element and everything after it
-		// IS live markup, so the same silence is the residue in its widest
-		// form rather than an instance of this rule. See scriptLikeElements.
+		// <noscript> is deliberately not in this list, and no longer for the
+		// same reason: with scripting disabled an unclosed one is an ordinary
+		// open element and everything after it IS live markup, so it is read
+		// rather than passed over. TestLintNoscriptBodyPlacement covers it.
 		tail := `<a href="javascript:[meta path='x' inline='true']">go</a>` +
 			`<div style="color:[meta path='y' inline='true']">x</div>`
 		for _, opener := range []string{"<iframe>", "<noembed>", "<noframes>", "<xmp>", "<plaintext>", "<textarea>", "<title>"} {
@@ -1206,6 +1211,290 @@ func TestLintRawTextElementBodies(t *testing.T) {
 			if warns(src, "[meta inline") {
 				t.Errorf("<%s> is RCDATA and safe: %s", el, src)
 			}
+		}
+	})
+}
+
+// lintWarnings is the message list for one source, for the placement tests
+// below, which care about what was said rather than where.
+func lintWarnings(src string) []string {
+	var out []string
+	for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+		out = append(out, issue.Message)
+	}
+	return out
+}
+
+func lintSaysAny(src, want string) bool {
+	for _, msg := range lintWarnings(src) {
+		if strings.Contains(msg, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// Inside <svg> and <math> the tokenizer's ten raw-text names carry no such
+// meaning, which the tokenizer cannot know because it is namespace-unaware.
+// Two things follow, and both were wrong before: a <script> there does decode
+// entities, so the escaping is undone rather than preserved; and an <iframe>
+// there is an inert SVG element whose children are real, so the link inside it
+// is a live link. The negative half of this test is the important half — the
+// value in an ordinary <svg><text> or <svg><title> must stay silent, and so
+// must anything after an HTML element has broken the parser out of foreign
+// content.
+func TestLintForeignContentPlacement(t *testing.T) {
+	const decodesEntities = "which is foreign content, where the parser decodes entities"
+	const htmlRawText = "does not decode entities"
+
+	t.Run("a script or style in foreign content has its escaping undone", func(t *testing.T) {
+		for _, tc := range []struct{ src, lang string }{
+			{`<svg><script>var s = "[property path='Name']"</script></svg>`, "JavaScript"},
+			{`<svg><style>.c{color:"[property path='Name']"}</style></svg>`, "CSS"},
+			{`<math><script>var s = "[property path='Name']"</script></math>`, "JavaScript"},
+		} {
+			if !lintSaysAny(tc.src, decodesEntities) {
+				t.Errorf("%s: want the foreign-content rationale, got %q", tc.src, lintWarnings(tc.src))
+			}
+			if lintSaysAny(tc.src, htmlRawText) {
+				t.Errorf("%s: entities ARE decoded there, so the HTML rationale is wrong", tc.src)
+			}
+			if !lintSaysAny(tc.src, tc.lang) {
+				t.Errorf("%s: the message still names %s", tc.src, tc.lang)
+			}
+		}
+	})
+
+	t.Run("an integration point puts HTML rules back", func(t *testing.T) {
+		// Inside these the children are parsed with HTML rules again, so a
+		// <script> there is an HTML script and its body decodes nothing.
+		for _, src := range []string{
+			`<svg><foreignObject><script>var s = "[property path='Name']"</script></foreignObject></svg>`,
+			`<svg><desc><script>var s = "[property path='Name']"</script></desc></svg>`,
+			`<svg><title><script>var s = "[property path='Name']"</script></title></svg>`,
+			`<math><mtext><script>var s = "[property path='Name']"</script></mtext></math>`,
+			`<math><annotation-xml encoding="text/html"><script>var s = "[property path='Name']"</script></annotation-xml></math>`,
+			`<svg></svg><script>var s = "[property path='Name']"</script>`,
+		} {
+			if !lintSaysAny(src, htmlRawText) {
+				t.Errorf("%s: want the HTML <script> rationale, got %q", src, lintWarnings(src))
+			}
+		}
+		// annotation-xml without an HTML encoding is not one, so its script is
+		// still MathML and still decodes.
+		src := `<math><annotation-xml><script>var s = "[property path='Name']"</script></annotation-xml></math>`
+		if !lintSaysAny(src, decodesEntities) {
+			t.Errorf("%s: want the foreign-content rationale, got %q", src, lintWarnings(src))
+		}
+	})
+
+	t.Run("the other raw-text names are ordinary elements in foreign content", func(t *testing.T) {
+		// The tokenizer swallows each of these bodies as raw text and the value
+		// in them was therefore analysed as prose. A browser reads real
+		// elements there, and an SVG <a href="javascript:…"> runs.
+		for _, src := range []string{
+			`<svg><iframe><a href="javascript:[property path='Name']">go</a></iframe></svg>`,
+			`<svg><textarea><a href="javascript:[property path='Name']">go</a></textarea></svg>`,
+			`<svg><xmp><a href="javascript:[property path='Name']">go</a></xmp></svg>`,
+			`<svg><noscript><a href="javascript:[property path='Name']">go</a></noscript></svg>`,
+			`<svg><g><textarea><a href="javascript:[property path='Name']">go</a></textarea></g></svg>`,
+			`<math><noembed><a href="javascript:[property path='Name']">go</a></noembed></math>`,
+			// "/>" really self-closes in foreign content, so what follows a
+			// <script/> there is a sibling rather than a script body.
+			`<svg><script/><a href="javascript:[property path='Name']">go</a></svg>`,
+			// <svg><title> is an integration point, so the anchor in it is a
+			// real HTML anchor.
+			`<svg><title><a href="javascript:[property path='Name']">go</a></title></svg>`,
+		} {
+			if !lintSaysAny(src, `continues a "javascript:" URL`) {
+				t.Errorf("%s: a live link in foreign content, got %q", src, lintWarnings(src))
+			}
+		}
+	})
+
+	t.Run("ordinary foreign markup stays silent", func(t *testing.T) {
+		// This is the half that matters. An icon with a label in it is the
+		// realistic template, and there is nothing wrong with any of these.
+		for _, src := range []string{
+			`<svg viewBox="0 0 24 24"><text>[property path="Name"]</text></svg>`,
+			`<svg><title>[property path="Name"]</title></svg>`,
+			`<svg><desc>[property path="Name"]</desc></svg>`,
+			`<svg><iframe><text>[property path="Name"]</text></iframe></svg>`,
+			`<svg><text class="c">[property path="Name"]</text></svg>`,
+			`<svg><a href="/x/[property path='Name']">go</a></svg>`,
+			`<svg><foreignObject><div class="c">[property path="Name"]</div></foreignObject></svg>`,
+		} {
+			if got := lintWarnings(src); len(got) != 0 {
+				t.Errorf("%s: nothing is wrong here, got %q", src, got)
+			}
+		}
+	})
+
+	t.Run("an HTML element breaks the parser out of foreign content", func(t *testing.T) {
+		// A browser leaves foreign content at any of ~40 HTML tag names, so
+		// the <textarea> below is HTML RCDATA and the anchor written in it is
+		// literal text. Reading it as foreign content would warn on a template
+		// whose only fault is an <svg> the author forgot to close.
+		for _, src := range []string{
+			`<svg><div><textarea><a href="javascript:[property path='Name']">go</a></textarea></div></svg>`,
+			`<svg><div>hi</div><textarea><a href="javascript:[property path='Name']">go</a></textarea>`,
+			`<svg><font color="red"><textarea><a href="javascript:[property path='Name']">go</a></textarea></font></svg>`,
+			`<svg><p><iframe><a href="javascript:[property path='Name']">go</a></iframe></p></svg>`,
+			// Past the </svg> the rules are HTML's again.
+			`<svg><path d="M0 0"/></svg><textarea><a href="javascript:[property path='Name']">go</a></textarea>`,
+		} {
+			if got := lintWarnings(src); len(got) != 0 {
+				t.Errorf("%s: a browser is out of foreign content here, got %q", src, got)
+			}
+		}
+		// <font> only breaks out when it carries one of three attributes.
+		src := `<svg><font><textarea><a href="javascript:[property path='Name']">go</a></textarea></font></svg>`
+		if !lintSaysAny(src, `continues a "javascript:" URL`) {
+			t.Errorf("%s: a bare <font> stays in foreign content, got %q", src, lintWarnings(src))
+		}
+	})
+}
+
+// With scripting disabled a <noscript> body is real markup — which is the mode
+// the element exists for — so a placement in it that needs no script to hurt is
+// reachable. The tokenizer raw-texts the body whatever the scripting flag says,
+// so none of it was analysed at all. What must NOT come back is the execution
+// set: an on* handler, an Alpine directive, a javascript: URL and a <script>
+// body are inapplicable under BOTH readings, and warning on them is the false
+// positive that made an earlier attempt at this withdrawn.
+func TestLintNoscriptBodyPlacement(t *testing.T) {
+	const scriptingCaveat = "whose body is markup only when scripting is disabled"
+
+	t.Run("the placements that need no script are reported", func(t *testing.T) {
+		for _, tc := range []struct{ src, want string }{
+			{
+				`<noscript><iframe srcdoc="[property path='Name']"></iframe></noscript>`,
+				`sits in a "srcdoc" attribute`,
+			},
+			{
+				`<noscript><div title=[property path='Name']>x</div></noscript>`,
+				"sits in an unquoted attribute value",
+			},
+			{
+				`<noscript><div style="color:[property path='Name']">x</div></noscript>`,
+				`sits in a "style" attribute`,
+			},
+			{
+				`<noscript><div data-[property path='Name']="v">x</div></noscript>`,
+				"interpolated into a tag or attribute NAME",
+			},
+			{
+				`<noscript><div title="[property path='Name' raw='true']">x</div></noscript>`,
+				"with raw= is not escaped at all",
+			},
+			// An unclosed one is the same case at its widest: with scripting
+			// disabled everything after it is live markup.
+			{
+				`<noscript><div style="color:[property path='Name']">x</div>`,
+				`sits in a "style" attribute`,
+			},
+		} {
+			if !lintSaysAny(tc.src, tc.want) {
+				t.Errorf("%s: want %q, got %q", tc.src, tc.want, lintWarnings(tc.src))
+			}
+			for _, msg := range lintWarnings(tc.src) {
+				if !strings.Contains(msg, scriptingCaveat) {
+					t.Errorf("%s: every message from a <noscript> body says which mode it applies in, got %q", tc.src, msg)
+				}
+			}
+		}
+	})
+
+	t.Run("nothing that needs a script to hurt is reported", func(t *testing.T) {
+		// None of these can execute in either reading: with scripting on the
+		// body is inert raw text, with it off the tags are real and no script
+		// in them runs. This is the list that must stay empty.
+		for _, src := range []string{
+			`<noscript>[property path="Name"]</noscript>`,
+			`<noscript><div class="c">[property path="Name"]</div></noscript>`,
+			`<noscript><a href="[property path='Name']">go</a></noscript>`,
+			`<noscript><a href="javascript:[property path='Name']">go</a></noscript>`,
+			`<noscript><button onclick="f('[property path=` + "`" + `Name` + "`" + `]')">go</button></noscript>`,
+			`<noscript><div x-text="[property path='Name']">x</div></noscript>`,
+			`<noscript><div @click="f('[property path=` + "`" + `Name` + "`" + `]')">x</div></noscript>`,
+			`<noscript><script>var s = "[property path='Name']";</script></noscript>`,
+			`<noscript><plaintext>[property path="Name"]</noscript>`,
+			`<noscript><form action="javascript:[property path='Name']"></form></noscript>`,
+		} {
+			if got := lintWarnings(src); len(got) != 0 {
+				t.Errorf("%s: no script runs in a <noscript> body, got %q", src, got)
+			}
+		}
+	})
+
+	t.Run("the same placements outside a noscript keep their plain message", func(t *testing.T) {
+		// The caveat is the whole difference, so it must not leak out.
+		for _, src := range []string{
+			`<iframe srcdoc="[property path='Name']"></iframe>`,
+			`<div style="color:[property path='Name']">x</div>`,
+			`<div title=[property path='Name']>x</div>`,
+		} {
+			for _, msg := range lintWarnings(src) {
+				if strings.Contains(msg, scriptingCaveat) {
+					t.Errorf("%s: this is live in every mode, got %q", src, msg)
+				}
+			}
+		}
+	})
+}
+
+// The two regions scanMarkup reads again are read by recursion, and the parts
+// of the answer that are reached outside it are not. Both facts are deliberate
+// and both are easy to change by accident, so they are pinned here.
+func TestLintRereadRegionEdges(t *testing.T) {
+	t.Run("the two regions compose", func(t *testing.T) {
+		// An <svg> inside a <noscript> is both at once, and the noscript half
+		// wins on the rules it withholds: with scripting disabled the SVG link
+		// is real and still runs no script, and with it enabled none of this is
+		// markup at all.
+		src := `<noscript><svg><iframe><a href="javascript:[property path='Name']">x</a></iframe></svg></noscript>`
+		if got := lintWarnings(src); len(got) != 0 {
+			t.Errorf("no script runs in a <noscript> body, whatever namespace it is in, got %q", got)
+		}
+		// A style= in the same place is reachable, and says so.
+		src = `<noscript><svg><iframe><text style="fill:[property path='Name']">x</text></iframe></svg></noscript>`
+		if !lintSaysAny(src, "whose body is markup only when scripting is disabled") {
+			t.Errorf("a style= in that placement is live with scripting off, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("the answers reached outside the region scan still apply", func(t *testing.T) {
+		// An interpolated ELEMENT name is proved by the "<" in front of it, and
+		// an unterminated tag is answered by one pass over the whole document.
+		// Both run after scanMarkup and neither is told which region it is
+		// looking at, so they warn without the scripting-mode caveat. Leaving
+		// them there is fail-closed, and both are in the set a <noscript> body
+		// reaches with scripting disabled anyway.
+		for _, tc := range []struct{ src, want string }{
+			{`<noscript><[property path="Name"] class="c">x</noscript>`, "interpolated into a tag or attribute NAME"},
+			{`<noscript><div title="[property path='Name']`, "inside a tag that is never closed"},
+			{`<svg><iframe><[property path="Name"] class="c">x</iframe></svg>`, "interpolated into a tag or attribute NAME"},
+		} {
+			if !lintSaysAny(tc.src, tc.want) {
+				t.Errorf("%s: want %q, got %q", tc.src, tc.want, lintWarnings(tc.src))
+			}
+		}
+	})
+
+	t.Run("nesting past the scan depth falls back to silence", func(t *testing.T) {
+		// A realistic nest is read all the way down.
+		nested := `<svg><iframe><svg><iframe><a href="javascript:[property path='Name']">x</a></iframe></svg></iframe></svg>`
+		if !lintSaysAny(nested, `continues a "javascript:" URL`) {
+			t.Errorf("a nested foreign region is still read, got %q", lintWarnings(nested))
+		}
+		// Past the bound the region is left alone, which is what happened to
+		// every one of them before scanMarkup existed. The bound is there
+		// because each level tokenizes a copy of what it reads, so an unbounded
+		// nest would cost O(len × depth).
+		deep := strings.Repeat("<svg><iframe>", maxMarkupScanDepth+4) +
+			`<a href="javascript:[property path='Name']">x</a>`
+		if got := lintWarnings(deep); len(got) != 0 {
+			t.Errorf("past the depth bound the region is unanalysed, got %q", got)
 		}
 	})
 }
