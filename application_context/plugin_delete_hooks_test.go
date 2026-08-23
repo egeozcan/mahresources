@@ -25,13 +25,24 @@ import (
 // createTestContextWithPlugins builds a context whose PluginManager is wired to
 // pluginDir.
 //
-// cache=private and a per-test DSN, unlike createTestContext's shared in-memory
-// DB: these tests count rows a hook created, and a database shared with the rest
-// of the package would make those counts depend on what else ran.
+// A per-test temp-file DB, unlike createTestContext's shared in-memory one:
+// these tests count rows a hook created, and a database shared with the rest of
+// the package would make those counts depend on what else ran.
+//
+// A temp file rather than mode=memory&cache=private, for the reason
+// newHistoryTestContext documents: cache=private gives every pooled connection
+// its own database, so a row written on one is invisible on the next. Several
+// tests here hold the plugin VM and run a concurrent goroutine against it, which
+// is exactly the shape that makes the pool open a second connection — and that
+// connection saw an empty database, so AutoMigrate's tables were simply absent
+// ("load tags: no such table: tags", intermittently, roughly one full ./... run
+// in five). A temp file keeps the per-test isolation this helper wants and is
+// one database however many connections reach it.
 func createTestContextWithPlugins(t *testing.T, pluginDir string) *MahresourcesContext {
 	t.Helper()
 
-	dsn := fmt.Sprintf("file:%s?mode=memory&cache=private", t.Name())
+	dbPath := filepath.Join(t.TempDir(), "hooks.db")
+	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=10000&_synchronous=NORMAL", dbPath)
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open db: %v", err)
