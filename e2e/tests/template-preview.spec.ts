@@ -107,12 +107,12 @@ test.describe('Template live preview', () => {
     page,
     apiClient,
   }) => {
-    // Production's only sink for a CustomCSS buffer is the {% custom_css %} tag,
-    // which writes a <style> element and nothing else. The preview sends that
-    // one buffer as both halves of its request, so the response carries it
-    // twice, and the frame used to render the markup half into the body as
-    // well — printing the stylesheet's own source as page text, which is the
-    // one thing saving the template can never produce.
+    // Every production sink for a CustomCSS buffer renders it as stylesheet
+    // content and nothing else. The preview sends that one buffer as both
+    // halves of its request, so the response carries it twice, and the frame
+    // used to render the markup half into the body as well — printing the
+    // stylesheet's own source as page text, which is the one thing saving the
+    // template can never produce.
     const stamp = Date.now();
     const marker = `css-slot-applied-${stamp}`;
     // Two rules, because they prove different things. The background pins the

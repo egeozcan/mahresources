@@ -56,10 +56,10 @@
             This category has no entities yet, so the preview uses one from elsewhere. It does not carry this category's metadata.
         </p>
 
-        {# A CustomCSS buffer reaches the page through the custom_css tag, which  #}
-        {# writes a style element and nothing else, so the frame renders it the   #}
-        {# same way and has no body content of its own to show. Say that, rather  #}
-        {# than leaving the frame an unexplained void (WS6 finding 29).           #}
+        {# Every production sink renders a CustomCSS buffer as stylesheet content #}
+        {# and nothing else, so the frame renders it the same way and has no body #}
+        {# content of its own to show. Say that, rather than leaving the frame an  #}
+        {# unexplained void (WS6 finding 29).                                      #}
         {# The region is always present and gains its text, rather than being     #}
         {# pre-filled and unhidden: a live region merely revealed is not reliably  #}
         {# announced, and this one appears in answer to the Slot control, where a  #}

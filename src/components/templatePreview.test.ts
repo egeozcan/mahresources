@@ -137,10 +137,11 @@ describe('template preview request', () => {
 });
 
 // The frame is one document built from two halves of the response: `css` goes
-// into a <style> element, `html` into the body. Production's only sink for a
-// CustomCSS buffer is the {% custom_css %} tag, which writes a <style> element
-// and nothing else (custom_css_tag.go), so the frame has to treat that buffer
-// the same way or it previews a page the saved template can never produce.
+// into a <style> element, `html` into the body. Every production sink for a
+// CustomCSS buffer renders it as stylesheet content and nothing else -- the
+// custom_css tag, the per-card block the MRQL paths prepend, the share page's
+// head block -- so the frame has to treat that buffer the same way or it
+// previews a page the saved template can never produce. See CSS_SLOT.
 function frameStub() {
     return { srcdoc: '' } as unknown as HTMLIFrameElement;
 }
@@ -241,7 +242,9 @@ describe('template preview frame', () => {
         // and no entity to render against - blank the frame and say why. They
         // have to claim the sequence number too, or the response for the slot
         // just left lands afterwards and overwrites the explanation with a
-        // render the pane has already disowned.
+        // render the pane has already disowned. Both branches are exercised:
+        // this one takes the missing-entity door, and the case below takes the
+        // carrier door, because the two are separate copies of the same rule.
         let release: () => void = () => {};
         const pending = new Promise<void>((resolve) => {
             release = resolve;
@@ -285,5 +288,140 @@ describe('template preview frame', () => {
         expect(bodyOf(frame.srcdoc)).not.toContain('stale');
         expect(component.error).toContain('Nothing to preview against yet');
         expect(component.loading).toBe(false);
+    });
+
+    test('the unsaved-carrier refusal retires an in-flight request too', async () => {
+        // The carrier door is a separate copy of the same rule, so a cleanup
+        // that tidied one and not the other would regress unnoticed.
+        let release: () => void = () => {};
+        const pending = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const fetchMock = vi.fn(async () => {
+            await pending;
+            return {
+                ok: true,
+                json: async () => ({
+                    html: '<h1>stale</h1>',
+                    css: '',
+                    entity: null,
+                    issues: [],
+                    cssIssues: [],
+                }),
+            };
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const component = templatePreview({
+            entityType: 'group',
+            previewPath: '/v1/category/previewTemplate',
+            categoryId: 7,
+        });
+        const frame = frameStub();
+        component.$refs = { frame };
+        component._form = formWith({
+            CustomCSS: '',
+            CustomHeader: '<h1>x</h1>',
+            CustomListHeader: '<header>x</header>',
+        });
+        component.entityId = 42;
+        component.slot = 'CustomHeader';
+
+        const inFlight = component.refresh();
+        // Switched to a list-header slot on a form with no saved carrier.
+        component.categoryId = null;
+        component.slot = 'CustomListHeader';
+        await component.refresh();
+        expect(component.error).toContain('Save this category first');
+        expect(bodyOf(frame.srcdoc)).not.toContain('stale');
+
+        release();
+        await inFlight;
+
+        expect(bodyOf(frame.srcdoc)).not.toContain('stale');
+        expect(component.error).toContain('Save this category first');
+        expect(component.loading).toBe(false);
+    });
+});
+
+describe('template preview startup', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    test('explains an empty deployment instead of leaving the frame a void', async () => {
+        // init() used to call refresh() only when an entity had been found, so
+        // the one case that has nothing to render against reached neither the
+        // explanation nor the blanking -- an unexplained 384px void at exactly
+        // the moment WS6 finding 29 was raised about.
+        const fetchMock = vi.fn(async (url: string) => ({
+            ok: true,
+            json: async () => [] as unknown[],
+            requested: url,
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+        vi.stubGlobal('localStorage', {
+            getItem: () => null,
+            setItem: () => {},
+        });
+        // No Alpine on it, so _publishStore returns without a store.
+        vi.stubGlobal('window', {});
+
+        const component = templatePreview({
+            entityType: 'group',
+            previewPath: '/v1/category/previewTemplate',
+            categoryId: 7,
+        });
+        const frame = frameStub();
+        component.$refs = { frame };
+        component.$root = { closest: () => null } as unknown as HTMLElement;
+
+        await component.init();
+
+        expect(component.entityId).toBe(null);
+        expect(component.error).toContain('Nothing to preview against yet');
+        // Blanked rather than left at whatever it last held.
+        expect(frame.srcdoc).toContain('<body>');
+        // The list lookups happened; no preview request was sent for them.
+        expect(fetchMock.mock.calls.every(([url]) => String(url).startsWith('/v1/groups'))).toBe(
+            true,
+        );
+    });
+
+    test('publishes a restored entity to the store the generate buttons read', async () => {
+        // A restore writes entityId directly rather than through _selectEntity,
+        // which is the one path that does not republish, so the store kept
+        // saying 0 while the pane showed a remembered entity by name.
+        const stored: Record<string, unknown> = {};
+        vi.stubGlobal('window', {
+            Alpine: {
+                store: (name: string, value?: unknown) => {
+                    if (value !== undefined) stored[name] = value;
+                    return stored[name];
+                },
+            },
+        });
+        vi.stubGlobal('localStorage', {
+            getItem: () => JSON.stringify({ id: 42, label: 'Remembered' }),
+            setItem: () => {},
+        });
+        const fetchMock = vi.fn(async () => ({
+            ok: true,
+            json: async () => ({ html: '', css: '', entity: null, issues: [], cssIssues: [] }),
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const component = templatePreview({
+            entityType: 'group',
+            previewPath: '/v1/category/previewTemplate',
+            categoryId: 7,
+        });
+        component.$refs = { frame: frameStub() };
+        component.$root = { closest: () => null } as unknown as HTMLElement;
+
+        await component.init();
+
+        expect(component.entityId).toBe(42);
+        expect((stored.templatePreview as { entityId: number }).entityId).toBe(42);
     });
 });

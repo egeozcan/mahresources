@@ -26,9 +26,13 @@ const SLOTS = [
   { name: 'CustomCSS', label: 'CSS' },
 ];
 
-// The one slot whose buffer is a stylesheet rather than markup. Production
-// emits it through the {% custom_css %} tag, which writes a <style> element and
-// nothing else (server/template_handlers/template_filters/custom_css_tag.go).
+// The one slot whose buffer is a stylesheet rather than markup. Production has
+// three sinks for it and every one of them renders it as stylesheet content and
+// nothing else: the {% custom_css %} tag on detail and list pages
+// (server/template_handlers/template_filters/custom_css_tag.go), the per-card
+// block the /mrql API and the inline [mrql] shortcode prepend (mrqlCategoryCSS,
+// renderResultCSS), and the share page's own head block (shared/displayNote.tpl).
+// None of them ever puts the buffer in body flow.
 const CSS_SLOT = 'CustomCSS';
 
 export function slotsForEntityType(entityType) {
@@ -136,6 +140,11 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       } catch (e) {
         /* ignore malformed storage */
       }
+      // A restore writes entityId directly rather than through _selectEntity,
+      // so it is the one way the pane can hold an entity the store has never
+      // heard of — and a generate button reading the store would then ground on
+      // nothing while the pane showed a remembered entity by name.
+      this._publishStore();
 
       if (!this.entityId) {
         await this._loadDefaultEntity();
@@ -150,7 +159,12 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
         });
       }
 
-      if (this.entityId) this.refresh();
+      // Unconditionally: with no entity at all — a fresh deployment, or a
+      // category whose members were deleted — refresh() is what says so and
+      // blanks the frame. Guarded on entityId, that case reached neither, and
+      // the pane sat at an unexplained 384px void, which is the very thing WS6
+      // finding 29 was raised about.
+      this.refresh();
     },
 
     _storageKey() {
