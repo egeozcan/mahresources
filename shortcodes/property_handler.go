@@ -204,11 +204,15 @@ func formatJSONScalar(v any, format, layout string) string {
 //
 // The bounds are encoding/json's, for the reason encoding/json has them: past
 // them the plain form is hundreds of digits, which no page wants either.
-func formatFloat(f float64) string {
+//
+// bits is the width the value actually had. A float32 widened to a float64 is
+// not the number it was — 1.2 becomes 1.2000000476837158, and formatting at 64
+// bits prints all of it, which is what "%g" did too.
+func formatFloat(f float64, bits int) string {
 	if abs := math.Abs(f); abs != 0 && (abs < 1e-6 || abs >= 1e21) {
-		return strconv.FormatFloat(f, 'e', -1, 64)
+		return strconv.FormatFloat(f, 'e', -1, bits)
 	}
-	return strconv.FormatFloat(f, 'f', -1, 64)
+	return strconv.FormatFloat(f, 'f', -1, bits)
 }
 
 // formatTimeValue applies layout (wins) or format to a time.
@@ -279,8 +283,10 @@ func formatFieldValue(v reflect.Value) string {
 		return fmt.Sprintf("%d", v.Int())
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return fmt.Sprintf("%d", v.Uint())
-	case reflect.Float32, reflect.Float64:
-		return formatFloat(v.Float())
+	case reflect.Float32:
+		return formatFloat(v.Float(), 32)
+	case reflect.Float64:
+		return formatFloat(v.Float(), 64)
 	case reflect.Bool:
 		return fmt.Sprintf("%t", v.Bool())
 	case reflect.Slice:

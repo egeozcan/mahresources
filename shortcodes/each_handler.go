@@ -79,6 +79,18 @@ func RenderEachShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 // [item] tokens inside a nested [each] block are not top-level (they live in
 // that block's inner content), so they are left untouched to bind to the nearest
 // enclosing [each].
+//
+// Top-level is a proxy for "belongs to this loop", and it is a conservative one:
+// an [item] inside *any* block — a [conditional], say — is also left alone, and
+// the processor's own dispatch then renders it empty. That predates the sentinel
+// scheme (it was equally true when the branch was substituted before being
+// processed) and is deliberately kept, because marking deeper is not a local
+// change: [lazy], [details] and [reload] seal their raw body into a signed token
+// that a *later* request renders, and a sentinel sealed into one would be
+// emitted to the page by a render that has no splice pass to consume it — and,
+// the prefix being per-process, could not be consumed even in principle.
+// Widening this means classifying every block by whether its body is rendered in
+// this pass, which belongs with those handlers rather than here.
 func markItems(branch string) (string, []Shortcode) {
 	// A branch that already contains NUL could otherwise carry sentinel bytes
 	// of its own. Replacing it byte-for-byte keeps every parsed offset valid.

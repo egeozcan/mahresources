@@ -396,3 +396,14 @@ func TestJSONNumbersRenderInPlainDecimal(t *testing.T) {
 	assert.Equal(t, "100000000000000000000", formatScalarValue(1e20, "", ""))
 	assert.Equal(t, "0.000001", formatScalarValue(1e-6, "", ""))
 }
+
+// A float32 is formatted at its own width. Widening one to a float64 and
+// printing that is how "%g" turned 1.2 into "1.2000000476837158"; no model has a
+// float32 field today, so this is a property of the formatter rather than of any
+// live page.
+func TestFloat32FormatsAtItsOwnPrecision(t *testing.T) {
+	assert.Equal(t, "1.2", formatFieldValue(reflect.ValueOf(float32(1.2))))
+	assert.Equal(t, "1.2", formatScalarValue(float32(1.2), "", ""))
+	assert.Equal(t, "1.2", formatScalarValue(float64(1.2), "", ""))
+	assert.Equal(t, "1234567", formatScalarValue(float32(1234567), "", ""))
+}
