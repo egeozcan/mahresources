@@ -3,6 +3,7 @@ package shortcodes
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -153,4 +154,108 @@ func TestItemFormatsJSONDecodedValues(t *testing.T) {
 	if got := renderItemValue(Shortcode{Name: "item", Attrs: map[string]string{"path": "n", "format": "filesize"}}, frac, 1); got != "2.5" {
 		t.Errorf("filesize on 2.5 = %q, want it unchanged", got)
 	}
+}
+
+// A Meta array element is data, never template source. [each] used to splice the
+// rendered element into the branch and *then* parse the result, so an element
+// carrying shortcode markup executed: html.EscapeString leaves "[" and "]" alone,
+// and parseAttrs runs html.UnescapeString over the attribute string, restoring
+// the escaped quotes before parsing. Anyone who can edit an entity's Meta could
+// therefore run any shortcode in the template's own context.
+func TestEachItemValueIsNotTemplateSource(t *testing.T) {
+	sc := eachSC(map[string]string{"path": "tags"}, `<li>[item]</li>`)
+	ctx := MetaShortcodeContext{
+		Entity: testEntity{Description: `<script>alert(1)</script>`},
+		Meta:   json.RawMessage(`{"tags":["[property path=\"Description\" raw=\"true\"]"]}`),
+	}
+	got := RenderEachShortcode(context.Background(), sc, ctx, nil, nil, 0)
+	assert.NotContains(t, got, "<script>", "the element ran as template source")
+	assert.Equal(t, `<li>[property path=&#34;Description&#34; raw=&#34;true&#34;]</li>`, got)
+}
+
+// The same hole with [mrql]: an element containing a query ran it as the viewer.
+// The executor must never see a query that came out of a Meta value.
+func TestEachItemValueCannotRunAnMRQLQuery(t *testing.T) {
+	var executed []string
+	executor := func(_ context.Context, query string, _ QueryOptions) (*QueryResult, error) {
+		executed = append(executed, query)
+		return &QueryResult{Mode: "count", Rows: []map[string]any{{"count": float64(7)}}}, nil
+	}
+	sc := eachSC(map[string]string{"path": "tags"}, `<li>[item]</li>`)
+	ctx := MetaShortcodeContext{
+		Meta: json.RawMessage(`{"tags":["[mrql query=\"FIND resources\" value=\"count\"]"]}`),
+	}
+	got := RenderEachShortcode(context.Background(), sc, ctx, nil, executor, 0)
+	assert.Empty(t, executed, "a Meta value executed a query")
+	assert.NotContains(t, got, "7")
+}
+
+// raw="true" means "not HTML-escaped" — the same thing it means on [property] and
+// on [meta inline="true"], neither of which re-processes its output. It does not
+// mean "re-processed as template source": the value renders as literal text.
+func TestEachRawItemValueIsLiteralTextNotMarkup(t *testing.T) {
+	sc := eachSC(map[string]string{"path": "tags"}, `[item raw="true"]`)
+	ctx := MetaShortcodeContext{
+		Entity: testEntity{Description: "secret"},
+		Meta:   json.RawMessage(`{"tags":["<b>[property path=\"Description\"]</b>"]}`),
+	}
+	got := RenderEachShortcode(context.Background(), sc, ctx, nil, nil, 0)
+	assert.Equal(t, `<b>[property path="Description"]</b>`, got)
+}
+
+// A JSON NUL escape unmarshals to a real NUL byte, which is what the item-splice
+// sentinels are delimited with. A Meta value must not be able to carry one into
+// the output.
+func TestEachStripsNULBytesFromItemValues(t *testing.T) {
+	sc := eachSC(map[string]string{"path": "tags"}, `[item]`)
+	ctx := MetaShortcodeContext{Meta: json.RawMessage("{\"tags\":[\"a\\u0000b\"]}")}
+	got := RenderEachShortcode(context.Background(), sc, ctx, nil, nil, 0)
+	assert.Equal(t, "ab", got)
+}
+
+// The three JSON dot-path walkers disagree about an empty path, and each answer
+// is load-bearing at its own call site. This is [item]'s: no path= means the
+// element itself, so the walk is the identity. (rawValueAtPath and
+// valueJSONAtPath pin the other two.)
+func TestItemWithNoPathRendersTheElementItself(t *testing.T) {
+	render := func(attrs map[string]string, elem any) string {
+		return renderItemValue(Shortcode{Name: "item", Attrs: attrs}, elem, 1)
+	}
+
+	assert.Equal(t, "x", render(map[string]string{}, "x"))
+	assert.Equal(t, `{&#34;a&#34;:&#34;b&#34;}`, render(map[string]string{}, map[string]any{"a": "b"}))
+
+	// A missing segment and a non-object step both resolve to nothing.
+	assert.Equal(t, "", render(map[string]string{"path": "missing"}, map[string]any{"a": "b"}))
+	assert.Equal(t, "", render(map[string]string{"path": "a"}, "scalar"))
+
+	// An explicit null is indistinguishable from a miss here, deliberately —
+	// both fall through to default=.
+	assert.Equal(t, "-", render(map[string]string{"path": "a", "default": "-"}, map[string]any{"a": nil}))
+	assert.Equal(t, "-", render(map[string]string{"path": "b", "default": "-"}, map[string]any{"a": nil}))
+}
+
+// The splice never rescans what it inserted. A repeated strings.Replace over the
+// sentinels would: the value written for sentinel 0 would be scanned again when
+// sentinel 1 was replaced, so a value carrying sentinel 1's bytes would be
+// expanded. stripNUL already keeps a Meta value from carrying those bytes at
+// all, so this input is unreachable through RenderEachShortcode and only an
+// in-package test can build it — which is exactly why the property needs pinning
+// here rather than through a rendered page.
+func TestSpliceItemsDoesNotRescanWhatItInserted(t *testing.T) {
+	rendered := "a" + itemSentinel(0) + "b" + itemSentinel(1) + "c"
+	forged := "<" + itemSentinel(1) + ">"
+
+	got := spliceItems(rendered, []string{forged, "SECOND"})
+
+	assert.Equal(t, "a"+forged+"bSECONDc", got)
+	assert.Equal(t, 1, strings.Count(got, "SECOND"), "an inserted value was re-expanded")
+}
+
+// A sentinel naming no value is dropped rather than printed: its bytes include a
+// NUL, which is not page content. Unreachable in practice (every sentinel the
+// marker wrote has a value), so it is pinned directly.
+func TestSpliceItemsDropsAnUnknownSentinel(t *testing.T) {
+	rendered := "a" + itemSentinel(7) + "b"
+	assert.Equal(t, "ab", spliceItems(rendered, []string{"only-one"}))
 }

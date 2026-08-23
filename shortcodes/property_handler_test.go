@@ -338,3 +338,89 @@ func TestFormatJSONScalarParsesOnlyOnRequest(t *testing.T) {
 		t.Errorf("zone-less input = %q", got)
 	}
 }
+
+// An MRQL aggregated row is a GORM map scan, so a timestamp column arrives as a
+// string on SQLite and as a time.Time on Postgres. format="date" has to mean the
+// same thing on both engines — and the same thing it means on [item] and on
+// [meta inline="true"], whose values are JSON-shaped too.
+func TestFormatScalarValueFormatsBothEngineShapesAlike(t *testing.T) {
+	stamp := time.Date(2026, 8, 22, 10, 30, 0, 0, time.UTC)
+
+	assert.Equal(t, "2026-08-22", formatScalarValue("2026-08-22T10:30:00Z", "date", ""))
+	assert.Equal(t, "2026-08-22", formatScalarValue(stamp, "date", ""))
+	assert.Equal(t, "10:30", formatScalarValue("2026-08-22T10:30:00Z", "time", ""))
+	assert.Equal(t, "10:30", formatScalarValue(stamp, "time", ""))
+	assert.Equal(t, "Aug 22, 2026", formatScalarValue("2026-08-22", "", "Jan 2, 2006"))
+	assert.Equal(t, "Aug 22, 2026", formatScalarValue(stamp, "", "Jan 2, 2006"))
+
+	// A string that is not a time passes through even when a time format was
+	// asked for, and nothing is parsed when no time format was asked for.
+	assert.Equal(t, "report", formatScalarValue("report", "date", ""))
+	assert.Equal(t, "2026-08-22T10:30:00Z", formatScalarValue("2026-08-22T10:30:00Z", "", ""))
+
+	// The non-time formatting [mrql value=] already had is unchanged.
+	assert.Equal(t, "", formatScalarValue(nil, "", ""))
+	assert.Equal(t, "42", formatScalarValue(int64(42), "", ""))
+	assert.Equal(t, "2.0 KB", formatScalarValue(float64(2048), "filesize", ""))
+}
+
+// JSON decodes every number to float64, so "%g" put every integer-looking Meta
+// field at or above one million into scientific notation: {"n":1234567} rendered
+// "1.234567e+06". It reaches the three shortcodes whose values are JSON-shaped.
+func TestJSONNumbersRenderInPlainDecimal(t *testing.T) {
+	// [item]
+	item := renderItemValue(
+		Shortcode{Name: "item", Attrs: map[string]string{"path": "n"}},
+		map[string]any{"n": float64(1234567)}, 1)
+	assert.Equal(t, "1234567", item)
+
+	// [meta inline="true"]
+	inline := RenderMetaShortcode(
+		Shortcode{Name: "meta", Attrs: map[string]string{"path": "n", "inline": "true"}},
+		MetaShortcodeContext{Meta: json.RawMessage(`{"n":1234567}`)})
+	assert.Equal(t, "1234567", inline)
+
+	// [mrql value=…] on an aggregate
+	assert.Equal(t, "1234567", formatScalarValue(float64(1234567), "", ""))
+	assert.Equal(t, "1234567.5", formatScalarValue(float64(1234567.5), "", ""))
+
+	// Small and negative values keep their plain form too.
+	assert.Equal(t, "0", formatScalarValue(float64(0), "", ""))
+	assert.Equal(t, "-1234567", formatScalarValue(float64(-1234567), "", ""))
+	assert.Equal(t, "2.5", formatScalarValue(2.5, "", ""))
+
+	// Past the point where plain decimal is hundreds of digits, exponent form is
+	// the readable one — the same bounds encoding/json switches at.
+	assert.Equal(t, "1e+21", formatScalarValue(1e21, "", ""))
+	assert.Equal(t, "1e-07", formatScalarValue(1e-7, "", ""))
+	assert.Equal(t, "100000000000000000000", formatScalarValue(1e20, "", ""))
+	assert.Equal(t, "0.000001", formatScalarValue(1e-6, "", ""))
+}
+
+// A float32 is formatted at its own width. Widening one to a float64 and
+// printing that is how "%g" turned 1.2 into "1.2000000476837158"; no model has a
+// float32 field today, so this is a property of the formatter rather than of any
+// live page.
+func TestFloat32FormatsAtItsOwnPrecision(t *testing.T) {
+	assert.Equal(t, "1.2", formatFieldValue(reflect.ValueOf(float32(1.2))))
+	assert.Equal(t, "1.2", formatScalarValue(float32(1.2), "", ""))
+	assert.Equal(t, "1.2", formatScalarValue(float64(1.2), "", ""))
+	assert.Equal(t, "1234567", formatScalarValue(float32(1234567), "", ""))
+}
+
+// The decimal/exponent cutoff is tested at the value's own width too, not just
+// applied at it: float32(1e-6) widens to a float64 slightly *under* 1e-6, so a
+// 64-bit comparison sends a number that is exactly on the bound into exponent
+// form. encoding/json compares float32(abs) for this reason, and these are the
+// boundary values on both sides at both widths.
+func TestFloatCutoffIsTestedAtTheValuesOwnWidth(t *testing.T) {
+	assert.Equal(t, "0.000001", formatScalarValue(float32(1e-6), "", ""))
+	assert.Equal(t, "0.000001", formatScalarValue(float64(1e-6), "", ""))
+	assert.Equal(t, "1e-07", formatScalarValue(float32(1e-7), "", ""))
+	assert.Equal(t, "1e-07", formatScalarValue(float64(1e-7), "", ""))
+
+	assert.Equal(t, "1e+21", formatScalarValue(float32(1e21), "", ""))
+	assert.Equal(t, "1e+21", formatScalarValue(float64(1e21), "", ""))
+	assert.Equal(t, "100000000000000000000", formatScalarValue(float32(1e20), "", ""))
+	assert.Equal(t, "100000000000000000000", formatScalarValue(float64(1e20), "", ""))
+}

@@ -128,16 +128,15 @@ func formatPropertyValue(v reflect.Value, format, layout string) string {
 	return formatFieldValue(v)
 }
 
-// formatScalarValue renders an arbitrary scalar (int, float, string, time.Time,
-// …) to display text, honoring the same format/layout attrs as [property]. It is
-// the formatting entry point for inline [mrql value=], reusing formatPropertyValue
-// so a count or aggregate column formats identically to an entity field. A nil
-// value renders empty.
+// formatScalarValue is the formatting entry point for inline [mrql value=]. It
+// names the one thing the call site in mrql_handler.go needs to know: an MRQL
+// row is JSON-shaped, not struct-shaped. The rows come back from a GORM map
+// scan, so a timestamp column arrives as a string on SQLite and as a time.Time
+// on Postgres — routing through formatJSONScalar is what makes format="date"
+// mean the same thing on both engines, and the same thing it means on [item] and
+// [meta inline="true"].
 func formatScalarValue(v any, format, layout string) string {
-	if v == nil {
-		return ""
-	}
-	return formatPropertyValue(reflect.ValueOf(v), format, layout)
+	return formatJSONScalar(v, format, layout)
 }
 
 // asInt64 returns the int64 value of an integer reflect.Value, or (0, false)
@@ -170,7 +169,9 @@ func asInt64(v reflect.Value) (int64, bool) {
 
 // formatJSONScalar formats a value decoded from JSON, where a timestamp is a
 // string and every number is a float64. It is the entry point for [item] and
-// [meta inline], whose values can only ever have come from a Meta blob.
+// [meta inline], whose values can only ever have come from a Meta blob, and for
+// [mrql value=], whose values come from a GORM map scan and are JSON-shaped for
+// the same reason on at least one of the two engines.
 //
 // It exists as a separate function rather than a branch inside
 // formatPropertyValue because that one is also [property]'s, and [property]
@@ -193,6 +194,34 @@ func formatJSONScalar(v any, format, layout string) string {
 		}
 	}
 	return formatPropertyValue(reflect.ValueOf(v), format, layout)
+}
+
+// formatFloat renders a float in plain decimal notation. "%g" was picking
+// scientific notation from six significant digits up, so every integer-looking
+// Meta field at or above one million printed as "1.234567e+06" — and JSON
+// decodes every number to a float64, so that is the shape [item], [meta inline]
+// and [mrql value=] on an aggregate all see.
+//
+// The bounds are encoding/json's, for the reason encoding/json has them: past
+// them the plain form is hundreds of digits, which no page wants either.
+//
+// bits is the width the value actually had, and it decides both halves of the
+// answer. A float32 widened to a float64 is not the number it was — 1.2 becomes
+// 1.2000000476837158, and formatting at 64 bits prints all of it, which is what
+// "%g" did too — and the cutoff has to be tested at the same width, or a float32
+// of 1e-6 falls just under a bound it is exactly on (encoding/json compares
+// float32(abs) for the same reason).
+func formatFloat(f float64, bits int) string {
+	abs := math.Abs(f)
+	exponent := abs != 0 && (abs < 1e-6 || abs >= 1e21)
+	if bits == 32 {
+		a := float32(abs)
+		exponent = a != 0 && (a < 1e-6 || a >= 1e21)
+	}
+	if exponent {
+		return strconv.FormatFloat(f, 'e', -1, bits)
+	}
+	return strconv.FormatFloat(f, 'f', -1, bits)
 }
 
 // formatTimeValue applies layout (wins) or format to a time.
@@ -263,8 +292,10 @@ func formatFieldValue(v reflect.Value) string {
 		return fmt.Sprintf("%d", v.Int())
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return fmt.Sprintf("%d", v.Uint())
-	case reflect.Float32, reflect.Float64:
-		return fmt.Sprintf("%g", v.Float())
+	case reflect.Float32:
+		return formatFloat(v.Float(), 32)
+	case reflect.Float64:
+		return formatFloat(v.Float(), 64)
 	case reflect.Bool:
 		return fmt.Sprintf("%t", v.Bool())
 	case reflect.Slice:

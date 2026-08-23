@@ -2,7 +2,6 @@ package shortcodes
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"html"
 	"reflect"
@@ -10,29 +9,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-func extractRawValueAtPath(metaRaw json.RawMessage, path string) any {
-	if len(metaRaw) == 0 || path == "" {
-		return nil
-	}
-	var meta map[string]any
-	if err := json.Unmarshal(metaRaw, &meta); err != nil {
-		return nil
-	}
-	parts := strings.Split(path, ".")
-	var current any = meta
-	for _, part := range parts {
-		obj, ok := current.(map[string]any)
-		if !ok {
-			return nil
-		}
-		current, ok = obj[part]
-		if !ok {
-			return nil
-		}
-	}
-	return current
-}
 
 // resolveConditionalValue resolves the tested value for one condition, reading
 // its source attributes with the given numbered suffix ("" for the base
@@ -87,7 +63,7 @@ func resolveConditionalValue(reqCtx context.Context, attrs map[string]string, su
 		}
 		return formatFieldValue(field), nil
 	}
-	return extractRawValueAtPath(ctx.Meta, attr("path")), nil
+	return ctx.rawValueAtPath(attr("path")), nil
 }
 
 // hasConditionSource reports whether a numbered-suffix condition names any value

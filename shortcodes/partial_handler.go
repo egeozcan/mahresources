@@ -33,6 +33,12 @@ func RenderPartialShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortc
 	return processWithDepth(reqCtx, content, ctx, renderer, executor, depth+1)
 }
 
+// partialNotFoundComment names the unresolved partial in an HTML comment. The
+// name is escaped before it is quoted: %q handles quotes and backslashes but
+// leaves "-->" alone, so a name could otherwise close the comment reporting it
+// and follow it with real markup. A template is admin/editor-authored, but a
+// plugin's output is re-processed as template source (processor.go), so the name
+// here is not always something an operator wrote.
 func partialNotFoundComment(name string) string {
-	return fmt.Sprintf("<!-- partial %q not found -->", name)
+	return fmt.Sprintf("<!-- partial %q not found -->", commentSafe(name))
 }

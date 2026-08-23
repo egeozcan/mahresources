@@ -29,8 +29,17 @@ func shortcodeErrorMarker(label, detail string) string {
 	)
 }
 
-// shortcodeComment renders an HTML comment marker. msg must not contain "--"
-// (callers pass fixed strings), so no escaping of comment terminators is needed.
+// commentSafe escapes text for interpolation into an HTML comment. It is the
+// one rule every comment emitter here uses, because a comment can be closed by
+// the text it carries: "-->" is not special to fmt's %q, and an escaped ">" can
+// never terminate a comment since entities are not decoded inside one.
+func commentSafe(s string) string {
+	return html.EscapeString(s)
+}
+
+// shortcodeComment renders an HTML comment marker. Today's callers pass fixed
+// strings, for which the escaping is a no-op; it is applied anyway so the
+// emitter is safe for whatever a later caller hands it.
 func shortcodeComment(msg string) string {
-	return "<!-- mr:" + msg + " -->"
+	return "<!-- mr:" + commentSafe(msg) + " -->"
 }
