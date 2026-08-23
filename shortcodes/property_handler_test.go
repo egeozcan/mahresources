@@ -338,3 +338,28 @@ func TestFormatJSONScalarParsesOnlyOnRequest(t *testing.T) {
 		t.Errorf("zone-less input = %q", got)
 	}
 }
+
+// An MRQL aggregated row is a GORM map scan, so a timestamp column arrives as a
+// string on SQLite and as a time.Time on Postgres. format="date" has to mean the
+// same thing on both engines — and the same thing it means on [item] and on
+// [meta inline="true"], whose values are JSON-shaped too.
+func TestFormatScalarValueFormatsBothEngineShapesAlike(t *testing.T) {
+	stamp := time.Date(2026, 8, 22, 10, 30, 0, 0, time.UTC)
+
+	assert.Equal(t, "2026-08-22", formatScalarValue("2026-08-22T10:30:00Z", "date", ""))
+	assert.Equal(t, "2026-08-22", formatScalarValue(stamp, "date", ""))
+	assert.Equal(t, "10:30", formatScalarValue("2026-08-22T10:30:00Z", "time", ""))
+	assert.Equal(t, "10:30", formatScalarValue(stamp, "time", ""))
+	assert.Equal(t, "Aug 22, 2026", formatScalarValue("2026-08-22", "", "Jan 2, 2006"))
+	assert.Equal(t, "Aug 22, 2026", formatScalarValue(stamp, "", "Jan 2, 2006"))
+
+	// A string that is not a time passes through even when a time format was
+	// asked for, and nothing is parsed when no time format was asked for.
+	assert.Equal(t, "report", formatScalarValue("report", "date", ""))
+	assert.Equal(t, "2026-08-22T10:30:00Z", formatScalarValue("2026-08-22T10:30:00Z", "", ""))
+
+	// The non-time formatting [mrql value=] already had is unchanged.
+	assert.Equal(t, "", formatScalarValue(nil, "", ""))
+	assert.Equal(t, "42", formatScalarValue(int64(42), "", ""))
+	assert.Equal(t, "2.0 KB", formatScalarValue(float64(2048), "filesize", ""))
+}

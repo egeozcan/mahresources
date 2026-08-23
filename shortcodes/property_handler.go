@@ -128,16 +128,15 @@ func formatPropertyValue(v reflect.Value, format, layout string) string {
 	return formatFieldValue(v)
 }
 
-// formatScalarValue renders an arbitrary scalar (int, float, string, time.Time,
-// …) to display text, honoring the same format/layout attrs as [property]. It is
-// the formatting entry point for inline [mrql value=], reusing formatPropertyValue
-// so a count or aggregate column formats identically to an entity field. A nil
-// value renders empty.
+// formatScalarValue is the formatting entry point for inline [mrql value=]. It
+// names the one thing the call site in mrql_handler.go needs to know: an MRQL
+// row is JSON-shaped, not struct-shaped. The rows come back from a GORM map
+// scan, so a timestamp column arrives as a string on SQLite and as a time.Time
+// on Postgres — routing through formatJSONScalar is what makes format="date"
+// mean the same thing on both engines, and the same thing it means on [item] and
+// [meta inline="true"].
 func formatScalarValue(v any, format, layout string) string {
-	if v == nil {
-		return ""
-	}
-	return formatPropertyValue(reflect.ValueOf(v), format, layout)
+	return formatJSONScalar(v, format, layout)
 }
 
 // asInt64 returns the int64 value of an integer reflect.Value, or (0, false)
@@ -170,7 +169,9 @@ func asInt64(v reflect.Value) (int64, bool) {
 
 // formatJSONScalar formats a value decoded from JSON, where a timestamp is a
 // string and every number is a float64. It is the entry point for [item] and
-// [meta inline], whose values can only ever have come from a Meta blob.
+// [meta inline], whose values can only ever have come from a Meta blob, and for
+// [mrql value=], whose values come from a GORM map scan and are JSON-shaped for
+// the same reason on at least one of the two engines.
 //
 // It exists as a separate function rather than a branch inside
 // formatPropertyValue because that one is also [property]'s, and [property]
