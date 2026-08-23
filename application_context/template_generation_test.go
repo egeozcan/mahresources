@@ -325,6 +325,50 @@ func TestTemplateGeneratorNamedSlotOutranksTheMode(t *testing.T) {
 	}
 }
 
+// TestTemplateGeneratorSlotGovernsThePromptToo pins the two halves together.
+// The handler validates Slot and does not validate Mode, so a request can
+// contradict itself; the prompt's mode rule and the linter's reading must not
+// then answer it differently — asking the model for HTML and grading the reply
+// as CSS is worse than either reading alone.
+func TestTemplateGeneratorSlotGovernsThePromptToo(t *testing.T) {
+	cases := map[string]struct {
+		slot, mode string
+		wantRule   string
+		rejectRule string
+	}{
+		"CSS slot labelled html": {
+			slot: "CustomCSS", mode: "html",
+			wantRule: "Output CSS only", rejectRule: "Output HTML",
+		},
+		"markup slot labelled css": {
+			slot: "CustomHeader", mode: "css",
+			wantRule: "Output HTML", rejectRule: "Output CSS only",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			in := slotInput()
+			in.Slot = tc.slot
+			in.Mode = tc.mode
+			provider := &fakeTemplateDraftProvider{
+				response: `{"content":"x","explanation":"y"}`,
+			}
+			gen := NewTemplateGenerator(provider, templateGenConfig())
+
+			if _, err := gen.GenerateTemplate(context.Background(), in, "do the thing"); err != nil {
+				t.Fatalf("GenerateTemplate: %v", err)
+			}
+			if !strings.Contains(provider.seenUser, tc.wantRule) {
+				t.Errorf("prompt should follow the slot and say %q:\n%s", tc.wantRule, provider.seenUser)
+			}
+			if strings.Contains(provider.seenUser, tc.rejectRule) {
+				t.Errorf("prompt must not follow the contradicted mode and say %q:\n%s", tc.rejectRule, provider.seenUser)
+			}
+		})
+	}
+}
+
 // TestTemplateGeneratorBundleDecidesCSSModePerSlot pins why cssMode is a
 // parameter rather than something read off the input inside the function:
 // finishBundle shares one TemplateGenerationInput across every slot it
@@ -332,7 +376,16 @@ func TestTemplateGeneratorNamedSlotOutranksTheMode(t *testing.T) {
 // stylesheet. Either whole-bundle answer is wrong — deriving from Mode="html"
 // flags neither slot, deriving from Mode="css" flags both.
 func TestTemplateGeneratorBundleDecidesCSSModePerSlot(t *testing.T) {
-	const draft = `{"slots":{"CustomHeader":"<div>[meta path=\"colour\" inline=\"true\"]</div>","CustomCSS":".badge{color:[meta path=\"colour\" inline=\"true\"]}"},"explanation":"Styles the badge."}`
+	// Each slot's content is diagnostic of the mode it was linted in, so the
+	// assertions below name a direction rather than a count. Counting "CSS
+	// slot" alone would not: inverting the condition merely moves that one
+	// warning from CustomCSS to CustomHeader, leaving the total at one.
+	//
+	// CustomHeader carries raw= in plain text, which warns "becomes real
+	// elements" as markup and "raw= ... in a CSS slot" as CSS. CustomCSS
+	// carries a bare interpolation, which warns only as CSS and is silent as
+	// markup.
+	const draft = `{"slots":{"CustomHeader":"<div>[meta path=\"colour\" inline=\"true\" raw=\"true\"]</div>","CustomCSS":".badge{color:[meta path=\"colour\" inline=\"true\"]}"},"explanation":"Styles the badge."}`
 
 	for _, mode := range []string{"html", "css"} {
 		t.Run("mode="+mode, func(t *testing.T) {
@@ -347,8 +400,16 @@ func TestTemplateGeneratorBundleDecidesCSSModePerSlot(t *testing.T) {
 			if err != nil {
 				t.Fatalf("GenerateTemplate: %v", err)
 			}
+			// CustomCSS was read as a stylesheet — and only it, or this count
+			// would be two.
 			if n := countIssuesContaining(got.Issues, "CSS slot"); n != 1 {
 				t.Fatalf("expected the CSS-placement issue on CustomCSS alone, got %d: %#v", n, got.Issues)
+			}
+			// ...and CustomHeader was read as markup. This is the assertion an
+			// inverted condition fails: it would lint the header as CSS, whose
+			// branch stands in place of this warning rather than beside it.
+			if n := countIssuesContaining(got.Issues, "becomes real elements"); n != 1 {
+				t.Fatalf("expected CustomHeader's markup XSS warning, got %d: %#v", n, got.Issues)
 			}
 		})
 	}

@@ -132,7 +132,8 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 			PartialExists: partialExistsFn(ctx),
 		}
 		// The slot says which document Content is, and nothing else does. An
-		// unnamed slot is deliberately *not* guessed at from the buffers:
+		// unnamed slot is deliberately *not* guessed at from the buffers: at a
+		// non-attribute position — where a stylesheet interpolation sits —
 		// shortcodes' CSS branch returns in place of the markup checks rather
 		// than adding to them, so reading markup as CSS silently drops the raw=
 		// "becomes real elements on the page" warning, which is the XSS one.
