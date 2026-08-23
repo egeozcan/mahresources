@@ -209,9 +209,10 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
     },
 
     // isCSSSlot reports whether the selected buffer is a stylesheet. It reaches
-    // the frame through a <style> element and nothing else, matching the only
-    // sink production has for it, so the frame body is empty while it is
-    // selected and the pane says why rather than leaving an unexplained void.
+    // the frame through a <style> element and nothing else, which is what every
+    // production sink does with it (see CSS_SLOT), so the frame body is empty
+    // while it is selected and the pane says why rather than leaving an
+    // unexplained void.
     isCSSSlot() {
       return this.slot === CSS_SLOT;
     },
