@@ -2304,3 +2304,55 @@ func TestLintRegionExitReachesTheCaller(t *testing.T) {
 		t.Errorf("%s: still MathML here, got %q", src, lintWarnings(src))
 	}
 }
+
+// Leaving foreign content from an HTML current node is HTML's "any other end
+// tag" — a foreign root is no HTML element and has no rule of its own — so it
+// stops at the first SPECIAL element like every other instance of that walk.
+func TestLintLeavingForeignContentObeysTheSpecialStop(t *testing.T) {
+	// A browser meets the <div> and ignores the "</svg>", so the iframe after
+	// it is still an inert SVG element.
+	src := `<svg><foreignObject><div></svg></div></foreignObject><iframe srcdoc="[property path='Name']"></iframe></svg>`
+	if got := lintWarnings(src); len(got) != 0 {
+		t.Errorf("%s: the </svg> is ignored, got %q", src, got)
+	}
+	// With nothing special above it the same tag is honoured.
+	src = `<svg><g></svg><iframe srcdoc="[property path='Name']"></iframe>`
+	if !lintSaysAny(src, `sits in a "srcdoc" attribute`) {
+		t.Errorf("%s: past the </svg> this is HTML, got %q", src, lintWarnings(src))
+	}
+	// And ordinary HTML nesting is untouched: the walk only applies when the
+	// tag would take the scan out of a foreign namespace.
+	src = `<div><p><iframe srcdoc="[property path='Name']"></iframe></div>`
+	if !lintSaysAny(src, `sits in a "srcdoc" attribute`) {
+		t.Errorf("%s: plain HTML, got %q", src, lintWarnings(src))
+	}
+}
+
+// Attribute names are ASCII-lowercased by a browser and by nothing more, so
+// this normalizes them the same way. U+212A KELVIN SIGN lowercases to "k" under
+// Unicode folding, and a rule that matched a name exactly would have read
+// "on\u212Aeydown" as the onkeydown a browser never creates.
+//
+// No rule here matches a name exactly today — the one that would, the on*
+// family, is a PREFIX test and fires on any attribute starting with "on",
+// including that one. That looseness is pre-existing and is the same trade the
+// URL rules make, so this is normalization hygiene rather than a change in what
+// is reported; what it buys is that the next exact-match rule cannot inherit
+// the defect.
+func TestLintAttributeNamesFoldOnlyASCII(t *testing.T) {
+	// The ASCII half folds, which is what the rules are written against.
+	if !lintSaysAny(`<button onKEYDOWN="[property path='Name']">x</button>`, "event handler") {
+		t.Error("an onKEYDOWN is an onkeydown")
+	}
+	if !lintSaysAny(`<div STYLE="color:[property path='Name']">x</div>`, `sits in a "style" attribute`) {
+		t.Error("a STYLE is a style")
+	}
+	// A non-ASCII fold does not create a name a browser never made: the reported
+	// attribute is the one that was written.
+	src := `<button on` + "K" + `eydown="[property path='Name']">x</button>`
+	for _, msg := range lintWarnings(src) {
+		if strings.Contains(msg, `"onkeydown"`) {
+			t.Errorf("%s: a browser makes no onkeydown here, got %q", src, msg)
+		}
+	}
+}

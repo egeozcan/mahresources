@@ -337,6 +337,18 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 		matched := false
 		for i := len(stack) - 1; i >= 0; i-- {
 			if stack[i].name == name {
+				// Leaving foreign content from an HTML current node is HTML's
+				// "any other end tag" — a foreign root is no HTML element and
+				// has no rule of its own — and that walk stops at the first
+				// SPECIAL element. "<svg><foreignObject><div></svg>" is the
+				// shape: a browser meets the <div> and ignores the tag, and
+				// popping to the svg anyway turned an inert foreign <iframe
+				// srcdoc> after it into a real one. Matching a frame that is
+				// already HTML keeps the plain search, so ordinary
+				// "<div><p>…</div>" nesting is untouched.
+				if enclosing().ns == "" && stack[i].ns != "" && stackHasSpecial(stack[i+1:]) {
+					break
+				}
 				stack, matched = stack[:i], true
 				break
 			}
@@ -913,7 +925,10 @@ func sentinelsInTag(tag string) []sentinelHit {
 		for i < len(tag) && tag[i] != '=' && tag[i] != '/' && !isASCIISpace(tag[i]) && tag[i] != '>' {
 			i++
 		}
-		name := strings.ToLower(tag[nameStart:i])
+		// asciiLower, not strings.ToLower, which folds U+212A onto "k": an
+		// attribute spelled with one is not "onkeydown" to a browser, and
+		// reading it as one reported an event handler that does not exist.
+		name := asciiLower(tag[nameStart:i])
 		// An interpolation in the NAME is worse than one in a value: nothing
 		// delimits it, so a Meta value containing a space simply adds
 		// attributes. <div data-[meta ...]="x"> is the realistic shape.
@@ -1151,12 +1166,12 @@ func urlSchemeBefore(prefix string) (scheme string, fixed bool) {
 	for i := 0; i < len(prefix); i++ {
 		switch prefix[i] {
 		case ':':
-			return strings.ToLower(strings.TrimSpace(prefix[:i])), true
+			return asciiLower(strings.TrimSpace(prefix[:i])), true
 		case '/', '?', '#':
 			return "", true
 		}
 	}
-	return strings.ToLower(strings.TrimSpace(prefix)), false
+	return asciiLower(strings.TrimSpace(prefix)), false
 }
 
 // couldStillBecomeExecutable reports whether a value appended to this prefix
