@@ -47,7 +47,7 @@ func RenderEachShortcode(reqCtx context.Context, sc Shortcode, ctx MetaShortcode
 		return processWithDepth(reqCtx, elseBranch, ctx, renderer, executor, depth+1)
 	}
 
-	arr, ok := extractRawValueAtPath(ctx.Meta, sc.Attrs["path"]).([]any)
+	arr, ok := ctx.rawValueAtPath(sc.Attrs["path"]).([]any)
 	if !ok || len(arr) == 0 {
 		return renderElse()
 	}

@@ -2,7 +2,6 @@ package shortcodes
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"html"
 	"reflect"
@@ -10,23 +9,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-// extractRawValueAtPath resolves a Meta dot-path to its decoded value, the
-// source [conditional] and [each] read. An empty path names no value: it
-// resolves to nil, so a [conditional path=""] tests nothing and an [each
-// path=""] renders its [else], rather than testing or iterating the whole blob.
-// A miss and an explicit null are both nil, which is what empty= means here.
-func extractRawValueAtPath(metaRaw json.RawMessage, path string) any {
-	if len(metaRaw) == 0 || path == "" {
-		return nil
-	}
-	var meta any
-	if err := json.Unmarshal(metaRaw, &meta); err != nil {
-		return nil
-	}
-	value, _ := navigateJSONValue(meta, path)
-	return value
-}
 
 // resolveConditionalValue resolves the tested value for one condition, reading
 // its source attributes with the given numbered suffix ("" for the base
@@ -81,7 +63,7 @@ func resolveConditionalValue(reqCtx context.Context, attrs map[string]string, su
 		}
 		return formatFieldValue(field), nil
 	}
-	return extractRawValueAtPath(ctx.Meta, attr("path")), nil
+	return ctx.rawValueAtPath(attr("path")), nil
 }
 
 // hasConditionSource reports whether a numbered-suffix condition names any value

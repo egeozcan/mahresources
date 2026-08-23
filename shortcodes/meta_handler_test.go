@@ -398,14 +398,14 @@ func TestExtractSchemaSliceIfThenElse(t *testing.T) {
 	}`
 
 	// When kind=a, aField should resolve
-	sliceA := extractSchemaSlice(schema, "aField", json.RawMessage(`{"kind":"a","aField":"x"}`))
+	sliceA := extractSchemaSlice(schema, "aField", metaObject(`{"kind":"a","aField":"x"}`))
 	require.NotEmpty(t, sliceA, "aField should resolve when kind=a")
 	var parsedA map[string]any
 	require.NoError(t, json.Unmarshal([]byte(sliceA), &parsedA))
 	assert.Equal(t, "A Field", parsedA["title"])
 
 	// When kind=b, bField should resolve
-	sliceB := extractSchemaSlice(schema, "bField", json.RawMessage(`{"kind":"b","bField":"y"}`))
+	sliceB := extractSchemaSlice(schema, "bField", metaObject(`{"kind":"b","bField":"y"}`))
 	require.NotEmpty(t, sliceB, "bField should resolve when kind=b")
 	var parsedB map[string]any
 	require.NoError(t, json.Unmarshal([]byte(sliceB), &parsedB))
@@ -423,14 +423,14 @@ func TestExtractSchemaSliceIfThenElseTypeSafe(t *testing.T) {
 	}`
 
 	// kind is the string "1", not the number 1 — should take else branch
-	sliceOther := extractSchemaSlice(schema, "otherField", json.RawMessage(`{"kind":"1"}`))
+	sliceOther := extractSchemaSlice(schema, "otherField", metaObject(`{"kind":"1"}`))
 	require.NotEmpty(t, sliceOther, "otherField should resolve when kind is string '1' (else branch)")
 
-	sliceNum := extractSchemaSlice(schema, "numField", json.RawMessage(`{"kind":"1"}`))
+	sliceNum := extractSchemaSlice(schema, "numField", metaObject(`{"kind":"1"}`))
 	assert.Empty(t, sliceNum, "numField should NOT resolve when kind is string '1'")
 
 	// kind is the number 1 — should take then branch
-	sliceNum2 := extractSchemaSlice(schema, "numField", json.RawMessage(`{"kind":1}`))
+	sliceNum2 := extractSchemaSlice(schema, "numField", metaObject(`{"kind":1}`))
 	require.NotEmpty(t, sliceNum2, "numField should resolve when kind is number 1 (then branch)")
 }
 
@@ -446,10 +446,10 @@ func TestExtractSchemaSliceIfThenElseObjectConst(t *testing.T) {
 
 	// Should not panic regardless of match result
 	assert.NotPanics(t, func() {
-		extractSchemaSlice(schema, "extra", json.RawMessage(`{"config":{"mode":"advanced"}}`))
+		extractSchemaSlice(schema, "extra", metaObject(`{"config":{"mode":"advanced"}}`))
 	})
 	assert.NotPanics(t, func() {
-		extractSchemaSlice(schema, "basic", json.RawMessage(`{"config":{"mode":"simple"}}`))
+		extractSchemaSlice(schema, "basic", metaObject(`{"config":{"mode":"simple"}}`))
 	})
 }
 
@@ -466,8 +466,8 @@ func TestExtractSchemaSliceUnsupportedConditionMergesBoth(t *testing.T) {
 
 	// "minimum" is not supported by evaluateSimpleCondition — both branches
 	// should be merged so both fields are discoverable.
-	slicePass := extractSchemaSlice(schema, "pass", json.RawMessage(`{"score":80}`))
-	sliceRetry := extractSchemaSlice(schema, "retry", json.RawMessage(`{"score":80}`))
+	slicePass := extractSchemaSlice(schema, "pass", metaObject(`{"score":80}`))
+	sliceRetry := extractSchemaSlice(schema, "retry", metaObject(`{"score":80}`))
 	assert.NotEmpty(t, slicePass, "pass should be discoverable via fallback merge")
 	assert.NotEmpty(t, sliceRetry, "retry should also be discoverable via fallback merge")
 }
@@ -486,13 +486,13 @@ func TestExtractSchemaSliceLeafConditional(t *testing.T) {
 		}
 	}`
 
-	slice := extractSchemaSlice(schema, "status", json.RawMessage(`{"status":"draft"}`))
+	slice := extractSchemaSlice(schema, "status", metaObject(`{"status":"draft"}`))
 	require.NotEmpty(t, slice)
 	var parsed map[string]any
 	require.NoError(t, json.Unmarshal([]byte(slice), &parsed))
 	assert.Equal(t, "Draft Status", parsed["title"])
 
-	slice2 := extractSchemaSlice(schema, "status", json.RawMessage(`{"status":"published"}`))
+	slice2 := extractSchemaSlice(schema, "status", metaObject(`{"status":"published"}`))
 	require.NotEmpty(t, slice2)
 	var parsed2 map[string]any
 	require.NoError(t, json.Unmarshal([]byte(slice2), &parsed2))
@@ -511,8 +511,8 @@ func TestExtractSchemaSliceConditionWithMixedKeywords(t *testing.T) {
 
 	// Even though kind=a matches, required:["flag"] is unsupported —
 	// should merge both branches, not trust the const-only match
-	sliceA := extractSchemaSlice(schema, "aField", json.RawMessage(`{"kind":"a"}`))
-	sliceB := extractSchemaSlice(schema, "bField", json.RawMessage(`{"kind":"a"}`))
+	sliceA := extractSchemaSlice(schema, "aField", metaObject(`{"kind":"a"}`))
+	sliceB := extractSchemaSlice(schema, "bField", metaObject(`{"kind":"a"}`))
 	assert.NotEmpty(t, sliceA, "aField should be discoverable via fallback merge")
 	assert.NotEmpty(t, sliceB, "bField should also be discoverable via fallback merge")
 }
@@ -527,10 +527,10 @@ func TestExtractSchemaSliceConditionVacuousMatch(t *testing.T) {
 		"else":{"properties":{"elseField":{"type":"string","title":"Else"}}}
 	}`
 
-	slice := extractSchemaSlice(schema, "thenField", json.RawMessage(`{}`))
+	slice := extractSchemaSlice(schema, "thenField", metaObject(`{}`))
 	assert.NotEmpty(t, slice, "thenField should resolve for {} (vacuous match)")
 
-	sliceElse := extractSchemaSlice(schema, "elseField", json.RawMessage(`{}`))
+	sliceElse := extractSchemaSlice(schema, "elseField", metaObject(`{}`))
 	assert.Empty(t, sliceElse, "elseField should NOT resolve for {} (vacuous match picks then)")
 }
 
@@ -543,8 +543,8 @@ func TestExtractSchemaSlicePropertyLevelUnsupportedKeyword(t *testing.T) {
 		"else":{"properties":{"y":{"type":"string","title":"Y"}}}
 	}`
 
-	sliceX := extractSchemaSlice(schema, "x", json.RawMessage(`{"code":"A"}`))
-	sliceY := extractSchemaSlice(schema, "y", json.RawMessage(`{"code":"A"}`))
+	sliceX := extractSchemaSlice(schema, "x", metaObject(`{"code":"A"}`))
+	sliceY := extractSchemaSlice(schema, "y", metaObject(`{"code":"A"}`))
 	assert.NotEmpty(t, sliceX, "x should be discoverable via fallback merge")
 	assert.NotEmpty(t, sliceY, "y should also be discoverable via fallback merge")
 }
@@ -559,14 +559,14 @@ func TestExtractSchemaSliceConditionTypeCheck(t *testing.T) {
 	}`
 
 	// code is a number — should take else branch
-	sliceNum := extractSchemaSlice(schema, "numField", json.RawMessage(`{"code":42}`))
+	sliceNum := extractSchemaSlice(schema, "numField", metaObject(`{"code":42}`))
 	assert.NotEmpty(t, sliceNum, "numField should resolve when code is number (else branch)")
 
-	sliceStr := extractSchemaSlice(schema, "strField", json.RawMessage(`{"code":42}`))
+	sliceStr := extractSchemaSlice(schema, "strField", metaObject(`{"code":42}`))
 	assert.Empty(t, sliceStr, "strField should NOT resolve when code is number")
 
 	// code is a string — should take then branch
-	sliceStr2 := extractSchemaSlice(schema, "strField", json.RawMessage(`{"code":"hello"}`))
+	sliceStr2 := extractSchemaSlice(schema, "strField", metaObject(`{"code":"hello"}`))
 	assert.NotEmpty(t, sliceStr2, "strField should resolve when code is string (then branch)")
 }
 
@@ -579,7 +579,7 @@ func TestExtractSchemaSliceConditionTopLevelType(t *testing.T) {
 	}`
 
 	// Value is an object — should take then branch
-	slice := extractSchemaSlice(schema, "objField", json.RawMessage(`{"objField":"x"}`))
+	slice := extractSchemaSlice(schema, "objField", metaObject(`{"objField":"x"}`))
 	assert.NotEmpty(t, slice, "objField should resolve when value is object (then branch)")
 }
 
@@ -592,14 +592,14 @@ func TestExtractSchemaSliceConditionIntegerVsNumber(t *testing.T) {
 	}`
 
 	// 3.14 is not an integer — should take else branch
-	slice := extractSchemaSlice(schema, "floatField", json.RawMessage(`{"val":3.14}`))
+	slice := extractSchemaSlice(schema, "floatField", metaObject(`{"val":3.14}`))
 	assert.NotEmpty(t, slice, "floatField should resolve when val is 3.14 (else)")
 
-	sliceInt := extractSchemaSlice(schema, "intField", json.RawMessage(`{"val":3.14}`))
+	sliceInt := extractSchemaSlice(schema, "intField", metaObject(`{"val":3.14}`))
 	assert.Empty(t, sliceInt, "intField should NOT resolve when val is 3.14")
 
 	// 5 is an integer — should take then branch
-	sliceInt2 := extractSchemaSlice(schema, "intField", json.RawMessage(`{"val":5}`))
+	sliceInt2 := extractSchemaSlice(schema, "intField", metaObject(`{"val":5}`))
 	assert.NotEmpty(t, sliceInt2, "intField should resolve when val is 5 (then)")
 }
 
@@ -612,17 +612,17 @@ func TestExtractSchemaSliceConditionTypeArray(t *testing.T) {
 	}`
 
 	// 42 is not string or null — should take else
-	sliceElse := extractSchemaSlice(schema, "elseF", json.RawMessage(`{"code":42}`))
+	sliceElse := extractSchemaSlice(schema, "elseF", metaObject(`{"code":42}`))
 	assert.NotEmpty(t, sliceElse, "elseF should resolve when code is number")
-	sliceThen := extractSchemaSlice(schema, "thenF", json.RawMessage(`{"code":42}`))
+	sliceThen := extractSchemaSlice(schema, "thenF", metaObject(`{"code":42}`))
 	assert.Empty(t, sliceThen, "thenF should NOT resolve when code is number")
 
 	// "hello" is string — should take then
-	sliceThen2 := extractSchemaSlice(schema, "thenF", json.RawMessage(`{"code":"hello"}`))
+	sliceThen2 := extractSchemaSlice(schema, "thenF", metaObject(`{"code":"hello"}`))
 	assert.NotEmpty(t, sliceThen2, "thenF should resolve when code is string")
 
 	// null is null — should take then
-	sliceThen3 := extractSchemaSlice(schema, "thenF", json.RawMessage(`{"code":null}`))
+	sliceThen3 := extractSchemaSlice(schema, "thenF", metaObject(`{"code":null}`))
 	assert.NotEmpty(t, sliceThen3, "thenF should resolve when code is null")
 }
 
@@ -642,7 +642,7 @@ func TestExtractSchemaSliceConditionalBranchWithRef(t *testing.T) {
 		"$defs":{"AdvDetail":{"title":"Advanced Detail","description":"full detail"}}
 	}`
 
-	slice := extractSchemaSlice(schema, "detail", json.RawMessage(`{"mode":"x","detail":"advanced"}`))
+	slice := extractSchemaSlice(schema, "detail", metaObject(`{"mode":"x","detail":"advanced"}`))
 	require.NotEmpty(t, slice)
 	assert.NotContains(t, slice, "$ref", "branch $ref must be resolved")
 	assert.Contains(t, slice, "Advanced Detail")
@@ -881,21 +881,67 @@ func TestInlineMetaDecodeIsMemoizedPerEntity(t *testing.T) {
 		MetaShortcodeContext{Meta: []byte("{not json")}))
 }
 
-// extractValueAtPath fills the widget's data-value attribute, so "not found"
+// valueJSONAtPath fills the widget's data-value attribute, so "not found"
 // has to stay distinguishable from an explicit null — one is the empty string
 // and the other is the JSON text "null". Its answer for an empty path is "",
 // the third of the three empty-path behaviours (see
-// TestItemWithNoPathRendersTheElementItself and TestExtractRawValueAtPathEdges);
+// TestItemWithNoPathRendersTheElementItself and TestRawValueAtPathEdges);
 // RenderMetaShortcode never asks, since it returns early on an empty path.
-func TestExtractValueAtPathEdges(t *testing.T) {
-	assert.Equal(t, `"b"`, extractValueAtPath(json.RawMessage(`{"a":"b"}`), "a"))
-	assert.Equal(t, `{"b":1}`, extractValueAtPath(json.RawMessage(`{"a":{"b":1}}`), "a"))
-	assert.Equal(t, "null", extractValueAtPath(json.RawMessage(`{"a":null}`), "a"))
+func TestValueJSONAtPathEdges(t *testing.T) {
+	assert.Equal(t, `"b"`, valueJSONAt(json.RawMessage(`{"a":"b"}`), "a"))
+	assert.Equal(t, `{"b":1}`, valueJSONAt(json.RawMessage(`{"a":{"b":1}}`), "a"))
+	assert.Equal(t, "null", valueJSONAt(json.RawMessage(`{"a":null}`), "a"))
 
-	assert.Equal(t, "", extractValueAtPath(json.RawMessage(`{"a":"b"}`), "missing"))
-	assert.Equal(t, "", extractValueAtPath(json.RawMessage(`{"a":"b"}`), ""))
-	assert.Equal(t, "", extractValueAtPath(json.RawMessage(`{"a":"b"}`), "a.b"))
-	assert.Equal(t, "", extractValueAtPath(nil, "a"))
-	assert.Equal(t, "", extractValueAtPath(json.RawMessage(`[1,2]`), "a"))
-	assert.Equal(t, "", extractValueAtPath(json.RawMessage(`not json`), "a"))
+	assert.Equal(t, "", valueJSONAt(json.RawMessage(`{"a":"b"}`), "missing"))
+	assert.Equal(t, "", valueJSONAt(json.RawMessage(`{"a":"b"}`), ""))
+	assert.Equal(t, "", valueJSONAt(json.RawMessage(`{"a":"b"}`), "a.b"))
+	assert.Equal(t, "", valueJSONAt(nil, "a"))
+	assert.Equal(t, "", valueJSONAt(json.RawMessage(`[1,2]`), "a"))
+	assert.Equal(t, "", valueJSONAt(json.RawMessage(`not json`), "a"))
+}
+
+// valueJSONAt reads the widget's data-value for a path through a context, the
+// way RenderMetaShortcode does.
+func valueJSONAt(meta json.RawMessage, path string) string {
+	return MetaShortcodeContext{Meta: meta}.valueJSONAtPath(path)
+}
+
+// metaObject decodes a Meta blob the way the context's memo does, for the
+// extractSchemaSlice cases that need a value context to evaluate if/then/else.
+func metaObject(raw string) map[string]any {
+	return MetaShortcodeContext{Meta: json.RawMessage(raw)}.decodeMetaObject()
+}
+
+// The memo hands one decoded tree to every reader on every by-value copy of the
+// context, so the tree has to be read-only: a mutation by one reader would be
+// seen by the next, and by every later card in the same render. Nothing writes
+// to it today — the schema resolvers copy into fresh maps and tryEvaluateCondition
+// only reads — and this fails if that changes.
+func TestDecodedMetaIsSharedReadOnly(t *testing.T) {
+	const schema = `{
+		"type": "object",
+		"properties": {"aField": {"type": "string"}},
+		"if": {"properties": {"kind": {"const": "a"}}},
+		"then": {"properties": {"aField": {"title": "A"}}},
+		"else": {"properties": {"aField": {"title": "B"}}}
+	}`
+	raw := json.RawMessage(`{"kind":"a","aField":"x","nested":{"b":1},"list":[{"c":2}]}`)
+
+	ctx := MetaShortcodeContext{
+		EntityType:  "group",
+		EntityID:    1,
+		Meta:        raw,
+		MetaSchema:  schema,
+		decodedMeta: &decodedMetaCache{},
+	}
+
+	// Every reader of the shared tree, in one render's worth of calls.
+	_ = RenderMetaShortcode(Shortcode{Name: "meta", Attrs: map[string]string{"path": "aField"}}, ctx)
+	_ = RenderMetaShortcode(Shortcode{Name: "meta", Attrs: map[string]string{"path": "nested.b", "inline": "true"}}, ctx)
+	_ = ctx.rawValueAtPath("list")
+	_ = ctx.valueJSONAtPath("nested")
+
+	var want any
+	require.NoError(t, json.Unmarshal(raw, &want))
+	assert.Equal(t, want, ctx.decodeMeta(), "a reader mutated the shared Meta tree")
 }

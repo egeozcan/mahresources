@@ -20,10 +20,13 @@ type MetaShortcodeContext struct {
 	ScopeGroupID  uint            // resolved "entity" scope (owning group or sentinel for ownerless)
 	ParentGroupID uint            // resolved "parent" scope (owner's owner)
 	RootGroupID   uint            // resolved "root" scope (top of chain)
-	// decodedMeta memoizes the parsed Meta for the inline [meta] path. It is a
-	// pointer because this struct travels by value through every handler, so all
-	// the copies share one decode: a slot carrying N inline values, rendered on a
-	// list of M cards, would otherwise unmarshal each card's blob N times.
+	// decodedMeta memoizes the parsed Meta for every reader of it — the [meta]
+	// widget's value, its schema slice, inline values, and the paths [each] and
+	// [conditional] resolve. It is a pointer because this struct travels by value
+	// through every handler, so all the copies share one decode: a slot carrying
+	// N Meta reads, rendered on a list of M cards, would otherwise unmarshal each
+	// card's blob N times. The tree it holds is shared and must be treated
+	// read-only (TestDecodedMetaIsSharedReadOnly).
 	// processWithDepth populates it per render; a zero value simply decodes
 	// locally, which is what a handler called directly (a test, another entry
 	// point) gets. mrql_handler builds a fresh context per result item, so the
@@ -54,8 +57,8 @@ func RenderMetaShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 	hideEmpty := sc.Attrs["hide-empty"] == "true"
 	defaultVal := sc.Attrs["default"]
 
-	valueJSON := extractValueAtPath(ctx.Meta, path)
-	schemaSlice := extractSchemaSlice(ctx.MetaSchema, path, ctx.Meta)
+	valueJSON := ctx.valueJSONAtPath(path)
+	schemaSlice := extractSchemaSlice(ctx.MetaSchema, path, ctx.decodeMetaObject())
 
 	return fmt.Sprintf(
 		`<meta-shortcode data-path="%s" data-editable="%t" data-hide-empty="%t" data-default="%s" data-entity-type="%s" data-entity-id="%d" data-schema="%s" data-value="%s"></meta-shortcode>`,
@@ -142,22 +145,22 @@ func navigateJSONValue(current any, path string) (value any, found bool) {
 	return current, true
 }
 
-// extractValueAtPath navigates the entity's Meta by dot-notation path and
-// returns the JSON-encoded value there, or "" when the path resolves to nothing.
-// An empty path is "nothing" too rather than the whole blob — RenderMetaShortcode
+// valueJSONAtPath navigates the entity's Meta by dot-notation path and returns
+// the JSON-encoded value there, or "" when the path resolves to nothing. An
+// empty path is "nothing" too rather than the whole blob — RenderMetaShortcode
 // returns before it could ask, and a widget bound to the entire Meta is not a
 // thing this shortcode can build.
-func extractValueAtPath(metaRaw json.RawMessage, path string) string {
-	if len(metaRaw) == 0 || path == "" {
+//
+// The re-marshal is not a round trip added here: the widget's data-value
+// attribute has always carried JSON text, and the sub-value has to be encoded
+// from something. Taking it from the memo means the blob is parsed once per
+// render rather than once per [meta] occurrence per card.
+func (ctx MetaShortcodeContext) valueJSONAtPath(path string) string {
+	if path == "" {
 		return ""
 	}
 
-	var meta any
-	if err := json.Unmarshal(metaRaw, &meta); err != nil {
-		return ""
-	}
-
-	value, found := navigateJSONValue(meta, path)
+	value, found := navigateJSONValue(ctx.decodeMeta(), path)
 	if !found {
 		return ""
 	}
@@ -169,11 +172,26 @@ func extractValueAtPath(metaRaw json.RawMessage, path string) string {
 	return string(encoded)
 }
 
+// rawValueAtPath resolves a Meta dot-path to its decoded value, the source
+// [conditional] and [each] read. An empty path names no value: it resolves to
+// nil, so a [conditional path=""] tests nothing and an [each path=""] renders
+// its [else], rather than testing or iterating the whole blob. A miss and an
+// explicit null are both nil, which is what empty= means here.
+func (ctx MetaShortcodeContext) rawValueAtPath(path string) any {
+	if path == "" {
+		return nil
+	}
+	value, _ := navigateJSONValue(ctx.decodeMeta(), path)
+	return value
+}
+
 // extractSchemaSlice navigates a JSON Schema by dot-notation path through
 // nested "properties" and returns the JSON-encoded sub-schema, or "" if not found.
-// Handles $ref, allOf, oneOf, anyOf, and if/then/else (using entityMeta to
-// evaluate conditions). entityMeta may be nil if no value context is available.
-func extractSchemaSlice(schemaStr string, path string, entityMeta json.RawMessage) string {
+// Handles $ref, allOf, oneOf, anyOf, and if/then/else (using metaValue to
+// evaluate conditions). metaValue is the entity's decoded Meta and may be nil if
+// no value context is available; it is read, never written — see
+// TestDecodedMetaIsSharedReadOnly, since callers hand it the memoized tree.
+func extractSchemaSlice(schemaStr string, path string, metaValue map[string]any) string {
 	if schemaStr == "" {
 		return ""
 	}
@@ -181,12 +199,6 @@ func extractSchemaSlice(schemaStr string, path string, entityMeta json.RawMessag
 	var root map[string]any
 	if err := json.Unmarshal([]byte(schemaStr), &root); err != nil {
 		return ""
-	}
-
-	// Parse entity meta for if/then/else condition evaluation.
-	var metaValue map[string]any
-	if len(entityMeta) > 0 {
-		_ = json.Unmarshal(entityMeta, &metaValue)
 	}
 
 	parts := strings.Split(path, ".")
@@ -703,10 +715,22 @@ type decodedMetaCache struct {
 	value any
 }
 
+// decodeMetaObject returns the memoized Meta as a JSON object, or nil when the
+// blob is absent, malformed, or not an object at its top level — the three cases
+// the previous per-call json.Unmarshal into a map[string]any also produced nil
+// for.
+func (ctx MetaShortcodeContext) decodeMetaObject() map[string]any {
+	obj, _ := ctx.decodeMeta().(map[string]any)
+	return obj
+}
+
 // decodeMeta returns the parsed Meta, decoding at most once when the context
 // carries a cache and every call when it does not. A malformed blob decodes to
 // nil, which navigates to nothing and falls through to default= — the same
 // answer as a missing path, and what the widget's client side also does.
+//
+// The tree is shared by every reader on every by-value copy of the context, so
+// callers must treat it as read-only.
 func (ctx MetaShortcodeContext) decodeMeta() any {
 	if len(ctx.Meta) == 0 {
 		return nil

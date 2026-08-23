@@ -214,8 +214,8 @@ func TestEachStripsNULBytesFromItemValues(t *testing.T) {
 
 // The three JSON dot-path walkers disagree about an empty path, and each answer
 // is load-bearing at its own call site. This is [item]'s: no path= means the
-// element itself, so the walk is the identity. (extractRawValueAtPath and
-// extractValueAtPath pin the other two.)
+// element itself, so the walk is the identity. (rawValueAtPath and
+// valueJSONAtPath pin the other two.)
 func TestItemWithNoPathRendersTheElementItself(t *testing.T) {
 	render := func(attrs map[string]string, elem any) string {
 		return renderItemValue(Shortcode{Name: "item", Attrs: attrs}, elem, 1)

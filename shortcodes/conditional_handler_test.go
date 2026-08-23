@@ -13,40 +13,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- extractRawValueAtPath tests ---
+// --- rawValueAtPath tests ---
 
-func TestExtractRawValueAtPathString(t *testing.T) {
+func TestRawValueAtPathString(t *testing.T) {
 	meta := json.RawMessage(`{"status":"active"}`)
-	result := extractRawValueAtPath(meta, "status")
+	result := rawAtPath(meta, "status")
 	assert.Equal(t, "active", result)
 }
 
-func TestExtractRawValueAtPathNumber(t *testing.T) {
+func TestRawValueAtPathNumber(t *testing.T) {
 	meta := json.RawMessage(`{"count":42}`)
-	result := extractRawValueAtPath(meta, "count")
+	result := rawAtPath(meta, "count")
 	assert.Equal(t, float64(42), result)
 }
 
-func TestExtractRawValueAtPathNested(t *testing.T) {
+func TestRawValueAtPathNested(t *testing.T) {
 	meta := json.RawMessage(`{"a":{"b":"deep"}}`)
-	result := extractRawValueAtPath(meta, "a.b")
+	result := rawAtPath(meta, "a.b")
 	assert.Equal(t, "deep", result)
 }
 
-func TestExtractRawValueAtPathMissing(t *testing.T) {
+func TestRawValueAtPathMissing(t *testing.T) {
 	meta := json.RawMessage(`{"a":"b"}`)
-	result := extractRawValueAtPath(meta, "missing")
+	result := rawAtPath(meta, "missing")
 	assert.Nil(t, result)
 }
 
-func TestExtractRawValueAtPathEmpty(t *testing.T) {
-	result := extractRawValueAtPath(nil, "x")
+func TestRawValueAtPathEmpty(t *testing.T) {
+	result := rawAtPath(nil, "x")
 	assert.Nil(t, result)
 }
 
-func TestExtractRawValueAtPathBool(t *testing.T) {
+func TestRawValueAtPathBool(t *testing.T) {
 	meta := json.RawMessage(`{"featured":true}`)
-	result := extractRawValueAtPath(meta, "featured")
+	result := rawAtPath(meta, "featured")
 	assert.Equal(t, true, result)
 }
 
@@ -560,15 +560,21 @@ func TestConditionalMRQLSourcePriorityOverPath(t *testing.T) {
 // path is nil — no value named — so a [conditional path=""] tests nothing and an
 // [each path=""] renders its [else], rather than testing or iterating the whole
 // blob. That differs from the walk [item] does (identity) and from what
-// extractValueAtPath answers, and all three are deliberate.
-func TestExtractRawValueAtPathEdges(t *testing.T) {
+// valueJSONAtPath answers, and all three are deliberate.
+func TestRawValueAtPathEdges(t *testing.T) {
 	meta := json.RawMessage(`{"a":"b"}`)
 
-	assert.Nil(t, extractRawValueAtPath(meta, ""))
-	assert.Nil(t, extractRawValueAtPath(json.RawMessage(`[1,2]`), "a"))
-	assert.Nil(t, extractRawValueAtPath(json.RawMessage(`not json`), "a"))
-	assert.Nil(t, extractRawValueAtPath(json.RawMessage(`{"a":"b"}`), "a.b"))
+	assert.Nil(t, rawAtPath(meta, ""))
+	assert.Nil(t, rawAtPath(json.RawMessage(`[1,2]`), "a"))
+	assert.Nil(t, rawAtPath(json.RawMessage(`not json`), "a"))
+	assert.Nil(t, rawAtPath(json.RawMessage(`{"a":"b"}`), "a.b"))
 
 	// An explicit null reads as nil, which is what empty= tests for.
-	assert.Nil(t, extractRawValueAtPath(json.RawMessage(`{"a":null}`), "a"))
+	assert.Nil(t, rawAtPath(json.RawMessage(`{"a":null}`), "a"))
+}
+
+// rawAtPath reads a Meta dot-path the way [conditional] and [each] do: through a
+// context, so the read goes over the same memoized decode the renderers use.
+func rawAtPath(meta json.RawMessage, path string) any {
+	return MetaShortcodeContext{Meta: meta}.rawValueAtPath(path)
 }
