@@ -1249,11 +1249,14 @@ func TestLintForeignContentPlacement(t *testing.T) {
 	const decodesEntities = "which is foreign content, where the parser decodes entities"
 	const htmlRawText = "does not decode entities"
 
-	t.Run("a script or style in foreign content has its escaping undone", func(t *testing.T) {
+	t.Run("a script or style in SVG has its escaping undone", func(t *testing.T) {
 		for _, tc := range []struct{ src, lang string }{
 			{`<svg><script>var s = "[property path='Name']"</script></svg>`, "JavaScript"},
 			{`<svg><style>.c{color:"[property path='Name']"}</style></svg>`, "CSS"},
-			{`<math><script>var s = "[property path='Name']"</script></math>`, "JavaScript"},
+			{`<svg><g><script>var s = "[property path='Name']"</script></g></svg>`, "JavaScript"},
+			// <svg> inside <annotation-xml> is taken by HTML rules whatever the
+			// encoding says, and the HTML rule for <svg> enters SVG.
+			{`<math><annotation-xml><svg><script>var s = "[property path='Name']"</script></svg></annotation-xml></math>`, "JavaScript"},
 		} {
 			if !lintSaysAny(tc.src, decodesEntities) {
 				t.Errorf("%s: want the foreign-content rationale, got %q", tc.src, lintWarnings(tc.src))
@@ -1263,6 +1266,25 @@ func TestLintForeignContentPlacement(t *testing.T) {
 			}
 			if !lintSaysAny(tc.src, tc.lang) {
 				t.Errorf("%s: the message still names %s", tc.src, tc.lang)
+			}
+		}
+	})
+
+	t.Run("MathML has no script and no style, so neither is a program", func(t *testing.T) {
+		// MathML Core defines neither, and the parser spec special-cases the end
+		// tag of an SVG <script> and has nothing of the sort for MathML. So a
+		// browser runs nothing and applies nothing here, and the body is read as
+		// the ordinary markup it is.
+		for _, src := range []string{
+			`<math><script>var s = "[property path='Name']"</script></math>`,
+			`<math><style>.c{color:[property path='Name']}</style></math>`,
+			`<math><annotation-xml><script>var s = "[property path='Name']"</script></annotation-xml></math>`,
+			// <mglyph> and <malignmark> are the two start tags a MathML text
+			// integration point does NOT hand to HTML, so this script is MathML.
+			`<math><mtext><mglyph><script>var s = "[property path='Name']"</script></mglyph></mtext></math>`,
+		} {
+			if got := lintWarnings(src); len(got) != 0 {
+				t.Errorf("%s: no browser runs or applies this, got %q", src, got)
 			}
 		}
 	})
@@ -1282,12 +1304,8 @@ func TestLintForeignContentPlacement(t *testing.T) {
 				t.Errorf("%s: want the HTML <script> rationale, got %q", src, lintWarnings(src))
 			}
 		}
-		// annotation-xml without an HTML encoding is not one, so its script is
-		// still MathML and still decodes.
-		src := `<math><annotation-xml><script>var s = "[property path='Name']"</script></annotation-xml></math>`
-		if !lintSaysAny(src, decodesEntities) {
-			t.Errorf("%s: want the foreign-content rationale, got %q", src, lintWarnings(src))
-		}
+		// annotation-xml without an HTML encoding is not one, so its children
+		// are still MathML — covered by the MathML subtest above.
 	})
 
 	t.Run("the other raw-text names are ordinary elements in foreign content", func(t *testing.T) {
@@ -1400,8 +1418,17 @@ func TestLintNoscriptBodyPlacement(t *testing.T) {
 				t.Errorf("%s: want %q, got %q", tc.src, tc.want, lintWarnings(tc.src))
 			}
 			for _, msg := range lintWarnings(tc.src) {
+				// The raw= reasons are the exception, and must be: an unescaped
+				// value can write "</noscript>" and go on in markup whichever
+				// way the body was read, so naming one mode would understate it.
+				if strings.Contains(msg, "with raw=") {
+					if strings.Contains(msg, scriptingCaveat) {
+						t.Errorf("%s: raw= holds under both readings, so it takes no caveat: %q", tc.src, msg)
+					}
+					continue
+				}
 				if !strings.Contains(msg, scriptingCaveat) {
-					t.Errorf("%s: every message from a <noscript> body says which mode it applies in, got %q", tc.src, msg)
+					t.Errorf("%s: a placement reason from a <noscript> body says which mode it applies in, got %q", tc.src, msg)
 				}
 			}
 		}
@@ -1511,7 +1538,7 @@ var foreignNestWrappers = []string{
 	"noscript", "plaintext", "style", "script", "mtext", "mi",
 	"annotation-xml", "font", "b", "table", "li", "a", "section",
 	`font color="red"`, `annotation-xml encoding="text/html"`,
-	"svg/", "iframe/", "script/", "path/",
+	"svg/", "iframe/", "script/", "path/", "mglyph",
 }
 
 // nestMarkup wraps probe in each of parts, in order, closing anything that was
@@ -1533,28 +1560,100 @@ func nestMarkup(parts []string, probe string) string {
 	return open + probe + strings.Join(closers, "")
 }
 
-// The linter reads foreign content from a token stream, and the thing it is
-// approximating is a namespace-aware parser. So ask one. For every nest of the
-// names that decide how markup is read, golang.org/x/net/html's PARSER says
-// whether the probe below is a real element with a live "javascript:" href, and
-// the linter has to warn exactly when it is.
+// The linter reads namespaces off a token stream, and what it is approximating
+// is a namespace-aware parser. So ask one. Each probe below places a value in
+// one position, golang.org/x/net/html's PARSER says whether the element that
+// makes that position dangerous actually exists, and the linter has to warn
+// exactly when it does.
 //
-// A warning with no real element behind it is the failure this file is graded
+// A warning with no live element behind it is the failure this file is graded
 // on, and it is what two earlier attempts at this shipped. The silent direction
 // is a missed warning, which is the state everything here was in before; the
-// four that are missed are named and explained.
-func TestLintForeignContentAgainstTheParser(t *testing.T) {
-	liveJSLink := func(src string) bool {
-		doc, err := html.Parse(strings.NewReader(src))
+// four that are missed are named below.
+func TestLintPlacementsAgainstTheParser(t *testing.T) {
+	type probe struct {
+		name string
+		// lintSrc and oracleSrc are the same markup, one carrying a shortcode
+		// and one a plain value.
+		lintSrc, oracleSrc string
+		// element is what has to exist for the placement to be dangerous, in one
+		// of namespaces.
+		element, attr, attrPrefix string
+		namespaces                []string
+		// scriptingOff asks the parser again with scripting disabled, for the
+		// placements that are live in that mode. The rules that describe
+		// execution do not, since neither mode runs a script in a <noscript>.
+		scriptingOff bool
+		msg          string
+	}
+	probes := []probe{
+		{
+			name: "javascript URL", msg: `continues a "javascript:" URL`,
+			lintSrc:   `<a href="javascript:[property path='Name']">go</a>`,
+			oracleSrc: `<a href="javascript:VALUE">go</a>`,
+			element:   "a", attr: "href", attrPrefix: "javascript:",
+			// Every namespace: the URL rules have always matched on attribute
+			// name rather than on element, which is the same looseness that
+			// warns about <div href="javascript:…"> in HTML.
+			namespaces: []string{"", "svg", "math"},
+		},
+		{
+			name: "srcdoc", msg: `sits in a "srcdoc" attribute`,
+			lintSrc:   `<iframe srcdoc="[property path='Name']"></iframe>`,
+			oracleSrc: `<iframe srcdoc="VALUE"></iframe>`,
+			element:   "iframe", attr: "srcdoc",
+			// HTML only: a foreign <iframe> has no browsing context.
+			namespaces: []string{""}, scriptingOff: true,
+		},
+		{
+			name: "script program", msg: "JavaScript",
+			lintSrc:   `<script>var s = "[property path='Name']"</script>`,
+			oracleSrc: `<script>var s = "VALUE"</script>`,
+			element:   "script", namespaces: []string{"", "svg"},
+		},
+		{
+			name: "style program", msg: "CSS",
+			lintSrc:   `<style>.c{color:[property path='Name']}</style>`,
+			oracleSrc: `<style>.c{color:VALUE}</style>`,
+			element:   "style", namespaces: []string{"", "svg"},
+		},
+	}
+
+	// A value inside a <script> or <style> body is judged as landing in a
+	// program rather than in markup, so anything written around it there draws
+	// the language message instead. These are the only nests where a probe and
+	// the parser disagree, and the message that does come back is the better one
+	// for the placement.
+	inAProgramBody := map[string]bool{
+		`<svg><script><a href="javascript:[property path='Name']">go</a></script></svg>`: true,
+		`<svg><style><a href="javascript:[property path='Name']">go</a></style></svg>`:   true,
+		`<svg><style><script>var s = "[property path='Name']"</script></style></svg>`:    true,
+		`<svg><script><style>.c{color:[property path='Name']}</style></script></svg>`:    true,
+	}
+
+	exists := func(src string, p probe, scripting bool) bool {
+		opts := []html.ParseOption{}
+		if !scripting {
+			opts = append(opts, html.ParseOptionEnableScripting(false))
+		}
+		doc, err := html.ParseWithOptions(strings.NewReader(src), opts...)
 		if err != nil {
 			return false
 		}
 		var walk func(*html.Node) bool
 		walk = func(n *html.Node) bool {
-			if n.Type == html.ElementNode && n.Data == "a" {
-				for _, a := range n.Attr {
-					if a.Key == "href" && strings.HasPrefix(strings.ToLower(a.Val), "javascript:") {
+			if n.Type == html.ElementNode && n.Data == p.element {
+				for _, ns := range p.namespaces {
+					if n.Namespace != ns {
+						continue
+					}
+					if p.attr == "" {
 						return true
+					}
+					for _, a := range n.Attr {
+						if a.Key == p.attr && strings.HasPrefix(strings.ToLower(a.Val), p.attrPrefix) {
+							return true
+						}
 					}
 				}
 			}
@@ -1568,27 +1667,22 @@ func TestLintForeignContentAgainstTheParser(t *testing.T) {
 		return walk(doc)
 	}
 
-	// A value in a <script> or <style> body is judged as landing in a program
-	// rather than in markup, so the anchor written around it draws the language
-	// message instead of the URL one. That is the better message for the
-	// placement, and these are the only nests where the two disagree.
-	programBody := map[string]bool{
-		`<svg><script><a href="javascript:[property path='Name']">go</a></script></svg>`:   true,
-		`<svg><style><a href="javascript:[property path='Name']">go</a></style></svg>`:     true,
-		`<math><script><a href="javascript:[property path='Name']">go</a></script></math>`: true,
-		`<math><style><a href="javascript:[property path='Name']">go</a></style></math>`:   true,
-	}
-
 	check := func(parts []string) {
-		src := nestMarkup(parts, `<a href="javascript:[property path='Name']">go</a>`)
-		oracle := nestMarkup(parts, `<a href="javascript:VALUE">go</a>`)
-		live := liveJSLink(oracle)
-		warned := lintSaysAny(src, `continues a "javascript:" URL`)
-		switch {
-		case warned && !live:
-			t.Errorf("FALSE POSITIVE: no browser makes a link here, yet %s warns:\n  %q", src, lintWarnings(src))
-		case live && !warned && !programBody[src]:
-			t.Errorf("MISSED: a real javascript: link here, and %s is silent", src)
+		for _, p := range probes {
+			lintSrc := nestMarkup(parts, p.lintSrc)
+			oracleSrc := nestMarkup(parts, p.oracleSrc)
+			live := exists(oracleSrc, p, true)
+			if !live && p.scriptingOff {
+				live = exists(oracleSrc, p, false)
+			}
+			warned := lintSaysAny(lintSrc, p.msg)
+			switch {
+			case warned && !live:
+				t.Errorf("FALSE POSITIVE (%s): no browser makes this live, yet %s warns:\n  %q",
+					p.name, lintSrc, lintWarnings(lintSrc))
+			case live && !warned && !inAProgramBody[lintSrc]:
+				t.Errorf("MISSED (%s): this is live in a browser, and %s is silent", p.name, lintSrc)
+			}
 		}
 	}
 
@@ -1600,7 +1694,8 @@ func TestLintForeignContentAgainstTheParser(t *testing.T) {
 	}
 	// Three deep over the names that actually change the reading, which is
 	// where a stack that pops the wrong frame shows up.
-	deep := []string{"svg", "math", "div", "iframe", "textarea", "title", "foreignObject", "g", `font color="red"`, "noscript", "p"}
+	deep := []string{"svg", "math", "div", "iframe", "textarea", "title", "foreignObject",
+		"g", `font color="red"`, "noscript", "p", "mtext", "mglyph", "annotation-xml"}
 	for _, a := range deep {
 		for _, b := range deep {
 			for _, c := range deep {
@@ -1637,6 +1732,65 @@ func TestLintSafePlacementsStaySilentEverywhere(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+}
+
+// Reading a foreign region as markup exposes attributes that were never read
+// before, and an attribute means what the ELEMENT it sits on makes it mean.
+// srcdoc is the one that matters: it is a property of HTMLIFrameElement, and a
+// foreign <iframe> is an inert element with no browsing context at all.
+func TestLintForeignElementsAreNotHTMLElements(t *testing.T) {
+	t.Run("srcdoc on a foreign element is inert", func(t *testing.T) {
+		for _, src := range []string{
+			`<svg><iframe srcdoc="[property path='Name']"></iframe></svg>`,
+			`<svg><textarea><iframe srcdoc="[property path='Name']"></iframe></textarea></svg>`,
+			`<math><iframe srcdoc="[property path='Name']"></iframe></math>`,
+		} {
+			if lintSaysAny(src, `sits in a "srcdoc" attribute`) {
+				t.Errorf("%s: a foreign <iframe> has no browsing context, got %q", src, lintWarnings(src))
+			}
+		}
+	})
+
+	t.Run("the same attribute on a real iframe still warns", func(t *testing.T) {
+		for _, src := range []string{
+			`<iframe srcdoc="[property path='Name']"></iframe>`,
+			`<svg><foreignObject><iframe srcdoc="[property path='Name']"></iframe></foreignObject></svg>`,
+			`<math><mtext><iframe srcdoc="[property path='Name']"></iframe></mtext></math>`,
+		} {
+			if !lintSaysAny(src, `sits in a "srcdoc" attribute`) {
+				t.Errorf("%s: this one is a real iframe, got %q", src, lintWarnings(src))
+			}
+		}
+	})
+
+	t.Run("what every namespace honours is unaffected", func(t *testing.T) {
+		// style= and an on* handler work on an SVG element as much as on an
+		// HTML one, so narrowing by namespace must not reach them.
+		if !lintSaysAny(`<svg><text style="fill:[property path='Name']">x</text></svg>`, `sits in a "style" attribute`) {
+			t.Error("SVG elements are styled with the same attribute")
+		}
+		if !lintSaysAny(`<svg><text onclick="f('[property path=`+"`"+`Name`+"`"+`]')">x</text></svg>`, "event handler") {
+			t.Error("SVG elements take the same event handlers")
+		}
+	})
+}
+
+// A region is read again from its source, so the scan that reads it does not
+// have the open elements above it. Two shapes make that visible and both were
+// false positives first.
+func TestLintForeignRegionEndsWithItsEnclosingElement(t *testing.T) {
+	for _, src := range []string{
+		// A browser's "</svg>" pops the foreign <iframe> and the SVG root, so
+		// the <textarea> is HTML RCDATA and the anchor in it is only text.
+		`<svg><iframe></svg><textarea><a href="javascript:[property path='Name']">go</a></textarea></iframe>`,
+		// "</p>" and "</br>" are the end-tag half of the breakout rule.
+		`<svg></p><textarea><a href="javascript:[property path='Name']">go</a></textarea>`,
+		`<svg></br><textarea><a href="javascript:[property path='Name']">go</a></textarea>`,
+	} {
+		if got := lintWarnings(src); len(got) != 0 {
+			t.Errorf("%s: a browser has left foreign content here, got %q", src, got)
 		}
 	}
 }
