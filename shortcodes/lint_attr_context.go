@@ -77,6 +77,11 @@ type attrContext struct {
 	// the rules are concerned, and it exists only to keep the two fallbacks
 	// below from answering a question the scan already settled.
 	inertText bool
+	// noscriptRaw marks an occurrence the scripting-enabled reading put inside
+	// a <noscript> raw-text body. No rule reads it: it exists only so
+	// attributeContextsFor knows which occurrences to ask the scripting-off
+	// reading about, and it never survives that merge.
+	noscriptRaw bool
 	// unterminated marks an occurrence inside a tag that is never closed, which
 	// the tokenizer cannot place. Treated as unsafe rather than as "not in an
 	// attribute", so a broken template fails closed.
@@ -127,11 +132,45 @@ func attributeContextsFor(input string, spans []bareValueSpan) map[int]attrConte
 	b.WriteString(input[last:])
 
 	substituted := b.String()
-	scanMarkup(substituted, func(index int, ctx attrContext) {
+	// First reading: scripting enabled, which is the default mode and the
+	// tokenizer's own — a <noscript> body is raw text ending at the first
+	// "</noscript>", and everything after that is live markup whatever the
+	// body contained. An occurrence that lands INSIDE such a body is dead in
+	// this reading and comes back marked noscriptRaw instead of answered.
+	sawNoscriptBody := false
+	scanMarkup(substituted, true, func(index int, ctx attrContext) {
+		if ctx.noscriptRaw {
+			sawNoscriptBody = true
+		}
 		if index >= 0 && index < len(spans) {
 			out[spans[index].start] = ctx
 		}
 	})
+	// Second reading, only when the first left questions: scripting disabled,
+	// where the body is markup — in which an unclosed <textarea> can swallow
+	// the very "</noscript>" the first reading stopped at, so the two
+	// readings are different segmentations of one document and neither can
+	// stand in for the other. Each marked occurrence takes its answer from
+	// this reading, with noscript forced on it: whatever the scripting-off
+	// scan made of it, its liveness is conditional on that mode, because the
+	// scripting-on reading already showed it as raw text — including when an
+	// end tag inside the body popped the <noscript> element itself before the
+	// occurrence was reached.
+	if sawNoscriptBody {
+		off := make(map[int]attrContext, len(spans))
+		scanMarkup(substituted, false, func(index int, ctx attrContext) {
+			if index >= 0 && index < len(spans) {
+				off[index] = ctx
+			}
+		})
+		for i, sp := range spans {
+			if ctx, ok := out[sp.start]; ok && ctx.noscriptRaw {
+				oc := off[i]
+				oc.noscript = true
+				out[sp.start] = oc
+			}
+		}
+	}
 
 	// An unterminated tag never reaches the tokenizer as a tag, so its
 	// occurrences come back unresolved. Reporting those as "not in an
@@ -234,22 +273,30 @@ func (f markupFrame) keepsForeignContent() bool {
 }
 
 // scanMarkup tokenizes src and records the attribute context of every sentinel
-// it can place.
+// it can place, reading src the way a browser with the given scripting mode
+// reads it.
 //
 // The tokenizer is namespace-unaware, and left alone its reading is not a
 // browser's in two places: it raw-texts the ten names in rawTextElements
 // wherever they appear, while a browser does so only in the HTML namespace —
 // inside <svg> or <math> an <iframe> is an inert foreign element whose
-// children are real markup — and it raw-texts <noscript> whatever the
-// scripting mode. Both are corrected the way x/net/html's own parser corrects
-// them (parse.go: "Don't let the tokenizer go into raw text mode in foreign
-// content"): Tokenizer.NextIsNotRawText clears the armed raw-text state, so
-// the element's body streams through this same loop as ordinary tokens, read
-// against the same stack. No region is copied and re-read and no second
-// tokenizer exists, so a CDATA section swallows a fake end tag the way a
-// browser's does, and an end tag inside such a body acts exactly where it
+// children are real markup — and it raw-texts <noscript>, which is a
+// browser's reading only when scripting is enabled. Both are corrected the
+// way x/net/html's own parser corrects them (parse.go: "Don't let the
+// tokenizer go into raw text mode in foreign content", and its scripting-off
+// <noscript> cases): Tokenizer.NextIsNotRawText clears the armed raw-text
+// state, so the element's body streams through this same loop as ordinary
+// tokens, read against the same stack. No region is copied and re-read and no
+// second tokenizer exists, so a CDATA section swallows a fake end tag the way
+// a browser's does, and an end tag inside such a body acts exactly where it
 // stands — on the one stack, in document order.
-func scanMarkup(src string, record func(index int, ctx attrContext)) {
+//
+// scripting decides only what a <noscript> body is: with it enabled the body
+// is raw text and every sentinel inside comes back marked noscriptRaw, and
+// with it disabled the body is markup. attributeContextsFor runs the enabled
+// reading first and asks the disabled one about exactly the marked positions,
+// because the two readings can disagree about where markup resumes.
+func scanMarkup(src string, scripting bool, record func(index int, ctx attrContext)) {
 	z := html.NewTokenizer(strings.NewReader(src))
 	var stack []markupFrame
 	// enclosing is the frame the next token is opened inside. The bottom of
@@ -287,12 +334,40 @@ func scanMarkup(src string, record func(index int, ctx attrContext)) {
 		// inert marks a body that is raw text to a browser as well, so the
 		// scan reads nothing out of it and says so.
 		inert bool
+		// noscriptRaw marks the inert body of a <noscript> under scripting:
+		// dead in THIS reading, but the caller has another one to ask.
+		noscriptRaw bool
 	}
-	forget := func() { pending.language, pending.inert = "", false }
+	forget := func() { pending.language, pending.inert, pending.noscriptRaw = "", false, false }
 
-	// closeTag applies an end tag to the stack.
+	// closeTag applies an end tag to the stack. HTML gives an end tag one of
+	// four readings, and which one is decided by name and namespace, not by a
+	// single search: the foreign-content walk, the adoption agency, a
+	// pop-until-in-scope rule the name carries, or "any other end tag".
+	// Conflating them was measurably wrong in both directions — a generic
+	// search that matched a foreign <title> from an HTML current node closed
+	// an element a browser keeps open, and a special-element stop applied to
+	// "</li>" refused a pop whose real boundary list ("list item scope")
+	// walks straight past a <div> and a foreign root.
 	closeTag := func(name string) {
 		forget()
+		// Foreign content first, which is the spec's own order: with a
+		// foreign current node the end tag walks the foreign prefix of the
+		// stack and pops to a name match. Only when the walk reaches an HTML
+		// element without matching does the tag become HTML's business.
+		if enclosing().ns != "" {
+			// "</br>" acts as a <br> start tag, and that is a breakout.
+			if name == "br" {
+				leaveForeignContent()
+				return
+			}
+			for i := len(stack) - 1; i >= 0 && stack[i].ns != ""; i-- {
+				if stack[i].name == name {
+					stack = stack[:i]
+					return
+				}
+			}
+		}
 		// "</form>" REMOVES the form element from the stack rather than popping
 		// down to it, so an <svg> the author forgot to close inside a form
 		// survives it and everything after is still SVG — where an <iframe> has
@@ -300,16 +375,11 @@ func scanMarkup(src string, record func(index int, ctx attrContext)) {
 		// the <svg> with it and made that srcdoc read as a real one.
 		if name == "form" {
 			for i := len(stack) - 1; i >= 0; i-- {
-				if stack[i].name == "form" {
+				if stack[i].ns == "" && stack[i].name == "form" {
 					stack = append(stack[:i], stack[i+1:]...)
 					break
 				}
 			}
-			return
-		}
-		// "</br>" and "</p>" are the end-tag half of the breakout rule.
-		if enclosing().ns != "" && (name == "br" || name == "p") {
-			leaveForeignContent()
 			return
 		}
 		// A formatting element's end tag is the adoption agency's business,
@@ -323,19 +393,10 @@ func scanMarkup(src string, record func(index int, ctx attrContext)) {
 		// the agency pops normally, and that is the whole of what is modelled:
 		// the clone the agency appends and the in-between frames it removes
 		// are DOM surgery that never changes which elements stay open under
-		// which namespace.
+		// which namespace. (A foreign element spelled like a formatting
+		// element — an SVG <font> — was already taken by the foreign walk
+		// above; the agency's own search is HTML-only.)
 		if formattingElements[name] {
-			// A foreign element spelled like one — an SVG <font> — is closed
-			// by the foreign end-tag walk like any other foreign element. The
-			// agency is HTML's rule, and the walk below never crosses into
-			// foreign frames because a foreign element is never a formatting
-			// element.
-			for i := len(stack) - 1; i >= 0 && stack[i].ns != ""; i-- {
-				if stack[i].name == name {
-					stack = stack[:i]
-					return
-				}
-			}
 			for i := len(stack) - 1; i >= 0; i-- {
 				if stack[i].name == name && stack[i].ns == "" {
 					if stackHasSpecial(stack[i+1:]) {
@@ -354,63 +415,65 @@ func scanMarkup(src string, record func(index int, ctx attrContext)) {
 			}
 			return
 		}
-		// In foreign content the search for what this end tag closes stops
-		// at the first frame sitting directly inside an HTML one, which is
-		// x/net's parseForeignContent: past that boundary the tag is
-		// HTML's business, and HTML ignores one that names nothing open.
-		// Searching the whole stack instead let "<x-foo><div><math></x-foo>"
-		// walk out of MathML, and an inert foreign <iframe srcdoc> became a
-		// real one.
-		for i := len(stack) - 1; i >= 0; i-- {
-			if stack[i].name == name {
-				// Leaving foreign content from an HTML current node is HTML's
-				// "any other end tag" — a foreign root is no HTML element and
-				// has no rule of its own — and that walk stops at the first
-				// SPECIAL element. "<svg><foreignObject><div></svg>" is the
-				// shape: a browser meets the <div> and ignores the tag, and
-				// popping to the svg anyway turned an inert foreign <iframe
-				// srcdoc> after it into a real one. Matching a frame that is
-				// already HTML keeps the plain search, so ordinary
-				// "<div><p>…</div>" nesting is untouched.
-				if enclosing().ns == "" && stack[i].ns != "" && stackHasSpecial(stack[i+1:]) {
-					break
+		// The names whose end tags pop until the element is popped, provided
+		// it is "in scope" — and each name's scope has its own boundary list,
+		// which is why they cannot ride the any-other walk below: "</li>"
+		// walks past a <div> and a foreign root that would stop an unknown
+		// name, and "</table>" stops at nearly nothing. A boundary met first
+		// means the element is not in scope and the tag is ignored.
+		if scopePopTags[name] || headingTags[name] {
+			boundary := func(f markupFrame) bool {
+				switch {
+				case name == "table":
+					// Table scope: html, table, template — and the nearest
+					// table is the match itself, so only template stops.
+					return f.ns == "" && f.name == "template"
+				case name == "li":
+					// List item scope adds the list containers.
+					return scopeBoundary(f) || (f.ns == "" && (f.name == "ol" || f.name == "ul"))
+				case name == "p":
+					// Button scope adds <button>.
+					return scopeBoundary(f) || (f.ns == "" && f.name == "button")
+				default:
+					return scopeBoundary(f)
 				}
-				stack = stack[:i]
-				break
 			}
-			if enclosing().ns != "" && i > 0 && stack[i-1].ns == "" {
-				// Past this the tag is HTML's business, and HTML's own rule
-				// for an end tag naming nothing on top walks down until it
-				// matches or meets a SPECIAL element, whichever comes first.
-				// Both halves matter: without the walk, "<div><math></div>"
-				// left the scan in MathML and an HTML <iframe srcdoc> after
-				// it read as inert; without the stop, "<x-foo><div><math>
-				// </x-foo>" popped a <div> a browser keeps and did the
-				// opposite.
-				// From the TOP, not from this boundary: the elements
-				// between them are where the walk stops.
-				// "<div><math><annotation-xml></div>" is ignored by a
-				// browser because annotation-xml is special and ends the
-				// scope the </div> would need.
-				for j := len(stack) - 1; j >= 0; j-- {
-					if stack[j].name == name {
-						stack = stack[:j]
-						break
-					}
-					if isSpecialElement(stack[j]) {
-						break
-					}
+			for i := len(stack) - 1; i >= 0; i-- {
+				f := stack[i]
+				if f.ns == "" && (f.name == name || (headingTags[name] && headingTags[f.name])) {
+					stack = stack[:i]
+					return
 				}
-				break
+				if boundary(f) {
+					break // not in scope: the tag closes nothing
+				}
+			}
+			// "</p>" with no p in scope — whether the walk met a boundary or
+			// ran out — inserts a p start tag and closes it, and a <p> start
+			// tag is a breakout when the current node is foreign. The
+			// insertion itself leaves the stack as it was.
+			if name == "p" {
+				leaveForeignContent()
+			}
+			return
+		}
+		// Any other end tag: the walk matches an HTML element with the same
+		// name and stops at the first SPECIAL element. A foreign frame can
+		// never be matched here — it is not an HTML element however it is
+		// spelled — but a special one (an integration point, say) still stops
+		// the walk. "<svg><title><g></title>" is the shape both halves pin:
+		// the <g> inside the integration point is HTML, the SVG <title> is
+		// special, and a browser ignores the tag and keeps all three open.
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i].ns == "" && stack[i].name == name {
+				stack = stack[:i]
+				return
+			}
+			if isSpecialElement(stack[i]) {
+				return
 			}
 		}
-		// An end tag that matched nothing is ignored, which is both HTML's
-		// rule and the foreign one's: a stray "</textarea>" in foreign content
-		// leaves a browser where it is, and treating one as an exit would put
-		// the scan back into HTML, where a srcdoc= that is inert on a foreign
-		// element starts warning again.
 	}
-
 	for {
 		// A "<![CDATA[" is a real CDATA section only when the current node is
 		// foreign — in HTML it is a bogus comment — and the tokenizer cannot
@@ -494,12 +557,19 @@ func scanMarkup(src string, record func(index int, ctx attrContext)) {
 					// body arrives as one text token of program source.
 					pending.language = name
 				case name == "noscript":
-					// Markup with scripting off, raw text with scripting on.
-					// Read as markup — the scripting-off reading, which is the
-					// mode the element exists for — with the frame marking
-					// everything inside as reachable only in that mode.
-					z.NextIsNotRawText()
-					frame.noscript = true
+					// Markup with scripting off, raw text with scripting on,
+					// and this scan reads it in its own mode. Off: the frame
+					// marks everything inside as reachable only in that mode.
+					// On: the body is raw text ending at the first
+					// "</noscript>", and each sentinel in it is marked for
+					// the caller to ask the other reading about.
+					if scripting {
+						pending.inert = true
+						pending.noscriptRaw = true
+					} else {
+						z.NextIsNotRawText()
+						frame.noscript = true
+					}
 				default:
 					// The other seven, plus a <style> a browser will not
 					// apply: raw text or RCDATA to the tokenizer and to a
@@ -530,7 +600,11 @@ func scanMarkup(src string, record func(index int, ctx attrContext)) {
 				// "<textarea><[meta …]" as an interpolated element name: there
 				// is no tag there, and a browser shows the "<" as text.
 				for _, idx := range sentinelIndexes(string(z.Raw())) {
-					record(idx.index, attrContext{inertText: true, noscript: inNoscript()})
+					record(idx.index, attrContext{
+						inertText:   true,
+						noscript:    inNoscript(),
+						noscriptRaw: pending.noscriptRaw,
+					})
 				}
 			case pending.language != "":
 				// A script or style body in the HTML namespace is where
@@ -591,6 +665,27 @@ var formattingElements = map[string]bool{
 	"a": true, "b": true, "big": true, "code": true, "em": true, "font": true,
 	"i": true, "nobr": true, "s": true, "small": true, "strike": true,
 	"strong": true, "tt": true, "u": true,
+}
+
+// scopePopTags are the end-tag names the in-body insertion mode gives their
+// own pop-until-popped rule, each guarded by a scope test. The table-section
+// names (td, tr, tbody and friends) are deliberately absent: their rules live
+// in the table insertion modes this scan does not model.
+var scopePopTags = map[string]bool{
+	"address": true, "applet": true, "article": true, "aside": true,
+	"blockquote": true, "button": true, "center": true, "dd": true,
+	"details": true, "dialog": true, "dir": true, "div": true, "dl": true,
+	"dt": true, "fieldset": true, "figcaption": true, "figure": true,
+	"footer": true, "header": true, "hgroup": true, "li": true,
+	"listing": true, "main": true, "marquee": true, "menu": true, "nav": true,
+	"object": true, "ol": true, "p": true, "pre": true, "section": true,
+	"summary": true, "table": true, "ul": true,
+}
+
+// headingTags close as a class: "</h2>" pops to the nearest open heading of
+// any rank.
+var headingTags = map[string]bool{
+	"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
 }
 
 // scopeBoundary reports whether HTML's "has an element in scope" walk stops at
@@ -1565,14 +1660,17 @@ func expressionAttributeKind(attr string) string {
 // formatting element's end tag never closes a special element open above it —
 // so the clone the agency appends is not reconstructed, and the non-formatting
 // frames it removes between the formatting element and the furthest block stay
-// on this stack. End tags with their own pop-until-in-scope rules ("</div>"
-// and its relatives) go through the generic walk, so table scope and foster
-// parenting do not exist here, and "</body>"/"</html>", which close nothing,
-// pop like ordinary names.
+// on this stack. The end tags with their own pop-until-in-scope rules carry
+// their own boundary lists in closeTag, but only as the in-body insertion mode
+// gives them: the table insertion modes do not exist here, so the
+// table-section end tags (td, tr, tbody and friends) ride the any-other walk,
+// and foster parenting never happens.
 //
 // TestLintPlacementsAgainstTheParser is what holds all of it: it asks
 // x/net/html's parser, over a few thousand generated nests, whether the element
-// that would make each placement dangerous exists at all.
+// that would make each placement dangerous exists at all — and its tag-soup
+// sibling, TestLintDifferentialTagSoup, asks the same of markup nobody wrote
+// on purpose.
 var scriptLikeElements = map[string]bool{"script": true, "style": true}
 
 var scriptLikeLanguage = map[string]string{"script": "JavaScript", "style": "CSS"}

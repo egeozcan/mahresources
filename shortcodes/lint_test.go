@@ -2557,3 +2557,58 @@ func TestLintAttributeContextRoundTen(t *testing.T) {
 		}
 	})
 }
+
+// A <noscript> body is two documents, not one: with scripting enabled it is
+// raw text ending at the first "</noscript>", and with it disabled it is
+// markup in which an unclosed <textarea> can swallow that same "</noscript>"
+// and everything after it. A scan that commits to either reading alone loses
+// the other's tail. Found by a randomized differential sweep, checked against
+// html.Parse in both modes.
+func TestLintNoscriptIsReadUnderBothScriptingModes(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("the tail after </noscript> is live with scripting on", func(t *testing.T) {
+		// With scripting on, the body is raw text up to "</noscript>" and the
+		// iframe after it is a real HTML iframe; the unclosed <textarea>
+		// inside the body swallows the tail only in the scripting-off
+		// reading. Live in the default mode: full warning, no caveat.
+		for _, src := range []string{
+			`<noscript><textarea></noscript><iframe srcdoc="[property path='Name']"></iframe>`,
+			`<noscript></div></p><textarea><textarea><mtext></noscript><a href="javascript:[property path='Name']">go</a>`,
+		} {
+			live := strings.Contains(src, "srcdoc")
+			msg := `sits in a "srcdoc" attribute`
+			if !live {
+				msg = `continues a "javascript:" URL`
+			}
+			if !warns(src, msg) {
+				t.Errorf("live with scripting enabled and unwarned: %s", src)
+			}
+			if warns(src, "whose body is markup only when scripting is disabled") {
+				t.Errorf("live in the DEFAULT mode; the caveat undersells it: %s", src)
+			}
+		}
+	})
+
+	t.Run("a body placement keeps its caveat when an end tag pops the noscript frame", func(t *testing.T) {
+		// "</div>" inside the body closes the div and takes the noscript
+		// element with it in the scripting-off reading, so the iframe is not
+		// inside a <noscript> ELEMENT — but it is still inside the raw-text
+		// segment a scripting browser skips, so its liveness is still
+		// conditional on scripting being off, and the message has to say so.
+		src := `<div><noscript></div><iframe srcdoc="[property path='Name']"></iframe></noscript>`
+		if !warns(src, `sits in a "srcdoc" attribute`) {
+			t.Errorf("live with scripting off and unwarned: %s", src)
+		}
+		if !warns(src, "whose body is markup only when scripting is disabled") {
+			t.Errorf("dead with scripting on; the warning must carry the mode: %s", src)
+		}
+	})
+}
