@@ -1101,11 +1101,13 @@ func TestLintRawTextElementBodies(t *testing.T) {
 		return false
 	}
 
-	t.Run("nothing in a noscript body can execute, under either parse", func(t *testing.T) {
-		// With scripting on the body is inert raw text the UA stylesheet hides;
-		// with scripting off the tags are real and no script runs. So every
-		// executable placement is a false positive there, which is what
-		// re-reading the body as markup produced.
+	t.Run("no script in a noscript body can execute, under either parse", func(t *testing.T) {
+		// With scripting on the body is inert raw text; with scripting off the
+		// tags are real and no script runs. So every *executable* placement is
+		// a false positive there, which is what re-reading the body as markup
+		// produced. What still applies in that mode — CSS, links, forms — is
+		// the residue named in scriptLikeElements' comment, and none of these
+		// inputs is one of those.
 		for _, src := range []string{
 			`<noscript>[property path="Name"]</noscript>`,
 			`<noscript><div class="c">[meta path='x' inline='true']</div></noscript>`,
@@ -1114,7 +1116,7 @@ func TestLintRawTextElementBodies(t *testing.T) {
 			`<noscript><script>var s = "[property path='Name']";</script></noscript>`,
 		} {
 			for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
-				t.Errorf("nothing runs in a <noscript> body, got %q for %s", issue.Message, src)
+				t.Errorf("no script runs in a <noscript> body, got %q for %s", issue.Message, src)
 			}
 		}
 		// raw= is the one that still matters: an unescaped value can close the

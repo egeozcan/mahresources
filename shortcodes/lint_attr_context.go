@@ -41,7 +41,8 @@ type attrContext struct {
 	// delimits the value at all.
 	inName bool
 	// rawTextElement names the script- or style-like element whose body the
-	// occurrence sits in, where escaping buys nothing at all.
+	// occurrence sits in, where escaping contains the value without making the
+	// placement safe.
 	rawTextElement string
 	// unterminated marks an occurrence inside a tag that is never closed, which
 	// the tokenizer cannot place. Treated as unsafe rather than as "not in an
@@ -116,7 +117,9 @@ tokenize:
 		case html.TextToken:
 			// A script or style body is where escaping helps least, not most:
 			// the parser decodes no entities there, so the value lands in
-			// JavaScript or CSS exactly as written.
+			// JavaScript or CSS with its escaping still in it — contained
+			// against a quote or a "<", and untouched in every character that
+			// matters to a language.
 			if openRawText != "" {
 				for _, idx := range sentinelIndexes(string(z.Raw())) {
 					if idx.index >= 0 && idx.index < len(spans) {
@@ -574,9 +577,11 @@ func expressionAttributeKind(attr string) string {
 // differ — its body is raw text when scripting is enabled and ordinary markup
 // when it is not — and it is still not here, because the difference does not
 // reach this rule. With scripting on the body is inert raw text; with scripting
-// off the tags are real but nothing in them can run, so every rule this file
-// exists for (an on* handler, an Alpine directive, a javascript: URL, a
-// <script> body) is inapplicable to it. Warning on the body as a whole is a
+// off the tags are real but no script in them can execute, so every rule this
+// file exists for (an on* handler, an Alpine directive, a javascript: URL, a
+// <script> body) is inapplicable to it. What still applies in that mode is
+// everything that is not script — CSS, links, forms — which is the residue
+// listed further down, not an exception to this. Warning on the body as a whole is a
 // false positive on its ordinary use, and reading the body as markup — which
 // was tried — reports those same executable placements as dangerous when they
 // cannot execute in either reading.
