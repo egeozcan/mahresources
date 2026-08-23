@@ -120,10 +120,17 @@ func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in Temp
 	// Mode, so a request can arrive contradicting itself; left alone,
 	// slot=CustomCSS with mode=html asked the model for HTML and then judged the
 	// answer as CSS. in is a value copy, so this rewrite is local to the call.
-	if target == TemplateTargetSlot && in.Slot != "" {
-		if singleSlotIsCSS(in) {
+	//
+	// A named slot settles it outright. With no slot the mode is all there is,
+	// and it is only canonicalised — writing "css" over a "CSS" that
+	// singleSlotIsCSS already accepts but modeRuleLine's exact-match switch does
+	// not. An unlabelled request is left alone rather than assigned a mode,
+	// since both halves already default it to markup.
+	if target == TemplateTargetSlot {
+		switch {
+		case singleSlotIsCSS(in):
 			in.Mode = "css"
-		} else {
+		case in.Slot != "":
 			in.Mode = "html"
 		}
 	}

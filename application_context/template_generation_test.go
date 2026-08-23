@@ -344,6 +344,13 @@ func TestTemplateGeneratorSlotGovernsThePromptToo(t *testing.T) {
 			slot: "CustomHeader", mode: "css",
 			wantRule: "Output HTML", rejectRule: "Output CSS only",
 		},
+		// No slot, so the mode is all there is — but the linter accepts it
+		// case-insensitively and modeRuleLine's switch is exact, so an
+		// uncanonicalised "CSS" asked for HTML and was graded as CSS.
+		"no slot, mixed-case css": {
+			slot: "", mode: "CSS",
+			wantRule: "Output CSS only", rejectRule: "Output HTML",
+		},
 	}
 
 	for name, tc := range cases {
