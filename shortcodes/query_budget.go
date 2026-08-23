@@ -166,9 +166,18 @@ func BudgetedExecutor(base QueryExecutor, onExceeded func(limit int)) QueryExecu
 // budgetCacheKey builds a deterministic key from the executor inputs. Two calls
 // with identical inputs produce identical results within a page, so keying on
 // the raw inputs (before saved-name/scope resolution) is sufficient for dedup.
+//
+// Every free-text field is %q-quoted, not just the params. The query and the
+// saved name can both contain the "|" separator — an MRQL string literal or a
+// regex operand is an ordinary place for one — and unquoted they let ("a|b",
+// saved "c") and ("a", saved "b|c") build one key. That is the worst failure
+// this cache has: Lookup hands the first shortcode's rows to the second and
+// nothing reports an error. Quoting makes the boundary unambiguous, because %q
+// escapes an interior quote; the remaining fields are numeric or boolean and
+// cannot contain a separator.
 func budgetCacheKey(query string, opts QueryOptions) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s|%s|%d|%d|%d|%d|%t",
+	fmt.Fprintf(&b, "%q|%q|%d|%d|%d|%d|%t",
 		query, opts.SavedName, opts.ScopeGroupID, opts.Limit, opts.Buckets, len(opts.Params), opts.WantTotal)
 	if len(opts.Params) > 0 {
 		keys := make([]string, 0, len(opts.Params))

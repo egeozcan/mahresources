@@ -158,3 +158,27 @@ func TestBudgetCacheKeyDistinguishesParamsAndScope(t *testing.T) {
 	_, ok3 := b.Lookup("q", QueryOptions{ScopeGroupID: 3})
 	assert.False(t, ok3)
 }
+
+// TestBudgetCacheKeySeparatorIsUnambiguous pins the field boundary between the
+// query text and the saved-query name. Both are free text and both can contain
+// "|" — an MRQL string literal or regex operand is an ordinary place for one — so
+// an unquoted separator gave ("a|b", saved "c") and ("a", saved "b|c") the same
+// key, and the second shortcode on the page was served the first one's rows.
+func TestBudgetCacheKeySeparatorIsUnambiguous(t *testing.T) {
+	assert.NotEqual(t,
+		budgetCacheKey("a|b", QueryOptions{SavedName: "c"}),
+		budgetCacheKey("a", QueryOptions{SavedName: "b|c"}))
+}
+
+// TestBudgetCacheDoesNotServeAcrossTheSeparator is that same pair seen through
+// the cache, which is where the defect showed: one shortcode's rows rendered
+// under another's markup, with no error anywhere.
+func TestBudgetCacheDoesNotServeAcrossTheSeparator(t *testing.T) {
+	b := QueryBudgetFrom(WithQueryBudget(context.Background(), 10))
+
+	b.Store("FIND groups WHERE name = 'a|b'", QueryOptions{SavedName: "c"}, &QueryResult{Mode: "left"})
+
+	if _, ok := b.Lookup("FIND groups WHERE name = 'a", QueryOptions{SavedName: "b'|c"}); ok {
+		t.Fatal("a cached result was served to a different (query, saved) pair that splits at the separator")
+	}
+}
