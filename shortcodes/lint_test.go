@@ -869,16 +869,18 @@ func TestLintAttributeContextRoundSeven(t *testing.T) {
 		return false
 	}
 
-	t.Run("a script body reaches JavaScript verbatim", func(t *testing.T) {
+	t.Run("a script body reaches JavaScript with its escaping in it", func(t *testing.T) {
 		// A template literal makes this concrete: "${...}" contains not one
-		// character html.EscapeString touches.
+		// character html.EscapeString touches. Not verbatim — a quote does
+		// arrive as &#34; and stays that way, since nothing decodes it — but
+		// escaped is not the same as safe in a language.
 		src := "<script>const label = `[meta path=\"label\" inline=\"true\"]`;</script>"
 		if !warns(src, "<script> body") {
 			t.Error("an inline value in a script body must warn")
 		}
 	})
 
-	t.Run("a style body reaches CSS verbatim", func(t *testing.T) {
+	t.Run("a style body reaches CSS the same way", func(t *testing.T) {
 		src := `<style>.card{color:[meta path="colour" inline="true"]}</style>`
 		if !warns(src, "<style> body") {
 			t.Error("an inline value in a style body must warn")
@@ -1105,9 +1107,9 @@ func TestLintRawTextElementBodies(t *testing.T) {
 		// With scripting on the body is inert raw text; with scripting off the
 		// tags are real and no script runs. So every *executable* placement is
 		// a false positive there, which is what re-reading the body as markup
-		// produced. What still applies in that mode — CSS, links, forms — is
-		// the residue named in scriptLikeElements' comment, and none of these
-		// inputs is one of those.
+		// produced. The href below is not one of those: it is a live link with
+		// scripting off, and its silence is the URL-bearing residue named in
+		// scriptLikeElements' comment, accepted on the same terms.
 		for _, src := range []string{
 			`<noscript>[property path="Name"]</noscript>`,
 			`<noscript><div class="c">[meta path='x' inline='true']</div></noscript>`,

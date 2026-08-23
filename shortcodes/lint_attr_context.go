@@ -117,9 +117,9 @@ tokenize:
 		case html.TextToken:
 			// A script or style body is where escaping helps least, not most:
 			// the parser decodes no entities there, so the value lands in
-			// JavaScript or CSS with its escaping still in it — contained
-			// against a quote or a "<", and untouched in every character that
-			// matters to a language.
+			// JavaScript or CSS with its escaping still in it. Contained
+			// against a quote or a "<", and no help at all against a backtick,
+			// a "${...}", a ";" or a brace, none of which it touches.
 			if openRawText != "" {
 				for _, idx := range sentinelIndexes(string(z.Raw())) {
 					if idx.index >= 0 && idx.index < len(spans) {
@@ -406,7 +406,7 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		if raw {
 			return []string{label + ` with raw= in a CSS slot is not escaped and lands in the stylesheet verbatim. Drop raw= here.`}
 		}
-		return []string{label + ` is in a CSS slot, where the value lands in a stylesheet verbatim: a ";" or "}" in it starts new declarations, and escaping touches neither.`}
+		return []string{label + ` is in a CSS slot, where the value lands in a stylesheet with nothing to re-parse it as HTML: a ";" or "}" in it starts new declarations, and escaping touches neither.`}
 	}
 	if ctx.unterminated {
 		return []string{label + ` is inside a tag that is never closed, so where it lands cannot be determined. Close the tag; until then treat the value as unsafe.`}
@@ -437,7 +437,7 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		out = append(out, label+` sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`)
 	}
 	if cssMode {
-		out = append(out, label+` is in a CSS slot, where the value lands in a stylesheet verbatim: a ";" or "}" in it starts new declarations, and escaping touches neither.`)
+		out = append(out, label+` is in a CSS slot, where the value lands in a stylesheet with nothing to re-parse it as HTML: a ";" or "}" in it starts new declarations, and escaping touches neither.`)
 	}
 	if kind := expressionAttributeKind(attr); kind != "" {
 		out = append(out, label+` sits in the "`+attr+`" `+kind+`, whose value is evaluated as script after the HTML parser has undone the escaping, so a value containing a quote can execute. Do not interpolate Meta into it.`)
@@ -577,11 +577,11 @@ func expressionAttributeKind(attr string) string {
 // differ — its body is raw text when scripting is enabled and ordinary markup
 // when it is not — and it is still not here, because the difference does not
 // reach this rule. With scripting on the body is inert raw text; with scripting
-// off the tags are real but no script in them can execute, so every rule this
-// file exists for (an on* handler, an Alpine directive, a javascript: URL, a
-// <script> body) is inapplicable to it. What still applies in that mode is
-// everything that is not script — CSS, links, forms — which is the residue
-// listed further down, not an exception to this. Warning on the body as a whole is a
+// off the tags are real but no script in them can execute, so every
+// script-execution rule here (an on* handler, an Alpine directive, a
+// javascript: URL, a <script> body) is inapplicable to it. What still applies
+// in that mode is everything that is not script — CSS, links, forms — which is
+// the residue listed further down, not an exception to this. Warning on the body as a whole is a
 // false positive on its ordinary use, and reading the body as markup — which
 // was tried — reports those same executable placements as dangerous when they
 // cannot execute in either reading.
@@ -610,12 +610,14 @@ func expressionAttributeKind(attr string) string {
 //
 // FOREIGN CONTENT is a wider and older gap that none of this closes and none of
 // it depends on. The tokenizer is namespace-unaware, so it raw-texts these
-// names inside <svg> and <math> as well, where a browser does not: inside <svg>
-// a <script> really is a script element whose text IS entity-decoded, and
-// <svg><iframe><a href="javascript:…"> is a live SVG link. Both are silent
-// here, as they were before any of this. Closing it means tracking foreign
-// content and its integration points, which is the parser's job rather than the
-// tokenizer's.
+// names inside <svg> and <math> as well, where a browser does not.
+// <svg><script> does warn, but on a rationale that is namespace-wrong and
+// therefore understated: foreign content DOES decode entities, so an escaped
+// quote is a quote there and can end a JavaScript string, which the message
+// says cannot happen. <svg><iframe><a href="javascript:…"> is silent outright,
+// and it is a live SVG link. Both were so before any of this. Closing it means
+// tracking foreign content and its integration points, which is the parser's
+// job rather than the tokenizer's.
 var scriptLikeElements = map[string]bool{"script": true, "style": true}
 
 var scriptLikeLanguage = map[string]string{"script": "JavaScript", "style": "CSS"}
