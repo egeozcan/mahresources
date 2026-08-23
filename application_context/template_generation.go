@@ -228,15 +228,21 @@ func finishBundle(in TemplateGenerationInput, raw string) (*TemplateGenerationRe
 
 // singleSlotIsCSS reports whether a slot-target draft is a stylesheet.
 //
-// The slot name is the authoritative half and the only one the handler
-// validates (templateGenerateSlotAllowed): a CustomCSS draft is CSS however the
-// request labelled its mode, so a client that names the slot and mislabels — or
-// omits — the mode still gets the placement warnings. Mode remains a signal in
-// its own right rather than a tiebreak, for a caller that names no slot at all;
-// the disagreement it can produce costs nothing, because every CSS-placement
-// issue is a warning and warnings do not invalidate a draft.
+// The slot decides whenever there is one. It is the half the handler validates
+// (templateGenerateSlotAllowed) and the half that actually names the document,
+// so a client that names CustomCSS and mislabels or omits the mode still gets
+// the placement warnings — and, more importantly, one that names a markup slot
+// is not read as CSS because it mislabelled the mode. That direction is not a
+// harmless false positive: shortcodes' CSS branch *returns* in place of the
+// markup checks rather than adding to them, so a markup draft judged as CSS
+// loses the raw= "becomes real elements on the page" warning, which is the XSS
+// one. Mode answers only when no slot is named, and an unlabelled request then
+// falls through to markup, which is the safe reading.
 func singleSlotIsCSS(in TemplateGenerationInput) bool {
-	return in.Slot == "CustomCSS" || strings.EqualFold(in.Mode, "css")
+	if in.Slot != "" {
+		return in.Slot == "CustomCSS"
+	}
+	return strings.EqualFold(in.Mode, "css")
 }
 
 // validateTemplateContent lints slot/bundle content as shortcodes and validates

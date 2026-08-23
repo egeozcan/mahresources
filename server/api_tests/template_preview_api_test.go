@@ -259,20 +259,23 @@ func TestPreviewTemplate_CSSPlacementIssues(t *testing.T) {
 	})
 
 	// An older client with the CustomCSS slot selected names no slot and sends
-	// one buffer as both content and css. Nothing else sends the same string
-	// twice, so it is one document: linting it twice would report every
-	// mode-independent issue twice, and judging it as markup would lose the
-	// placement warning entirely.
-	t.Run("an unnamed slot sending one buffer twice is one CSS document", func(t *testing.T) {
+	// one buffer as both content and css, so which document it is cannot be
+	// known. Both readings are reported, minus what they agree on. Guessing CSS
+	// instead would be unsafe in one direction and noisy in the other: the CSS
+	// branch stands in place of the markup checks rather than adding to them,
+	// so a markup buffer read as CSS loses its XSS warning, while linting both
+	// naively repeats every mode-independent issue.
+	t.Run("an unnamed slot sending one buffer twice gets both readings, once each", func(t *testing.T) {
 		tc := SetupTestEnv(t)
 		g := &models.Group{Name: "Legacy CSS Client Group"}
 		if err := tc.DB.Create(g).Error; err != nil {
 			t.Fatalf("create group: %v", err)
 		}
 
-		// [meta] with no path is an error whatever the mode, so it counts the
-		// passes; the placement warning counts the mode.
-		const buffer = `.badge{color:[meta inline="true"]}`
+		// raw= warns differently under each reading, and the missing path is an
+		// error under both — so one buffer counts the passes and the two
+		// placement messages count the modes.
+		const buffer = `.badge{color:[meta inline="true" raw="true"]}`
 		rr := tc.MakeRequest(http.MethodPost, "/v1/category/previewTemplate", map[string]any{
 			"entityId": g.ID,
 			"content":  buffer,
@@ -286,10 +289,13 @@ func TestPreviewTemplate_CSSPlacementIssues(t *testing.T) {
 			t.Fatalf("decode: %v", err)
 		}
 		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 1 {
-			t.Fatalf("expected one CSS-placement issue, got %d: %+v", n, resp.Issues)
+			t.Fatalf("expected the stylesheet reading's placement issue, got %d: %+v", n, resp.Issues)
+		}
+		if n := countPreviewIssues(resp.Issues, "becomes real elements"); n != 1 {
+			t.Fatalf("the markup reading's XSS warning must survive, got %d: %+v", n, resp.Issues)
 		}
 		if n := countPreviewIssues(resp.Issues, `required attribute "path"`); n != 1 {
-			t.Fatalf("one buffer must be linted once, got %d copies of the mode-independent issue: %+v", n, resp.Issues)
+			t.Fatalf("what both readings agree on is reported once, got %d: %+v", n, resp.Issues)
 		}
 	})
 

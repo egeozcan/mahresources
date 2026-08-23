@@ -22,12 +22,13 @@ type templatePreviewRequest struct {
 	EntityID uint   `json:"entityId" schema:"entityId"`
 	Content  string `json:"content" schema:"content"`
 	CSS      string `json:"css" schema:"css"`
-	// Slot names which Custom* field Content came from. It is what says whether
-	// Content is markup or a stylesheet: with the CustomCSS slot selected the
-	// editor sends that buffer as Content, and a stylesheet carries no <style>
-	// wrapper of its own, so nothing in the text says so. Empty (an older
-	// client) degrades to judging Content as markup, which is what the endpoint
-	// always did.
+	// Slot names which Custom* field Content came from, and is the only thing
+	// that says whether Content is markup or a stylesheet: with the CustomCSS
+	// slot selected the editor sends that buffer as Content, and a stylesheet
+	// carries no <style> wrapper of its own to say so. Empty is an older client;
+	// Content is then linted as markup, which is what the endpoint always did,
+	// and if it also arrived as CSS the stylesheet reading is reported
+	// alongside rather than instead.
 	Slot       string `json:"slot" schema:"slot"`
 	CategoryID uint   `json:"categoryId" schema:"categoryId"` // optional: the category being edited, for a mismatch warning
 	// Carrier previews the slot against the carrier (Category/ResourceCategory/
@@ -124,20 +125,38 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 			// reading the editor gutter or the preview.
 			PartialExists: partialExistsFn(ctx),
 		}
-		contentIsCSS := previewContentIsCSS(req)
+		// The slot says which document Content is, and nothing else does. An
+		// unnamed slot is deliberately *not* guessed at from the buffers:
+		// shortcodes' CSS branch returns in place of the markup checks rather
+		// than adding to them, so reading markup as CSS silently drops the raw=
+		// "becomes real elements on the page" warning, which is the XSS one.
+		// Markup is the safe reading and was the endpoint's only one.
+		contentIsCSS := req.Slot == "CustomCSS"
 		lintOpts.CSSMode = contentIsCSS
 		issues := shortcodes.Lint(req.Content, lintOpts)
-		// The css buffer is a second document and needs its own pass, judged as
-		// a stylesheet whatever slot is selected — unless it is the document
-		// just linted, in which case linting it again would print every issue
-		// twice. Equal text alone is not enough to skip: with a markup slot
-		// selected the two passes run in different modes and are entitled to
-		// disagree, so both must run. Offsets on the appended issues index the
-		// css buffer rather than Content; the pane renders severity and message
-		// only.
+
+		// The css buffer is a second document needing its own pass as a
+		// stylesheet — unless it is the document just linted, which is what the
+		// CustomCSS slot sends, and linting it again would print every issue
+		// twice. Text equality alone does not establish that: with a markup slot
+		// named, the two buffers are two documents however alike they read.
+		// Offsets on the appended issues index the css buffer rather than
+		// Content; the pane renders severity and message only.
 		if req.CSS != "" && !(contentIsCSS && req.CSS == req.Content) {
 			lintOpts.CSSMode = true
-			issues = append(issues, shortcodes.Lint(req.CSS, lintOpts)...)
+			cssIssues := shortcodes.Lint(req.CSS, lintOpts)
+			// An older client names no slot and sends one buffer as both, so
+			// Content is under both readings at once and has just been linted
+			// under the markup one. Report what the two readings agree on once
+			// and keep what only one of them says — the markup XSS warnings and
+			// the CSS placement warning are each visible to a single reading,
+			// so dropping either pass would drop real diagnostics. Both ran over
+			// the same text, so a shared finding carries identical offsets and
+			// matches exactly.
+			if req.Slot == "" && req.CSS == req.Content {
+				cssIssues = issuesNotAlreadyReported(issues, cssIssues)
+			}
+			issues = append(issues, cssIssues...)
 		}
 		// Warn (don't fail) when previewing against an entity of a different
 		// category than the one being edited.
@@ -161,21 +180,25 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 	}
 }
 
-// previewContentIsCSS reports whether Content is the CustomCSS buffer rather
-// than markup, which decides both how Content is linted and whether the css
-// buffer is a second document or the same one.
-//
-// The slot says so outright. A client that names none is older than the field,
-// and there one buffer arriving as both Content and CSS is the tell: that is
-// what the editor sends with the CustomCSS slot selected, and nothing else
-// sends the same string twice. Reading it as one CSS document is what keeps
-// such a client from being told every mode-independent issue twice — and gets
-// it the placement warnings it could not ask for.
-func previewContentIsCSS(req templatePreviewRequest) bool {
-	if req.Slot != "" {
-		return req.Slot == "CustomCSS"
+// issuesNotAlreadyReported drops from add every issue already present in have.
+// LintIssue is a comparable struct of exactly the four fields the response
+// carries, so equality here is the whole of what a caller could tell apart.
+func issuesNotAlreadyReported(have, add []shortcodes.LintIssue) []shortcodes.LintIssue {
+	if len(have) == 0 || len(add) == 0 {
+		return add
 	}
-	return req.CSS != "" && req.CSS == req.Content
+	seen := make(map[shortcodes.LintIssue]struct{}, len(have))
+	for _, iss := range have {
+		seen[iss] = struct{}{}
+	}
+	out := add[:0:0]
+	for _, iss := range add {
+		if _, dup := seen[iss]; dup {
+			continue
+		}
+		out = append(out, iss)
+	}
+	return out
 }
 
 // loadPreviewEntity fetches the carrier entity with its category relation

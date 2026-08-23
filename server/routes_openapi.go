@@ -2234,9 +2234,11 @@ Request body fields:
   - css        (string) — CustomCSS to process alongside
   - slot       (string) — which Custom* field content came from. It decides how
     content is linted: "CustomCSS" is a stylesheet, which carries no <style>
-    wrapper of its own to say so, and is then the same document as css rather
-    than a second one. Omitting it judges content as markup, except that one
-    buffer sent as both content and css is read as the CustomCSS slot.
+    wrapper of its own to say so. Sending that slot with css set to the same
+    string is one document and is linted once. Any other slot makes content and
+    css two documents, linted separately even when their text matches. Omitting
+    slot lints content as markup; if css repeats it verbatim, the stylesheet
+    reading is reported alongside the markup one, minus what they agree on.
   - categoryId (integer) — the category being edited (for a mismatch warning;
     required when carrier is set)
   - carrier    (boolean) — render against the category/type itself rather than a
