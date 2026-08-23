@@ -165,7 +165,7 @@ func TestMRQLShortcodeRecursionDepthCap(t *testing.T) {
 	// Depth 0 → executes, custom template contains [mrql] → depth 1 executes, …
 	// repeats until depth maxRecursionDepth-1, then the shortcode is left as raw.
 	html := RenderMRQLShortcode(context.Background(), sc, ctx, nil, executor, 0)
-	assert.Equal(t, maxRecursionDepth, callCount) // executes exactly maxRecursionDepth times
+	assert.Equal(t, maxRecursionDepth, callCount)                // executes exactly maxRecursionDepth times
 	assert.Contains(t, html, `[mrql query="type = 'resource'"]`) // depth-cap shortcode left raw
 }
 
