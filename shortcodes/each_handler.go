@@ -163,8 +163,10 @@ func renderItemValue(sc Shortcode, elem any, index int) string {
 		return strconv.Itoa(index)
 	}
 
+	// formatJSONScalar, not formatPropertyValue: an [item] value came out of a
+	// Meta blob, where a timestamp is a string and every number is a float64.
 	value := navigateJSONValue(elem, sc.Attrs["path"])
-	text := formatItemValue(value, sc.Attrs["format"], sc.Attrs["layout"])
+	text := formatJSONScalar(value, sc.Attrs["format"], sc.Attrs["layout"])
 
 	if text == "" {
 		if def := sc.Attrs["default"]; def != "" {
@@ -196,11 +198,4 @@ func navigateJSONValue(current any, path string) any {
 		}
 	}
 	return current
-}
-
-// formatItemValue formats a decoded JSON element. [item] only ever sees values
-// that came out of a Meta blob, so it uses the JSON-aware entry point: a
-// timestamp there is a string and a number is a float64.
-func formatItemValue(v any, format, layout string) string {
-	return formatJSONScalar(v, format, layout)
 }
