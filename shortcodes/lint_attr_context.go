@@ -52,6 +52,10 @@ type attrContext struct {
 	// occurrence sits in, where escaping contains the value without making the
 	// placement safe.
 	rawTextElement string
+	// element is the lowercased name of the tag the occurrence sits in, which a
+	// couple of rules need because an attribute means what its element makes it
+	// mean: srcdoc is defined on <iframe> and nowhere else.
+	element string
 	// foreignRoot is the namespace the occurrence's own element is in — "svg",
 	// "math", or "" for HTML. It narrows two things. It inverts the rationale
 	// for a program body, because foreign content DOES decode entities, so the
@@ -296,6 +300,17 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 			raw := string(z.Raw())
 			nameBytes, hasAttr := z.TagName()
 			name := string(nameBytes)
+			// Read from the tag's own source rather than through z.TagAttr,
+			// which replaces NUL with U+FFFD and so erases the sentinel.
+			hits := sentinelsInTag(raw)
+			interpolated := func(attr string) bool {
+				for _, hit := range hits {
+					if hit.ctx.inValue && hit.ctx.attr == attr {
+						return true
+					}
+				}
+				return false
+			}
 
 			ns := enclosing().namespaceForChild(name)
 			if ns != "" && breaksOutOfForeignContent(name, z, hasAttr) {
@@ -309,17 +324,18 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 			// recorded, because it decides what some of them mean: a srcdoc= on
 			// a foreign element is an attribute of an element with no browsing
 			// context, not a document waiting to be parsed.
-			for _, hit := range sentinelsInTag(raw) {
+			for _, hit := range hits {
 				ctx := hit.ctx
 				ctx.noscript = mode.noscript
 				ctx.foreignRoot = ns
+				ctx.element = name
 				record(hit.index, ctx)
 			}
 
 			frame := markupFrame{
 				name:            name,
 				ns:              ns,
-				htmlIntegration: isHTMLIntegrationPoint(ns, name, z, hasAttr),
+				htmlIntegration: isHTMLIntegrationPoint(ns, name, z, hasAttr, interpolated("encoding")),
 				mathText:        ns == "math" && mathTextIntegrationPoints[name],
 			}
 			forget()
@@ -356,7 +372,12 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 					pending.mode = scanMode{foreign: frame.namespaceForChild("span"), noscript: mode.noscript, enclosing: name}
 				}
 			}
-			if tt != html.SelfClosingTagToken {
+			// A void element is popped the instant it is inserted, and a "/"
+			// only really closes a tag in foreign content — HTML ignores it, so
+			// "<div/>" opens a div. Getting either wrong leaves a frame on the
+			// stack that a browser does not have, and the namespace of
+			// everything after it is then read off the wrong element.
+			if !voidElements[name] && !(tt == html.SelfClosingTagToken && ns != "") {
 				stack = append(stack, frame)
 			}
 		case html.EndTagToken:
@@ -376,8 +397,10 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 				}
 			}
 			// An end tag matching nothing this scan opened closes an element
-			// opened OUTSIDE it, and exactly two of those end the region: a
-			// foreign root, and the element whose body this is.
+			// opened OUTSIDE it, and exactly two of those end the region: the
+			// foreign root this region is inside, and the element whose body it
+			// is. Not any foreign root — a "</svg>" inside a MathML region
+			// closes nothing, and a browser stays in MathML.
 			// "<svg><iframe></svg><textarea>…" is the shape — a browser pops
 			// both and reads the textarea as RCDATA, and without this the scan
 			// would go on calling it foreign and warn about a link a browser
@@ -388,7 +411,7 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 			// it is, and treating one as an exit would put the scan back into
 			// HTML, where a srcdoc= that is inert on a foreign element starts
 			// warning again.
-			if !matched && base != "" && (name == "svg" || name == "math" || name == mode.enclosing) {
+			if !matched && base != "" && (name == base || name == mode.enclosing) {
 				stack, base = stack[:0], ""
 			}
 		case html.TextToken:
@@ -451,13 +474,21 @@ func breaksOutOfForeignContent(name string, z *html.Tokenizer, hasAttr bool) boo
 // the one that earns its keep: it is the accessible name of an inline icon, so
 // it is ordinary in a category template, and its content is HTML rather than
 // SVG.
-func isHTMLIntegrationPoint(ns, name string, z *html.Tokenizer, hasAttr bool) bool {
+func isHTMLIntegrationPoint(ns, name string, z *html.Tokenizer, hasAttr, interpolatedEncoding bool) bool {
 	switch ns {
 	case "svg":
 		return name == "desc" || name == "foreignobject" || name == "title"
 	case "math":
 		if name != "annotation-xml" {
 			return false
+		}
+		// An interpolated encoding decides the namespace of everything inside,
+		// from a value a lower-privileged user writes. Which one it will turn
+		// out to be cannot be known here, so this reads it as the HTML
+		// integration point it may become — the same fail-closed choice the
+		// unterminated-tag case makes.
+		if interpolatedEncoding {
+			return true
 		}
 		// Only with an HTML encoding; with any other one, or none, the children
 		// are still MathML. (A start-tag <svg> inside one is taken by HTML rules
@@ -468,7 +499,9 @@ func isHTMLIntegrationPoint(ns, name string, z *html.Tokenizer, hasAttr bool) bo
 			if string(key) != "encoding" {
 				continue
 			}
-			switch strings.ToLower(strings.TrimSpace(string(val))) {
+			// Not trimmed: the match is ASCII case-insensitive and nothing more,
+			// so encoding=" text/html " is NOT an integration point.
+			switch strings.ToLower(string(val)) {
 			case "text/html", "application/xhtml+xml":
 				return true
 			}
@@ -492,6 +525,15 @@ var rawTextElements = map[string]bool{
 	"iframe": true, "noembed": true, "noframes": true, "noscript": true,
 	"plaintext": true, "script": true, "style": true, "textarea": true,
 	"title": true, "xmp": true,
+}
+
+// voidElements have no end tag and no children, so a browser pops one as soon
+// as it inserts it. Keeping a frame for one would put the namespace of its
+// following siblings on the wrong element.
+var voidElements = map[string]bool{
+	"area": true, "base": true, "br": true, "col": true, "embed": true,
+	"hr": true, "img": true, "input": true, "link": true, "meta": true,
+	"param": true, "source": true, "track": true, "wbr": true,
 }
 
 // foreignBreakoutTags are the HTML start tag names that end foreign content,
@@ -743,9 +785,17 @@ func isASCIISpace(c byte) bool {
 // no browsing context, so its srcdoc is never parsed as a document. The rules
 // about markup syntax (raw=, an unquoted value, an interpolated name) and the
 // two attributes every namespace honours (style=, on*) are untouched. So are
-// the URL rules, deliberately — an SVG <a href="javascript:…"> runs, and those
-// rules have always matched on attribute name rather than on element, the same
-// looseness that warns about <div href="javascript:…"> in HTML.
+// the URL rules, deliberately — an SVG <a href="javascript:…"> runs.
+//
+// Those stay element-blind, and it is a real trade rather than an oversight. An
+// href on an SVG <g>, like one on an HTML <div>, navigates nowhere, so warning
+// about it is a false positive. But the alternative is an allow-list of which
+// element makes which attribute a URL, and a list one entry short is a missed
+// warning on a real link — <a>, <area>, <base>, <link>, <form action>, SVG <a>,
+// <image>, <use>, <animate>… The false positives the list would buy are markup
+// nobody writes; the misses it would risk are markup people do. srcdoc is the
+// one attribute checked against its element, and only because it has exactly
+// one host and no ambiguity about it.
 //
 // ctx.noscript: a <noscript> body is markup only when scripting is disabled, so
 // the rules that describe execution are withheld there entirely and the ones
@@ -835,8 +885,10 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		out = append(out, qualify(label+` sits in a "style" attribute, where escaping does not prevent CSS injection.`))
 	}
 	// srcdoc is the property of one HTML element rather than of the markup, so
-	// it says nothing about the same attribute written on a foreign one.
-	if alwaysUnsafeAttrs[attr] && ctx.foreignRoot == "" {
+	// it says nothing about the same attribute written on a foreign <iframe>,
+	// which has no browsing context, or on an HTML element that is not an
+	// iframe, where it is an inert unknown attribute.
+	if alwaysUnsafeAttrs[attr] && ctx.foreignRoot == "" && ctx.element == "iframe" {
 		out = append(out, qualify(label+` sits in a "`+attr+`" attribute, whose value the browser decodes and parses as HTML, so escaping does not prevent script injection anywhere in it.`))
 	}
 	if urlBearingAttrs[attr] && scriptCanRun {
@@ -1029,7 +1081,7 @@ func expressionAttributeKind(attr string) string {
 // srcdoc is never parsed as a document. What is untouched is everything about
 // markup syntax (raw=, an unquoted value, an interpolated name), the two
 // attributes every namespace honours (style=, on*), and the URL rules, which
-// have always matched on attribute name rather than on element.
+// stay element-blind on purpose (unsafeAttributeContexts says why).
 //
 // Three things keep this from becoming a third false-positive machine, and each
 // was a false positive first. breaksOutOfForeignContent: ~40 HTML tag names end
@@ -1041,6 +1093,15 @@ func expressionAttributeKind(attr string) string {
 // inside <annotation-xml> all land where a browser puts them. And an end tag
 // naming a foreign root or the region's own element ends the region, because a
 // re-read region does not carry the elements open above it.
+//
+// One thing predates all of this and is unchanged by it: whether a <script>
+// body is a program at all is decided by the element's name, never by its
+// type=. A <script type="application/json"> holds data rather than code, so
+// naming JavaScript there overstates it — though an escaped value in one can
+// neither close the element nor be decoded back into a quote, so what it
+// overstates is the reason rather than the verdict. Reading type= means
+// classifying the JavaScript MIME types, and it is a question about HTML
+// namespaces only in the sense that both were found in the same sweep.
 //
 // TestLintPlacementsAgainstTheParser is what holds all of it: it asks
 // x/net/html's parser, over a few thousand generated nests, whether the element

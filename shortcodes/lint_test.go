@@ -1622,8 +1622,9 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 	// A value inside a <script> or <style> body is judged as landing in a
 	// program rather than in markup, so anything written around it there draws
 	// the language message instead. These are the only nests where a probe and
-	// the parser disagree, and the message that does come back is the better one
-	// for the placement.
+	// the parser disagree, and the message that does come back is asserted
+	// below rather than merely excused — an exception that suppresses a miss
+	// without saying what replaces it would hide the next one.
 	inAProgramBody := map[string]bool{
 		`<svg><script><a href="javascript:[property path='Name']">go</a></script></svg>`: true,
 		`<svg><style><a href="javascript:[property path='Name']">go</a></style></svg>`:   true,
@@ -1682,6 +1683,11 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 					p.name, lintSrc, lintWarnings(lintSrc))
 			case live && !warned && !inAProgramBody[lintSrc]:
 				t.Errorf("MISSED (%s): this is live in a browser, and %s is silent", p.name, lintSrc)
+			case live && !warned:
+				if !lintSaysAny(lintSrc, "which is foreign content, where the parser decodes entities") {
+					t.Errorf("EXCUSED BUT SILENT (%s): %s draws neither message, got %q",
+						p.name, lintSrc, lintWarnings(lintSrc))
+				}
 			}
 		}
 	}
@@ -1701,6 +1707,40 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 			for _, c := range deep {
 				check([]string{a, b, c})
 			}
+		}
+	}
+
+	// Balanced markup is the easy half. Every defect this scan has had came
+	// from markup that is not: a stray end tag closing something that was never
+	// opened, a void element that a browser pops and a frame stack does not,
+	// and a "/>" that HTML ignores. checkRaw takes the source as written.
+	checkRaw := func(before, after string) {
+		for _, p := range probes {
+			lintSrc := before + p.lintSrc + after
+			oracleSrc := before + p.oracleSrc + after
+			live := exists(oracleSrc, p, true)
+			if !live && p.scriptingOff {
+				live = exists(oracleSrc, p, false)
+			}
+			if lintSaysAny(lintSrc, p.msg) && !live {
+				t.Errorf("FALSE POSITIVE (%s): no browser makes this live, yet %s warns:\n  %q",
+					p.name, lintSrc, lintWarnings(lintSrc))
+			}
+		}
+	}
+	openers := []string{
+		"<svg>", "<math>", "<svg><iframe>", "<math><iframe>", "<svg><textarea>",
+		"<math><mtext>", "<svg><g>", "<math><annotation-xml>", "<div>",
+	}
+	strays := []string{
+		"", "</svg>", "</math>", "</textarea>", "</iframe>", "</div>", "</p>", "</br>",
+		"<br>", "<img>", "<hr>", "<div/>", "<span/>", "<path/>", "<mglyph>",
+		"<br><mglyph>", "<div/><mglyph>", "</svg><script>", "</math><script>",
+	}
+	for _, o := range openers {
+		for _, stray := range strays {
+			checkRaw(o+stray, "")
+			checkRaw(o+stray, "</iframe></svg>")
 		}
 	}
 }
@@ -1817,5 +1857,88 @@ func TestLintOnlyTheRegionsOwnEndTagEndsIt(t *testing.T) {
 	src = `<svg><iframe></iframe><iframe srcdoc="[property path='Name']"></iframe></svg>`
 	if lintSaysAny(src, `sits in a "srcdoc" attribute`) {
 		t.Errorf("still inside the <svg>, so still inert, got %q", lintWarnings(src))
+	}
+}
+
+// The namespace of everything after an element is read off the frame stack, so
+// a frame a browser does not have puts every later element in the wrong
+// namespace. Three ways to acquire one, and each was a false positive or a
+// missed warning first.
+func TestLintFrameStackMatchesTheParsers(t *testing.T) {
+	t.Run("a void element leaves no frame", func(t *testing.T) {
+		// A browser pops <br> the instant it inserts it, so <mglyph> is still
+		// opened inside <mtext> — where it is one of the two names that stay
+		// MathML — and the <iframe> under it is inert.
+		src := `<math><mtext><br><mglyph><iframe srcdoc="[property path='Name']"></iframe></mglyph></mtext></math>`
+		if got := lintWarnings(src); len(got) != 0 {
+			t.Errorf("the <br> is gone before the <mglyph> opens, got %q", got)
+		}
+	})
+
+	t.Run("HTML ignores a solidus, so it leaves one", func(t *testing.T) {
+		// The mirror: "<div/>" is not self-closing in HTML, so the div IS open
+		// and everything under it is HTML, including a real iframe.
+		src := `<math><mtext><div/><mglyph><iframe srcdoc="[property path='Name']"></iframe></mglyph></mtext></math>`
+		if !lintSaysAny(src, `sits in a "srcdoc" attribute`) {
+			t.Errorf(`"<div/>" opens a div in HTML, got %q`, lintWarnings(src))
+		}
+		// In foreign content the same solidus really does close the tag.
+		src = `<svg><path/><a href="javascript:[property path='Name']">go</a></svg>`
+		if !lintSaysAny(src, `continues a "javascript:" URL`) {
+			t.Errorf("a self-closed <path> leaves no frame in SVG, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("only the region's own root ends it", func(t *testing.T) {
+		// A "</svg>" inside a MathML region closes nothing, and a browser stays
+		// in MathML, where a <script> runs nothing.
+		src := `<math><iframe></svg><script>var s="[property path='Name']"</script></iframe></math>`
+		if got := lintWarnings(src); len(got) != 0 {
+			t.Errorf("still MathML, so still inert, got %q", got)
+		}
+	})
+}
+
+// <annotation-xml> is the one element whose namespace is decided by an
+// attribute value, which makes it the one place a lower-privileged value can
+// change how the document is parsed.
+func TestLintAnnotationXMLEncoding(t *testing.T) {
+	live := `sits in a "srcdoc" attribute`
+
+	t.Run("the match is case-insensitive and nothing more", func(t *testing.T) {
+		if !lintSaysAny(`<math><annotation-xml encoding="TEXT/HTML"><iframe srcdoc="[property path='Name']"></iframe></annotation-xml></math>`, live) {
+			t.Error("an ASCII case-insensitive match is a match")
+		}
+		// Not trimmed: a browser compares the attribute as written.
+		for _, src := range []string{
+			`<math><annotation-xml encoding=" text/html "><iframe srcdoc="[property path='Name']"></iframe></annotation-xml></math>`,
+			`<math><annotation-xml encoding="image/svg+xml"><iframe srcdoc="[property path='Name']"></iframe></annotation-xml></math>`,
+			`<math><annotation-xml><iframe srcdoc="[property path='Name']"></iframe></annotation-xml></math>`,
+		} {
+			if lintSaysAny(src, live) {
+				t.Errorf("%s: this is still MathML, got %q", src, lintWarnings(src))
+			}
+		}
+	})
+
+	t.Run("an interpolated encoding fails closed", func(t *testing.T) {
+		// The value decides whether everything inside is HTML, and it is written
+		// by whoever can edit the entity. Reading it as the integration point it
+		// may turn out to be is the same choice the unterminated-tag rule makes.
+		src := `<math><annotation-xml encoding="[property path='Encoding']"><script>var s="[property path='Name']"</script></annotation-xml></math>`
+		if !lintSaysAny(src, "reaches JavaScript") {
+			t.Errorf("an encoding nobody can predict must not read as inert, got %q", lintWarnings(src))
+		}
+	})
+}
+
+// srcdoc is defined on <iframe> and on nothing else, so the rule that describes
+// it is the one place an element name is worth checking.
+func TestLintSrcdocIsAnIframeAttribute(t *testing.T) {
+	if lintSaysAny(`<div srcdoc="[property path='Name']"></div>`, `sits in a "srcdoc" attribute`) {
+		t.Error("a srcdoc on a div is an inert unknown attribute")
+	}
+	if !lintSaysAny(`<iframe srcdoc="[property path='Name']"></iframe>`, `sits in a "srcdoc" attribute`) {
+		t.Error("on an iframe it is the real thing")
 	}
 }
