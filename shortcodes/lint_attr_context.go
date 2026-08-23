@@ -322,6 +322,20 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 	// inside a region this scan handed off.
 	closeTag := func(name string) {
 		forget()
+		// "</form>" REMOVES the form element from the stack rather than popping
+		// down to it, so an <svg> the author forgot to close inside a form
+		// survives it and everything after is still SVG — where an <iframe> has
+		// no browsing context and its srcdoc is inert. Popping to the form took
+		// the <svg> with it and made that srcdoc read as a real one.
+		if name == "form" {
+			for i := len(stack) - 1; i >= 0; i-- {
+				if stack[i].name == "form" {
+					stack = append(stack[:i], stack[i+1:]...)
+					break
+				}
+			}
+			return
+		}
 		// "</br>" and "</p>" are the end-tag half of the breakout rule.
 		if enclosing().ns != "" && (name == "br" || name == "p") {
 			leaveForeignContent()

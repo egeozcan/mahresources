@@ -2356,3 +2356,19 @@ func TestLintAttributeNamesFoldOnlyASCII(t *testing.T) {
 		}
 	}
 }
+
+// A "</form>" removes the form element from the stack rather than popping down
+// to it, which is the one end tag in HTML that works that way.
+func TestLintFormEndTagRemovesRatherThanPops(t *testing.T) {
+	// The <svg> the author forgot to close survives the </form>, so the iframe
+	// after it is an inert SVG element.
+	src := `<form><svg></form><iframe srcdoc="[property path='Name']"></iframe>`
+	if got := lintWarnings(src); len(got) != 0 {
+		t.Errorf("%s: the <svg> outlives the </form>, got %q", src, got)
+	}
+	// With the svg closed, the same iframe is a real one.
+	src = `<form><svg></svg></form><iframe srcdoc="[property path='Name']"></iframe>`
+	if !lintSaysAny(src, `sits in a "srcdoc" attribute`) {
+		t.Errorf("%s: plain HTML here, got %q", src, lintWarnings(src))
+	}
+}
