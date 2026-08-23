@@ -173,7 +173,7 @@ func Lint(input string, opts LintOptions) []LintIssue {
 			valueSpans = append(valueSpans, bareValueSpan{start: tk.start, end: tk.end})
 		}
 	}
-	valueContexts := attributeContextsFor(input, valueSpans)
+	valueContexts, valueContextsOff := attributeContextsFor(input, valueSpans)
 
 	// --- Attribute and semantic checks over opener tokens ---
 	for _, tk := range tokens {
@@ -222,8 +222,26 @@ func Lint(input string, opts LintOptions) []LintIssue {
 			if tk.name == "meta" {
 				label = "[meta inline]"
 			}
-			for _, msg := range unsafeAttributeContexts(valueContexts[tk.start], tk.attrs["raw"] == "true", opts.CSSMode, label) {
+			raw := tk.attrs["raw"] == "true"
+			seen := map[string]bool{}
+			for _, msg := range unsafeAttributeContexts(valueContexts[tk.start], raw, opts.CSSMode, label) {
+				if seen[msg] {
+					continue
+				}
+				seen[msg] = true
 				add(tk.start, tk.end, SeverityWarning, msg)
+			}
+			// The scripting-disabled reading, for the occurrences whose two
+			// browser readings differ. Its warnings carry the scripting-mode
+			// qualifier; identical strings are not repeated.
+			if off, ok := valueContextsOff[tk.start]; ok {
+				for _, msg := range unsafeAttributeContexts(off, raw, opts.CSSMode, label) {
+					if seen[msg] {
+						continue
+					}
+					seen[msg] = true
+					add(tk.start, tk.end, SeverityWarning, msg)
+				}
 			}
 		}
 

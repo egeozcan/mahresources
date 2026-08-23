@@ -2849,3 +2849,90 @@ func TestLintAttributeContextRoundTwelve(t *testing.T) {
 		}
 	})
 }
+
+// Round-13 findings, every expectation verified against html.Parse (and
+// ParseWithOptions for the scripting-off case). Most are edge cases in the
+// document-phase and duplicate-attribute handling the previous round added.
+func TestLintAttributeContextRoundThirteen(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("an honored frameset retracts the body it replaces", func(t *testing.T) {
+		// The <div> and its style attribute are removed with the body.
+		if warns(`<div style="[property path='Name']"></div><frameset>`, "style") {
+			t.Error("the div is gone; its style attribute never exists")
+		}
+	})
+
+	t.Run("a frameset after the first is ignored", func(t *testing.T) {
+		if warns(`<frameset></frameset><frameset style="[property path='Name']">`, "style") {
+			t.Error("the second frameset is an after-frameset ignored token")
+		}
+	})
+
+	t.Run("html merges even inside a frameset document", func(t *testing.T) {
+		if !warns(`<frameset><html style="[property path='Name']">`, "style") {
+			t.Error("an <html> token merges its attributes onto the real element")
+		}
+	})
+
+	t.Run("frameset eligibility uses HTML whitespace only", func(t *testing.T) {
+		// NBSP is body content, so the frameset is ignored and the anchor is
+		// live.
+		src := " <frameset><a href=\"javascript:[property path='Name']\">x</a>"
+		if !warns(src, "javascript") {
+			t.Error("NBSP is not HTML whitespace; the frameset is ignored")
+		}
+	})
+
+	t.Run("a late head after the body started is ignored", func(t *testing.T) {
+		if warns(`<div></div><head style="[property path='Name']">`, "style") {
+			t.Error("the implicit head already closed; a later head token is ignored")
+		}
+	})
+
+	t.Run("html and body do not merge while a template is open", func(t *testing.T) {
+		if warns(`<template><html style="[property path='Name']">`, "style") {
+			t.Error("the in-template mode ignores html/body tokens")
+		}
+	})
+
+	t.Run("a placement safe on one mode but live on the other is warned", func(t *testing.T) {
+		// scripting-on: noscript raw text, iframe foreign, srcdoc inert.
+		// scripting-off: the <style> is a real element and swallows
+		// </noscript> as raw text, so the value is direct CSS.
+		src := `<noscript><style></noscript><svg><iframe srcdoc="[property path='Name']"></iframe>`
+		if !warns(src, "CSS") {
+			t.Error("live as CSS with scripting off, and the on reading hid it")
+		}
+	})
+
+	t.Run("a discarded duplicate encoding does not classify the integration point", func(t *testing.T) {
+		src := `<math><annotation-xml encoding="application/mathml+xml" encoding="[property path='Name']"><iframe srcdoc="[property path='Name']"></iframe></annotation-xml></math>`
+		if warns(src, `sits in a "srcdoc" attribute`) {
+			t.Error("the first encoding wins and keeps the iframe in MathML")
+		}
+	})
+
+	t.Run("a discarded duplicate type does not make the style a stylesheet", func(t *testing.T) {
+		src := `<style type="text/plain" type="[property path='Name']">.x{color:[property path='Name']}</style>`
+		if warns(src, "CSS") {
+			t.Error("type=text/plain wins, so the body applies nothing")
+		}
+	})
+
+	t.Run("a foreign element named html is closed by its end tag", func(t *testing.T) {
+		// Inside an SVG <script>, <html> is a foreign element; </html> pops
+		// it, leaving the value as the script's direct child text.
+		src := `<svg><script><html></html>[property path='Name']</script></svg>`
+		if !warns(src, "JavaScript") {
+			t.Error("the value is program text of the SVG script")
+		}
+	})
+}

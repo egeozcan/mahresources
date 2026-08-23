@@ -100,10 +100,17 @@ func lintSentinel(i int) string { return lintSentinelPrefix + strconv.Itoa(i) + 
 // attributeContextsFor answers, for every occurrence, which attribute it sits
 // in. Each occurrence is replaced by an inert unique sentinel, the result is
 // tokenized, and the sentinels are located in the tags that come back.
-func attributeContextsFor(input string, spans []bareValueSpan) map[int]attrContext {
+// attributeContextsFor returns, for every occurrence, the attribute context
+// of its default (scripting-enabled) reading, and — as a second map keyed the
+// same way — the scripting-DISABLED reading for the occurrences whose two
+// readings differ, so a caller that evaluates both catches a placement live
+// in only one mode. The second map is empty unless the source contains a
+// <noscript>.
+func attributeContextsFor(input string, spans []bareValueSpan) (map[int]attrContext, map[int]attrContext) {
 	out := make(map[int]attrContext, len(spans))
+	alt := make(map[int]attrContext)
 	if len(spans) == 0 {
-		return out
+		return out, alt
 	}
 	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
 
@@ -173,11 +180,27 @@ func attributeContextsFor(input string, spans []bareValueSpan) map[int]attrConte
 			if !ok {
 				continue
 			}
-			if s1.noscriptRaw || s1.inertText || s1 == (attrContext{}) {
-				oc := off[i]
-				oc.noscript = true
-				oc.noscriptRaw = false
+			oc := off[i]
+			oc.noscript = true
+			oc.noscriptRaw = false
+			// The two readings are two real browser configurations, and a
+			// placement dangerous in either must be reported.
+			switch {
+			case s1.noscriptRaw || s1.inertText || s1 == (attrContext{}):
+				// The scripting-on reading found nothing here — the
+				// occurrence sat in a <noscript> raw-text body, or in text
+				// the scan settled as inert. The scripting-off reading takes
+				// over as the primary answer, qualified, so the element-name
+				// and unterminated-tag FALLBACKS below (which run on this
+				// map) also see it.
 				out[sp.start] = oc
+			case oc != s1:
+				// The scripting-on reading resolved this to something live or
+				// safe, and the scripting-off reading differs — keep it
+				// ALONGSIDE, qualified, because a value dead as foreign markup
+				// with scripting on can be live CSS with it off. Lint
+				// evaluates both and unions the warnings.
+				alt[sp.start] = oc
 			}
 		}
 	}
@@ -225,7 +248,7 @@ func attributeContextsFor(input string, spans []bareValueSpan) map[int]attrConte
 			out[spans[askSpan[k]].start] = attrContext{unterminated: true}
 		}
 	}
-	return out
+	return out, alt
 }
 
 // markupFrame is one open element, carrying the little this scan wants from
@@ -323,9 +346,18 @@ func (f markupFrame) keepsForeignContent() bool {
 // with it disabled the body is markup. attributeContextsFor runs the enabled
 // reading first and asks the disabled one about exactly the marked positions,
 // because the two readings can disagree about where markup resumes.
-func scanMarkup(src string, scripting bool, record func(index int, ctx attrContext)) (sawNoscript bool) {
+func scanMarkup(src string, scripting bool, emit func(index int, ctx attrContext)) (sawNoscript bool) {
 	z := html.NewTokenizer(strings.NewReader(src))
 	var stack []markupFrame
+	// record wraps emit and remembers the order occurrences were recorded in,
+	// so an honored <frameset> — which replaces the body outright — can
+	// retract everything recorded since the body started.
+	var recorded []int
+	bodyStartMark := -1
+	record := func(index int, ctx attrContext) {
+		emit(index, ctx)
+		recorded = append(recorded, index)
+	}
 	// enclosing is the frame the next token is opened inside. The bottom of
 	// the stack is the document itself, which is HTML.
 	enclosing := func() markupFrame {
@@ -536,6 +568,57 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 		return n <= len(name) && asciiEqualFold(text[i:at], name[:n])
 	}
 
+	// peekTagName reads the element name out of a raw tag token without
+	// consuming the tokenizer's own TagName (which is not idempotent), for
+	// the few dispatch decisions the inertRest gate makes before the switch.
+	peekTagName := func(raw string) string {
+		i := 0
+		if i < len(raw) && raw[i] == '<' {
+			i++
+		}
+		if i < len(raw) && raw[i] == '/' {
+			i++
+		}
+		start := i
+		for i < len(raw) && raw[i] != ' ' && raw[i] != '\t' && raw[i] != '\n' &&
+			raw[i] != '\f' && raw[i] != '\r' && raw[i] != '>' && raw[i] != '/' {
+			i++
+		}
+		return asciiLower(raw[start:i])
+	}
+	// foreignDispatch reports whether the parser would hand this token to
+	// foreign-content processing rather than to the HTML insertion mode —
+	// x/net's inForeignContent, as a function of the current node. It is what
+	// makes the template surrender below leaky: ignoreTheRemainingTokens kills
+	// the HTML insertion mode, but a token dispatched to foreign content still
+	// runs, so an end tag can still pop back out of foreign content and the
+	// start tags that follow are live again.
+	foreignDispatch := func(tt html.TokenType, raw string) bool {
+		e := enclosing()
+		if e.ns == "" {
+			return false
+		}
+		start := tt == html.StartTagToken || tt == html.SelfClosingTagToken
+		text := tt == html.TextToken
+		if e.mathText {
+			if text {
+				return false
+			}
+			if start {
+				if nm := peekTagName(raw); nm != "mglyph" && nm != "malignmark" {
+					return false
+				}
+			}
+		}
+		if e.ns == "math" && e.name == "annotation-xml" && start && peekTagName(raw) == "svg" {
+			return false
+		}
+		if e.htmlIntegration && (start || text) {
+			return false
+		}
+		return true
+	}
+
 	// inertRest reports that the parser this scan mirrors has stopped
 	// building anything: an honored <frameset> replaced the body and every
 	// insertion mode from there ignores body content, or x/net's parser met a
@@ -566,6 +649,11 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 	// src= navigates — and every OTHER token is ignored, before and after the
 	// "</frameset>".
 	framesetMode := false
+	// framesetDepth counts open frameset elements in a frameset document, and
+	// framesetClosed marks the after-frameset phase the top frameset's close
+	// begins — where every token, a later <frameset> included, is ignored.
+	framesetDepth := 0
+	framesetClosed := false
 
 	// pending describes the raw-text body the tokenizer is about to hand back
 	// as a single text token, for the elements where that reading is also a
@@ -601,6 +689,18 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 	// walks straight past a <div> and a foreign root.
 	closeTag := func(name string) {
 		forget()
+		// "</frameset>" in a frameset document decrements the frame depth;
+		// closing the top one begins the after-frameset phase, where every
+		// later token is ignored.
+		if framesetMode && name == "frameset" {
+			if framesetDepth > 0 {
+				framesetDepth--
+				if framesetDepth == 0 {
+					framesetClosed = true
+				}
+			}
+			return
+		}
 		// "</br>" acts as a <br> START tag: a breakout in foreign content,
 		// body content for the frameset-ok flag everywhere, and it closes
 		// nothing.
@@ -609,18 +709,19 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 				leaveForeignContent()
 			}
 			reconstruct()
-			framesetOK = false
-			return
-		}
-		// "</body>" and "</html>" switch insertion modes and close nothing:
-		// the elements they name outlive them, so the stack does not move.
-		if name == "body" || name == "html" {
+			if !htmlFrameOpen("template") {
+				framesetOK = false
+			}
 			return
 		}
 		// Foreign content first, which is the spec's own order: with a
 		// foreign current node the end tag walks the foreign prefix of the
 		// stack and pops to a name match. Only when the walk reaches an HTML
-		// element without matching does the tag become HTML's business.
+		// element without matching does the tag become HTML's business. This
+		// runs BEFORE the html/body no-op, because a foreign element spelled
+		// <html> or <body> — an SVG one inside a <script> — is closed here
+		// like any other foreign element, and only an unmatched one falls
+		// through to the HTML rule.
 		if enclosing().ns != "" {
 			for i := len(stack) - 1; i >= 0 && stack[i].ns != ""; i-- {
 				if stack[i].name == name {
@@ -628,6 +729,13 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 					return
 				}
 			}
+		}
+		// "</body>" and "</html>" switch insertion modes and close nothing in
+		// HTML content: the elements they name outlive them, so the stack
+		// does not move. (The foreign walk above already handled a foreign
+		// element of either name.)
+		if name == "body" || name == "html" {
+			return
 		}
 		// "</form>" REMOVES the form element from the stack rather than popping
 		// down to it, so an <svg> the author forgot to close inside a form
@@ -749,9 +857,12 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 		// as html.Parse reads it.
 		z.AllowCDATA(enclosing().ns != "")
 		tt := z.Next()
-		if inertRest && tt != html.ErrorToken {
-			// The parser has stopped building; every remaining sentinel is in
-			// text nobody renders, and saying so keeps the fallbacks quiet.
+		if inertRest && tt != html.ErrorToken && !foreignDispatch(tt, string(z.Raw())) {
+			// The parser's HTML insertion mode has stopped building, so a
+			// token it dispatches to that mode is in text nobody renders.
+			// A token dispatched to foreign content still runs, though, and
+			// falls through to the switch below — an end tag there can pop
+			// back out of foreign content and make later tokens live again.
 			for _, idx := range sentinelIndexes(string(z.Raw())) {
 				record(idx.index, attrContext{inertText: true, noscript: inNoscript()})
 			}
@@ -767,17 +878,26 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 			// Read from the tag's own source rather than through z.TagAttr,
 			// which replaces NUL with U+FFFD and so erases the sentinel.
 			hits := sentinelsInTag(raw)
-			if framesetMode && name != "frameset" && name != "frame" && name != "noframes" {
-				// In a frameset document only the frameset machinery exists;
-				// this token is ignored and its attributes never are.
-				for _, hit := range hits {
-					record(hit.index, attrContext{inertText: true})
+			if framesetMode {
+				// In a frameset document only the frameset machinery is real,
+				// plus an <html> token whose attributes merge onto the
+				// document element; everything else, and everything at all
+				// once the top frameset has closed, is an ignored token whose
+				// attributes never exist.
+				real := !framesetClosed && (name == "frameset" || name == "frame" ||
+					name == "noframes" || name == "html")
+				if !real {
+					for _, hit := range hits {
+						record(hit.index, attrContext{inertText: true})
+					}
+					continue
 				}
-				continue
 			}
 			interpolatedEncoding := false
 			for _, hit := range hits {
-				if hit.ctx.inValue && hit.ctx.attr == "encoding" && encodingCouldBeHTML(hit.value) {
+				// A discarded duplicate never reaches the DOM, so it cannot
+				// decide the namespace: the parser keeps the first encoding.
+				if hit.ctx.inValue && hit.ctx.attr == "encoding" && !hit.ctx.discarded && encodingCouldBeHTML(hit.value) {
 					interpolatedEncoding = true
 				}
 			}
@@ -835,7 +955,14 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 					// nothing and MERGES its attributes onto the real one —
 					// an attribute the element already has is discarded. The
 					// tag's own hits are recorded here with that rule, and
-					// nothing is pushed.
+					// nothing is pushed. While a <template> is open the
+					// in-template mode ignores both outright, merging nothing.
+					if htmlFrameOpen("template") {
+						for _, hit := range hits {
+							record(hit.index, attrContext{inertText: true})
+						}
+						continue
+					}
 					attrsSeen := htmlAttrs
 					if name == "body" {
 						attrsSeen = bodyAttrs
@@ -857,6 +984,10 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 					}
 					if name == "body" {
 						framesetOK = false
+						if !bodyStarted {
+							bodyStartMark = len(recorded)
+						}
+						bodyStarted = true
 					}
 					continue
 				case name == "frameset":
@@ -866,22 +997,41 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 					// token, and inside template contents it always is: the
 					// body it would replace is not the second element on the
 					// stack there. Either way it opens no frame here.
-					if (!bodyStarted || framesetOK) && !htmlFrameOpen("template") {
+					switch {
+					case framesetMode:
+						// A nested frameset is real; one arriving after the
+						// top frameset closed is not.
+						if framesetClosed {
+							ignored = true
+						} else {
+							framesetDepth++
+						}
+					case framesetOK && !htmlFrameOpen("template"):
 						framesetMode = true
-					} else {
+						framesetDepth = 1
+						// The body and everything recorded in it is gone.
+						if bodyStartMark >= 0 {
+							for _, idx := range recorded[bodyStartMark:] {
+								emit(idx, attrContext{inertText: true})
+							}
+						}
+					default:
 						ignored = true
 					}
 				case name == "head":
 					// A real element only at the very start of the document,
-					// and only once.
-					ignored = len(stack) > 0 || !framesetOK || headSeen
+					// and only once: after the body has started the implicit
+					// head is already closed, so a later head token is
+					// ignored.
+					ignored = bodyStarted || len(stack) > 0 || !framesetOK || headSeen
 					if !ignored {
 						headSeen = true
 					}
 				case name == "frame":
-					// Real only inside a frameset document; in the body it is
-					// an ignored token.
-					ignored = !framesetMode
+					// Real only inside a frameset document that has not yet
+					// closed; in the body, and after the top frameset closes,
+					// it is an ignored token.
+					ignored = !framesetMode || framesetClosed
 				case tableSectionTags[name]:
 					// In body these are ignored; the table insertion modes
 					// build them, approximated by an open <table> — and
@@ -932,7 +1082,11 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 					// template the body has started around counts against it.
 					headPosition := len(stack) == 0 ||
 						(len(stack) == 1 && stack[0].ns == "" && stack[0].name == "head")
-					if !(name == "template" && headPosition) {
+					// A flip inside template contents does not reach the
+					// document's frameset-ok flag: the template is a separate
+					// parse, so a <select> or <br> in it leaves a later
+					// top-level <frameset> still eligible.
+					if !(name == "template" && headPosition) && !htmlFrameOpen("template") {
 						framesetOK = false
 					}
 				} else if name == "input" {
@@ -945,7 +1099,7 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 							hidden = true
 						}
 					}
-					if !hidden {
+					if !hidden && !htmlFrameOpen("template") {
 						framesetOK = false
 					}
 				}
@@ -1030,6 +1184,9 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 			}
 			if len(stack) == 0 && name != "frameset" && name != "frame" &&
 				!(ns == "" && headContentTags[name]) {
+				if !bodyStarted {
+					bodyStartMark = len(recorded)
+				}
 				bodyStarted = true
 			}
 			if enteredForeignFromHTML {
@@ -1155,7 +1312,7 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 			// the head, which hands it to the body.
 			if t := enclosing(); t.ns == "" && t.headNoscript &&
 				pending.language == "" && !pending.inert &&
-				strings.TrimSpace(html.UnescapeString(string(z.Raw()))) != "" {
+				hasNonHTMLSpace(html.UnescapeString(string(z.Raw()))) {
 				stack = stack[:len(stack)-1]
 			}
 			// Body text is body content: any non-whitespace character outside
@@ -1163,9 +1320,14 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 			// judged on the text the parser decodes, so entity-spelled
 			// whitespace is still whitespace.
 			if pending.language == "" && !pending.inert &&
-				strings.TrimSpace(html.UnescapeString(string(z.Raw()))) != "" {
-				framesetOK = false
+				hasNonHTMLSpace(html.UnescapeString(string(z.Raw()))) {
+				if !htmlFrameOpen("template") {
+					framesetOK = false
+				}
 				if len(stack) == 0 {
+					if !bodyStarted {
+						bodyStartMark = len(recorded)
+					}
 					bodyStarted = true
 				}
 			}
@@ -1469,9 +1631,11 @@ var rawTextElements = map[string]bool{
 func styleTypeApplies(z *html.Tokenizer, hasAttr bool, hits []sentinelHit) bool {
 	// An interpolated type= is asked what it could complete, exactly as an
 	// interpolated <annotation-xml> encoding is: type="text/plain[meta …]"
-	// cannot become text/css, so nothing is applied and the body is inert.
+	// cannot become text/css, so nothing is applied and the body is inert. A
+	// discarded duplicate type is skipped: the parser keeps the first, so the
+	// z.TagAttr walk below reads the value that actually decides.
 	for _, hit := range hits {
-		if hit.ctx.inValue && hit.ctx.attr == "type" {
+		if hit.ctx.inValue && hit.ctx.attr == "type" && !hit.ctx.discarded {
 			return interpolatedValueCouldBe(hit.value, styleSheetTypes)
 		}
 	}
@@ -1805,6 +1969,22 @@ func sentinelIndexes(value string) []sentinelPos {
 		}
 		from = i + len(lintSentinelPrefix) + end + 1
 	}
+}
+
+// hasNonHTMLSpace reports whether s holds any character that is not HTML
+// whitespace (space, tab, LF, FF, CR). It is a byte scan on purpose: a NBSP
+// (U+00A0) is body content to the parser, and its UTF-8 bytes are not any of
+// these, so it reads as content — where strings.TrimSpace, which trims every
+// Unicode space, would wrongly treat it as blank.
+func hasNonHTMLSpace(s string) bool {
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case ' ', '\t', '\n', '\f', '\r':
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func isASCIISpace(c byte) bool {
@@ -2339,7 +2519,13 @@ func expressionAttributeKind(attr string) string {
 // have their own boundary lists here but no clear-back-to-context, foster
 // parenting never happens, and the in-body corrections in scanMarkup honor
 // the table-section START tags whenever a <table> or <template> is open
-// rather than only in the modes that really do.
+// rather than only in the modes that really do. Document phases are modelled
+// only as far as the frameset-ok flag and the one-head/one-html/one-body
+// merge rules reach: a template's own contents are treated as a nested parse
+// only for the frameset-ok flag they must not touch, not as the separate
+// insertion-mode stack a browser keeps, and x/net's template-meets-foreign
+// surrender is mirrored as a leaky "HTML insertion mode is dead" that foreign
+// end tags still escape.
 //
 // TestLintPlacementsAgainstTheParser is what holds all of it: it asks
 // x/net/html's parser, over a few thousand generated nests, whether the element

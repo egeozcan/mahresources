@@ -99,6 +99,7 @@ func TestLintDifferentialTagSoup(t *testing.T) {
 		"</button>", "<h2>", "</h2>", "<h3>", "</h3>", "<dd>", "</dd>",
 		"<image>", "<keygen>", "<frameset>", "</frameset>", "<frame>",
 		"<head>", "</head>", "<template>", "</template>", "<ul>", "</ul>",
+		"<noframes>", "</noframes>", "<body>", "<html>", "<annotation-xml>",
 		"<input>", `<input type="hidden">`, "<hr>", "<pre>", "</pre>",
 		"<td>", "</td>", "<tr>", "</tr>", "<marquee>", "</marquee>",
 		"<object>", "</object>", "<optgroup>", "<dt>", "</dt>",
