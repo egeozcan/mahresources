@@ -71,7 +71,7 @@ Renders a metadata field from the entity's `meta` JSON, using the category's Met
 | Attribute | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `path` | Yes | -- | Dot-notation path into the entity's Meta JSON (e.g., `cooking.time`, `address.city`) |
-| `inline` | No | `false` | Renders the bare value instead of the `<meta-shortcode>` element. The only form usable inside an HTML attribute (see [Inline values](#inline-values-inside-html-attributes)) |
+| `inline` | No | `false` | Renders the bare value instead of the `<meta-shortcode>` element. The only form usable inside an HTML attribute, and it emits the stored value rather than the element's schema-aware display (see [Inline values](#inline-values-inside-html-attributes)) |
 | `editable` | No | `false` | Shows a pencil edit button; clicking opens a schema-aware inline form. Ignored when `inline` is set |
 | `hide-empty` | No | `false` | Hides the shortcode entirely when the value is absent or null |
 | `default` | No | -- | Text rendered in place of the empty state when the value is missing. Ignored when `hide-empty` is set (hide wins) |
@@ -86,6 +86,7 @@ Renders a metadata field from the entity's `meta` JSON, using the category's Met
 - When `editable=true`, clicking the pencil calls the `editMeta` API endpoint
 - If the path exists in the MetaSchema, rendering is schema-aware (type formatting, enum pills, shape detection, x-display)
 - If no schema exists, falls back to plain value display
+- All of that is the element's doing, in the browser. `inline="true"` emits no element and applies none of it (see [Inline output is the stored value](#inline-output-is-the-stored-value))
 
 ### Examples
 
@@ -151,6 +152,42 @@ This matters because the two halves have different authors: an admin or editor w
 Inline mode also works where the widget does not hydrate -- public share pages and `CustomMRQLResult` cards -- because it is plain server-rendered text.
 
 The alternative, for a slot that runs in a browser with the entity in scope, is Alpine: every entity-bound slot is wrapped in `x-data="{ entity: … }"`, so `:href="'/archive/' + entity.Meta.slug"` reads the same value client-side.
+
+### Inline output is the stored value
+
+Everything under [How It Works](#how-it-works) is the `<meta-shortcode>` element's doing, in the browser. `inline="true"` emits no element, so none of it applies. What it renders is the stored value as plain text, shaped by `format` / `layout` and by the `default` / `hide-empty` fallbacks, then escaped unless `raw="true"`.
+
+With a MetaSchema that declares `status` as a labeled enum (`in_progress` labelled `In Progress`):
+
+```html
+[meta path="status"]                        <!-- In Progress, in an enum pill -->
+[meta path="status" inline="true"]          <!-- in_progress -->
+```
+
+The same split applies to the element's other display rules. The element stops at the first rule that matches the field, so each row below is what that rule produces when it is the one that fires. Inline reaches none of them.
+
+| Rule | Element form | `inline="true"` |
+|---|---|---|
+| `x-display` naming a built-in renderer | The renderer's output | The value, renderer not run |
+| `x-display` naming a `plugin:` type | The plugin's output | The value, renderer not run |
+| An object matching a shape (`url`, `geo`, `daterange`, `dimensions`) | The shape's rendering | The value's JSON, no detection |
+| A [labeled enum](./meta-schemas.md#type-aware-rendering) (`oneOf` + `const` + `title`) | The matching entry's `title`, or the stored value when that entry has no `title` and when no entry matches | The stored value |
+| A plain `enum` list | The value, in a pill | The value |
+| `"type": "boolean"` | `Yes` / `No` | `true` / `false` |
+| No rule matched, object value | The value's JSON | The value's JSON |
+| No rule matched, array value | The array's JSON | The elements joined with `, ` |
+
+Precedence among those rules has one wrinkle worth knowing when you write a schema. The element checks for an enum twice: once against the schema as written, before it consults a `plugin:` renderer, and once against the schema with composition resolved, after. So an enum you declare on the field itself preempts a `plugin:` renderer, while one that only becomes visible once a `$ref`, `allOf`, `oneOf` or `anyOf` has been resolved does not. A built-in `x-display` declared on the field, and a matching object shape, are both checked ahead of either enum pass. None of it reaches inline output either way.
+
+**This is what `inline` is for, not a gap in it.** Its main use is building an attribute or a URL, and there the stored value is the one that has to travel. `data-status="[meta path='status' inline='true']"` hands a CSS rule or a script the key it was written against, `in_progress`, and not a label an operator can rename in the schema without touching the template. Resolving labels here would break the mode's primary use.
+
+So pick the form by what consumes the output. Use `[meta path="status"]` where a reader sees the value and wants the label. Use `inline="true"` where markup, a URL or a script consumes it. Use both where a card needs each:
+
+```html
+<div class="card" data-status="[meta path='status' inline='true']">
+  Status: [meta path="status"]
+</div>
+```
 
 ## `[property]` -- Entity Field Access
 

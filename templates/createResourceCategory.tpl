@@ -126,6 +126,17 @@
                             &middot; <b class="text-stone-500">raw</b>="true" skip HTML escaping (never inside an attribute &mdash; an unescaped quote closes it early)
                         </span>
                         <br><span class="text-stone-400 ml-4">
+                            Inline emits the stored value, not the element's rendering of it. The display rules the
+                            element applies do not apply here: a labeled enum renders its stored value and not its
+                            label, a boolean renders
+                            <code class="bg-stone-100 px-1 rounded">true</code>/<code class="bg-stone-100 px-1 rounded">false</code>
+                            and not Yes/No, and an <code class="bg-stone-100 px-1 rounded">x-display</code> renderer does
+                            not run. That is what the mode is for:
+                            <code class="bg-stone-100 px-1 rounded">data-status="[meta path='status' inline='true']"</code>
+                            has to carry the key a CSS rule or a script was written against, not a label an operator can
+                            rename in the schema. Use the element form where you want the label.
+                        </span>
+                        <br><span class="text-stone-400 ml-4">
                             Escaping keeps the value inside a <i>quoted</i> attribute and no further. It does not make a
                             <code class="bg-stone-100 px-1 rounded">javascript:</code> value safe as a whole
                             <code class="bg-stone-100 px-1 rounded">href</code>, survive an

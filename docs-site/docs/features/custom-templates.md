@@ -79,6 +79,8 @@ Custom template content is **not** evaluated as a Pongo2 template. Expressions l
 
 Use single quotes for the inner shortcode attributes so the outer HTML attribute stays intact. `[property]` and `[item]` escape the same way.
 
+What `inline="true"` emits is the stored value, not the element's rendering of it. The MetaSchema's display rules belong to the element, so a labeled enum gives its stored value and not its label, a boolean gives `true` / `false` and not `Yes` / `No`, and an `x-display` renderer does not run. That is deliberate: the URL above has to carry the stored value. See [Inline output is the stored value](./shortcodes.md#inline-output-is-the-stored-value).
+
 :::warning Escaping is not general attribute safety
 
 It keeps the value inside a quoted attribute. It does **not** make a `javascript:` value safe as a whole `href`, survive an `on*` handler, contain a value in an unquoted attribute, or prevent CSS injection in `style`. The editor warns on those four shapes. Meta is written by anyone who can edit the entity, including the plain `user` role, while the template is written by an admin or editor -- so a careless interpolation crosses a privilege boundary. See [Inline values inside HTML attributes](./shortcodes.md#inline-values-inside-html-attributes).
