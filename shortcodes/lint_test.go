@@ -881,3 +881,70 @@ func TestLintCoversEveryBareValueShortcode(t *testing.T) {
 		}
 	})
 }
+
+// Round-11 findings. The tokenizer raw-texts eight elements, not two, and for
+// the six besides <script> and <style> nothing inside them was analysed at all:
+// their bodies arrive as text with no open raw-text element recorded, so the
+// context stayed the zero value, and a tag nested inside one is never emitted
+// as a tag for the attribute walk to see.
+func TestLintOpaqueRawTextElements(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("a body the tokenizer cannot see into is treated as unsafe", func(t *testing.T) {
+		// The href here never reaches the attribute walk, so the placement rules
+		// did not run on it. Byte-identical markup outside the wrapper warns
+		// about the scheme; inside it the honest answer is "this was not read".
+		for _, el := range []string{"iframe", "noembed", "noframes", "noscript", "plaintext", "xmp"} {
+			src := "<" + el + `><a href="[meta path='x' inline='true']">go</a></` + el + ">"
+			if !warns(src, "<"+el+"> body") {
+				t.Errorf("nothing inside <%s> was analysed: %s", el, src)
+			}
+		}
+	})
+
+	t.Run("a bare value in one warns with no tag around it either", func(t *testing.T) {
+		if !warns(`<noscript>[property path="Name"]</noscript>`, "<noscript> body") {
+			t.Error("every bare-value shortcode in an unreadable body is unplaced")
+		}
+	})
+
+	t.Run("the message never claims a language it does not know", func(t *testing.T) {
+		for _, el := range []string{"iframe", "noembed", "noframes", "noscript", "plaintext", "xmp"} {
+			src := "<" + el + `>[meta path='x' inline='true']</` + el + ">"
+			for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+				if strings.Contains(issue.Message, "the value reaches  ") {
+					t.Errorf("<%s> has no language to name: %s", el, issue.Message)
+				}
+			}
+		}
+	})
+
+	t.Run("script and style keep their own language", func(t *testing.T) {
+		if !warns(`<script>var s = "[meta path='x' inline='true']";</script>`, "reaches JavaScript") {
+			t.Error("a script body still names JavaScript")
+		}
+		if !warns(`<style>.c{color:[meta path='x' inline='true']}</style>`, "reaches CSS") {
+			t.Error("a style body still names CSS")
+		}
+	})
+
+	t.Run("RCDATA bodies stay quiet, tags inside them included", func(t *testing.T) {
+		// textarea and title are raw-tagged by the tokenizer too, but their
+		// bodies decode entities, so an escaped value is inert there — and the
+		// <a href> inside is literal text to the browser as well, exactly as the
+		// zero-value context reports.
+		for _, el := range []string{"textarea", "title"} {
+			src := "<" + el + `><a href="[meta path='x' inline='true']">go</a></` + el + ">"
+			if warns(src, "[meta inline") {
+				t.Errorf("<%s> is RCDATA and safe: %s", el, src)
+			}
+		}
+	})
+}
