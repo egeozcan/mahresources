@@ -163,9 +163,11 @@ func renderItemValue(sc Shortcode, elem any, index int) string {
 		return strconv.Itoa(index)
 	}
 
-	// formatJSONScalar, not formatPropertyValue: an [item] value came out of a
-	// Meta blob, where a timestamp is a string and every number is a float64.
-	value := navigateJSONValue(elem, sc.Attrs["path"])
+	// An empty path is the identity here: [item] with no path= renders the
+	// element itself. formatJSONScalar, not formatPropertyValue: an [item] value
+	// came out of a Meta blob, where a timestamp is a string and every number is
+	// a float64.
+	value, _ := navigateJSONValue(elem, sc.Attrs["path"])
 	text := formatJSONScalar(value, sc.Attrs["format"], sc.Attrs["layout"])
 
 	if text == "" {
@@ -178,24 +180,4 @@ func renderItemValue(sc Shortcode, elem any, index int) string {
 		return text
 	}
 	return html.EscapeString(text)
-}
-
-// navigateJSONValue walks a dot-separated path into a decoded JSON value
-// (map[string]any at each step). An empty path returns current unchanged; a
-// missing segment or non-object step returns nil.
-func navigateJSONValue(current any, path string) any {
-	if path == "" {
-		return current
-	}
-	for _, part := range strings.Split(path, ".") {
-		obj, ok := current.(map[string]any)
-		if !ok {
-			return nil
-		}
-		current, ok = obj[part]
-		if !ok {
-			return nil
-		}
-	}
-	return current
 }

@@ -880,3 +880,22 @@ func TestInlineMetaDecodeIsMemoizedPerEntity(t *testing.T) {
 		Shortcode{Name: "meta", Attrs: map[string]string{"path": "v", "inline": "true", "default": "n/a"}},
 		MetaShortcodeContext{Meta: []byte("{not json")}))
 }
+
+// extractValueAtPath fills the widget's data-value attribute, so "not found"
+// has to stay distinguishable from an explicit null — one is the empty string
+// and the other is the JSON text "null". Its answer for an empty path is "",
+// the third of the three empty-path behaviours (see
+// TestItemWithNoPathRendersTheElementItself and TestExtractRawValueAtPathEdges);
+// RenderMetaShortcode never asks, since it returns early on an empty path.
+func TestExtractValueAtPathEdges(t *testing.T) {
+	assert.Equal(t, `"b"`, extractValueAtPath(json.RawMessage(`{"a":"b"}`), "a"))
+	assert.Equal(t, `{"b":1}`, extractValueAtPath(json.RawMessage(`{"a":{"b":1}}`), "a"))
+	assert.Equal(t, "null", extractValueAtPath(json.RawMessage(`{"a":null}`), "a"))
+
+	assert.Equal(t, "", extractValueAtPath(json.RawMessage(`{"a":"b"}`), "missing"))
+	assert.Equal(t, "", extractValueAtPath(json.RawMessage(`{"a":"b"}`), ""))
+	assert.Equal(t, "", extractValueAtPath(json.RawMessage(`{"a":"b"}`), "a.b"))
+	assert.Equal(t, "", extractValueAtPath(nil, "a"))
+	assert.Equal(t, "", extractValueAtPath(json.RawMessage(`[1,2]`), "a"))
+	assert.Equal(t, "", extractValueAtPath(json.RawMessage(`not json`), "a"))
+}

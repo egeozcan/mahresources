@@ -555,3 +555,20 @@ func TestConditionalMRQLSourcePriorityOverPath(t *testing.T) {
 	result := RenderConditionalShortcode(context.Background(), sc, ctx, nil, executor, 0)
 	assert.Equal(t, "", result)
 }
+
+// [conditional] and [each] read Meta through this one. Its answer for an empty
+// path is nil — no value named — so a [conditional path=""] tests nothing and an
+// [each path=""] renders its [else], rather than testing or iterating the whole
+// blob. That differs from the walk [item] does (identity) and from what
+// extractValueAtPath answers, and all three are deliberate.
+func TestExtractRawValueAtPathEdges(t *testing.T) {
+	meta := json.RawMessage(`{"a":"b"}`)
+
+	assert.Nil(t, extractRawValueAtPath(meta, ""))
+	assert.Nil(t, extractRawValueAtPath(json.RawMessage(`[1,2]`), "a"))
+	assert.Nil(t, extractRawValueAtPath(json.RawMessage(`not json`), "a"))
+	assert.Nil(t, extractRawValueAtPath(json.RawMessage(`{"a":"b"}`), "a.b"))
+
+	// An explicit null reads as nil, which is what empty= tests for.
+	assert.Nil(t, extractRawValueAtPath(json.RawMessage(`{"a":null}`), "a"))
+}

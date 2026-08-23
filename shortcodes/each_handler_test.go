@@ -211,3 +211,25 @@ func TestEachStripsNULBytesFromItemValues(t *testing.T) {
 	got := RenderEachShortcode(context.Background(), sc, ctx, nil, nil, 0)
 	assert.Equal(t, "ab", got)
 }
+
+// The three JSON dot-path walkers disagree about an empty path, and each answer
+// is load-bearing at its own call site. This is [item]'s: no path= means the
+// element itself, so the walk is the identity. (extractRawValueAtPath and
+// extractValueAtPath pin the other two.)
+func TestItemWithNoPathRendersTheElementItself(t *testing.T) {
+	render := func(attrs map[string]string, elem any) string {
+		return renderItemValue(Shortcode{Name: "item", Attrs: attrs}, elem, 1)
+	}
+
+	assert.Equal(t, "x", render(map[string]string{}, "x"))
+	assert.Equal(t, `{&#34;a&#34;:&#34;b&#34;}`, render(map[string]string{}, map[string]any{"a": "b"}))
+
+	// A missing segment and a non-object step both resolve to nothing.
+	assert.Equal(t, "", render(map[string]string{"path": "missing"}, map[string]any{"a": "b"}))
+	assert.Equal(t, "", render(map[string]string{"path": "a"}, "scalar"))
+
+	// An explicit null is indistinguishable from a miss here, deliberately —
+	// both fall through to default=.
+	assert.Equal(t, "-", render(map[string]string{"path": "a", "default": "-"}, map[string]any{"a": nil}))
+	assert.Equal(t, "-", render(map[string]string{"path": "b", "default": "-"}, map[string]any{"a": nil}))
+}

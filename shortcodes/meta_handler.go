@@ -95,7 +95,8 @@ func RenderMetaShortcode(sc Shortcode, ctx MetaShortcodeContext) string {
 // was building. hide-empty= is honoured here rather than client-side, because
 // inline mode emits no element for a client to act on.
 func renderInlineMetaValue(sc Shortcode, ctx MetaShortcodeContext) string {
-	text := formatJSONScalar(navigateJSONValue(ctx.decodeMeta(), sc.Attrs["path"]), sc.Attrs["format"], sc.Attrs["layout"])
+	value, _ := navigateJSONValue(ctx.decodeMeta(), sc.Attrs["path"])
+	text := formatJSONScalar(value, sc.Attrs["format"], sc.Attrs["layout"])
 
 	// Trimmed for the emptiness decision only — the widget's client side treats
 	// a whitespace-only value as empty (meta-shortcode.ts), and inline mode must
@@ -114,33 +115,54 @@ func renderInlineMetaValue(sc Shortcode, ctx MetaShortcodeContext) string {
 	return html.EscapeString(text)
 }
 
-// extractValueAtPath navigates a JSON object by dot-notation path
-// and returns the JSON-encoded value at that path, or "" if not found.
+// navigateJSONValue walks a dot-separated path into a decoded JSON value,
+// taking a map[string]any at each step. It is the single walker behind [item],
+// [meta], [each] and [conditional]; found reports whether the path resolved,
+// which is what lets the widget tell an explicit null (JSON "null") apart from a
+// missing key (no value at all).
+//
+// An empty path returns current unchanged. What that means is the caller's to
+// decide, and the three callers decide differently on purpose: [item] with no
+// path= renders the element itself, while a [meta] or [conditional] with no
+// path= names no value and says so before calling here.
+func navigateJSONValue(current any, path string) (value any, found bool) {
+	if path == "" {
+		return current, true
+	}
+	for _, part := range strings.Split(path, ".") {
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current, ok = obj[part]
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+// extractValueAtPath navigates the entity's Meta by dot-notation path and
+// returns the JSON-encoded value there, or "" when the path resolves to nothing.
+// An empty path is "nothing" too rather than the whole blob — RenderMetaShortcode
+// returns before it could ask, and a widget bound to the entire Meta is not a
+// thing this shortcode can build.
 func extractValueAtPath(metaRaw json.RawMessage, path string) string {
-	if len(metaRaw) == 0 {
+	if len(metaRaw) == 0 || path == "" {
 		return ""
 	}
 
-	var meta map[string]any
+	var meta any
 	if err := json.Unmarshal(metaRaw, &meta); err != nil {
 		return ""
 	}
 
-	parts := strings.Split(path, ".")
-	var current any = meta
-
-	for _, part := range parts {
-		obj, ok := current.(map[string]any)
-		if !ok {
-			return ""
-		}
-		current, ok = obj[part]
-		if !ok {
-			return ""
-		}
+	value, found := navigateJSONValue(meta, path)
+	if !found {
+		return ""
 	}
 
-	encoded, err := json.Marshal(current)
+	encoded, err := json.Marshal(value)
 	if err != nil {
 		return ""
 	}
