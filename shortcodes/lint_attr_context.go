@@ -542,40 +542,61 @@ func expressionAttributeKind(attr string) string {
 // escaping a value placed there accomplishes nothing.
 //
 // The tokenizer raw-texts ten elements, and no tag inside any of them is ever
-// emitted as a tag, so it is worth saying why the other eight are not here.
+// emitted as a tag, so a value in one is analysed as ordinary prose. That reads
+// like a hole and mostly is not; the argument is written out because it has
+// been got wrong twice, once by warning on all eight of the other bodies and
+// once by re-reading a <noscript> body as markup. All of it is about the HTML
+// namespace — see the last paragraph.
 //
 // textarea and title are RCDATA: entities *are* decoded there, so escaping
 // works exactly as it does in an attribute — and a tag written inside one is
 // literal text to the browser too, which is precisely what the zero-value "not
 // in an attribute" context already reports.
 //
-// iframe, noembed, noframes, xmp and plaintext are raw text in an HTML parser
-// unconditionally, which makes the same answer right for a different reason: a
-// tag inside one is text to the browser as well, so "not in an attribute" is
-// the truth rather than a gap. An escaped value cannot even close the element —
-// html.EscapeString leaves no "<" and no entity is decoded to give one back —
-// and a raw value that closes it with "</xmp>" is already covered by the raw=
-// rule in unsafeAttributeContexts, which is the message that case wants.
-// plaintext runs to EOF and cannot be closed at all.
+// iframe, noembed, noframes, xmp and plaintext are raw text, which makes the
+// same answer right for a different reason: a tag inside one is text to the
+// browser as well, so "not in an attribute" is the truth rather than a gap. An
+// escaped value cannot even close the element — html.EscapeString leaves no "<"
+// and no entity is decoded to give one back — and a raw value that closes it
+// with "</xmp>" is already covered by the raw= rule in
+// unsafeAttributeContexts, which is the message that case wants. plaintext runs
+// to EOF and cannot be closed at all.
 //
 // noscript is the only one where the tokenizer's reading and a browser's can
 // differ — its body is raw text when scripting is enabled and ordinary markup
 // when it is not — and it is still not here, because the difference does not
-// reach this rule. With scripting on the body is inert text the UA stylesheet
-// hides; with scripting off the tags are real but nothing in them can run, so
-// every rule this file exists for (an on* handler, an Alpine directive, a
-// javascript: URL, a <script> body) is inapplicable to it. Warning on the body
-// as a whole is a false positive on its ordinary use, and reading the body as
-// markup — which was tried — reports those same executable placements as
-// dangerous when they cannot execute in either reading.
+// reach this rule. With scripting on the body is inert raw text; with scripting
+// off the tags are real but nothing in them can run, so every rule this file
+// exists for (an on* handler, an Alpine directive, a javascript: URL, a
+// <script> body) is inapplicable to it. Warning on the body as a whole is a
+// false positive on its ordinary use, and reading the body as markup — which
+// was tried — reports those same executable placements as dangerous when they
+// cannot execute in either reading.
 //
-// What that leaves unwarned, known and accepted: for a reader with scripting
-// off, a value in an *unquoted* attribute, in a style= attribute, in an
-// interpolated attribute name, or in a <style> element, all inside a
-// <noscript>, can still inject CSS or attributes. Buying those means carrying a
+// An UNCLOSED one of these swallows the rest of the document rather than a
+// body, and that is not a fail-open for the same reason: a browser's tokenizer
+// runs to EOF in raw text too, so the href further down that this file then
+// says nothing about is not a link there either. noscript is the exception
+// again, and again only into the residue below.
+//
+// The residue, known and accepted: with scripting disabled, a value inside a
+// <noscript> can land in an unquoted attribute, a style= attribute, an
+// interpolated attribute name, a <style> element, a stylesheet URL, or a
+// srcdoc= — whose value is parsed as a whole document, so even an escaped value
+// becomes real markup inside the frame. None of them execute script in that
+// mode and all of them are unwarned. Buying them means carrying a
 // scripting-mode axis through every rule below, for an element that has to be
 // nested inside a category template first. A raw= value in a <noscript> body
 // already warns, through the raw= rule, which is the one that matters most.
+//
+// FOREIGN CONTENT is a wider and older gap that none of this closes and none of
+// it depends on. The tokenizer is namespace-unaware, so it raw-texts these
+// names inside <svg> and <math> as well, where a browser does not: inside <svg>
+// a <script> really is a script element whose text IS entity-decoded, and
+// <svg><iframe><a href="javascript:…"> is a live SVG link. Both are silent
+// here, as they were before any of this. Closing it means tracking foreign
+// content and its integration points, which is the parser's job rather than the
+// tokenizer's.
 var scriptLikeElements = map[string]bool{"script": true, "style": true}
 
 var scriptLikeLanguage = map[string]string{"script": "JavaScript", "style": "CSS"}

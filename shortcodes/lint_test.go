@@ -589,9 +589,15 @@ func TestLintManyBareValuesAtScale(t *testing.T) {
 // The unterminated-tag test used to run once per occurrence, each time locating
 // the sentinel in the whole document, walking back to the nearest "<" and then
 // forward to EOF. It is now one left-to-right pass that answers for every
-// occurrence at once. That old shape is easy to write and obviously right, so
-// it serves here as the specification the new one is held to, over hand-picked
+// occurrence at once. That old shape is short enough to hold in the head, so it
+// serves here as the specification the new one is held to, over hand-picked
 // shapes and randomized ones, at every byte offset.
+//
+// Specification of what the code did, not of what is ideal. It restarts its
+// quote state at the nearest "<" even when that "<" is inside a quoted value,
+// so `<div title="a <b">[property path="Name"]</div>` is reported as an
+// unterminated tag when it is nothing of the sort. That predates this rewrite,
+// which had to preserve it exactly; the differential is what says so.
 func TestUnterminatedTagScanMatchesThePerOffsetScan(t *testing.T) {
 	// The pre-rewrite algorithm, verbatim apart from taking an offset instead of
 	// searching for a sentinel.
@@ -1152,6 +1158,30 @@ func TestLintRawTextElementBodies(t *testing.T) {
 		}
 		if !warns(`<style>.c{color:[meta path='x' inline='true']}</style>`, "reaches CSS") {
 			t.Error("a style body still names CSS")
+		}
+	})
+
+	t.Run("an unclosed one swallows the document, and so does a browser's", func(t *testing.T) {
+		// The rest of the slot stops being analysed, which looks like the worst
+		// kind of silence — a typo turning off the check for everything after
+		// it. It is not, because a browser's tokenizer runs to EOF in raw text
+		// too: the href below is not a link there either. <script> is the one
+		// that still speaks, because it is listed and its message keeps
+		// applying to every value after it.
+		tail := `<a href="javascript:[meta path='x' inline='true']">go</a>` +
+			`<div style="color:[meta path='y' inline='true']">x</div>`
+		for _, opener := range []string{"<iframe>", "<noembed>", "<noframes>", "<xmp>", "<plaintext>", "<textarea>", "<title>", "<noscript>"} {
+			for _, issue := range Lint(opener+tail, LintOptions{Known: KnownFromBuiltins()}) {
+				t.Errorf("after an unclosed %s nothing is markup, got %q", opener, issue.Message)
+			}
+		}
+		if !warns("<script>"+tail, "reaches JavaScript") {
+			t.Error("an unclosed <script> still takes every value after it into JavaScript")
+		}
+		// The value that is still dangerous after any of them is a raw one,
+		// which can close the element and continue in markup.
+		if !warns(`<xmp>[property path="Name" raw="true"]`, "becomes real elements") {
+			t.Error("raw= is unescaped wherever the element ends")
 		}
 	})
 
