@@ -2239,7 +2239,11 @@ func TestLintForeignEndTagSearchStopsAtTheHTMLBoundary(t *testing.T) {
 }
 
 // A <style> is a stylesheet only when its type is one a browser supports, and
-// otherwise it applies nothing at all — so the body is markup and only markup.
+// otherwise it applies nothing at all. What the body then IS depends on the
+// namespace, not the type: an HTML <style> body is raw text either way — the
+// type only decides whether that text is a stylesheet or inert — while an SVG
+// <style> body is markup either way, and an unsupported type leaves it markup
+// and only markup.
 func TestLintStyleTypeDecidesWhetherItIsAStylesheet(t *testing.T) {
 	t.Run("an unsupported type applies nothing", func(t *testing.T) {
 		for _, src := range []string{
@@ -2730,4 +2734,118 @@ func TestLintActiveFormattingReconstruction(t *testing.T) {
 	if !warns(src) {
 		t.Errorf("the reconstructed <font> makes </font> close the svg: %s", src)
 	}
+}
+
+// Round-12 findings, every expectation verified against html.Parse (and
+// ParseWithOptions for the scripting-mode cases).
+func TestLintAttributeContextRoundTwelve(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+	srcdocMsg := `sits in a "srcdoc" attribute`
+
+	t.Run("a frameset document still has a frameset", func(t *testing.T) {
+		// Nothing in the BODY of a frameset document exists, but the
+		// <frameset> and its <frame> children do, and their attributes are
+		// live: an onload= runs and a frame src= navigates.
+		if !warns(`<frameset onload="[property path='Name']"></frameset>`, "onload") {
+			t.Error("the frameset element is real and its onload runs")
+		}
+		if !warns(`<frameset><frame src="javascript:[property path='Name']"></frameset>`, `continues a "javascript:" URL`) {
+			t.Error("the frame element is real and its src navigates")
+		}
+	})
+
+	t.Run("an interpolation in an end tag chooses what it closes", func(t *testing.T) {
+		// "</text[x]>" is "</textarea>" for a value of "area": the value
+		// completes the end-tag NAME, and nothing delimits it there.
+		for _, src := range []string{
+			`<textarea></text[property path='Close']><iframe srcdoc="x">`,
+			`<svg></s[property path='Close']><iframe srcdoc="x">`,
+			`<noscript></noscr[property path='Close']><iframe srcdoc="x">`,
+		} {
+			if !warns(src, "interpolated into a tag or attribute NAME") {
+				t.Errorf("the value can complete the end tag: %s", src)
+			}
+		}
+	})
+
+	t.Run("html, body and a second head are one element each", func(t *testing.T) {
+		// A later <html> or <body> token merges its attributes onto the one
+		// real element and opens nothing, so the frame the scan used to push
+		// changed the namespace of everything after it.
+		if !warns(`<div/><html><math></div><iframe srcdoc="[property path='Name']"></iframe>`, srcdocMsg) {
+			t.Error("the <html> token opens nothing; </div> still closes the div and the math")
+		}
+		// A merged attribute survives only if the real element does not have
+		// it yet.
+		if warns(`<body onclick="fixed"><body onclick="[property path='Name']">x</body>`, "onclick") {
+			t.Error("the second body's onclick is discarded by the merge")
+		}
+		if !warns(`<body onclick="[property path='Name']">x</body>`, "onclick") {
+			t.Error("the first body's own onclick is real")
+		}
+		if warns(`<head></head><head onclick="[property path='Name']">`, "onclick") {
+			t.Error("a second head token is ignored outright")
+		}
+		// "</html>" closes nothing: the svg stays open and the iframe is
+		// foreign.
+		if warns(`<html><svg></html><iframe srcdoc="[property path='Name']"></iframe>`, srcdocMsg) {
+			t.Error("</html> does not pop foreign content")
+		}
+	})
+
+	t.Run("the frameset-ok text test reads decoded text", func(t *testing.T) {
+		// "&#32;" is whitespace to the parser, so the frameset is honored and
+		// the anchor after it never exists.
+		if warns(`&#32;<frameset></frameset><a href="javascript:[property path='Name']">go</a>`, "javascript") {
+			t.Error("entity-spelled whitespace is still whitespace")
+		}
+	})
+
+	t.Run("an end-tag br is a br", func(t *testing.T) {
+		// "</br>" acts as a <br> start tag: it breaks out of foreign content
+		// AND counts as body content, so the frameset after it is ignored
+		// and the iframe is live.
+		if !warns(`<svg></br><frameset></frameset><iframe srcdoc="[property path='Name']"></iframe>`, srcdocMsg) {
+			t.Error("</br> flips frameset-ok like the <br> it acts as")
+		}
+	})
+
+	t.Run("search and select end tags pop until in scope", func(t *testing.T) {
+		// Both pop across the <div> that stops an unknown name, so the
+		// "</div>" after them closes nothing and the svg stays open.
+		for _, el := range []string{"search", "select"} {
+			src := `<` + el + `><div></` + el + `><svg></div><iframe srcdoc="[property path='Name']"></iframe>`
+			if warns(src, srcdocMsg) {
+				t.Errorf("</%s> already closed the div; the iframe is foreign: %s", el, src)
+			}
+		}
+	})
+
+	t.Run("an input pops a select in scope", func(t *testing.T) {
+		src := `<select><input><svg></select><iframe srcdoc="[property path='Name']"></iframe>`
+		if warns(src, srcdocMsg) {
+			t.Error("the <input> closed the select, so </select> closes nothing and the svg stays open")
+		}
+	})
+
+	t.Run("a noscript body diverges the modes even with no shortcode inside it", func(t *testing.T) {
+		// With scripting on, "x" is raw text and the frameset is honored:
+		// nothing after exists. With scripting off, "x" is body content, the
+		// frameset is ignored, and the iframe is live — so the warning fires,
+		// carrying the mode it applies in.
+		src := `<noscript>x</noscript><frameset></frameset><iframe srcdoc="[property path='Name']"></iframe>`
+		if !warns(src, srcdocMsg) {
+			t.Error("live with scripting off; the scan must consult that reading")
+		}
+		if !warns(src, "whose body is markup only when scripting is disabled") {
+			t.Error("dead with scripting on; the warning must carry the mode")
+		}
+	})
 }

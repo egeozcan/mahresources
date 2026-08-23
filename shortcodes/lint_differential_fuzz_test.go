@@ -128,10 +128,12 @@ func TestLintDifferentialTagSoup(t *testing.T) {
 				// A value that lands in a program body draws the language
 				// message instead of the probe's own; same excusal as the
 				// fixed sweeps.
+				// Only the program-landing messages excuse a missing probe
+				// warning; a broad predicate here once let an unrelated CSS
+				// warning mask a real dual-mode miss.
 				excused := lintSaysAny(lintSrc, "which is foreign content, where the parser decodes entities") ||
 					lintSaysAny(lintSrc, "sits inside a <script>") || lintSaysAny(lintSrc, "sits inside a <style>") ||
-					lintSaysAny(lintSrc, "JavaScript") || lintSaysAny(lintSrc, "CSS") ||
-					lintSaysAny(lintSrc, "whose body is markup only when scripting is disabled")
+					lintSaysAny(lintSrc, "interpolated into a tag or attribute NAME")
 				switch {
 				case warned && !live:
 					fails++
