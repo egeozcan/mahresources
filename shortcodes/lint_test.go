@@ -1078,10 +1078,13 @@ func TestLintMetaAttributesThatOnlyInlineReads(t *testing.T) {
 	})
 }
 
-// Round-11 findings. The tokenizer raw-texts ten elements and the linter
-// listed two, so a tag written inside any of the other eight was never emitted
-// as a tag and the value in it was analysed as ordinary prose. That is only
-// *wrong* for one of them, and the difference is what the treatment turns on.
+// The tokenizer raw-texts ten elements and this file lists two, so a tag
+// written inside any of the other eight is never emitted as a tag and the value
+// in it is analysed as ordinary prose. That reads like a hole, and twice it was
+// treated as one — first by labelling all eight bodies unreadable, then by
+// re-reading a <noscript> body as markup. Both were wrong, and the argument for
+// leaving the eight alone is in scriptLikeElements' comment. These pin it, so
+// the next reader finds tests rather than only prose.
 func TestLintRawTextElementBodies(t *testing.T) {
 	warns := func(src, want string) bool {
 		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
@@ -1092,37 +1095,24 @@ func TestLintRawTextElementBodies(t *testing.T) {
 		return false
 	}
 
-	t.Run("a noscript body is read as the markup it may be", func(t *testing.T) {
-		// The href is real for exactly the audience a <noscript> is written
-		// for, and the tokenizer emitted no <a> for the attribute walk to find.
-		// Reading the body as markup gives the same answer the byte-identical
-		// markup gets outside the wrapper.
-		for _, tc := range []struct{ src, want string }{
-			{`<noscript><a href="[meta path='x' inline='true']">go</a></noscript>`, "choose the scheme"},
-			{`<noscript><button onclick="f('[meta path='x' inline='true']')">go</button></noscript>`, "event handler"},
-			{`<noscript><a href="javascript:[property path='Name']">go</a></noscript>`, "executes rather than fetches"},
-			{`<noscript><div title="[meta path='x' inline='true' raw='true']</noscript>`, "never closed"},
-		} {
-			if !warns(tc.src, tc.want) {
-				t.Errorf("no %q warning for %s", tc.want, tc.src)
-			}
-		}
-	})
-
-	t.Run("an escaped value in a noscript body is text under either parse", func(t *testing.T) {
-		// Raw text with scripting on, a text node with it off. Warning here
-		// would be a false positive, which is what a blanket "this body could
-		// not be read" produced.
+	t.Run("nothing in a noscript body can execute, under either parse", func(t *testing.T) {
+		// With scripting on the body is inert raw text the UA stylesheet hides;
+		// with scripting off the tags are real and no script runs. So every
+		// executable placement is a false positive there, which is what
+		// re-reading the body as markup produced.
 		for _, src := range []string{
 			`<noscript>[property path="Name"]</noscript>`,
 			`<noscript><div class="c">[meta path='x' inline='true']</div></noscript>`,
-			`<noscript><a href="/x/[meta path='x' inline='true']">go</a></noscript>`,
+			`<noscript><a href="[meta path='x' inline='true']">go</a></noscript>`,
+			`<noscript><button onclick="f('[meta path='x' inline='true']')">go</button></noscript>`,
+			`<noscript><script>var s = "[property path='Name']";</script></noscript>`,
 		} {
 			for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
-				t.Errorf("escaped text in <noscript> is safe, got %q for %s", issue.Message, src)
+				t.Errorf("nothing runs in a <noscript> body, got %q for %s", issue.Message, src)
 			}
 		}
-		// raw= is still raw, wherever the body ends up being parsed.
+		// raw= is the one that still matters: an unescaped value can close the
+		// element and continue in markup whichever way the body was read.
 		if !warns(`<noscript>[property path="Name" raw="true"]</noscript>`, "becomes real elements") {
 			t.Error("a raw value in a noscript body must still warn")
 		}
@@ -1162,22 +1152,6 @@ func TestLintRawTextElementBodies(t *testing.T) {
 		}
 		if !warns(`<style>.c{color:[meta path='x' inline='true']}</style>`, "reaches CSS") {
 			t.Error("a style body still names CSS")
-		}
-	})
-
-	t.Run("nested noscript bodies stop at the depth cap", func(t *testing.T) {
-		// A parser drops a <noscript> inside a <noscript>, so this shape means
-		// nothing; the cap exists so a pathological one costs a bounded number
-		// of re-reads rather than one per nesting level. At the cap the body is
-		// left unresolved, which is what every raw-text body was before this.
-		nest := func(n int) string {
-			return strings.Repeat("<noscript>", n) + `<a href="[meta path='x' inline='true']">go</a>`
-		}
-		if !warns(nest(maxNoscriptDepth), "choose the scheme") {
-			t.Error("nesting up to the cap is still read")
-		}
-		if warns(nest(maxNoscriptDepth+1), "choose the scheme") {
-			t.Error("past the cap the body is left alone, not re-read forever")
 		}
 	})
 
