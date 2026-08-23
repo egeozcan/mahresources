@@ -180,6 +180,11 @@ type scanMode struct {
 	// disabled and inert raw text with scripting enabled, so the placements
 	// reachable there are the ones that need no script to hurt.
 	noscript bool
+	// enclosing names the element whose body this scan was handed, which is the
+	// one element that can be closed from inside the region without ever having
+	// been opened in it. Empty at the top of a document, and for the siblings of
+	// a self-closed foreign element, which close nothing.
+	enclosing string
 }
 
 // maxMarkupScanDepth bounds the recursion in scanMarkup. Each level builds a
@@ -327,7 +332,7 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 						pending.language = name
 					} else if name == "noscript" {
 						pending.reread = true
-						pending.mode = scanMode{noscript: true}
+						pending.mode = scanMode{noscript: true, enclosing: name}
 					}
 				case tt == html.SelfClosingTagToken:
 					// "/>" really closes in foreign content, so what the
@@ -348,7 +353,7 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 					// children are real markup, including a MathML <script> or
 					// <style>, which no browser runs or applies.
 					pending.reread = true
-					pending.mode = scanMode{foreign: frame.namespaceForChild("span"), noscript: mode.noscript}
+					pending.mode = scanMode{foreign: frame.namespaceForChild("span"), noscript: mode.noscript, enclosing: name}
 				}
 			}
 			if tt != html.SelfClosingTagToken {
@@ -371,14 +376,19 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 				}
 			}
 			// An end tag matching nothing this scan opened closes an element
-			// opened OUTSIDE it — which, when it names a foreign root or the
-			// raw-text element whose body this is, means the region ended here
-			// and the rest of what this scan holds is HTML.
-			// "<svg><iframe></svg><textarea>…" is the shape: a browser pops
+			// opened OUTSIDE it, and exactly two of those end the region: a
+			// foreign root, and the element whose body this is.
+			// "<svg><iframe></svg><textarea>…" is the shape — a browser pops
 			// both and reads the textarea as RCDATA, and without this the scan
-			// would go on calling it foreign and warn about a link that a
-			// browser only ever shows as text.
-			if !matched && base != "" && (name == "svg" || name == "math" || rawTextElements[name]) {
+			// would go on calling it foreign and warn about a link a browser
+			// only ever shows as text.
+			//
+			// Any OTHER unmatched end tag is left alone on purpose. A browser
+			// ignores a stray "</textarea>" in foreign content and stays where
+			// it is, and treating one as an exit would put the scan back into
+			// HTML, where a srcdoc= that is inert on a foreign element starts
+			// warning again.
+			if !matched && base != "" && (name == "svg" || name == "math" || name == mode.enclosing) {
 				stack, base = stack[:0], ""
 			}
 		case html.TextToken:

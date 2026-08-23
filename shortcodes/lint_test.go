@@ -1794,3 +1794,28 @@ func TestLintForeignRegionEndsWithItsEnclosingElement(t *testing.T) {
 		}
 	}
 }
+
+// The region-ending rule above is deliberately narrow, because leaving foreign
+// content is not the quiet direction in both senses: it makes the raw-text
+// names raw again (fewer warnings) but it also makes srcdoc live again (more).
+// So only an end tag that really did end the region counts.
+func TestLintOnlyTheRegionsOwnEndTagEndsIt(t *testing.T) {
+	// A browser ignores a stray "</textarea>" here and stays in SVG, where the
+	// <iframe> is inert and its srcdoc is never parsed as a document.
+	src := `<svg><iframe></textarea><iframe srcdoc="[property path='Name']"></iframe>`
+	if lintSaysAny(src, `sits in a "srcdoc" attribute`) {
+		t.Errorf("a stray end tag does not leave foreign content, got %q", lintWarnings(src))
+	}
+	// An end tag that really did end the region does, and then the srcdoc is on
+	// a real HTML iframe again.
+	src = `<svg><iframe></svg><iframe srcdoc="[property path='Name']"></iframe>`
+	if !lintSaysAny(src, `sits in a "srcdoc" attribute`) {
+		t.Errorf("past the </svg> this is HTML again, got %q", lintWarnings(src))
+	}
+	// Closing the region's own element without leaving the <svg> does not: the
+	// next <iframe> is a second inert SVG element, not an HTML one.
+	src = `<svg><iframe></iframe><iframe srcdoc="[property path='Name']"></iframe></svg>`
+	if lintSaysAny(src, `sits in a "srcdoc" attribute`) {
+		t.Errorf("still inside the <svg>, so still inert, got %q", lintWarnings(src))
+	}
+}
