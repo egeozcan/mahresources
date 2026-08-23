@@ -2,6 +2,7 @@ package shortcodes
 
 import (
 	"errors"
+	"math/rand"
 	"strings"
 	"testing"
 )
@@ -537,15 +538,130 @@ func TestLintScannerHandlesRawTextAndPartialSchemes(t *testing.T) {
 	}
 }
 
-// One scan serves every inline [meta] in a template, so many of them stay linear.
-func TestLintManyInlineMetasStayLinear(t *testing.T) {
-	body := strings.Repeat(`[meta path='x' inline='true']`, 2000)
-	src := `<a title="` + body + `">x</a>`
-	// Correctness is the assertion; the shape of the fix is what keeps it quick.
-	for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
-		if strings.Contains(issue.Message, "[meta inline") {
-			t.Fatalf("title= is a safe context, got: %s", issue.Message)
+// One scan serves every bare value in a template. The in-attribute placement
+// was linear from the start, because the tokenizer hands each tag's occurrences
+// back together; the ones that resolve through the *fallback* scan — a value in
+// ordinary text, and the same value in a CSS slot — were the quadratic pair,
+// each costing a search of the whole document plus a rescan to EOF. This is the
+// placement an author writes most often, and lint runs on every debounced
+// keystroke in the template editor.
+//
+// Correctness at that scale is the assertion. A wall-clock assertion would be
+// flaky; what pins the rewritten scan's semantics is
+// TestUnterminatedTagScanMatchesThePerOffsetScan below.
+func TestLintManyBareValuesStayLinear(t *testing.T) {
+	const n = 2000
+
+	t.Run("in ordinary text", func(t *testing.T) {
+		src := strings.Repeat(`[property path="Name"] and a little filler. `, n)
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			t.Fatalf("escaped text is a safe context, got: %s", issue.Message)
 		}
+	})
+
+	t.Run("in a CSS slot", func(t *testing.T) {
+		src := strings.Repeat(`.c{color:[property path="Name"]}`, n)
+		got := 0
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins(), CSSMode: true}) {
+			if !strings.Contains(issue.Message, "CSS slot") {
+				t.Fatalf("unexpected issue: %s", issue.Message)
+			}
+			got++
+		}
+		if got != n {
+			t.Fatalf("got %d CSS-slot warnings, want %d", got, n)
+		}
+	})
+
+	t.Run("in a safe attribute", func(t *testing.T) {
+		body := strings.Repeat(`[meta path='x' inline='true']`, n)
+		src := `<a title="` + body + `">x</a>`
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, "[meta inline") {
+				t.Fatalf("title= is a safe context, got: %s", issue.Message)
+			}
+		}
+	})
+}
+
+// The unterminated-tag test used to run once per occurrence, each time locating
+// the sentinel in the whole document, walking back to the nearest "<" and then
+// forward to EOF. It is now one left-to-right pass that answers for every
+// occurrence at once. That old shape is easy to write and obviously right, so
+// it serves here as the specification the new one is held to, over hand-picked
+// shapes and randomized ones, at every byte offset.
+func TestUnterminatedTagScanMatchesThePerOffsetScan(t *testing.T) {
+	// The pre-rewrite algorithm, verbatim apart from taking an offset instead of
+	// searching for a sentinel.
+	reference := func(s string, at int) bool {
+		open := strings.LastIndexByte(s[:at], '<')
+		if open < 0 {
+			return false
+		}
+		if open+1 >= len(s) || !isTagNameStart(s[open+1]) {
+			return false
+		}
+		var q byte
+		for i := open; i < len(s); i++ {
+			c := s[i]
+			switch {
+			case q != 0:
+				if c == q {
+					q = 0
+				}
+			case c == '"' || c == '\'':
+				q = c
+			case c == '>':
+				return false
+			}
+		}
+		return true
+	}
+
+	check := func(t *testing.T, s string) {
+		t.Helper()
+		at := make([]int, len(s))
+		for i := range at {
+			at[i] = i
+		}
+		got := insideUnterminatedTags(s, at)
+		for i := range at {
+			if want := reference(s, i); got[i] != want {
+				t.Fatalf("offset %d of %q: got %v, want %v", i, s, got[i], want)
+			}
+		}
+	}
+
+	for _, s := range []string{
+		``,
+		`<`,
+		`<a`,
+		`plain text`,
+		`Score < 5 and more`,
+		`<div title="x">after</div>`,
+		`<div title="before > still open`,
+		`<div title='mixed " quoting' >done`,
+		`<a href="/x/">one</a><b class="y`,
+		// A "<" inside a quoted value is still the nearest one, and the forward
+		// scan restarts its quote state there.
+		`<div title="a <b" > tail`,
+		`<div x=y> a=" </div>`,
+		`<!-- > <x a=" --> <button onclick="f()">`,
+		`</`,
+		`<//a b="`,
+		`<a b='c"d' e="f'g" >`,
+	} {
+		check(t, s)
+	}
+
+	rng := rand.New(rand.NewSource(20260823))
+	alphabet := []byte(`<>"'/= abx!-`)
+	for n := 0; n < 2000; n++ {
+		buf := make([]byte, rng.Intn(28))
+		for i := range buf {
+			buf[i] = alphabet[rng.Intn(len(alphabet))]
+		}
+		check(t, string(buf))
 	}
 }
 

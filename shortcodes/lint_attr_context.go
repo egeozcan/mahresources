@@ -67,13 +67,21 @@ func attributeContextsFor(input string, spans []inlineMetaSpan) map[int]attrCont
 	}
 
 	var b strings.Builder
+	// sentinelAt[i] is where span i's sentinel begins in the substituted text,
+	// or -1 for a span that was not substituted. Recording it here rather than
+	// searching for it afterwards is half of what keeps the fallback below
+	// linear: a strings.Index over the whole document, once per span, made a
+	// template full of bare values quadratic in how many it held.
+	sentinelAt := make([]int, len(spans))
 	last := 0
 	for i, sp := range spans {
+		sentinelAt[i] = -1
 		if sp.start < last || sp.end > len(input) || sp.start > sp.end {
 			out[sp.start] = attrContext{}
 			continue
 		}
 		b.WriteString(input[last:sp.start])
+		sentinelAt[i] = b.Len()
 		b.WriteString(lintSentinel(i))
 		last = sp.end
 		out[sp.start] = attrContext{}
@@ -121,16 +129,25 @@ tokenize:
 	// attribute" would fail open on exactly the template that is most broken:
 	// <div title="[meta ... raw="true"] with no ">" is still an attribute an
 	// author is interpolating into. Mark them unknown so the caller warns.
+	//
+	// Resolving to "not unterminated" writes nothing, deliberately: a raw-text
+	// body's occurrence passes through here too, and it keeps that context
+	// unless an unterminated tag is the better answer.
+	var ask []int     // sentinel offsets, ascending, still needing the test
+	var askSpan []int // parallel: which span each of those belongs to
 	for i, sp := range spans {
 		if ctx, ok := out[sp.start]; ok && (ctx.inValue || ctx.inName) {
 			continue
 		}
-		sentinel := lintSentinel(i)
+		at := sentinelAt[i]
+		if at < 0 {
+			continue
+		}
 		// An interpolated ELEMENT name never reaches the tokenizer as a tag:
 		// "<" followed by anything that is not a name character is text, and the
 		// sentinel is deliberately not a name character. The "<" immediately
 		// before it is the whole proof, so no tokenizer is needed.
-		if at := strings.Index(substituted, sentinel); at > 0 {
+		if at > 0 {
 			j := at - 1
 			if j > 0 && substituted[j] == '/' {
 				j--
@@ -140,46 +157,105 @@ tokenize:
 				continue
 			}
 		}
-		if insideUnterminatedTag(substituted, sentinel) {
-			out[sp.start] = attrContext{unterminated: true}
+		ask = append(ask, at)
+		askSpan = append(askSpan, i)
+	}
+	for k, unterminated := range insideUnterminatedTags(substituted, ask) {
+		if unterminated {
+			out[spans[askSpan[k]].start] = attrContext{unterminated: true}
 		}
 	}
 	return out
 }
 
-// insideUnterminatedTag reports whether the sentinel sits after a "<" that is
-// never closed, which is the one case the tokenizer cannot describe.
-func insideUnterminatedTag(substituted, sentinel string) bool {
-	at := strings.Index(substituted, sentinel)
-	if at < 0 {
-		return false
+// insideUnterminatedTags reports, for each offset in at (ascending), whether it
+// sits after a "<" that is never closed — the one case the tokenizer cannot
+// describe. One left-to-right pass answers for all of them, because asking per
+// offset means walking back to the nearest "<" and then forward to EOF, which
+// is the whole document once per occurrence.
+//
+// The pass can carry every pending answer at once because there are only ever
+// three of them to carry. Each byte acts on the quote state as a permutation
+// (a '"' swaps "outside" with "inside a double quote" and fixes the third; a
+// "'" does the mirror; every other byte is the identity), so two scans in
+// different states never converge into one, and three states is the ceiling on
+// how many distinct scans can be in flight. pending[q] holds the offsets whose
+// scan currently sits in state q, and a byte that permutes the states just
+// swaps those buckets.
+func insideUnterminatedTags(substituted string, at []int) []bool {
+	out := make([]bool, len(at))
+	if len(at) == 0 {
+		return out
 	}
-	open := strings.LastIndexByte(substituted[:at], '<')
-	if open < 0 {
-		return false
-	}
-	// "<" only opens a tag when a name or a markup declaration follows it;
-	// "Score < [meta ...]" is text and closes nothing.
-	if open+1 >= len(substituted) || !isTagNameStart(substituted[open+1]) {
-		return false
-	}
-	// The terminator has to be found quote-aware: <div title="before > [meta …]
-	// contains a ">" that closes nothing.
-	var q byte
-	for i := open; i < len(substituted); i++ {
-		c := substituted[i]
-		switch {
-		case q != 0:
-			if c == q {
-				q = 0
+	const (
+		outside = iota // not inside an attribute value
+		inDouble
+		inSingle
+	)
+	var pending [3][]int
+	// active is the quote state of the scan belonging to the nearest "<" that
+	// could open a tag, or -1 when the nearest one could not open one, was
+	// already closed by a ">", or does not exist yet.
+	active := -1
+	remaining, next := 0, 0
+	for i := 0; i < len(substituted); i++ {
+		for next < len(at) && at[next] == i {
+			// Everything the answer depends on is at or after this byte, so an
+			// offset is registered before its own byte is processed — which is
+			// what "the nearest < strictly before it" means.
+			if active >= 0 {
+				pending[active] = append(pending[active], next)
+				remaining++
 			}
-		case c == '"' || c == '\'':
-			q = c
-		case c == '>':
-			return false
+			next++
+		}
+		switch substituted[i] {
+		case '"':
+			pending[outside], pending[inDouble] = pending[inDouble], pending[outside]
+			switch active {
+			case outside:
+				active = inDouble
+			case inDouble:
+				active = outside
+			}
+		case '\'':
+			pending[outside], pending[inSingle] = pending[inSingle], pending[outside]
+			switch active {
+			case outside:
+				active = inSingle
+			case inSingle:
+				active = outside
+			}
+		case '>':
+			// Only a scan that is outside quotes is closed by this ">":
+			// <div title="before > [meta …] contains one that closes nothing.
+			remaining -= len(pending[outside])
+			pending[outside] = pending[outside][:0]
+			if active == outside {
+				active = -1
+			}
+		case '<':
+			// "<" only opens a tag when a name or a markup declaration follows
+			// it; "Score < [meta ...]" is text and closes nothing. Scans already
+			// in flight are unaffected — each keeps the quote state it has had
+			// since its own "<".
+			if i+1 < len(substituted) && isTagNameStart(substituted[i+1]) {
+				active = outside
+			} else {
+				active = -1
+			}
+		}
+		if next == len(at) && remaining == 0 {
+			break
 		}
 	}
-	return true
+	// Whatever is still pending met no ">" outside quotes before the end.
+	for q := range pending {
+		for _, k := range pending[q] {
+			out[k] = true
+		}
+	}
+	return out
 }
 
 type sentinelHit struct {
