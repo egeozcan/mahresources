@@ -2,6 +2,7 @@ package shortcodes
 
 import (
 	"errors"
+	"math/rand"
 	"strings"
 	"testing"
 )
@@ -537,15 +538,156 @@ func TestLintScannerHandlesRawTextAndPartialSchemes(t *testing.T) {
 	}
 }
 
-// One scan serves every inline [meta] in a template, so many of them stay linear.
-func TestLintManyInlineMetasStayLinear(t *testing.T) {
-	body := strings.Repeat(`[meta path='x' inline='true']`, 2000)
-	src := `<a title="` + body + `">x</a>`
-	// Correctness is the assertion; the shape of the fix is what keeps it quick.
-	for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
-		if strings.Contains(issue.Message, "[meta inline") {
-			t.Fatalf("title= is a safe context, got: %s", issue.Message)
+// One scan serves every bare value in a template. The in-attribute placement
+// was linear from the start, because the tokenizer hands each tag's occurrences
+// back together; the ones that resolve through the *fallback* scan — a value in
+// ordinary text, and the same value in a CSS slot — were the quadratic pair,
+// each costing a search of the whole document plus a rescan to EOF. This is the
+// placement an author writes most often, and lint runs on every debounced
+// keystroke in the template editor.
+//
+// Correctness at that scale is all this asserts, and the name says so: it
+// passes against the quadratic shape too, which merely takes 25x longer.
+// A wall-clock assertion is the one thing that would make it flaky. What pins
+// the rewritten scan is TestUnterminatedTagScanMatchesThePerOffsetScan below;
+// the linearity itself is structural, one pass with the offsets already known.
+func TestLintManyBareValuesAtScale(t *testing.T) {
+	const n = 2000
+
+	t.Run("in ordinary text", func(t *testing.T) {
+		src := strings.Repeat(`[property path="Name"] and a little filler. `, n)
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			t.Fatalf("escaped text is a safe context, got: %s", issue.Message)
 		}
+	})
+
+	t.Run("in a CSS slot", func(t *testing.T) {
+		src := strings.Repeat(`.c{color:[property path="Name"]}`, n)
+		got := 0
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins(), CSSMode: true}) {
+			if !strings.Contains(issue.Message, "CSS slot") {
+				t.Fatalf("unexpected issue: %s", issue.Message)
+			}
+			got++
+		}
+		if got != n {
+			t.Fatalf("got %d CSS-slot warnings, want %d", got, n)
+		}
+	})
+
+	t.Run("in a safe attribute", func(t *testing.T) {
+		body := strings.Repeat(`[meta path='x' inline='true']`, n)
+		src := `<a title="` + body + `">x</a>`
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, "[meta inline") {
+				t.Fatalf("title= is a safe context, got: %s", issue.Message)
+			}
+		}
+	})
+}
+
+// The unterminated-tag test used to run once per occurrence, each time locating
+// the sentinel in the whole document, walking back to the nearest "<" and then
+// forward to EOF. It is now one left-to-right pass that answers for every
+// occurrence at once. That old shape is short enough to hold in the head, so it
+// serves here as the specification the new one is held to, over hand-picked
+// shapes and randomized ones, at every byte offset.
+//
+// Specification of what the code did, not of what is ideal. It restarts its
+// quote state at the nearest "<" even when that "<" is inside a quoted value,
+// so `<div title="a <b">[property path="Name"]</div>` is reported as an
+// unterminated tag when it is nothing of the sort. That predates this rewrite,
+// which had to preserve it exactly; the differential is what says so.
+func TestUnterminatedTagScanMatchesThePerOffsetScan(t *testing.T) {
+	// The pre-rewrite algorithm, verbatim apart from taking an offset instead of
+	// searching for a sentinel.
+	reference := func(s string, at int) bool {
+		open := strings.LastIndexByte(s[:at], '<')
+		if open < 0 {
+			return false
+		}
+		if open+1 >= len(s) || !isTagNameStart(s[open+1]) {
+			return false
+		}
+		var q byte
+		for i := open; i < len(s); i++ {
+			c := s[i]
+			switch {
+			case q != 0:
+				if c == q {
+					q = 0
+				}
+			case c == '"' || c == '\'':
+				q = c
+			case c == '>':
+				return false
+			}
+		}
+		return true
+	}
+
+	// Every offset, len(s) included: an offset at the very end is a legitimate
+	// question the old shape answered, even though a recorded sentinel start is
+	// always followed by the sentinel's own bytes. Sparse subsets go with it,
+	// because a real call asks about a handful of offsets, and they are what
+	// exercises the early exit once nothing is left pending.
+	check := func(t *testing.T, s string) {
+		t.Helper()
+		verify := func(at []int) {
+			got := insideUnterminatedTags(s, at)
+			for k, off := range at {
+				if want := reference(s, off); got[k] != want {
+					t.Fatalf("offset %d of %q (asked %v): got %v, want %v", off, s, at, got[k], want)
+				}
+			}
+		}
+		all := make([]int, len(s)+1)
+		for i := range all {
+			all[i] = i
+		}
+		verify(all)
+		for _, step := range []int{2, 3, 7} {
+			var sparse []int
+			for i := 0; i < len(all); i += step {
+				sparse = append(sparse, all[i])
+			}
+			verify(sparse)
+		}
+		for _, one := range all {
+			verify([]int{one})
+		}
+	}
+
+	for _, s := range []string{
+		``,
+		`<`,
+		`<a`,
+		`plain text`,
+		`Score < 5 and more`,
+		`<div title="x">after</div>`,
+		`<div title="before > still open`,
+		`<div title='mixed " quoting' >done`,
+		`<a href="/x/">one</a><b class="y`,
+		// A "<" inside a quoted value is still the nearest one, and the forward
+		// scan restarts its quote state there.
+		`<div title="a <b" > tail`,
+		`<div x=y> a=" </div>`,
+		`<!-- > <x a=" --> <button onclick="f()">`,
+		`</`,
+		`<//a b="`,
+		`<a b='c"d' e="f'g" >`,
+	} {
+		check(t, s)
+	}
+
+	rng := rand.New(rand.NewSource(20260823))
+	alphabet := []byte(`<>"'/= abx!-`)
+	for n := 0; n < 2000; n++ {
+		buf := make([]byte, rng.Intn(28))
+		for i := range buf {
+			buf[i] = alphabet[rng.Intn(len(alphabet))]
+		}
+		check(t, string(buf))
 	}
 }
 
@@ -727,16 +869,18 @@ func TestLintAttributeContextRoundSeven(t *testing.T) {
 		return false
 	}
 
-	t.Run("a script body reaches JavaScript verbatim", func(t *testing.T) {
+	t.Run("a script body reaches JavaScript with its escaping in it", func(t *testing.T) {
 		// A template literal makes this concrete: "${...}" contains not one
-		// character html.EscapeString touches.
+		// character html.EscapeString touches. Not verbatim — a quote does
+		// arrive as &#34; and stays that way, since nothing decodes it — but
+		// escaped is not the same as safe in a language.
 		src := "<script>const label = `[meta path=\"label\" inline=\"true\"]`;</script>"
 		if !warns(src, "<script> body") {
 			t.Error("an inline value in a script body must warn")
 		}
 	})
 
-	t.Run("a style body reaches CSS verbatim", func(t *testing.T) {
+	t.Run("a style body reaches CSS the same way", func(t *testing.T) {
 		src := `<style>.card{color:[meta path="colour" inline="true"]}</style>`
 		if !warns(src, "<style> body") {
 			t.Error("an inline value in a style body must warn")
@@ -878,6 +1022,190 @@ func TestLintCoversEveryBareValueShortcode(t *testing.T) {
 	t.Run("x-id evaluates its value", func(t *testing.T) {
 		if !warns(`<div x-id="['panel-[meta path='slug' inline='true']']"></div>`, "Alpine directive") {
 			t.Error("x-id takes an array expression, not a literal")
+		}
+	})
+}
+
+// [meta]'s documented attribute set gained raw, format and layout, which took
+// away the `unknown attribute "raw" on [meta]` diagnostic they used to draw.
+// Only RenderMetaShortcode's inline branch reads them, so without inline="true"
+// they now do nothing and nothing says so.
+func TestLintMetaAttributesThatOnlyInlineReads(t *testing.T) {
+	issue := func(src, want string) *LintIssue {
+		return findIssue(Lint(src, LintOptions{Known: KnownFromBuiltins()}), want)
+	}
+
+	t.Run("raw, format and layout are inert without inline", func(t *testing.T) {
+		for _, tc := range []struct{ src, want string }{
+			{`[meta path="x" raw="true"]`, `raw="true" without inline="true"`},
+			{`[meta path="x" format="date"]`, `format= without inline="true"`},
+			{`[meta path="x" layout="Jan 2, 2006"]`, `layout= without inline="true"`},
+			{`[meta path="x" inline="false" raw="true"]`, `raw="true" without inline="true"`},
+		} {
+			got := issue(tc.src, tc.want)
+			if got == nil {
+				t.Errorf("no warning containing %q for %s", tc.want, tc.src)
+				continue
+			}
+			if got.Severity != SeverityWarning {
+				t.Errorf("%s: severity %q, want %q", tc.src, got.Severity, SeverityWarning)
+			}
+		}
+	})
+
+	t.Run("with inline they are read, so they stay quiet", func(t *testing.T) {
+		for _, src := range []string{
+			`[meta path="x" inline="true" raw="true"]`,
+			`[meta path="x" inline="true" format="date"]`,
+			`[meta path="x" inline="true" layout="Jan 2, 2006"]`,
+		} {
+			if got := issue(src, `without inline="true"`); got != nil {
+				t.Errorf("%s: unexpected %q", src, got.Message)
+			}
+		}
+	})
+
+	t.Run("editable is the other way round", func(t *testing.T) {
+		got := issue(`[meta path="x" inline="true" editable="true"]`, "editable is ignored")
+		if got == nil {
+			t.Error(`inline="true" renders the bare value, so there is no editor to turn on`)
+		} else if got.Severity != SeverityWarning {
+			t.Errorf("severity %q, want %q", got.Severity, SeverityWarning)
+		}
+		if got := issue(`[meta path="x" editable="true"]`, "editable is ignored"); got != nil {
+			t.Errorf("editable alone is the widget's whole point: %s", got.Message)
+		}
+	})
+
+	t.Run("a no-op the author asked for stays quiet", func(t *testing.T) {
+		// raw="false" is what the default already is, so saying it changes
+		// nothing whether inline is set or not. Warning there would be noise.
+		if got := issue(`[meta path="x" raw="false"]`, `without inline="true"`); got != nil {
+			t.Errorf("unexpected %q", got.Message)
+		}
+	})
+}
+
+// The tokenizer raw-texts ten elements and this file lists two, so a tag
+// written inside any of the other eight is never emitted as a tag and the value
+// in it is analysed as ordinary prose. That reads like a hole, and twice it was
+// treated as one — first by labelling all eight bodies unreadable, then by
+// re-reading a <noscript> body as markup. Both were wrong, and the argument for
+// leaving the eight alone is in scriptLikeElements' comment. These pin it, so
+// the next reader finds tests rather than only prose.
+func TestLintRawTextElementBodies(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("no script in a noscript body can execute, under either parse", func(t *testing.T) {
+		// With scripting on the body is inert raw text; with scripting off the
+		// tags are real and no script runs. So every *executable* placement is
+		// a false positive there, which is what re-reading the body as markup
+		// produced. The href below is not one of those: it is a live link with
+		// scripting off, and its silence is the URL-bearing residue named in
+		// scriptLikeElements' comment, accepted on the same terms.
+		for _, src := range []string{
+			`<noscript>[property path="Name"]</noscript>`,
+			`<noscript><div class="c">[meta path='x' inline='true']</div></noscript>`,
+			`<noscript><a href="[meta path='x' inline='true']">go</a></noscript>`,
+			`<noscript><button onclick="f('[meta path='x' inline='true']')">go</button></noscript>`,
+			`<noscript><script>var s = "[property path='Name']";</script></noscript>`,
+		} {
+			for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+				t.Errorf("no script runs in a <noscript> body, got %q for %s", issue.Message, src)
+			}
+		}
+		// raw= is the one that still matters: an unescaped value can close the
+		// element and continue in markup whichever way the body was read.
+		if !warns(`<noscript>[property path="Name" raw="true"]</noscript>`, "becomes real elements") {
+			t.Error("a raw value in a noscript body must still warn")
+		}
+	})
+
+	t.Run("the unconditional raw-text bodies contain an escaped value", func(t *testing.T) {
+		// These five are raw text in an HTML parser whatever the scripting flag
+		// says, so a tag inside one is text to the browser as well and "not in
+		// an attribute" is the truth rather than a gap. An escaped value cannot
+		// close the element either: html.EscapeString leaves no "<", and no
+		// entity is decoded there to give one back.
+		for _, el := range []string{"iframe", "noembed", "noframes", "plaintext", "xmp"} {
+			src := "<" + el + `><a href="[meta path='x' inline='true']">go</a></` + el + ">"
+			if warns(src, "[meta inline") {
+				t.Errorf("an escaped value in <%s> is contained: %s", el, src)
+			}
+		}
+	})
+
+	t.Run("a raw value in a closable one is the raw rule's business", func(t *testing.T) {
+		// "</xmp>" is exactly how a raw value gets back out into markup, and
+		// the answer — drop raw= — is the one that rule already gives.
+		// plaintext is left out: it runs to EOF, so a raw value there cannot
+		// escape either, and the warning it draws is the raw rule being
+		// conservative rather than anything this classification decided.
+		for _, el := range []string{"iframe", "noembed", "noframes", "xmp"} {
+			src := "<" + el + `>[meta path='x' inline='true' raw='true']</` + el + ">"
+			if !warns(src, "becomes real elements") {
+				t.Errorf("a raw value in <%s> must warn: %s", el, src)
+			}
+		}
+	})
+
+	t.Run("script and style keep their own language", func(t *testing.T) {
+		if !warns(`<script>var s = "[meta path='x' inline='true']";</script>`, "reaches JavaScript") {
+			t.Error("a script body still names JavaScript")
+		}
+		if !warns(`<style>.c{color:[meta path='x' inline='true']}</style>`, "reaches CSS") {
+			t.Error("a style body still names CSS")
+		}
+	})
+
+	t.Run("an unclosed one swallows the document, and so does a browser's", func(t *testing.T) {
+		// The rest of the slot stops being analysed, which looks like the worst
+		// kind of silence — a typo turning off the check for everything after
+		// it. It is not, because a browser's tokenizer runs to EOF in raw text
+		// (or RCDATA, or PLAINTEXT) too: the href below is not a link there
+		// either. <script> is the one that still speaks, because it is listed
+		// and its message keeps applying to every value after it.
+		//
+		// <noscript> is deliberately not in this list. With scripting disabled
+		// an unclosed one is an ordinary open element and everything after it
+		// IS live markup, so the same silence is the residue in its widest
+		// form rather than an instance of this rule. See scriptLikeElements.
+		tail := `<a href="javascript:[meta path='x' inline='true']">go</a>` +
+			`<div style="color:[meta path='y' inline='true']">x</div>`
+		for _, opener := range []string{"<iframe>", "<noembed>", "<noframes>", "<xmp>", "<plaintext>", "<textarea>", "<title>"} {
+			for _, issue := range Lint(opener+tail, LintOptions{Known: KnownFromBuiltins()}) {
+				t.Errorf("after an unclosed %s nothing is markup, got %q", opener, issue.Message)
+			}
+		}
+		if !warns("<script>"+tail, "reaches JavaScript") {
+			t.Error("an unclosed <script> still takes every value after it into JavaScript")
+		}
+		// The value that is still dangerous after a closable one is a raw one,
+		// which can write "</xmp>" and continue in markup. Not after
+		// <plaintext>, which nothing closes — the warning there is the raw=
+		// rule being conservative, as it is for a closed <plaintext> body.
+		if !warns(`<xmp>[property path="Name" raw="true"]`, "becomes real elements") {
+			t.Error("raw= is unescaped wherever the element ends")
+		}
+	})
+
+	t.Run("RCDATA bodies stay quiet, tags inside them included", func(t *testing.T) {
+		// textarea and title are raw-tagged by the tokenizer too, but their
+		// bodies decode entities, so an escaped value is inert there — and the
+		// <a href> inside is literal text to the browser as well, exactly as the
+		// zero-value context reports.
+		for _, el := range []string{"textarea", "title"} {
+			src := "<" + el + `><a href="[meta path='x' inline='true']">go</a></` + el + ">"
+			if warns(src, "[meta inline") {
+				t.Errorf("<%s> is RCDATA and safe: %s", el, src)
+			}
 		}
 	})
 }

@@ -8,8 +8,12 @@ import (
 	"golang.org/x/net/html"
 )
 
-// Where an inline [meta] lands in the markup around it, which decides whether
-// escaping is enough. Finding that out means answering "which attribute of
+// Where a shortcode that emits a bare value lands in the markup around it,
+// which decides whether escaping is enough. That is [meta inline="true"],
+// [property], [item] and [mrql value=] — see emitsBareValue; the file talks
+// about "[meta inline]" in places because it was the first of them.
+//
+// Finding that out means answering "which attribute of
 // which tag is this inside", and four rounds of review established that a
 // hand-written answer is wrong on the next case every time: a ">" inside a
 // handler is not a tag end, a "<" inside one is not a tag start, a <script>
@@ -22,8 +26,8 @@ import (
 // quoted — is a bounded scan over a single tag's source with no nesting and no
 // escapes to resolve, and that part was never the problem.
 
-// inlineMetaSpan is one [meta ... inline] occurrence in the template source.
-type inlineMetaSpan struct{ start, end int }
+// bareValueSpan is one bare-value shortcode occurrence in the template source.
+type bareValueSpan struct{ start, end int }
 
 // attrContext is where one occurrence falls in the markup around it.
 type attrContext struct {
@@ -37,7 +41,8 @@ type attrContext struct {
 	// delimits the value at all.
 	inName bool
 	// rawTextElement names the script- or style-like element whose body the
-	// occurrence sits in, where escaping buys nothing at all.
+	// occurrence sits in, where escaping contains the value without making the
+	// placement safe.
 	rawTextElement string
 	// unterminated marks an occurrence inside a tag that is never closed, which
 	// the tokenizer cannot place. Treated as unsafe rather than as "not in an
@@ -52,7 +57,7 @@ func lintSentinel(i int) string { return lintSentinelPrefix + strconv.Itoa(i) + 
 // attributeContextsFor answers, for every occurrence, which attribute it sits
 // in. Each occurrence is replaced by an inert unique sentinel, the result is
 // tokenized, and the sentinels are located in the tags that come back.
-func attributeContextsFor(input string, spans []inlineMetaSpan) map[int]attrContext {
+func attributeContextsFor(input string, spans []bareValueSpan) map[int]attrContext {
 	out := make(map[int]attrContext, len(spans))
 	if len(spans) == 0 {
 		return out
@@ -67,13 +72,21 @@ func attributeContextsFor(input string, spans []inlineMetaSpan) map[int]attrCont
 	}
 
 	var b strings.Builder
+	// sentinelAt[i] is where span i's sentinel begins in the substituted text,
+	// or -1 for a span that was not substituted. Recording it here rather than
+	// searching for it afterwards is half of what keeps the fallback below
+	// linear: a strings.Index over the whole document, once per span, made a
+	// template full of bare values quadratic in how many it held.
+	sentinelAt := make([]int, len(spans))
 	last := 0
 	for i, sp := range spans {
+		sentinelAt[i] = -1
 		if sp.start < last || sp.end > len(input) || sp.start > sp.end {
 			out[sp.start] = attrContext{}
 			continue
 		}
 		b.WriteString(input[last:sp.start])
+		sentinelAt[i] = b.Len()
 		b.WriteString(lintSentinel(i))
 		last = sp.end
 		out[sp.start] = attrContext{}
@@ -104,7 +117,9 @@ tokenize:
 		case html.TextToken:
 			// A script or style body is where escaping helps least, not most:
 			// the parser decodes no entities there, so the value lands in
-			// JavaScript or CSS exactly as written.
+			// JavaScript or CSS with its escaping still in it. Contained
+			// against a quote or a "<", and no help at all against a backtick,
+			// a "${...}", a ";" or a brace, none of which it touches.
 			if openRawText != "" {
 				for _, idx := range sentinelIndexes(string(z.Raw())) {
 					if idx.index >= 0 && idx.index < len(spans) {
@@ -120,16 +135,27 @@ tokenize:
 	// attribute" would fail open on exactly the template that is most broken:
 	// <div title="[meta ... raw="true"] with no ">" is still an attribute an
 	// author is interpolating into. Mark them unknown so the caller warns.
+	//
+	// Resolving to "not unterminated" writes nothing, deliberately: a raw-text
+	// body's occurrence passes through here too, and it keeps that context
+	// unless one of the two answers below is the better one. Both can overwrite
+	// it — the element-name check by design, and a "<" written inside a script
+	// string does reach it, which is fail-closed but a worse message.
+	var ask []int     // sentinel offsets, ascending, still needing the test
+	var askSpan []int // parallel: which span each of those belongs to
 	for i, sp := range spans {
 		if ctx, ok := out[sp.start]; ok && (ctx.inValue || ctx.inName) {
 			continue
 		}
-		sentinel := lintSentinel(i)
+		at := sentinelAt[i]
+		if at < 0 {
+			continue
+		}
 		// An interpolated ELEMENT name never reaches the tokenizer as a tag:
 		// "<" followed by anything that is not a name character is text, and the
 		// sentinel is deliberately not a name character. The "<" immediately
 		// before it is the whole proof, so no tokenizer is needed.
-		if at := strings.Index(substituted, sentinel); at > 0 {
+		if at > 0 {
 			j := at - 1
 			if j > 0 && substituted[j] == '/' {
 				j--
@@ -139,46 +165,111 @@ tokenize:
 				continue
 			}
 		}
-		if insideUnterminatedTag(substituted, sentinel) {
-			out[sp.start] = attrContext{unterminated: true}
+		ask = append(ask, at)
+		askSpan = append(askSpan, i)
+	}
+	for k, unterminated := range insideUnterminatedTags(substituted, ask) {
+		if unterminated {
+			out[spans[askSpan[k]].start] = attrContext{unterminated: true}
 		}
 	}
 	return out
 }
 
-// insideUnterminatedTag reports whether the sentinel sits after a "<" that is
-// never closed, which is the one case the tokenizer cannot describe.
-func insideUnterminatedTag(substituted, sentinel string) bool {
-	at := strings.Index(substituted, sentinel)
-	if at < 0 {
-		return false
+// insideUnterminatedTags reports, for each offset in at (ascending), whether it
+// sits after a "<" that is never closed — the one case the tokenizer cannot
+// describe. One left-to-right pass answers for all of them, because asking per
+// offset means walking back to the nearest "<" and then forward to EOF, which
+// is the whole document once per occurrence.
+//
+// The pass can carry every pending answer at once because there are only ever
+// three of them to carry. Each byte acts on the quote state as a permutation
+// (a '"' swaps "outside" with "inside a double quote" and fixes the third; a
+// "'" does the mirror; every other byte is the identity), so two scans in
+// different states never converge into one, and three states is the ceiling on
+// how many distinct scans can be in flight. pending[q] holds the offsets whose
+// scan currently sits in state q, and a byte that permutes the states just
+// swaps those buckets.
+func insideUnterminatedTags(substituted string, at []int) []bool {
+	out := make([]bool, len(at))
+	if len(at) == 0 {
+		return out
 	}
-	open := strings.LastIndexByte(substituted[:at], '<')
-	if open < 0 {
-		return false
-	}
-	// "<" only opens a tag when a name or a markup declaration follows it;
-	// "Score < [meta ...]" is text and closes nothing.
-	if open+1 >= len(substituted) || !isTagNameStart(substituted[open+1]) {
-		return false
-	}
-	// The terminator has to be found quote-aware: <div title="before > [meta …]
-	// contains a ">" that closes nothing.
-	var q byte
-	for i := open; i < len(substituted); i++ {
-		c := substituted[i]
-		switch {
-		case q != 0:
-			if c == q {
-				q = 0
+	const (
+		outside = iota // not inside an attribute value
+		inDouble
+		inSingle
+	)
+	var pending [3][]int
+	// active is the quote state of the scan belonging to the nearest "<" that
+	// could open a tag, or -1 when the nearest one could not open one, was
+	// already closed by a ">", or does not exist yet.
+	active := -1
+	remaining, next := 0, 0
+	// The bound is inclusive: an offset at the very end of the document is a
+	// legitimate question ("<a", 2), and answering it needs one pass with no
+	// byte left to read.
+	for i := 0; i <= len(substituted); i++ {
+		for next < len(at) && at[next] == i {
+			// Everything the answer depends on is at or after this byte, so an
+			// offset is registered before its own byte is processed — which is
+			// what "the nearest < strictly before it" means.
+			if active >= 0 {
+				pending[active] = append(pending[active], next)
+				remaining++
 			}
-		case c == '"' || c == '\'':
-			q = c
-		case c == '>':
-			return false
+			next++
+		}
+		if i == len(substituted) {
+			break
+		}
+		switch substituted[i] {
+		case '"':
+			pending[outside], pending[inDouble] = pending[inDouble], pending[outside]
+			switch active {
+			case outside:
+				active = inDouble
+			case inDouble:
+				active = outside
+			}
+		case '\'':
+			pending[outside], pending[inSingle] = pending[inSingle], pending[outside]
+			switch active {
+			case outside:
+				active = inSingle
+			case inSingle:
+				active = outside
+			}
+		case '>':
+			// Only a scan that is outside quotes is closed by this ">":
+			// <div title="before > [meta …] contains one that closes nothing.
+			remaining -= len(pending[outside])
+			pending[outside] = pending[outside][:0]
+			if active == outside {
+				active = -1
+			}
+		case '<':
+			// "<" only opens a tag when a name or a markup declaration follows
+			// it; "Score < [meta ...]" is text and closes nothing. Scans already
+			// in flight are unaffected — each keeps the quote state it has had
+			// since its own "<".
+			if i+1 < len(substituted) && isTagNameStart(substituted[i+1]) {
+				active = outside
+			} else {
+				active = -1
+			}
+		}
+		if next == len(at) && remaining == 0 {
+			break
 		}
 	}
-	return true
+	// Whatever is still pending met no ">" outside quotes before the end.
+	for q := range pending {
+		for _, k := range pending[q] {
+			out[k] = true
+		}
+	}
+	return out
 }
 
 type sentinelHit struct {
@@ -300,7 +391,7 @@ func isASCIISpace(c byte) bool {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f'
 }
 
-// unsafeAttributeContexts reports the ways an inline [meta] value is still
+// unsafeAttributeContexts reports the ways a bare shortcode value is still
 // dangerous where it is being placed.
 //
 // html.EscapeString covers & < > ' " and nothing else — exactly enough to keep a
@@ -317,13 +408,14 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		if raw {
 			return []string{label + ` with raw= in a CSS slot is not escaped and lands in the stylesheet verbatim. Drop raw= here.`}
 		}
-		return []string{label + ` is in a CSS slot, where the value lands in a stylesheet verbatim: a ";" or "}" in it starts new declarations, and escaping touches neither.`}
+		return []string{label + ` is in a CSS slot, where the value lands in a stylesheet with nothing to re-parse it as HTML: a ";" in it can start another declaration and a "}" can escape the rule, and escaping touches neither.`}
 	}
 	if ctx.unterminated {
 		return []string{label + ` is inside a tag that is never closed, so where it lands cannot be determined. Close the tag; until then treat the value as unsafe.`}
 	}
 	if ctx.rawTextElement != "" {
-		return []string{label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + scriptLikeLanguage[ctx.rawTextElement] + ` exactly as written. Escaping stops nothing here — a "${...}" in a template literal or a ";" in a declaration is not escaped at all. Pass the value in through a data- attribute instead.`}
+		// Only script and style ever set this, so the language is never empty.
+		return []string{label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + scriptLikeLanguage[ctx.rawTextElement] + ` with its escaping still in it rather than as the text you wrote. Escaping does not make the placement safe either — a "${...}" in a template literal or a ";" in a declaration contains nothing it touches. Pass the value in through a data- attribute instead.`}
 	}
 	if ctx.inName {
 		return []string{label + ` is interpolated into a tag or attribute NAME, which nothing delimits: a value containing a space or "=" simply adds attributes of its own, and escaping does not touch either character. Build the name in the template instead.`}
@@ -347,7 +439,7 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		out = append(out, label+` sits in an unquoted attribute value, where escaping does not stop a value containing a space from adding attributes of its own. Quote the attribute.`)
 	}
 	if cssMode {
-		out = append(out, label+` is in a CSS slot, where the value lands in a stylesheet verbatim: a ";" or "}" in it starts new declarations, and escaping touches neither.`)
+		out = append(out, label+` is in a CSS slot, where the value lands in a stylesheet with nothing to re-parse it as HTML: a ";" in it can start another declaration and a "}" can escape the rule, and escaping touches neither.`)
 	}
 	if kind := expressionAttributeKind(attr); kind != "" {
 		out = append(out, label+` sits in the "`+attr+`" `+kind+`, whose value is evaluated as script after the HTML parser has undone the escaping, so a value containing a quote can execute. Do not interpolate Meta into it.`)
@@ -455,10 +547,84 @@ func expressionAttributeKind(attr string) string {
 	return ""
 }
 
-// scriptLikeElements have bodies in which the parser decodes no entities, so
-// escaping a value placed there accomplishes nothing. textarea and title are
-// deliberately absent: their bodies are RCDATA, where entities *are* decoded, so
-// escaping works exactly as it does in an attribute.
+// scriptLikeElements have bodies in which the parser decodes no entities, so a
+// value placed there arrives with its escaping still in it and escaping is not
+// what decides whether the placement is safe. It is not nothing — an escaped
+// value carries no "<" and no bare quote, so it can neither close the element
+// nor end a JavaScript string — but a backtick, a "${...}" or a ";" is not
+// escaped at all, and those are the characters that matter in a language.
+//
+// The tokenizer raw-texts ten elements, and no tag inside any of them is ever
+// emitted as a tag, so a value in one is analysed as ordinary prose. That reads
+// like a hole and mostly is not; the argument is written out because it has
+// been got wrong twice, once by warning on all eight of the other bodies and
+// once by re-reading a <noscript> body as markup. All of it is about the HTML
+// namespace — see the last paragraph.
+//
+// textarea and title are RCDATA: entities *are* decoded there, so escaping
+// works exactly as it does in an attribute — and a tag written inside one is
+// literal text to the browser too, which is precisely what the zero-value "not
+// in an attribute" context already reports.
+//
+// iframe, noembed, noframes, xmp and plaintext are raw text, which makes the
+// same answer right for a different reason: a tag inside one is text to the
+// browser as well, so "not in an attribute" is the truth rather than a gap. An
+// escaped value cannot even close the element — html.EscapeString leaves no "<"
+// and no entity is decoded to give one back — and a raw value that closes it
+// with "</xmp>" is already covered by the raw= rule in
+// unsafeAttributeContexts, which is the message that case wants. plaintext runs
+// to EOF and cannot be closed at all.
+//
+// noscript is the only one where the tokenizer's reading and a browser's can
+// differ — its body is raw text when scripting is enabled and ordinary markup
+// when it is not — and it is still not here, because the difference does not
+// reach this rule. With scripting on the body is inert raw text; with scripting
+// off the tags are real but no script in them can execute, so every
+// script-execution rule here (an on* handler, an Alpine directive, a
+// javascript: URL, a <script> body) is inapplicable to it. What still applies
+// in that mode is everything that is not script — CSS, links, forms — which is
+// the residue listed further down, not an exception to this. Warning on the body as a whole is a
+// false positive on its ordinary use, and reading the body as markup — which
+// was tried — reports those same executable placements as dangerous when they
+// cannot execute in either reading.
+//
+// An UNCLOSED one of the other seven swallows the rest of the document rather
+// than a body, and that is not a fail-open either: a browser's tokenizer runs
+// to EOF in raw text (or RCDATA, or PLAINTEXT) too, so the href further down
+// that this file then says nothing about is not a link there either.
+//
+// An unclosed <noscript> is not that, and it is the widest form of the residue
+// rather than a case of the rule above: with scripting disabled it is an
+// ordinary open element, so everything after it is live markup that this file
+// reads as one raw-text run and says nothing about at all.
+//
+// The residue, known and accepted: with scripting disabled, a value inside a
+// <noscript> — or after an unclosed one — can land in an unquoted attribute, a
+// style= attribute, an interpolated attribute name, a <style> element, any
+// URL-bearing attribute (a stylesheet href, a <base href> that re-points every
+// relative URL on the page, a form action), or a srcdoc=, whose value is parsed
+// as a whole document so even an escaped value becomes real markup inside the
+// frame. None of them execute script in that mode and all of them are
+// unwarned. Buying them means carrying a scripting-mode axis through every rule
+// below, for an element that has to be nested inside a category template first.
+// A raw= value in a <noscript> body already warns, through the raw= rule, which
+// is the one that matters most.
+//
+// One of those is not a <noscript> matter at all and is unwarned everywhere: a
+// refresh <meta content="0;url=…"> chooses a navigation target, and "content"
+// is not in urlBearingAttrs — recognising it needs the sibling http-equiv,
+// since the same attribute on <meta name="description"> is prose.
+//
+// FOREIGN CONTENT is a wider and older gap that none of this closes and none of
+// it depends on. The tokenizer is namespace-unaware, so it raw-texts these
+// names inside <svg> and <math> as well, where a browser does not.
+// <svg><script> does warn, but on a rationale that is namespace-wrong and
+// therefore understated: foreign content DOES decode entities, so an escaped
+// quote is a quote there and can end a JavaScript string, which the message
+// says cannot happen. <svg><iframe><a href="javascript:…"> is silent outright,
+// and it is a live SVG link. Both were so before any of this. Closing it means
+// tracking foreign content and its integration points, which is the parser's
+// job rather than the tokenizer's.
 var scriptLikeElements = map[string]bool{"script": true, "style": true}
 
 var scriptLikeLanguage = map[string]string{"script": "JavaScript", "style": "CSS"}
