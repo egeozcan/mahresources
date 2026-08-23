@@ -407,3 +407,20 @@ func TestFloat32FormatsAtItsOwnPrecision(t *testing.T) {
 	assert.Equal(t, "1.2", formatScalarValue(float64(1.2), "", ""))
 	assert.Equal(t, "1234567", formatScalarValue(float32(1234567), "", ""))
 }
+
+// The decimal/exponent cutoff is tested at the value's own width too, not just
+// applied at it: float32(1e-6) widens to a float64 slightly *under* 1e-6, so a
+// 64-bit comparison sends a number that is exactly on the bound into exponent
+// form. encoding/json compares float32(abs) for this reason, and these are the
+// boundary values on both sides at both widths.
+func TestFloatCutoffIsTestedAtTheValuesOwnWidth(t *testing.T) {
+	assert.Equal(t, "0.000001", formatScalarValue(float32(1e-6), "", ""))
+	assert.Equal(t, "0.000001", formatScalarValue(float64(1e-6), "", ""))
+	assert.Equal(t, "1e-07", formatScalarValue(float32(1e-7), "", ""))
+	assert.Equal(t, "1e-07", formatScalarValue(float64(1e-7), "", ""))
+
+	assert.Equal(t, "1e+21", formatScalarValue(float32(1e21), "", ""))
+	assert.Equal(t, "1e+21", formatScalarValue(float64(1e21), "", ""))
+	assert.Equal(t, "100000000000000000000", formatScalarValue(float32(1e20), "", ""))
+	assert.Equal(t, "100000000000000000000", formatScalarValue(float64(1e20), "", ""))
+}

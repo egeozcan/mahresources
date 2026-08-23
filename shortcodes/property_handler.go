@@ -205,11 +205,20 @@ func formatJSONScalar(v any, format, layout string) string {
 // The bounds are encoding/json's, for the reason encoding/json has them: past
 // them the plain form is hundreds of digits, which no page wants either.
 //
-// bits is the width the value actually had. A float32 widened to a float64 is
-// not the number it was — 1.2 becomes 1.2000000476837158, and formatting at 64
-// bits prints all of it, which is what "%g" did too.
+// bits is the width the value actually had, and it decides both halves of the
+// answer. A float32 widened to a float64 is not the number it was — 1.2 becomes
+// 1.2000000476837158, and formatting at 64 bits prints all of it, which is what
+// "%g" did too — and the cutoff has to be tested at the same width, or a float32
+// of 1e-6 falls just under a bound it is exactly on (encoding/json compares
+// float32(abs) for the same reason).
 func formatFloat(f float64, bits int) string {
-	if abs := math.Abs(f); abs != 0 && (abs < 1e-6 || abs >= 1e21) {
+	abs := math.Abs(f)
+	exponent := abs != 0 && (abs < 1e-6 || abs >= 1e21)
+	if bits == 32 {
+		a := float32(abs)
+		exponent = a != 0 && (a < 1e-6 || a >= 1e21)
+	}
+	if exponent {
 		return strconv.FormatFloat(f, 'e', -1, bits)
 	}
 	return strconv.FormatFloat(f, 'f', -1, bits)
