@@ -56,6 +56,14 @@
             This category has no entities yet, so the preview uses one from elsewhere. It does not carry this category's metadata.
         </p>
 
+        {# A CustomCSS buffer reaches the page through the custom_css tag, which #}
+        {# writes a style element and nothing else, so the frame renders it the  #}
+        {# same way and has no body content of its own to show. Say that, rather #}
+        {# than leaving the frame an unexplained void (WS6 finding 29).          #}
+        <p x-show="isCSSSlot()" class="text-xs text-stone-700 font-mono px-3 py-2 bg-stone-50">
+            CSS is injected as a &lt;style&gt; block, so this slot renders nothing of its own. It is applied to the frame below on every slot — pick a markup slot to see it styling that slot.
+        </p>
+
         <p class="text-[11px] text-stone-600 px-3 pt-2">
             Rendered in an isolated sandbox — interactive editors and API-backed widgets are non-functional in preview.
         </p>

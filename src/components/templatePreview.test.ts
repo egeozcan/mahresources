@@ -135,3 +135,73 @@ describe('template preview request', () => {
         expect(body.slot).toBe('CustomListHeader');
     });
 });
+
+// The frame is one document built from two halves of the response: `css` goes
+// into a <style> element, `html` into the body. Production's only sink for a
+// CustomCSS buffer is the {% custom_css %} tag, which writes a <style> element
+// and nothing else (custom_css_tag.go), so the frame has to treat that buffer
+// the same way or it previews a page the saved template can never produce.
+function frameStub() {
+    return { srcdoc: '' } as unknown as HTMLIFrameElement;
+}
+
+// bodyOf returns the part of the built document from <body> on, which is the
+// only part neither <style> element is in.
+function bodyOf(srcdoc: string) {
+    const at = srcdoc.indexOf('<body>');
+    expect(at).toBeGreaterThan(-1);
+    return srcdoc.slice(at);
+}
+
+describe('template preview frame', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    test('renders the CustomCSS buffer as a stylesheet, not also as body content', async () => {
+        // With CustomCSS selected the pane sends one buffer as both `content`
+        // and `css`, so the response carries the stylesheet twice. Rendering the
+        // `html` half into the body printed the stylesheet's own source as page
+        // text, which is the one thing saving the template cannot do.
+        const css = '.badge{color:red}';
+        const fetchMock = stubFetch({ html: css, css });
+        const component = templatePreview({
+            entityType: 'group',
+            previewPath: '/v1/category/previewTemplate',
+            categoryId: 7,
+        });
+        const frame = frameStub();
+        component.$refs = { frame };
+        component._form = formWith({ CustomCSS: css, CustomHeader: '<h1>x</h1>' });
+        component.entityId = 42;
+        component.slot = 'CustomCSS';
+
+        await component.refresh();
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(frame.srcdoc).toContain(`<style>${css}</style>`);
+        expect(bodyOf(frame.srcdoc)).not.toContain(css);
+    });
+
+    test('a markup slot still renders its html in the body and its css in <style>', async () => {
+        // The suppression is keyed on the selected slot, not on the two buffers
+        // reading alike, so an ordinary slot keeps both halves.
+        const fetchMock = stubFetch({ html: '<h1>rendered</h1>', css: '.badge{color:red}' });
+        const component = templatePreview({
+            entityType: 'group',
+            previewPath: '/v1/category/previewTemplate',
+            categoryId: 7,
+        });
+        const frame = frameStub();
+        component.$refs = { frame };
+        component._form = formWith({ CustomCSS: '.badge{color:red}', CustomHeader: '<h1>x</h1>' });
+        component.entityId = 42;
+        component.slot = 'CustomHeader';
+
+        await component.refresh();
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(frame.srcdoc).toContain('<style>.badge{color:red}</style>');
+        expect(bodyOf(frame.srcdoc)).toContain('<h1>rendered</h1>');
+    });
+});

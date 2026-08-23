@@ -26,6 +26,11 @@ const SLOTS = [
   { name: 'CustomCSS', label: 'CSS' },
 ];
 
+// The one slot whose buffer is a stylesheet rather than markup. Production
+// emits it through the {% custom_css %} tag, which writes a <style> element and
+// nothing else (server/template_handlers/template_filters/custom_css_tag.go).
+const CSS_SLOT = 'CustomCSS';
+
 export function slotsForEntityType(entityType) {
   return SLOTS.filter((s) => !s.only || s.only === entityType);
 }
@@ -62,17 +67,37 @@ const CATEGORY_PARAMS = {
   note: 'noteTypeId',
 };
 
+/**
+ * Alpine injects these through the component's scope chain rather than onto the
+ * data object, so they are declared as types and never as properties: a real
+ * `$refs` on the data object shadows Alpine's magic, and `_renderFrame` would
+ * stop finding the iframe.
+ *
+ * @typedef {object} TemplatePreviewMagics
+ * @property {{ frame?: HTMLIFrameElement }} $refs The x-ref registry.
+ * @property {HTMLElement} $root The element carrying this component's x-data.
+ */
+
+/**
+ * @param {object} [options]
+ * @param {string} [options.entityType] Carrier entity type: group, resource or note.
+ * @param {string} [options.previewPath] Endpoint that renders one slot.
+ * @param {number|string|null} [options.categoryId] The category/type being edited; null on the create form.
+ * @param {string} [options.generatePath] Endpoint behind the per-slot generate buttons.
+ */
 export function templatePreview({ entityType = 'group', previewPath = '', categoryId = null, generatePath = '' } = {}) {
-  return {
+  const component = {
     entityType,
     previewPath,
     generatePath,
     categoryId: categoryId || null,
     slots: slotsForEntityType(entityType),
     slot: 'CustomHeader',
+    /** @type {number|string|null} */
     entityId: null,
     entityLabel: '',
     query: '',
+    /** @type {{ id: number, name: string }[]} */
     suggestions: [],
     open: false,
     loading: false,
@@ -82,9 +107,13 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
     // otherwise reasonably assume the sample carries the category's own meta
     // (WS6, finding 29).
     usingUnscopedSample: false,
+    /** @type {{ severity: string, message: string, start?: number, end?: number }[]} */
     issues: [],
+    /** @type {ReturnType<typeof setTimeout>|null} */
     _refreshTimer: null,
+    /** @type {ReturnType<typeof setTimeout>|null} */
     _searchTimer: null,
+    /** @type {HTMLFormElement|null} */
     _form: null,
     _refreshSeq: 0,
 
@@ -115,7 +144,7 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       if (this._form) {
         this._form.addEventListener('template-slot-changed', (e) => {
           const changed = e.detail && e.detail.name;
-          if (changed === this.slot || changed === 'CustomCSS') {
+          if (changed === this.slot || changed === CSS_SLOT) {
             this._scheduleRefresh();
           }
         });
@@ -163,6 +192,14 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
     // category/type itself (carrier mode) rather than a member entity.
     isCarrierSlot() {
       return CARRIER_SLOTS.has(this.slot);
+    },
+
+    // isCSSSlot reports whether the selected buffer is a stylesheet. It reaches
+    // the frame through a <style> element and nothing else, matching the only
+    // sink production has for it, so the frame body is empty while it is
+    // selected and the pane says why rather than leaving an unexplained void.
+    isCSSSlot() {
+      return this.slot === CSS_SLOT;
     },
 
     hasErrors() {
@@ -301,6 +338,7 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
         // server has to be told or its issue list stays silent where the editor
         // gutter warns.
         const slot = this.slot;
+        const cssSlot = slot === CSS_SLOT;
         const body = carrier
           ? { carrier: true, slot, content, css, categoryId: Number(this.categoryId) }
           : {
@@ -328,7 +366,15 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
         // Two lists because a lint issue's offsets index one buffer or the
         // other; the pane shows severity and message, so it reads them as one.
         this.issues = [...(data.issues || []), ...(data.cssIssues || [])];
-        this._renderFrame(data.html || '', data.css || '', data.entity);
+        // With the CSS slot selected the request sent one buffer as both
+        // `content` and `css`, so `data.html` is the stylesheet a second time.
+        // The frame renders `css` into a <style> element, which is the only
+        // thing production ever does with a CustomCSS buffer; injecting the
+        // other copy into the body as well printed the stylesheet's own source
+        // as page text — a document no saved template can produce. Keyed on the
+        // slot the request was built from, not on the two halves reading alike,
+        // which for a markup slot means two documents however similar they are.
+        this._renderFrame(cssSlot ? '' : data.html || '', data.css || '', data.entity);
       } catch (e) {
         if (seq !== this._refreshSeq) return;
         this.error = 'Preview request failed.';
@@ -377,4 +423,5 @@ ${html}
 </body></html>`;
     },
   };
+  return /** @type {typeof component & TemplatePreviewMagics} */ (component);
 }
