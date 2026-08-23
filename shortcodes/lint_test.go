@@ -2024,6 +2024,12 @@ func TestLintInterpolatedEncodingAsksWhatItCouldBecome(t *testing.T) {
 	live(`<math><annotation-xml encoding="[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
 	live(`<math><annotation-xml encoding="text/[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
 	live(`<math><annotation-xml encoding="[property path='E']/html"><script>let x="[property path='N']"</script></annotation-xml></math>`)
+	// The static path compares what the browser sees, because z.TagAttr decodes
+	// entities. So must this one, or "text&#x2f;" reads as inert.
+	live(`<math><annotation-xml encoding="text&#x2f;[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
+	// A fixed run between two interpolations is not checked, which
+	// over-approximates in the direction that warns.
+	live(`<math><annotation-xml encoding="[property path='E']zz[property path='F']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
 }
 
 // A <style> and a <script> inside a <noscript> are the pair that shows where

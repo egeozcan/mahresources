@@ -995,7 +995,9 @@ var htmlAnnotationEncodings = []string{"text/html", "application/xhtml+xml"}
 //
 // The shape is couldStillBecomeExecutable's: what is fixed is the text on
 // either side of the interpolation, so encoding="text/[meta …]" could and
-// encoding="image/[meta …]" could not. Asking only whether the value holds an
+// encoding="image/[meta …]" could not. Text sitting BETWEEN two interpolations
+// is not checked, which over-approximates in the fail-closed direction and is
+// the right way round. Asking only whether the value holds an
 // interpolation at all failed closed on the second, which is a warning about a
 // script a browser never runs.
 func encodingCouldBeHTML(value string) bool {
@@ -1011,8 +1013,12 @@ func encodingCouldBeHTML(value string) bool {
 	} else {
 		end = len(value)
 	}
-	prefix := strings.ToLower(value[:first.at])
-	suffix := strings.ToLower(value[end:])
+	// Unescaped, because the static path compares the value the browser sees:
+	// z.TagAttr decodes entities, so encoding="text&#x2f;[meta …]" has to be
+	// judged as the "text/" it will become. This is the same bypass the URL
+	// rules close with html.UnescapeString.
+	prefix := strings.ToLower(html.UnescapeString(value[:first.at]))
+	suffix := strings.ToLower(html.UnescapeString(value[end:]))
 	for _, enc := range htmlAnnotationEncodings {
 		if len(prefix)+len(suffix) <= len(enc) &&
 			strings.HasPrefix(enc, prefix) && strings.HasSuffix(enc, suffix) {
