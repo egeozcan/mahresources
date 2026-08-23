@@ -26,13 +26,16 @@ import (
 // quoted — is a bounded scan over a single tag's source with no nesting and no
 // escapes to resolve, and that part was never the problem.
 //
-// The tokenizer is not a parser, and in two places its reading is not a
+// The tokenizer is not a parser, and in three places its reading is not a
 // browser's: it raw-texts ten element names wherever they appear, while a
-// browser only does so in the HTML namespace, and it raw-texts <noscript>
-// whatever the scripting mode. Both are handled by reading the region the
-// tokenizer handed back as one text token again, as markup, in scanMarkup —
-// rather than by moving off the tokenizer, which would cost the byte offsets
-// every diagnostic here is anchored to.
+// browser only does so in the HTML namespace; it raw-texts <noscript> whatever
+// the scripting mode; and it reads "<![CDATA[" as a bogus comment everywhere
+// unless told otherwise, while a browser reads a real CDATA section in foreign
+// content. The first two are handled by reading the region the tokenizer
+// handed back as one text token again, as markup, in scanMarkup — rather than
+// by moving off the tokenizer, which would cost the byte offsets every
+// diagnostic here is anchored to. The third is the tokenizer's own AllowCDATA
+// flag, set from the namespace scanMarkup already tracks.
 
 // bareValueSpan is one bare-value shortcode occurrence in the template source.
 type bareValueSpan struct{ start, end int }
@@ -430,6 +433,15 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 	}
 
 	for {
+		// A "<![CDATA[" is a real CDATA section only when the current node is
+		// foreign — in HTML it is a bogus comment — and the tokenizer cannot
+		// know which, so it is told before every token. enclosing() is the
+		// spec's adjusted current node, with one approximation: at the bottom
+		// of a re-read region the synthetic frame carries the namespace of the
+		// region's CHILDREN, which for the one integration point among the
+		// raw-text names (an SVG <title>) is HTML while the element itself is
+		// not. No differing outcome from that corner is known.
+		z.AllowCDATA(enclosing().ns != "")
 		tt := z.Next()
 		switch tt {
 		case html.ErrorToken:
@@ -543,6 +555,10 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 			nameBytes, _ := z.TagName()
 			closeTag(string(nameBytes))
 		case html.TextToken:
+			// A text token whose raw begins with the CDATA opener is a section
+			// the tokenizer was allowed to read — a raw-text body that merely
+			// starts with those bytes is caught by its pending case first.
+			isCDATA := strings.HasPrefix(string(z.Raw()), "<![CDATA[")
 			switch {
 			case pending.reread:
 				if depth < maxMarkupScanDepth {
@@ -559,9 +575,18 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 				// "direct child of the region's own element" means here, and it
 				// becomes true again after that <g> closes.
 				for _, idx := range sentinelIndexes(string(z.Raw())) {
+					fr := programRoot
+					if isCDATA {
+						// Entities are NOT decoded inside a CDATA section —
+						// that is what Illustrator wraps a style body in one
+						// for — so the escaping arrives intact and the HTML
+						// message is the true one, not the foreign message
+						// that says the parser undoes it.
+						fr = ""
+					}
 					record(idx.index, attrContext{
 						rawTextElement: program,
-						foreignRoot:    programRoot,
+						foreignRoot:    fr,
 						noscript:       mode.noscript,
 					})
 				}
@@ -586,6 +611,14 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 						rawTextElement: pending.language,
 						noscript:       mode.noscript,
 					})
+				}
+			case isCDATA:
+				// Character data in foreign content, outside any program.
+				// Recorded as settled text so the fallbacks do not answer for
+				// it: an unpaired quote in it is not an open attribute, and a
+				// "<" in it starts nothing.
+				for _, idx := range sentinelIndexes(string(z.Raw())) {
+					record(idx.index, attrContext{inertText: true, noscript: mode.noscript})
 				}
 			}
 		}
@@ -1152,7 +1185,14 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 	// which has no browsing context, or on an HTML element that is not an
 	// iframe, where it is an inert unknown attribute.
 	if alwaysUnsafeAttrs[attr] && ctx.foreignRoot == "" && ctx.element == "iframe" {
-		out = append(out, qualify(label+` sits in a "`+attr+`" attribute, whose value the browser decodes and parses as HTML, so escaping does not prevent script injection anywhere in it.`))
+		injection := "script"
+		if ctx.noscript {
+			// With scripting disabled the srcdoc document is still parsed —
+			// that is what makes the placement live at all — but no script in
+			// it runs, so what the attribute admits there is markup.
+			injection = "markup"
+		}
+		out = append(out, qualify(label+` sits in a "`+attr+`" attribute, whose value the browser decodes and parses as HTML, so escaping does not prevent `+injection+` injection anywhere in it.`))
 	}
 	if urlBearingAttrs[attr] && scriptCanRun {
 		scheme, fixed := urlSchemeBefore(ctx.valueSoFar)
@@ -1475,6 +1515,17 @@ func expressionAttributeKind(attr string) string {
 //     so the region is read again as markup. <svg><iframe><a
 //     href="javascript:…"> is a live SVG link and was silent; <svg><title> is
 //     an HTML integration point, so the anchor in it is a real HTML anchor.
+//
+// Foreign content is also where "<![CDATA[" opens a real CDATA section — the
+// wrapper Illustrator and Inkscape put around a style body — whose content is
+// character data with no entity decoding. The tokenizer is told per token via
+// AllowCDATA, from the namespace this scan tracks anyway. Both directions were
+// defects first: a bogus-comment reading of the section ended at its first ">"
+// and read the rest as markup, so character data holding "<div>" broke out of
+// SVG and a foreign iframe after it warned as an HTML one; and a CDATA-wrapped
+// SVG program body never reached the language rules at all. A program value
+// inside one takes the HTML message rather than the foreign one, because the
+// undoing of the escaping is exactly what a CDATA section does not do.
 //
 // An element being foreign also narrows the rules that describe what one
 // particular HTML element DOES, since a foreign element is not that element

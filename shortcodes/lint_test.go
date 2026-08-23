@@ -1434,6 +1434,26 @@ func TestLintNoscriptBodyPlacement(t *testing.T) {
 		}
 	})
 
+	t.Run("the srcdoc message speaks of markup, not script", func(t *testing.T) {
+		// With scripting disabled the srcdoc document is still parsed — that
+		// is what makes the placement live at all — but no script in it runs,
+		// so what the attribute admits there is markup.
+		src := `<noscript><iframe srcdoc="[property path='Name']"></iframe></noscript>`
+		if !lintSaysAny(src, "markup injection") {
+			t.Errorf("want a markup-injection message, got %q", lintWarnings(src))
+		}
+		for _, msg := range lintWarnings(src) {
+			if strings.Contains(msg, "script injection") {
+				t.Errorf("no script runs in that mode: %q", msg)
+			}
+		}
+		// Outside a <noscript> the same placement admits script and says so.
+		plain := `<iframe srcdoc="[property path='Name']"></iframe>`
+		if !lintSaysAny(plain, "script injection") {
+			t.Errorf("want a script-injection message, got %q", lintWarnings(plain))
+		}
+	})
+
 	t.Run("nothing that needs a script to hurt is reported", func(t *testing.T) {
 		// None of these can execute in either reading: with scripting on the
 		// body is inert raw text, with it off the tags are real and no script
@@ -1467,6 +1487,64 @@ func TestLintNoscriptBodyPlacement(t *testing.T) {
 				if strings.Contains(msg, scriptingCaveat) {
 					t.Errorf("%s: this is live in every mode, got %q", src, msg)
 				}
+			}
+		}
+	})
+}
+
+// A "<![CDATA[" section is real character data in foreign content and a bogus
+// comment in HTML — the tokenizer's AllowCDATA flag is how the scan follows the
+// namespace it already tracks. Both directions matter: character data that
+// looks like markup must not move the scan, and a program body Illustrator or
+// Inkscape wrapped in CDATA still reaches the language.
+func TestLintCDATAIsCharacterDataInForeignContent(t *testing.T) {
+	t.Run("a CDATA-wrapped SVG program body still reaches the language", func(t *testing.T) {
+		for _, tc := range []struct{ src, want string }{
+			{`<svg><style><![CDATA[.c{color:[property path='Name']}]]></style></svg>`, "CSS"},
+			{`<svg><script><![CDATA[var s = "[property path='Name']"]]></script></svg>`, "JavaScript"},
+		} {
+			if !lintSaysAny(tc.src, tc.want) {
+				t.Errorf("%s: want %q, got %q", tc.src, tc.want, lintWarnings(tc.src))
+			}
+			// Entities are NOT decoded inside a CDATA section, so the message
+			// is the HTML one — escaping arrives intact — not the foreign one,
+			// which says the parser undoes it.
+			for _, msg := range lintWarnings(tc.src) {
+				if strings.Contains(msg, "where the parser decodes entities") {
+					t.Errorf("%s: a CDATA section decodes nothing: %q", tc.src, msg)
+				}
+			}
+		}
+	})
+
+	t.Run("character data that looks like markup moves nothing", func(t *testing.T) {
+		for _, src := range []string{
+			// The phantom "<div>" read out of a bogus comment was a breakout
+			// tag, and the iframe after it warned as an HTML one. A browser
+			// reads the whole section as text and stays in SVG.
+			`<svg><![CDATA[ a>b <div> ]]><iframe srcdoc="[property path='Name']"></iframe></svg>`,
+			// The same shape inside a re-read region.
+			`<svg><iframe><![CDATA[ a>b <div> ]]><iframe srcdoc="[property path='Name']"></iframe></iframe></svg>`,
+			// A fake close swallowed by the section closes nothing.
+			`<svg><![CDATA[ </svg> ]]><iframe srcdoc="[property path='Name']"></iframe></svg>`,
+			// An unpaired quote in character data is not an open attribute.
+			`<svg><g><![CDATA[ x " y [property path='Name'] ]]></g></svg>`,
+			// Inert character data in plain foreign content.
+			`<svg><g><![CDATA[ [property path='Name'] ]]></g></svg>`,
+		} {
+			if got := lintWarnings(src); len(got) != 0 {
+				t.Errorf("%s: character data, got %q", src, got)
+			}
+		}
+	})
+
+	t.Run("in HTML content a CDATA section is a bogus comment and stays one", func(t *testing.T) {
+		for _, src := range []string{
+			`<div><![CDATA[ [property path='Name'] ]]></div>`,
+			`<noscript><![CDATA[ [property path='Name'] ]]></noscript>`,
+		} {
+			if got := lintWarnings(src); len(got) != 0 {
+				t.Errorf("%s: a comment renders nothing, got %q", src, got)
 			}
 		}
 	})
@@ -1638,6 +1716,21 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 			oracleSrc: `<style>.c{color:VALUE}</style>`,
 			element:   "style", namespaces: []string{"", "svg"}, scriptingOff: true, childText: true,
 		},
+		{
+			// The CDATA wrapper Illustrator and Inkscape put around a style
+			// body: character data in foreign content, literal text in an HTML
+			// raw-text body — the value reaches the stylesheet either way.
+			name: "style program (CDATA)", msg: "CSS",
+			lintSrc:   `<style><![CDATA[.c{color:[property path='Name']}]]></style>`,
+			oracleSrc: `<style><![CDATA[.c{color:VALUE}]]></style>`,
+			element:   "style", namespaces: []string{"", "svg"}, scriptingOff: true, childText: true,
+		},
+		{
+			name: "script program (CDATA)", msg: "JavaScript",
+			lintSrc:   `<script><![CDATA[var s = "[property path='Name']"]]></script>`,
+			oracleSrc: `<script><![CDATA[var s = "VALUE"]]></script>`,
+			element:   "script", namespaces: []string{"", "svg"}, childText: true,
+		},
 	}
 
 	// A value inside a <script> or <style> body is judged as landing in a
@@ -1781,6 +1874,10 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 		// Close something, then probe: the shape where a stale program or a
 		// stale namespace shows up.
 		"<div></div>", "<g></g>", "<span></span>", "<p></p>", "<foreignObject></foreignObject>",
+		// CDATA sections: character data in foreign content, a bogus comment
+		// in HTML, and the second one holds markup that must move nothing
+		// when the section is real.
+		"<![CDATA[x]]>", "<![CDATA[ a>b <div> ]]>", "<![CDATA[ </svg> ]]>",
 	}
 	for _, o := range openers {
 		for _, stray := range strays {
