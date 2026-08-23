@@ -1,0 +1,39 @@
+## Spec / behavior
+
+- **MAJOR — `shortcodes/lint_attr_context.go:157`**: The immediate-`<` fallback mistakes harmless RCDATA/comments for interpolated tag names:
+  ```html
+  <textarea><[property path="Name"]</textarea>
+  <!-- <[property path="Name"]> -->
+  ```
+  Browsers produce text/comment content; the linter warns about an interpolated name.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:327-330,480`**: Leaving foreign content through a breakout start/end tag clears `base` but not `program`. Once the breakout element closes, `len(stack)==0` incorrectly means “direct program child”:
+  ```html
+  <svg><script><div></div>[property path="Name"]</script></svg>
+  ```
+  Chromium places the value as ordinary HTML text outside the SVG script; the linter reports JavaScript. `<p>` and `</p>` reproduce it too.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:443`**: The HTML end-tag walk begins at the foreign/HTML boundary rather than the actual stack top, skipping SPECIAL descendants:
+  ```html
+  <div><math><annotation-xml></div><iframe srcdoc="[property path='Name']"></iframe>
+  ```
+  Chromium ignores `</div>` at the `annotation-xml` scope boundary, leaving a MathML iframe with inert `srcdoc`. The linter pops through it and warns.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:470`**: The unmatched region-end fallback bypasses that SPECIAL-element rule entirely:
+  ```html
+  <svg><script><foreignObject><div></svg></div></foreignObject><iframe srcdoc="[property path='Name']"></iframe></script></svg>
+  ```
+  Chromium ignores `</svg>` while the SPECIAL `<div>` is current; the iframe remains SVG and inert. The linter clears all state and reports `srcdoc`.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:611-626`**: `styleTypeApplies` accepts browser-inert types. It trims fixed values and treats every interpolated value as potentially CSS:
+  ```html
+  <style type=" text/css ">.c{color:[property path='Name']}</style>
+  <style type="text/plain[property path='T']">.c{color:[property path='Name']}</style>
+  ```
+  Chromium creates no stylesheet in either case, but both warn. Interpolated types need fixed-run feasibility like `encodingCouldBeHTML`. `TagAttr` consumption itself is safe here: no later style reader needs its iterator state.
+
+## Standards / tests
+
+- **MINOR — `shortcodes/lint_test.go:1693-1755`**: The oracle can pass while the linter is wrong: balanced nesting never generates “close element, then probe” or SPECIAL-boundary shapes, and it checks only the probe’s expected diagnostic rather than all false-positive diagnostics. All tests pass with every trigger above.
+
+No additional aliasing, re-entrancy, recursion-bound, or noscript-filter defect found.

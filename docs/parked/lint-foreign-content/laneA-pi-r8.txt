@@ -1,0 +1,26 @@
+**(A)** Yes. A remaining **major** false-positive family is triggered by plausible malformed/composed form markup, not merely adversarial constructions. The documented data-`<script>` residue is also plausible.
+
+**(B)** Accurate form handling requires one additional tree-construction mechanism: the HTML parser’s **form-element pointer / form-in-scope rules**. It does **not** require adoption agency, foster parenting, implied end tags, template contents, or general scope algorithms. The data-script issue only needs local `type` classification.
+
+### Findings
+
+- **MAJOR — PLAUSIBLE — `shortcodes/lint_attr_context.go:338-353,444-449`**  
+  The scanner lacks form-element-pointer semantics:
+  - Browsers discard a nested `<form>`, but the tokenizer records and warns on its nonexistent attribute:
+    ```html
+    <form action="/save"><form action="[property path='URL']">Save</form></form>
+    ```
+  - `</form>` removes the active form without popping an unclosed foreign subtree; the scanner instead pops through it and misclassifies the following iframe as HTML:
+    ```html
+    <form><svg></form><iframe srcdoc="[property path='Name']"></iframe>
+    ```
+    The browser creates an inert SVG `<iframe>`; the linter emits the `srcdoc` warning. A forgotten `</svg>` inside a form is plausible template markup.
+
+- **MINOR — PLAUSIBLE — `shortcodes/lint_attr_context.go:467,1478-1487`; `shortcodes/lint_test.go:2165-2171`**  
+  Every HTML `<script>` body is classified as JavaScript regardless of `type`:
+  ```html
+  <script type="application/json">{"name":"[property path='Name']"}</script>
+  ```
+  This is an inert data block, but the linter warns that the value reaches JavaScript. The test explicitly codifies this residue. Fixing it requires MIME/data-script classification, not tree construction.
+
+`go test ./shortcodes -count=1` passes.

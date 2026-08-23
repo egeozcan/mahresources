@@ -1,0 +1,26 @@
+## Findings
+
+- **MAJOR — `shortcodes/lint_attr_context.go:448-456`** — SVG program tracking is too broad.  
+  Trigger: `<svg><script><g>[property path="Name"]</g></script></svg>`  
+  Chromium does not execute the descendant `<g>` text as script source, despite `script.textContent` containing it; similarly, nested SVG `<style>` text is not applied. The linter warns because every text token at any stack depth inherits `mode.program`. The comment at lines 449–451 and test at `lint_test.go:1959-1965` encode the incorrect `textContent` premise.  
+  A second manifestation is `<svg><script></svg>[property path="Name"]</script>`: the browser has popped the SVG script, but clearing `base` at lines 439–440 does not clear `mode.program`, so ordinary text still warns as JavaScript.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:1001-1020`** — `encodingCouldBeHTML` mishandles fixed text.  
+  False-positive trigger:  
+  `<math><annotation-xml encoding="[property path='A']zzz[property path='B']"><script>[property path='N']</script></annotation-xml></math>`  
+  It discards everything between the first and last sentinels, including immutable `zzz`; neither interpolation can remove it, so no value can equal either HTML encoding.  
+  Missed-warning trigger:  
+  `<math><annotation-xml encoding="&#x74;ext/[property path='E']"><script>[property path='N']</script></annotation-xml></math>`  
+  The browser entity-decodes the fixed prefix to `text/`, allowing `E=html`; this function compares the source spelling and stays silent. Plain ASCII case handling is correct.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:415-422`** — the new foreign end-tag boundary stops one step too early.  
+  Trigger: `<div><math></div><iframe srcdoc="[property path='Name']"></iframe>`  
+  The foreign algorithm hands `</div>` back to HTML processing; HTML then matches and pops the parent `<div>`, leaving a real HTML iframe. The linter breaks before checking/processing that matching HTML parent and incorrectly treats the iframe as inert MathML.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:875-895`** — noscript style reporting ignores inactive style types.  
+  Trigger: `<noscript><style type="text/plain">[property path="Name"]</style></noscript>`  
+  With scripting enabled, noscript is inert; with scripting disabled, Chromium does not apply this unsupported stylesheet type. The CSS warning is therefore false. The unconditional stylesheet prose at `lint_test.go:2029-2035` is too broad.
+
+- **MINOR — `shortcodes/lint_test.go:1641-1674,1723-1735,1760-1765`** — the parser oracle can pass all of these errors. It checks program-element existence rather than whether `VALUE` contributes executable source, blanket-allows script/style warnings in the “safe” suite, and `checkRaw` checks only false positives—not missed warnings.
+
+Focused tests pass. I found no additional recursion-bound, aliasing, or re-entrancy defect.

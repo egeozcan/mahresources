@@ -1,0 +1,27 @@
+- **MAJOR — `shortcodes/lint_attr_context.go:427`** — HTML void-element rules are applied in foreign namespaces.  
+  Trigger:  
+  ```html
+  <svg><script><source>[property path="Name"]</source></script></svg>
+  ```  
+  SVG `<source>` remains open, so the value is descendant text, not direct child text used as the script source. The linter drops the frame and incorrectly warns that the value reaches JavaScript. The oracle omits foreign elements whose names are HTML-void.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:503-506`** — namespace exits found during recursive rereads are not propagated to the parent scan.  
+  Trigger:  
+  ```html
+  <math><textarea></math></textarea><textarea><a href="javascript:[property path='Name']">go</a></textarea>
+  ```  
+  The browser exits MathML at `</math>`; the second `<textarea>` is HTML RCDATA, making the anchor literal harmless text. The parent scan retains MathML state and warns about a live `javascript:` URL. The malformed oracle never exercises a foreign-root closer inside a reread followed by a sibling probe.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:497,680-686`** — `stackHasSpecial` is too blunt in foreign mode and causes a material missed warning.  
+  Trigger:  
+  ```html
+  <svg><iframe><foreignObject><math></svg><iframe srcdoc="[property path='Name']"></iframe></iframe>
+  ```  
+  A browser’s foreign end-tag walk ignores the special-element barrier, finds `svg`, and makes the second iframe HTML; its `srcdoc` is injectable. `stackHasSpecial` sees `foreignObject`, refuses the exit, and the linter is silent.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:665`** — “ASCII case-insensitive” is implemented with Unicode `strings.EqualFold`.  
+  Trigger:  
+  ```html
+  <style type="text/cſſ">[property path="Name"]</style>
+  ```  
+  Go folds `ſ` with ASCII `s`, so the linter treats this as `text/css` and warns. Browsers perform ASCII-only matching; this unsupported type applies no stylesheet, making the placement harmless. The style-type tests cover ASCII case changes only.

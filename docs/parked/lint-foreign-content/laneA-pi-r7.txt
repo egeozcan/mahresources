@@ -1,0 +1,31 @@
+## Spec
+
+1. **MAJOR — `shortcodes/lint_attr_context.go:495-500`; oracle gap at `shortcodes/lint_test.go:1656-1700`**
+
+   ```html
+   <svg><iframe><a href="javascript:[property path='Name']"><text>go</text></a></iframe></svg>
+   ```
+
+   The linter warns about a live `javascript:` URL. Chromium creates the SVG `<a>` node, but `<iframe>` is not an SVG rendering container: the anchor and text have zero bounds, are absent from the accessibility tree, and are skipped by Tab. The URL cannot be activated.
+
+   The oracle passes because `exists` equates “an element with this attribute exists in the parse tree” with “the placement is live.” The same problem invalidates the asserted warning for unsupported SVG `<style>` descendants at `lint_test.go:2140-2144`. Parsed markup is not necessarily rendered or interactive markup.
+
+2. **MAJOR — `shortcodes/lint_attr_context.go:338-368`**
+
+   ```html
+   <svg><foreignObject><div></svg></div></foreignObject><iframe srcdoc="[property path='Name']"></iframe></svg>
+   ```
+
+   The linter warns on `srcdoc`; x/net/html and Chromium leave the final `<iframe>` in SVG, where it has no browsing context. With the current node being the HTML `<div>`, HTML’s generic end-tag walk ignores `</svg>` because it encounters the special `<div>` first. `closeTag`, however, directly finds the earlier SVG frame at line 339 and pops it before applying any special-element stop. Round 6 fixed only the unmatched/recursive fallback, leaving the same rule bypassed for roots present in the local stack. The malformed oracle corpus lacks this direct `<svg><foreignObject><div></svg>…` shape.
+
+3. **MAJOR — `shortcodes/lint_attr_context.go:916`**
+
+   ```html
+   <button onKeydown="[property path='Name']">x</button>
+   ```
+
+   The Round 6 ASCII-fold correction is incomplete. `strings.ToLower` converts U+212A KELVIN SIGN to ASCII `k`, so the linter reports an `onkeydown` handler. The HTML tokenizer/browser preserves the attribute as `onKeydown`; it is inert, and normal HTML escaping fully contains the value. `asciiLower` should also govern attribute-name normalization. Existing tests cover long-s in type/encoding values but no non-ASCII attribute name.
+
+## Standards
+
+No additional recursion-cost, aliasing, re-entrancy, or `<noscript>` findings. `go test --tags 'json1 fts5' ./shortcodes -count=1` passes, including the current parser oracle—confirming the oracle does not catch the first two cases.

@@ -1,0 +1,29 @@
+1. **Yes—two plausible false positives remain.**
+   - Known/declined data-script case, `shortcodes/lint_attr_context.go:481,1112`:
+     ```html
+     <script type="application/ld+json">{"name":"[property path='Name']"}</script>
+     ```
+     This incorrectly warns that the value reaches JavaScript.
+   - Malformed but plausible inline SVG, `shortcodes/lint_attr_context.go:414-424,526`:
+     ```html
+     <svg><g><title>Icon</g><iframe srcdoc="[property path='Name']"></iframe>
+     ```
+     The browser keeps the iframe in SVG, where `srcdoc` is inert; the linter warns because recursive scanning cannot report `</g>` closing an arbitrary caller ancestor. I verified the parser namespace is `"svg"`.
+
+2. **Yes.** A plausible unreported navigation hazard is:
+   ```html
+   <noscript><meta http-equiv="refresh" content="0;url=[property path='URL']"></noscript>
+   ```
+   This permits user-controlled navigation with scripting disabled. `content` is absent from `urlBearingAttrs` at `shortcodes/lint_attr_context.go:1341-1345`; the omission is acknowledged at `:1444-1447`. Similar non-script URL residue includes form actions and `<base href>`.
+
+3. **Generally yes:** the oracle is load-bearing across its sampled namespace transitions, direct-child program semantics, and stack recovery. **Biggest hole:** it never exercises a re-read integration-point body closing an arbitrary caller ancestor—the `<svg><g><title></g>` shape above—so that walk regression passes. Malformed cases also check only the false-positive direction.
+
+4. No recursion defect found. Work is bounded by depth eight, therefore `O(n × depth)` copying; state is per invocation, callbacks are synchronous, and no mutable global state is shared. Sorting aliases `spans`, but the sole caller passes a fresh local slice. The `<noscript>` filter’s division is coherent; however, its qualified `srcdoc` diagnostic still says “script injection” when the reachable problem with scripting disabled is HTML/markup injection.
+
+5. **Stale prose:**
+   - `lint_attr_context.go:1495-1497` says data-script handling overstates only the *reason*, not the verdict; it actually produces a false-positive verdict.
+   - `:1424` says every `<noscript>`-body message carries the qualifier, contradicting the intentional raw-value exception.
+   - `lint_test.go:1092` says “six” ordinary non-program raw-text/RCDATA bodies; there are seven after excluding `<noscript>`.
+   - `lint_attr_context.go:1384-1389` similarly says all “other eight” are prose, despite `<noscript>` now being re-read.
+
+**ADVERSARIAL residue:** depth-limit silence; element-blind URL warnings such as `<div href="javascript:[property]">`; unknown `on…` attributes treated as handlers.

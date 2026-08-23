@@ -1,0 +1,57 @@
+## Findings
+
+- **MAJOR — HTML-only attribute hazards are applied to inert foreign elements** (`shortcodes/lint_attr_context.go:243-246, 744-745`).  
+  Concrete false positive:
+  ```html
+  <svg><textarea><iframe srcdoc="[property path='Name']"></iframe></textarea></svg>
+  ```
+  The new recursion exposes the inner `iframe`, then reports `srcdoc` as parsed HTML. In a browser it is an SVG-namespace `SVGElement`, not `HTMLIFrameElement`; it has no browsing context and `srcdoc` is inert. Chromium confirms `contentDocument === null`. The placement is harmless.
+
+- **MAJOR — MathML `<script>`/`<style>` are incorrectly treated as programs** (`shortcodes/lint_attr_context.go:288-292, 699-704, 912-920`; incorrectly pinned by `shortcodes/lint_test.go:1254,1283-1287`).  
+  Concrete false positive:
+  ```html
+  <math><textarea><script>var s="[property path='Name']"</script></textarea></math>
+  ```
+  This warns that JavaScript sees the value. The browser creates a MathML `MathMLElement`, not an executable HTML/SVG script; Chromium executes nothing. Entity decoding is true, but irrelevant without a language consumer. The same defect affects MathML `<style>`.
+
+- **MAJOR — Recursive scans discard the open-element ancestry, producing safe-markup warnings** (`shortcodes/lint_attr_context.go:210-216,301-315`).  
+  Concrete false positive:
+  ```html
+  <svg><iframe></svg><textarea><a href="javascript:[property path='Name']">go</a></textarea></iframe>
+  ```
+  The real parser’s `</svg>` pops both the foreign `iframe` and SVG root; `textarea` is then HTML RCDATA and the anchor is text. The recursive scan starts with only `base="svg"`, cannot pop the omitted root, and warns on the nonexistent link.
+
+  The omitted `</p>`/`</br>` breakout has the same result:
+  ```html
+  <svg></p><textarea><a href="javascript:[property path='Name']">go</a></textarea>
+  ```
+  `shortcodes/lint_attr_context.go:345-348` says this “costs a warning rather than producing a false one”; under the stated grading criterion, that warning **is** a false positive.
+
+- **MAJOR — MathML integration-point handling omits two spec rules** (`shortcodes/lint_attr_context.go:263-269,368-396`).
+  1. `<annotation-xml>` specially admits a start-tag `<svg>` even without HTML encoding. This warns falsely:
+     ```html
+     <math><annotation-xml><svg><title><textarea><a href="javascript:[property path='Name']">go</a></textarea></title></svg></annotation-xml></math>
+     ```
+     The browser enters SVG; `<title>` is an integration point; `<textarea>` becomes HTML RCDATA, so no link exists.
+  2. `mglyph` and `malignmark` are exceptions at MathML text integration points. This warns falsely:
+     ```html
+     <math><mtext><mglyph><svg><script>var s="[property path='Name']"</script></svg></mglyph></mtext></math>
+     ```
+     The browser keeps `mglyph`, `svg`, and `script` in MathML; nothing executes. The scanner instead enters SVG.
+
+- **MAJOR — The noscript filter suppresses `raw=` along with the execution rule** (`shortcodes/lint_attr_context.go:690-698`).  
+  This produces no warning:
+  ```html
+  <noscript><script>[property path="Name" raw="true"]</script></noscript>
+  ```
+  But a raw value can emit `</noscript><script>…` and escape the inert body when scripting is enabled. The requirement explicitly includes `raw=` among reportable noscript placements.
+
+- **MINOR — Noscript prose overpromises qualification** (`shortcodes/lint_attr_context.go:650-674,893-895`).  
+  ```html
+  <noscript>[property path="Name" raw="true"]</noscript>
+  ```
+  warns without `noscriptQualifier`, because plain-text occurrences retain a zero context. This contradicts “every reason/message from a body.”
+
+## Other checks
+
+Outside `svg`/`math`/`noscript`, I found no behavioral regression; 3,504 representative inputs produced byte-identical diagnostics against HEAD. All execution-based noscript rules are withheld, aside from over-withholding `raw=` above. Recursion is depth-bounded; tokenizer buffers are copied before `Next`, and I found no aliasing/re-entrancy issue. `go test ./shortcodes -count=1` passes.

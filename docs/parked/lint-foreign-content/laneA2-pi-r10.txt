@@ -1,0 +1,54 @@
+1. **[MAJOR] `shortcodes/lint_attr_context.go:490-565` — the outer tokenizer truncates foreign CDATA at a fake raw-text end tag before recursive scanning.**
+
+   Input:
+   ```html
+   <svg><script><![CDATA[var x="</script>"; var y="[property path='Name']";]]></script></svg>
+   ```
+
+   `html.Parse` creates one SVG `script` whose direct text is:
+   ```text
+   var x="</script>"; var y="[property path='Name']";
+   ```
+   The shortcode therefore reaches JavaScript. The linter returns no warnings because the namespace-blind outer tokenizer splits at the `</script>` inside CDATA before `AllowCDATA` can act recursively.
+
+2. **[MAJOR] `shortcodes/lint_attr_context.go:439-444` — `AllowCDATA` uses the child namespace at an SVG `<title>` integration point instead of the current element’s namespace.**
+
+   Input:
+   ```html
+   <svg><title><![CDATA[a>b <iframe srcdoc="[property path='Name']">]]></title></svg>
+   ```
+
+   `html.Parse` creates only an SVG `title` with the entire CDATA payload as one text node; no iframe exists. The linter warns that `[property]` sits in a live `srcdoc`. This disproves the comment’s claim that no differing outcome is known for this approximation.
+
+3. **[MAJOR] `shortcodes/lint_attr_context.go:431,563-566` — caller end-tag effects are applied only after the recursive region’s remainder has already been scanned in the stale namespace.**
+
+   Input:
+   ```html
+   <div><svg><iframe></div><iframe srcdoc="[property path='Name']"></iframe></iframe></svg>
+   ```
+
+   `html.Parse` closes the caller’s `div`/SVG state at `</div>` and creates the second iframe as an HTML body-level sibling with live `srcdoc`. The linter returns no warnings because recursion scans that iframe as foreign before forwarding `</div>`. This contradicts `lint_attr_context.go:1566-1574`, which says this residue fails only in the warning/false-positive direction.
+
+4. **[MAJOR] `shortcodes/lint_attr_context.go:431,1566-1574` — only the last unmatched end tag is forwarded, so a later no-op tag erases an earlier namespace-changing tag.**
+
+   Input:
+   ```html
+   <math><textarea></math></svg></textarea><iframe id=TARGET srcdoc="[property path='Name']"></iframe>
+   ```
+
+   `html.Parse` honors `</math>` and creates `TARGET` as an HTML iframe with live `srcdoc`; the later `</svg>` is irrelevant. The linter returns no warnings because `closedFromInside` is overwritten with `svg`, losing the earlier `math` close. This also disproves the documented “fail-open in the direction that warns” reasoning.
+
+5. **[MAJOR] `shortcodes/lint_attr_context.go:354-370` — generic stack popping does not model the adoption agency algorithm.**
+
+   Input:
+   ```html
+   <b><div></b><svg></div><iframe srcdoc="[property path='Name']"></iframe>
+   ```
+
+   `html.Parse` retains the `div`, reconstructs an empty `b` inside it, places the SVG there, and then creates the iframe as an HTML sibling after `</div>`. The linter returns no warnings: its generic `</b>` handling pops through the `div`, so the later `</div>` fails to close the SVG in its model. Replacing `b` with `a` or `nobr` reproduces the same miss.
+
+## QUESTIONS
+
+None.
+
+MAJOR COUNT: 5

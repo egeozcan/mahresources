@@ -1,0 +1,50 @@
+- **MAJOR — `shortcodes/lint_attr_context.go:354-355`: HTML void/self-closing elements corrupt the simulated stack.**  
+  False positive:
+  ```html
+  <math><mtext><br><mglyph><iframe srcdoc="[property path='Name']"></iframe></mglyph></mtext></math>
+  ```
+  Browsers immediately pop `<br>`; `mglyph` and `iframe` remain MathML and `srcdoc` is inert. The scanner retains an HTML `<br>` frame and warns. The inverse causes a missed warning:
+  ```html
+  <math><mtext><div/><mglyph><iframe srcdoc="[property path='Name']"></iframe></mglyph></mtext></math>
+  ```
+  HTML ignores `/` on `<div>`, so the iframe is HTML and live; the scanner drops `<div/>` and stays silent.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:373-383`: the region-ending heuristic is far too aggressive.**  
+  ```html
+  <math><iframe></svg><script>var s="[property path='Name']"</script></iframe></math>
+  ```
+  The unmatched `</svg>` is ignored; the script remains MathML and inert. The scanner clears MathML mode and emits a JavaScript warning. Any unmatched raw-text name does likewise:
+  ```html
+  <svg><iframe></textarea><iframe srcdoc="[property path='Name']"></iframe></iframe></svg>
+  ```
+  This directly contradicts the comment’s claim that the tag names the enclosing root/region element—the code cannot establish that.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:461-465`: whitespace trimming invents an integration point.**  
+  ```html
+  <math><annotation-xml encoding=" text/html "><iframe srcdoc="[property path='Name']"></iframe></annotation-xml></math>
+  ```
+  The encoding match is ASCII-case-insensitive, not whitespace-trimmed. Browsers keep this MathML; lint treats it as HTML and falsely warns.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:317,444-465`: interpolated `encoding` can silently change the namespace.**  
+  ```html
+  <math><annotation-xml encoding="[property path='Encoding']"><script>var s="[property path='Name']"</script></annotation-xml></math>
+  ```
+  Lint sees the sentinel as a non-HTML encoding and reports nothing. If the lower-privileged value is `text/html`, the browser creates an executing HTML script. `namespaceForChild` matches the static parser rules, but namespace is not static here.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:827-838`: element semantics remain ignored.**  
+  Both are harmless but warn:
+  ```html
+  <div srcdoc="[property path='Name']"></div>
+  <svg><iframe><g href="javascript:[property path='Name']">x</g></iframe></svg>
+  ```
+  `srcdoc` only acts on HTML iframe; `href` on SVG `g` does not navigate. The comments explicitly admit the latter false-positive policy, contrary to the graded requirement.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:321-345,930-938`: not every `<script>` body is a program.**  
+  ```html
+  <script type="application/json">{"name":"[property path='Name']"}</script>
+  ```
+  No JavaScript executes, and HTML escaping cannot close the raw-text element, yet lint warns. The “body is a program” prose is false.
+
+- **MAJOR — `shortcodes/lint_test.go:1544-1704`: the parser oracle is useful but not load-bearing.** It generates only balanced wrappers, so all malformed-end-tag and HTML stack failures above pass. Its probes hard-code `<a>` and `<iframe>`, hiding wrong-host warnings; script/style “liveness” is merely element existence, ignoring `type`; and `inAProgramBody` suppresses misses without asserting the promised alternative warning.
+
+The raw-in-`noscript` caveat exemption itself is correct. Recursion is bounded and re-entrant, with no shared mutable scan state or aliasing issue found.

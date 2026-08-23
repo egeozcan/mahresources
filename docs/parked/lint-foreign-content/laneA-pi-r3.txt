@@ -1,0 +1,40 @@
+## Findings
+
+- **MAJOR — `shortcodes/lint_attr_context.go:359-366`; `shortcodes/lint_test.go:1622-1632,1751-1769`**  
+  Exact false positive:  
+  ```html
+  <svg><script><g data-x="[property path='Name']"></g></script></svg>
+  ```  
+  In foreign content, the browser parses `<g>` as an element; the value remains an inert attribute and is not JavaScript source. The linter instead treats the tokenizer’s entire raw token as script. The same defect affects SVG `<style>`. The oracle deliberately excuses these cases, and the “safe placements” sweep explicitly permits their warnings, so it passes while preserving the false positive.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:392-396`**  
+  Exact false positive:  
+  ```html
+  <x-foo><div><math></x-foo><iframe srcdoc="[property path='Name']"></iframe>
+  ```  
+  The browser ignores `</x-foo>` in this foreign-content state; the iframe remains MathML and `srcdoc` is inert. The frame scan searches the entire stack, finds `x-foo`, and incorrectly returns to HTML, producing a `srcdoc` warning. The oracle’s unbalanced sweep does not include this ancestor-crossing shape.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:306-338,485-491`; `shortcodes/lint_test.go:1924-1932`**  
+  Exact false positive:  
+  ```html
+  <math><annotation-xml encoding="image/[property path='Encoding']"><script>let x="[property path='Name']"</script></annotation-xml></math>
+  ```  
+  No interpolated value can make that attribute exactly `text/html` or `application/xhtml+xml`; the script remains inert MathML. Failing closed is defensible when the interpolation can produce either exact encoding—particularly when it occupies the whole value—but not merely because the attribute contains any interpolation. The prose’s “cannot be known” claim is therefore too broad.
+
+- **MAJOR — `shortcodes/lint_attr_context.go:837-847`**  
+  Meaningful over-corrected miss:  
+  ```html
+  <noscript><style>.x{color:[property path='Name']}</style></noscript>
+  ```  
+  With scripting disabled, this is an active stylesheet and values such as `red}body{display:none}` inject CSS. Suppressing `<script>` is correct; suppressing `<style>` is not. The comment at lines 1045-1048 acknowledges the residue but does not justify it.
+
+- **MINOR — `shortcodes/lint_attr_context.go:860-865,1013-1020`**  
+  Pre-existing, acknowledged false positive:  
+  ```html
+  <plaintext>[property path='Name' raw='true']
+  ```  
+  PLAINTEXT runs through EOF, so even raw markup cannot become elements, contrary to the warning.
+
+## Assessment
+
+The oracle is load-bearing for the specific void/solidus regressions, but not for “all of it”: it does not bind program probes to where `VALUE` landed and explicitly allows the SVG false positive above. Recursion is bounded `O(8n)`, local, re-entrant, and I found no aliasing issue. Focused shortcode tests pass.
