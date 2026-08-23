@@ -36,12 +36,12 @@ type calendarContent struct {
 type CustomCalendarEvent struct {
 	ID          string `json:"id"`
 	Title       string `json:"title"`
-	Start       string `json:"start"`       // ISO 8601 datetime
-	End         string `json:"end"`         // ISO 8601 datetime
+	Start       string `json:"start"` // ISO 8601 datetime
+	End         string `json:"end"`   // ISO 8601 datetime
 	AllDay      bool   `json:"allDay"`
 	Location    string `json:"location,omitempty"`
 	Description string `json:"description,omitempty"`
-	CalendarID  string `json:"calendarId"`  // Must be "custom"
+	CalendarID  string `json:"calendarId"` // Must be "custom"
 }
 
 // MaxCustomEvents is the maximum number of custom events allowed per calendar block.

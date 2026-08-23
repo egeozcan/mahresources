@@ -138,7 +138,7 @@ func TestParseImport_BasicPlan(t *testing.T) {
 		t.Fatalf("write tar: %v", err)
 	}
 
-	plan, err := ctx.ParseImport(context.Background(),"test-job", tarPath)
+	plan, err := ctx.ParseImport(context.Background(), "test-job", tarPath)
 	if err != nil {
 		t.Fatalf("ParseImport: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestParseImport_AmbiguousNoteType(t *testing.T) {
 		t.Fatalf("write tar: %v", err)
 	}
 
-	plan, err := ctx.ParseImport(context.Background(),"test-ambiguous-notetype", tarPath)
+	plan, err := ctx.ParseImport(context.Background(), "test-ambiguous-notetype", tarPath)
 	if err != nil {
 		t.Fatalf("ParseImport: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestParseImport_ManifestOnlyMissingHashes(t *testing.T) {
 		t.Fatalf("write tar: %v", err)
 	}
 
-	plan, err := ctx.ParseImport(context.Background(),"test-manifest-only", tarPath)
+	plan, err := ctx.ParseImport(context.Background(), "test-manifest-only", tarPath)
 	if err != nil {
 		t.Fatalf("ParseImport: %v", err)
 	}
@@ -473,7 +473,7 @@ func TestParseImport_SchemaDefsOff_FallsBackToNames(t *testing.T) {
 		t.Fatalf("write tar: %v", err)
 	}
 
-	plan, err := ctx.ParseImport(context.Background(),"test-schemadefs-off", tarPath)
+	plan, err := ctx.ParseImport(context.Background(), "test-schemadefs-off", tarPath)
 	if err != nil {
 		t.Fatalf("ParseImport: %v", err)
 	}
@@ -569,7 +569,7 @@ func TestParseImport_SeriesSlugReuse(t *testing.T) {
 		t.Fatalf("write tar: %v", err)
 	}
 
-	plan, err := ctx.ParseImport(context.Background(),"test-series-slug", tarPath)
+	plan, err := ctx.ParseImport(context.Background(), "test-series-slug", tarPath)
 	if err != nil {
 		t.Fatalf("ParseImport: %v", err)
 	}
@@ -661,7 +661,7 @@ func TestParseImport_NameBasedMapping_ExistingCategory(t *testing.T) {
 		t.Fatalf("write tar: %v", err)
 	}
 
-	plan, err := ctx.ParseImport(context.Background(),"test-job-cat", tarPath)
+	plan, err := ctx.ParseImport(context.Background(), "test-job-cat", tarPath)
 	if err != nil {
 		t.Fatalf("ParseImport: %v", err)
 	}

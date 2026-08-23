@@ -159,9 +159,9 @@ func newResourceEditCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	help := helptext.Load(resourcesHelpFS, "resources_help/resource_edit.md")
 	var (
 		name, description, tagsStr, groupsStr, notesStr string
-		meta, category, originalName, originalLocation   string
-		ownerID, resourceCategoryID, seriesID            uint
-		width, height                                    uint
+		meta, category, originalName, originalLocation  string
+		ownerID, resourceCategoryID, seriesID           uint
+		width, height                                   uint
 	)
 
 	cmd := &cobra.Command{
@@ -395,9 +395,9 @@ func newResourceEditMetaCmd(c *client.Client, opts *output.Options) *cobra.Comma
 func newResourceUploadCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	help := helptext.Load(resourcesHelpFS, "resources_help/resource_upload.md")
 	var (
-		name, description, meta, category       string
-		contentCategory, originalName            string
-		ownerID, resourceCategoryID              uint
+		name, description, meta, category string
+		contentCategory, originalName     string
+		ownerID, resourceCategoryID       uint
 	)
 
 	cmd := &cobra.Command{
@@ -506,8 +506,8 @@ func newResourceDownloadCmd(c *client.Client, _ *output.Options) *cobra.Command 
 func newResourcePreviewCmd(c *client.Client, _ *output.Options) *cobra.Command {
 	help := helptext.Load(resourcesHelpFS, "resources_help/resource_preview.md")
 	var (
-		outFile        string
-		width, height  uint
+		outFile       string
+		width, height uint
 	)
 
 	cmd := &cobra.Command{

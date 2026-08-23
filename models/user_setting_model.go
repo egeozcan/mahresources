@@ -11,7 +11,7 @@ import "time"
 // users (matching PluginKV) to avoid SQLite FK/AutoMigrate churn; rows are cleaned up by
 // the user-deletion path rather than a cascade.
 type UserSetting struct {
-	ID        uint      `gorm:"primarykey"`
+	ID        uint `gorm:"primarykey"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	UserId    uint   `gorm:"uniqueIndex:idx_user_setting_key;index;not null"`

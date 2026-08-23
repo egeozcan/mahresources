@@ -17,10 +17,10 @@ import (
 // dropped. The map is plumbed verbatim to the frontend, which interprets it
 // identically — see isParamVisible in src/components/pluginActionModal.js.
 type ActionParam struct {
-	Name        string         `json:"name"`
-	Type        string         `json:"type"` // text, textarea, number, select, boolean, hidden, info, entity_ref
-	Label       string         `json:"label"`
-	Required    bool           `json:"required"`
+	Name     string `json:"name"`
+	Type     string `json:"type"` // text, textarea, number, select, boolean, hidden, info, entity_ref
+	Label    string `json:"label"`
+	Required bool   `json:"required"`
 	// Default is the parameter's default value. For most types any matching
 	// value is accepted; for Type=="entity_ref" it must be one of
 	// "trigger" | "selection" | "both" | "" (omitting the field defaults to "trigger").

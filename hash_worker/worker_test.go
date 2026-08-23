@@ -97,7 +97,7 @@ func TestHashWorker_FindSimilarities(t *testing.T) {
 	// Seed cache with some hashes. Use AHash=same as DHash so AHash check always passes.
 	// Use values without high bit set to avoid SQLite uint64 limitations.
 	baseHash := uint64(0x7F00FF00FF00FF00)
-	w.hashCache.Add(1, hashEntry{DHash: baseHash, AHash: baseHash})                       // Base hash
+	w.hashCache.Add(1, hashEntry{DHash: baseHash, AHash: baseHash})                     // Base hash
 	w.hashCache.Add(2, hashEntry{DHash: 0x7F00FF00FF00FF01, AHash: 0x7F00FF00FF00FF01}) // 1 bit different (similar)
 	w.hashCache.Add(3, hashEntry{DHash: 0x00FF00FF00FF00FF, AHash: 0x00FF00FF00FF00FF}) // Many bits different (not similar)
 
@@ -130,9 +130,9 @@ func TestSimilarityQuery_UnionBothDirections(t *testing.T) {
 	// Create similarity records with various Hamming distances
 	// Resource 5 is similar to resources 1, 2, 3 with different distances
 	similarities := []models.ResourceSimilarity{
-		{ResourceID1: 1, ResourceID2: 5, HammingDistance: 3}, // 5 is larger, stored as (1, 5)
-		{ResourceID1: 2, ResourceID2: 5, HammingDistance: 1}, // closest match
-		{ResourceID1: 3, ResourceID2: 5, HammingDistance: 5}, // furthest match
+		{ResourceID1: 1, ResourceID2: 5, HammingDistance: 3},  // 5 is larger, stored as (1, 5)
+		{ResourceID1: 2, ResourceID2: 5, HammingDistance: 1},  // closest match
+		{ResourceID1: 3, ResourceID2: 5, HammingDistance: 5},  // furthest match
 		{ResourceID1: 5, ResourceID2: 10, HammingDistance: 2}, // 5 is smaller, stored as (5, 10)
 	}
 

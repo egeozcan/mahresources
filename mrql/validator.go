@@ -505,7 +505,7 @@ func validateNode(node Node, entityType EntityType) error {
 			if !ok {
 				return &ValidationError{
 					Message: "type field requires resource, note, or group",
-					Pos: n.Value.Pos(),
+					Pos:     n.Value.Pos(),
 				}
 			}
 			if _, valid := ValidEntityTypes[strings.ToLower(sl.Value)]; !valid {

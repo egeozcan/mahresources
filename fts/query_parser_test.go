@@ -4,11 +4,11 @@ import "testing"
 
 func TestParseSearchQuery(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     string
-		wantTerm  string
-		wantMode  SearchMode
-		wantDist  int
+		name     string
+		input    string
+		wantTerm string
+		wantMode SearchMode
+		wantDist int
 	}{
 		{
 			name:     "empty string",

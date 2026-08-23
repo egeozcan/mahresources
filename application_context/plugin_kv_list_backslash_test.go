@@ -26,7 +26,7 @@ func TestPluginKV_ListWithBackslashPrefix(t *testing.T) {
 	// Set up keys: one with a backslash in the key, one without
 	ctx.PluginKVSet(pluginName, `path\to\file1`, `1`)
 	ctx.PluginKVSet(pluginName, `path\to\file2`, `2`)
-	ctx.PluginKVSet(pluginName, `pathtofile3`, `3`)   // no backslashes — should NOT match prefix "path\to\"
+	ctx.PluginKVSet(pluginName, `pathtofile3`, `3`) // no backslashes — should NOT match prefix "path\to\"
 
 	// List with a prefix that contains backslashes
 	keys, err := ctx.PluginKVList(pluginName, `path\to\`)

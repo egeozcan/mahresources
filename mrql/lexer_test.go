@@ -67,8 +67,8 @@ func TestLexerOperators(t *testing.T) {
 // TestLexerDelimiters tests parentheses, comma, dot.
 func TestLexerDelimiters(t *testing.T) {
 	tests := []struct {
-		ch      string
-		want    TokenType
+		ch   string
+		want TokenType
 	}{
 		{"(", TokenLParen},
 		{")", TokenRParen},

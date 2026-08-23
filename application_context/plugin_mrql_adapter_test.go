@@ -81,7 +81,6 @@ func TestPluginMRQLAdapterScoped(t *testing.T) {
 	assert.Empty(t, result.Items)
 }
 
-
 func TestPluginMRQLAdapterRequiresEntityType(t *testing.T) {
 	ctx := createTestContext(t)
 	adapter := &pluginMRQLAdapter{ctx: ctx}

@@ -20,14 +20,14 @@ var notesHelpFS embed.FS
 
 // noteResponse is a lightweight struct matching the API's Note JSON shape.
 type noteResponse struct {
-	ID         uint      `json:"ID"`
-	Name       string    `json:"Name"`
-	Description string   `json:"Description"`
-	CreatedAt  time.Time `json:"CreatedAt"`
-	UpdatedAt  time.Time `json:"UpdatedAt"`
-	OwnerId    *uint     `json:"OwnerId"`
-	NoteTypeId *uint     `json:"NoteTypeId"`
-	ShareToken *string   `json:"ShareToken"`
+	ID          uint      `json:"ID"`
+	Name        string    `json:"Name"`
+	Description string    `json:"Description"`
+	CreatedAt   time.Time `json:"CreatedAt"`
+	UpdatedAt   time.Time `json:"UpdatedAt"`
+	OwnerId     *uint     `json:"OwnerId"`
+	NoteTypeId  *uint     `json:"NoteTypeId"`
+	ShareToken  *string   `json:"ShareToken"`
 }
 
 // NewNoteCmd returns the singular "note" command with get/create/delete/edit/share subcommands.
@@ -739,9 +739,9 @@ func newNotesMetaKeysCmd(c *client.Client, opts *output.Options) *cobra.Command 
 
 func newNotesTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var (
-		tFlags                                                      timelineFlags
+		tFlags                                                             timelineFlags
 		name, description, tagsStr, groupsStr, createdBefore, createdAfter string
-		ownerID, noteTypeID                                         uint
+		ownerID, noteTypeID                                                uint
 	)
 
 	help := helptext.Load(notesHelpFS, "notes_help/notes_timeline.md")

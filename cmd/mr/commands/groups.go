@@ -810,9 +810,9 @@ func newGroupsMetaKeysCmd(c *client.Client, opts *output.Options) *cobra.Command
 
 func newGroupsTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var (
-		tFlags                                                                          timelineFlags
+		tFlags                                                                     timelineFlags
 		name, description, tagsStr, groupsStr, urlStr, createdBefore, createdAfter string
-		ownerID, categoryID                                                             uint
+		ownerID, categoryID                                                        uint
 	)
 
 	help := helptext.Load(groupsHelpFS, "groups_help/groups_timeline.md")

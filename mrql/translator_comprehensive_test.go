@@ -4742,11 +4742,11 @@ func TestBugfix_ItemCapWarnsWithBucketCount(t *testing.T) {
 }
 
 // MIN/MAX(meta.*) trade-off tests:
-// - Must not return NULL when values exist (string or numeric)
-// - On SQLite, json_extract returns native types so numeric ordering is correct
-// - On PG, text extraction gives lexicographic order for multi-digit numbers
-//   (known trade-off: "10" < "2" in text, but all values are included)
-// - SUM/AVG use numeric cast (non-numeric → NULL) — tested separately
+//   - Must not return NULL when values exist (string or numeric)
+//   - On SQLite, json_extract returns native types so numeric ordering is correct
+//   - On PG, text extraction gives lexicographic order for multi-digit numbers
+//     (known trade-off: "10" < "2" in text, but all values are included)
+//   - SUM/AVG use numeric cast (non-numeric → NULL) — tested separately
 func TestBugfix_MaxMetaReturnsValueNotNull(t *testing.T) {
 	db := setupTestDB(t)
 

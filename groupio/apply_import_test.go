@@ -33,7 +33,7 @@ func createGUIDIsolatedContext(t *testing.T, name string) *opCtx {
 // noopSink satisfies download_queue.ProgressSink for tests.
 type noopSink struct{}
 
-func (noopSink) SetPhase(string)              {}
+func (noopSink) SetPhase(string)               {}
 func (noopSink) SetPhaseProgress(int64, int64) {}
 func (noopSink) UpdateProgress(int64, int64)   {}
 func (noopSink) AppendWarning(string)          {}

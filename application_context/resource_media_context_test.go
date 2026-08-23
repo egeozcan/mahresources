@@ -199,10 +199,10 @@ func TestParseFFmpegError(t *testing.T) {
 
 func TestComputeActualTargetDims(t *testing.T) {
 	tests := []struct {
-		name              string
+		name                 string
 		resourceW, resourceH uint
-		reqW, reqH        uint
-		wantW, wantH      uint
+		reqW, reqH           uint
+		wantW, wantH         uint
 	}{
 		// Both axes zero, known aspect — full size scaled to fit MaxThumb (600).
 		{"both zero, 1920x1080", 1920, 1080, 0, 0, 600, 338},

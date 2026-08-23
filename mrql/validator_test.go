@@ -209,9 +209,9 @@ func TestValidator(t *testing.T) {
 			`type = "resource"`,
 			`type = "note"`,
 			`type = "group"`,
-			`type = "RESOURCE"`,   // case-insensitive
-			`type = "Note"`,       // mixed case
-			`type = "GROUP"`,      // uppercase
+			`type = "RESOURCE"`, // case-insensitive
+			`type = "Note"`,     // mixed case
+			`type = "GROUP"`,    // uppercase
 		}
 		for _, q := range cases {
 			t.Run(q, func(t *testing.T) {

@@ -73,9 +73,9 @@ func jpegWithOrientation(t *testing.T, img image.Image, orient uint16) []byte {
 	app1 = append(app1, payload...)
 
 	out := make([]byte, 0, len(base)+len(app1))
-	out = append(out, 0xFF, 0xD8)   // SOI
-	out = append(out, app1...)      // EXIF APP1
-	out = append(out, base[2:]...)  // rest of the original JPEG
+	out = append(out, 0xFF, 0xD8)  // SOI
+	out = append(out, app1...)     // EXIF APP1
+	out = append(out, base[2:]...) // rest of the original JPEG
 	return out
 }
 

@@ -86,8 +86,8 @@ func TestImportPlan_RoundTripJSON(t *testing.T) {
 
 func TestImportDecisions_RoundTripJSON(t *testing.T) {
 	decisions := &ImportDecisions{
-		ParentGroupID:          uintPtr(42),
-		ResourceCollisionPolicy: "skip",
+		ParentGroupID:            uintPtr(42),
+		ResourceCollisionPolicy:  "skip",
 		AcknowledgeMissingHashes: true,
 		MappingActions: map[string]MappingAction{
 			"category:c0001": {Include: true, Action: "map", DestinationID: uintPtr(3)},

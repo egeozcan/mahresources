@@ -398,7 +398,7 @@ func newTagsDeleteCmd(c *client.Client, opts *output.Options) *cobra.Command {
 
 func newTagsTimelineCmd(c *client.Client, opts *output.Options) *cobra.Command {
 	var (
-		tFlags              timelineFlags
+		tFlags            timelineFlags
 		name, description string
 	)
 

@@ -5,17 +5,17 @@ import "fmt"
 // ImportPlan is the parsed result of an import tar. Persisted as JSON to
 // _imports/<jobId>.plan.json and served via GET /v1/imports/{jobId}/plan.
 type ImportPlan struct {
-	JobID            string           `json:"job_id"`
-	SchemaVersion    int              `json:"schema_version"`
-	SourceInstanceID string           `json:"source_instance_id,omitempty"`
-	Counts           ImportPlanCounts `json:"counts"`
-	Items            []ImportPlanItem `json:"items"`
-	Mappings         ImportMappings   `json:"mappings"`
-	SeriesInfo       []SeriesMapping  `json:"series_info"`
-	DanglingRefs     []DanglingRefPlan `json:"dangling_refs"`
-	Conflicts        ConflictSummary  `json:"conflicts"`
-	ManifestOnlyMissingHashes int     `json:"manifest_only_missing_hashes"`
-	Warnings         []string         `json:"warnings"`
+	JobID                     string            `json:"job_id"`
+	SchemaVersion             int               `json:"schema_version"`
+	SourceInstanceID          string            `json:"source_instance_id,omitempty"`
+	Counts                    ImportPlanCounts  `json:"counts"`
+	Items                     []ImportPlanItem  `json:"items"`
+	Mappings                  ImportMappings    `json:"mappings"`
+	SeriesInfo                []SeriesMapping   `json:"series_info"`
+	DanglingRefs              []DanglingRefPlan `json:"dangling_refs"`
+	Conflicts                 ConflictSummary   `json:"conflicts"`
+	ManifestOnlyMissingHashes int               `json:"manifest_only_missing_hashes"`
+	Warnings                  []string          `json:"warnings"`
 }
 
 type ImportPlanCounts struct {
@@ -152,22 +152,22 @@ type ShellGroupAction struct {
 // _imports/<jobId>.result.json so the UI/CLI can fetch it, and so partial-failure
 // results list created IDs for manual cleanup (spec §9.5).
 type ImportApplyResult struct {
-	CreatedCategories         int      `json:"created_categories"`
-	CreatedNoteTypes          int      `json:"created_note_types"`
-	CreatedResourceCategories int      `json:"created_resource_categories"`
-	CreatedTags               int      `json:"created_tags"`
-	CreatedGRTs               int      `json:"created_grts"`
-	CreatedSeries             int      `json:"created_series"`
-	ReusedSeries              int      `json:"reused_series"`
-	CreatedGroups             int      `json:"created_groups"`
-	CreatedResources          int      `json:"created_resources"`
-	SkippedByHash             int      `json:"skipped_by_hash"`
-	SkippedMissingBytes       int      `json:"skipped_missing_bytes"`
-	CreatedNotes              int      `json:"created_notes"`
-	CreatedPreviews           int      `json:"created_previews"`
-	CreatedVersions           int      `json:"created_versions"`
-	CreatedShellGroups        int      `json:"created_shell_groups"`
-	MappedShellGroups         int      `json:"mapped_shell_groups"`
+	CreatedCategories         int `json:"created_categories"`
+	CreatedNoteTypes          int `json:"created_note_types"`
+	CreatedResourceCategories int `json:"created_resource_categories"`
+	CreatedTags               int `json:"created_tags"`
+	CreatedGRTs               int `json:"created_grts"`
+	CreatedSeries             int `json:"created_series"`
+	ReusedSeries              int `json:"reused_series"`
+	CreatedGroups             int `json:"created_groups"`
+	CreatedResources          int `json:"created_resources"`
+	SkippedByHash             int `json:"skipped_by_hash"`
+	SkippedMissingBytes       int `json:"skipped_missing_bytes"`
+	CreatedNotes              int `json:"created_notes"`
+	CreatedPreviews           int `json:"created_previews"`
+	CreatedVersions           int `json:"created_versions"`
+	CreatedShellGroups        int `json:"created_shell_groups"`
+	MappedShellGroups         int `json:"mapped_shell_groups"`
 
 	// BH-016: GUID-collision policy=merge counters — merged existing rows with incoming payload
 	MergedGroups    int `json:"merged_groups"`

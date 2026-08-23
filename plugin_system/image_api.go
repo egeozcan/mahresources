@@ -17,10 +17,10 @@ import (
 
 	// Register additional image decoders for image.Decode (jpeg is imported
 	// normally below so we can also encode it).
-	_ "image/gif"
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
+	_ "image/gif"
 )
 
 // parseAspectRatio parses a "W:H" string (e.g. "16:9") into a float ratio W/H.

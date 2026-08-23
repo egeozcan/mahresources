@@ -12,37 +12,37 @@ const (
 	TokenIdentifier                  // field names: name, contentType, etc.
 
 	// Keywords
-	TokenAnd     // AND
-	TokenOr      // OR
-	TokenNot     // NOT
-	TokenIn      // IN
-	TokenIs      // IS
-	TokenEmpty   // EMPTY
-	TokenNull    // NULL
-	TokenOrderBy // ORDER BY (two words, merged by lexer)
-	TokenAsc     // ASC
-	TokenDesc    // DESC
-	TokenLimit   // LIMIT
-	TokenOffset  // OFFSET
-	TokenGroupBy // GROUP BY (two words, merged by lexer)
-	TokenHaving  // HAVING
-	TokenCount   // COUNT (followed by '(')
-	TokenSum     // SUM (followed by '(')
-	TokenAvg     // AVG (followed by '(')
-	TokenMin     // MIN (followed by '(')
-	TokenMax     // MAX (followed by '(')
+	TokenAnd       // AND
+	TokenOr        // OR
+	TokenNot       // NOT
+	TokenIn        // IN
+	TokenIs        // IS
+	TokenEmpty     // EMPTY
+	TokenNull      // NULL
+	TokenOrderBy   // ORDER BY (two words, merged by lexer)
+	TokenAsc       // ASC
+	TokenDesc      // DESC
+	TokenLimit     // LIMIT
+	TokenOffset    // OFFSET
+	TokenGroupBy   // GROUP BY (two words, merged by lexer)
+	TokenHaving    // HAVING
+	TokenCount     // COUNT (followed by '(')
+	TokenSum       // SUM (followed by '(')
+	TokenAvg       // AVG (followed by '(')
+	TokenMin       // MIN (followed by '(')
+	TokenMax       // MAX (followed by '(')
 	TokenText      // TEXT (for TEXT ~)
 	TokenKwType    // TYPE (also usable as field name via context)
 	TokenScope     // SCOPE
 	TokenSimilarTo // SIMILAR TO (two words, merged by lexer)
 
 	// Operators
-	TokenEq      // =
-	TokenNeq     // !=
-	TokenGt      // >
-	TokenGte     // >=
-	TokenLt      // <
-	TokenLte     // <=
+	TokenEq       // =
+	TokenNeq      // !=
+	TokenGt       // >
+	TokenGte      // >=
+	TokenLt       // <
+	TokenLte      // <=
 	TokenLike     // ~
 	TokenNotLike  // !~
 	TokenRegex    // ~*  (PostgreSQL case-insensitive POSIX regex match)

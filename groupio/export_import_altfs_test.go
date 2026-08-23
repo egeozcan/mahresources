@@ -20,7 +20,7 @@ import (
 // Named differently from apply_import_test.go's noopSink to avoid redeclaration.
 type noopSinkAltFS struct{}
 
-func (noopSinkAltFS) SetPhase(string)              {}
+func (noopSinkAltFS) SetPhase(string)               {}
 func (noopSinkAltFS) SetPhaseProgress(int64, int64) {}
 func (noopSinkAltFS) UpdateProgress(int64, int64)   {}
 func (noopSinkAltFS) AppendWarning(string)          {}

@@ -87,4 +87,3 @@ func newDocsCheckExamplesCmd() *cobra.Command {
 		"Run the fenced bash blocks in these markdown files, globs, or directories instead of the command tree's own examples. Repeatable.")
 	return cmd
 }
-

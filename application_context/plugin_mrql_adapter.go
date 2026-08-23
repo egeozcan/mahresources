@@ -239,4 +239,3 @@ func mrqlGroupToMap(g *models.Group) map[string]any {
 	}
 	return m
 }
-

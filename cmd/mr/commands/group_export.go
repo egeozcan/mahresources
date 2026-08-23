@@ -142,10 +142,14 @@ type triState struct {
 	val bool
 }
 
-func (t *triState) setTrue()          { t.set = true; t.val = true }
-func (t *triState) setFalse()         { t.set = true; t.val = false }
-func (t *triState) setDefault(v bool) { if !t.set { t.val = v } }
-func (t *triState) value() bool       { return t.val }
+func (t *triState) setTrue()  { t.set = true; t.val = true }
+func (t *triState) setFalse() { t.set = true; t.val = false }
+func (t *triState) setDefault(v bool) {
+	if !t.set {
+		t.val = v
+	}
+}
+func (t *triState) value() bool { return t.val }
 
 type exportCmdOptions struct {
 	IncludeSubtree            triState
