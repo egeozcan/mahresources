@@ -1606,16 +1606,22 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 			namespaces: []string{""}, scriptingOff: true,
 		},
 		{
+			// No scriptingOff, and that is the whole distinction the <noscript>
+			// rules rest on: with scripting disabled the body is markup and the
+			// <script> in it is a real element, but it still does not run.
 			name: "script program", msg: "JavaScript",
 			lintSrc:   `<script>var s = "[property path='Name']"</script>`,
 			oracleSrc: `<script>var s = "VALUE"</script>`,
 			element:   "script", namespaces: []string{"", "svg"},
 		},
 		{
+			// A <style> in the same place IS live in that mode: it is a real
+			// stylesheet, and a value in it can close the declaration and open
+			// another. Nothing about it needs a script.
 			name: "style program", msg: "CSS",
 			lintSrc:   `<style>.c{color:[property path='Name']}</style>`,
 			oracleSrc: `<style>.c{color:VALUE}</style>`,
-			element:   "style", namespaces: []string{"", "svg"},
+			element:   "style", namespaces: []string{"", "svg"}, scriptingOff: true,
 		},
 	}
 
@@ -1943,5 +1949,106 @@ func TestLintSrcdocIsAnIframeAttribute(t *testing.T) {
 	}
 	if !lintSaysAny(`<iframe srcdoc="[property path='Name']"></iframe>`, `sits in a "srcdoc" attribute`) {
 		t.Error("on an iframe it is the real thing")
+	}
+}
+
+// An SVG <script> or <style> body is a program AND markup at the same time,
+// which is the pair of facts an HTML one does not have. Only what lands in the
+// TEXT is program source.
+func TestLintSVGProgramBodiesAreAlsoMarkup(t *testing.T) {
+	t.Run("text in one is program source, however deep", func(t *testing.T) {
+		for _, tc := range []struct{ src, lang string }{
+			{`<svg><script>var s = "[property path='Name']"</script></svg>`, "JavaScript"},
+			// textContent collects every descendant text node, so a nested one
+			// is in the program too.
+			{`<svg><script><g>[property path="Name"]</g></script></svg>`, "JavaScript"},
+			{`<svg><style>.c{color:[property path='Name']}</style></svg>`, "CSS"},
+		} {
+			if !lintSaysAny(tc.src, tc.lang) {
+				t.Errorf("%s: this text is %s, got %q", tc.src, tc.lang, lintWarnings(tc.src))
+			}
+		}
+	})
+
+	t.Run("an attribute in one is an attribute", func(t *testing.T) {
+		// The body is parsed, so <g> here is a real SVG element and its
+		// data-x is an inert attribute of it — not a line of JavaScript, which
+		// is what treating the whole raw token as program source claimed.
+		for _, src := range []string{
+			`<svg><script><g data-x="[property path='Name']"></g></script></svg>`,
+			`<svg><style><g data-x="[property path='Name']"></g></style></svg>`,
+		} {
+			if got := lintWarnings(src); len(got) != 0 {
+				t.Errorf("%s: an attribute of a real element, got %q", src, got)
+			}
+		}
+		// And when the attribute is one that does something, the rule that
+		// describes it is the one that fires.
+		src := `<svg><script><a href="javascript:[property path='Name']">go</a></script></svg>`
+		if !lintSaysAny(src, `continues a "javascript:" URL`) {
+			t.Errorf("a real SVG link inside the body, got %q", lintWarnings(src))
+		}
+	})
+
+	t.Run("an HTML program body is still raw text", func(t *testing.T) {
+		// No tag inside one is a tag, so the whole body is program source and
+		// the "attribute" below is only characters in it.
+		src := `<script><g data-x="[property path='Name']"></g></script>`
+		if !lintSaysAny(src, "reaches JavaScript") {
+			t.Errorf("an HTML <script> body is raw text throughout, got %q", lintWarnings(src))
+		}
+	})
+}
+
+// <annotation-xml> is the one element whose namespace an attribute VALUE
+// decides, so an interpolation in it is asked what it could complete rather
+// than whether it is there — the shape couldStillBecomeExecutable already uses
+// for a URL scheme.
+func TestLintInterpolatedEncodingAsksWhatItCouldBecome(t *testing.T) {
+	inert := func(src string) {
+		t.Helper()
+		if got := lintWarnings(src); len(got) != 0 {
+			t.Errorf("%s: this stays MathML, got %q", src, got)
+		}
+	}
+	live := func(src string) {
+		t.Helper()
+		if !lintSaysAny(src, "reaches JavaScript") {
+			t.Errorf("%s: this could become HTML, got %q", src, lintWarnings(src))
+		}
+	}
+	// Nothing appended to "image/" is "text/html" or "application/xhtml+xml".
+	inert(`<math><annotation-xml encoding="image/[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
+	inert(`<math><annotation-xml encoding="[property path='E']/svg+xml"><script>let x="[property path='N']"</script></annotation-xml></math>`)
+	// These could.
+	live(`<math><annotation-xml encoding="[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
+	live(`<math><annotation-xml encoding="text/[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
+	live(`<math><annotation-xml encoding="[property path='E']/html"><script>let x="[property path='N']"</script></annotation-xml></math>`)
+}
+
+// A <style> and a <script> inside a <noscript> are the pair that shows where
+// the dividing line is: both are real elements with scripting disabled, and
+// only one of them does anything.
+func TestLintNoscriptStyleIsAStylesheetAndScriptIsNot(t *testing.T) {
+	src := `<noscript><style>.x{color:[property path='Name']}</style></noscript>`
+	if !lintSaysAny(src, "reaches CSS") {
+		t.Errorf("with scripting off this is a live stylesheet, got %q", lintWarnings(src))
+	}
+	if !lintSaysAny(src, "whose body is markup only when scripting is disabled") {
+		t.Errorf("and it says which mode, got %q", lintWarnings(src))
+	}
+	src = `<noscript><script>var s="[property path='Name']"</script></noscript>`
+	if got := lintWarnings(src); len(got) != 0 {
+		t.Errorf("the script is real in that mode and still does not run, got %q", got)
+	}
+}
+
+// In foreign content the search for what an end tag closes stops at the first
+// element sitting directly inside an HTML one: past that the tag is HTML's
+// business, and HTML ignores one that names nothing open.
+func TestLintForeignEndTagSearchStopsAtTheHTMLBoundary(t *testing.T) {
+	src := `<x-foo><div><math></x-foo><iframe srcdoc="[property path='Name']"></iframe>`
+	if got := lintWarnings(src); len(got) != 0 {
+		t.Errorf("a browser ignores that end tag and stays in MathML, got %q", got)
 	}
 }

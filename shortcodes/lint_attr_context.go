@@ -189,6 +189,12 @@ type scanMode struct {
 	// been opened in it. Empty at the top of a document, and for the siblings of
 	// a self-closed foreign element, which close nothing.
 	enclosing string
+	// program names the SVG <script> or <style> whose body this is, whose TEXT
+	// is program source even though its tags are markup. programRoot is the
+	// namespace that program sits in, which is always "svg" today and is
+	// carried rather than assumed.
+	program     string
+	programRoot string
 }
 
 // maxMarkupScanDepth bounds the recursion in scanMarkup. Each level builds a
@@ -284,12 +290,15 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 	// pending describes the raw-text body the tokenizer is about to hand back
 	// as a single text token, and what this scan makes of it.
 	var pending struct {
-		language string   // script or style, whose body is a program
-		foreign  string   // the foreign root that program sits in, "" for HTML
+		// language is the HTML <script> or <style> whose body is a program AND
+		// raw text. Only HTML has one of those: an SVG program body is markup
+		// as well, so it is re-read like every other foreign region and reaches
+		// the language through scanMode.program instead.
+		language string
 		reread   bool     // read the body as markup instead
 		mode     scanMode // ... in this mode
 	}
-	forget := func() { pending.language, pending.foreign, pending.reread = "", "", false }
+	forget := func() { pending.language, pending.reread = "", false }
 
 	for {
 		tt := z.Next()
@@ -303,13 +312,11 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 			// Read from the tag's own source rather than through z.TagAttr,
 			// which replaces NUL with U+FFFD and so erases the sentinel.
 			hits := sentinelsInTag(raw)
-			interpolated := func(attr string) bool {
-				for _, hit := range hits {
-					if hit.ctx.inValue && hit.ctx.attr == attr {
-						return true
-					}
+			interpolatedEncoding := false
+			for _, hit := range hits {
+				if hit.ctx.inValue && hit.ctx.attr == "encoding" && encodingCouldBeHTML(hit.value) {
+					interpolatedEncoding = true
 				}
-				return false
 			}
 
 			ns := enclosing().namespaceForChild(name)
@@ -335,7 +342,7 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 			frame := markupFrame{
 				name:            name,
 				ns:              ns,
-				htmlIntegration: isHTMLIntegrationPoint(ns, name, z, hasAttr, interpolated("encoding")),
+				htmlIntegration: isHTMLIntegrationPoint(ns, name, z, hasAttr, interpolatedEncoding),
 				mathText:        ns == "math" && mathTextIntegrationPoints[name],
 			}
 			forget()
@@ -360,10 +367,17 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 					// SVG is the one foreign namespace that has these two: an
 					// SVG <script> executes — the parser spec special-cases its
 					// end tag and has nothing of the sort for MathML — and an
-					// SVG <style> is a real stylesheet. So still a program, and
-					// still worth naming its language; but foreign content
-					// decodes entities, which inverts what escaping does to it.
-					pending.language, pending.foreign = name, ns
+					// SVG <style> is a real stylesheet. So the body IS a
+					// program; but it is not raw text, so it is read as markup
+					// like every other foreign region, and only what lands in
+					// its TEXT is program source. An attribute written on an
+					// element inside it is an attribute of a real element, not a
+					// line of JavaScript.
+					pending.reread = true
+					pending.mode = scanMode{
+						foreign: frame.namespaceForChild("span"), noscript: mode.noscript,
+						enclosing: name, program: name, programRoot: ns,
+					}
 				default:
 					// Everything else here is an inert foreign element whose
 					// children are real markup, including a MathML <script> or
@@ -389,10 +403,21 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 				leaveForeignContent()
 				continue
 			}
+			// In foreign content the search for what this end tag closes stops
+			// at the first frame sitting directly inside an HTML one, which is
+			// x/net's parseForeignContent again: past that boundary the tag is
+			// HTML's business, and HTML ignores one that names nothing open.
+			// Searching the whole stack instead let "<x-foo><div><math></x-foo>"
+			// walk out of MathML, and an inert foreign <iframe srcdoc> became a
+			// real one.
+			foreignSearch := enclosing().ns != ""
 			matched := false
 			for i := len(stack) - 1; i >= 0; i-- {
 				if stack[i].name == name {
 					stack, matched = stack[:i], true
+					break
+				}
+				if foreignSearch && i > 0 && stack[i-1].ns == "" {
 					break
 				}
 			}
@@ -420,6 +445,17 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 				if depth < maxMarkupScanDepth {
 					scanMarkup(string(z.Raw()), pending.mode, depth+1, record)
 				}
+			case mode.program != "":
+				// Inside an SVG <script> or <style>, text is the program. Every
+				// text node under it is, because that is what textContent
+				// collects, so this does not ask how deeply nested it is.
+				for _, idx := range sentinelIndexes(string(z.Raw())) {
+					record(idx.index, attrContext{
+						rawTextElement: mode.program,
+						foreignRoot:    mode.programRoot,
+						noscript:       mode.noscript,
+					})
+				}
 			case pending.language != "":
 				// A script or style body in the HTML namespace is where
 				// escaping helps least, not most: the parser decodes no
@@ -431,7 +467,6 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 				for _, idx := range sentinelIndexes(string(z.Raw())) {
 					record(idx.index, attrContext{
 						rawTextElement: pending.language,
-						foreignRoot:    pending.foreign,
 						noscript:       mode.noscript,
 					})
 				}
@@ -482,11 +517,11 @@ func isHTMLIntegrationPoint(ns, name string, z *html.Tokenizer, hasAttr, interpo
 		if name != "annotation-xml" {
 			return false
 		}
-		// An interpolated encoding decides the namespace of everything inside,
-		// from a value a lower-privileged user writes. Which one it will turn
-		// out to be cannot be known here, so this reads it as the HTML
-		// integration point it may become — the same fail-closed choice the
-		// unterminated-tag case makes.
+		// An encoding an interpolation could complete decides the namespace of
+		// everything inside, from a value a lower-privileged user writes, so it
+		// reads as the HTML integration point it may become — the same
+		// fail-closed choice the unterminated-tag case makes. "Could complete"
+		// and not "contains one": see encodingCouldBeHTML.
 		if interpolatedEncoding {
 			return true
 		}
@@ -501,9 +536,10 @@ func isHTMLIntegrationPoint(ns, name string, z *html.Tokenizer, hasAttr, interpo
 			}
 			// Not trimmed: the match is ASCII case-insensitive and nothing more,
 			// so encoding=" text/html " is NOT an integration point.
-			switch strings.ToLower(string(val)) {
-			case "text/html", "application/xhtml+xml":
-				return true
+			for _, enc := range htmlAnnotationEncodings {
+				if strings.EqualFold(string(val), enc) {
+					return true
+				}
 			}
 			return false
 		}
@@ -649,6 +685,11 @@ func insideUnterminatedTags(substituted string, at []int) []bool {
 type sentinelHit struct {
 	index int
 	ctx   attrContext
+	// value is the whole attribute value the sentinel sits in, as written. It
+	// is a slice of the tag's own source, so keeping it copies nothing, and one
+	// rule needs the text on BOTH sides of the interpolation rather than only
+	// the prefix ctx.valueSoFar carries.
+	value string
 }
 
 // sentinelsInTag scans one tag's own source for sentinels sitting in attribute
@@ -730,7 +771,7 @@ func sentinelsInTag(tag string) []sentinelHit {
 				// is judged as the "javascript" the browser will see.
 				ctx.valueSoFar = html.UnescapeString(value[:idx.at])
 			}
-			hits = append(hits, sentinelHit{index: idx.index, ctx: ctx})
+			hits = append(hits, sentinelHit{index: idx.index, ctx: ctx, value: value})
 		}
 		if i < len(tag) {
 			i++
@@ -834,11 +875,10 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 	if ctx.rawTextElement != "" {
 		// Only script and style ever set this, so the language is never empty.
 		switch {
-		case ctx.noscript:
-			// Neither reading of a <noscript> body puts a language behind this.
-			// With scripting enabled the body is inert raw text; with it
-			// disabled the <script> is a real element that does not run, and a
-			// <style> is the residue named in scriptLikeElements' comment. What
+		case ctx.noscript && ctx.rawTextElement == "script":
+			// A <script> in a <noscript> body reaches nothing under either
+			// reading: with scripting enabled the body is inert raw text, and
+			// with it disabled the element is real and does not run. What
 			// survives is raw=, which is unescaped either way and can write
 			// "</noscript>" and go on in markup.
 			if raw {
@@ -852,7 +892,7 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 				` sees the value: an escaped quote arrives as a real quote and can ` + foreignEscapeConsequence[ctx.rawTextElement] +
 				`. Escaping makes this placement worse than the HTML one rather than safer. Pass the value in through a data- attribute instead.`}
 		}
-		return []string{label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + scriptLikeLanguage[ctx.rawTextElement] + ` with its escaping still in it rather than as the text you wrote. Escaping does not make the placement safe either — a "${...}" in a template literal or a ";" in a declaration contains nothing it touches. Pass the value in through a data- attribute instead.`}
+		return []string{qualify(label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + scriptLikeLanguage[ctx.rawTextElement] + ` with its escaping still in it rather than as the text you wrote. Escaping does not make the placement safe either — a "${...}" in a template literal or a ";" in a declaration contains nothing it touches. Pass the value in through a data- attribute instead.`)}
 	}
 	if ctx.inName {
 		return []string{qualify(label + ` is interpolated into a tag or attribute NAME, which nothing delimits: a value containing a space or "=" simply adds attributes of its own, and escaping does not touch either character. Build the name in the template instead.`)}
@@ -938,6 +978,44 @@ func urlSchemeBefore(prefix string) (scheme string, fixed bool) {
 func couldStillBecomeExecutable(prefix string) bool {
 	for scheme := range executableURLSchemes {
 		if strings.HasPrefix(scheme, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// htmlAnnotationEncodings are the two <annotation-xml> encodings that make its
+// children HTML. The match is ASCII case-insensitive and nothing more — no
+// trimming, no parameters.
+var htmlAnnotationEncodings = []string{"text/html", "application/xhtml+xml"}
+
+// encodingCouldBeHTML reports whether an interpolated <annotation-xml>
+// encoding= could come out as one of those two, which is the question the
+// namespace of everything inside the element turns on.
+//
+// The shape is couldStillBecomeExecutable's: what is fixed is the text on
+// either side of the interpolation, so encoding="text/[meta …]" could and
+// encoding="image/[meta …]" could not. Asking only whether the value holds an
+// interpolation at all failed closed on the second, which is a warning about a
+// script a browser never runs.
+func encodingCouldBeHTML(value string) bool {
+	hits := sentinelIndexes(value)
+	if len(hits) == 0 {
+		return false
+	}
+	first := hits[0]
+	last := hits[len(hits)-1]
+	end := last.at + len(lintSentinelPrefix)
+	if i := strings.IndexByte(value[end:], 0); i >= 0 {
+		end += i + 1
+	} else {
+		end = len(value)
+	}
+	prefix := strings.ToLower(value[:first.at])
+	suffix := strings.ToLower(value[end:])
+	for _, enc := range htmlAnnotationEncodings {
+		if len(prefix)+len(suffix) <= len(enc) &&
+			strings.HasPrefix(enc, prefix) && strings.HasSuffix(enc, suffix) {
 			return true
 		}
 	}
@@ -1087,8 +1165,9 @@ func expressionAttributeKind(attr string) string {
 // was a false positive first. breaksOutOfForeignContent: ~40 HTML tag names end
 // foreign content (the list copied from x/net's own breakout map, plus the
 // "</br>"/"</p>" end tags), so an <svg> the author forgot to close does not turn
-// every later <textarea> into a live region. markupFrame.namespaceForChild:
-// x/net's inForeignContent written against one frame, so <svg><title>, the
+// every later <textarea> into a live region. markupFrame.namespaceForChild and
+// the end-tag search: x/net's inForeignContent and parseForeignContent written
+// against one frame, so <svg><title>, the
 // MathML text points and their <mglyph>/<malignmark> exceptions, and an <svg>
 // inside <annotation-xml> all land where a browser puts them. And an end tag
 // naming a foreign root or the region's own element ends the region, because a
