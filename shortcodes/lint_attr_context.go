@@ -264,7 +264,7 @@ func (f markupFrame) keepsForeignContent() bool {
 // while a browser does so only when scripting is enabled.
 //
 // depth is the recursion depth, bounded by maxMarkupScanDepth.
-func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx attrContext)) {
+func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx attrContext)) (closedFromInside string) {
 	z := html.NewTokenizer(strings.NewReader(src))
 	var stack []markupFrame
 	// base is the namespace of content directly at the top of this scan, which
@@ -317,11 +317,92 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 	}
 	forget := func() { pending.language, pending.inert, pending.reread = "", false, false }
 
+	// closeTag applies an end tag, and is a closure because the recursion
+	// below reports one back: an element opened out here can be closed from
+	// inside a region this scan handed off.
+	closeTag := func(name string) {
+		forget()
+		// "</br>" and "</p>" are the end-tag half of the breakout rule.
+		if enclosing().ns != "" && (name == "br" || name == "p") {
+			leaveForeignContent()
+			return
+		}
+		// In foreign content the search for what this end tag closes stops
+		// at the first frame sitting directly inside an HTML one, which is
+		// x/net's parseForeignContent again: past that boundary the tag is
+		// HTML's business, and HTML ignores one that names nothing open.
+		// Searching the whole stack instead let "<x-foo><div><math></x-foo>"
+		// walk out of MathML, and an inert foreign <iframe srcdoc> became a
+		// real one.
+		matched := false
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i].name == name {
+				stack, matched = stack[:i], true
+				break
+			}
+			if enclosing().ns != "" && i > 0 && stack[i-1].ns == "" {
+				// Past this the tag is HTML's business, and HTML's own rule
+				// for an end tag naming nothing on top walks down until it
+				// matches or meets a SPECIAL element, whichever comes first.
+				// Both halves matter: without the walk, "<div><math></div>"
+				// left the scan in MathML and an HTML <iframe srcdoc> after
+				// it read as inert; without the stop, "<x-foo><div><math>
+				// </x-foo>" popped a <div> a browser keeps and did the
+				// opposite.
+				// From the TOP, not from this boundary: the elements
+				// between them are where the walk stops.
+				// "<div><math><annotation-xml></div>" is ignored by a
+				// browser because annotation-xml is special and ends the
+				// scope the </div> would need.
+				for j := len(stack) - 1; j >= 0; j-- {
+					if stack[j].name == name {
+						stack, matched = stack[:j], true
+						break
+					}
+					if isSpecialElement(stack[j]) {
+						break
+					}
+				}
+				break
+			}
+		}
+		// An end tag matching nothing this scan opened closes an element
+		// opened OUTSIDE it, and exactly two of those end the region: the
+		// foreign root this region is inside, and the element whose body it
+		// is. Not any foreign root — a "</svg>" inside a MathML region
+		// closes nothing, and a browser stays in MathML.
+		// "<svg><iframe></svg><textarea>…" is the shape — a browser pops
+		// both and reads the textarea as RCDATA, and without this the scan
+		// would go on calling it foreign and warn about a link a browser
+		// only ever shows as text.
+		//
+		// Any OTHER unmatched end tag is left alone on purpose. A browser
+		// ignores a stray "</textarea>" in foreign content and stays where
+		// it is, and treating one as an exit would put the scan back into
+		// HTML, where a srcdoc= that is inert on a foreign element starts
+		// warning again.
+		// ... and it stops at a SPECIAL element for the same reason the
+		// walk above does. "<svg><script><foreignObject><div></svg>" is
+		// ignored by a browser, because the current node is an HTML <div>
+		// and HTML's rule refuses to walk past one.
+		if !matched && base != "" && (name == base || name == mode.enclosing) &&
+			!(enclosing().ns == "" && stackHasSpecial(stack)) {
+			stack, base = stack[:0], ""
+			program, programRoot = "", ""
+			// Reported back, because the element it closed is the caller's: in
+			// "<math><textarea></math></textarea><textarea>…" a browser left
+			// MathML at the "</math>", so the second <textarea> is HTML RCDATA.
+			// A caller that kept its own MathML state read the link written in
+			// that one as live.
+			closedFromInside = name
+		}
+	}
+
 	for {
 		tt := z.Next()
 		switch tt {
 		case html.ErrorToken:
-			return
+			return closedFromInside
 		case html.StartTagToken, html.SelfClosingTagToken:
 			raw := string(z.Raw())
 			nameBytes, hasAttr := z.TagName()
@@ -424,85 +505,19 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 			// "<div/>" opens a div. Getting either wrong leaves a frame on the
 			// stack that a browser does not have, and the namespace of
 			// everything after it is then read off the wrong element.
-			if !voidElements[name] && !(tt == html.SelfClosingTagToken && ns != "") {
+			if !(voidElements[name] && ns == "") && !(tt == html.SelfClosingTagToken && ns != "") {
 				stack = append(stack, frame)
 			}
 		case html.EndTagToken:
-			forget()
 			nameBytes, _ := z.TagName()
-			name := string(nameBytes)
-			// "</br>" and "</p>" are the end-tag half of the breakout rule.
-			if enclosing().ns != "" && (name == "br" || name == "p") {
-				leaveForeignContent()
-				continue
-			}
-			// In foreign content the search for what this end tag closes stops
-			// at the first frame sitting directly inside an HTML one, which is
-			// x/net's parseForeignContent again: past that boundary the tag is
-			// HTML's business, and HTML ignores one that names nothing open.
-			// Searching the whole stack instead let "<x-foo><div><math></x-foo>"
-			// walk out of MathML, and an inert foreign <iframe srcdoc> became a
-			// real one.
-			matched := false
-			for i := len(stack) - 1; i >= 0; i-- {
-				if stack[i].name == name {
-					stack, matched = stack[:i], true
-					break
-				}
-				if enclosing().ns != "" && i > 0 && stack[i-1].ns == "" {
-					// Past this the tag is HTML's business, and HTML's own rule
-					// for an end tag naming nothing on top walks down until it
-					// matches or meets a SPECIAL element, whichever comes first.
-					// Both halves matter: without the walk, "<div><math></div>"
-					// left the scan in MathML and an HTML <iframe srcdoc> after
-					// it read as inert; without the stop, "<x-foo><div><math>
-					// </x-foo>" popped a <div> a browser keeps and did the
-					// opposite.
-					// From the TOP, not from this boundary: the elements
-					// between them are where the walk stops.
-					// "<div><math><annotation-xml></div>" is ignored by a
-					// browser because annotation-xml is special and ends the
-					// scope the </div> would need.
-					for j := len(stack) - 1; j >= 0; j-- {
-						if stack[j].name == name {
-							stack, matched = stack[:j], true
-							break
-						}
-						if isSpecialElement(stack[j]) {
-							break
-						}
-					}
-					break
-				}
-			}
-			// An end tag matching nothing this scan opened closes an element
-			// opened OUTSIDE it, and exactly two of those end the region: the
-			// foreign root this region is inside, and the element whose body it
-			// is. Not any foreign root — a "</svg>" inside a MathML region
-			// closes nothing, and a browser stays in MathML.
-			// "<svg><iframe></svg><textarea>…" is the shape — a browser pops
-			// both and reads the textarea as RCDATA, and without this the scan
-			// would go on calling it foreign and warn about a link a browser
-			// only ever shows as text.
-			//
-			// Any OTHER unmatched end tag is left alone on purpose. A browser
-			// ignores a stray "</textarea>" in foreign content and stays where
-			// it is, and treating one as an exit would put the scan back into
-			// HTML, where a srcdoc= that is inert on a foreign element starts
-			// warning again.
-			// ... and it stops at a SPECIAL element for the same reason the
-			// walk above does. "<svg><script><foreignObject><div></svg>" is
-			// ignored by a browser, because the current node is an HTML <div>
-			// and HTML's rule refuses to walk past one.
-			if !matched && base != "" && (name == base || name == mode.enclosing) && !stackHasSpecial(stack) {
-				stack, base = stack[:0], ""
-				program, programRoot = "", ""
-			}
+			closeTag(string(nameBytes))
 		case html.TextToken:
 			switch {
 			case pending.reread:
 				if depth < maxMarkupScanDepth {
-					scanMarkup(string(z.Raw()), pending.mode, depth+1, record)
+					if exited := scanMarkup(string(z.Raw()), pending.mode, depth+1, record); exited != "" {
+						closeTag(exited)
+					}
 				}
 			case program != "" && len(stack) == 0:
 				// Inside an SVG <script> or <style>, a DIRECT child text node is
@@ -608,7 +623,7 @@ func isHTMLIntegrationPoint(ns, name string, z *html.Tokenizer, hasAttr, interpo
 			// Not trimmed: the match is ASCII case-insensitive and nothing more,
 			// so encoding=" text/html " is NOT an integration point.
 			for _, enc := range htmlAnnotationEncodings {
-				if strings.EqualFold(string(val), enc) {
+				if asciiEqualFold(string(val), enc) {
 					return true
 				}
 			}
@@ -662,7 +677,7 @@ func styleTypeApplies(z *html.Tokenizer, hasAttr bool, hits []sentinelHit) bool 
 		// case-insensitive match for text/css", so type=" text/css " applies
 		// nothing at all.
 		for _, want := range styleSheetTypes {
-			if strings.EqualFold(string(val), want) {
+			if asciiEqualFold(string(val), want) {
 				return true
 			}
 		}
@@ -674,9 +689,12 @@ func styleTypeApplies(z *html.Tokenizer, hasAttr bool, hits []sentinelHit) bool 
 // stackHasSpecial reports whether HTML's walk would stop somewhere inside this
 // scan rather than reaching past it. Used only by the region-end fallback,
 // which is about an element this scan never opened, so anything that blocks the
-// walk blocks that too. Conservative when the current node is foreign — the
-// foreign rule does not stop at a special element — and being conservative
-// there costs a warning rather than inventing one.
+// walk blocks that too.
+//
+// Asked only when the current node is HTML, because the stop is HTML's rule.
+// The foreign rule has none: in "<svg><iframe><foreignObject><math></svg>" a
+// browser walks past the special <foreignObject>, finds the svg and leaves —
+// and refusing to leave there left a real HTML <iframe srcdoc> unwarned.
 func stackHasSpecial(stack []markupFrame) bool {
 	for _, f := range stack {
 		if isSpecialElement(f) {
@@ -732,6 +750,10 @@ var htmlSpecialElements = map[string]bool{
 // voidElements have no end tag and no children, so a browser pops one as soon
 // as it inserts it. Keeping a frame for one would put the namespace of its
 // following siblings on the wrong element.
+//
+// The list is HTML's, and so is the rule: an <svg><source> is an ordinary
+// foreign element that stays open, and dropping its frame made the text under
+// it read as a direct child of whatever was above.
 var voidElements = map[string]bool{
 	"area": true, "base": true, "br": true, "col": true, "embed": true,
 	"hr": true, "img": true, "input": true, "link": true, "meta": true,
@@ -1150,6 +1172,42 @@ func couldStillBecomeExecutable(prefix string) bool {
 	return false
 }
 
+// asciiEqualFold and asciiLower implement the "ASCII case-insensitive match"
+// every one of these attribute comparisons is specified with. strings.EqualFold
+// is Unicode simple folding, which makes "text/cſſ" equal to "text/css" — a
+// browser does not, so a stylesheet it never builds was drawing a CSS warning.
+func asciiEqualFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		if asciiLowerByte(a[i]) != asciiLowerByte(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiLower(s string) string {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 'A' && s[i] <= 'Z' {
+			b := []byte(s)
+			for j := i; j < len(b); j++ {
+				b[j] = asciiLowerByte(b[j])
+			}
+			return string(b)
+		}
+	}
+	return s
+}
+
+func asciiLowerByte(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c + ('a' - 'A')
+	}
+	return c
+}
+
 // styleSheetTypes are the type= values that leave a <style> element a
 // stylesheet: the empty string, or text/css. The match is ASCII
 // case-insensitive and nothing more — no trimming, no parameters.
@@ -1208,7 +1266,7 @@ func fixedRunsAround(value string) []string {
 	runs := make([]string, 0, len(hits)+1)
 	at := 0
 	for _, h := range hits {
-		runs = append(runs, strings.ToLower(html.UnescapeString(value[at:h.at])))
+		runs = append(runs, asciiLower(html.UnescapeString(value[at:h.at])))
 		at = h.at + len(lintSentinelPrefix)
 		if i := strings.IndexByte(value[at:], 0); i >= 0 {
 			at += i + 1
@@ -1216,7 +1274,7 @@ func fixedRunsAround(value string) []string {
 			at = len(value)
 		}
 	}
-	return append(runs, strings.ToLower(html.UnescapeString(value[at:])))
+	return append(runs, asciiLower(html.UnescapeString(value[at:])))
 }
 
 // fixedRunsFit reports whether some assignment to the interpolations could make

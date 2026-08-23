@@ -2232,3 +2232,75 @@ func TestLintProgramAndWalkEndWhereABrowserEndsThem(t *testing.T) {
 		}
 	})
 }
+
+// Three notions in this scan are HTML's and stop at the namespace boundary, and
+// each of them crossed it once.
+func TestLintHTMLNotionsStopAtTheNamespaceBoundary(t *testing.T) {
+	t.Run("void is an HTML notion", func(t *testing.T) {
+		// An <svg><source> is an ordinary foreign element that stays open, so
+		// the value under it is a descendant text node rather than the script's
+		// own child text.
+		src := `<svg><script><source>[property path="Name"]</source></script></svg>`
+		if got := lintWarnings(src); len(got) != 0 {
+			t.Errorf("%s: the <source> is still open, got %q", src, got)
+		}
+		// In HTML the same body is raw text throughout, so the value is source.
+		if !lintSaysAny(`<script><source>[property path="Name"]</source></script>`, "reaches JavaScript") {
+			t.Error("an HTML <script> body is raw text throughout")
+		}
+	})
+
+	t.Run("the special-element stop is an HTML rule", func(t *testing.T) {
+		// The foreign end-tag walk has no such stop: it walks past the special
+		// <foreignObject>, finds the svg and leaves, so the second iframe is a
+		// real HTML one.
+		src := `<svg><iframe><foreignObject><math></svg><iframe srcdoc="[property path='Name']"></iframe></iframe>`
+		if !lintSaysAny(src, `sits in a "srcdoc" attribute`) {
+			t.Errorf("%s: the </svg> is honoured here, got %q", src, lintWarnings(src))
+		}
+		// With an HTML element as the current node, HTML's rule governs and
+		// refuses to walk past one. The pair is the point.
+		src = `<svg><script><foreignObject><div></svg></div></foreignObject><iframe srcdoc="[property path='Name']"></iframe></script></svg>`
+		if got := lintWarnings(src); len(got) != 0 {
+			t.Errorf("%s: the </svg> is ignored here, got %q", src, got)
+		}
+	})
+
+	t.Run("case-insensitive means ASCII", func(t *testing.T) {
+		// strings.EqualFold folds U+017F with "s", so "text/cſſ" read as
+		// text/css and drew a warning about a stylesheet no browser builds.
+		for _, src := range []string{
+			`<style type="text/c` + "ſſ" + `">[property path="Name"]</style>`,
+			`<math><annotation-xml encoding="text/htm` + "ſ" + `"><iframe srcdoc="[property path='Name']"></iframe></annotation-xml></math>`,
+		} {
+			if got := lintWarnings(src); len(got) != 0 {
+				t.Errorf("%s: a browser matches ASCII only, got %q", src, got)
+			}
+		}
+		// ASCII case still folds, which is the half that has to keep working.
+		if !lintSaysAny(`<style type="TEXT/CSS">[property path="Name"]</style>`, "reaches CSS") {
+			t.Error("TEXT/CSS is text/css")
+		}
+		if !lintSaysAny(`<math><annotation-xml encoding="TEXT/HTML"><iframe srcdoc="[property path='Name']"></iframe></annotation-xml></math>`, `sits in a "srcdoc" attribute`) {
+			t.Error("TEXT/HTML is text/html")
+		}
+	})
+}
+
+// A region is read from its own source, so an end tag inside it that closes
+// something OUTSIDE it has to be reported back — the caller opened that element
+// and is the one holding the state for it.
+func TestLintRegionExitReachesTheCaller(t *testing.T) {
+	// A browser leaves MathML at the "</math>", so the second <textarea> is
+	// HTML RCDATA and the anchor written in it is literal text.
+	src := `<math><textarea></math></textarea><textarea><a href="javascript:[property path='Name']">go</a></textarea>`
+	if got := lintWarnings(src); len(got) != 0 {
+		t.Errorf("%s: past the </math> this is HTML, got %q", src, got)
+	}
+	// Without the exit it is still MathML, where the same anchor is a real
+	// element.
+	src = `<math><textarea><a href="javascript:[property path='Name']">go</a></textarea></math>`
+	if !lintSaysAny(src, `continues a "javascript:" URL`) {
+		t.Errorf("%s: still MathML here, got %q", src, lintWarnings(src))
+	}
+}
