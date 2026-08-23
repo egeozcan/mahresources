@@ -1550,9 +1550,10 @@ func TestLintCDATAIsCharacterDataInForeignContent(t *testing.T) {
 	})
 }
 
-// The two regions scanMarkup reads again are read by recursion, and the parts
-// of the answer that are reached outside it are not. Both facts are deliberate
-// and both are easy to change by accident, so they are pinned here.
+// The two bodies scanMarkup reads against the tokenizer's default — foreign
+// content and <noscript> — stream through the same scan, and the parts of the
+// answer that are reached outside it do not. Both facts are deliberate and
+// both are easy to change by accident, so they are pinned here.
 func TestLintRereadRegionEdges(t *testing.T) {
 	t.Run("the two regions compose", func(t *testing.T) {
 		// An <svg> inside a <noscript> is both at once, and the noscript half
@@ -1588,20 +1589,20 @@ func TestLintRereadRegionEdges(t *testing.T) {
 		}
 	})
 
-	t.Run("nesting past the scan depth falls back to silence", func(t *testing.T) {
-		// A realistic nest is read all the way down.
-		nested := `<svg><iframe><svg><iframe><a href="javascript:[property path='Name']">x</a></iframe></svg></iframe></svg>`
-		if !lintSaysAny(nested, `continues a "javascript:" URL`) {
-			t.Errorf("a nested foreign region is still read, got %q", lintWarnings(nested))
-		}
-		// Past the bound the region is left alone, which is what happened to
-		// every one of them before scanMarkup existed. The bound is there
-		// because each level tokenizes a copy of what it reads, so an unbounded
-		// nest would cost O(len × depth).
-		deep := strings.Repeat("<svg><iframe>", maxMarkupScanDepth+4) +
-			`<a href="javascript:[property path='Name']">x</a>`
-		if got := lintWarnings(deep); len(got) != 0 {
-			t.Errorf("past the depth bound the region is unanalysed, got %q", got)
+	t.Run("nesting is read all the way down", func(t *testing.T) {
+		// The link inside every one of these nests is a live SVG link, and
+		// there is no depth past which the scan stops reading: the body of a
+		// foreign element streams through the same tokenizer rather than
+		// being copied into a recursion, so there is no bound to fall off.
+		// (The recursive design's bound left everything past 8 levels
+		// unanalysed, and silent.)
+		for _, depth := range []int{2, 12} {
+			nested := strings.Repeat("<svg><iframe>", depth) +
+				`<a href="javascript:[property path='Name']">x</a>`
+			if !lintSaysAny(nested, `continues a "javascript:" URL`) {
+				t.Errorf("depth %d: a nested foreign body is still read, got %q",
+					depth, lintWarnings(nested))
+			}
 		}
 	})
 }
@@ -1839,9 +1840,14 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 	// from markup that is not: a stray end tag closing something that was never
 	// opened, a void element that a browser pops and a frame stack does not,
 	// and a "/>" that HTML ignores. checkRaw takes the source as written.
-	// Only the false-positive direction: malformed markup has many legitimate
-	// misses (a region past the depth bound, a value inside a program body),
-	// and the balanced sweep above is where the missed half is asserted.
+	//
+	// Both directions. The recursive design could only afford the
+	// false-positive half here, because its depth bound made silence past 8
+	// levels a designed outcome; with the bodies streaming through one
+	// tokenizer there is no such excuse left, and a live placement this
+	// corpus reaches must be warned about. The one excusal is the same one
+	// the balanced sweep makes: a value that lands in a program body draws
+	// the language message instead of the probe's own.
 	checkRaw := func(before, after string) {
 		for _, p := range probes {
 			lintSrc := before + p.lintSrc + after
@@ -1850,9 +1856,16 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 			if !live && p.scriptingOff {
 				live = exists(oracleSrc, p, false)
 			}
-			if lintSaysAny(lintSrc, p.msg) && !live {
+			warned := lintSaysAny(lintSrc, p.msg)
+			switch {
+			case warned && !live:
 				t.Errorf("FALSE POSITIVE (%s): no browser makes this live, yet %s warns:\n  %q",
 					p.name, lintSrc, lintWarnings(lintSrc))
+			case live && !warned:
+				if !lintSaysAny(lintSrc, "which is foreign content, where the parser decodes entities") {
+					t.Errorf("MISSED (%s): this is live in a browser, and %s is silent, got %q",
+						p.name, lintSrc, lintWarnings(lintSrc))
+				}
 			}
 		}
 	}
@@ -1874,6 +1887,10 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 		// Close something, then probe: the shape where a stale program or a
 		// stale namespace shows up.
 		"<div></div>", "<g></g>", "<span></span>", "<p></p>", "<foreignObject></foreignObject>",
+		// Formatting-element end tags run the adoption agency, whose one
+		// stack-visible property — a special element above the formatting
+		// element stays open — is what these exercise.
+		"</b>", "</a>", "<b></b>", "<b><div></b>", "</form>", "<form></form>",
 		// CDATA sections: character data in foreign content, a bogus comment
 		// in HTML, and the second one holds markup that must move nothing
 		// when the section is real.
@@ -2468,4 +2485,75 @@ func TestLintFormEndTagRemovesRatherThanPops(t *testing.T) {
 	if !lintSaysAny(src, `sits in a "srcdoc" attribute`) {
 		t.Errorf("%s: plain HTML here, got %q", src, lintWarnings(src))
 	}
+}
+
+// Round-10 findings, each checked against html.Parse before being written
+// down. Four are missed warnings and one is a false positive, and all five
+// come from the same place: region re-reading let the namespace-blind
+// tokenizer decide where a region ENDS, and let a region's remainder be read
+// in a state the end tags inside it had already changed.
+func TestLintAttributeContextRoundTen(t *testing.T) {
+	warns := func(src, want string) bool {
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("a CDATA section swallows a fake raw-text end tag", func(t *testing.T) {
+		// The "</script>" sits inside the CDATA section, so html.Parse makes
+		// one SVG <script> whose direct child text is the whole var block —
+		// the value reaches JavaScript, with its escaping intact (a CDATA
+		// section decodes no entities).
+		src := `<svg><script><![CDATA[var x="</script>"; var y="[property path='Name']";]]></script></svg>`
+		if !warns(src, "JavaScript") {
+			t.Errorf("this is the program text of an SVG <script>: %s", src)
+		}
+	})
+
+	t.Run("CDATA is allowed by the element's own namespace, not its children's", func(t *testing.T) {
+		// An SVG <title> is an HTML integration point, but the element itself
+		// is in the SVG namespace, and that is what admits a CDATA section.
+		// html.Parse makes one text node of the whole payload; no iframe
+		// exists, and no browser reads that srcdoc.
+		src := `<svg><title><![CDATA[a>b <iframe srcdoc="[property path='Name']">]]></title></svg>`
+		if warns(src, "srcdoc") {
+			t.Errorf("the payload is character data, not markup: %s", src)
+		}
+	})
+
+	t.Run("an end tag inside a swallowed region acts where it stands", func(t *testing.T) {
+		// The tokenizer hands "</div><iframe srcdoc=…>" back as the foreign
+		// iframe's raw-text body. The "</div>" closes the caller's <div> and
+		// takes the <svg> with it, so the second iframe is an HTML iframe at
+		// body level and its srcdoc is a document.
+		src := `<div><svg><iframe></div><iframe srcdoc="[property path='Name']"></iframe></iframe></svg>`
+		if !warns(src, "srcdoc") {
+			t.Errorf("the second iframe is HTML with a live srcdoc: %s", src)
+		}
+	})
+
+	t.Run("every end tag acts, not only the last", func(t *testing.T) {
+		// "</math>" leaves MathML; the later "</svg>" names nothing and is
+		// ignored. Keeping only the last unmatched end tag read that backwards
+		// and left the scan in MathML, where the iframe read as inert.
+		src := `<math><textarea></math></svg></textarea><iframe srcdoc="[property path='Name']"></iframe>`
+		if !warns(src, "srcdoc") {
+			t.Errorf("the iframe is HTML with a live srcdoc: %s", src)
+		}
+	})
+
+	t.Run("a formatting end tag does not pop through a special element", func(t *testing.T) {
+		// The adoption agency: "</b>" with a <div> above it removes the b and
+		// keeps the div open, so the later "</div>" still closes the div —
+		// and the <svg> inside it. The iframe after that is HTML.
+		for _, fe := range []string{"b", "a", "nobr"} {
+			src := `<` + fe + `><div></` + fe + `><svg></div><iframe srcdoc="[property path='Name']"></iframe>`
+			if !warns(src, "srcdoc") {
+				t.Errorf("</div> closes the div a browser kept open: %s", src)
+			}
+		}
+	})
 }
