@@ -18,10 +18,10 @@ function formWith(values: Record<string, string>) {
     } as unknown as HTMLFormElement;
 }
 
-function stubFetch() {
+function stubFetch(payload: Record<string, unknown> = {}) {
     const fetchMock = vi.fn(async () => ({
         ok: true,
-        json: async () => ({ html: '', css: '', entity: null, issues: [] }),
+        json: async () => ({ html: '', css: '', entity: null, issues: [], cssIssues: [], ...payload }),
     }));
     vi.stubGlobal('fetch', fetchMock);
     return fetchMock;
@@ -84,6 +84,34 @@ describe('template preview request', () => {
         expect(body.slot).toBe('CustomHeader');
         expect(body.content).toBe('<h1>x</h1>');
         expect(body.css).toBe('.badge{color:red}');
+    });
+
+    test('shows both issue lists, since the server splits them by buffer', async () => {
+        // The response separates content findings from css findings because
+        // their offsets index different buffers. The pane shows severity and
+        // message, so it reads them as one list — and dropping either half
+        // would silently hide half the diagnostics.
+        const fetchMock = stubFetch({
+            issues: [{ start: 0, end: 1, severity: 'warning', message: 'from content' }],
+            cssIssues: [{ start: 0, end: 1, severity: 'warning', message: 'from css' }],
+        });
+        const component = templatePreview({
+            entityType: 'group',
+            previewPath: '/v1/category/previewTemplate',
+            categoryId: 7,
+        });
+        component._form = formWith({ CustomCSS: '.a{}', CustomHeader: '<h1>x</h1>' });
+        component.$refs = {};
+        component.entityId = 42;
+        component.slot = 'CustomHeader';
+
+        await component.refresh();
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(component.issues.map((i: { message: string }) => i.message)).toEqual([
+            'from content',
+            'from css',
+        ]);
     });
 
     test('carrier mode names its slot as well', async () => {

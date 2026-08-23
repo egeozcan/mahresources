@@ -12,10 +12,17 @@ import (
 )
 
 type previewResponse struct {
-	HTML   string          `json:"html"`
-	CSS    string          `json:"css"`
-	Entity json.RawMessage `json:"entity"`
-	Issues []lintIssue     `json:"issues"`
+	HTML      string          `json:"html"`
+	CSS       string          `json:"css"`
+	Entity    json.RawMessage `json:"entity"`
+	Issues    []lintIssue     `json:"issues"`
+	CSSIssues []lintIssue     `json:"cssIssues"`
+}
+
+// allIssues is what the pane displays: the two lists concatenated. Assertions
+// about *which* buffer a diagnostic came from must read the fields directly.
+func (r previewResponse) allIssues() []lintIssue {
+	return append(append([]lintIssue{}, r.Issues...), r.CSSIssues...)
 }
 
 func TestPreviewTemplate_HappyPath(t *testing.T) {
@@ -155,6 +162,36 @@ func countPreviewIssues(issues []lintIssue, want string) int {
 func TestPreviewTemplate_CSSPlacementIssues(t *testing.T) {
 	const cssBuffer = `.badge{color:[meta path="colour" inline="true"]}`
 
+	// The content buffer alone, with no css to borrow a verdict from: the CSS
+	// reading can only have come from the content pass, so this is the subtest
+	// that actually pins the slot-driven mode.
+	t.Run("a named CustomCSS slot makes the content buffer a stylesheet", func(t *testing.T) {
+		tc := SetupTestEnv(t)
+		g := &models.Group{Name: "CSS Content Only Group"}
+		if err := tc.DB.Create(g).Error; err != nil {
+			t.Fatalf("create group: %v", err)
+		}
+
+		rr := tc.MakeRequest(http.MethodPost, "/v1/category/previewTemplate", map[string]any{
+			"entityId": g.ID,
+			"slot":     "CustomCSS",
+			"content":  cssBuffer,
+		})
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (body: %s)", rr.Code, rr.Body.String())
+		}
+		var resp previewResponse
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 1 {
+			t.Fatalf("the content pass must judge a CustomCSS slot as CSS, got %d: %+v", n, resp.Issues)
+		}
+		if len(resp.CSSIssues) != 0 {
+			t.Fatalf("no css buffer was sent, so its list must be empty: %+v", resp.CSSIssues)
+		}
+	})
+
 	t.Run("the selected CustomCSS slot is judged as a stylesheet, once", func(t *testing.T) {
 		tc := SetupTestEnv(t)
 		g := &models.Group{Name: "CSS Slot Group"}
@@ -177,8 +214,12 @@ func TestPreviewTemplate_CSSPlacementIssues(t *testing.T) {
 		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 1 {
-			t.Fatalf("expected exactly one CSS-placement issue, got %d: %+v", n, resp.Issues)
+		if n := countPreviewIssues(resp.allIssues(), "CSS slot"); n != 1 {
+			t.Fatalf("expected exactly one CSS-placement issue, got %d: %+v", n, resp.allIssues())
+		}
+		// One document, so the second pass never ran.
+		if len(resp.CSSIssues) != 0 {
+			t.Fatalf("the css buffer is the content buffer here, so it is not linted twice: %+v", resp.CSSIssues)
 		}
 	})
 
@@ -202,8 +243,11 @@ func TestPreviewTemplate_CSSPlacementIssues(t *testing.T) {
 		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 1 {
-			t.Fatalf("expected the css buffer's placement issue, got %d: %+v", n, resp.Issues)
+		if n := countPreviewIssues(resp.CSSIssues, "CSS slot"); n != 1 {
+			t.Fatalf("expected the css buffer's placement issue, got %d: %+v", n, resp.CSSIssues)
+		}
+		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 0 {
+			t.Fatalf("the markup slot's own content must not be judged as CSS, got %d: %+v", n, resp.Issues)
 		}
 	})
 
@@ -253,8 +297,11 @@ func TestPreviewTemplate_CSSPlacementIssues(t *testing.T) {
 		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 1 {
-			t.Fatalf("expected the css buffer's placement issue alone, got %d: %+v", n, resp.Issues)
+		if n := countPreviewIssues(resp.CSSIssues, "CSS slot"); n != 1 {
+			t.Fatalf("expected the css buffer's placement issue, got %d: %+v", n, resp.CSSIssues)
+		}
+		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 0 {
+			t.Fatalf("an unnamed slot reads content as markup, got %d: %+v", n, resp.Issues)
 		}
 	})
 
@@ -288,14 +335,15 @@ func TestPreviewTemplate_CSSPlacementIssues(t *testing.T) {
 		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 1 {
-			t.Fatalf("expected the stylesheet reading's placement issue, got %d: %+v", n, resp.Issues)
+		all := resp.allIssues()
+		if n := countPreviewIssues(all, "CSS slot"); n != 1 {
+			t.Fatalf("expected the stylesheet reading's placement issue, got %d: %+v", n, all)
 		}
-		if n := countPreviewIssues(resp.Issues, "becomes real elements"); n != 1 {
-			t.Fatalf("the markup reading's XSS warning must survive, got %d: %+v", n, resp.Issues)
+		if n := countPreviewIssues(all, "becomes real elements"); n != 1 {
+			t.Fatalf("the markup reading's XSS warning must survive, got %d: %+v", n, all)
 		}
-		if n := countPreviewIssues(resp.Issues, `required attribute "path"`); n != 1 {
-			t.Fatalf("what both readings agree on is reported once, got %d: %+v", n, resp.Issues)
+		if n := countPreviewIssues(all, `required attribute "path"`); n != 1 {
+			t.Fatalf("what both readings agree on is reported once, got %d: %+v", n, all)
 		}
 	})
 
@@ -324,13 +372,16 @@ func TestPreviewTemplate_CSSPlacementIssues(t *testing.T) {
 			t.Fatalf("decode: %v", err)
 		}
 		// Only the css pass runs in CSS mode...
-		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 1 {
-			t.Fatalf("expected the css buffer's placement issue alone, got %d: %+v", n, resp.Issues)
+		if n := countPreviewIssues(resp.CSSIssues, "CSS slot"); n != 1 {
+			t.Fatalf("expected the css buffer's placement issue, got %d: %+v", n, resp.CSSIssues)
 		}
-		// ...but both documents are linted, so a blanket equality dedupe would
-		// silently drop the header's own diagnostics.
-		if n := countPreviewIssues(resp.Issues, `required attribute "path"`); n != 2 {
-			t.Fatalf("two documents must each be linted, got %d: %+v", n, resp.Issues)
+		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 0 {
+			t.Fatalf("the markup slot's content is not a stylesheet, got %d: %+v", n, resp.Issues)
+		}
+		// ...but both documents are linted and neither is deduped away, so a
+		// blanket equality dedupe would silently drop the header's diagnostics.
+		if n := countPreviewIssues(resp.allIssues(), `required attribute "path"`); n != 2 {
+			t.Fatalf("two documents must each be linted, got %d: %+v", n, resp.allIssues())
 		}
 	})
 }

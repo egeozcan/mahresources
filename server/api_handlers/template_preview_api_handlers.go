@@ -45,8 +45,14 @@ type templatePreviewResponse struct {
 	// `{{ group|json }}` filter (plain json.Marshal of the model), so the
 	// preview frame can recreate the `x-data="{ entity: ... }"` Alpine scope
 	// those pages wrap the Custom* slots in.
-	Entity json.RawMessage        `json:"entity"`
-	Issues []shortcodes.LintIssue `json:"issues"`
+	Entity json.RawMessage `json:"entity"`
+	// Issues are the content buffer's, plus the whole-request notes (the
+	// category mismatch), which index nothing. CSSIssues are the css buffer's.
+	// They are two lists because a LintIssue's Start/End are offsets, and one
+	// list of offsets into two different buffers is not readable by anything
+	// but the pane, which shows severity and message only.
+	Issues    []shortcodes.LintIssue `json:"issues"`
+	CSSIssues []shortcodes.LintIssue `json:"cssIssues"`
 }
 
 // GetPreviewTemplateHandler handles POST /v1/{category|resourceCategory|noteType}/previewTemplate.
@@ -137,26 +143,25 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 
 		// The css buffer is a second document needing its own pass as a
 		// stylesheet — unless it is the document just linted, which is what the
-		// CustomCSS slot sends, and linting it again would print every issue
+		// CustomCSS slot sends, and linting it again would report everything
 		// twice. Text equality alone does not establish that: with a markup slot
 		// named, the two buffers are two documents however alike they read.
-		// Offsets on the appended issues index the css buffer rather than
-		// Content; the pane renders severity and message only.
+		var cssIssues []shortcodes.LintIssue
 		if req.CSS != "" && !(contentIsCSS && req.CSS == req.Content) {
 			lintOpts.CSSMode = true
-			cssIssues := shortcodes.Lint(req.CSS, lintOpts)
+			cssIssues = shortcodes.Lint(req.CSS, lintOpts)
 			// An older client names no slot and sends one buffer as both, so
 			// Content is under both readings at once and has just been linted
 			// under the markup one. Report what the two readings agree on once
 			// and keep what only one of them says — the markup XSS warnings and
 			// the CSS placement warning are each visible to a single reading,
 			// so dropping either pass would drop real diagnostics. Both ran over
-			// the same text, so a shared finding carries identical offsets and
-			// matches exactly.
+			// one text, so a shared finding carries identical offsets and matches
+			// exactly. This is the one case where CSSIssues is not the whole of
+			// what the css buffer produced.
 			if req.Slot == "" && req.CSS == req.Content {
 				cssIssues = issuesNotAlreadyReported(issues, cssIssues)
 			}
-			issues = append(issues, cssIssues...)
 		}
 		// Warn (don't fail) when previewing against an entity of a different
 		// category than the one being edited.
@@ -169,6 +174,9 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		if issues == nil {
 			issues = []shortcodes.LintIssue{}
 		}
+		if cssIssues == nil {
+			cssIssues = []shortcodes.LintIssue{}
+		}
 
 		entityJSON, err := json.Marshal(entity)
 		if err != nil {
@@ -176,7 +184,13 @@ func GetPreviewTemplateHandler(ctx TemplatePreviewContext, entityType string) fu
 		}
 
 		writer.Header().Set("Content-Type", constants.JSON)
-		_ = json.NewEncoder(writer).Encode(templatePreviewResponse{HTML: html, CSS: css, Entity: entityJSON, Issues: issues})
+		_ = json.NewEncoder(writer).Encode(templatePreviewResponse{
+			HTML:      html,
+			CSS:       css,
+			Entity:    entityJSON,
+			Issues:    issues,
+			CSSIssues: cssIssues,
+		})
 	}
 }
 
