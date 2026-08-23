@@ -82,3 +82,19 @@ func TestLintPartialSelfReference(t *testing.T) {
 		t.Fatalf("did not expect self-reference warning for a different name")
 	}
 }
+
+// %q escapes quotes and backslashes but not "-->", so the not-found comment
+// could be closed from inside by the very name it reports and followed by real
+// markup. Templates are admin/editor-authored, but processor.go re-processes a
+// plugin's output as template source, so a plugin shortcode's return value
+// reaches this emitter too.
+func TestPartialNotFoundCommentCannotBeClosedFromInside(t *testing.T) {
+	ctx := WithPartialResolver(context.Background(), resolverFrom(map[string]string{}))
+	got := Process(ctx, `[partial name="x --> <img src=x onerror=alert(1)> <!--"]`, MetaShortcodeContext{}, nil, nil)
+
+	assert.NotContains(t, got, "<img", "the name escaped the comment")
+	assert.Equal(t, 1, strings.Count(got, "-->"), "the comment is closed exactly once, at its end")
+	assert.Equal(t,
+		`<!-- partial "x --&gt; &lt;img src=x onerror=alert(1)&gt; &lt;!--" not found -->`,
+		got)
+}
