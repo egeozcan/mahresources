@@ -196,6 +196,21 @@ func formatJSONScalar(v any, format, layout string) string {
 	return formatPropertyValue(reflect.ValueOf(v), format, layout)
 }
 
+// formatFloat renders a float in plain decimal notation. "%g" was picking
+// scientific notation from six significant digits up, so every integer-looking
+// Meta field at or above one million printed as "1.234567e+06" — and JSON
+// decodes every number to a float64, so that is the shape [item], [meta inline]
+// and [mrql value=] on an aggregate all see.
+//
+// The bounds are encoding/json's, for the reason encoding/json has them: past
+// them the plain form is hundreds of digits, which no page wants either.
+func formatFloat(f float64) string {
+	if abs := math.Abs(f); abs != 0 && (abs < 1e-6 || abs >= 1e21) {
+		return strconv.FormatFloat(f, 'e', -1, 64)
+	}
+	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
 // formatTimeValue applies layout (wins) or format to a time.
 func formatTimeValue(t time.Time, format, layout string) string {
 	if layout != "" {
@@ -265,7 +280,7 @@ func formatFieldValue(v reflect.Value) string {
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return fmt.Sprintf("%d", v.Uint())
 	case reflect.Float32, reflect.Float64:
-		return fmt.Sprintf("%g", v.Float())
+		return formatFloat(v.Float())
 	case reflect.Bool:
 		return fmt.Sprintf("%t", v.Bool())
 	case reflect.Slice:

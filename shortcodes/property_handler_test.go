@@ -363,3 +363,36 @@ func TestFormatScalarValueFormatsBothEngineShapesAlike(t *testing.T) {
 	assert.Equal(t, "42", formatScalarValue(int64(42), "", ""))
 	assert.Equal(t, "2.0 KB", formatScalarValue(float64(2048), "filesize", ""))
 }
+
+// JSON decodes every number to float64, so "%g" put every integer-looking Meta
+// field at or above one million into scientific notation: {"n":1234567} rendered
+// "1.234567e+06". It reaches the three shortcodes whose values are JSON-shaped.
+func TestJSONNumbersRenderInPlainDecimal(t *testing.T) {
+	// [item]
+	item := renderItemValue(
+		Shortcode{Name: "item", Attrs: map[string]string{"path": "n"}},
+		map[string]any{"n": float64(1234567)}, 1)
+	assert.Equal(t, "1234567", item)
+
+	// [meta inline="true"]
+	inline := RenderMetaShortcode(
+		Shortcode{Name: "meta", Attrs: map[string]string{"path": "n", "inline": "true"}},
+		MetaShortcodeContext{Meta: json.RawMessage(`{"n":1234567}`)})
+	assert.Equal(t, "1234567", inline)
+
+	// [mrql value=…] on an aggregate
+	assert.Equal(t, "1234567", formatScalarValue(float64(1234567), "", ""))
+	assert.Equal(t, "1234567.5", formatScalarValue(float64(1234567.5), "", ""))
+
+	// Small and negative values keep their plain form too.
+	assert.Equal(t, "0", formatScalarValue(float64(0), "", ""))
+	assert.Equal(t, "-1234567", formatScalarValue(float64(-1234567), "", ""))
+	assert.Equal(t, "2.5", formatScalarValue(2.5, "", ""))
+
+	// Past the point where plain decimal is hundreds of digits, exponent form is
+	// the readable one — the same bounds encoding/json switches at.
+	assert.Equal(t, "1e+21", formatScalarValue(1e21, "", ""))
+	assert.Equal(t, "1e-07", formatScalarValue(1e-7, "", ""))
+	assert.Equal(t, "100000000000000000000", formatScalarValue(1e20, "", ""))
+	assert.Equal(t, "0.000001", formatScalarValue(1e-6, "", ""))
+}
