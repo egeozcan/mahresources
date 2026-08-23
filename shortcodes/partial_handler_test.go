@@ -97,4 +97,13 @@ func TestPartialNotFoundCommentCannotBeClosedFromInside(t *testing.T) {
 	assert.Equal(t,
 		`<!-- partial "x --&gt; &lt;img src=x onerror=alert(1)&gt; &lt;!--" not found -->`,
 		got)
+
+	// Every way a comment can end, held to the same rule the emitter actually
+	// keeps: the only ">" in the output is the one that closes it.
+	for _, term := range commentTerminators {
+		out := partialNotFoundComment("a" + term + "b")
+		assert.True(t, strings.HasSuffix(out, " -->"), "%q: lost its own terminator", term)
+		assert.Equal(t, 1, strings.Count(out, ">"),
+			"%q: the name contributed a %q that could close the comment", term, ">")
+	}
 }

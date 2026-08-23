@@ -973,10 +973,15 @@ func TestEveryMetaReaderReadsThroughTheMemo(t *testing.T) {
 
 	// [conditional]/[each]
 	assert.Equal(t, "from-memo", ctx.rawValueAtPath("a"))
-	// the widget's data-value
-	assert.Equal(t, `"from-memo"`, ctx.valueJSONAtPath("a"))
-	// the widget's data-schema, whose if/then is evaluated against the value
-	assert.Contains(t, extractSchemaSlice(schema, "a", ctx.decodeMetaObject()), `"MEMO"`)
+	// The widget as it is actually rendered, not its two helpers: its data-value
+	// and its data-schema (whose if/then is evaluated against the value) both
+	// have to come from the memo, and a RenderMetaShortcode that decoded
+	// ctx.Meta for either of them would print "from-blob"/"BLOB" here.
+	widget := RenderMetaShortcode(Shortcode{Name: "meta", Attrs: map[string]string{"path": "a"}}, ctx)
+	assert.Contains(t, widget, "from-memo")
+	assert.Contains(t, widget, "MEMO")
+	assert.NotContains(t, widget, "from-blob")
+	assert.NotContains(t, widget, "BLOB")
 	// [meta inline="true"]
 	assert.Equal(t, "from-memo", RenderMetaShortcode(
 		Shortcode{Name: "meta", Attrs: map[string]string{"path": "a", "inline": "true"}}, ctx))
