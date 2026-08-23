@@ -1731,6 +1731,9 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 	openers := []string{
 		"<svg>", "<math>", "<svg><iframe>", "<math><iframe>", "<svg><textarea>",
 		"<math><mtext>", "<svg><g>", "<math><annotation-xml>", "<div>",
+		// Two roots deep, so the closer that arrives belongs to the outer one.
+		"<svg><iframe><math>", "<math><iframe><svg>", "<svg><math><iframe>",
+		"<math><mtext><div><svg><iframe>",
 	}
 	strays := []string{
 		"", "</svg>", "</math>", "</textarea>", "</iframe>", "</div>", "</p>", "</br>",
