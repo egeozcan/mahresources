@@ -89,40 +89,7 @@ func attributeContextsFor(input string, spans []inlineMetaSpan) map[int]attrCont
 	b.WriteString(input[last:])
 
 	substituted := b.String()
-	z := html.NewTokenizer(strings.NewReader(substituted))
-	var openRawText string
-tokenize:
-	for {
-		switch z.Next() {
-		case html.ErrorToken:
-			break tokenize
-		case html.StartTagToken, html.SelfClosingTagToken:
-			for _, hit := range sentinelsInTag(string(z.Raw())) {
-				if hit.index >= 0 && hit.index < len(spans) {
-					out[spans[hit.index].start] = hit.ctx
-				}
-			}
-			name, _ := z.TagName()
-			openRawText = ""
-			if rawTextElements[string(name)] {
-				openRawText = string(name)
-			}
-		case html.EndTagToken:
-			openRawText = ""
-		case html.TextToken:
-			// A raw-text body is where escaping helps least, not most: the
-			// parser decodes no entities there, so a script or style body takes
-			// the value into JavaScript or CSS exactly as written, and a
-			// <noscript> body was read as neither markup nor script.
-			if openRawText != "" {
-				for _, idx := range sentinelIndexes(string(z.Raw())) {
-					if idx.index >= 0 && idx.index < len(spans) {
-						out[spans[idx.index].start] = attrContext{rawTextElement: openRawText}
-					}
-				}
-			}
-		}
-	}
+	classifyTokens(substituted, spans, out, 0)
 
 	// An unterminated tag never reaches the tokenizer as a tag, so its
 	// occurrences come back unresolved. Reporting those as "not in an
@@ -166,6 +133,68 @@ tokenize:
 		}
 	}
 	return out
+}
+
+// maxNoscriptDepth bounds the re-reading below. A <noscript> inside a
+// <noscript> is ignored by a real parser anyway ("in head noscript" drops a
+// nested one), so this exists to keep a pathological template from costing a
+// re-scan per nesting level, not to serve a real shape.
+const maxNoscriptDepth = 4
+
+// classifyTokens records what the tokenizer can say about each sentinel in one
+// already-substituted document: which attribute of which tag it sits in, or
+// which raw-text body. It works from sentinel indices rather than byte offsets,
+// which is what lets it read a nested body by calling itself.
+func classifyTokens(doc string, spans []inlineMetaSpan, out map[int]attrContext, depth int) {
+	z := html.NewTokenizer(strings.NewReader(doc))
+	var openRawText string
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			return
+		case html.StartTagToken, html.SelfClosingTagToken:
+			for _, hit := range sentinelsInTag(string(z.Raw())) {
+				if hit.index >= 0 && hit.index < len(spans) {
+					out[spans[hit.index].start] = hit.ctx
+				}
+			}
+			name, _ := z.TagName()
+			openRawText = ""
+			if n := string(name); scriptLikeElements[n] || n == "noscript" {
+				openRawText = n
+			}
+		case html.EndTagToken:
+			openRawText = ""
+		case html.TextToken:
+			switch {
+			case openRawText == "":
+			case openRawText == "noscript":
+				// A <noscript> body is raw text when scripting is enabled and
+				// ordinary markup when it is not, and the tokenizer only ever
+				// reads it the first way — so <noscript><a href="[meta …]">
+				// arrived here as prose with no <a> in it, and the placement
+				// rules never ran on an href that is real for exactly the
+				// audience a <noscript> is written for.
+				//
+				// Reading the body as markup answers both parses at once: it is
+				// the scripting-disabled reading, which is the only one in which
+				// the value can land somewhere unsafe, and it leaves an escaped
+				// value in plain text alone, which is what it is under either.
+				if depth < maxNoscriptDepth {
+					classifyTokens(string(z.Raw()), spans, out, depth+1)
+				}
+			default:
+				// A script or style body is where escaping helps least, not
+				// most: the parser decodes no entities there, so the value
+				// lands in JavaScript or CSS exactly as written.
+				for _, idx := range sentinelIndexes(string(z.Raw())) {
+					if idx.index >= 0 && idx.index < len(spans) {
+						out[spans[idx.index].start] = attrContext{rawTextElement: openRawText}
+					}
+				}
+			}
+		}
+	}
 }
 
 // insideUnterminatedTags reports, for each offset in at (ascending), whether it
@@ -406,10 +435,8 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		return []string{label + ` is inside a tag that is never closed, so where it lands cannot be determined. Close the tag; until then treat the value as unsafe.`}
 	}
 	if ctx.rawTextElement != "" {
-		if lang := scriptLikeLanguage[ctx.rawTextElement]; lang != "" {
-			return []string{label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + lang + ` exactly as written. Escaping stops nothing here — a "${...}" in a template literal or a ";" in a declaration is not escaped at all. Pass the value in through a data- attribute instead.`}
-		}
-		return []string{label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser reads as raw text when scripting is enabled and as markup when it is not, and the tags inside it were analysed as neither — so where the value lands cannot be determined. Move it outside the element; until then treat the value as unsafe.`}
+		// Only script and style ever set this, so the language is never empty.
+		return []string{label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + scriptLikeLanguage[ctx.rawTextElement] + ` exactly as written. Escaping stops nothing here — a "${...}" in a template literal or a ";" in a declaration is not escaped at all. Pass the value in through a data- attribute instead.`}
 	}
 	if ctx.inName {
 		return []string{label + ` is interpolated into a tag or attribute NAME, which nothing delimits: a value containing a space or "=" simply adds attributes of its own, and escaping does not touch either character. Build the name in the template instead.`}
@@ -541,11 +568,11 @@ func expressionAttributeKind(attr string) string {
 	return ""
 }
 
-// rawTextElements are the bodies where "the tokenizer emitted no tags here"
-// has to change the answer. It raw-tags ten elements (iframe, noembed,
-// noframes, noscript, plaintext, script, style, textarea, title, xmp) and no
-// tag inside any of them is ever emitted as a tag, so it is worth saying why
-// seven of the ten are deliberately absent rather than merely unlisted.
+// scriptLikeElements have bodies in which the parser decodes no entities, so
+// escaping a value placed there accomplishes nothing.
+//
+// The tokenizer raw-texts ten elements, and no tag inside any of them is ever
+// emitted as a tag, so it is worth saying why the other eight are not here.
 //
 // textarea and title are RCDATA: entities *are* decoded there, so escaping
 // works exactly as it does in an attribute — and a tag written inside one is
@@ -553,25 +580,19 @@ func expressionAttributeKind(attr string) string {
 // in an attribute" context already reports.
 //
 // iframe, noembed, noframes, xmp and plaintext are raw text in an HTML parser
-// unconditionally, and that makes the same answer right for a different reason:
-// a tag inside one is text to the browser as well, so "not in an attribute" is
+// unconditionally, which makes the same answer right for a different reason: a
+// tag inside one is text to the browser as well, so "not in an attribute" is
 // the truth rather than a gap. An escaped value cannot even close the element —
 // html.EscapeString leaves no "<" and no entity is decoded to give one back —
 // and a raw value that closes it with "</xmp>" is already covered by the raw=
-// rule below, which is the message that case wants. plaintext runs to EOF and
-// cannot be closed at all. Listing them would be a false positive on every
-// escaped value in one.
+// rule in unsafeAttributeContexts, which is the message that case wants.
+// plaintext runs to EOF and cannot be closed at all.
 //
-// noscript is the one that is genuinely undecidable, and the reason this list
-// grew at all: its body is raw text when scripting is enabled and ordinary
-// markup when it is not, so <noscript><a href="[meta …]"> — read here as prose,
-// because the tokenizer emitted no <a> — may really be an attribute. It fails
-// closed.
-var rawTextElements = map[string]bool{"script": true, "style": true, "noscript": true}
+// noscript is the one where the tokenizer's reading and the browser's can
+// differ, so it is not here either: classifyTokens reads its body as markup
+// rather than labelling it.
+var scriptLikeElements = map[string]bool{"script": true, "style": true}
 
-// scriptLikeLanguage names the language a raw-text body is written in, for the
-// two where the value lands in one. noscript names none, and gets the
-// "could not be read" message instead.
 var scriptLikeLanguage = map[string]string{"script": "JavaScript", "style": "CSS"}
 
 // inertAlpineDirectives take a literal value rather than an expression, so

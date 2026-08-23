@@ -546,10 +546,12 @@ func TestLintScannerHandlesRawTextAndPartialSchemes(t *testing.T) {
 // placement an author writes most often, and lint runs on every debounced
 // keystroke in the template editor.
 //
-// Correctness at that scale is the assertion. A wall-clock assertion would be
-// flaky; what pins the rewritten scan's semantics is
-// TestUnterminatedTagScanMatchesThePerOffsetScan below.
-func TestLintManyBareValuesStayLinear(t *testing.T) {
+// Correctness at that scale is all this asserts, and the name says so: it
+// passes against the quadratic shape too, which merely takes 25x longer.
+// A wall-clock assertion is the one thing that would make it flaky. What pins
+// the rewritten scan is TestUnterminatedTagScanMatchesThePerOffsetScan below;
+// the linearity itself is structural, one pass with the offsets already known.
+func TestLintManyBareValuesAtScale(t *testing.T) {
 	const n = 2000
 
 	t.Run("in ordinary text", func(t *testing.T) {
@@ -620,18 +622,33 @@ func TestUnterminatedTagScanMatchesThePerOffsetScan(t *testing.T) {
 
 	// Every offset, len(s) included: an offset at the very end is a legitimate
 	// question the old shape answered, even though a recorded sentinel start is
-	// always followed by the sentinel's own bytes.
+	// always followed by the sentinel's own bytes. Sparse subsets go with it,
+	// because a real call asks about a handful of offsets, and they are what
+	// exercises the early exit once nothing is left pending.
 	check := func(t *testing.T, s string) {
 		t.Helper()
-		at := make([]int, len(s)+1)
-		for i := range at {
-			at[i] = i
-		}
-		got := insideUnterminatedTags(s, at)
-		for i := range at {
-			if want := reference(s, i); got[i] != want {
-				t.Fatalf("offset %d of %q: got %v, want %v", i, s, got[i], want)
+		verify := func(at []int) {
+			got := insideUnterminatedTags(s, at)
+			for k, off := range at {
+				if want := reference(s, off); got[k] != want {
+					t.Fatalf("offset %d of %q (asked %v): got %v, want %v", off, s, at, got[k], want)
+				}
 			}
+		}
+		all := make([]int, len(s)+1)
+		for i := range all {
+			all[i] = i
+		}
+		verify(all)
+		for _, step := range []int{2, 3, 7} {
+			var sparse []int
+			for i := 0; i < len(all); i += step {
+				sparse = append(sparse, all[i])
+			}
+			verify(sparse)
+		}
+		for _, one := range all {
+			verify([]int{one})
 		}
 	}
 
@@ -1075,22 +1092,39 @@ func TestLintRawTextElementBodies(t *testing.T) {
 		return false
 	}
 
-	t.Run("a noscript body cannot be placed, so it fails closed", func(t *testing.T) {
-		// Its body is markup when scripting is disabled, so this href may be a
-		// real attribute — and the tokenizer emitted no <a> for the walk to
-		// find. Byte-identical markup outside the wrapper warns about the
-		// scheme; inside it, the honest answer is "this was not read".
-		src := `<noscript><a href="[meta path='x' inline='true']">go</a></noscript>`
-		if !warns(src, "<noscript> body") {
-			t.Error("nothing inside <noscript> was analysed: " + src)
-		}
-		if !warns(`<noscript>[property path="Name"]</noscript>`, "<noscript> body") {
-			t.Error("with no tag around it either, the body is still unreadable")
-		}
-		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
-			if strings.Contains(issue.Message, "the value reaches  ") {
-				t.Errorf("<noscript> has no language to name: %s", issue.Message)
+	t.Run("a noscript body is read as the markup it may be", func(t *testing.T) {
+		// The href is real for exactly the audience a <noscript> is written
+		// for, and the tokenizer emitted no <a> for the attribute walk to find.
+		// Reading the body as markup gives the same answer the byte-identical
+		// markup gets outside the wrapper.
+		for _, tc := range []struct{ src, want string }{
+			{`<noscript><a href="[meta path='x' inline='true']">go</a></noscript>`, "choose the scheme"},
+			{`<noscript><button onclick="f('[meta path='x' inline='true']')">go</button></noscript>`, "event handler"},
+			{`<noscript><a href="javascript:[property path='Name']">go</a></noscript>`, "executes rather than fetches"},
+			{`<noscript><div title="[meta path='x' inline='true' raw='true']</noscript>`, "never closed"},
+		} {
+			if !warns(tc.src, tc.want) {
+				t.Errorf("no %q warning for %s", tc.want, tc.src)
 			}
+		}
+	})
+
+	t.Run("an escaped value in a noscript body is text under either parse", func(t *testing.T) {
+		// Raw text with scripting on, a text node with it off. Warning here
+		// would be a false positive, which is what a blanket "this body could
+		// not be read" produced.
+		for _, src := range []string{
+			`<noscript>[property path="Name"]</noscript>`,
+			`<noscript><div class="c">[meta path='x' inline='true']</div></noscript>`,
+			`<noscript><a href="/x/[meta path='x' inline='true']">go</a></noscript>`,
+		} {
+			for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+				t.Errorf("escaped text in <noscript> is safe, got %q for %s", issue.Message, src)
+			}
+		}
+		// raw= is still raw, wherever the body ends up being parsed.
+		if !warns(`<noscript>[property path="Name" raw="true"]</noscript>`, "becomes real elements") {
+			t.Error("a raw value in a noscript body must still warn")
 		}
 	})
 
@@ -1108,10 +1142,13 @@ func TestLintRawTextElementBodies(t *testing.T) {
 		}
 	})
 
-	t.Run("a raw value in one of them is the raw rule's business", func(t *testing.T) {
+	t.Run("a raw value in a closable one is the raw rule's business", func(t *testing.T) {
 		// "</xmp>" is exactly how a raw value gets back out into markup, and
 		// the answer — drop raw= — is the one that rule already gives.
-		for _, el := range []string{"iframe", "noembed", "noframes", "plaintext", "xmp"} {
+		// plaintext is left out: it runs to EOF, so a raw value there cannot
+		// escape either, and the warning it draws is the raw rule being
+		// conservative rather than anything this classification decided.
+		for _, el := range []string{"iframe", "noembed", "noframes", "xmp"} {
 			src := "<" + el + `>[meta path='x' inline='true' raw='true']</` + el + ">"
 			if !warns(src, "becomes real elements") {
 				t.Errorf("a raw value in <%s> must warn: %s", el, src)
@@ -1125,6 +1162,22 @@ func TestLintRawTextElementBodies(t *testing.T) {
 		}
 		if !warns(`<style>.c{color:[meta path='x' inline='true']}</style>`, "reaches CSS") {
 			t.Error("a style body still names CSS")
+		}
+	})
+
+	t.Run("nested noscript bodies stop at the depth cap", func(t *testing.T) {
+		// A parser drops a <noscript> inside a <noscript>, so this shape means
+		// nothing; the cap exists so a pathological one costs a bounded number
+		// of re-reads rather than one per nesting level. At the cap the body is
+		// left unresolved, which is what every raw-text body was before this.
+		nest := func(n int) string {
+			return strings.Repeat("<noscript>", n) + `<a href="[meta path='x' inline='true']">go</a>`
+		}
+		if !warns(nest(maxNoscriptDepth), "choose the scheme") {
+			t.Error("nesting up to the cap is still read")
+		}
+		if warns(nest(maxNoscriptDepth+1), "choose the scheme") {
+			t.Error("past the cap the body is left alone, not re-read forever")
 		}
 	})
 
