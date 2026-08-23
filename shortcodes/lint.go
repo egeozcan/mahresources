@@ -280,8 +280,12 @@ func Lint(input string, opts LintOptions) []LintIssue {
 					add(tk.start, tk.end, SeverityWarning,
 						`[meta] has raw="true" without inline="true"; only the inline form reads it, so it is ignored and the value is still escaped`)
 				}
+				// Not TrimSpace: formatTimeValue reads layout != "", so
+				// layout=" " is an active layout that formats a date as one
+				// space. An attribute that does something is worth a line even
+				// when what it does is silly.
 				for _, attr := range []string{"format", "layout"} {
-					if strings.TrimSpace(tk.attrs[attr]) != "" {
+					if tk.attrs[attr] != "" {
 						add(tk.start, tk.end, SeverityWarning,
 							`[meta] has `+attr+`= without inline="true"; only the inline form reads it, so it is ignored and the value renders unformatted`)
 					}

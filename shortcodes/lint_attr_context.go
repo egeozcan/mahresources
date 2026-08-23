@@ -112,8 +112,8 @@ tokenize:
 		case html.TextToken:
 			// A raw-text body is where escaping helps least, not most: the
 			// parser decodes no entities there, so a script or style body takes
-			// the value into JavaScript or CSS exactly as written, and in the
-			// six others no tag inside was read at all.
+			// the value into JavaScript or CSS exactly as written, and a
+			// <noscript> body was read as neither markup nor script.
 			if openRawText != "" {
 				for _, idx := range sentinelIndexes(string(z.Raw())) {
 					if idx.index >= 0 && idx.index < len(spans) {
@@ -198,7 +198,10 @@ func insideUnterminatedTags(substituted string, at []int) []bool {
 	// already closed by a ">", or does not exist yet.
 	active := -1
 	remaining, next := 0, 0
-	for i := 0; i < len(substituted); i++ {
+	// The bound is inclusive: an offset at the very end of the document is a
+	// legitimate question ("<a", 2), and answering it needs one pass with no
+	// byte left to read.
+	for i := 0; i <= len(substituted); i++ {
 		for next < len(at) && at[next] == i {
 			// Everything the answer depends on is at or after this byte, so an
 			// offset is registered before its own byte is processed — which is
@@ -208,6 +211,9 @@ func insideUnterminatedTags(substituted string, at []int) []bool {
 				remaining++
 			}
 			next++
+		}
+		if i == len(substituted) {
+			break
 		}
 		switch substituted[i] {
 		case '"':
@@ -403,7 +409,7 @@ func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) [
 		if lang := scriptLikeLanguage[ctx.rawTextElement]; lang != "" {
 			return []string{label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser does not decode entities in, so the value reaches ` + lang + ` exactly as written. Escaping stops nothing here — a "${...}" in a template literal or a ";" in a declaration is not escaped at all. Pass the value in through a data- attribute instead.`}
 		}
-		return []string{label + ` sits inside a <` + ctx.rawTextElement + `> body, whose contents are raw text rather than markup, so the tags around it were never read and where the value lands cannot be determined. Move it outside the element; until then treat the value as unsafe.`}
+		return []string{label + ` sits inside a <` + ctx.rawTextElement + `> body, which the browser reads as raw text when scripting is enabled and as markup when it is not, and the tags inside it were analysed as neither — so where the value lands cannot be determined. Move it outside the element; until then treat the value as unsafe.`}
 	}
 	if ctx.inName {
 		return []string{label + ` is interpolated into a tag or attribute NAME, which nothing delimits: a value containing a space or "=" simply adds attributes of its own, and escaping does not touch either character. Build the name in the template instead.`}
@@ -535,32 +541,37 @@ func expressionAttributeKind(attr string) string {
 	return ""
 }
 
-// rawTextElements have bodies the tokenizer reads as raw text, which is the
-// whole list it sets rawTag for, minus the two RCDATA ones. Nothing inside one
-// is ever emitted as a tag, so a value there cannot be placed at all: before
-// these six were listed, a body's occurrences arrived as text with no open
-// raw-text element recorded, the context stayed the zero value, and
-// <noscript><a href="[meta …]"> was analysed as if it were plain prose.
+// rawTextElements are the bodies where "the tokenizer emitted no tags here"
+// has to change the answer. It raw-tags ten elements (iframe, noembed,
+// noframes, noscript, plaintext, script, style, textarea, title, xmp) and no
+// tag inside any of them is ever emitted as a tag, so it is worth saying why
+// seven of the ten are deliberately absent rather than merely unlisted.
 //
-// textarea and title are deliberately absent, and stay absent even though the
-// tokenizer raw-tags them too: their bodies are RCDATA, where entities *are*
-// decoded, so escaping works exactly as it does in an attribute — and a tag
-// written inside one is literal text to the browser as well, which is precisely
-// what the zero-value "not in an attribute" context already reports.
-var rawTextElements = map[string]bool{
-	"script": true, "style": true,
-	"iframe": true, "noembed": true, "noframes": true,
-	"noscript": true, "plaintext": true, "xmp": true,
-}
+// textarea and title are RCDATA: entities *are* decoded there, so escaping
+// works exactly as it does in an attribute — and a tag written inside one is
+// literal text to the browser too, which is precisely what the zero-value "not
+// in an attribute" context already reports.
+//
+// iframe, noembed, noframes, xmp and plaintext are raw text in an HTML parser
+// unconditionally, and that makes the same answer right for a different reason:
+// a tag inside one is text to the browser as well, so "not in an attribute" is
+// the truth rather than a gap. An escaped value cannot even close the element —
+// html.EscapeString leaves no "<" and no entity is decoded to give one back —
+// and a raw value that closes it with "</xmp>" is already covered by the raw=
+// rule below, which is the message that case wants. plaintext runs to EOF and
+// cannot be closed at all. Listing them would be a false positive on every
+// escaped value in one.
+//
+// noscript is the one that is genuinely undecidable, and the reason this list
+// grew at all: its body is raw text when scripting is enabled and ordinary
+// markup when it is not, so <noscript><a href="[meta …]"> — read here as prose,
+// because the tokenizer emitted no <a> — may really be an attribute. It fails
+// closed.
+var rawTextElements = map[string]bool{"script": true, "style": true, "noscript": true}
 
 // scriptLikeLanguage names the language a raw-text body is written in, for the
-// two where the value lands in one. The other six get the "could not be read"
-// message instead, because there is no single true statement about what happens
-// to a value in them: a <noscript> body is markup again when scripting is off,
-// an <iframe> or <noframes> fallback renders only where the element is
-// unsupported, and in <xmp> and <plaintext> an escaped value cannot break out
-// at all. What is true of all six is that the markup around the value was never
-// read, so where it lands is unknown — which is the unterminated-tag rule.
+// two where the value lands in one. noscript names none, and gets the
+// "could not be read" message instead.
 var scriptLikeLanguage = map[string]string{"script": "JavaScript", "style": "CSS"}
 
 // inertAlpineDirectives take a literal value rather than an expression, so

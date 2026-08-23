@@ -618,9 +618,12 @@ func TestUnterminatedTagScanMatchesThePerOffsetScan(t *testing.T) {
 		return true
 	}
 
+	// Every offset, len(s) included: an offset at the very end is a legitimate
+	// question the old shape answered, even though a recorded sentinel start is
+	// always followed by the sentinel's own bytes.
 	check := func(t *testing.T, s string) {
 		t.Helper()
-		at := make([]int, len(s))
+		at := make([]int, len(s)+1)
 		for i := range at {
 			at[i] = i
 		}
@@ -1058,12 +1061,11 @@ func TestLintMetaAttributesThatOnlyInlineReads(t *testing.T) {
 	})
 }
 
-// Round-11 findings. The tokenizer raw-texts eight elements, not two, and for
-// the six besides <script> and <style> nothing inside them was analysed at all:
-// their bodies arrive as text with no open raw-text element recorded, so the
-// context stayed the zero value, and a tag nested inside one is never emitted
-// as a tag for the attribute walk to see.
-func TestLintOpaqueRawTextElements(t *testing.T) {
+// Round-11 findings. The tokenizer raw-texts ten elements and the linter
+// listed two, so a tag written inside any of the other eight was never emitted
+// as a tag and the value in it was analysed as ordinary prose. That is only
+// *wrong* for one of them, and the difference is what the treatment turns on.
+func TestLintRawTextElementBodies(t *testing.T) {
 	warns := func(src, want string) bool {
 		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
 			if strings.Contains(issue.Message, want) {
@@ -1073,31 +1075,46 @@ func TestLintOpaqueRawTextElements(t *testing.T) {
 		return false
 	}
 
-	t.Run("a body the tokenizer cannot see into is treated as unsafe", func(t *testing.T) {
-		// The href here never reaches the attribute walk, so the placement rules
-		// did not run on it. Byte-identical markup outside the wrapper warns
-		// about the scheme; inside it the honest answer is "this was not read".
-		for _, el := range []string{"iframe", "noembed", "noframes", "noscript", "plaintext", "xmp"} {
-			src := "<" + el + `><a href="[meta path='x' inline='true']">go</a></` + el + ">"
-			if !warns(src, "<"+el+"> body") {
-				t.Errorf("nothing inside <%s> was analysed: %s", el, src)
+	t.Run("a noscript body cannot be placed, so it fails closed", func(t *testing.T) {
+		// Its body is markup when scripting is disabled, so this href may be a
+		// real attribute — and the tokenizer emitted no <a> for the walk to
+		// find. Byte-identical markup outside the wrapper warns about the
+		// scheme; inside it, the honest answer is "this was not read".
+		src := `<noscript><a href="[meta path='x' inline='true']">go</a></noscript>`
+		if !warns(src, "<noscript> body") {
+			t.Error("nothing inside <noscript> was analysed: " + src)
+		}
+		if !warns(`<noscript>[property path="Name"]</noscript>`, "<noscript> body") {
+			t.Error("with no tag around it either, the body is still unreadable")
+		}
+		for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
+			if strings.Contains(issue.Message, "the value reaches  ") {
+				t.Errorf("<noscript> has no language to name: %s", issue.Message)
 			}
 		}
 	})
 
-	t.Run("a bare value in one warns with no tag around it either", func(t *testing.T) {
-		if !warns(`<noscript>[property path="Name"]</noscript>`, "<noscript> body") {
-			t.Error("every bare-value shortcode in an unreadable body is unplaced")
+	t.Run("the unconditional raw-text bodies contain an escaped value", func(t *testing.T) {
+		// These five are raw text in an HTML parser whatever the scripting flag
+		// says, so a tag inside one is text to the browser as well and "not in
+		// an attribute" is the truth rather than a gap. An escaped value cannot
+		// close the element either: html.EscapeString leaves no "<", and no
+		// entity is decoded there to give one back.
+		for _, el := range []string{"iframe", "noembed", "noframes", "plaintext", "xmp"} {
+			src := "<" + el + `><a href="[meta path='x' inline='true']">go</a></` + el + ">"
+			if warns(src, "[meta inline") {
+				t.Errorf("an escaped value in <%s> is contained: %s", el, src)
+			}
 		}
 	})
 
-	t.Run("the message never claims a language it does not know", func(t *testing.T) {
-		for _, el := range []string{"iframe", "noembed", "noframes", "noscript", "plaintext", "xmp"} {
-			src := "<" + el + `>[meta path='x' inline='true']</` + el + ">"
-			for _, issue := range Lint(src, LintOptions{Known: KnownFromBuiltins()}) {
-				if strings.Contains(issue.Message, "the value reaches  ") {
-					t.Errorf("<%s> has no language to name: %s", el, issue.Message)
-				}
+	t.Run("a raw value in one of them is the raw rule's business", func(t *testing.T) {
+		// "</xmp>" is exactly how a raw value gets back out into markup, and
+		// the answer — drop raw= — is the one that rule already gives.
+		for _, el := range []string{"iframe", "noembed", "noframes", "plaintext", "xmp"} {
+			src := "<" + el + `>[meta path='x' inline='true' raw='true']</` + el + ">"
+			if !warns(src, "becomes real elements") {
+				t.Errorf("a raw value in <%s> must warn: %s", el, src)
 			}
 		}
 	})
