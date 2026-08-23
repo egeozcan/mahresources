@@ -411,15 +411,20 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 		// walk above does. "<svg><script><foreignObject><div></svg>" is
 		// ignored by a browser, because the current node is an HTML <div>
 		// and HTML's rule refuses to walk past one.
-		if !matched && base != "" && (name == base || name == mode.enclosing) &&
-			!(enclosing().ns == "" && stackHasSpecial(stack)) {
-			stack, base = stack[:0], ""
-			program, programRoot = "", ""
-			// Reported back, because the element it closed is the caller's: in
-			// "<math><textarea></math></textarea><textarea>…" a browser left
-			// MathML at the "</math>", so the second <textarea> is HTML RCDATA.
-			// A caller that kept its own MathML state read the link written in
-			// that one as live.
+		if !matched {
+			if base != "" && (name == base || name == mode.enclosing) &&
+				!(enclosing().ns == "" && stackHasSpecial(stack)) {
+				stack, base = stack[:0], ""
+				program, programRoot = "", ""
+			}
+			// Reported back whatever it named, because an end tag that closed
+			// nothing in here may still close something the CALLER opened, and
+			// the caller is the one holding that element's state. Two shapes:
+			// "<math><textarea></math></textarea><textarea>…" leaves MathML at
+			// the "</math>", and "<svg><g><title>Icon</g><iframe srcdoc=…>"
+			// closes the <g> from inside the re-read <title>. The caller
+			// applies its own rules to it, so a name nothing has open is a
+			// no-op there as it was here.
 			closedFromInside = name
 		}
 	}
@@ -1057,7 +1062,8 @@ func isASCIISpace(c byte) bool {
 //
 // ctx.noscript: a <noscript> body is markup only when scripting is disabled, so
 // the rules that describe execution are withheld there entirely and the ones
-// that describe a placement carry noscriptQualifier.
+// that describe a PLACEMENT carry noscriptQualifier. The raw= rules are neither
+// and carry nothing — qualify, below, is where that is decided and why.
 func unsafeAttributeContexts(ctx attrContext, raw, cssMode bool, label string) []string {
 	// qualify names the mode a reason applies in. Only the reasons that
 	// describe a placement — an attribute, a quote, a name — take it, because
@@ -1382,11 +1388,12 @@ func expressionAttributeKind(attr string) string {
 // see below.
 //
 // The tokenizer raw-texts ten names (rawTextElements), and no tag inside any of
-// them is emitted as a tag. Two of the ten are here. In the HTML namespace the
-// other eight are read as ordinary prose, which is a decision rather than an
-// oversight: it has been got wrong twice, once by warning on all eight bodies
-// and once by re-reading a <noscript> body as markup and reporting placements
-// in it that cannot execute under either reading.
+// them is emitted as a tag. Two of the ten are here, and <noscript> is re-read
+// (below). The remaining SEVEN are read as ordinary prose while they are in the
+// HTML namespace, which is a decision rather than an oversight: it has been got
+// wrong twice, once by warning on all eight of the non-program bodies and once
+// by re-reading a <noscript> body as markup and reporting placements in it that
+// cannot execute under either reading.
 //
 // textarea and title are RCDATA: entities *are* decoded there, so escaping
 // works exactly as it does in an attribute — and a tag written inside one is
@@ -1494,11 +1501,26 @@ func expressionAttributeKind(attr string) string {
 // type=. A <script type="application/json"> holds data rather than code, so
 // naming JavaScript there overstates it — though an escaped value in one can
 // neither close the element nor be decoded back into a quote, so what it
-// overstates is the reason rather than the verdict. <style> DID get the
+// overstates is the verdict as well: nothing there reaches JavaScript, and a
+// <script type="application/ld+json"> holding an escaped value is a warning
+// about a program that does not exist. What the escaping does still hold is
+// real — no "<" and no decoded quote, so the element cannot be closed — which
+// is why this is a wrong reason attached to a wrong verdict rather than a
+// missed hazard. <style> DID get the
 // equivalent check (styleTypeApplies), and the asymmetry is the two specs'
 // rather than this file's: a style has exactly one valid type, while deciding
 // whether a script runs means classifying the JavaScript MIME types, "module",
 // and the data types (importmap, speculationrules) that are neither.
+//
+// Two things a re-read region still cannot do, both known and both fail-open in
+// the direction that warns. An end tag inside one that closes an element the
+// CALLER opened is reported back, so the caller's state is right; but the
+// region has already read its own remainder in the namespace it started with,
+// so "<svg><g><title>Icon</g><iframe srcdoc=…>" reads that iframe as HTML when
+// a browser leaves it in SVG. Fixing it means carrying the caller's open
+// elements into the recursion, which is a change to what a region IS rather
+// than to a rule inside one. And only one exit is reported, the last, so a
+// region holding several unmatched end tags forwards the final one.
 //
 // TestLintPlacementsAgainstTheParser is what holds all of it: it asks
 // x/net/html's parser, over a few thousand generated nests, whether the element

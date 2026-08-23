@@ -1089,12 +1089,12 @@ func TestLintMetaAttributesThatOnlyInlineReads(t *testing.T) {
 }
 
 // The tokenizer raw-texts ten elements and scriptLikeElements lists two, so a
-// tag written inside one of the other eight is never emitted as a tag. For six
-// of them, in the HTML namespace, the value in the body is analysed as ordinary
-// prose and that is the right answer rather than a hole — twice it was treated
-// as one, first by labelling all eight bodies unreadable and then by re-reading
-// a <noscript> body as markup and reporting placements in it that cannot
-// execute. The argument is in scriptLikeElements' comment; these pin it, so the
+// tag written inside one of the other eight is never emitted as a tag. For
+// SEVEN of them — all but <noscript>, which is re-read — the value in an HTML
+// body is analysed as ordinary prose, and that is the right answer rather than
+// a hole: twice it was treated as one, first by labelling all eight bodies
+// unreadable and then by re-reading a <noscript> body as markup and reporting
+// placements in it that cannot execute. The argument is in scriptLikeElements' comment; these pin it, so the
 // next reader finds tests rather than only prose.
 //
 // The two that are re-read — <noscript>, and any of the ten inside <svg> or
