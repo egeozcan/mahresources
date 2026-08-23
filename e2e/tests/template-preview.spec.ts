@@ -115,11 +115,14 @@ test.describe('Template live preview', () => {
     // one thing saving the template can never produce.
     const stamp = Date.now();
     const marker = `css-slot-applied-${stamp}`;
-    // ::after content, because the frame's own body reset (margin/padding/
-    // background/color) is emitted after the author's CSS and would win on any
-    // of those properties. Generated content is also absent from textContent,
-    // so the two assertions below cannot both be satisfied by one mechanism.
-    const css = `body::after{content:"${marker}"}`;
+    // Two rules, because they prove different things. The background pins the
+    // cascade: the frame's own body reset is preview chrome with no counterpart
+    // on a real page, so it is emitted before the author's CSS exactly as
+    // base.tpl puts the app stylesheets before the custom_css tag's <style>.
+    // The ::after content is the marker the body must NOT contain as text --
+    // generated content never reaches textContent, so the only way the marker
+    // gets there is the stylesheet being injected as markup as well.
+    const css = `body{background-color:rgb(3,5,7)}body::after{content:"${marker}"}`;
     const headerProbe = `header-probe-${stamp}`;
     const category = await apiClient.createCategory(`CSS Slot Cat ${stamp}`, undefined, {
       CustomCSS: css,
@@ -149,16 +152,27 @@ test.describe('Template live preview', () => {
     // live in the frame's cascade.
     await expect
       .poll(
-        async () => {
-          const srcdocFrame = page.frames().find((f) => f.url() === 'about:srcdoc');
-          if (!srcdocFrame) return '';
-          return srcdocFrame
-            .evaluate(() => getComputedStyle(document.body, '::after').content)
-            .catch(() => '');
-        },
+        async () =>
+          frame
+            .locator('body')
+            .evaluate((el) => getComputedStyle(el, '::after').content)
+            .catch(() => ''),
         { timeout: 10000 },
       )
       .toContain(marker);
+
+    // ...and the author's own body rule wins over the frame's reset, which is
+    // what it will do in production.
+    await expect
+      .poll(
+        async () =>
+          frame
+            .locator('body')
+            .evaluate((el) => getComputedStyle(el).backgroundColor)
+            .catch(() => ''),
+        { timeout: 10000 },
+      )
+      .toBe('rgb(3, 5, 7)');
 
     // ...and not injected as body content. The marker can only reach textContent
     // if the stylesheet was written into the body as markup as well.

@@ -304,6 +304,15 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
 
     async refresh() {
       if (!this.previewPath) return;
+      // Concurrent refreshes (slot switch racing a debounced edit) can resolve
+      // out of order; only the newest request may touch the pane state. Claimed
+      // here rather than at the fetch, because the two branches below answer
+      // without sending one and must retire an in-flight request too: a
+      // response for the slot just left would otherwise land afterwards and
+      // overwrite the frame they had deliberately blanked. They also clear
+      // `loading` for the same reason — a superseded response returns before
+      // the line that would have cleared it.
+      const seq = ++this._refreshSeq;
       const carrier = this.isCarrierSlot();
       if (carrier) {
         // A list-header slot renders against the category itself, which must
@@ -311,6 +320,7 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
         if (!this.categoryId) {
           this.error = 'Save this category first, then reopen the form to preview the list header.';
           this.issues = [];
+          this.loading = false;
           this._renderFrame('', '', null);
           return;
         }
@@ -322,16 +332,14 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
           'Nothing to preview against yet — this category has no ' +
           `${this.entityType}s, and none exist to borrow. Pick one above, or create one first.`;
         this.issues = [];
+        this.loading = false;
         this._renderFrame('', '', null);
         return;
       }
-      // Concurrent refreshes (slot switch racing a debounced edit) can resolve
-      // out of order; only the newest request may touch the pane state.
-      const seq = ++this._refreshSeq;
       this.loading = true;
       this.error = '';
       const content = this._readSlot(this.slot);
-      const css = this._readSlot('CustomCSS');
+      const css = this._readSlot(CSS_SLOT);
       try {
         // The slot names which buffer `content` is. With CustomCSS selected it
         // is a stylesheet, which carries no <style> wrapper to say so, and the
@@ -392,6 +400,12 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
       // returned CustomCSS, and the app JS bundle (so [meta] web components and
       // Alpine widgets hydrate — /public/ is served with a CORS header because
       // module scripts are CORS-fetched from this frame's opaque origin).
+      // The frame's own body reset is preview chrome with no counterpart on a
+      // real page, so it is emitted BEFORE the author's CSS: base.tpl links the
+      // app stylesheets and only then renders {% block head %}, where the
+      // custom_css tag writes its <style>, so an author's own `body` rule wins
+      // in production. Emitted after, the reset silently won here instead, and
+      // margin, padding, background and color previewed as unstylable.
       // The rendered slot is wrapped in the same x-data="{ entity: ... }"
       // scope the display pages provide, so Alpine expressions like
       // x-text="entity.Name" behave as they will on the real page.
@@ -411,8 +425,8 @@ export function templatePreview({ entityType = 'group', previewPath = '', catego
 <link rel="stylesheet" href="/public/index.css">
 <link rel="stylesheet" href="/public/tailwind.css">
 <link rel="stylesheet" href="/public/jsonTable.css">
-<style>${css}</style>
 <style>body{margin:0;padding:1rem;background:#fff;color:#1c1917;}</style>
+<style>${css}</style>
 <script>window.__previewEntity = ${entityJson};
 window.__mahUserSettings = ${settingsJson};</script>
 </head><body>

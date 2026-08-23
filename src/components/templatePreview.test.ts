@@ -204,4 +204,84 @@ describe('template preview frame', () => {
         expect(frame.srcdoc).toContain('<style>.badge{color:red}</style>');
         expect(bodyOf(frame.srcdoc)).toContain('<h1>rendered</h1>');
     });
+
+    test("emits the frame's own reset before the author CSS, as the real pages do", async () => {
+        // base.tpl links the app stylesheets and only then renders the head
+        // block, where the custom_css tag writes its <style>, so an author's
+        // own `body` rule wins in production. The frame's reset is preview
+        // chrome with no counterpart there; emitted after the author CSS it
+        // silently won instead, and body margin, padding, background and color
+        // previewed as unstylable.
+        const fetchMock = stubFetch({ html: '', css: 'body{background:#000}' });
+        const component = templatePreview({
+            entityType: 'group',
+            previewPath: '/v1/category/previewTemplate',
+            categoryId: 7,
+        });
+        const frame = frameStub();
+        component.$refs = { frame };
+        component._form = formWith({ CustomCSS: 'body{background:#000}', CustomHeader: '' });
+        component.entityId = 42;
+        component.slot = 'CustomHeader';
+
+        await component.refresh();
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const reset = frame.srcdoc.indexOf('body{margin:0');
+        const author = frame.srcdoc.indexOf('body{background:#000}');
+        expect(reset).toBeGreaterThan(-1);
+        expect(author).toBeGreaterThan(-1);
+        expect(reset).toBeLessThan(author);
+    });
+
+    test('a refusal that sends no request retires the one already in flight', async () => {
+        // The two branches that answer without a request - an unsaved carrier,
+        // and no entity to render against - blank the frame and say why. They
+        // have to claim the sequence number too, or the response for the slot
+        // just left lands afterwards and overwrites the explanation with a
+        // render the pane has already disowned.
+        let release: () => void = () => {};
+        const pending = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const fetchMock = vi.fn(async () => {
+            await pending;
+            return {
+                ok: true,
+                json: async () => ({
+                    html: '<h1>stale</h1>',
+                    css: '',
+                    entity: null,
+                    issues: [],
+                    cssIssues: [],
+                }),
+            };
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const component = templatePreview({
+            entityType: 'group',
+            previewPath: '/v1/category/previewTemplate',
+            categoryId: 7,
+        });
+        const frame = frameStub();
+        component.$refs = { frame };
+        component._form = formWith({ CustomCSS: '', CustomHeader: '<h1>x</h1>' });
+        component.entityId = 42;
+        component.slot = 'CustomHeader';
+
+        const inFlight = component.refresh();
+        // The chosen entity goes away while that request is out.
+        component.entityId = null;
+        await component.refresh();
+        expect(component.error).toContain('Nothing to preview against yet');
+        expect(bodyOf(frame.srcdoc)).not.toContain('stale');
+
+        release();
+        await inFlight;
+
+        expect(bodyOf(frame.srcdoc)).not.toContain('stale');
+        expect(component.error).toContain('Nothing to preview against yet');
+        expect(component.loading).toBe(false);
+    });
 });
