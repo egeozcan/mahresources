@@ -266,6 +266,10 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 	// tag can clear it: past one a browser has left foreign content for good,
 	// and so has everything this scan has left to read.
 	base := mode.foreign
+	// program and programRoot start as the mode's and are cleared with the
+	// region: past a "</svg>" that popped an SVG <script>, what follows is
+	// ordinary text rather than more of the program.
+	program, programRoot := mode.program, mode.programRoot
 	// enclosing is the frame a token at the top of this scan is opened inside.
 	// The region's own element is not on the stack, and it does not need to be:
 	// base already carries the namespace its children are in, and no element
@@ -352,6 +356,9 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 					// HTML: the tokenizer's reading is a browser's, except for
 					// <noscript>, whose body is markup with scripting off.
 					if scriptLikeElements[name] {
+						if name == "style" && !styleTypeApplies(z, hasAttr, hits) {
+							break
+						}
 						pending.language = name
 					} else if name == "noscript" {
 						pending.reread = true
@@ -363,6 +370,14 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 					// which share this element's own namespace.
 					pending.reread = true
 					pending.mode = scanMode{foreign: ns, noscript: mode.noscript}
+				case ns == "svg" && name == "style" && !styleTypeApplies(z, hasAttr, hits):
+					// An unsupported type= means the browser applies nothing, so
+					// the body is markup and only markup.
+					pending.reread = true
+					pending.mode = scanMode{
+						foreign: frame.namespaceForChild("span"), noscript: mode.noscript,
+						enclosing: name,
+					}
 				case ns == "svg" && scriptLikeElements[name]:
 					// SVG is the one foreign namespace that has these two: an
 					// SVG <script> executes — the parser spec special-cases its
@@ -410,14 +425,30 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 			// Searching the whole stack instead let "<x-foo><div><math></x-foo>"
 			// walk out of MathML, and an inert foreign <iframe srcdoc> became a
 			// real one.
-			foreignSearch := enclosing().ns != ""
 			matched := false
 			for i := len(stack) - 1; i >= 0; i-- {
 				if stack[i].name == name {
 					stack, matched = stack[:i], true
 					break
 				}
-				if foreignSearch && i > 0 && stack[i-1].ns == "" {
+				if enclosing().ns != "" && i > 0 && stack[i-1].ns == "" {
+					// Past this the tag is HTML's business, and HTML's own rule
+					// for an end tag naming nothing on top walks down until it
+					// matches or meets a SPECIAL element, whichever comes first.
+					// Both halves matter: without the walk, "<div><math></div>"
+					// left the scan in MathML and an HTML <iframe srcdoc> after
+					// it read as inert; without the stop, "<x-foo><div><math>
+					// </x-foo>" popped a <div> a browser keeps and did the
+					// opposite.
+					for j := i; j >= 0; j-- {
+						if stack[j].name == name {
+							stack, matched = stack[:j], true
+							break
+						}
+						if isSpecialElement(stack[j]) {
+							break
+						}
+					}
 					break
 				}
 			}
@@ -438,6 +469,7 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 			// warning again.
 			if !matched && base != "" && (name == base || name == mode.enclosing) {
 				stack, base = stack[:0], ""
+				program, programRoot = "", ""
 			}
 		case html.TextToken:
 			switch {
@@ -445,14 +477,18 @@ func scanMarkup(src string, mode scanMode, depth int, record func(index int, ctx
 				if depth < maxMarkupScanDepth {
 					scanMarkup(string(z.Raw()), pending.mode, depth+1, record)
 				}
-			case mode.program != "":
-				// Inside an SVG <script> or <style>, text is the program. Every
-				// text node under it is, because that is what textContent
-				// collects, so this does not ask how deeply nested it is.
+			case program != "" && len(stack) == 0:
+				// Inside an SVG <script> or <style>, a DIRECT child text node is
+				// the program. Not every descendant one: the spec builds the
+				// source from "child text content", which is the Text children
+				// and not textContent, so a value written inside a <g> in there
+				// is markup that no browser executes. len(stack) == 0 is what
+				// "direct child of the region's own element" means here, and it
+				// becomes true again after that <g> closes.
 				for _, idx := range sentinelIndexes(string(z.Raw())) {
 					record(idx.index, attrContext{
-						rawTextElement: mode.program,
-						foreignRoot:    mode.programRoot,
+						rawTextElement: program,
+						foreignRoot:    programRoot,
 						noscript:       mode.noscript,
 					})
 				}
@@ -561,6 +597,78 @@ var rawTextElements = map[string]bool{
 	"iframe": true, "noembed": true, "noframes": true, "noscript": true,
 	"plaintext": true, "script": true, "style": true, "textarea": true,
 	"title": true, "xmp": true,
+}
+
+// styleTypeApplies reports whether a browser will treat this <style> element as
+// a stylesheet. The type must be absent, empty, or text/css; anything else and
+// nothing is applied, so a value in the body is inert text.
+//
+// <script> deliberately gets no equivalent, and the asymmetry is the two specs'
+// rather than this file's: a style has exactly one valid type, while deciding
+// whether a script runs means classifying the JavaScript MIME types, "module",
+// and the data types (importmap, speculationrules) that are neither. That one
+// is named as residue instead.
+func styleTypeApplies(z *html.Tokenizer, hasAttr bool, hits []sentinelHit) bool {
+	// An interpolated type= is a value nobody here can read, so it is taken as
+	// the stylesheet it may turn out to be.
+	for _, hit := range hits {
+		if hit.ctx.inValue && hit.ctx.attr == "type" {
+			return true
+		}
+	}
+	for hasAttr {
+		var key, val []byte
+		key, val, hasAttr = z.TagAttr()
+		if string(key) != "type" {
+			continue
+		}
+		t := strings.TrimSpace(string(val))
+		return t == "" || strings.EqualFold(t, "text/css")
+	}
+	return true
+}
+
+// isSpecialElement reports whether HTML's "any other end tag" walk stops at this
+// element. Copied from x/net/html's own isSpecialElementMap and the namespace
+// switch beside it.
+func isSpecialElement(f markupFrame) bool {
+	switch f.ns {
+	case "":
+		return htmlSpecialElements[f.name]
+	case "math":
+		switch f.name {
+		case "mi", "mo", "mn", "ms", "mtext", "annotation-xml":
+			return true
+		}
+	case "svg":
+		switch f.name {
+		case "foreignobject", "desc", "title":
+			return true
+		}
+	}
+	return false
+}
+
+var htmlSpecialElements = map[string]bool{
+	"address": true, "applet": true, "area": true, "article": true,
+	"aside": true, "base": true, "basefont": true, "bgsound": true,
+	"blockquote": true, "body": true, "br": true, "button": true,
+	"caption": true, "center": true, "col": true, "colgroup": true,
+	"dd": true, "details": true, "dir": true, "div": true, "dl": true,
+	"dt": true, "embed": true, "fieldset": true, "figcaption": true,
+	"figure": true, "footer": true, "form": true, "frame": true,
+	"frameset": true, "h1": true, "h2": true, "h3": true, "h4": true,
+	"h5": true, "h6": true, "head": true, "header": true, "hgroup": true,
+	"hr": true, "html": true, "iframe": true, "img": true, "input": true,
+	"keygen": true, "li": true, "link": true, "listing": true, "main": true,
+	"marquee": true, "menu": true, "meta": true, "nav": true, "noembed": true,
+	"noframes": true, "noscript": true, "object": true, "ol": true, "p": true,
+	"param": true, "plaintext": true, "pre": true, "script": true,
+	"section": true, "select": true, "source": true, "style": true,
+	"summary": true, "table": true, "tbody": true, "td": true,
+	"template": true, "textarea": true, "tfoot": true, "th": true,
+	"thead": true, "title": true, "tr": true, "track": true, "ul": true,
+	"wbr": true, "xmp": true,
 }
 
 // voidElements have no end tag and no children, so a browser pops one as soon
@@ -993,39 +1101,71 @@ var htmlAnnotationEncodings = []string{"text/html", "application/xhtml+xml"}
 // encoding= could come out as one of those two, which is the question the
 // namespace of everything inside the element turns on.
 //
-// The shape is couldStillBecomeExecutable's: what is fixed is the text on
-// either side of the interpolation, so encoding="text/[meta …]" could and
-// encoding="image/[meta …]" could not. Text sitting BETWEEN two interpolations
-// is not checked, which over-approximates in the fail-closed direction and is
-// the right way round. Asking only whether the value holds an
-// interpolation at all failed closed on the second, which is a warning about a
-// script a browser never runs.
+// The shape is couldStillBecomeExecutable's: what is fixed is every run of text
+// an interpolation cannot change, so encoding="text/[meta …]" could and
+// encoding="image/[meta …]" could not. The runs BETWEEN two interpolations are
+// fixed as well and are checked, so encoding="[meta …]zzz[meta …]" could not
+// either. Asking only whether the value holds an interpolation at all failed
+// closed on all three, which is a warning about a script no browser runs.
 func encodingCouldBeHTML(value string) bool {
-	hits := sentinelIndexes(value)
-	if len(hits) == 0 {
-		return false
+	runs := fixedRunsAround(value)
+	if len(runs) < 2 {
+		return false // no interpolation in it at all
 	}
-	first := hits[0]
-	last := hits[len(hits)-1]
-	end := last.at + len(lintSentinelPrefix)
-	if i := strings.IndexByte(value[end:], 0); i >= 0 {
-		end += i + 1
-	} else {
-		end = len(value)
-	}
-	// Unescaped, because the static path compares the value the browser sees:
-	// z.TagAttr decodes entities, so encoding="text&#x2f;[meta …]" has to be
-	// judged as the "text/" it will become. This is the same bypass the URL
-	// rules close with html.UnescapeString.
-	prefix := strings.ToLower(html.UnescapeString(value[:first.at]))
-	suffix := strings.ToLower(html.UnescapeString(value[end:]))
 	for _, enc := range htmlAnnotationEncodings {
-		if len(prefix)+len(suffix) <= len(enc) &&
-			strings.HasPrefix(enc, prefix) && strings.HasSuffix(enc, suffix) {
+		if fixedRunsFit(runs, enc) {
 			return true
 		}
 	}
 	return false
+}
+
+// fixedRunsAround splits an attribute value into the text an interpolation
+// cannot change: the run before the first sentinel, the runs between them, and
+// the run after the last. Returns nil when the value holds no sentinel.
+//
+// Each run is unescaped, because the static path compares the value the browser
+// sees — z.TagAttr decodes entities, so encoding="text&#x2f;[meta …]" has to be
+// judged as the "text/" it becomes. Same bypass the URL rules close with
+// html.UnescapeString.
+func fixedRunsAround(value string) []string {
+	hits := sentinelIndexes(value)
+	if len(hits) == 0 {
+		return nil
+	}
+	runs := make([]string, 0, len(hits)+1)
+	at := 0
+	for _, h := range hits {
+		runs = append(runs, strings.ToLower(html.UnescapeString(value[at:h.at])))
+		at = h.at + len(lintSentinelPrefix)
+		if i := strings.IndexByte(value[at:], 0); i >= 0 {
+			at += i + 1
+		} else {
+			at = len(value)
+		}
+	}
+	return append(runs, strings.ToLower(html.UnescapeString(value[at:])))
+}
+
+// fixedRunsFit reports whether some assignment to the interpolations could make
+// the whole value equal want. The first run has to start it, the last has to end
+// it, and the ones between have to appear in order in what is left — which is
+// exact rather than conservative, so encoding="[meta …]zzz[meta …]" is refused:
+// neither interpolation can delete the "zzz", and no encoding contains one.
+func fixedRunsFit(runs []string, want string) bool {
+	if !strings.HasPrefix(want, runs[0]) {
+		return false
+	}
+	pos := len(runs[0])
+	for _, r := range runs[1 : len(runs)-1] {
+		i := strings.Index(want[pos:], r)
+		if i < 0 {
+			return false
+		}
+		pos += i + len(r)
+	}
+	last := runs[len(runs)-1]
+	return len(want)-len(last) >= pos && strings.HasSuffix(want, last)
 }
 
 // executableURLSchemes run rather than fetch, so continuing one is unsafe even
@@ -1116,7 +1256,8 @@ func expressionAttributeKind(attr string) string {
 // markup to a browser only when scripting is disabled — which is the mode the
 // element exists for, so the placements live in that mode are worth reporting.
 // The set that is reported is exactly the one that needs no script: srcdoc, an
-// unquoted attribute, style=, an interpolated attribute name, and raw=. Every
+// unquoted attribute, style=, a <style> ELEMENT a browser would apply, an
+// interpolated attribute name, and raw=. Every
 // script-execution rule (an on* handler, an Alpine directive, a javascript: URL,
 // a <script> body) is withheld, because it is inapplicable under BOTH readings —
 // with scripting on the body is inert raw text, with it off the handler is real
@@ -1126,10 +1267,16 @@ func expressionAttributeKind(attr string) string {
 // widest and is read the same way, since with scripting disabled everything
 // after it is live markup.
 //
-// Two members of the non-execution set stay unreported and are residue. A
-// <style> ELEMENT inside a <noscript> is a real stylesheet in that mode, and is
-// left out because it is the language rule above rather than a placement rule,
-// and the language rule reports a <script> in the same breath. And every
+// A <style> element and a <script> element are the pair that shows where the
+// dividing line runs. Both are real elements with scripting disabled; only one
+// of them does anything. The stylesheet applies, and a value in it can close
+// the declaration and open another — the same hazard style= carries, and it
+// needs no script; the script is inert. So the language rule reports the first
+// and withholds the second, rather than treating "a program body" as one case.
+// A <style> whose type= no browser supports is not a stylesheet either, and
+// styleTypeApplies is where that is asked, everywhere rather than only here.
+//
+// One member of the non-execution set stays unreported and is residue: every
 // URL-bearing attribute other than an executable scheme — a stylesheet href, a
 // <base href> that re-points every relative URL on the page, a form action — is
 // out because the two URL rules only ever describe an executable scheme, which
@@ -1151,7 +1298,11 @@ func expressionAttributeKind(attr string) string {
 //     DOES decode entities, so the escaping is undone before the language sees
 //     the value and an escaped quote arrives as a real quote. That placement is
 //     worse than the HTML one, not better, and the old message claimed the
-//     opposite.
+//     opposite. The body is not raw text either, so it is read as markup like
+//     every other foreign region, and what is program source is its CHILD TEXT
+//     CONTENT — the direct Text children a script's source is built from, not
+//     textContent. An attribute on an element inside one is an attribute of a
+//     real element, and text inside that element is markup nothing runs.
 //   - MathML has neither, so a <math><script> runs nothing and a <math><style>
 //     applies nothing. Both are read as the ordinary markup they are.
 //   - The remaining names are inert foreign elements whose children are real,
@@ -1184,9 +1335,11 @@ func expressionAttributeKind(attr string) string {
 // type=. A <script type="application/json"> holds data rather than code, so
 // naming JavaScript there overstates it — though an escaped value in one can
 // neither close the element nor be decoded back into a quote, so what it
-// overstates is the reason rather than the verdict. Reading type= means
-// classifying the JavaScript MIME types, and it is a question about HTML
-// namespaces only in the sense that both were found in the same sweep.
+// overstates is the reason rather than the verdict. <style> DID get the
+// equivalent check (styleTypeApplies), and the asymmetry is the two specs'
+// rather than this file's: a style has exactly one valid type, while deciding
+// whether a script runs means classifying the JavaScript MIME types, "module",
+// and the data types (importmap, speculationrules) that are neither.
 //
 // TestLintPlacementsAgainstTheParser is what holds all of it: it asks
 // x/net/html's parser, over a few thousand generated nests, whether the element

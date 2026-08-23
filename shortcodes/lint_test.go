@@ -1580,6 +1580,11 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 		// of namespaces.
 		element, attr, attrPrefix string
 		namespaces                []string
+		// childText requires VALUE to reach the element's CHILD TEXT CONTENT —
+		// its direct Text children, which is what a program's source text is
+		// built from. Existence alone would let a warning about JavaScript pass
+		// on markup where no JavaScript ever sees the value.
+		childText bool
 		// scriptingOff asks the parser again with scripting disabled, for the
 		// placements that are live in that mode. The rules that describe
 		// execution do not, since neither mode runs a script in a <noscript>.
@@ -1612,7 +1617,7 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 			name: "script program", msg: "JavaScript",
 			lintSrc:   `<script>var s = "[property path='Name']"</script>`,
 			oracleSrc: `<script>var s = "VALUE"</script>`,
-			element:   "script", namespaces: []string{"", "svg"},
+			element:   "script", namespaces: []string{"", "svg"}, childText: true,
 		},
 		{
 			// A <style> in the same place IS live in that mode: it is a real
@@ -1621,7 +1626,7 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 			name: "style program", msg: "CSS",
 			lintSrc:   `<style>.c{color:[property path='Name']}</style>`,
 			oracleSrc: `<style>.c{color:VALUE}</style>`,
-			element:   "style", namespaces: []string{"", "svg"}, scriptingOff: true,
+			element:   "style", namespaces: []string{"", "svg"}, scriptingOff: true, childText: true,
 		},
 	}
 
@@ -1654,12 +1659,23 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 					if n.Namespace != ns {
 						continue
 					}
-					if p.attr == "" {
+					switch {
+					case p.childText:
+						// Direct Text children only, in tree order — the
+						// definition the source text of a script or a
+						// stylesheet is built from.
+						for c := n.FirstChild; c != nil; c = c.NextSibling {
+							if c.Type == html.TextNode && strings.Contains(c.Data, "VALUE") {
+								return true
+							}
+						}
+					case p.attr == "":
 						return true
-					}
-					for _, a := range n.Attr {
-						if a.Key == p.attr && strings.HasPrefix(strings.ToLower(a.Val), p.attrPrefix) {
-							return true
+					default:
+						for _, a := range n.Attr {
+							if a.Key == p.attr && strings.HasPrefix(strings.ToLower(a.Val), p.attrPrefix) {
+								return true
+							}
 						}
 					}
 				}
@@ -1720,6 +1736,9 @@ func TestLintPlacementsAgainstTheParser(t *testing.T) {
 	// from markup that is not: a stray end tag closing something that was never
 	// opened, a void element that a browser pops and a frame stack does not,
 	// and a "/>" that HTML ignores. checkRaw takes the source as written.
+	// Only the false-positive direction: malformed markup has many legitimate
+	// misses (a region past the depth bound, a value inside a program body),
+	// and the balanced sweep above is where the missed half is asserted.
 	checkRaw := func(before, after string) {
 		for _, p := range probes {
 			lintSrc := before + p.lintSrc + after
@@ -1956,17 +1975,36 @@ func TestLintSrcdocIsAnIframeAttribute(t *testing.T) {
 // which is the pair of facts an HTML one does not have. Only what lands in the
 // TEXT is program source.
 func TestLintSVGProgramBodiesAreAlsoMarkup(t *testing.T) {
-	t.Run("text in one is program source, however deep", func(t *testing.T) {
+	t.Run("a direct child text node is the program", func(t *testing.T) {
 		for _, tc := range []struct{ src, lang string }{
 			{`<svg><script>var s = "[property path='Name']"</script></svg>`, "JavaScript"},
-			// textContent collects every descendant text node, so a nested one
-			// is in the program too.
-			{`<svg><script><g>[property path="Name"]</g></script></svg>`, "JavaScript"},
 			{`<svg><style>.c{color:[property path='Name']}</style></svg>`, "CSS"},
+			// Still a direct child, after an element in the middle closed.
+			{`<svg><script><g></g>var s = "[property path='Name']"</script></svg>`, "JavaScript"},
 		} {
 			if !lintSaysAny(tc.src, tc.lang) {
 				t.Errorf("%s: this text is %s, got %q", tc.src, tc.lang, lintWarnings(tc.src))
 			}
+		}
+	})
+
+	t.Run("a descendant text node is not", func(t *testing.T) {
+		// The source text is built from "child text content", which is the Text
+		// CHILDREN and not textContent, so a value written inside an element in
+		// there is markup no browser executes or applies.
+		for _, src := range []string{
+			`<svg><script><g>[property path="Name"]</g></script></svg>`,
+			`<svg><style><g>[property path="Name"]</g></style></svg>`,
+		} {
+			if got := lintWarnings(src); len(got) != 0 {
+				t.Errorf("%s: not child text content, got %q", src, got)
+			}
+		}
+		// And the region ends with the element it belongs to, so text past a
+		// "</svg>" that popped the script is ordinary text again.
+		src := `<svg><script></svg>[property path="Name"]`
+		if got := lintWarnings(src); len(got) != 0 {
+			t.Errorf("%s: the script is closed, got %q", src, got)
 		}
 	})
 
@@ -2027,9 +2065,11 @@ func TestLintInterpolatedEncodingAsksWhatItCouldBecome(t *testing.T) {
 	// The static path compares what the browser sees, because z.TagAttr decodes
 	// entities. So must this one, or "text&#x2f;" reads as inert.
 	live(`<math><annotation-xml encoding="text&#x2f;[property path='E']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
-	// A fixed run between two interpolations is not checked, which
-	// over-approximates in the direction that warns.
-	live(`<math><annotation-xml encoding="[property path='E']zz[property path='F']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
+	// A fixed run BETWEEN two interpolations is immutable too. No assignment
+	// makes "[E]zz[F]" either encoding, because neither contains a "zz"...
+	inert(`<math><annotation-xml encoding="[property path='E']zz[property path='F']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
+	// ... while "[E]x[F]" is text/html with E="te" and F="t/html".
+	live(`<math><annotation-xml encoding="[property path='E']x[property path='F']"><script>let x="[property path='N']"</script></annotation-xml></math>`)
 }
 
 // A <style> and a <script> inside a <noscript> are the pair that shows where
@@ -2057,4 +2097,60 @@ func TestLintForeignEndTagSearchStopsAtTheHTMLBoundary(t *testing.T) {
 	if got := lintWarnings(src); len(got) != 0 {
 		t.Errorf("a browser ignores that end tag and stays in MathML, got %q", got)
 	}
+	// The walk past that boundary is HTML's own, and it stops at a SPECIAL
+	// element rather than at nothing: here it finds the <div>, pops the math
+	// with it, and what follows is a real HTML iframe. The pair is the point —
+	// one boundary has to answer no above and yes here.
+	src = `<div><math></div><iframe srcdoc="[property path='Name']"></iframe>`
+	if !lintSaysAny(src, `sits in a "srcdoc" attribute`) {
+		t.Errorf("the </div> pops the math with it, got %q", lintWarnings(src))
+	}
+}
+
+// A <style> is a stylesheet only when its type is one a browser supports, and
+// otherwise it applies nothing at all — so the body is markup and only markup.
+func TestLintStyleTypeDecidesWhetherItIsAStylesheet(t *testing.T) {
+	t.Run("an unsupported type applies nothing", func(t *testing.T) {
+		for _, src := range []string{
+			`<style type="text/plain">[property path="Name"]</style>`,
+			`<noscript><style type="text/plain">[property path="Name"]</style></noscript>`,
+			`<svg><style type="text/plain">[property path="Name"]</style></svg>`,
+		} {
+			if got := lintWarnings(src); len(got) != 0 {
+				t.Errorf("%s: a browser applies nothing here, got %q", src, got)
+			}
+		}
+		// It is markup, though, so a real link written in one is a real link.
+		src := `<svg><style type="text/plain"><a href="javascript:[property path='Name']">x</a></style></svg>`
+		if !lintSaysAny(src, `continues a "javascript:" URL`) {
+			t.Errorf("%s: the body is markup, got %q", src, lintWarnings(src))
+		}
+	})
+
+	t.Run("absent, empty or text/css is a stylesheet", func(t *testing.T) {
+		for _, src := range []string{
+			`<style>.c{color:[property path='Name']}</style>`,
+			`<style type="">.c{color:[property path='Name']}</style>`,
+			`<style type="TEXT/CSS">.c{color:[property path='Name']}</style>`,
+			`<svg><style type="text/css">.c{color:[property path='Name']}</style></svg>`,
+		} {
+			if !lintSaysAny(src, "CSS") {
+				t.Errorf("%s: this one applies, got %q", src, lintWarnings(src))
+			}
+		}
+		// An interpolated type is a value nobody here can read, so it is taken
+		// as the stylesheet it may turn out to be.
+		if !lintSaysAny(`<style type="[property path='T']">.c{color:[property path='Name']}</style>`, "CSS") {
+			t.Error("an interpolated type= fails closed")
+		}
+	})
+
+	// <script> deliberately has no equivalent: a style has one valid type, and
+	// deciding whether a script runs means classifying the JavaScript MIME
+	// types. That is named as residue rather than half-implemented.
+	t.Run("a script with a data type is residue, not a rule", func(t *testing.T) {
+		if !lintSaysAny(`<script type="application/json">{"n":"[property path='Name']"}</script>`, "reaches JavaScript") {
+			t.Error("unchanged: the script rule has never read type=")
+		}
+	})
 }
