@@ -99,12 +99,15 @@ func TestLintDifferentialTagSoup(t *testing.T) {
 		"</button>", "<h2>", "</h2>", "<h3>", "</h3>", "<dd>", "</dd>",
 		"<image>", "<keygen>", "<frameset>", "</frameset>", "<frame>",
 		"<head>", "</head>", "<template>", "</template>", "<ul>", "</ul>",
+		"<input>", `<input type="hidden">`, "<hr>", "<pre>", "</pre>",
+		"<td>", "</td>", "<tr>", "</tr>", "<marquee>", "</marquee>",
+		"<object>", "</object>", "<optgroup>", "<dt>", "</dt>",
 	}
 	fails := 0
 	for _, seed := range []int64{11, 42} {
 		rng := rand.New(rand.NewSource(seed))
 		for c := 0; c < 5000 && fails < 12; c++ {
-			n := 2 + rng.Intn(8)
+			n := 2 + rng.Intn(10)
 			var sb strings.Builder
 			for i := 0; i < n; i++ {
 				sb.WriteString(tokens[rng.Intn(len(tokens))])

@@ -2705,3 +2705,29 @@ func TestLintTreeConstructionAgreesWithTheParser(t *testing.T) {
 		}
 	})
 }
+
+// The active formatting list, found by the tag-soup oracle: a formatting
+// element a scope pop closed is not gone — the next body insertion
+// reconstructs it, and the reconstructed copy can later run the adoption
+// agency over an <svg> that opened after it. Both shapes verified against
+// html.Parse.
+func TestLintActiveFormattingReconstruction(t *testing.T) {
+	warns := func(src string) bool {
+		return lintSaysAny(src, `sits in a "srcdoc" attribute`)
+	}
+	// The <dt> start tag closes the <p> and takes the <a> with it, but the
+	// <a> stays listed, so the <svg> start reconstructs it first — and the
+	// later "</a>" runs the agency, closing the svg. The iframe is HTML.
+	src := `<p><a><dt><svg></a><iframe srcdoc="[property path='Name']"></iframe>`
+	if !warns(src) {
+		t.Errorf("the reconstructed <a> carries the </a> that closes the svg: %s", src)
+	}
+	// Same shape through a <button>: the </annotation-xml> pops the <font>,
+	// reconstruction re-opens it before the <svg>, and "</font>" finds a
+	// SPECIAL <button> above it — the button survives as the furthest block
+	// and the svg does not. The iframe is HTML inside the button.
+	src = `<annotation-xml><font></annotation-xml><button><svg><g></font><iframe srcdoc="[property path='Name']"></iframe>`
+	if !warns(src) {
+		t.Errorf("the reconstructed <font> makes </font> close the svg: %s", src)
+	}
+}

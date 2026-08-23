@@ -240,6 +240,19 @@ type markupFrame struct {
 	// node of one is program source; anything deeper sits inside some other
 	// frame and is markup like everything else.
 	program string
+	// id makes one opened element distinguishable from another spelled the
+	// same, which the active formatting list needs: whether an entry is still
+	// OPEN is a question about this element, not about its name.
+	id int
+}
+
+// afeEntry is one entry in the list of active formatting elements: a
+// formatting element that was opened, or the marker an applet, marquee,
+// object, template, td, th or caption inserts so reconstruction cannot reach
+// past it.
+type afeEntry struct {
+	frame  markupFrame
+	marker bool
 }
 
 // namespaceForChild answers which namespace a start tag with this name lands in
@@ -342,37 +355,133 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 			}
 		}
 	}
-	// adoptionAgency is the agency's stack-visible effect, shared by the
-	// formatting end tags and by the <a>/<nobr> start tags that run the
-	// agency against an already-open element of their own name. Its outer
-	// loop reruns on the clone it inserts until nothing special is open above
-	// one, and each pass reparents one furthest block — so the net the stack
-	// keeps is exactly the SPECIAL frames that were open above the formatting
-	// element, each of which was a furthest block once, and everything else
-	// above it is closed: "<b><div><svg></b>" ends with the div open and the
-	// svg gone, which is where html.Parse puts the next token. Without a
-	// special element above it the agency pops normally, and out of scope it
-	// does nothing.
-	adoptionAgency := func(name string) {
-		for i := len(stack) - 1; i >= 0; i-- {
-			if stack[i].name == name && stack[i].ns == "" {
-				if stackHasSpecial(stack[i+1:]) {
-					kept := stack[:i]
-					for _, f := range stack[i+1:] {
-						if isSpecialElement(f) {
-							kept = append(kept, f)
-						}
-					}
-					stack = kept
-				} else {
-					stack = stack[:i]
-				}
-				return
+	// The list of active formatting elements. A formatting element a scope
+	// pop or the agency's surgery closed does not leave this list, and that
+	// is the point of it: the next insertion in body content RECONSTRUCTS
+	// every listed element that is no longer open, the way a browser re-opens
+	// a <b> across block boundaries. This is not namespace-cosmetic — a
+	// reconstructed <a> stands between an <svg> and the "</a>" that will run
+	// the agency over both, so without it the scan and the parser disagree
+	// about whether that svg is still open.
+	var afe []afeEntry
+	nextID := 0
+	afeIndex := func(name string) int {
+		for i := len(afe) - 1; i >= 0 && !afe[i].marker; i-- {
+			if afe[i].frame.name == name {
+				return i
 			}
-			if scopeBoundary(stack[i]) {
+		}
+		return -1
+	}
+	onStack := func(id int) bool {
+		for _, f := range stack {
+			if f.id == id {
+				return true
+			}
+		}
+		return false
+	}
+	clearAfeToMarker := func() {
+		hasMarker := false
+		for _, e := range afe {
+			if e.marker {
+				hasMarker = true
+			}
+		}
+		if !hasMarker {
+			return
+		}
+		for len(afe) > 0 {
+			last := afe[len(afe)-1]
+			afe = afe[:len(afe)-1]
+			if last.marker {
 				return
 			}
 		}
+	}
+	// reconstruct re-opens, in order, every entry after the last marker that
+	// is not on the stack. Called where x/net's parser calls its own — before
+	// body text and before the start tags whose in-body rules reconstruct —
+	// and nowhere else: a <div> deliberately does not, which is why a <b> can
+	// stay closed across one until text re-opens it.
+	reconstruct := func() {
+		n := len(afe)
+		if n == 0 || afe[n-1].marker || onStack(afe[n-1].frame.id) {
+			return
+		}
+		i := n - 1
+		for i > 0 && !afe[i-1].marker && !onStack(afe[i-1].frame.id) {
+			i--
+		}
+		for ; i < n; i++ {
+			clone := afe[i].frame
+			nextID++
+			clone.id = nextID
+			stack = append(stack, clone)
+			afe[i].frame = clone
+		}
+	}
+	inScope := func(name string) bool {
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i].ns == "" && stack[i].name == name {
+				return true
+			}
+			if scopeBoundary(stack[i]) {
+				return false
+			}
+		}
+		return false
+	}
+	// adoptionAgency is the agency's stack-visible effect, shared by the
+	// formatting end tags and by the <a>/<nobr> start tags that run the
+	// agency against an already-open element of their own name. The element
+	// it acts on comes from the active formatting LIST, not from the stack: a
+	// listed element that is no longer open is simply delisted, and one out
+	// of scope is left alone. For an open one, the agency's outer loop reruns
+	// on the clone it inserts until nothing special is open above one, and
+	// each pass reparents one furthest block — so the net the stack keeps is
+	// exactly the SPECIAL frames that were open above the formatting element,
+	// each of which was a furthest block once, and everything else above it
+	// is closed: "<b><div><svg></b>" ends with the div open and the svg gone,
+	// which is where html.Parse puts the next token. Without a special
+	// element above it the agency pops normally. It reports false when the
+	// list holds no such element at all, which for an end tag means the
+	// any-other rule speaks instead.
+	adoptionAgency := func(name string) bool {
+		ai := afeIndex(name)
+		if ai < 0 {
+			return false
+		}
+		fe := afe[ai].frame
+		si := -1
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i].id == fe.id {
+				si = i
+				break
+			}
+		}
+		if si < 0 {
+			afe = append(afe[:ai], afe[ai+1:]...)
+			return true
+		}
+		for i := len(stack) - 1; i > si; i-- {
+			if scopeBoundary(stack[i]) {
+				return true // out of scope: parse error, nothing moves
+			}
+		}
+		if stackHasSpecial(stack[si+1:]) {
+			kept := stack[:si]
+			for _, f := range stack[si+1:] {
+				if isSpecialElement(f) {
+					kept = append(kept, f)
+				}
+			}
+			stack = kept
+		} else {
+			stack = stack[:si]
+		}
+		afe = append(afe[:ai], afe[ai+1:]...)
+		return true
 	}
 	// liClosure is the loop the <li>, <dd> and <dt> start tags run: close the
 	// nearest open element of their kind, walking past address, div and p and
@@ -483,8 +592,11 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 		// element — an SVG <font> — was already taken by the foreign walk
 		// above; the agency's own search is HTML-only.)
 		if formattingElements[name] {
-			adoptionAgency(name)
-			return
+			if adoptionAgency(name) {
+				return
+			}
+			// The list holds no such element, and the agency's answer for
+			// that is the any-other rule below.
 		}
 		// The names whose end tags pop until the element is popped, provided
 		// it is "in scope" — and each name's scope has its own boundary list,
@@ -499,6 +611,11 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 					// Table scope: html, table, template — and the nearest
 					// table is the match itself, so only template stops.
 					return f.ns == "" && f.name == "template"
+				case name == "template":
+					// "</template>" pops to the template unconditionally —
+					// the parser checks only that one is open, and nothing
+					// stops the walk.
+					return false
 				case name == "li":
 					// List item scope adds the list containers.
 					return scopeBoundary(f) || (f.ns == "" && (f.name == "ol" || f.name == "ul"))
@@ -513,6 +630,9 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 				f := stack[i]
 				if f.ns == "" && (f.name == name || (headingTags[name] && headingTags[f.name])) {
 					stack = stack[:i]
+					if afeMarkerTags[name] {
+						clearAfeToMarker()
+					}
 					return
 				}
 				if boundary(f) {
@@ -538,6 +658,9 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 		for i := len(stack) - 1; i >= 0; i-- {
 			if stack[i].ns == "" && stack[i].name == name {
 				stack = stack[:i]
+				if afeMarkerTags[name] {
+					clearAfeToMarker()
+				}
 				return
 			}
 			if isSpecialElement(stack[i]) {
@@ -585,8 +708,10 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 				leaveForeignContent()
 				ns = enclosing().namespaceForChild(name)
 			}
+			enteredForeignFromHTML := false
 			if ns == "" && (name == "svg" || name == "math") {
 				ns = name
+				enteredForeignFromHTML = true
 			}
 			// A start tag that is not head content closes an open <head> —
 			// the in-head mode hands anything else to the body — and that
@@ -691,6 +816,11 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 							stack = stack[:len(stack)-1]
 						}
 					}
+					if name == "xmp" {
+						// The one raw-text element whose in-body rule
+						// reconstructs before it goes raw.
+						reconstruct()
+					}
 				case name == "li":
 					liClosure("li", "li")
 				case name == "dd", name == "dt":
@@ -706,15 +836,45 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 							break
 						}
 					}
-				case name == "a", name == "nobr":
-					// An open element of the same name means the agency runs
-					// before the new one is inserted.
-					adoptionAgency(name)
+					reconstruct()
+				case name == "a":
+					// An <a> still in the list means the agency runs before
+					// the new one is inserted — the list, not the stack, is
+					// what the rule consults.
+					if afeIndex("a") >= 0 {
+						adoptionAgency("a")
+					}
+					reconstruct()
+				case name == "nobr":
+					reconstruct()
+					if inScope("nobr") {
+						adoptionAgency("nobr")
+						reconstruct()
+					}
+				case formattingElements[name]:
+					reconstruct()
 				case name == "option", name == "optgroup":
 					if t := enclosing(); t.ns == "" && t.name == "option" {
 						stack = stack[:len(stack)-1]
 					}
+					reconstruct()
+				case name == "applet", name == "marquee", name == "object", name == "select",
+					name == "area", name == "br", name == "embed", name == "img",
+					name == "keygen", name == "wbr", name == "input":
+					reconstruct()
+				default:
+					// Any other start tag reconstructs before inserting —
+					// except the raw-text names, whose in-body rules go
+					// straight to the tokenizer.
+					if !rawTextElements[name] {
+						reconstruct()
+					}
 				}
+			}
+			if enteredForeignFromHTML {
+				// An <svg> or <math> root is inserted by the in-body mode,
+				// which reconstructs first like any other phrasing content.
+				reconstruct()
 			}
 			// The namespace is settled before this tag's own attributes are
 			// recorded, because it decides what some of them mean: a srcdoc= on
@@ -790,7 +950,17 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 			// stack that a browser does not have, and the namespace of
 			// everything after it is then read off the wrong element.
 			if !(voidElements[name] && ns == "") && !(tt == html.SelfClosingTagToken && ns != "") {
+				nextID++
+				frame.id = nextID
 				stack = append(stack, frame)
+				if ns == "" {
+					if formattingElements[name] {
+						afe = append(afe, afeEntry{frame: frame})
+					}
+					if afeMarkerTags[name] {
+						afe = append(afe, afeEntry{marker: true})
+					}
+				}
 			}
 		case html.EndTagToken:
 			nameBytes, _ := z.TagName()
@@ -801,6 +971,11 @@ func scanMarkup(src string, scripting bool, record func(index int, ctx attrConte
 			if framesetOK && pending.language == "" && !pending.inert &&
 				strings.TrimSpace(string(z.Raw())) != "" {
 				framesetOK = false
+			}
+			// Body text also reconstructs the active formatting elements
+			// before it is inserted, whitespace included.
+			if enclosing().ns == "" && pending.language == "" && !pending.inert {
+				reconstruct()
 			}
 			// A text token whose raw begins with the CDATA opener is a section
 			// the tokenizer was allowed to read — a raw-text body that merely
@@ -878,6 +1053,14 @@ var formattingElements = map[string]bool{
 	"a": true, "b": true, "big": true, "code": true, "em": true, "font": true,
 	"i": true, "nobr": true, "s": true, "small": true, "strike": true,
 	"strong": true, "tt": true, "u": true,
+}
+
+// afeMarkerTags insert a marker into the active formatting list when they
+// open, and clear the list back to one when they close: reconstruction never
+// reaches past the boundary they draw.
+var afeMarkerTags = map[string]bool{
+	"applet": true, "caption": true, "marquee": true, "object": true,
+	"td": true, "template": true, "th": true,
 }
 
 // scopePopTags are the end-tag names the in-body insertion mode gives their
@@ -1918,17 +2101,16 @@ func expressionAttributeKind(attr string) string {
 // deepest, and no claim is made here about which direction any of it fails in.
 // The adoption agency is kept to its stack-visible net — the special frames
 // above the formatting element survive and everything else above it closes —
-// but the active formatting list itself does not exist here, so a formatting
-// element the agency or a scope pop closed is never RECONSTRUCTED into later
-// content the way a browser re-opens a <b> across block boundaries; formatting
-// frames are namespace-neutral, which is why that stays tolerable. The end
-// tags with their own pop-until-in-scope rules carry their own boundary lists
-// in closeTag, but only as the in-body insertion mode gives them: the table
-// insertion modes do not exist here, so the table-section end tags (td, tr,
-// tbody and friends) ride the any-other walk, foster parenting never happens,
-// and the in-body corrections in scanMarkup honor the table-section START
-// tags whenever a <table> is open rather than only in the modes that really
-// do.
+// and the active formatting list exists (a scope pop does not delist a
+// formatting element, and the next body insertion reconstructs it), but
+// without the spec's Noah's Ark clause, so more than three identical entries
+// can accumulate where a browser would cap them. The end tags with their own
+// pop-until-in-scope rules carry their own boundary lists in closeTag, but
+// only as the in-body insertion mode gives them: the table insertion modes do
+// not exist here, so the table-section end tags (td, tr, tbody and friends)
+// ride the any-other walk, foster parenting never happens, and the in-body
+// corrections in scanMarkup honor the table-section START tags whenever a
+// <table> is open rather than only in the modes that really do.
 //
 // TestLintPlacementsAgainstTheParser is what holds all of it: it asks
 // x/net/html's parser, over a few thousand generated nests, whether the element
