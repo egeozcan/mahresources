@@ -223,6 +223,40 @@ func TestPreviewTemplate_CSSPlacementIssues(t *testing.T) {
 		}
 	})
 
+	// The CustomCSS slot with a css buffer that is not the same text. The
+	// browser never sends this, but the skip is conditioned on the buffers
+	// being one document, and a condition that skipped on the slot alone would
+	// drop the css buffer's findings here while every other subtest stayed
+	// green.
+	t.Run("a named CustomCSS slot with a different css buffer is two documents", func(t *testing.T) {
+		tc := SetupTestEnv(t)
+		g := &models.Group{Name: "CSS Slot Two Buffers Group"}
+		if err := tc.DB.Create(g).Error; err != nil {
+			t.Fatalf("create group: %v", err)
+		}
+
+		rr := tc.MakeRequest(http.MethodPost, "/v1/category/previewTemplate", map[string]any{
+			"entityId": g.ID,
+			"slot":     "CustomCSS",
+			"content":  cssBuffer,
+			"css":      `.other{color:[meta path="shade" inline="true"]}`,
+		})
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (body: %s)", rr.Code, rr.Body.String())
+		}
+		var resp previewResponse
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		// Both buffers are stylesheets, and both are linted.
+		if n := countPreviewIssues(resp.Issues, "CSS slot"); n != 1 {
+			t.Fatalf("the content buffer must still be linted, got %d: %+v", n, resp.Issues)
+		}
+		if n := countPreviewIssues(resp.CSSIssues, "CSS slot"); n != 1 {
+			t.Fatalf("the css buffer must be linted too, got %d: %+v", n, resp.CSSIssues)
+		}
+	})
+
 	t.Run("the css buffer is linted while another slot is selected", func(t *testing.T) {
 		tc := SetupTestEnv(t)
 		g := &models.Group{Name: "Header Slot Group"}

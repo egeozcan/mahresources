@@ -121,16 +121,16 @@ func (g *defaultTemplateGenerator) GenerateTemplate(ctx context.Context, in Temp
 	// slot=CustomCSS with mode=html asked the model for HTML and then judged the
 	// answer as CSS. in is a value copy, so this rewrite is local to the call.
 	//
-	// A named slot settles it outright. With no slot the mode is all there is,
-	// and it is only canonicalised — writing "css" over a "CSS" that
-	// singleSlotIsCSS already accepts but modeRuleLine's exact-match switch does
-	// not. An unlabelled request is left alone rather than assigned a mode,
-	// since both halves already default it to markup.
+	// A slot draft is one of exactly two things, so the mode is rewritten to
+	// whichever singleSlotIsCSS says rather than passed through. That also
+	// canonicalises a mixed-case "CSS", which that predicate accepts and
+	// modeRuleLine's exact-match switch does not, and refuses "json", which
+	// belongs to the metaschema target and would otherwise have asked for JSON
+	// and linted the reply as markup. Other targets keep their own mode.
 	if target == TemplateTargetSlot {
-		switch {
-		case singleSlotIsCSS(in):
+		if singleSlotIsCSS(in) {
 			in.Mode = "css"
-		case in.Slot != "":
+		} else {
 			in.Mode = "html"
 		}
 	}

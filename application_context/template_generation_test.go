@@ -351,6 +351,12 @@ func TestTemplateGeneratorSlotGovernsThePromptToo(t *testing.T) {
 			slot: "", mode: "CSS",
 			wantRule: "Output CSS only", rejectRule: "Output HTML",
 		},
+		// json belongs to the metaschema target. Reaching a slot target it
+		// asked for JSON and had the reply linted as markup.
+		"no slot, json is not a slot mode": {
+			slot: "", mode: "json",
+			wantRule: "Output HTML", rejectRule: "Output valid JSON",
+		},
 	}
 
 	for name, tc := range cases {
